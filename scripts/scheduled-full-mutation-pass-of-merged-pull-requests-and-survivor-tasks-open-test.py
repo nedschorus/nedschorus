@@ -14,6 +14,7 @@ import fcntl
 import importlib.util
 import json
 import os
+import re
 import signal
 import sqlite3
 import subprocess
@@ -58,7 +59,10 @@ with (plan_file.parent / "calls.log").open("a") as log:
     log.write(json.dumps(arguments) + "\\n")
 head = arguments[arguments.index("--head") + 1]
 rechecking = "--recorded-mutant-killed-check" in arguments
-step = plan.get("recheck", {{}}) if rechecking else plan.get(head, {{}})
+# A case's plan for a merge's second pass is under the head followed by " second pass".
+in_second_pass = "--no-mutant-started-after-unix-time" in arguments
+step = (plan.get("recheck", {{}}) if rechecking
+        else plan.get(head + " second pass", {{}}) if in_second_pass else plan.get(head, {{}}))
 def stopped(number, frame):
     (plan_file.parent / "stopped-by-sigterm").write_text(head)
     sys.exit(143)
@@ -161,16 +165,19 @@ class Fixture:
             (self.agents / name).mkdir(parents=True, exist_ok=True)
         return self.tasks / f"nedschorus-{name}-tasks"
 
+    def options(self):
+        return ["--clone", str(self.clone),
+                "--log-store-root", str(self.log_store),
+                "--state-directory", str(self.state),
+                "--task-lists-directory", str(self.tasks),
+                "--agent-seats-directory", str(self.agents),
+                "--cosmic-ray-venv", str(self.venv),
+                "--mutation-testing-program", str(self.program)]
+
     def run(self, plan=None, *flags, timeout_seconds=None, output=None):
         if plan is not None:
             self.plan_file.write_text(json.dumps(plan))
-        command = [sys.executable, str(SCRIPT), "--clone", str(self.clone),
-                   "--log-store-root", str(self.log_store),
-                   "--state-directory", str(self.state),
-                   "--task-lists-directory", str(self.tasks),
-                   "--agent-seats-directory", str(self.agents),
-                   "--cosmic-ray-venv", str(self.venv),
-                   "--mutation-testing-program", str(self.program)]
+        command = [sys.executable, str(SCRIPT), *self.options()]
         if timeout_seconds is not None:
             command += ["--merge-timeout-seconds", str(timeout_seconds)]
         streams = ({"capture_output": True} if output is None
@@ -209,9 +216,10 @@ def survivor(line=2, operator="core/ReplaceBinaryOperator_Add_Mul"):
             "diff": SURVIVOR_DIFF, "reason": ""}
 
 
-def verdict(survived=(), errored=(), no_suite=()):
+def verdict(survived=(), errored=(), no_suite=(), not_run=0):
     return {"head": "h", "merge_base": "b", "survived": list(survived),
-            "errored": list(errored), "files_with_no_suite": list(no_suite)}
+            "errored": list(errored), "files_with_no_suite": list(no_suite),
+            "mutants_not_run_count": not_run}
 
 
 def task_files(list_directory):
@@ -316,6 +324,100 @@ def run_every_exit_but_0_6_7_9_opens_a_job_failure_task_cases():
           and all(tasks for runs in opened_for_exit.values() for tasks in runs),
           (sorted(exits), opened_for_exit))
 
+    # A reader of the job log matches an exit code to its meaning by the docstring's numbers.
+    documented = {name: int(number) for name, number
+                  in re.findall(r"\b(EXIT_[A-Z_]+) \((\d+)\)", job.__doc__)}
+    exit_constants = {name: value for name, value in vars(job).items()
+                      if name.startswith("EXIT_") and isinstance(value, int)}
+    check("each exit code has a value of its own, and each the docstring numbers has that number",
+          len(set(exit_constants.values())) == len(exit_constants)
+          and len(documented) >= 6
+          and all(exit_constants.get(name) == number for name, number in documented.items()),
+          (exit_constants, documented))
+
+
+def run_untestable_merge_cases():
+    """A merge the mutation testing program finds a suite failing on, with no mutant applied."""
+    failing_suite = "scripts/thing-test.py"
+    untestable_step = {
+        "exit": job.mutation_testing.EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD,
+        "stderr": (f"mutation-testing: not run — a suite for scripts/thing.py fails on the "
+                   f"unmutated head, so no mutant can be judged:\n"
+                   f"{job.mutation_testing.SUITE_FAILS_ON_UNMUTATED_HEAD_LINE_PREFIX}"
+                   f"{failing_suite}\nMake the suite pass at the head, then run this again.")}
+
+    # The untestable merge is recorded, its task opened, and the merge after it tested in the
+    # same run, from a state file an earlier version wrote without untestable_merges.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
+        alpha_list = fixture.seat("alpha")
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        untestable = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n",
+                                    author="alpha")
+        after = fixture.commit("scripts/other.py", "def triple(x):\n    return x * 3\n",
+                               author="alpha")
+        completed = fixture.run({untestable: untestable_step,
+                                 after: {"json": verdict(survived=[survivor()])}})
+        record = fixture.records()[-1].read_text() if fixture.records() else ""
+        tasks = job_failure_tasks(fixture)
+        heads = [call[call.index("--head") + 1] for call in fixture.calls()]
+        check("a merge whose suite fails on its unchanged code is recorded as untestable with "
+              "that suite, and the run goes on to test the next merge and exits 0",
+              completed.returncode == job.EXIT_ALL_DONE
+              and heads == [untestable, after]
+              and fixture.state_json()["last_tested_main_commit"] == after
+              and fixture.state_json()[job.UNTESTABLE_MERGES_STATE_KEY]
+              == {untestable: [failing_suite]}
+              and task_files(alpha_list) == ["1.json"],
+              (completed.returncode, completed.stderr, heads, fixture.state_json()))
+        check("an untestable merge opens one job failure task naming the merge, the failing "
+              "suite and a later commit's run with the merge's own parent as --base",
+              [task["subject"] for task in tasks]
+              == [job.untestable_merge_job_failure_task_subject(untestable)]
+              and untestable in tasks[0]["description"]
+              and failing_suite in tasks[0]["description"]
+              and f"--base {start}" in tasks[0]["description"]
+              and f"--head <that commit>" in tasks[0]["description"],
+              tasks)
+        check("the record names the untestable merge, its failing suite and its task, and "
+              "counts it among the merges tested",
+              f"UNTESTABLE: merge {untestable[:12]} (change scripts/thing.py): on its unchanged "
+              f"code the suite(s) {failing_suite} fail" in record
+              and f"JOB FAILURE TASK: opened task #{tasks[0]['id'] if tasks else ''} on "
+                  f"{job.JOB_FAILURE_TASK_AGENT_SEAT}'s task list, "
+                  f"{job.untestable_merge_job_failure_task_subject(untestable)}" in record
+              and "merges tested: 2 of 2, 1 of them recorded as untestable" in record,
+              record)
+        calls_before = len(fixture.calls())
+        completed = fixture.run({"recheck": {"exit": 1}})
+        check("the next run does not try the untestable merge again",
+              completed.returncode == job.EXIT_ALL_DONE
+              and not any("--recorded-mutant-killed-check" not in call
+                          for call in fixture.calls()[calls_before:]),
+              (completed.returncode, fixture.calls()[calls_before:]))
+
+    # The task cannot be opened: a failed step, the state left as it was.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        start = git(fixture.work, "rev-parse", "HEAD")
+        fixture.set_last(start)
+        untestable = fixture.commit("scripts/thing.py", "def double(x):\n    return x + x\n")
+        after = fixture.commit("scripts/other.py", "def triple(x):\n    return x * 3\n")
+        completed = fixture.run({untestable: untestable_step})
+        heads = [call[call.index("--head") + 1] for call in fixture.calls()]
+        check("an untestable merge whose job failure task cannot be opened stops the run at "
+              "that merge, exit 4, with the state not advanced and no merge recorded as "
+              "untestable",
+              completed.returncode == job.EXIT_STEP_FAILED
+              and heads == [untestable]
+              and f"merge {untestable[:12]} (change scripts/thing.py): a suite fails on its "
+                  f"unchanged code ({failing_suite}), so it is untestable, but its job failure "
+                  f"task could not be opened" in completed.stderr
+              and fixture.state_json() == {"last_tested_main_commit": start, "tasks_opened": {}},
+              (completed.returncode, completed.stderr, heads, fixture.state_json()))
+
 
 def run_carry_on_and_job_failure_task_cases():
     # A merge past the limit with no mutant judged: carried on, not recorded as tested, and
@@ -364,6 +466,11 @@ def run_carry_on_and_job_failure_task_cases():
               and f"--parallel-mutant-workers {workers} " in tasks[0]["description"]
               and f"--cosmic-ray-sessions-directory-kept-to-resume {sessions}"
                   in tasks[0]["description"], tasks)
+        check("the hand run the task gives for a first pass merge runs at most as many mutants "
+              "as the first pass",
+              bool(tasks) and f"--mutants-run-at-most-shared-evenly-among-changed-files "
+                              f"{job.FIRST_PASS_MUTANTS_RUN_PER_MERGE_AT_MOST}"
+              in tasks[0]["description"], tasks)
         completed = fixture.run({merge: {"sleep": 30}}, timeout_seconds=1)
         record = fixture.records()[-1].read_text()
         check("the next run with no progress opens no second task while the first is open",
@@ -633,7 +740,382 @@ def run_carry_on_and_job_failure_task_cases():
           "the cores", counts == [12, 1, 16, 1], counts)
 
 
+def scheduled_jobs_file_with_schedule(fixture, schedule, file_name="scheduled-jobs.json"):
+    path = fixture.root / file_name
+    path.write_text(json.dumps({"jobs": [
+        {"name": "another-job", "on": {"ned-box": {"schedule": "* * * * *"}}},
+        {"name": job.PROGRAM, "on": {"ned-box": {"schedule": schedule}}}]}))
+    return path
+
+
+def schedule_due_in_seconds(seconds):
+    """A daily cron schedule whose next start is that many seconds from now, to the minute."""
+    due = time.localtime(time.time() + seconds)
+    return f"{due.tm_min} {due.tm_hour} * * *"
+
+
+def option_value(call, option):
+    return call[call.index(option) + 1] if option in call else None
+
+
+AT_MOST_FLAG = "--mutants-run-at-most-shared-evenly-among-changed-files"
+STOP_FLAG = "--no-mutant-started-after-unix-time"
+NOT_RUN_KEY = job.MERGES_WITH_MUTANTS_NOT_RUN_STATE_KEY
+
+
+def run_first_pass_and_second_pass_cases():
+    first_survivor = survivor()
+    second_survivor = survivor(1, "core/NumberReplacer")
+    second_survivor["diff"] = "--- a/scripts/thing.py\n-VALUE = 1\n+VALUE = 2\n"
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.seat("alpha")
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
+        fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+        oldest = fixture.commit("scripts/thing.py", "VALUE = 1\ndef double(x):\n    return x + x\n",
+                                author="alpha")
+        # Commit times a second apart at least, so newest first is one order only.
+        time.sleep(1.1)
+        middle = fixture.commit("scripts/other.py", "VALUE = 1\n", author="alpha")
+        time.sleep(1.1)
+        newest = fixture.commit("scripts/third.py", "VALUE = 1\n", author="alpha")
+        schedule_file = scheduled_jobs_file_with_schedule(fixture, schedule_due_in_seconds(12 * 3600))
+        schedule_flags = ["--scheduled-jobs-on-each-machine-json-file", str(schedule_file)]
+        completed = fixture.run({
+            oldest: {"json": verdict(survived=[first_survivor], not_run=5), "exit": 1},
+            middle: {"json": verdict()},
+            newest: {"json": verdict(not_run=3), "exit": 1},
+            f"{newest} second pass": {"json": verdict()},
+            f"{oldest} second pass": {"json": verdict(
+                survived=[first_survivor, second_survivor], not_run=2), "exit": 1}},
+            *schedule_flags)
+        calls = fixture.calls()
+        stop_wanted = job.unix_time_cron_next_starts_this_program_on_ned_box(
+            schedule_file, time.time()) - 30 * 60
+        state = fixture.state_json()
+        record = fixture.records()[-1].read_text() if fixture.records() else ""
+        alpha_tasks = [json.loads(path.read_text()) for path in
+                       sorted((fixture.tasks / "nedschorus-alpha-tasks").glob("*.json"))]
+        check("the first pass runs every waiting merge, oldest first, each with at most 12 "
+              "mutants shared among its changed files and no stop time",
+              [(option_value(call, "--head"), option_value(call, AT_MOST_FLAG),
+                option_value(call, STOP_FLAG)) for call in calls[:3]]
+              == [(oldest, "12", None), (middle, "12", None), (newest, "12", None)]
+              and job.FIRST_PASS_MUTANTS_RUN_PER_MERGE_AT_MOST == 12,
+              f"calls={calls} rc={completed.returncode} err={completed.stderr}")
+        check("the second pass follows the whole first pass and runs the merges with mutants "
+              "not run, newest first, with no cap, their own kept sessions, and the stop time "
+              "30 minutes before cron next starts the job",
+              [(option_value(call, "--head"), option_value(call, AT_MOST_FLAG)) for call in calls[3:]]
+              == [(newest, None), (oldest, None)]
+              and all(float(option_value(call, STOP_FLAG)) == stop_wanted
+                      and option_value(call, "--cosmic-ray-sessions-directory-kept-to-resume")
+                      == str(fixture.state
+                             / job.COSMIC_RAY_SESSIONS_KEPT_FOR_UNFINISHED_MERGES_DIRECTORY_NAME
+                             / option_value(call, "--head")) for call in calls[3:]),
+              f"calls={calls[3:]} wanted stop {stop_wanted}")
+        merged_at = int(git(fixture.work, "log", "-1", "--format=%ct", oldest))
+        check("the state records each merge with mutants not run, its merge time, their count "
+              "and the survivors already handled; a merge with none left leaves it; the second "
+              "pass leaves the last tested commit at the newest merge; exit 0",
+              completed.returncode == 0 and state["last_tested_main_commit"] == newest
+              and state.get(NOT_RUN_KEY) == {oldest: {
+                  "merged_at_unix_seconds": merged_at, "mutants_not_run_count": 2,
+                  "surviving_mutant_keys_already_handled": sorted(
+                      [job.mutant_key(first_survivor), job.mutant_key(second_survivor)])}},
+              f"rc={completed.returncode} state={state} err={completed.stderr}")
+        check("a survivor of the second pass gets its task, and the first pass's survivor, "
+              "reported again, gets no second one",
+              [task["subject"].split(": ")[0] for task in alpha_tasks]
+              == ["Surviving mutants in scripts/thing.py:2",
+                  "Surviving mutants in scripts/thing.py:1"], alpha_tasks)
+        check("the record counts the mutants not run and names the oldest merge with one and "
+              "its age, and marks the second pass's merges",
+              f"MUTANTS NOT RUN: 2, in 1 merge(s) recorded as tested; the oldest such merge is "
+              f"{oldest[:12]}, merged " in record and " days ago" in record
+              and "second pass: 2 merge(s) have mutants not run; it starts none after "
+              in record and f"merge {oldest[:12]}, second pass: " in record
+              and f"merge {middle[:12]}, second pass" not in record, record)
+
+        # The recheck finds the first pass's survivor killed, so the state stops naming its
+        # task; the merge's next second pass reports it again.
+        sessions_root = (fixture.state
+                         / job.COSMIC_RAY_SESSIONS_KEPT_FOR_UNFINISHED_MERGES_DIRECTORY_NAME)
+        for name in (oldest, "merge-that-waits-for-nothing"):
+            (sessions_root / name).mkdir(parents=True, exist_ok=True)
+        (fixture.root / "calls.log").unlink()
+        completed = fixture.run({
+            "recheck": {"verdicts": {job.mutant_key(first_survivor): "killed"}},
+            f"{oldest} second pass": {"json": verdict(
+                survived=[first_survivor, second_survivor]), "exit": 1}}, *schedule_flags)
+        state = fixture.state_json()
+        record = fixture.records()[-1].read_text()
+        check("a survivor an earlier run of the merge handled, killed since and so no longer in "
+              "the state's tasks, gets no second task when the second pass reports it again",
+              len(task_files(fixture.tasks / "nedschorus-alpha-tasks")) == 2
+              and job.mutant_key(first_survivor) not in state["tasks_opened"]
+              and f"merge {oldest[:12]}, second pass" in record,
+              f"state={state} record={record} err={completed.stderr}")
+        check("a merge whose last mutant the second pass ran leaves the state, and the record "
+              "counts no mutant not run",
+              state.get(NOT_RUN_KEY) == {} and state["last_tested_main_commit"] == newest
+              and "MUTANTS NOT RUN: 0, in no merge recorded as tested" in record,
+              f"state={state} record={record}")
+        check("the kept sessions of a merge with mutants not run are kept, those of a merge "
+              "that waits for neither pass removed",
+              (sessions_root / oldest).is_dir()
+              and not (sessions_root / "merge-that-waits-for-nothing").exists(),
+              sorted(path.name for path in sessions_root.iterdir()))
+        fixture.run({"recheck": {}}, *schedule_flags)
+        check("once the merge has no mutant not run, the next run removes its kept sessions",
+              not (sessions_root / oldest).exists(),
+              sorted(path.name for path in sessions_root.iterdir()))
+
+    # The second pass's stop time, its limit on one merge, and what ends it.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        fixture.seat(job.JOB_FAILURE_TASK_AGENT_SEAT)
+        start = git(fixture.work, "rev-parse", "HEAD")
+        older = fixture.commit("scripts/thing.py", "VALUE = 1\n")
+        newer = fixture.commit("scripts/other.py", "VALUE = 1\n")
+        # The second pass called directly below has no run before it to fetch the merges.
+        git(fixture.clone, "fetch", "-q", "origin", "main")
+        waiting = {
+            older: {"merged_at_unix_seconds": 100, "mutants_not_run_count": 4,
+                    "surviving_mutant_keys_already_handled": []},
+            newer: {"merged_at_unix_seconds": 200, "mutants_not_run_count": 6,
+                    "surviving_mutant_keys_already_handled": []}}
+
+        def state_with_both_waiting():
+            fixture.state.mkdir(exist_ok=True)
+            (fixture.state / job.STATE_FILE_NAME).write_text(json.dumps({
+                "last_tested_main_commit": newer, "tasks_opened": {}, NOT_RUN_KEY: waiting}))
+            if (fixture.root / "calls.log").exists():
+                (fixture.root / "calls.log").unlink()
+
+        def second_pass_called_directly(plan, times, stop_at, *flags):
+            """Run the second pass in this process with a clock that gives `times` in turn."""
+            state_with_both_waiting()
+            fixture.plan_file.write_text(json.dumps(plan))
+            arguments = job.parse_arguments([*fixture.options(), *flags])
+            arguments.clone = arguments.clone.resolve()
+            state = fixture.state_json()
+            record = []
+            clock = iter(times)
+            os.environ[PLAN_VARIABLE] = str(fixture.plan_file)
+            try:
+                with tempfile.TemporaryDirectory() as second_pass_scratch:
+                    carried_on = job.second_pass_mutation_tests_mutants_not_run_newest_merge_first_until_stop_time(
+                        stop_at, arguments, state, fixture.state / job.STATE_FILE_NAME, record,
+                        "the record", Path(second_pass_scratch), clock=lambda: next(clock))
+            finally:
+                del os.environ[PLAN_VARIABLE]
+            return carried_on, "\n".join(record)
+
+        carried_on, record = second_pass_called_directly(
+            {f"{newer} second pass": {"json": verdict(not_run=1), "exit": 1}}, [100, 500], 500)
+        check("the second pass starts on no further merge once the stop time has come: the "
+              "newest merge is run, the next is not, and both keep their mutants not run",
+              not carried_on
+              and [option_value(call, "--head") for call in fixture.calls()] == [newer]
+              and f"second pass stopped for the next scheduled run, before merge {older[:12]}"
+              in record
+              and {merge: each["mutants_not_run_count"] for merge, each
+                   in fixture.state_json()[NOT_RUN_KEY].items()} == {older: 4, newer: 1},
+              f"record={record} calls={fixture.calls()} state={fixture.state_json()}")
+        carried_on, record = second_pass_called_directly(
+            {f"{newer} second pass": {"json": verdict(not_run=1), "exit": 1},
+             f"{older} second pass": {"json": verdict(not_run=1), "exit": 1}}, [100, 499], 500)
+        check("just before the stop time the second pass still starts on the next merge",
+              not carried_on
+              and [option_value(call, "--head") for call in fixture.calls()] == [newer, older],
+              f"record={record} calls={fixture.calls()}")
+        for case_name, flags, wanted_limit in [
+                ("half the margin after the stop time, when sooner than the per-merge limit",
+                 ["--second-pass-stops-starting-mutants-seconds-before-next-scheduled-run", "2"],
+                 "1.5"),
+                ("the per-merge limit, when sooner",
+                 ["--merge-timeout-seconds", "1.25"], "1.25")]:
+            carried_on, record = second_pass_called_directly(
+                {f"{newer} second pass": {"sleep": 30}}, [100, 100], 100.5, *flags)
+            check(f"a second pass merge is stopped with SIGTERM at {case_name}; it is carried "
+                  f"on, keeps its mutants not run, and no later merge is run",
+                  carried_on and f"CARRIED ON: merge {newer[:12]} (change scripts/other.py) ran "
+                                 f"past the limit of {wanted_limit} s" in record
+                  and "a later second pass goes on with its mutants not yet run" in record
+                  and [option_value(call, "--head") for call in fixture.calls()] == [newer]
+                  and fixture.state_json()[NOT_RUN_KEY] == waiting,
+                  f"carried_on={carried_on} record={record} calls={fixture.calls()}")
+
+        state_with_both_waiting()
+        schedule_file = scheduled_jobs_file_with_schedule(fixture, schedule_due_in_seconds(12 * 3600))
+        schedule_flags = ["--scheduled-jobs-on-each-machine-json-file", str(schedule_file)]
+        completed = fixture.run({f"{newer} second pass": {"sleep": 30}}, *schedule_flags,
+                                timeout_seconds=1)
+        check("a run whose second pass merge ran past the limit exits 9 and opens no job "
+              "failure task",
+              completed.returncode == job.EXIT_MERGE_CARRIED_ON_TO_NEXT_RUN
+              and job_failure_tasks(fixture) == []
+              and fixture.state_json()[NOT_RUN_KEY] == waiting,
+              f"rc={completed.returncode} tasks={job_failure_tasks(fixture)} "
+              f"err={completed.stderr}")
+
+        # The second pass drops test_one_merge's task, so only a direct call shows whether a
+        # second pass merge past the limit that judged nothing new gives one.
+        state_with_both_waiting()
+        fixture.plan_file.write_text(json.dumps({f"{newer} second pass": {"sleep": 30}}))
+        arguments = job.parse_arguments(fixture.options())
+        arguments.clone = arguments.clone.resolve()
+        os.environ[PLAN_VARIABLE] = str(fixture.plan_file)
+        try:
+            with tempfile.TemporaryDirectory() as second_pass_scratch:
+                result = job.test_one_merge(
+                    arguments, fixture.state_json(), fixture.state / job.STATE_FILE_NAME, newer,
+                    [], "the record", Path(second_pass_scratch), 100.0, 1.0)
+        finally:
+            del os.environ[PLAN_VARIABLE]
+        check("a second pass merge past the limit that judged no new mutant is carried on with "
+              "no job failure task, unlike the same merge in the first pass",
+              result == (True, None), result)
+
+        state_with_both_waiting()
+        completed = fixture.run(
+            {}, "--scheduled-jobs-on-each-machine-json-file",
+            str(scheduled_jobs_file_with_schedule(fixture, schedule_due_in_seconds(10 * 60),
+                                                  "scheduled-jobs-due-soon.json")))
+        record = fixture.records()[-1].read_text()
+        check("with cron's next start of the job less than the 30 minutes away, the second "
+              "pass runs no merge, and the record still counts the mutants not run and the "
+              "oldest merge's age in days",
+              completed.returncode == 0 and fixture.calls() == []
+              and f"second pass stopped for the next scheduled run, before merge {newer[:12]}"
+              in record
+              and f"MUTANTS NOT RUN: 10, in 2 merge(s) recorded as tested; the oldest such "
+                  f"merge is {older[:12]}, merged 1970-01-01 00:01 UTC, " in record,
+              f"rc={completed.returncode} calls={fixture.calls()} record={record}")
+
+        state_with_both_waiting()
+        completed = fixture.run({f"{newer} second pass": {
+            "exit": 3, "stderr": f"{job.mutation_testing.SUITE_FAILS_ON_UNMUTATED_HEAD_LINE_PREFIX}"
+                                 f"scripts/thing-test.py"},
+            f"{older} second pass": {"json": verdict(not_run=4), "exit": 1}}, *schedule_flags)
+        state = fixture.state_json()
+        check("a second pass merge a suite now fails on with no mutant is recorded as "
+              "untestable with its task and leaves the merges with mutants not run; the last "
+              "tested commit stays, and the second pass goes on to the next merge",
+              state.get(job.UNTESTABLE_MERGES_STATE_KEY) == {newer: ["scripts/thing-test.py"]}
+              and list(state[NOT_RUN_KEY]) == [older]
+              and state["last_tested_main_commit"] == newer
+              and [option_value(call, "--head") for call in fixture.calls()] == [newer, older]
+              and [task["subject"] for task in job_failure_tasks(fixture)]
+              == [job.untestable_merge_job_failure_task_subject(newer)],
+              f"rc={completed.returncode} state={state} err={completed.stderr}")
+
+        for case_name, schedule_file_text in [
+                ("names no such job", json.dumps({"jobs": []})),
+                ("is not JSON", "not JSON"),
+                ("gives a schedule that is not daily", json.dumps({"jobs": [{
+                    "name": job.PROGRAM, "on": {"ned-box": {"schedule": "30 0 * * 1"}}}]})),
+                ("gives a schedule with a step", json.dumps({"jobs": [{
+                    "name": job.PROGRAM, "on": {"ned-box": {"schedule": "*/5 0 * * *"}}}]})),
+                ("gives a schedule of one field", json.dumps({"jobs": [{
+                    "name": job.PROGRAM, "on": {"ned-box": {"schedule": "30"}}}]})),
+                ("gives the job no schedule on ned-box", json.dumps({"jobs": [{
+                    "name": job.PROGRAM, "on": {"mac": {"schedule": "30 0 * * *"}}}]})),
+                ("gives a schedule that is no text", json.dumps({"jobs": [{
+                    "name": job.PROGRAM, "on": {"ned-box": {"schedule": 30}}}]})),
+                ("is a list", "[]"),
+                ("is missing", None)]:
+            state_with_both_waiting()
+            (fixture.state / job.STATE_FILE_NAME).write_text(json.dumps({
+                "last_tested_main_commit": start, "tasks_opened": {}, NOT_RUN_KEY: waiting}))
+            bad = fixture.root / "bad-scheduled-jobs.json"
+            bad.unlink(missing_ok=True)
+            if schedule_file_text is not None:
+                bad.write_text(schedule_file_text)
+            completed = fixture.run({older: {"json": verdict()}, newer: {"json": verdict()}},
+                                    "--scheduled-jobs-on-each-machine-json-file", str(bad))
+            check(f"a scheduled jobs file that {case_name}: the first pass is done, the second "
+                  f"runs no merge, and the run exits 4 saying the schedule cannot be read",
+                  completed.returncode == job.EXIT_STEP_FAILED
+                  and f"the schedule of {job.PROGRAM} on ned-box cannot be read from {bad}"
+                  in completed.stderr
+                  and fixture.state_json()["last_tested_main_commit"] == newer
+                  and all(option_value(call, STOP_FLAG) is None for call in fixture.calls()),
+                  f"rc={completed.returncode} err={completed.stderr} calls={fixture.calls()}")
+
+        for case_name, not_run_in_state in [
+                ("is a list", []),
+                ("gives a merge no count", {older: {
+                    "merged_at_unix_seconds": 1, "surviving_mutant_keys_already_handled": []}}),
+                ("gives a merge a merge time that is text", {older: dict(
+                    waiting[older], merged_at_unix_seconds="1")}),
+                ("gives a merge a count that is text", {older: dict(
+                    waiting[older], mutants_not_run_count="4")}),
+                ("gives a merge survivors that are no list", {older: dict(
+                    waiting[older], surviving_mutant_keys_already_handled={})})]:
+            state_with_both_waiting()
+            (fixture.state / job.STATE_FILE_NAME).write_text(json.dumps({
+                "last_tested_main_commit": newer, "tasks_opened": {},
+                NOT_RUN_KEY: not_run_in_state}))
+            completed = fixture.run({}, *schedule_flags)
+            check(f"a state file whose {NOT_RUN_KEY} {case_name}: exit 4, the state file "
+                  f"cannot be read, and nothing is run",
+                  completed.returncode == job.EXIT_STEP_FAILED
+                  and "cannot be read (" in completed.stderr and fixture.calls() == [],
+                  f"rc={completed.returncode} err={completed.stderr}")
+
+    # When cron next starts the job, in local time as cron reads the schedule.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        schedule_file = scheduled_jobs_file_with_schedule(fixture, "30 0 * * *")
+
+        def local(month, day, hour, minute, second=0):
+            return time.mktime((2026, month, day, hour, minute, second, 0, 0, -1))
+        for case_name, now, wanted in [
+                ("a second before today's start: today's", local(11, 11, 0, 29, 59), local(11, 11, 0, 30)),
+                ("at today's start: tomorrow's", local(11, 11, 0, 30), local(11, 12, 0, 30)),
+                ("at noon: tomorrow's", local(11, 11, 12, 0), local(11, 12, 0, 30)),
+                ("on a month's last day: the next month's first", local(11, 30, 12, 0),
+                 local(12, 1, 0, 30))]:
+            due = job.unix_time_cron_next_starts_this_program_on_ned_box(schedule_file, now)
+            check(f"cron's next start of the job, {case_name}", due == wanted, (due, wanted))
+        due = job.unix_time_cron_next_starts_this_program_on_ned_box(
+            scheduled_jobs_file_with_schedule(fixture, "5 13 * * *"), local(11, 11, 12, 0))
+        check("cron's next start of the job reads the hour and the minute from the schedule",
+              due == local(11, 11, 13, 5), (due, local(11, 11, 13, 5)))
+
+    line = job.run_record_line_counting_mutants_not_run_and_naming_oldest_merge_with_one({NOT_RUN_KEY: {
+        "b" * 40: {"merged_at_unix_seconds": 86400, "mutants_not_run_count": 3},
+        "a" * 40: {"merged_at_unix_seconds": 2 * 86400, "mutants_not_run_count": 4}}}, 3.5 * 86400)
+    check("the record's line sums the mutants not run over the merges and names the oldest "
+          "merge by its merge time, with its age in days",
+          line == "MUTANTS NOT RUN: 7, in 2 merge(s) recorded as tested; the oldest such merge "
+                  "is bbbbbbbbbbbb, merged 1970-01-02 00:00 UTC, 2.5 days ago", line)
+    line = job.run_record_line_counting_mutants_not_run_and_naming_oldest_merge_with_one({NOT_RUN_KEY: {
+        "b" * 40: {"merged_at_unix_seconds": 86400, "mutants_not_run_count": 3},
+        "a" * 40: {"merged_at_unix_seconds": 86400, "mutants_not_run_count": 4}}}, 2 * 86400)
+    check("of two merges made in the same second the record's line names one, the same each "
+          "time", "the oldest such merge is aaaaaaaaaaaa, " in line, line)
+
+
+def run_last_line_said_cases():
+    kept = (f"{job.mutation_testing.TEST_SUITE_RUNNER_LOGS_KEPT_LINE_PREFIX}/tmp/x; "
+            f"remove that directory once you have read them.")
+    check("last_line_said quotes the refusal on standard error, not the line naming where the "
+          "suite runner's logs are kept after it",
+          job.last_line_said("MUTATING a.py", f"refused: the suites fail\n{kept}\n")
+          == "refused: the suites fail")
+    check("last_line_said falls back to standard output's last line when standard error holds "
+          "only the kept-logs line",
+          job.last_line_said("MUTATING a.py with b-test.py\n", f"{kept}\n")
+          == "MUTATING a.py with b-test.py")
+    check("last_line_said says nothing when neither stream holds another line",
+          job.last_line_said("", f"{kept}\n") == "nothing")
+
+
 def run_cases():
+    run_last_line_said_cases()
     # The first run writes the state file and tests nothing.
     with tempfile.TemporaryDirectory() as scratch:
         fixture = Fixture(scratch)
@@ -780,6 +1262,11 @@ def run_cases():
          "It printed:\n    mutation-testing: git worktree add failed (exit 128): Preparing "
          "worktree (detached HEAD 557f938)\n    error: unable to write file README: No space "
          "left on device\n    fatal: Could not reset index file to revision 'HEAD'.\n"),
+        # Above EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD, as when a signal stopped it.
+        ("the mutation testing program exits 143",
+         {"exit": 143, "stderr": "stopped"}, None,
+         "exited 143 without saying whether each mutant was killed. The next run tries this "
+         "merge again."),
         ("the mutation testing program writes no JSON file",
          {"exit": 0}, None, "but its JSON file"),
         ("the JSON file lacks a key",
@@ -808,6 +1295,8 @@ def run_cases():
                   in completed.stderr and not crash_tasks, (completed.stderr, crash_tasks))
 
     run_carry_on_and_job_failure_task_cases()
+    run_untestable_merge_cases()
+    run_first_pass_and_second_pass_cases()
 
     # No task list for the survivor at all: the merge is not recorded as tested.
     with tempfile.TemporaryDirectory() as scratch:
@@ -909,27 +1398,93 @@ def run_cases():
               (completed.returncode, task_files(alpha_list), fixture.state_json(),
                completed.stderr))
 
-        # Each run checks that the tasks it opened still hold their survivors, and reports, once,
-        # each that does not and is not completed; it opens no task in its place.
-        (alpha_list / "1.json").write_text(json.dumps({"id": "1", "description": "rewritten"}))
+        # An agent rewrites the description of an open survivor task, as TaskUpdate does, keeping
+        # the task's other keys: the task still holds its mutant, and the recheck lists it again.
+        rewritten = json.loads((alpha_list / "1.json").read_text())
+        rewritten["description"] = "Rewritten by its owner; the mutant is not named here."
+        (alpha_list / "1.json").write_text(json.dumps(rewritten))
         diff_file = job.mutant_diff_file_path(fixture.log_store, key)
+        calls_before = len(fixture.calls())
         completed = fixture.run()
-        check("a task rewritten so it no longer names its mutant is reported in the record and "
-              "on stderr, no task is opened, the state stops naming it, and the run exits 7",
-              completed.returncode == job.EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR
-              and task_files(alpha_list) == ["1.json"]
-              and fixture.state_json()["tasks_opened"] == {}
-              and f"TASK LOST: task #1 on alpha's task list ({alpha_list / '1.json'}) no "
-                  f"longer holds the surviving mutant {diff_file}: its description no longer "
-                  f"names the mutant's diff file" in fixture.records()[-1].read_text()
-              and "1 task(s) that an earlier run opened" in completed.stderr
-              and "later runs do not report them again" in completed.stderr,
-              (completed.returncode, task_files(alpha_list), completed.stderr))
-        completed = fixture.run()
-        check("a lost task already reported is not reported again, and the run exits 0",
-              completed.returncode == 0 and "TASK LOST" not in fixture.records()[-1].read_text()
-              and task_files(alpha_list) == ["1.json"],
-              (completed.returncode, completed.stderr))
+        recheck_calls = [call for call in fixture.calls()[calls_before:]
+                         if call[:1] == ["--recorded-mutant-killed-check"]]
+        task = json.loads((alpha_list / "1.json").read_text())
+        check("an open task whose description was rewritten so it no longer names its mutant "
+              "still holds the mutant: nothing is reported lost, the state still names the "
+              "task, the recheck judges the mutant, the description names the diff file again, "
+              "and the run exits 0",
+              completed.returncode == 0
+              and "TASK LOST" not in fixture.records()[-1].read_text()
+              and fixture.state_json()["tasks_opened"] == {key: {"agent_seat": "alpha",
+                                                                 "task_id": 1}}
+              and [call[1] for call in recheck_calls] == [str(diff_file)]
+              and task["status"] == rewritten["status"]
+              and f"This task's command: {job.survivor_task_recorded_mutant_killed_check_command_line([diff_file])}\n"
+                  in task["description"],
+              (completed.returncode, completed.stderr, fixture.state_json(), recheck_calls, task))
+        rewritten = json.loads((alpha_list / "1.json").read_text())
+        rewritten["description"] = "Rewritten by its owner again."
+        (alpha_list / "1.json").write_text(json.dumps(rewritten))
+        completed = fixture.run({"recheck": {"verdicts": {key: "killed"}}})
+        check("the recheck completes a rewritten task whose mutant is killed, and the state "
+              "stops naming the mutant",
+              completed.returncode == 0
+              and json.loads((alpha_list / "1.json").read_text())["status"] == "completed"
+              and fixture.state_json()["tasks_opened"] == {},
+              (completed.returncode, completed.stderr, fixture.state_json()))
+
+    # An open task whose description no longer names its mutant: when one other open task names
+    # the diff file, the mutant moves there; when two or more do, the mutant is reported lost.
+    for others_naming in (1, 2):
+        with tempfile.TemporaryDirectory() as scratch:
+            fixture = Fixture(scratch)
+            alpha_list = fixture.seat("alpha")
+            fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+            merge = fixture.commit("scripts/thing.py",
+                                   "def double(x):\n    return x + x\nVALUE = 1\n",
+                                   author="alpha")
+            fixture.run({merge: {"json": verdict(
+                survived=[survivor(), survivor(1, "core/ReplaceBinaryOperator_Add_Sub"),
+                          survivor(3, "core/ReplaceBinaryOperator_Add_Div")])}})
+            keys = {given["task_id"]: key
+                    for key, given in fixture.state_json()["tasks_opened"].items()}
+            left = json.loads((alpha_list / "1.json").read_text())
+            left["description"] = "Rewritten by its owner."
+            (alpha_list / "1.json").write_text(json.dumps(left))
+            for task_id in (2, 3)[:others_naming]:
+                other = json.loads((alpha_list / f"{task_id}.json").read_text())
+                other["description"] += f"\n{keys[1]}.diff"
+                (alpha_list / f"{task_id}.json").write_text(json.dumps(other))
+            completed = fixture.run()
+            record = fixture.records()[-1].read_text()
+            diff_file = job.mutant_diff_file_path(fixture.log_store, keys[1])
+            if others_naming == 1:
+                check("a mutant whose open task no longer names its diff file moves to the one "
+                      "other open task naming it, and the run exits 0",
+                      completed.returncode == 0 and "TASK LOST" not in record
+                      and f"TASK MOVED: the surviving mutant {diff_file} is now held by task #2 "
+                          f"on alpha's task list, not task #1 (its description no longer names "
+                          f"the mutant's diff file)" in record
+                      and fixture.state_json()["tasks_opened"].get(keys[1])
+                      == {"agent_seat": "alpha", "task_id": 2},
+                      (completed.returncode, record, fixture.state_json()))
+            else:
+                check("a mutant whose open task no longer names its diff file, while two other "
+                      "open tasks do, is reported lost, and the run exits 7",
+                      completed.returncode == job.EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR
+                      and f"TASK LOST: task #1 on alpha's task list ({alpha_list / '1.json'}) no "
+                          f"longer holds the surviving mutant {diff_file}: its description no "
+                          f"longer names the mutant's diff file" in record
+                      and "TASK MOVED" not in record
+                      and "1 task(s) that an earlier run opened" in completed.stderr
+                      and "later runs do not report them again" in completed.stderr
+                      and keys[1] not in fixture.state_json()["tasks_opened"],
+                      (completed.returncode, record, completed.stderr, fixture.state_json()))
+                completed = fixture.run()
+                check("a lost task already reported is not reported again, and the run exits 0",
+                      completed.returncode == 0
+                      and "TASK LOST" not in fixture.records()[-1].read_text(),
+                      (completed.returncode, completed.stderr))
 
     # A task whose file is gone is reported once; a completed task is dropped from the state
     # without a report, and a pending one that holds its mutant is kept.
@@ -979,6 +1534,57 @@ def run_cases():
               completed.returncode == 0 and "TASK LOST" not in fixture.records()[-1].read_text()
               and fixture.state_json()["tasks_opened"] == {},
               (completed.returncode, completed.stderr, fixture.state_json()))
+
+    # Tasks that still hold their mutant, or are completed, come before the lost ones in the
+    # state, so a loop that stops at either misses the lost tasks after it.
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        alpha_list = fixture.seat("alpha")
+        fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+        merge = fixture.commit("scripts/thing.py",
+                               "def double(x):\n    return x + x\nVALUE = 1\nOTHER = 2\n",
+                               author="alpha")
+        fixture.run({merge: {"json": verdict(survived=[
+            survivor(1, "core/ReplaceBinaryOperator_Add_Sub"), survivor(),
+            survivor(3, "core/ReplaceBinaryOperator_Add_Div"),
+            survivor(4, "core/ReplaceBinaryOperator_Add_Mod")])}})
+        order = [given["task_id"] for given in fixture.state_json()["tasks_opened"].values()]
+        finished = json.loads((alpha_list / "2.json").read_text())
+        finished["status"] = "completed"
+        (alpha_list / "2.json").write_text(json.dumps(finished))
+        (alpha_list / "3.json").unlink()
+        (alpha_list / "4.json").unlink()
+        completed = fixture.run()
+        record = fixture.records()[-1].read_text()
+        check("after a held task and a completed task, each of two lost tasks gets its own "
+              "TASK LOST line, and the run exits 7",
+              order == [1, 2, 3, 4]
+              and completed.returncode == job.EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR
+              and record.count("TASK LOST: ") == 2
+              and "TASK LOST: task #3 on alpha's task list" in record
+              and "TASK LOST: task #4 on alpha's task list" in record
+              and [given["task_id"] for given in fixture.state_json()["tasks_opened"].values()]
+              == [1],
+              (order, completed.returncode, record, fixture.state_json()))
+
+    with tempfile.TemporaryDirectory() as scratch:
+        fixture = Fixture(scratch)
+        alpha_list = fixture.seat("alpha")
+        fixture.set_last(git(fixture.work, "rev-parse", "HEAD"))
+        first = fixture.commit("scripts/thing.py",
+                               "def double(x):\n    return x + x\nVALUE = 1\n", author="alpha")
+        fixture.run({first: {"json": verdict(survived=[survivor()])}})
+        second = fixture.commit("scripts/other.py", "VALUE = 2\n", author="alpha")
+        completed = fixture.run({second: {"json": verdict(survived=[
+            survivor(), survivor(3, "core/ReplaceBinaryOperator_Add_Div")])}})
+        record = fixture.records()[-1].read_text()
+        check("a line whose survivors were all given tasks before does not stop the next line's "
+              "new survivor from getting a task",
+              completed.returncode == 0 and task_files(alpha_list) == ["1.json", "2.json"]
+              and "already given task #1 on alpha's task list" in record
+              and "SURVIVED scripts/thing.py:3 core/ReplaceBinaryOperator_Add_Div: task #2 "
+                  "opened on alpha's task list" in record,
+              (completed.returncode, task_files(alpha_list), record))
 
     # A mutant whose task file is gone, as after a fold of its task into another and the
     # handoff prune of the completed task, follows the one open task that names its diff file;
@@ -1175,7 +1781,9 @@ def run_cases():
              "--cosmic-ray-venv", str(fixture.venv),
              "--mutation-testing-program", str(fixture.program)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            env={**os.environ, PLAN_VARIABLE: str(fixture.plan_file)}, start_new_session=True)
+            # The kill skips the program's TemporaryDirectory cleanup, so it makes that directory in scratch.
+            env={**os.environ, PLAN_VARIABLE: str(fixture.plan_file), "TMPDIR": scratch},
+            start_new_session=True)
         deadline = time.monotonic() + 120
         while len(fixture.calls()) == calls_before and time.monotonic() < deadline \
                 and process.poll() is None:
@@ -1534,8 +2142,15 @@ def run_cases():
         completed = fixture.run()
         check("no cosmic-ray in the venv: exit 4, nothing tested, and the install command named",
               completed.returncode == job.EXIT_STEP_FAILED and fixture.calls() == []
-              and f"bin/pip install cosmic-ray=={job.COSMIC_RAY_VERSION}" in completed.stderr,
+              and f"bin/pip install cosmic-ray=={job.mutation_testing.COSMIC_RAY_VERSION}" in completed.stderr,
               f"rc={completed.returncode} err={completed.stderr}")
+
+    # With no --cosmic-ray-venv, the nightly job uses the venv the quick pass uses, so the two
+    # share one install of cosmic-ray.
+    arguments = job.parse_arguments([])
+    check("no --cosmic-ray-venv: the venv is the quick pass's default venv",
+          arguments.cosmic_ray_venv == job.mutation_testing.DEFAULT_COSMIC_RAY_VENV,
+          (arguments.cosmic_ray_venv, job.mutation_testing.DEFAULT_COSMIC_RAY_VENV))
 
     # A fetch that fails.
     with tempfile.TemporaryDirectory() as scratch:
@@ -1565,7 +2180,7 @@ def run_cases():
     # The hand run a job failure task gives holds the job's lock, because it shares the
     # merge's kept sessions with the nightly run.
     if not FLOCK_PROGRAM.exists():
-        # The job runs only on ned-box; the Mac's daily full test run still runs this suite.
+        # The job runs only on ned-box; the Mac's scheduled full test run still runs this suite.
         print(f"SKIP  [this machine cannot run it] the hand-run command's lock case: {FLOCK_PROGRAM} is missing; it exists on Linux only")
     else:
         with tempfile.TemporaryDirectory() as scratch:
@@ -1581,7 +2196,7 @@ def run_cases():
                 "mutation_testing_program": str(program), "clone": scratch / "clone",
                 "cosmic_ray_venv": scratch / "venv"})()
             command = job.mutation_testing_hand_run_command(arguments, "a" * 40, "b" * 40, 2,
-                                                            scratch / "sessions")
+                                                            scratch / "sessions", [])
             # What systemd-run runs: the command after its own options.
             under_lock = command[command.index("/usr/bin/flock "):]
             with open(state / job.LOCK_FILE_NAME, "a") as holder:
@@ -1644,7 +2259,7 @@ def run_cases():
         result = []
         runner = threading.Thread(target=lambda: result.append(job.run_mutation_testing(
             arguments, "a" * 40, "b" * 40, Path(scratch) / "out.json", 1,
-            Path(scratch) / "sessions")), daemon=True)
+            Path(scratch) / "sessions", [], arguments.merge_timeout_seconds)), daemon=True)
         try:
             runner.start()
             runner.join(timeout=60)

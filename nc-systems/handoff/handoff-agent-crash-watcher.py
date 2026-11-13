@@ -19,8 +19,8 @@ scripts/recover-crashed-seats.py makes (assess_seat), and:
   that is now down in a state only he should restart from: a handoff waiting
   that no supervisor acted on, or an exit its supervisor recorded without
   resuming, other than a stop on purpose;
-- tells the user, without restarting it, about an agent-seat it saw running
-  that recover-crashed-seats.py now refuses (verdict refuse), or whose tmux
+- hands the agent-seat a task, without restarting it, when it saw the agent-seat running
+  and recover-crashed-seats.py now refuses it (verdict refuse), or its tmux
   session is now only the shell its launch left open (verdict
   ask-to-close-the-leftover-idle-shell), which recovery closes only on an
   operator's yes at a terminal; either stays silent over a stop on purpose,
@@ -35,7 +35,7 @@ scripts/recover-crashed-seats.py makes (assess_seat), and:
   restart or the user brings back;
 - tries to restart an agent-seat at most once in RESTART_LIMIT_SECONDS, a
   failed attempt included; a second crash inside that time leaves it down and
-  tells the user.
+  hands the agent-seat a task.
 
 One rule says whether a death is already handled (death_already_handled): the
 watcher records the seat supervisor's last poll when it handles a death, and
@@ -46,11 +46,30 @@ carries microseconds. A restart that succeeded counts as a sighting of the
 seat running; after a failed attempt the poll is recorded again, so the
 attempt's own brief run is part of the death it was handling.
 
-The user hears from the watcher only when it cannot do its job of restarting:
-a crash it will not restart (a second crash inside RESTART_LIMIT_SECONDS), a
-seat down in a state only he should restart from (the two cases above), a seat
-recovery refuses or a leftover shell holds (the case after those), and each
-failure become a notice. Each notice is kept as text, and also written as an
+A failure an agent can fix becomes a task on an agent-seat's task list,
+~/.claude/tasks/nedschorus-<seat>-tasks/, written with
+nc-systems/general-tools/agent-seat-task-list-new-pending-task-write-common.py;
+the task's subject names the failure's kind and what to fix, and its
+description tells the agent-seat to find the cause and fix it, telling the
+user only when the fix needs a guarded-file changed or the cause cannot be
+found. A failure that leaves the seat down, a second crash inside
+RESTART_LIMIT_SECONDS (second-crash), a failed restart (recovery-failed), a
+seat recovery refuses (recovery-refuses) or a leftover shell holds
+(leftover-shell), becomes a task on the seat's own list, which waits there
+until the seat runs again, and one on the list of
+AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME, which also says how to
+restart the seat; when the seat down is that owner, the user is shown a
+notice instead of the second task. A seat the watcher cannot assess
+(assessment-failed) and a run that fails as a whole (run-failed) become a task
+on the owner's list only. A seat recovery keeps refusing gets its tasks once
+until it is seen running again or restarted, however long the refusal lasts.
+A task that cannot be written is logged, and shown to the user as a notice
+instead, quoting the task.
+
+The user hears from the watcher about a seat down in a state only he should
+restart from (the two cases above), about the owner left down, and about a
+task it could not write. Each
+becomes a notice. Each notice is kept as text, and also written as an
 HTML page under notice-pages/ in LOG_DIRECTORY, which the program opens in the
 browser on his Mac with scripts/open-html-page-in-mac-browser-from-ned-box.py:
 a browser tab stays findable where one more terminal window is easily lost.
@@ -60,8 +79,7 @@ instead in a terminal window on his Mac, with
 scripts/open-mac-window-from-ned-box.py running --show-notice. Each notice is
 also written as an alert, with the shared user-alerts module, which the
 walk-me-through hook brings into his approval-walk on ned-box; an alert that
-cannot be written is logged, and the page or window still opens. A refused seat gets one notice until
-it is seen running again or restarted, however long the refusal lasts. The cases it leaves
+cannot be written is logged, and the page or window still opens. The cases it leaves
 alone stay silent, logged only: a stop on purpose, and a seat not seen running
 since the machine booted. A restart it carries out shows no
 notice: recover-crashed-seats.py opens a window on the Mac attached to the
@@ -69,9 +87,9 @@ restarted seat's tmux session. The one exception is a restart whose recovery
 output holds `STARTED OUTSIDE THE USER'S SYSTEMD MANAGER` (the constant
 AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER):
 the seat runs, but outside the user's systemd manager, so the test suites' low CPU weight does
-not reach it, and that gets a notice. A page or window the Mac cannot be reached for,
+not reach it, and that gets a notice, with no alert. A page or window the Mac cannot be reached for,
 a notice's or a restarted seat's, stays pending and is tried again on every run. Every decision, each restart
-included, is appended to decisions.jsonl in LOG_DIRECTORY; the notices are
+and each task included, is appended to decisions.jsonl in LOG_DIRECTORY; the notices are
 kept beside it.
 
 Off ned-box the program refuses: the agents root it reads is ned-box's.
@@ -85,9 +103,11 @@ on ned-box only, as the cron line
 Cron starts it with cron's own short environment, so no agent-session's
 variables reach a seat it restarts.
 
-NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_STATE_DIRECTORY and
-NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_LOG_DIRECTORY override where the
-state and the log go: the seams the nc-test-suite uses.
+NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_STATE_DIRECTORY,
+NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_LOG_DIRECTORY and
+NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_TASK_LISTS_DIRECTORY
+override where the state, the log and the task lists go: the seams the
+nc-test-suite uses.
 """
 
 import argparse
@@ -118,11 +138,18 @@ _user_alerts_specification = importlib.util.spec_from_file_location(
     REPOSITORY / "nc-systems" / "general-tools" / "user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py")
 user_alerts = importlib.util.module_from_spec(_user_alerts_specification)
 _user_alerts_specification.loader.exec_module(user_alerts)
+_agent_seat_task_list_specification = importlib.util.spec_from_file_location(
+    "agent_seat_task_list_new_pending_task_write_common",
+    REPOSITORY / "nc-systems" / "general-tools" / "agent-seat-task-list-new-pending-task-write-common.py")
+agent_seat_task_list = importlib.util.module_from_spec(_agent_seat_task_list_specification)
+_agent_seat_task_list_specification.loader.exec_module(agent_seat_task_list)
 
 LOG_DIRECTORY = Path(ned_box_home_path_constants.NED_BOX_HOME) / "nedschorus-logs" / PROGRAM
 STATE_DIRECTORY = Path("~/.local/state/nedschorus").expanduser()
 STATE_DIRECTORY_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_STATE_DIRECTORY"
 LOG_DIRECTORY_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_LOG_DIRECTORY"
+TASK_LISTS_DIRECTORY_ENVIRONMENT_VARIABLE = (
+    "NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_TASK_LISTS_DIRECTORY")
 
 CRASHED_VERDICTS = ("resume", "fresh-session-from-conversation-tail")
 RUNNING_VERDICT = "seat-already-running"
@@ -154,69 +181,14 @@ RECOVERY_WINDOW_NOT_OPENED_EXIT_STATUS = 3
 # recover-crashed-seats.py's AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER.
 AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER = "STARTED OUTSIDE THE USER'S SYSTEMD MANAGER"
 
+# recover-crashed-seats.py's SEAT_ALREADY_RUNNING_REPORT_MARKER.
+SEAT_ALREADY_RUNNING_REPORT_MARKER = "ALREADY RUNNING"
+
 # How a notice hands its problem on: the user sits at his Mac, whose windows onto
 # ned-box's agent-seats are where he types to them.
 PASTE_THIS_NOTICE_INTO_A_NED_BOX_AGENT_SEAT = (
     "Paste this whole notice into the window of an agent-seat on ned-box, such as "
     "fleet-restart-at-login, which built the crash watcher, and ask it to ")
-
-SECOND_CRASH_NOTICE_TEMPLATE = (
-    "{seat} is down. Its agent-session stopped again at about {died_at} without writing "
-    "a handoff. The crash watcher {earlier_attempt}.\n"
-    "The watcher tries to restart an agent-seat at most once an hour, so it left {seat} "
-    "down: an agent-seat that stops twice within an hour is likely to stop again.\n"
-    "Recommendation: find out why it stopped before you restart it. Its last "
-    "conversation is the newest .jsonl file in {transcripts}.\n"
-    "To restart it, run in a Terminal on your Mac:\n"
-    "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 scripts/recover-crashed-seats.py {seat}'\n"
-    "When recovery restarts {seat}, it opens {seat}'s window on your Mac itself. If "
-    "instead the last line recovery prints in your Terminal says WINDOW NOT OPENED, open "
-    "the window, also in a Terminal on your Mac, with:\n"
-    "  {mac_launcher} {seat}\n"
-    "Record: {record}\n"
-)
-
-RECOVERY_FAILED_NOTICE_TEMPLATE = (
-    "{seat} is down: the crash watcher could not restart it. Its agent-session stopped "
-    "at about {died_at} without writing a handoff, and "
-    "scripts/recover-crashed-seats.py {seat} exited {exit_code}. Its last line was:\n"
-    "  {recovery_last_line}\n"
-    "Its whole output is in the record named below.\n"
-    "The watcher does not try again for this crash.\n"
-    "What to do, at your Mac:\n"
-    "1. " + PASTE_THIS_NOTICE_INTO_A_NED_BOX_AGENT_SEAT + "fix what stopped recovery. "
-    "Wait until it says the cause is fixed.\n"
-    "2. Then restart {seat} by running in a Terminal on your Mac:\n"
-    "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 scripts/recover-crashed-seats.py {seat}'\n"
-    "When recovery restarts {seat}, it opens {seat}'s window on your Mac itself. If "
-    "instead the last line recovery prints in your Terminal says WINDOW NOT OPENED, open "
-    "the window, also in a Terminal on your Mac, with:\n"
-    "  {mac_launcher} {seat}\n"
-    "For the agent-seat on ned-box this notice is pasted into: recovery's last line, quoted "
-    "above, is what recovery said when it did not restart {seat}. When that line names a "
-    "step to take, take it on ned-box; otherwise find the cause in recovery's whole output, "
-    "in the record named below, and in scripts/recover-crashed-seats.py, and fix it. Do not "
-    "restart {seat} yourself: tell the user when the cause is fixed, and he restarts it "
-    "from his Mac with the steps above.\n"
-    "Record: {record}\n"
-)
-
-ASSESSMENT_FAILED_NOTICE_TEMPLATE = (
-    "The crash watcher could not check {seat}: {error}\n"
-    "Until this is fixed the watcher cannot restart {seat} if it crashes. It tells you "
-    "again only if the error changes; until then each run writes it to the record.\n"
-    + PASTE_THIS_NOTICE_INTO_A_NED_BOX_AGENT_SEAT + "fix the error.\n"
-    "Record: {record}\n"
-)
-
-RUN_FAILED_NOTICE_TEMPLATE = (
-    "The crash watcher on ned-box failed and is watching no agent-seat: {error}\n"
-    "Until this is fixed, an agent-seat that crashes is not restarted. The watcher tells "
-    "you again only if the error changes; until then each failed run writes it to the "
-    "record.\n"
-    + PASTE_THIS_NOTICE_INTO_A_NED_BOX_AGENT_SEAT + "fix the error.\n"
-    "Record: {record}\n"
-)
 
 WAITING_HANDOFF_NOTICE_TEMPLATE = (
     "{seat} is down, and the crash watcher did not restart it. Its supervisor stopped "
@@ -249,46 +221,127 @@ RECORDED_EXIT_NOTICE_TEMPLATE = (
     "Record: {record}\n"
 )
 
-LEFTOVER_SHELL_NOTICE_TEMPLATE = (
-    "{seat} is down, and the crash watcher cannot restart it. Its supervisor stopped at "
-    "about {died_at}, and {seat}'s tmux session on ned-box is now only the shell its "
-    "launch left open. Recovery closes that shell only when someone at a terminal says "
-    "yes, so the watcher, which runs unattended, leaves {seat} down.\n"
-    "To close the shell and restart {seat}, run in a Terminal on your Mac:\n"
+# Every text below that an agent reads is written to
+# docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
+# The agent-seat that owns the crash watcher: a failure of a whole run, which concerns no one
+# agent-seat, is its task.
+AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME = "fleet-restart-at-login"
+
+# A failure an agent can fix becomes a task on the agent-seat it concerns: its subject, by the
+# failure's kind, then its description. The user hears only from the agent-seat, and only when
+# the fix needs a guarded-file changed or the cause cannot be found.
+FAILURE_KIND_TO_AGENT_SEAT_TASK_SUBJECT_TEMPLATE = {
+    "second-crash": "agent-crash-watcher, second-crash: {seat} stopped twice within an hour without a "
+                    "session-handoff; find why and fix the cause",
+    "recovery-failed": "agent-crash-watcher, recovery-failed: scripts/recover-crashed-seats.py could "
+                       "not restart {seat}; find why and fix the cause",
+    "assessment-failed": "agent-crash-watcher, assessment-failed: the agent-crash-watcher cannot check {seat}; "
+                         "find why and fix the cause",
+    "run-failed": "agent-crash-watcher, run-failed: the agent-crash-watcher fails and watches no agent-seat; "
+                  "find why and fix the cause",
+    "leftover-shell": "agent-crash-watcher, leftover-shell: a leftover shell kept {seat} down after it "
+                      "stopped; find why and fix the cause",
+    "recovery-refuses": "agent-crash-watcher, recovery-refuses: scripts/recover-crashed-seats.py "
+                        "refused to restart {seat}; find why and fix the cause",
+}
+FAILURE_KIND_TO_AGENT_SEAT_TASK_DESCRIPTION_TEMPLATE = {
+    "second-crash": (
+        "{seat} stopped at about {died_at} without writing a session-handoff. The agent-crash-watcher "
+        "{earlier_attempt}. The agent-crash-watcher restarts an agent-seat at most once an hour, so it left "
+        "{seat} down after this second stop.\n"
+        "The conversations that stopped are the newest .jsonl files in {transcripts}.\n"),
+    "recovery-failed": (
+        "{seat} stopped at about {died_at} without writing a session-handoff, and the "
+        "agent-crash-watcher could not restart it: scripts/recover-crashed-seats.py {seat} exited {exit_code}. "
+        "Recovery's last line was:\n"
+        "  {recovery_last_line}\n"
+        "Recovery's whole output is in the record named below. The agent-crash-watcher did not try again for "
+        "that stop.\n"),
+    "assessment-failed": (
+        "The agent-crash-watcher could not check {seat}: {error}\n"
+        "Until the cause is fixed, the agent-crash-watcher cannot restart {seat} if {seat} crashes. The agent-crash-watcher "
+        "writes this task again only if the error changes; until then each run writes the error "
+        "to the record.\n"),
+    "run-failed": (
+        "The agent-crash-watcher on ned-box, nc-systems/handoff/handoff-agent-crash-watcher.py, failed "
+        "and is watching no agent-seat: {error}\n"
+        "Until the cause is fixed, an agent-seat that crashes is not restarted. The agent-crash-watcher "
+        "writes this task again only if the error changes; until then each failed run writes "
+        "the error to the record.\n"),
+    "leftover-shell": (
+        "{seat} stopped at about {died_at}, and its tmux session on ned-box was left as only the "
+        "shell its launch left open. scripts/recover-crashed-seats.py closes that shell only "
+        "when someone at a terminal answers yes, so the agent-crash-watcher, which runs unattended, "
+        "left {seat} down.\n"),
+    "recovery-refuses": (
+        "{seat} was down, or could not be shown to be running, and the agent-crash-watcher could not "
+        "restart {seat}: scripts/recover-crashed-seats.py refused {seat}, saying:\n"
+        "  {refusal}\n"
+        "The agent-crash-watcher had seen {seat} running; its supervisor last checked in at about "
+        "{died_at}.\n"),
+}
+# The kinds that leave the agent-seat down: its own task waits until it runs again, so the
+# owner gets the task too, with the restart.
+DOWN_AGENT_SEAT_FAILURE_KINDS = ("second-crash", "recovery-failed", "leftover-shell",
+                                 "recovery-refuses")
+# Words a recover-crashed-seats.py --dry-run prints only when recovery restarts the agent-seat
+# on an operator's yes at a terminal alone: a leftover shell holds its tmux session, or it
+# exited on record. The unattended run's refusal never says so.
+RECOVER_CRASHED_SEATS_DRY_RUN_WOULD_ASK_THE_OPERATOR_REPORT_MARKER = "would ask an operator at a terminal"
+DOWN_AGENT_SEAT_RESTART_BY_OWNER_TEMPLATE = (
+    "{seat} is down, and no other program restarts it; its own copy of this task waits on its "
+    "task list until it runs again. Restart {seat} once you know the cause and judge that a "
+    "restart will not stop it again the same way; a fix still waiting to merge is no reason to "
+    "keep it down, and when {seat} is merge-lane-2, nothing merges while it is down. Restart "
+    "it on ned-box, from your own checkout, with:\n"
+    "  python3 scripts/recover-crashed-seats.py {seat}\n"
+    "If recovery prints REFUSED, run the same command with --dry-run added. If the dry run "
+    "says it " + RECOVER_CRASHED_SEATS_DRY_RUN_WOULD_ASK_THE_OPERATOR_REPORT_MARKER + ", "
+    "recovery restarts {seat} only on an operator's yes at a terminal: a shell left open holds "
+    "{seat}'s tmux session, or {seat} exited on record. Do not exit that shell or restart "
+    "{seat} another way yourself, though the refusal says to: tell the user that only his yes "
+    "at a terminal restarts {seat}, and give him this command to run in a Terminal on his "
+    "Mac:\n"
+    "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 scripts/recover-crashed-seats.py {seat}'\n")
+AGENT_SEAT_TASK_DESCRIPTION_CLOSING_TEMPLATE = (
+    "Find the cause and fix it going forward. A fix to code, settings or instructions goes in a "
+    "pull request.\n"
+    "If the fix needs a change to a guarded-file, tell the user what change it needs and why.\n"
+    "If you cannot find the cause, or cannot fix it, tell the user what you found.\n"
+    "A subagent tells the agent that dispatched it instead of the user.\n"
+    "Record: {record}\n")
+
+# What the user is shown when the agent-seat left down is the owner itself: no agent-seat reads
+# its task until he restarts it.
+OWNER_AGENT_SEAT_DOWN_NOTICE_TEMPLATE = (
+    "{seat} is down, and the crash watcher left it down. {seat} is the agent-seat that restarts "
+    "the agent-seats the crash watcher leaves down, so no agent-seat can restart it.\n"
+    "To restart it, run in a Terminal on your Mac:\n"
     "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 scripts/recover-crashed-seats.py {seat}'\n"
-    "It asks whether to restart {seat}. Answer y, and it closes the shell and restarts "
-    "{seat}. Answer n, and it leaves {seat} down.\n"
     "When recovery restarts {seat}, it opens {seat}'s window on your Mac itself. If "
     "instead the last line recovery prints in your Terminal says WINDOW NOT OPENED, open "
     "the window, also in a Terminal on your Mac, with:\n"
     "  {mac_launcher} {seat}\n"
-    "The watcher tells you again only after {seat} has run again.\n"
-    "Record: {record}\n"
+    "{seat} then finds on its task list the task below, to find why it went down and fix the "
+    "cause.\n"
+    "Task subject: {subject}\n"
+    "Task description:\n"
+    "{description}"
 )
 
-RECOVERY_REFUSES_NOTICE_TEMPLATE = (
-    "{seat} is down or cannot be shown to be running, and the crash watcher cannot "
-    "restart it: scripts/recover-crashed-seats.py refuses it, saying:\n"
-    "  {refusal}\n"
-    "The watcher saw {seat} running earlier; its supervisor last checked in at about "
-    "{died_at}.\n"
-    "What to do, at your Mac:\n"
-    "1. " + PASTE_THIS_NOTICE_INTO_A_NED_BOX_AGENT_SEAT + "clear what makes recovery "
-    "refuse {seat}. Wait until it says the cause is cleared.\n"
-    "2. Then restart {seat} by running in a Terminal on your Mac:\n"
-    "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 scripts/recover-crashed-seats.py {seat}'\n"
-    "When recovery restarts {seat}, it opens {seat}'s window on your Mac itself. If "
-    "instead the last line recovery prints in your Terminal says WINDOW NOT OPENED, open "
-    "the window, also in a Terminal on your Mac, with:\n"
-    "  {mac_launcher} {seat}\n"
-    "For the agent-seat on ned-box this notice is pasted into: recovery's refusal, quoted "
-    "above, is why recovery will not restart {seat}. When the refusal names a step to take, "
-    "take it on ned-box; otherwise find the cause in scripts/recover-crashed-seats.py, which "
-    "wrote the refusal, and clear it. Do not restart {seat} yourself: tell the user when "
-    "the cause is cleared, and he restarts it from his Mac with the steps above.\n"
-    "The watcher tells you again only after {seat} has run again.\n"
-    "Record: {record}\n"
+# What the user is shown when a failure's task cannot be written: the task, for an agent to do.
+AGENT_SEAT_TASK_NOT_WRITTEN_NOTICE_TEMPLATE = (
+    "The crash watcher could not hand a failure to {owner} as a task. Writing the task to "
+    "{owner}'s task list failed: {task_write_error}\n"
+    + PASTE_THIS_NOTICE_INTO_A_NED_BOX_AGENT_SEAT + "fix why the task could not be written, and "
+    "then do the task quoted below.\n"
+    "Task subject: {subject}\n"
+    "Task description:\n"
+    "{description}"
 )
+AGENT_SEAT_TASK_NOT_WRITTEN_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO = (
+    "An agent on ned-box can fix why the crash watcher could not write the task the notice "
+    "quotes, and then do that task.")
 
 # Each notice's alert: its title, by the notice's kind, and what an agent on ned-box can do about it.
 FAILED_RESTART_NOTICE_KIND_TO_USER_ALERT_TITLE_TEMPLATE = {
@@ -465,10 +518,13 @@ class Watcher:
 
     def __init__(self, *, state, now, boot_at, log_directory, assess, died_at_about,
                  transcripts_directory, recover, open_window, show_notice_words,
-                 stopped_on_purpose=None, recorded_exit_question=None, open_seat_window=None,
+                 agent_seat_task_write, stopped_on_purpose=None, recorded_exit_question=None, open_seat_window=None,
                  seat_session_alive=None, assess_as_though_leftover_shell_closed=None,
                  down_agent_seat_records_stopped_on_purpose=None, open_page=None, user_alert_write_to_pending=None):
         self.state = state
+        # (agent-seat, subject, description) -> (task id, task list): writes a new pending task
+        # on that agent-seat's task list. Raises OSError.
+        self.agent_seat_task_write = agent_seat_task_write
         # (title, notice text, action) -> alert id: writes the notice's alert. None writes none.
         self.user_alert_write_to_pending = user_alert_write_to_pending
         # path -> (exit code, output): opens a notice's HTML page in the Mac's browser. None
@@ -501,6 +557,9 @@ class Watcher:
         # it reads them. None counts no refused seat as stopped on purpose.
         self.down_agent_seat_records_stopped_on_purpose = (
             down_agent_seat_records_stopped_on_purpose)
+        # Notices this run wrote whose user-alert failed and whose window or page did not open:
+        # each reaches the user only from the pending notices of a saved state.
+        self.notices_neither_alerted_nor_shown = []
 
     @property
     def decisions_path(self) -> Path:
@@ -514,9 +573,16 @@ class Watcher:
 
     def notice_path(self, seat, kind) -> Path:
         stamp = self.now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        return self.log_directory / "notices" / f"{stamp}-{seat}-{kind}.txt"
+        path = self.log_directory / "notices" / f"{stamp}-{seat}-{kind}.txt"
+        # One failure can write two notices in a run, as when both of its tasks cannot be written.
+        number = 2
+        while path.exists():
+            path = self.log_directory / "notices" / f"{stamp}-{seat}-{kind}-{number}.txt"
+            number += 1
+        return path
 
-    def write_notice(self, seat, kind, template, title_template=None, write_user_alert=True,
+    def write_notice(self, seat, kind, template, title_template=None,
+                     user_alert_action=FAILED_RESTART_NOTICE_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO,
                      **fields) -> dict:
         path = self.notice_path(seat, kind)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -525,32 +591,76 @@ class Watcher:
                   f"(on ned-box: {self.decisions_path})")
         text = template.format(seat=seat, record=record, mac_launcher=MAC_LAUNCHER, **fields)
         path.write_text(text, encoding="utf-8")
-        if write_user_alert:
-            self.write_alert(seat, kind, path, text)
+        alerted = self.write_alert(seat, kind, path, text, user_alert_action)
         notice = {"path": str(path)}
         title = None if title_template is None else title_template.format(seat=seat)
         page = self.write_notice_page(seat, path, text, title)
         if page is not None:
             notice["page"] = str(page)
-        self.show(notice)
+        if not self.show(notice) and not alerted:
+            self.notices_neither_alerted_nor_shown.append(notice)
         return notice
 
-    def write_alert(self, seat, kind, notice_path: Path, text) -> bool:
+    def write_alert(self, seat, kind, notice_path: Path, text, action) -> bool:
         """Write the notice's user-alert; return whether one was written."""
         title_template = FAILED_RESTART_NOTICE_KIND_TO_USER_ALERT_TITLE_TEMPLATE.get(kind)
         # A kind without a title, such as the notice written after a successful restart, gets no
-        # alert: only a failed restart needs the user.
+        # alert: that agent-seat runs, so nothing waits on the user.
         if self.user_alert_write_to_pending is None or title_template is None:
             return False
         try:
-            alert_id = self.user_alert_write_to_pending(title_template.format(seat=seat), text,
-                                             FAILED_RESTART_NOTICE_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO)
+            alert_id = self.user_alert_write_to_pending(title_template.format(seat=seat), text, action)
         except OSError as error:
             self.log(seat, "user alert not written; the notice's page or window still opens",
                      notice=str(notice_path), error=f"{type(error).__name__}: {error}")
             return False
         self.log(seat, "user alert written", notice=str(notice_path), alert=alert_id)
         return True
+
+    def report_failure_to_agent_seat(self, seat, kind, **fields):
+        """Hand a failure an agent can fix to the agent-seats that fix it, as tasks.
+
+        A failure that leaves the seat down becomes a task on the seat's own list and one, with
+        the restart, on AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME's; when the seat down is
+        that owner, the user is shown a notice with its user-alert instead of the second task.
+        Any other failure becomes a task on the owner's list only.
+        """
+        owner = AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME
+        subject = FAILURE_KIND_TO_AGENT_SEAT_TASK_SUBJECT_TEMPLATE[kind].format(seat=seat)
+        values = dict(seat=seat, record=f"nedlern@ned-box:{self.decisions_path}", **fields)
+        description = (FAILURE_KIND_TO_AGENT_SEAT_TASK_DESCRIPTION_TEMPLATE[kind]
+                       + AGENT_SEAT_TASK_DESCRIPTION_CLOSING_TEMPLATE).format(**values)
+        if kind not in DOWN_AGENT_SEAT_FAILURE_KINDS:
+            self.agent_seat_task_write_or_notice(seat, kind, owner, subject, description)
+            return
+        self.agent_seat_task_write_or_notice(seat, kind, seat, subject, description)
+        if seat == owner:
+            self.log(seat, "the agent-seat left down is the crash watcher's owner; the user is "
+                     "shown a notice", kind=kind)
+            self.write_notice(seat, kind, OWNER_AGENT_SEAT_DOWN_NOTICE_TEMPLATE, subject=subject,
+                              description=description)
+            return
+        owner_description = (FAILURE_KIND_TO_AGENT_SEAT_TASK_DESCRIPTION_TEMPLATE[kind]
+                             + DOWN_AGENT_SEAT_RESTART_BY_OWNER_TEMPLATE
+                             + AGENT_SEAT_TASK_DESCRIPTION_CLOSING_TEMPLATE).format(**values)
+        self.agent_seat_task_write_or_notice(seat, kind, owner, subject, owner_description)
+
+    def agent_seat_task_write_or_notice(self, seat, kind, task_owner, subject, description):
+        """Write the task on task_owner's list; when it cannot be written, show the user a
+        notice quoting it, with its user-alert."""
+        try:
+            task_id, task_list = self.agent_seat_task_write(task_owner, subject, description)
+        except OSError as error:
+            task_write_error = f"{type(error).__name__}: {error}"
+            self.log(seat, "task not written; the user is shown it as a notice instead",
+                     kind=kind, owner=task_owner, error=task_write_error)
+            self.write_notice(seat, kind, AGENT_SEAT_TASK_NOT_WRITTEN_NOTICE_TEMPLATE,
+                              user_alert_action=AGENT_SEAT_TASK_NOT_WRITTEN_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO,
+                              owner=task_owner, task_write_error=task_write_error,
+                              subject=subject, description=description)
+            return
+        self.log(seat, "task written for the agent-seat to find the cause and fix it", kind=kind,
+                 owner=task_owner, task=task_id, task_list=str(task_list))
 
     def write_notice_page(self, seat, notice_path: Path, text, title=None):
         """Write the notice's HTML page; return its path, or None to show the text instead."""
@@ -641,7 +751,7 @@ class Watcher:
         for seat in seat_names:
             try:
                 verdict, detail = self.assess(seat)
-            except Exception as error:  # noqa: BLE001 - any failure here must reach the user
+            except Exception as error:  # noqa: BLE001 - any failure here must be reported
                 self.report_assessment_failure(seat, f"{type(error).__name__}: {error}")
                 continue
             self.decide(seat, verdict, detail)
@@ -652,8 +762,7 @@ class Watcher:
         if key in self.state["reported_errors"]:
             return
         self.state["reported_errors"].append(key)
-        self.write_notice(seat, "assessment-failed", ASSESSMENT_FAILED_NOTICE_TEMPLATE,
-                          error=error_text)
+        self.report_failure_to_agent_seat(seat, "assessment-failed", error=error_text)
 
     def down_kind(self, seat, verdict, detail):
         """Return "crash" to restart, "for-the-user" or "refused" to report, or None to leave alone."""
@@ -677,7 +786,7 @@ class Watcher:
             return False
         try:
             return self.down_agent_seat_records_stopped_on_purpose(seat)
-        except Exception as error:  # noqa: BLE001 - unsure of a stop on purpose, tell the user
+        except Exception as error:  # noqa: BLE001 - unsure of a stop on purpose, report the refusal
             self.log(seat, "could not read whether it stopped on purpose; counted as not",
                      error=f"{type(error).__name__}: {error}")
             return False
@@ -807,16 +916,15 @@ class Watcher:
                      f"about {earlier_died_at}, and recovery reported that attempt as failed; "
                      f"{seat} then ran again, either because that attempt came up late or "
                      f"because it was started by hand or by another program")
-            self.log(seat, "not restarted: a restart was attempted less than an hour ago; "
-                     "user told", died_at_about=timestamp(died_at), earlier_attempt=earlier)
-            self.write_notice(
-                seat, "second-crash", SECOND_CRASH_NOTICE_TEMPLATE,
-                died_at=clock_text(died_at), earlier_attempt=earlier_attempt,
-                transcripts=path_on_the_mac(self.transcripts_directory(seat)))
+            self.log(seat, "not restarted: a restart was attempted less than an hour ago",
+                     died_at_about=timestamp(died_at), earlier_attempt=earlier)
+            self.report_failure_to_agent_seat(
+                seat, "second-crash", died_at=clock_text(died_at),
+                earlier_attempt=earlier_attempt, transcripts=self.transcripts_directory(seat))
             return
         exit_code, output = self.recover(seat)
         if (exit_code in (0, RECOVERY_WINDOW_NOT_OPENED_EXIT_STATUS)
-                and "ALREADY RUNNING" not in output):
+                and SEAT_ALREADY_RUNNING_REPORT_MARKER not in output):
             # Recovery exits 0 or 3 only once the seat's supervisor survived its settle: a sighting.
             self.mark_seen_running(record, self.now)
             self.record_recovery_attempt(record, died_at, "restarted")
@@ -842,29 +950,29 @@ class Watcher:
         # belongs to this death, so the handled poll moves past it.
         self.mark_handled(seat, record)
         self.record_recovery_attempt(record, died_at, "failed")
-        self.log(seat, "recovery failed; user told", exit_code=exit_code,
+        self.log(seat, "recovery failed", exit_code=exit_code,
                  died_at_about=timestamp(died_at), recovery_output=output)
         output_lines = [line for line in output.strip().splitlines() if line.strip()]
-        self.write_notice(seat, "recovery-failed", RECOVERY_FAILED_NOTICE_TEMPLATE,
-                          died_at=clock_text(died_at), exit_code=exit_code,
-                          recovery_last_line=(output_lines[-1].strip() if output_lines
-                                              else "(it printed nothing)"))
+        self.report_failure_to_agent_seat(seat, "recovery-failed",
+                                          died_at=clock_text(died_at), exit_code=exit_code,
+                                          recovery_last_line=(output_lines[-1].strip() if output_lines
+                                                              else "(it printed nothing)"))
 
     def report_refused(self, seat, verdict, detail, died_at):
         if verdict == LEFTOVER_SHELL_VERDICT:
             reported_instead = self.leftover_shell_reported_without_asking(seat, detail)
             if reported_instead is None:
                 self.log(seat, "not restarted: its tmux session is a leftover shell, which "
-                         "recovery closes only on an operator's yes; user told",
+                         "recovery closes only on an operator's yes",
                          died_at_about=timestamp(died_at), detail=str(detail))
-                self.write_notice(seat, "leftover-shell", LEFTOVER_SHELL_NOTICE_TEMPLATE,
-                                  died_at=clock_text(died_at))
+                self.report_failure_to_agent_seat(seat, "leftover-shell",
+                                                  died_at=clock_text(died_at))
                 return
             detail = reported_instead
-        self.log(seat, "not restarted: recovery refuses it; user told",
+        self.log(seat, "not restarted: recovery refuses it",
                  died_at_about=timestamp(died_at), detail=str(detail))
-        self.write_notice(seat, "recovery-refuses", RECOVERY_REFUSES_NOTICE_TEMPLATE,
-                          died_at=clock_text(died_at), refusal=str(detail))
+        self.report_failure_to_agent_seat(seat, "recovery-refuses",
+                                          died_at=clock_text(died_at), refusal=str(detail))
 
     def report_down_for_the_user(self, seat, verdict, detail, died_at):
         if verdict == WAITING_HANDOFF_VERDICT:
@@ -912,6 +1020,8 @@ def run_once(environment) -> int:
     state_directory = Path(environment.get(STATE_DIRECTORY_ENVIRONMENT_VARIABLE)
                            or STATE_DIRECTORY)
     log_directory = Path(environment.get(LOG_DIRECTORY_ENVIRONMENT_VARIABLE) or LOG_DIRECTORY)
+    task_lists_directory = Path(environment.get(TASK_LISTS_DIRECTORY_ENVIRONMENT_VARIABLE)
+                                or Path.home() / ".claude" / "tasks")
     state_directory.mkdir(parents=True, exist_ok=True)
     with (state_directory / f"{PROGRAM}.lock").open("w") as lock_stream:
         try:
@@ -920,68 +1030,82 @@ def run_once(environment) -> int:
             # A run that is still restarting a seat owns this minute.
             return 0
         try:
-            return watch(environment, state_directory, log_directory)
-        except Exception as error:  # noqa: BLE001 - a failed run must reach the user, not only cron's log
+            return watch(environment, state_directory, log_directory, task_lists_directory)
+        except Exception as error:  # noqa: BLE001 - a failed run must reach its owner, not only cron's log
             report_run_failure(f"{type(error).__name__}: {error}", state_directory,
-                               log_directory)
+                               log_directory, task_lists_directory)
             raise
 
 
-def report_run_failure(error_text, state_directory: Path, log_directory: Path):
-    """Log the failure, and show the user a notice the first time this error is seen.
+def report_run_failure(error_text, state_directory: Path, log_directory: Path,
+                       task_lists_directory: Path):
+    """Log the failure, and hand it to AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME as a task the first time
+    this error reaches an agent-seat or the user.
 
-    The notice waits in the state every run reads, so a later run, failing or
-    healthy, shows it once the Mac can be reached.
+    A task that cannot be written becomes a notice for the user, with its user-alert. A notice the
+    Mac misses waits in the state every run reads, so a later run, failing or healthy, shows it
+    once the Mac can be reached; when that state cannot be read or saved, its user-alert alone
+    reaches the user. When the task, the user-alert, the Mac window and the saved state all fail,
+    the error is not marked reported, and the next failing run reports it again.
     """
     now = datetime.now(timezone.utc)
     reported_path = state_directory / f"{PROGRAM}-reported-run-failures.txt"
     reported = (reported_path.read_text(encoding="utf-8").splitlines()
                 if reported_path.is_file() else [])
-    # Apart from the reported record: a notice the Mac missed is retried each failing run, but
-    # its user-alert stays on disk until claimed, so a second alert would be a duplicate.
-    alerted_path = state_directory / f"{PROGRAM}-alerted-run-failures.txt"
-    alerted = (alerted_path.read_text(encoding="utf-8").splitlines()
-               if alerted_path.is_file() else [])
     state_path = state_directory / f"{PROGRAM}-state.json"
     try:
         state = read_state(state_path)
         state_readable = True
     except (OSError, ValueError):
-        # The failure may be this file; the notice is then retried by the next failing run.
+        # The failure may be this file.
         state = {"seats": {}, "pending_notices": [], "reported_errors": []}
         state_readable = False
     watcher = Watcher(state=state, now=now, boot_at=now, log_directory=log_directory,
                       assess=None, died_at_about=None, transcripts_directory=None,
                       recover=None, open_window=open_mac_window,
                       show_notice_words=show_notice_words_for_window,
+                      agent_seat_task_write=agent_seat_task_list_new_pending_task_writer_function_factory_for_task_lists_directory(task_lists_directory),
                       open_page=open_mac_browser_page,
                       user_alert_write_to_pending=user_alerts.user_alert_write_to_pending)
     watcher.log(None, "run failed", error=error_text)
     for notice in list(state["pending_notices"]):
         watcher.show(notice)
     if error_text not in reported:
-        notice = watcher.write_notice("watcher", "run-failed", RUN_FAILED_NOTICE_TEMPLATE,
-                                      write_user_alert=False, error=error_text)
-        notice_path = Path(notice["path"])
-        if error_text not in alerted and watcher.write_alert(
-                "watcher", "run-failed", notice_path, notice_path.read_text(encoding="utf-8")):
-            try:
-                with alerted_path.open("a", encoding="utf-8") as stream:
-                    stream.write(error_text + "\n")
-            except OSError as error:
-                watcher.log(None, "could not record that the run failure's user alert was written; "
-                            "the next failing run writes it again", error=f"{type(error).__name__}: {error}")
-    saved = False
+        watcher.report_failure_to_agent_seat("watcher", "run-failed", error=error_text)
+    state_saved = False
     if state_readable:
         try:
             write_state(state_path, state)
-            saved = True
+            state_saved = True
         except OSError as error:
-            watcher.log(None, "could not save the watcher's state; a notice the Mac missed is "
-                        "retried by the next failing run", error=f"{type(error).__name__}: {error}")
-    if error_text not in reported and (saved or not state["pending_notices"]):
-        with reported_path.open("a", encoding="utf-8") as stream:
-            stream.write(error_text + "\n")
+            watcher.log(None, "could not save the watcher's state; a notice the Mac missed is not "
+                        "retried", error=f"{type(error).__name__}: {error}")
+    if error_text in reported:
+        return
+    if watcher.notices_neither_alerted_nor_shown and not state_saved:
+        # No task, alert, window or saved notice carries this failure, so it stays unrecorded
+        # and the next failing run reports it again.
+        watcher.log(None, "run failure reached no agent-seat and not the user; left unmarked so "
+                    "the next failing run reports it again", error=error_text)
+        print(f"{PROGRAM}: this run failed, and no agent-seat or user was told: the task could "
+              f"not be written, the user-alert could not be written, the Mac opened no window, "
+              f"and the state that would keep the notice for a later run could not be read or saved.\n"
+              f"The failure: {error_text}\n"
+              f"It is left unrecorded, so the next run that fails reports it again.\n"
+              f"To learn why each of the four failed, read {watcher.decisions_path}.",
+              file=sys.stderr)
+        return
+    with reported_path.open("a", encoding="utf-8") as stream:
+        stream.write(error_text + "\n")
+
+
+def agent_seat_task_list_new_pending_task_writer_function_factory_for_task_lists_directory(task_lists_directory: Path):
+    """Return the Watcher's agent_seat_task_write, for the task lists under task_lists_directory."""
+    def agent_seat_task_write(agent_seat, subject, description):
+        task_list = task_lists_directory / f"nedschorus-{agent_seat}-tasks"
+        return (agent_seat_task_list.agent_seat_task_list_new_pending_task_write(
+            task_list, subject, description), task_list)
+    return agent_seat_task_write
 
 
 def open_mac_window(words):
@@ -1032,7 +1156,8 @@ def handoff_down_agent_seat_records_stopped_on_purpose_predicate_factory(
     return down_agent_seat_records_stopped_on_purpose
 
 
-def watch(environment, state_directory: Path, log_directory: Path) -> int:
+def watch(environment, state_directory: Path, log_directory: Path,
+          task_lists_directory: Path) -> int:
     login_restart = load_module("restart_live_seats_at_login", LOGIN_RESTART_PROGRAM)
     recovery = login_restart.recovery
     supervisor = login_restart.supervisor
@@ -1065,6 +1190,7 @@ def watch(environment, state_directory: Path, log_directory: Path) -> int:
         log_directory=log_directory, assess=assess, died_at_about=died_at_about,
         transcripts_directory=transcripts_directory, recover=recover,
         open_window=open_mac_window, show_notice_words=show_notice_words_for_window,
+        agent_seat_task_write=agent_seat_task_list_new_pending_task_writer_function_factory_for_task_lists_directory(task_lists_directory),
         open_page=open_mac_browser_page,
         user_alert_write_to_pending=user_alerts.user_alert_write_to_pending,
         stopped_on_purpose=stopped_on_purpose_predicate(supervisor, handoff_directory),

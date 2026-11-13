@@ -49,8 +49,9 @@ marker string as its entire instruction, silently.
 Before it writes the handoff, the writer prunes the completed tasks from the
 agent-seat's task list, the one CLAUDE_CODE_TASK_LIST_ID names, because Claude
 Code lists every completed task in each task reminder and never removes one
-itself. A completed task is removed only when the log-store holds a copy with
-the same bytes, so nothing is lost; it is kept when an open task links to it
+itself. The writer first copies each completed task it would remove into the
+log-store, and removes it only when the log-store's copy then has the same
+bytes, so nothing is lost; a completed task is kept when an open task links to it
 in either direction, or when the next step names its id or its subject. The
 high-water mark is raised before anything is removed, so Claude Code never
 gives a removed task's id to a new task, which would overwrite the
@@ -64,8 +65,15 @@ because the two are one decision: a handoff nobody is watching must not stop
 the agent working, and an agent that runs only the first half of a two-step
 procedure would stop anyway.
 
-Exit codes: 0 written and a supervisor is watching, 1 written but nothing is
-watching, 2 bad invocation or an empty next step.
+Exit codes, each with the verdict line it prints last on stdout:
+  0  VERDICT: handoff written; a supervisor is watching
+  1  VERDICT: handoff written; nothing is watching
+  2  VERDICT: handoff written; could not tell whether a supervisor is watching
+     -- the supervisor lock is unreadable, or ps cannot identify the live
+     process holding it. Do not rerun: the handoff is already on disk.
+  2  VERDICT: nothing written -- a bad invocation, an empty or missing next
+     step, or a refused agent name; the cause is on stderr.
+Exit 2 has two meanings, so a caller tells them apart by the verdict line.
 """
 
 import argparse
@@ -115,6 +123,12 @@ _threshold_hook_spec.loader.exec_module(threshold_hook)
 deferred_marker_files = threshold_hook.handoff_deferred_marker_and_refused_commands_files_common
 
 
+HANDOFF_WRITTEN_AND_HANDOFF_SUPERVISOR_IS_WATCHING_VERDICT_LINE = "VERDICT: handoff written; a supervisor is watching"
+HANDOFF_WRITTEN_AND_NO_HANDOFF_SUPERVISOR_WATCHING_VERDICT_LINE = "VERDICT: handoff written; nothing is watching"
+HANDOFF_WRITTEN_CANNOT_TELL_WHETHER_HANDOFF_SUPERVISOR_WATCHING_VERDICT_LINE = (
+    "VERDICT: handoff written; could not tell whether a supervisor is watching")
+HANDOFF_NOTHING_WRITTEN_VERDICT_LINE = "VERDICT: nothing written"
+
 NEXT_STEP_VERBATIM_FIELD = field_names.NEXT_STEP_VERBATIM_FIELD
 NEXT_STEP_BLOCK_OPENING_MARKER = field_names.NEXT_STEP_BLOCK_OPENING_MARKER
 NEXT_STEP_BLOCK_TERMINATOR = field_names.NEXT_STEP_BLOCK_TERMINATOR
@@ -143,6 +157,7 @@ BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX = (
     supervisor.BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX)
 COLD_READ_FULL_RUN_COMMAND_REFUSED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX = (
     supervisor.COLD_READ_FULL_RUN_COMMAND_REFUSED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX)
+BACKGROUND_TASK_PAST_WAIT_LIMIT_FIELD_PREFIX = supervisor.BACKGROUND_TASK_PAST_WAIT_LIMIT_FIELD_PREFIX
 
 # An interim task-notification carries <status>completed</status>, so it gets an event of its own.
 WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT = "waiting on its own background work"
@@ -151,7 +166,10 @@ WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT = "waiting on its own background work"
 STILL_WORKING_SUBAGENT_LAST_EVENTS = ("spawned", "resumed", WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT)
 
 # Prefilter megabytes of tool output before parsing possible subagent events.
-SUBAGENT_EVENT_RECORD_MARKERS = ("async_launched", "resumedAgentId", "<task-notification>")
+SUBAGENT_EVENT_RECORD_MARKERS = ("async_launched", "resumedAgentId", "<task-notification>",
+                                 threshold_hook.TASK_STOP_TOOL_RESULT_MARKER_KEY)
+# The last event of a subagent a TaskStop call stopped, which gets no task-notification.
+STOPPED_BY_TASK_STOP_EVENT = "stopped"
 
 
 def collapse_to_one_line(text: str) -> str:
@@ -273,10 +291,14 @@ def task_notification_text(record: dict):
 
 def spawned_subagent_roster(transcript_path: Path) -> list:
     """Return this session's spawned subagents in spawn order with their last events."""
-    # Agent results acknowledge spawn, not completion; terminal events arrive in notifications.
+    # Agent results acknowledge spawn, not completion; terminal events arrive in notifications,
+    # or, for a subagent TaskStop stopped, in the TaskStop result alone.
     # Predecessor rosters are not inherited; deferred work must remain in next-step.
     roster = []
     by_agent_id = {}
+    # Agent-ids a TaskStop ended and no resume has restarted since; a later event such as a
+    # final-notification echo does not lift the stop.
+    stopped_ids = set()
     with transcript_path.open("r", encoding="utf-8", errors="replace") as handle:
         for line in handle:
             if not any(marker in line for marker in SUBAGENT_EVENT_RECORD_MARKERS):
@@ -307,8 +329,15 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
                     continue
                 resumed = by_agent_id.get(result.get("resumedAgentId"))
                 if resumed is not None:
+                    stopped_ids.discard(resumed["agent_id"])
                     resumed["last_event"] = "resumed"
                     resumed["last_event_at"] = stamp
+                    continue
+                stopped = by_agent_id.get(result.get("task_id"))
+                if stopped is not None and threshold_hook.TASK_STOP_TOOL_RESULT_MARKER_KEY in result:
+                    stopped_ids.add(stopped["agent_id"])
+                    stopped["last_event"] = STOPPED_BY_TASK_STOP_EVENT
+                    stopped["last_event_at"] = stamp
                     continue
 
             notification = task_notification_text(record)
@@ -325,6 +354,9 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
                                       notification):
                 entry = by_agent_id.get(task_id)
                 if entry is None:
+                    continue
+                # An interim notice queued before a TaskStop can arrive after it.
+                if task_id in stopped_ids and event == WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT:
                     continue
                 # Repeated notifications are echoes, not new events; preserve the first arrival time.
                 if event != entry["last_event"]:
@@ -498,10 +530,95 @@ def handoff_deferral_fields_for_this_session(handoff_directory: Path, working_di
     return lines, "handoff-deferral: " + ("; ".join(parts) or "nothing to record")
 
 
+def background_tasks_past_wait_limit_still_running(transcript_path: Path, deferral_began_at=None,
+                                                    now=None) -> list:
+    """Return [(task id, description, command, kind, wait-limit minutes, minutes run)] for the
+    background Bash tasks with no completion notification that are past their kind's wait-limit at
+    now, in launch order, leaving out waiting-tasks and the tasks launched at or after
+    deferral_began_at, which the handoff-deferral did not wait for and its own fields list.
+
+    A task whose launch record has no readable time is left out: it cannot be shown to be past its
+    wait-limit. Raises threshold_hook.TranscriptCouldNotBeFullyRead when a launch record cannot be
+    read.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    flight = threshold_hook.work_in_flight(str(transcript_path), float("inf"), now=now,
+                                           should_read_subagent_own_transcripts=False)
+    candidates = [task_id for task_id in flight.background_task_ids
+                  if flight.launched_at_by_id.get(task_id) is not None
+                  and (deferral_began_at is None or flight.launched_at_by_id[task_id] < deferral_began_at)]
+    launches = background_task_launches_by_id(transcript_path, candidates)
+    past = []
+    for task_id in candidates:
+        description, command = launches[task_id]
+        kind, wait_limit_minutes = threshold_hook.background_task_kind_and_wait_limit_minutes_from_command(command)
+        seconds_run = (now - flight.launched_at_by_id[task_id]).total_seconds()
+        if kind == threshold_hook.WAIT_LIMIT_TABLE_WAITING_TASK_KIND_NAME or threshold_hook.background_task_still_within_wait(
+                seconds_run, wait_limit_minutes * 60):
+            continue
+        past.append((task_id, description, command, kind, wait_limit_minutes, seconds_run / 60))
+    return past
+
+
+def background_task_past_wait_limit_field_lines(past_tasks) -> list:
+    """Render each background task past its wait-limit as a numbered field."""
+    lines = []
+    for ordinal, (task_id, description, command, kind, wait_limit_minutes, minutes_run) in enumerate(
+            past_tasks, start=1):
+        described = f' "{description}"' if description else ""
+        lines.append(f"{BACKGROUND_TASK_PAST_WAIT_LIMIT_FIELD_PREFIX}{ordinal}: {task_id}{described} "
+                     f"command: {json.dumps(command)}; kind: {kind}; wait-limit: "
+                     f"{wait_limit_minutes:g} minutes; ran: {minutes_run:.0f} minutes; wait-limit table: "
+                     f"{threshold_hook.WAIT_LIMIT_TABLE_LOCATION}")
+    return lines
+
+
+def past_wait_limit_tasks_by_hand_instruction() -> str:
+    """What the agent does when the tasks past their wait-limit could not be listed."""
+    return ("The session-handoff is already written. Find in your own conversation each background "
+            "task, other than a waiting-task, still running past its kind's wait-limit. If there "
+            "is any, run this script again with a next step that names each, with its command, how "
+            f"long it ran, and its kind and wait-limit from {threshold_hook.WAIT_LIMIT_TABLE_LOCATION}. "
+            "When the rerun prints this not-listed line again, you are done: the next step you "
+            "wrote carries the tasks.")
+
+
+def background_task_past_wait_limit_fields_for_this_session(handoff_directory: Path,
+                                                            working_directory: Path, now=None):
+    """Return (field lines, console status) for the background tasks past their wait-limit.
+
+    Never raises: what cannot be read is named in the status, which tells the agent to add it to
+    the next step by hand.
+    """
+    session_id = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if not session_id:
+        return [], ("background tasks past their wait-limit: not listed, because "
+                    "CLAUDE_CODE_SESSION_ID is unset and this script cannot find this session's "
+                    "transcript without it. " + past_wait_limit_tasks_by_hand_instruction())
+    try:
+        marker = deferred_marker_files.handoff_deferral_record_read_from_marker_or_moved_at_fire(
+            handoff_directory, session_id)
+    except deferred_marker_files.HandoffDeferredMarkerUnreadable:
+        # The handoff-deferral status reports this; without the start time no task is left out.
+        marker = None
+    try:
+        transcript_path = find_session_transcript(session_id, working_directory)
+        if transcript_path is None:
+            raise LookupError(f"no single transcript found for session {session_id} under {PROJECTS_ROOT}")
+        past_tasks = background_tasks_past_wait_limit_still_running(
+            transcript_path, marker.deferral_began_at if marker is not None else None, now=now)
+    except Exception as error:  # noqa: BLE001 - these fields never block a handoff
+        return [], (f"background tasks past their wait-limit: not listed ({type(error).__name__}: "
+                    f"{error}). " + past_wait_limit_tasks_by_hand_instruction())
+    return (background_task_past_wait_limit_field_lines(past_tasks),
+            f"background tasks past their wait-limit: {len(past_tasks)} recorded")
+
+
 def write_handoff_file(handoff_path: Path, next_step: str, counter: int,
                        ask_user_before_restart: bool,
                        seat_directory: Path, spawned_subagent_lines=(), verbatim_lines=(),
-                       handoff_deferral_lines=()) -> None:
+                       handoff_deferral_lines=(), background_task_past_wait_limit_lines=()) -> None:
     """Write the handoff atomically so readers cannot see a partial file."""
     lines = [
         f"{field_names.WRITTEN_AT_FIELD}: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
@@ -521,6 +638,7 @@ def write_handoff_file(handoff_path: Path, next_step: str, counter: int,
 
     lines.extend(spawned_subagent_lines)
     lines.extend(handoff_deferral_lines)
+    lines.extend(background_task_past_wait_limit_lines)
 
     # Write the block last so field-like content cannot shadow actual fields.
     if verbatim_lines:
@@ -569,12 +687,36 @@ class LogStoreUnreachable(Exception):
     """The log-store's copy of the task list could not be checked at all."""
 
 
-class LogStoreCopyUnreadable(Exception):
-    """ssh reached the log-store, but sha256sum could not read some copies."""
+class LogStoreCopyFailedOnLogStoreSide(Exception):
+    """ssh reached the log-store, but rsync could not write some copies or sha256sum could not read them."""
 
-    def __init__(self, said: str, unreadable_names: list):
+    def __init__(self, said: str, unreadable_names=None):
         super().__init__(said)
+        # None when rsync failed: then no copy has been read yet.
         self.unreadable_names = unreadable_names
+
+
+# rsync exits 3, 11 or 23 only after ssh has connected: a file or folder could not be written or read.
+RSYNC_EXITS_AFTER_CONNECTING = (3, 11, 23)
+
+
+def copy_task_files_to_log_store(host, list_directory: Path, store_list_directory, file_names) -> None:
+    """Copy the named task files into the log-store's copy of the list; raise if rsync fails."""
+    # The mirror runs on a timer, so a task completed since its last run has an older copy, or none.
+    completed = subprocess.run(transcript_mirror.rsync_command(host, list_directory, store_list_directory,
+                                                               files_on_stdin=True),
+                               input="".join(f"{name}\n" for name in file_names),
+                               capture_output=True, text=True, check=False)
+    if completed.returncode == 0:
+        return
+    said = collapse_to_one_line(completed.stderr) or "nothing on stderr"
+    if host and completed.returncode in RSYNC_EXITS_AFTER_CONNECTING:
+        raise LogStoreCopyFailedOnLogStoreSide(f"rsync to {host} exited {completed.returncode}: {said}")
+    # An unreachable host makes rsync exit 255 or 12, depending on timing, so its exit cannot tell.
+    if host:
+        raise LogStoreUnreachable(f"rsync to {host} exited {completed.returncode}: {said}")
+    raise RuntimeError(f"rsync of the completed tasks to {store_list_directory} exited "
+                       f"{completed.returncode}: {said}")
 
 
 def log_store_copy_sha256_of_each_task_file(host, store_list_directory, file_names) -> dict:
@@ -602,7 +744,7 @@ def log_store_copy_sha256_of_each_task_file(host, store_list_directory, file_nam
     unexplained = [line for line in completed.stderr.splitlines()
                    if line.strip() and not line.rstrip().endswith(": No such file or directory")]
     if completed.returncode == 1 and unexplained:
-        raise LogStoreCopyUnreadable(
+        raise LogStoreCopyFailedOnLogStoreSide(
             f"sha256sum on {host} could not read every copy: {collapse_to_one_line(chr(10).join(unexplained))}",
             [name for name in file_names if any(f": {name}:" in line for line in unexplained)])
     hashes = {}
@@ -714,23 +856,31 @@ def prune_completed_tasks_unguarded(next_step_text: str) -> str:
     store_list_directory = machine_path / store_directory / list_name
     store_text = log_store_task_list_copy_location_in_scp_form(host, store_list_directory)
     kept_parts = [f"{len(kept_linked)} linked to open tasks", f"{len(kept_cited)} cited by the next step"]
+    candidate_names = [tasks[task_id][0].name for task_id in candidates]
+    store_hashes = {}
     try:
-        store_hashes = log_store_copy_sha256_of_each_task_file(host, store_list_directory,
-                                         [tasks[task_id][0].name for task_id in candidates]) \
-            if candidates else {}
+        if candidates:
+            copy_task_files_to_log_store(host, list_directory, store_list_directory, candidate_names)
+            store_hashes = log_store_copy_sha256_of_each_task_file(host, store_list_directory, candidate_names)
     except LogStoreUnreachable as error:
         return (f"kept every completed task in {list_name}, because the log-store copy at "
                 f"{store_text} could not be checked ({error}). Check that ned-box is up and that "
                 f"`ssh {host} true` works; the next handoff prunes them. Tell the user this line "
                 "in your last message before you wait.")
-    except LogStoreCopyUnreadable as error:
+    except LogStoreCopyFailedOnLogStoreSide as error:
         # ssh worked, so the ssh remedy would send the reader the wrong way.
-        copies = ", ".join(error.unreadable_names) or "the copies sha256sum named"
+        if error.unreadable_names is not None:
+            copies = ", ".join(error.unreadable_names) or "the copies sha256sum named"
+            failed, remedy = "read", (f"On ned-box, run `ls -l` on {copies} in "
+                                      f"{store_list_directory} and make each a file nedlern can read")
+        else:
+            failed, remedy = "updated", (
+                "rsync's message, in the parentheses, says what failed. Check on ned-box yourself, with "
+                f"`ls -ld {store_list_directory}` and `df -h {store_list_directory}`, that nedlern "
+                "can write there and the disk has room")
         return (f"kept every completed task in {list_name}, because ned-box answered but the "
-                f"log-store copy at {store_text} could not be read ({error}). On ned-box, run "
-                f"`ls -l` on {copies} in {store_list_directory} and make each a file nedlern can "
-                "read; the next handoff prunes them. Tell the user this line in your last message "
-                "before you wait.")
+                f"log-store copy at {store_text} could not be {failed} ({error}). {remedy}; the next "
+                "handoff prunes them. Tell the user this line in your last message before you wait.")
     verified = [task_id for task_id in candidates
                 if store_hashes.get(tasks[task_id][0].name)
                 == hashlib.sha256(tasks[task_id][1]).hexdigest()]
@@ -782,7 +932,7 @@ def run_branch_protection_audit() -> str:
         return f"branch-protection audit: audit-failed — {type(error).__name__}: {error}"
 
 
-def main(argv=None) -> int:
+def write_handoff_and_report_supervisor(argv) -> int:
     parser = argparse.ArgumentParser(
         description="Write the handoff file that retires this session.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -813,6 +963,7 @@ def main(argv=None) -> int:
     next_step_path = Path(arguments.next_step_file).expanduser()
     if not next_step_path.is_file():
         print(f"handoff-write-and-check-supervisor: no such file: {next_step_path}", file=sys.stderr)
+        print(HANDOFF_NOTHING_WRITTEN_VERDICT_LINE)
         return 2
 
     next_step_text = next_step_path.read_text(encoding="utf-8")
@@ -823,6 +974,7 @@ def main(argv=None) -> int:
             "with no instruction, so nothing was written",
             file=sys.stderr,
         )
+        print(HANDOFF_NOTHING_WRITTEN_VERDICT_LINE)
         return 2
 
     verbatim_lines = verbatim_block_lines(next_step_text)
@@ -835,6 +987,7 @@ def main(argv=None) -> int:
             "what the successor reads. Reword that line and rerun. Nothing was written.",
             file=sys.stderr,
         )
+        print(HANDOFF_NOTHING_WRITTEN_VERDICT_LINE)
         return 2
 
     agent = arguments.agent or default_agent_name()
@@ -871,6 +1024,7 @@ def main(argv=None) -> int:
             f"writing would destroy a handoff that seat may not have acted on yet. {exits}",
             file=sys.stderr,
         )
+        print(HANDOFF_NOTHING_WRITTEN_VERDICT_LINE)
         return 2
 
     # An unwatched name would strand the handoff even when this directory has a live supervisor.
@@ -890,45 +1044,87 @@ def main(argv=None) -> int:
             f"as {agent}.",
             file=sys.stderr,
         )
+        print(HANDOFF_NOTHING_WRITTEN_VERDICT_LINE)
         return 2
 
     counter = next_restart_counter(handoff_path, state_path)
     spawned_subagent_lines, roster_report = spawned_subagent_roster_for_this_session(seat_directory)
     handoff_deferral_lines, handoff_deferral_report = handoff_deferral_fields_for_this_session(
         handoff_directory, seat_directory)
+    past_wait_limit_lines, past_wait_limit_report = background_task_past_wait_limit_fields_for_this_session(
+        handoff_directory, seat_directory)
     prune_report = prune_completed_tasks(next_step_text)
     write_handoff_file(handoff_path, next_step, counter, arguments.ask_user_before_restart, seat_directory,
                        spawned_subagent_lines=spawned_subagent_lines,
                        verbatim_lines=verbatim_lines,
-                       handoff_deferral_lines=handoff_deferral_lines)
+                       handoff_deferral_lines=handoff_deferral_lines,
+                       background_task_past_wait_limit_lines=past_wait_limit_lines)
     # Flushed at once: the supervisor may end this session soon after the handoff file appears.
-    print(f"handoff-write-and-check-supervisor: wrote {handoff_path} (session-handoff-sequence-number {counter})", flush=True)
+    print(f"handoff-write-and-check-supervisor: wrote {handoff_path} (session-handoff-sequence-number {counter})", flush=True)  # pragma: no mutate, the next line's print flushes the same buffer at once, so flush=False changes no output
     print(f"handoff-write-and-check-supervisor: {roster_report}", flush=True)
     print(f"handoff-write-and-check-supervisor: {handoff_deferral_report}", flush=True)
+    print(f"handoff-write-and-check-supervisor: {past_wait_limit_report}", flush=True)
     print(f"handoff-write-and-check-supervisor: {prune_report}", flush=True)
     print(f"handoff-write-and-check-supervisor: {run_branch_protection_audit()}")
 
-    alive, explanation = supervisor.supervisor_liveness(state_path)
-    if alive:
-        # With ps unavailable, a held lock only implies a supervisor; do not promise takeover.
+    answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(state_path)
+    machine = "ubuntu" if sys.platform.startswith("linux") else "mac"
+    if answer == supervisor.SUPERVISOR_LIVENESS_WATCHING:
         print(
             f"handoff-write-and-check-supervisor: {explanation}. Stop working now and wait — "
-            "if it is watching, it takes over within seconds."
+            "it takes over within seconds."
         )
+        print(HANDOFF_WRITTEN_AND_HANDOFF_SUPERVISOR_IS_WATCHING_VERDICT_LINE)
         return 0
 
+    if answer == supervisor.SUPERVISOR_LIVENESS_CANNOT_TELL:
+        # Guessing either way is unsafe: a wrong "watched" strands the work, and a wrong
+        # "unwatched" can bring a second supervisor that kills and relaunches the session.
+        print(
+            f"handoff-write-and-check-supervisor: {explanation}. The handoff is written at "
+            f"{handoff_path}, but whether a supervisor is watching this seat could not be told.\n"
+            f"First tell the user what this message says, and ask him to check on the {machine} machine, "
+            f"with `ps -ww -e -o pid=,args= | grep -F {supervisor.SUPERVISOR_SCRIPT_FILE_NAME}`, "
+            f"whether a {supervisor.SUPERVISOR_SCRIPT_FILE_NAME} with --agent {agent} is running.\n"
+            "If one is, it ends this session and starts a successor from the handoff; there is "
+            "nothing more to do.\n"
+            f"If none is, the user runs `scripts/resupervise-seat.py {agent} --machine {machine}` "
+            "in a Terminal on the Mac to seat a supervised successor from the handoff.\n"
+            "Then stop working now, so that a supervisor that is watching takes over from the "
+            "handoff as written.\n"
+            "Do not rerun this program: the handoff is already written, and a second one would "
+            "replace it.",
+            file=sys.stderr, flush=True,
+        )
+        print(HANDOFF_WRITTEN_CANNOT_TELL_WHETHER_HANDOFF_SUPERVISOR_WATCHING_VERDICT_LINE)
+        return 2
+
     # Use the supervised launcher to consume the waiting handoff.
-    # Print --machine explicitly: the default is Mac, but a box seat must be recovered on the box.
-    machine = "ubuntu" if sys.platform.startswith("linux") else "mac"
+    # resupervise-seat.py runs on the Mac for a seat of either machine: for a box seat it
+    # prepares over ssh and then runs the Mac-side launch-claude-ubuntu. Print --machine
+    # explicitly: the default is Mac, and a box seat's advice must not target a same-named Mac seat.
     print(
         f"handoff-write-and-check-supervisor: {explanation} — and this seat has no supervisor to "
         f"reincarnate it. The handoff is written at {handoff_path}; nothing will act on it by itself. "
-        "Tell the user: to seat a supervised successor, run "
+        "Tell the user: to seat a supervised successor, run, in a Terminal on the Mac, "
         f"`scripts/resupervise-seat.py {agent} --machine {machine}` — it clears this seat's stale "
         "tmux session and relaunches, and the supervisor starts a fresh agent-session from the handoff. Relaunching "
         "`claude` by hand instead produces another unsupervised seat. Until then, keep working."
     )
+    print(HANDOFF_WRITTEN_AND_NO_HANDOFF_SUPERVISOR_WATCHING_VERDICT_LINE)
     return 1
+
+
+def main(argv=None) -> int:
+    try:
+        exit_code = write_handoff_and_report_supervisor(argv)
+    except SystemExit as stop:
+        # argparse stops with 2 on a bad invocation, before anything is written.
+        if stop.code != 2:
+            raise
+        exit_code = 2
+        print(HANDOFF_NOTHING_WRITTEN_VERDICT_LINE)
+    return exit_code
 
 
 if __name__ == "__main__":

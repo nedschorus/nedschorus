@@ -609,6 +609,8 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
                     last_spend, source = spent, subagent_transcript
         verdict["last_activity"] = {"time": iso(last_spend),
                                     "source": str(source) if last_spend else None}
+        verdict[fields.LAST_TOOL_CALL_AT] = iso(max(
+            (moment for moment, _, _ in facts.tool_calls if moment), default=None))
 
         last = facts.last_model_turn_record or {}
         limit = is_usage_limit(last)
@@ -667,7 +669,7 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
         raised = [item for item in verdict["sentences"] if item["code_reading"] != fields.NOT_RAISED]
         if not raised:
             verdict.update(rules_three_to_five(verdict, put_off_at, checker, task_directory))
-        elif any(item["code_reading"] == fields.JUDGE for item in raised):
+        elif any(item["code_reading"] == fields.JUDGE for item in raised):  # pragma: no mutate, raised holds only the UNBACKED and JUDGE constants themselves, and "unbacked" sorts after "judge", so <= and is give what == gives
             judged = [item for item in raised if item["code_reading"] == fields.JUDGE]
             verdict[fields.TOOL_CALLS_SINCE_START_OF_EARLIEST_TURN_WITH_SENTENCE_TO_JUDGE] = (
                 tool_calls_since_start_of_earliest_turn_with_sentence_to_judge(facts, judged))

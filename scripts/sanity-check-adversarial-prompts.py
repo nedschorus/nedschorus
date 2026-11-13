@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a sanity-check: independent audits, each on both runtimes, over one document.
+"""Run a sanity-check: independent audits, each on both agent-binaries, over one document.
 
 The sanity-check is this project's second review instrument, separate from
 the cold read (`nc-systems/cold-read/cold-read-grid.py`, the prose-and-clarity review) and
@@ -35,10 +35,10 @@ fails before any model cost is spent.
 
 Operating rules:
 
-- Both runtimes on every audit — the claude CLI (claude-fable-5-1, falling
+- Both agent-binaries on every audit — the claude CLI (claude-fable-5-1, falling
   back to claude-opus-5 when Fable produces no review) and
   gpt-6.1-sol (the codex CLI), at xhigh reasoning effort. Each audit
-  therefore runs as two review agents, one per runtime, named
+  therefore runs as two review agents, one per agent-binary, named
   `<audit>-adversarial-prompt-<runtime>`, such as `cut-adversarial-prompt-claude`
   (the `--adversarial-prompt` flag still takes the short `<audit>`, such as
   `cut`), in this runner's output; each agent's report file is that name with `.md` added,
@@ -52,7 +52,7 @@ Operating rules:
   whether a document deserves its sanity-check; a PR carrying an actionable MD with
   no sign of a past sanity-check may have one suggested — a note, never a gate.
 - The requesting agent triages: follows up the warnings described below,
-  settles hedged claims about code by reading the code, merges the runtimes' reports, and
+  settles hedged claims about code by reading the code, merges the agent-binaries' reports, and
   presents the surviving findings to the user one at a time for his ruling
   (the walk-me-through skill). Findings are design changes; none is applied
   without the user's ruling. Triage is complete when every warning and every
@@ -107,7 +107,7 @@ the target. `--adversarial-prompt` (repeatable; default all three) runs a
 subset — the fresh-eyes second pass is `--adversarial-prompt fresh-eyes
 --problem-statement <variant>`, and a failed audit reruns without repeating
 the others. `--runtime` (repeatable, `claude` or `codex`; default both) does
-the same for runtimes: a rerun of the one agent that failed is this run's
+the same for agent-binaries: a rerun of the one agent that failed is this run's
 command with `--adversarial-prompt <audit> --runtime <runtime>` as its only
 `--adversarial-prompt` and `--runtime`, and the runner prints that command
 whole under the agent's `FAILED:` line when a rerun is what the
@@ -160,7 +160,7 @@ Running a sanity-check, and reading its output:
   the user what the line says, and after the user has cleared the cause run
   the command printed there, which runs that one agent again into a new
   record directory. For every other failure: triage that audit from the other
-  runtime's report when a run saved one, and write in finding-dispositions.md
+  agent-binary's report when a run saved one, and write in finding-dispositions.md
   that the audit is unreviewed when none did. A report saved by an agent's
   second launch carries `relaunched_after=<cause class>` in its provenance
   line.
@@ -179,7 +179,7 @@ Running a sanity-check, and reading its output:
   there. Withholding the tools was never the protection it looked like: on
   2026-08-21 a claude agent wrote a file to the worktree while carrying no
   write tools at all (nedschorus#161) — so the check below runs after every agent
-  that completes, on both runtimes: a write to the review copy outside the
+  that completes, on both agent-binaries: a write to the review copy outside the
   agents' scratch directories is reported as
   `WARNING: the review copy was modified outside the cells' scratch
   directories, seen when <audit>-adversarial-prompt-<runtime> finished: <paths>`. The agents
@@ -230,8 +230,8 @@ Running a sanity-check, and reading its output:
   see the line. The class decides whether the runner relaunches, because a
   relaunch of a logged-out CLI is a wasted launch and its failure sends the audit to triage
   with one report. The instructions do not depend on which agent finished
-  first, or on whether this run launched the other runtime: a rerun of one
-  agent is a run that launched one runtime, and the other runtime's report is
+  first, or on whether this run launched the other agent-binary: a rerun of one
+  agent is a run that launched one agent-binary, and the other agent-binary's report is
   then in the first run's record.
 - WHEN A RUN IS STOPPED. The /sanity-check skill starts this runner as a
   background task, and a seat's handoff ends that seat's background tasks, so
@@ -257,7 +257,10 @@ Running a sanity-check, and reading its output:
   the run stopped, so every agent-binary is in the process table the handler
   then reads. The one later start is the `--version` probe of a cell saving
   its report, for the report's provenance line; it reads the version and
-  exits. A signal that arrives after every cell has finished, each having
+  exits. Each agent-binary and probe starts in a session of its own, so a
+  signal sent to the runner's process group reaches the runner alone and the
+  runner does the stopping; a SIGKILL sent to that group therefore leaves
+  the agents running, as a SIGKILL to the runner alone does. A signal that arrives after every cell has finished, each having
   saved its report or said why it could not, stopped nothing: the runner
   finishes the run's closing steps, prints what a finished run prints, with
   no `STOPPED:` line, and ends by the signal. A cell still running when the
@@ -317,9 +320,9 @@ git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
     REPO_ROOT / "nc-systems" / "general-tools"
-    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+    / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 _command_line_prefix_spec = importlib.util.spec_from_file_location(
@@ -345,7 +348,7 @@ def _cold_read_cell_program(file_name: str):
 
 
 # What each agent-binary prints when a launch fails for a reason it can name
-# (logged out, a usage limit), per runtime: a function from the model to the
+# (logged out, a usage limit), per agent-binary: a function from the model to the
 # texts, which common.classify_failed_attempt matches against the start of
 # each line the agent-binary wrote. Each text was captured from a real run and
 # is kept, with its source, beside the cold-read cell that met it; taken from
@@ -413,8 +416,7 @@ def git_failure_next_step_lines(rerun: str, text_the_failure_line_contains: str)
     """
     program = str(pathlib.Path(__file__).resolve())
     return next_step_lines.git_failure_next_step_lines(
-        rerun, program, text_the_failure_line_contains=text_the_failure_line_contains,
-        include_the_misspelt_branch_commit_or_path_line=True) + "\n"
+        rerun, program, text_the_failure_line_contains=text_the_failure_line_contains) + "\n"
 
 
 # The line a cell prints when its first launch produced no report and the
@@ -475,7 +477,7 @@ IGNORED_PATHS_WATCHED_FOR_WRITES = (RECORDS_DIRECTORY_NAME,)
 # write detection alone and belong to no commit — see reviewed_revision.
 IGNORED_PATH_STATUS_CODE = "!!"
 
-# The claude runtime's chain, tried in order until one produces a review.
+# The claude agent-binary's chain, tried in order until one produces a review.
 # "claude-fable-5" is obsolete, and Fable is sometimes unavailable, so Opus 5
 # stands behind it and ends the chain.
 #
@@ -489,7 +491,7 @@ CLAUDE_MODEL_CHAIN = ("claude-fable-5-1", "claude-opus-5")
 # Matches cold-read-codex-cell.py's `deep` tier; the id needs codex-cli 0.159.1
 # or later.
 CODEX_MODEL = "gpt-6.1-sol"
-# xhigh for both runtimes, by the user's calibration and a tier probe of both:
+# xhigh for both agent-binaries, by the user's calibration and a tier probe of both:
 # max earned neither slot.
 REASONING_EFFORT = "xhigh"
 CELL_TIMEOUT_SECONDS = 3600
@@ -652,14 +654,14 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
         except OSError as error:
             # A CLI that will not launch is one failed attempt, not the end of
             # the run. run_cell's own OSError handler still covers the codex
-            # runtime, which has no chain to advance.
+            # agent-binary, which has no chain to advance.
             failed_attempts.append(f"{model}({type(error).__name__})")
             print(f"WARNING: {model} could not be run: {error}", flush=True)
             last_cause = common.classify_failed_attempt(
                 stdout="", stderr="", exit_code=None, recognised_texts=(),
                 start_error=str(error))
             continue
-        # The runtime's own words survive every ending, the house chain's rule
+        # The agent-binary's own words survive every ending, the house chain's rule
         # (BOTH STREAMS ARE CAPTURED, in run_model_chain,
         # nc-systems/cold-read/cold-read-cell-common.py). A CLI that is logged out or out of
         # credits explains itself on one of these streams and nowhere else, so
@@ -670,7 +672,7 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
         # the only trace of the degradation in the output. Re-emitted before any
         # branch below, so no ending drops them. This program's log is its
         # stdout -- the review itself is returned to run_cell, never printed --
-        # so the runtime's words go there too, and not to stderr as in the
+        # so the agent-binary's words go there too, and not to stderr as in the
         # house tool, whose log is the other stream.
         if completed is None or RUN_STOPPED.is_set():
             # The run was stopped: this model was never started, or its launch
@@ -719,13 +721,21 @@ def run_agent_binary_unless_run_stopped(command: list, input: str = None,
     its pipes, and the run waited for that child with every stop signal
     ignored, its review copy left behind. The wait after the start is outside the
     lock and is subprocess.run's own: on a timeout the agent-binary is killed
-    and TimeoutExpired raised with the streams it had written."""
+    and TimeoutExpired raised with the streams it had written.
+
+    The agent-binary starts in a session of its own, so a stop signal sent to
+    the runner's process group, as Ctrl-C at a terminal sends it, reaches the
+    runner alone, and stop_run_on_signal stops the agent-binary after it has
+    set RUN_STOPPED. In the runner's group the agent-binary could die of that
+    signal first, and its cell's thread, seeing RUN_STOPPED still unset,
+    printed RETRYING and could relaunch it or start the claude chain's next
+    model."""
     with AGENT_BINARY_LAUNCH_LOCK:
         if RUN_STOPPED.is_set():
             return None
         if input is not None:
             popen_keywords["stdin"] = subprocess.PIPE
-        process = subprocess.Popen(command, **popen_keywords)
+        process = subprocess.Popen(command, start_new_session=True, **popen_keywords)
     with process:
         try:
             stdout, stderr = process.communicate(input, timeout=timeout)
@@ -828,13 +838,13 @@ def run_codex(prompt: str, checkout: pathlib.Path = None) -> tuple:
 
 
 def captured_stream_as_text(captured) -> str:
-    """A stream a runtime wrote, as text, in whichever form it was handed back.
+    """A stream an agent-binary wrote, as text, in whichever form it was handed back.
 
     subprocess.TimeoutExpired carries what the child had written before it was
     cut off, and CPython raises it before the decoding step, so a call that
     asked for text still gets bytes (measured on Python 3.13); a stream
     that was never piped, and a piped one the child wrote nothing to, arrive
-    as None. Undecodable bytes are replaced, never raised on: a runtime cut off
+    as None. Undecodable bytes are replaced, never raised on: an agent-binary cut off
     partway through a character must not turn a timeout into a crash.
     """
     if captured is None:
@@ -976,7 +986,7 @@ CLI_VERSION_CACHE = {}
 
 
 def runtime_cli_version(runtime: str) -> str:
-    """The reviewing CLI's version, measured by this runner, once per runtime.
+    """The reviewing CLI's version, measured by this runner, once per agent-binary.
 
     In each report's provenance line because a cell's self-reported CLI version
     is not one to lean on for a cross-version fact; the runner measures it
@@ -991,6 +1001,10 @@ def runtime_cli_version(runtime: str) -> str:
             completed = subprocess.run(
                 [binary, "--version"], stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, text=True, check=False, timeout=60,
+                # As an agent-binary's launch does, so a stop signal sent to
+                # the process group cannot end the probe before RUN_STOPPED
+                # is set and have "unknown" cached as the version.
+                start_new_session=True,
             )
             lines = (completed.stdout or "").strip().splitlines()
             measured = (
@@ -1000,7 +1014,7 @@ def runtime_cli_version(runtime: str) -> str:
             )
         except (OSError, subprocess.TimeoutExpired):
             measured = "unknown"
-        # A probe the stop may have ended is not cached as the runtime's version.
+        # A probe the stop may have ended is not cached as the agent-binary's version.
         if RUN_STOPPED.is_set():
             return measured
         CLI_VERSION_CACHE[runtime] = measured
@@ -1077,7 +1091,7 @@ def reviewed_worktree_state(baseline: dict) -> str:
 
 def stray_paths(baseline: dict, now: dict) -> list:
     """Paths whose status or fingerprint changed while the cells ran — a cell
-    writing to the worktree, which its prompt forbids on either runtime.
+    writing to the worktree, which its prompt forbids on either agent-binary.
     Compared over the union of both snapshots, so a file that appears,
     changes, or disappears all count."""
     return sorted(path for path in set(now) | set(baseline)
@@ -1525,9 +1539,9 @@ def launch_cell_once(cell: str, adversarial_prompt: str, runtime: str, prompt: s
         # do. The cause is then read off the exit code alone.
         code, output, model, fallback_from, *cause = runner(prompt, checkout)
     except subprocess.TimeoutExpired as timeout:
-        # What the runtime wrote before it was cut off, printed before the
+        # What the agent-binary wrote before it was cut off, printed before the
         # cell's FAILED line, both streams in run_claude's order: every other
-        # ending keeps a failed runtime's words, and this one dropped them. The
+        # ending keeps a failed agent-binary's words, and this one dropped them. The
         # exception holds the streams of the attempt that timed out and no
         # other — run_claude prints each earlier failed attempt's words as that
         # attempt ends, so they are already out and are not repeated here. A
@@ -1569,7 +1583,7 @@ def launch_cell_once(cell: str, adversarial_prompt: str, runtime: str, prompt: s
     # After the worktree check, so a cell that ran to the end has its writes
     # compared whatever it returned; before the quote scan and the write, so a
     # text that is not a report raises no warnings to triage, never lands as a
-    # report, and is printed so the runtime's words survive.
+    # report, and is printed so the agent-binary's words survive.
     missing = missing_report_phrases(adversarial_prompt, output)
     if missing:
         print(output, flush=True)
@@ -1628,7 +1642,7 @@ def rerun_command_for_cell(adversarial_prompt: str, runtime: str, target: str, c
     """The command that runs this one cell again, as one line a shell takes
     as it stands: this run's target, every context document and the
     sanity-check-request when one was passed, with the cell's adversarial prompt and
-    runtime as the only `--adversarial-prompt` and `--runtime`. Both flags are repeatable,
+    agent-binary as the only `--adversarial-prompt` and `--runtime`. Both flags are repeatable,
     so a command that kept the first run's would run more than the one cell.
     The program and the request are named by absolute path and the documents
     by their repository-relative names, which the program resolves against its
@@ -1852,7 +1866,7 @@ def main() -> int:
             return 2
         # A print surface is per audit while a scratch directory is per cell,
         # so the shape is shown with its varying parts left as names: a real
-        # path would claim one runtime's directory for both of the audit's
+        # path would claim one agent-binary's directory for both of the audit's
         # cells, and a reader would take it for the literal path.
         illustrative_scratch = (RECORDS_ROOT / "<date>-<target-stem>"
                                 / CELL_SCRATCH_DIRECTORY_NAME

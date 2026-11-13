@@ -46,7 +46,7 @@ and the numbers are listed on stderr instead, each with its line
 forbids bare numbers, and walk files had carried 33 and 35 of them
 unchecked). Bare file names and the walk's 300-word item cap are deliberately
 not checked, by the same rulings. Every cold-read-cell's own progress -- the
-launcher's stderr, the runtime's stderr, the stray-write and recovery lines --
+launcher's stderr, the agent-binary's stderr, the stray-write and recovery lines --
 is re-emitted on this program's stderr, so a caller watching stdout gets the
 one line and a caller reading stderr gets the whole account.
 
@@ -96,8 +96,8 @@ record's being-written lock, a flock on the record directory taken with
 cold-read-record-ship.py's record_directory_being_written_lock_take, from
 the record's creation until it ships the record. While it is held,
 cold-read-record-ship.py prints FAILED for the record and copies nothing,
-and the hook that ships every worktree's records before a
-`git worktree remove` skips it. A shipper that does not test the lock, such
+and the hook that ships a worktree's records before a
+`git worktree remove` of it skips it. A shipper that does not test the lock, such
 as an older checkout's, may still ship it mid-read; that shipment holds at
 most target/ and the marked copy, and a shipment only adds files, so the
 read's own shipment adds the rest. Before
@@ -378,7 +378,7 @@ COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 30 
 PROGRAM = "cold-read-fast-read"
 WALK_DRAFT_SUFFIX = "-draft.md"
 # Both endings are the walk-me-through skill's to name; this program only
-# follows them, and scripts/walk-file-endings-match-the-skill-test.py fails
+# follows them, and nc-systems/skills/walk-me-through/tests/walk-file-endings-match-the-skill-test.py fails
 # if these two drift from what .claude/skills/walk-me-through/SKILL.md says.
 WALK_SUGGESTIONS_SUFFIX = "-cold-read-fast-read.md"
 
@@ -1371,7 +1371,7 @@ def what_should_be_code_cell_start(target: pathlib.Path, scratch: pathlib.Path) 
           f"{COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS / 60:g} minutes, "
           f"while the fast-clarify cell answers Questions 1 to 3; if Questions 1 to 3 "
           f"finish first, the read waits for Question 4 up to that limit. "
-          f"If the Question 4 cell fails or runs past that time, the report still holds "
+          f"If the Question 4 cell fails or runs past that limit, the report still holds "
           f"Questions 1 to 3, and its Question 4 section says why Question 4 was not answered.",
           file=sys.stderr)
     # A file, not a pipe: the launcher's output is read only after it exits.
@@ -1399,8 +1399,8 @@ def what_should_be_code_cell_abandon(cell: WhatShouldBeCodeQuestionCell) -> None
     was_running = cell.process.poll() is None
     cell_common.stop_process_tree(cell.process)
     print(cell.launcher_output.read_text(encoding="utf-8"), file=sys.stderr, end="")
-    print(f"{PROGRAM}: Question 4 was abandoned: the read ended with no report to hold "
-          f"its answer; "
+    print(f"{PROGRAM}: Question 4 was abandoned: the read failed, so there is no report "
+          f"to hold its answer; "
           + ("its cell was still running, and was stopped." if was_running
              else "its cell had already exited."), file=sys.stderr)
 
@@ -1578,7 +1578,7 @@ def main() -> int:
             question_4_cell=question_4_cell)
         try:
             quota_error_line = ""
-            for attempt in range(1, FAST_READ_ATTEMPTS + 1):
+            for attempt in range(1, FAST_READ_ATTEMPTS + 1):  # pragma: no mutate, FAST_READ_ATTEMPTS is even, so | 1 gives + 1
                 exit_code, output = run_one_fast_clarify_cell(
                     AGY_CELL_LAUNCHER, marked_copy, cell_report, prompt_file)
                 if exit_code == 0:

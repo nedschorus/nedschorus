@@ -238,8 +238,8 @@ def run_live_supervisor_case(workspace: Path):
               result.returncode == 1, result.stdout + result.stderr)
         check("the live-supervisor refusal says there is nothing to recover",
               "Nothing to recover" in result.stderr, result.stderr)
-        # Conditional for the same reason as handoff-write-and-check-supervisor:
-        # alive can be yes-by-assumption when ps cannot be asked, and promising
+        # Conditional because supervisor_liveness reads an unidentified live lock
+        # holder as alive when ps cannot be asked, and promising
         # a reincarnation nothing keeps is how a seat stays down while its
         # operator believes it is being watched (#328 follow-up round).
         check("and states the reincarnation conditionally, since alive can be an assumption",
@@ -332,8 +332,9 @@ def run_missing_launcher_case(workspace: Path):
         (supervisor_home / supervisor_file).write_text(
             SUPERVISOR_SCRIPT.with_name(supervisor_file).read_text(encoding="utf-8"),
             encoding="utf-8")
-    # uncommitted-work-snapshots.py reads git's output with the shared module,
-    # and the supervisor strips the variables that redirect git with another.
+    # uncommitted-work-snapshots.py reads git's output with one shared module
+    # and writes a restore's task with another, and the supervisor strips the
+    # variables that redirect git with a third.
     general_tools_home = workspace / "nc-systems" / "general-tools"
     general_tools_home.mkdir(parents=True)
     # resupervise-seat.py reads tmux's absent-session answers with the shared
@@ -342,11 +343,12 @@ def run_missing_launcher_case(workspace: Path):
     # answers a Stop hook.
     for general_tools_module in (
             "git-machine-readable-output-runner-and-parser-common.py",
+            "agent-seat-task-list-new-pending-task-write-common.py",
             "git-redirecting-environment-variables-removal-common.py",
             "tmux-target-or-server-does-not-exist-error-pattern-common.py",
             "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py",
             "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py",
-            "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py",
+            "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py",
             "pull-request-conflict-with-main-rebase-or-replace-answer-common.py"):
         (general_tools_home / general_tools_module).write_text(
             (SUPERVISOR_SCRIPT.parents[1] / "general-tools" / general_tools_module)

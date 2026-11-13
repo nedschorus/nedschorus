@@ -1,8 +1,23 @@
 #!/usr/bin/env python3
 """Request a handoff before context runs out.
 
-It fires at a share of the context window, or below that share once it has deferred the
-handoff in this session and the work it deferred for has finished.
+It counts the context used plus the tokens the session's compactions dropped, and asks for the
+/handoff skill once that count reaches --threshold-used-percentage of the context window.
+Below --ceiling-used-percentage, by the same count, it defers instead, saving the work it waits for in
+<session>-handoff-deferred in ~/.claude/handoffs/, while Claude Code's background_tasks list
+shows a running subagent, workflow or background shell task younger than its kind's wait-limit,
+from BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND, or while a
+transcript it reads launch records from cannot be read, since it then cannot tell what runs.
+With no background_tasks list it counts nothing as running.
+
+The post-compaction hook deletes only <session>-handoff-asked, so while <session>-handoff-deferred
+exists the hook still fires below the threshold once the awaited work has finished; it then
+moves that file to <session>-handoff-deferred-fired, where the writer script reads when the
+deferral began.
+
+.claude/settings.json registers it under Stop alone, and a subagent's turn raises SubagentStop,
+so it never runs in a subagent; the subagent line in HANDOFF_DEFERRED_MARKER_NOT_DELETED follows
+the tool-message page's rule for messages that send an agent to the user.
 
 Stop-hook payloads lack context usage; headless sessions lack a status line.
 The transcript supplies usage for both interactive and headless sessions."""
@@ -81,16 +96,24 @@ DEFAULT_THRESHOLD_USED_PERCENTAGE = 33.0
 
 FIRST_TAIL_READ_BYTES = 256 * 1024
 
-# Messages below follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+# Messages below follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 # Keep the procedure in the skill so hook instructions cannot drift from it.
+# The count can pass 100% of the window, so a compacted session's message gives both shares.
+SHARE_WITH_COMPACTION_DROPPED = (
+    "{used_percentage:.0f}% ({used_plus_dropped_percentage:.0f}% counting the "
+    "tokens its compactions dropped, the figure compared with the threshold and the ceiling)"
+)
+
 HANDOFF_INSTRUCTION = (
     "This session has used {share} of its context window, which has "
     "reached the reincarnation threshold. Run the /handoff skill now."
 )
 
 MODEL_ID_NOT_IN_CONTEXT_WINDOW_TABLE_LINE = (
-    "The model id {model} is not in the threshold hook's context-window table, so the share "
-    "above assumes a {default_window_thousands}K window; tell the user, so the table can be updated."
+    "The model id {model} is not in CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX, the threshold-hook's "
+    "context-window table in scripts/handoff-context-threshold-hook.py, so the {share} of its "
+    "context window this session has used assumes a {default_window_thousands}K window; tell the "
+    "user, so the table can be updated."
 )
 
 BACKGROUND_TASKS_LIST_MISSING_SENTENCE = (
@@ -104,13 +127,14 @@ CLAUDE_VERSION_TIMEOUT_SECONDS = 10
 NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION = (
     "Carry on, open approval-walks included. Short work, which usually ends "
     "within 10 minutes, such as a cold-read-fast-read, may start; run such work "
-    "as a subagent or a background Bash task. If that work "
-    "is still running when the session-handoff ends this agent-session, the work "
-    "stops, and the handoff writer script, "
-    "nc-systems/handoff/handoff-write-and-check-supervisor.py, names each "
-    "subagent and each background Bash task still running in your "
-    "session-handoff for your successor, so you need not add that work to your "
-    "task list. Your successor is shown that work, and "
+    "as a subagent or a background Bash task. When you run the handoff writer "
+    "script, nc-systems/handoff/handoff-write-and-check-supervisor.py, before "
+    "this agent-session ends, it names in your session-handoff each subagent "
+    "still working, whenever it started, and each background Bash task that "
+    "started since this handoff-deferral began and is still running, so you need "
+    "not add that work to "
+    "your task list; the end of this agent-session stops that work. Your "
+    "successor is shown that work, and "
     "decides whether to start it again. If the writer script says it could not list "
     "that work, it says what to name by hand; name it in the session-handoff's next "
     "step. Do not start long "
@@ -133,14 +157,19 @@ HANDOFF_DEFERRED_MARKER_NOT_DELETED = (
     "without waiting for an answer."
 )
 
+WAIT_LIMIT_TABLE_LOCATION = (
+    "BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND in scripts/handoff-context-threshold-hook.py")
+WAIT_LIMIT_TABLE_SENTENCE = f"Each kind's wait-limit is in {WAIT_LIMIT_TABLE_LOCATION}."
+
 HANDOFF_DEFERRED_NOTICE = (
     "Context at {share} — handoff deferred while {running} run, because a "
     "handoff now would stop them.\n"
     "Do not run the /handoff skill now; carry on with your work, and a later "
     "system message will tell you when to run it. That message comes once "
     "the work running now has finished ({awaited}), with a background task, "
-    "though not a subagent, counted as finished {wait_minutes:g} minutes after "
-    "its launch even if it still runs, or once this session's context reaches the {ceiling:g}% ceiling. "
+    "though not a subagent, counted as finished once it is as old as its kind's "
+    "wait-limit even if it still runs, or once this session's context reaches the {ceiling:g}% ceiling. "
+    + WAIT_LIMIT_TABLE_SENTENCE + " "
     "Work you start from now on does not delay that message, and when the "
     "handoff comes, it stops whatever is still running.\n"
     + NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION
@@ -153,9 +182,10 @@ HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE = (
     "system message will tell you when to run it. That message comes once "
     "the hook can read the whole transcript and finds that the work started "
     "before now has finished, with a background task, though not a subagent, "
-    "counted as finished {wait_minutes:g} minutes after its launch even if it "
+    "counted as finished once it is as old as its kind's wait-limit even if it "
     "still runs, or once "
-    "this session's context reaches the {ceiling:g}% ceiling. Work you start "
+    "this session's context reaches the {ceiling:g}% ceiling. "
+    + WAIT_LIMIT_TABLE_SENTENCE + " Work you start "
     "from now on does not delay that message, and when the handoff comes, it "
     "stops whatever is still running.\n"
     + NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION
@@ -187,8 +217,67 @@ def awaited_phrase(flight: WorkInFlight) -> str:
     return ", ".join(parts)
 
 
-# Allow a slow cold-read cell plus one retry; the context ceiling still bounds deferral.
-DEFAULT_BACKGROUND_TASK_WAIT_MINUTES = 75.0
+# A background Bash task holds the session-handoff while younger than its kind's wait-limit; past
+# it the task is presumed stuck or open-ended. The first kind with a pattern that matches the whole
+# command (re.fullmatch, ignoring case) is the task's kind. Work kinds come before waiting-task and
+# match a name anywhere, so a command that both does work and waits keeps the work's limit.
+# A waiting-task pattern spells out one whole command, because any work beside the wait would get 0
+# and be killed by the handoff: each operand is one _WORD, which cannot hold a backtick,
+# a command substitution or an unquoted separator. A variable name is read whole, or a failed
+# match backtracks over every way to split it.
+_WORD = r"""(?:[^\s;&|<>()`$'"\\]|\$\w+(?!\w)|\$\{\w+\}|'[^']*'|"(?:[^"`$\\]|\$\w+(?!\w)|\$\{\w+\})*")+"""
+_ARGUMENTS = r"(?:[ \t]+" + _WORD + r")*"
+_REDIRECTIONS = r"(?:[ \t]*(?:\d?>&\d|(?:\d?>>?|&>|<)[ \t]*" + _WORD + r"))*"
+_COMMAND_END = r"[ \t]*(?:;|\n)\s*"
+_COMMAND_PREFIX = r"\s*(?:(?:(?:cd|export)[ \t]+" + _WORD + r"|[A-Za-z_]\w*=(?:" + _WORD + r")?)[ \t]*(?:&&|;|\n)\s*)*"
+_TO_THE_END = _REDIRECTIONS + r"[ \t]*;?\s*"
+_WATCHER = (r"(?:bash[ \t]+|python3(?:[ \t]+-u)?[ \t]+)?(?:" + _WORD + r"/)?"
+            r"(?:watch-and-merge-provisional[\w.-]*|wait-review-runs[\w.-]*"
+            r"|wait-for-next-pull-request-event[\w.-]*|watch-open-pull-requests-nbd\.py)"
+            + _ARGUMENTS + _REDIRECTIONS
+            + r"""(?:[ \t]*\|[ \t]*(?:grep[ \t]+-v[ \t]+(?:'[^']*'|"[^"`$\\]*")|tail[ \t]+-n?[ \t]*\d+))*""")
+_LOOP_CONDITION_CHECK = r"(?:![ \t]+)?(?:grep|pgrep|kill[ \t]+-0|test|\[|true|:)" + _ARGUMENTS + _REDIRECTIONS
+_DEADLINE = r"\$\(date[ \t]+\+%s\)"
+WAIT_LIMIT_TABLE_WAITING_TASK_KIND_NAME = "waiting-task"
+BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND = (
+    ("nc-mutation-testing", (r".*(?:mutation|mutmut|mutant).*",), 105.0),
+    ("test-suite", (r".*(?:run-all-test-suites\.py|pytest|-test\.py\b|_test\.py\b|unittest"
+                    r"|head-tests-with-retry|head-test-run|test-suite|run-suites).*",), 90.0),
+    (WAIT_LIMIT_TABLE_WAITING_TASK_KIND_NAME, tuple(_COMMAND_PREFIX + shape + _TO_THE_END for shape in (
+        r"sleep[ \t]+" + _WORD,
+        r"gh[ \t]+pr[ \t]+checks(?=[^\n;&|]*--watch)" + _ARGUMENTS,
+        r"gh[ \t]+run[ \t]+watch" + _ARGUMENTS,
+        _WATCHER,
+        r"(?:until|while)[ \t]+" + _LOOP_CONDITION_CHECK
+        + r"(?:[ \t]*(?:&&|\|\|)[ \t]*" + _LOOP_CONDITION_CHECK + r")*"
+        + _COMMAND_END + r"do\s+sleep[ \t]+" + _WORD + _COMMAND_END + r"done",
+        r"end=\$\(\([ \t]*" + _DEADLINE + r"[ \t]*\+[ \t]*\d+[ \t]*\)\)" + _COMMAND_END
+        + r"while[ \t]+\[[ \t]+" + _DEADLINE + r"[ \t]+-lt[ \t]+\$end[ \t]+\]" + _COMMAND_END
+        + r"do\s+" + _WATCHER + _COMMAND_END + r"done")), 0.0),
+)
+# Allows a slow cold-read-full-run with one cell relaunch.
+BACKGROUND_TASK_WAIT_LIMIT_MINUTES_WHEN_NO_KIND_MATCHES = 75.0
+BACKGROUND_TASK_KIND_WHEN_NO_KIND_MATCHES = "no kind in the table matched"
+_COMPILED_WAIT_LIMIT_KINDS = [
+    (kind, [re.compile(pattern, re.I | re.S) for pattern in patterns], minutes)
+    for kind, patterns, minutes in BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND]
+
+
+def background_task_kind_and_wait_limit_minutes_from_command(command) -> tuple:
+    """Return (kind, wait-limit in minutes) of the first kind with a pattern that matches the whole
+    command; a command no pattern matches, or None for an unknown command, gets the no-match limit."""
+    if isinstance(command, str):
+        for kind, patterns, minutes in _COMPILED_WAIT_LIMIT_KINDS:
+            if any(pattern.fullmatch(command) for pattern in patterns):
+                return kind, minutes
+    return BACKGROUND_TASK_KIND_WHEN_NO_KIND_MATCHES, BACKGROUND_TASK_WAIT_LIMIT_MINUTES_WHEN_NO_KIND_MATCHES
+
+
+def background_task_still_within_wait(age_seconds, wait_limit_seconds) -> bool:
+    """A task with no readable launch time counts as within its wait, unless its limit is 0."""
+    if wait_limit_seconds <= 0:
+        return False
+    return age_seconds is None or age_seconds < wait_limit_seconds
 
 # Covers a subagent just woken by its own background task, before it has launched or written more.
 SUBAGENT_OWN_TRANSCRIPT_RECENT_WRITE_SECONDS = 5 * 60
@@ -212,12 +301,51 @@ class TranscriptCouldNotBeFullyRead(Exception):
 
 SPAWNED_SUBAGENT_STATUS = "async_launched"
 
+# SendMessage to a finished subagent resumes it under the same task-id; its next notification decides.
+RESUMED_SUBAGENT_KEY = "resumedAgentId"
+
 # Check a toolUseResult key, not raw text: foreground grep output can contain the launch marker.
 BACKGROUND_TASK_LAUNCH_KEY = "backgroundTaskId"
+
+# Claude Code writes no task-notification for a task TaskStop stops; only the TaskStop result,
+# whose toolUseResult carries this key beside task_id, records that the task ended.
+TASK_STOP_TOOL_RESULT_MARKER_KEY = "task_type"
+
+# Only the assistant record of a Bash call run in the background carries this input key.
+BACKGROUND_BASH_CALL_KEY = '"run_in_background"'
 
 # Completion notifications use these tags across several record types.
 TASK_NOTIFICATION_PATTERN = re.compile(r"<task-notification>(.*?)</task-notification>", re.S)
 TASK_NOTIFICATION_TASK_ID_PATTERN = re.compile(r"<task-id>([^<]+)</task-id>")
+
+
+def background_bash_commands_by_tool_use_id_from_line(line: str) -> dict:
+    """Return {tool_use id: command} for the Bash calls run in the background in this transcript
+    line; a line that does not parse gives none, so its task gets the no-match wait-limit."""
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        return {}
+    message = record.get("message") if isinstance(record, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    commands = {}
+    for block in content if isinstance(content, list) else []:
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            continue
+        tool_input = block.get("input")
+        if isinstance(tool_input, dict) and tool_input.get("run_in_background") is True:
+            commands[block.get("id")] = tool_input.get("command")
+    return commands
+
+
+def tool_result_tool_use_id(record):
+    """Return the tool_use id the record's first tool_result answers, or None."""
+    message = record.get("message") if isinstance(record, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    for block in content if isinstance(content, list) else []:
+        if isinstance(block, dict) and block.get("type") == "tool_result":
+            return block.get("tool_use_id")
+    return None
 
 
 def claude_version_or_why_unread() -> str:
@@ -243,16 +371,12 @@ def hook_payload_from_stdin() -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
-def context_window_for(model: str) -> int:
-    """Return the model's context window in tokens."""
+def context_window_tokens_from_table_or_none(model: str):
+    """Return the model's context window in tokens from the table, or None when no prefix matches."""
     for prefix, window in CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX.items():
         if model.startswith(prefix):
             return window
-    return DEFAULT_CONTEXT_WINDOW_TOKENS
-
-
-def model_id_is_in_context_window_table(model: str) -> bool:
-    return any(model.startswith(prefix) for prefix in CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX)
+    return None
 
 
 def newest_assistant_message(path: Path):
@@ -305,7 +429,10 @@ def context_used_tokens_window_and_model_from_transcript(transcript_path: str):
         return None
 
     model = message.get("model", "")
-    return used_tokens_of(message["usage"]), context_window_for(model), model
+    window = context_window_tokens_from_table_or_none(model)
+    if window is None:
+        window = DEFAULT_CONTEXT_WINDOW_TOKENS
+    return used_tokens_of(message["usage"]), window, model
 
 
 def context_used_percentage_from_transcript(transcript_path: str):
@@ -315,6 +442,37 @@ def context_used_percentage_from_transcript(transcript_path: str):
         return None
     used_tokens, window, _model = reading
     return 100.0 * used_tokens / window
+
+
+COMPACTION_RECORD_SUBTYPE = "compact_boundary"
+
+
+def compaction_dropped_tokens_from_transcript(transcript_path: str) -> int:
+    """Return the tokens all of the session's compactions dropped; 0 when it has none."""
+    dropped_tokens = 0
+    # Bytes that are not UTF-8 are read past: raising on them would stop the hook at every Stop.
+    with Path(transcript_path).expanduser().open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if COMPACTION_RECORD_SUBTYPE not in line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            # Claude Code keeps the running total on each compaction record, so the newest one counts.
+            if isinstance(record, dict) and record.get("subtype") == COMPACTION_RECORD_SUBTYPE:
+                dropped_tokens = record["compactMetadata"]["cumulativeDroppedTokens"]
+    return dropped_tokens
+
+
+def context_used_plus_compaction_dropped_percentage_from_transcript(transcript_path: str):
+    """Return the context used plus the tokens compactions dropped, as a percentage of the context
+    window: the count the threshold and the ceiling are measured by. None when unavailable."""
+    reading = context_used_tokens_window_and_model_from_transcript(transcript_path)
+    if reading is None:
+        return None
+    used_tokens, window, _model = reading
+    return 100.0 * (used_tokens + compaction_dropped_tokens_from_transcript(transcript_path)) / window
 
 
 USED_TOKEN_FIELDS = ("input_tokens", "cache_read_input_tokens",
@@ -397,15 +555,20 @@ def spawned_subagent_ids_in_flight(transcript_path: str) -> list:
                           should_read_subagent_own_transcripts=False).subagent_ids
 
 
-def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
+def work_in_flight(transcript_path: str, background_task_wait_seconds=None,
                    now=None, should_read_subagent_own_transcripts=True,
                    should_raise_on_undecodable_bytes=False) -> WorkInFlight:
     """Return running subagents and background tasks in launch order.
 
-    A subagent whose last task-notification is interim counts only while its own transcript
-    shows work in flight; should_read_subagent_own_transcripts=False counts it from the notices alone.
+    A subagent counts from its spawn, or from a resume after a SendMessage, until a final
+    task-notification or a TaskStop call stops it; a TaskStop also ends a background task, and the
+    background tasks of a subagent it stopped. One whose last task-notification is interim counts
+    only while its own transcript shows work in flight; should_read_subagent_own_transcripts=False
+    counts it from the notices alone.
     should_raise_on_undecodable_bytes=True raises TranscriptCouldNotBeFullyRead on bytes that are
     not UTF-8 anywhere in the file, instead of reading past them.
+    background_task_wait_seconds=None gives each background task its kind's wait-limit, from the
+    command of the Bash call that launched it; a number gives every task that wait instead.
     """
     # Scan the whole transcript: a running task may have launched hours before the tail.
     # Unreadable candidates raise; treating an incomplete scan as empty could kill running work.
@@ -418,22 +581,35 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
     spawned_ids = []
     launched_task_ids = []
     launched_task_age = {}
+    launched_task_command = {}
+    background_command_by_tool_use_id = {}
     launched_at_by_id = {}
-    # The last notification for a task-id decides: an interim one leaves its subagent running.
+    # The last notification, TaskStop or resume for a task-id decides: an interim notification
+    # leaves its subagent running, and a resume clears the entry so the subagent counts again.
     last_notification_is_interim = {}
+    # Task-ids a TaskStop ended and no resume has restarted since.
+    stopped_ids = set()
     try:
         decoding_errors = "strict" if should_raise_on_undecodable_bytes else "replace"
         with path.open("r", encoding="utf-8", errors=decoding_errors) as handle:
-            for line in handle:
+            for line_number, line in enumerate(handle, start=1):
                 is_spawn_candidate = SPAWNED_SUBAGENT_STATUS in line
                 is_launch_candidate = BACKGROUND_TASK_LAUNCH_KEY in line
-                if is_spawn_candidate or is_launch_candidate:
+                is_resume_candidate = RESUMED_SUBAGENT_KEY in line
+                is_stop_candidate = TASK_STOP_TOOL_RESULT_MARKER_KEY in line
+                if is_spawn_candidate or is_launch_candidate or is_resume_candidate or \
+                        is_stop_candidate:
                     try:
                         record = json.loads(line)
                     except (json.JSONDecodeError, UnicodeDecodeError) as problem:
-                        raise TranscriptCouldNotBeFullyRead(
-                            f"{path}: a spawn or launch record did not parse"
-                        ) from problem
+                        # A stop record not read only leaves its task counted as running.
+                        if is_spawn_candidate or is_launch_candidate or is_resume_candidate:
+                            raise TranscriptCouldNotBeFullyRead(
+                                f"{path}, line {line_number}: a spawn, resume or launch record did "
+                                f"not parse ({problem}); the line's first 200 characters: "
+                                f"{line[:200].rstrip()!r}"
+                            ) from problem
+                        record = None
                     tool_result = record.get("toolUseResult") if isinstance(record, dict) else None
                     if not isinstance(tool_result, dict):
                         tool_result = {}
@@ -443,16 +619,32 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
                         if agent_id and agent_id not in spawned_ids:
                             spawned_ids.append(agent_id)
                             launched_at_by_id[agent_id] = record_time(record)
+                    # A resume clears the subagent's last notification and its stop, so it counts
+                    # as in flight again; a record without the key uses None, which is never a key.
+                    last_notification_is_interim.pop(tool_result.get(RESUMED_SUBAGENT_KEY), None)
+                    stopped_ids.discard(tool_result.get(RESUMED_SUBAGENT_KEY))
                     if is_launch_candidate:
                         task_id = tool_result.get(BACKGROUND_TASK_LAUNCH_KEY)
                         if task_id and task_id not in launched_task_age:
                             launched_task_ids.append(task_id)
                             launched_task_age[task_id] = record_age_seconds(record, now)
+                            launched_task_command[task_id] = background_command_by_tool_use_id.get(
+                                tool_result_tool_use_id(record))
                             launched_at_by_id[task_id] = record_time(record)
+                    stopped_id = tool_result.get("task_id")
+                    if TASK_STOP_TOOL_RESULT_MARKER_KEY in tool_result and isinstance(stopped_id, str):
+                        last_notification_is_interim[stopped_id] = False
+                        stopped_ids.add(stopped_id)
+                if BACKGROUND_BASH_CALL_KEY in line:
+                    background_command_by_tool_use_id.update(
+                        background_bash_commands_by_tool_use_id_from_line(line))
                 if "<task-id>" in line:
                     for notification in TASK_NOTIFICATION_PATTERN.findall(line):
                         interim = interim_recognizer.task_notification_is_interim(notification)
                         for task_id in TASK_NOTIFICATION_TASK_ID_PATTERN.findall(notification):
+                            # An interim notice queued before a TaskStop can arrive after it.
+                            if interim and task_id in stopped_ids:
+                                continue
                             last_notification_is_interim[task_id] = interim
     except (OSError, UnicodeDecodeError) as problem:
         raise TranscriptCouldNotBeFullyRead(f"{path}: {problem}") from problem
@@ -461,13 +653,16 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
                     if not interim}
 
     def still_within_wait(task_id):
-        age = launched_task_age[task_id]
-        return age is None or age <= background_task_wait_seconds
+        wait_limit_seconds = (
+            background_task_kind_and_wait_limit_minutes_from_command(launched_task_command[task_id])[1] * 60
+            if background_task_wait_seconds is None else background_task_wait_seconds)
+        return background_task_still_within_wait(launched_task_age[task_id], wait_limit_seconds)
 
     def subagent_still_in_flight(agent_id):
         if agent_id in finished_ids:
             return False
-        # A subagent with no notice yet has not stopped once; only an interim last notice is doubted.
+        # A subagent with no notice since its spawn or resume has not stopped; only an interim
+        # last notice is doubted.
         if agent_id not in last_notification_is_interim or not should_read_subagent_own_transcripts:
             return True
         return subagent_own_transcript_shows_work_in_flight(
@@ -482,14 +677,16 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
 
 
 def work_in_flight_from_background_tasks(background_tasks: list, transcript_path: str,
-                                        background_task_wait_seconds: float,
+                                        background_task_wait_seconds=None,
                                         now=None) -> WorkInFlight:
     """Return the running subagents, workflows and background shell tasks on Claude Code's list.
 
     The list gives no start time and shows a Monitor as a shell task, so each listed shell task's
-    launch record is looked up in the session's transcript and its subagents' transcripts: a shell
-    task launched by the Monitor tool holds nothing, nor does one launched longer ago than the wait;
-    one whose launch no transcript records counts as within its wait. Each listed subagent and shell
+    launch record is looked up in the session's transcript and its subagents' transcripts, the
+    Workflow-tool agents' included: a shell task launched by the Monitor tool holds nothing, nor
+    does one at least as old as its wait; one whose launch no transcript records counts as
+    within its wait, unless its wait is 0. background_task_wait_seconds=None gives each shell task
+    its kind's wait-limit, from the list entry's command; a number gives every task that wait. Each listed subagent and shell
     task is dated by its launch record, for a deferral that saved no list, and so is each subagent
     off the list whose transcript launched a listed shell task; a workflow, or work whose launch no
     transcript records, has no date. An entry that is not a running subagent, workflow or
@@ -509,9 +706,13 @@ def work_in_flight_from_background_tasks(background_tasks: list, transcript_path
     launch_ages, monitor_ids, launching_subagent_id_by_task_id = (
         shell_task_launch_ages_and_monitor_ids(transcript_path, shell_ids, now))
 
+    command_by_id = {entry["id"]: entry.get("command") for entry in running}
+
     def still_within_wait(task_id):
-        age = launch_ages.get(task_id)
-        return age is None or age <= background_task_wait_seconds
+        wait_limit_seconds = (
+            background_task_kind_and_wait_limit_minutes_from_command(command_by_id.get(task_id))[1] * 60
+            if background_task_wait_seconds is None else background_task_wait_seconds)
+        return background_task_still_within_wait(launch_ages.get(task_id), wait_limit_seconds)
 
     subagent_ids = ids_of(SUBAGENT_TASK_TYPE)
     launching_subagent_ids_off_the_list = sorted(
@@ -575,7 +776,7 @@ def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list
     subagent_directory = session_path.with_suffix("") / "subagents"
     # An undated subagent shell task counts as within its wait, so a subagent directory that
     # cannot be listed only keeps the handoff waiting, up to the ceiling.
-    paths = [session_path, *sorted(subagent_directory.glob("*.jsonl"))]
+    paths = [session_path, *session_subagent_transcript_paths(session_path)]
     for path in paths:
         try:
             with path.open("r", encoding="utf-8", errors="replace") as handle:
@@ -600,11 +801,14 @@ def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list
                     if tool_result.get(BACKGROUND_TASK_LAUNCH_KEY) in shell_ids:
                         launch_ages.setdefault(tool_result[BACKGROUND_TASK_LAUNCH_KEY],
                                                record_age_seconds(record, now))
-                        if path != session_path and path.stem.startswith(SUBAGENT_TRANSCRIPT_PREFIX):
+                        # A Workflow-tool agent's task is tied to no subagent: the workflow is
+                        # listed while its agents run, and their tasks are killed with it.
+                        if path.parent == subagent_directory \
+                                and path.stem.startswith(SUBAGENT_TRANSCRIPT_PREFIX):
                             launching_subagent_id_by_task_id.setdefault(
                                 tool_result[BACKGROUND_TASK_LAUNCH_KEY],
                                 path.stem[len(SUBAGENT_TRANSCRIPT_PREFIX):])
-                    if MONITOR_LAUNCH_KEY in tool_result and tool_result.get("taskId") in shell_ids:
+                    if MONITOR_LAUNCH_KEY in tool_result and tool_result.get("taskId") in shell_ids:  # pragma: no mutate, only a Monitor's result carries timeoutMs and it always carries a taskId, while the other results with a taskId are task-list updates, whose numeric ids no shell task has, so or acts as and
                         monitor_ids.add(tool_result["taskId"])
         except OSError as problem:
             raise TranscriptCouldNotBeFullyRead(f"{path}: {problem}") from problem
@@ -614,6 +818,15 @@ def shell_task_launch_ages_and_monitor_ids(transcript_path: str, shell_ids: list
 SUBAGENT_TRANSCRIPT_PREFIX = "agent-"
 
 
+def session_subagent_transcript_paths(session_transcript_path) -> list:
+    """Return the session's subagent transcripts, sorted: the Agent-tool subagents' beside the
+    session's, then the Workflow-tool agents', one directory per workflow run under workflows/."""
+    subagent_directory = Path(session_transcript_path).with_suffix("") / "subagents"
+    # A workflow run's directory also holds journal.jsonl, which is not a transcript.
+    return [*sorted(subagent_directory.glob("*.jsonl")),
+            *sorted(subagent_directory.glob(f"workflows/*/{SUBAGENT_TRANSCRIPT_PREFIX}*.jsonl"))]
+
+
 def subagent_transcript_path(session_transcript_path, agent_id) -> Path:
     """Return where Claude Code writes the subagent's own transcript, beside the session's."""
     return (Path(session_transcript_path).with_suffix("") / "subagents"
@@ -621,7 +834,7 @@ def subagent_transcript_path(session_transcript_path, agent_id) -> Path:
 
 
 def subagent_own_transcript_shows_work_in_flight(subagent_path: Path,
-                                                 background_task_wait_seconds: float,
+                                                 background_task_wait_seconds,
                                                  now) -> bool:
     """Return True while the subagent's own transcript was written within the recent-write
     window, or shows a background task of its own still within its wait.
@@ -690,12 +903,10 @@ def defer(session_id, used, share, flight, arguments, unreadable_marker_problem=
     lines = [
         HANDOFF_DEFERRED_NOTICE.format(
             share=share, running=running_phrase(flight), awaited=awaited_phrase(flight),
-            wait_minutes=arguments.background_task_wait_minutes,
             ceiling=arguments.ceiling_used_percentage)
         if count_is_known
         else HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE.format(
-            share=share, wait_minutes=arguments.background_task_wait_minutes,
-            ceiling=arguments.ceiling_used_percentage)
+            share=share, ceiling=arguments.ceiling_used_percentage)
     ]
     try:
         handoff_deferred_marker_and_refused_commands_files_common.handoff_deferred_marker_write(HANDOFF_DIRECTORY, session_id, marker_record)
@@ -710,18 +921,17 @@ def defer(session_id, used, share, flight, arguments, unreadable_marker_problem=
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Fire the handoff skill when context runs low.")
+    parser = argparse.ArgumentParser(description="Fire the handoff skill when context runs low.",
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--threshold-used-percentage", type=float,
-                        default=DEFAULT_THRESHOLD_USED_PERCENTAGE)
+                        default=DEFAULT_THRESHOLD_USED_PERCENTAGE,
+                        help="the share of the context window, in percent, that the context used "
+                             "plus the tokens compactions dropped must reach for the hook to ask "
+                             "for the /handoff skill: the reincarnation threshold")
     parser.add_argument(
         "--ceiling-used-percentage", type=float, default=65.0,
-        help="above this used share the handoff fires even with work in flight",
-    )
-    parser.add_argument(
-        "--background-task-wait-minutes", type=float,
-        default=DEFAULT_BACKGROUND_TASK_WAIT_MINUTES,
-        help="a background Bash task older than this no longer holds the handoff: "
-             "it is presumed stuck or open-ended",
+        help="the share of the context window, in percent, at or above which the context used "
+             "plus the tokens compactions dropped fires the handoff even with work in flight",
     )
     arguments = parser.parse_args(argv)
 
@@ -742,10 +952,14 @@ def main(argv=None) -> int:
     if reading is None:
         return 0
     used_tokens, window, model = reading
-    used = 100.0 * used_tokens / window
-    share = f"{used:.0f}%"
-    # A compaction can drop the share below the threshold after a deferral; the deferred marker
-    # records that the threshold was passed, so the handoff its notice promised still comes.
+    dropped_tokens = compaction_dropped_tokens_from_transcript(transcript_path)
+    used = 100.0 * (used_tokens + dropped_tokens) / window
+    share = (SHARE_WITH_COMPACTION_DROPPED.format(
+                 used_percentage=100.0 * used_tokens / window, used_plus_dropped_percentage=used)
+             if dropped_tokens else f"{used:.0f}%")
+    # The count can fall below the threshold after a deferral, as when the session moves to a model
+    # with a larger window; a compaction does not lower it. The deferred marker records that the
+    # threshold was passed, so the handoff its notice promised still comes.
     if used < arguments.threshold_used_percentage and not deferred_marker_path(session_id).exists():
         return 0
 
@@ -758,9 +972,7 @@ def main(argv=None) -> int:
         # An incomplete scan is not an all-clear; defer only as far as the context ceiling.
         try:
             flight = (WorkInFlight([], []) if background_tasks_list_is_missing
-                      else work_in_flight_from_background_tasks(
-                          background_tasks, transcript_path,
-                          arguments.background_task_wait_minutes * 60))
+                      else work_in_flight_from_background_tasks(background_tasks, transcript_path))
             count_is_known = True
         except TranscriptCouldNotBeFullyRead:
             flight = None
@@ -804,9 +1016,10 @@ def main(argv=None) -> int:
                   path=deferred_marker, host=socket.gethostname(), error=error),
               file=sys.stderr)
     # Printed last: the marker message above refers to the instruction just before it.
-    if not model_id_is_in_context_window_table(model):
+    if context_window_tokens_from_table_or_none(model) is None:
         print(MODEL_ID_NOT_IN_CONTEXT_WINDOW_TABLE_LINE.format(
-                  model=model, default_window_thousands=DEFAULT_CONTEXT_WINDOW_TOKENS // 1000),
+                  model=model, share=share,
+                  default_window_thousands=DEFAULT_CONTEXT_WINDOW_TOKENS // 1000),
               file=sys.stderr)
     return 2
 

@@ -14,7 +14,11 @@ which finds the open walk, its waiting items and its walk-document's items. It
 also loads the answer hook,
 walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-user-prompt-submit-hook.py,
 for the closing line's answer letters, ANSWER_LETTERS_TEXT, and for its
-closing_line, which builds the closing line the refusal's step 3 gives.
+closing_line, which builds the closing line the refusal's step 3 gives; and,
+when it refuses, the walk check program,
+walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py, for
+the category and waits-on tags the refusal's step 1 names, which that
+program's close step reads to choose when the new item is shown.
 
 EVERY TURN is checked, whoever started it: the user, another agent-seat, a
 background-task notice. THE REPLY is the text of every assistant message
@@ -24,11 +28,19 @@ the Stop hook before it has written the final message to the transcript.
 
 THE TEXT CHECKED is the reply, line by line, without:
 - every item of the walk-document the reply shows: an item is shown when a
-  reply line matches its heading, and then every reply line matching a line
-  of the item, from its heading to its answer line, is left out, apart from
-  a Withdrawn version's lines, from its Withdrawn heading to the next
-  opening that names an item, as the approval-walk finder reads them, and so is
-  one matching the answer line's first sentence, the walk-me-through skill's
+  reply line matches the heading of its unit, the item's own opening, as the
+  approval-walk finder reads openings, or `Item N of M: <the point>` or
+  `Item N of M` alone naming that item, whatever M it gives; and then every
+  reply line matching its unit's heading or a line of the item is left out,
+  and, when a reply line matches the unit's heading, one matching a line
+  between that heading and the unit's first item or first Withdrawn
+  heading, a `#new` or `#new_if_d` line there included as shown below.
+  The item's lines are those the approval-walk finder's line-range helper
+  gives it, which leave out a Withdrawn version's lines, up to its answer
+  line; an item without an opening under a heading shared by several items
+  holds the whole unit, every answer line included, since its lines cannot
+  be told from the other items'. So is a reply line matching
+  the answer line's first sentence, the walk-me-through skill's
   answer line without what the item adds after it, such as ` D: <the
   alternative>`; and one showing a line of the item that opens with the
   mark `#new` or `#new_if_d` as the agent shows it, the mark replaced by
@@ -157,8 +169,8 @@ that is not JSON or a file it cannot read, the hook prints one line naming it
 on stderr and exits 1: Claude Code records a Stop hook's exit 1 as a
 non-blocking error and still ends the turn.
 
-Agent-facing messages follow
-docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+Tool-messages-to-agent follow
+docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 """
 import datetime
 import functools
@@ -174,12 +186,15 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 CURRENT_ITEM_HOOK_FILE = HERE / "walk-me-through-agent-reply-to-user-not-ending-with-waiting-item-closing-line-refusal-stop-hook.py"
 WALK_FINDER_FILE = HERE / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py"
+WALK_CHECK_PROGRAM = HERE / "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py"
 ANSWER_HOOK_FILE = (HERE / "walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-"
                     "user-prompt-submit-hook.py")
 REPOSITORY_TOP = HERE.parents[2]
 STOP_HOOKS_STAY_SILENT_RULE_FILE = (
     REPOSITORY_TOP / "nc-systems" / "general-tools"
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
+ATTENDANCE_CHECK_FILE = (REPOSITORY_TOP / "nc-systems" / "general-tools"
+                         / "agent-session-unattended-by-user-check-common.py")
 PATH_CONSTANTS_FILE = (REPOSITORY_TOP / "nc-systems" / "general-tools"
                        / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
 CLAUDE_CODE_COMMAND_LINE_PREFIX_FILE = (
@@ -297,10 +312,14 @@ MODEL_CHECK_FAILED_NOTICE = ("the hook's `claude -p` call that has the model jud
 REFUSAL_INSTRUCTIONS = (
     "If the flagged text asks the user to decide or answer something, do these three steps:",
     "1. Add it to the walk-document {document} as an interruption item headed `## <the point of the question>`, "
-    "with no number, placed right after item {last_waiting}. Do not number it yourself: when the user answers item "
-    "{last_waiting}, the close step of "
+    "with no number, placed right after item {last_waiting}. Under the heading, give it a line of its own naming "
+    "its category, the one for how soon its work must happen, one of {category_tags}, and a line "
+    "`{waits_on_tag} <title>` for each item it must follow, as the walk-me-through skill's section "
+    "\"Re-planning\" says. Do not number it yourself: the close step of "
     "nc-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py "
-    "writes the next number into this heading. "
+    "chooses when, among the items not yet shown, the user sees it, by the items it waits on, its category and the "
+    "day it first entered a walk, so it may come later than right after item {last_waiting}, and writes its number "
+    "into this heading then. "
     "Quote the question whole "
     "in the item, as its asker wrote it, whether you or another agent, giving each line of the flagged text a "
     "line of its own, word for word, and putting the rest of the question on other lines of the item. This hook passes the "
@@ -310,9 +329,9 @@ REFUSAL_INSTRUCTIONS = (
     "Give the item one recommendation and one alternative, and end it with the recommendation stated as an "
     "action, as in `Recommendation: <what you recommend doing>.` State the alternative before it, as in "
     "`The alternative: <what D does instead>.`",
-    "2. Do not show the new item now: it is shown after item {waiting} is answered.",
+    "2. Do not show the new item now: the walk shows it when its turn comes.",
     "3. The flagged text has already reached the user, so leave it. End the message you write next with the line "
-    "`I added the question as a new item after item {last_waiting}.` and then {closing_lines_named}, as the "
+    "`I added the question to the walk as a new item.` and then {closing_lines_named}, as the "
     "walk-me-through skill writes it, as the last text of that message:\n{closing_lines}{no_page}",
     "If the flagged text does not ask the user anything, reword it in your reply so that it no longer reads "
     "as a question for him, and end the turn.",
@@ -358,6 +377,8 @@ def load_module(name, path):
 
 walk_finder = load_module("walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
                           WALK_FINDER_FILE)
+# An item's own heading as the agent shows it, normalized: `Item N of M: <the point>` with one item, whatever M gives.
+ITEM_OWN_HEADING = re.compile(rf"item ({walk_finder.NUMBER}) of \d+(?::|$)")
 current_item_hook = load_module("walk_me_through_agent_reply_to_user_not_ending_with_waiting_item_closing_line_refusal_stop_hook",
                                 CURRENT_ITEM_HOOK_FILE)
 answer_hook = load_module(
@@ -436,25 +457,35 @@ def new_text_as_shown(line):
 
 
 def shown_item_lines(reply_lines, document_lines, units, openings):
-    """The normalized lines, heading to answer line, of every unit whose heading a reply line matches, the answer
-    line's answer sentence alone, and each `#new` or `#new_if_d` line as the agent shows it; a Withdrawn version's
-    lines, from its Withdrawn heading to the next of the approval-walk finder's openings that names an item, are
-    not the item's, so they are left out."""
+    """The normalized lines of every item the reply shows, as the module docstring's THE TEXT CHECKED says: the
+    heading of its unit, the unit's lines before its first item's or its first Withdrawn heading when the reply
+    holds that heading, and its lines as the approval-walk finder's line-range helper gives them, up to its answer
+    line, or, for an item without an opening under a heading shared by several items, the whole unit; with each
+    answer line's answer sentence alone and each `#new` or `#new_if_d` line as the agent shows it."""
     reply_set = normalized_lines(reply_lines)
+    own_headings = {heading[1] for heading in map(ITEM_OWN_HEADING.match, reply_set) if heading}
     shown = set()
-    for _, _, _, first, end in units:
-        if normalized(document_lines[first]) not in reply_set:
-            continue
-        withdrawn = False
-        for number, line in enumerate(document_lines[first:end], first):
-            if number in openings:
-                withdrawn = not openings[number][0]
-            if withdrawn:
+    for numbers, total, _, first, end in units:
+        unit_shown = normalized(document_lines[first]) in reply_set
+        spans = [(number, *(walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
+            openings, first, end, number, numbers, total) if len(numbers) > 1 else (first, end)))
+                 for number in numbers or [None]]
+        if unit_shown:
+            # A Withdrawn heading, an opening that names no item, ends the lead-in as it ends an item's lines.
+            withdrawn = [line for line in openings if first < line < end and not openings[line][0]]
+            for line in document_lines[first:min([start for _, start, _ in spans] + withdrawn)]:
+                shown |= normalized_lines([line, new_text_as_shown(line) or ""])
+        for number, start, stop in spans:
+            if not (unit_shown or number in own_headings or normalized(document_lines[start]) in reply_set):
                 continue
-            shown |= normalized_lines([line, new_text_as_shown(line) or ""])
-            if normalized(line).startswith(ANSWER_LINE_START):
-                shown |= normalized_lines([answer_sentence(line)])
-                break
+            # The whole unit stands for each of its items, so no item's answer line ends it.
+            whole_shared_unit = len(numbers) > 1 and start == first
+            for line in document_lines[start:stop]:
+                shown |= normalized_lines([line, new_text_as_shown(line) or ""])
+                if normalized(line).startswith(ANSWER_LINE_START):
+                    shown |= normalized_lines([answer_sentence(line)])
+                    if not whole_shared_unit:
+                        break
     return shown
 
 
@@ -664,8 +695,8 @@ def run(stdin_text, environment):
 
 def output_for(payload, environment, model=model_judgement):
     """A block naming the sentence that asks the user something outside the walk's items, or None."""
-    if (environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
-            or environment.get("CLAUDE_CODE_SESSION_ATTENDED") == "0"):
+    if load_module("agent_session_unattended_by_user_check_common",
+                   ATTENDANCE_CHECK_FILE).agent_session_unattended_by_user(environment):
         return None
     transcript_path = payload.get("transcript_path")
     if not transcript_path or not Path(transcript_path).expanduser().is_file() or not payload.get("cwd"):
@@ -723,9 +754,14 @@ def output_for(payload, environment, model=model_judgement):
     waiting = numbers[-1]
     waiting_label = " and ".join(numbers)
     new_total = str(int(total) + 1)
+    # Loaded only here, on the way to a refusal, so a reply that passes does not pay for it.
+    check_and_close = load_module("walk_me_through_answer_added_texts_cold_read_fast_read_check_and_close",
+                                  WALK_CHECK_PROGRAM)
     closing, without_page = closing_lines(pages, name, document_text, units, parser, numbers, new_total)
     values = {"walk": name, "last_waiting": waiting, "sentence": sentence, "decided": decided, "waiting": waiting_label,
-              "document": document,
+              "document": document, "waits_on_tag": check_and_close.WALK_WAITS_ON_TAG,
+              "category_tags": ", ".join(f"`{check_and_close.WALK_CATEGORY_TAG}{category}`"
+                                         for category in check_and_close.WALK_CATEGORIES),
               "closing_lines_named": SEVERAL_CLOSING_LINES_NAMED if numbers[1:] else ONE_CLOSING_LINE_NAMED,
               "closing_lines": "\n".join(closing), "no_page": NO_PAGE_TEMPLATE.format(
                   items=("items " if without_page[1:] else "item ") + " and ".join(without_page),

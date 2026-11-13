@@ -918,6 +918,22 @@ with tempfile.TemporaryDirectory() as temporary:
     check("no merge state is left behind",
           not (seat / ".git" / "MERGE_HEAD").exists())
 
+    # An ignored directory at a path main newly tracks: without
+    # --no-overwrite-ignore, git replaces its file with main's, and the only copy is lost.
+    origin, seat = _make_origin_and_seat(root, "ff-ignored")
+    (origin / "ignored-here").mkdir()
+    _commit(origin, "ignored-here/notes.md", "main's copy\n", "main tracks a file the seat ignores")
+    (seat / "ignored-here").mkdir()
+    (seat / "ignored-here" / ".gitignore").write_text("*\n", encoding="utf-8")
+    (seat / "ignored-here" / "notes.md").write_text("the only copy\n", encoding="utf-8")
+    head_before = _git(["rev-parse", "HEAD"], seat).stdout.strip()
+    line = ghi_ask.fast_forward_seat_checkout(seat)
+    check("a fast-forward over an ignored file at a path main tracks is refused, naming the file",
+          "would not fast-forward" in line and "ignored-here/notes.md" in line
+          and _git(["rev-parse", "HEAD"], seat).stdout.strip() == head_before, line)
+    check("and the ignored file survives",
+          (seat / "ignored-here" / "notes.md").read_text(encoding="utf-8") == "the only copy\n")
+
     not_a_checkout = root / "not-a-checkout"
     not_a_checkout.mkdir()
     line = ghi_ask.fast_forward_seat_checkout(not_a_checkout)

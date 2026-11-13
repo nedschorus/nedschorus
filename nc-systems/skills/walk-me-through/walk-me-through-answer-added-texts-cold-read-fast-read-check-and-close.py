@@ -10,8 +10,10 @@ Usage, from the agent-session's checkout:
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check
       [--obvious | --after-advisor | --disapproved | --deferred | --option N
        | --part-answer N=ANSWER ... | --moved-on-no-decision | --not-asked KIND|none
-       | --already-decided USER_RULING | --moved-on REASON]
-      --user-reply-as-typed REPLY    (every answer but --not-asked, --already-decided and --moved-on)
+       | --already-decided USER_RULING | --now-over-later-already-decided
+       | --moved-on REASON]
+      --user-reply-as-typed REPLY    (every answer but --not-asked, --already-decided,
+                                      --now-over-later-already-decided and --moved-on)
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py close
       [--hold-answer-until-new-item-answered]
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py approval-walk-waiting-item-cold-read-fast-read
@@ -24,23 +26,34 @@ recommendation. R, E and O decide nothing, so the program takes no flag for
 them. --part-answer, given once for each part of an item that holds parts, as
 in `--part-answer 1=A --part-answer 2=D`, gives that part its own answer, A, AO
 or D. Z is not taken for a part, and a part number given twice is refused,
-writing nothing. Two flags record an item the user is not shown, so that no
+writing nothing. Three flags record an item the user is not shown, so that no
 agent writes a deciding line by hand: --already-decided for an item an earlier
 user-ruling decides as the item recommends, USER_RULING citing that ruling,
-which adds the `#new` texts as A does; and --moved-on for an item the walk
+which adds the `#new` texts as A does; --now-over-later-already-decided, the
+same with the now-over-later ruling as its citation; and --moved-on for an item the walk
 leaves with no decision, REASON saying why, which changes nothing.
 --moved-on-no-decision records that the user moved on from an
 item that asks for no decision, such as a summary item: it needs no
 `#case_against` line, runs no fast read, and close records the item as `<moved on, no
-decision>`.
+decision>`. It is refused, writing nothing, for an item that has a recommendation as
+the short-answer hook reads it: text after its last "Recommendation:", outside
+fenced or indented code and HTML comments, because that item asks for a decision.
+It is refused too, writing nothing, when the item has no such recommendation but
+does have one once a `<!--` inside an HTML tag opens no comment, as when the
+`<!--` in an attribute, such as `<div title="<!--">`, hides the recommendation
+from the short-answer hook's reading.
 
-Every answer but --not-asked, --already-decided and --moved-on, which record an
-item the user is not shown, needs --user-reply-as-typed, the user's reply
+Every answer but --not-asked, --already-decided, --now-over-later-already-decided
+and --moved-on, which record an item the user is not shown, needs --user-reply-as-typed, the user's reply
 exactly as he typed it; check writes it, its whitespace runs squeezed to single
-spaces, into the answer line right after the date, as in `in his words "a
-trivial - a bit longer doesn't matter."`, so that the minutes keep a
-remark that rides with the answer. A check without it is refused, writing
-nothing, and so is one that gives it with any of those three. A reply that is a
+spaces, into the answer line right after the time of the answer, which check
+writes in UTC marked Z, in the form `(YYYY-MM-DD HH:MMZ)`, as in ``in his words "`a
+trivial - a bit longer doesn't matter.`"``, so that the minutes keep a
+remark that rides with the answer. The reply, USER_RULING, REASON and the start
+of each text in a status line are written as code spans, so that a
+`#next_to_present` or `#approval_walk_paused` inside them is not read as the
+walk's marker. A check without --user-reply-as-typed is refused, writing
+nothing, and so is one that gives it with any of those four. A reply that is a
 navigation word alone, next, N, continue or go, whatever its case and any
 trailing period or exclamation mark, is refused for every answer but
 --moved-on-no-decision, writing nothing: it approves nothing, and the
@@ -113,13 +126,31 @@ another weak one, or a fix that matches its design from one that does not;
 the agent judges those.
 
 `--not-asked none` settles an item of none of those kinds, only when its
-`#case_against` line rates the case against none. It needs a touches line,
+`#case_against` line rates the case against none or weak. It needs a touches line,
 which may be empty for a change that touches no file, such as doing nothing;
-it refuses a touched file that is not in the checkout, and one the instruction-file guard,
-.claude/guard-hooks/instruction-file-guard.py, protects, because an item that
-adds words the user has not approved to such a file is shown to him; the
-guard's own functions decide which files those are. The minutes write the
-answer as `not asked, case against none`.
+an item without that line comes to the user. It refuses a touched file that is
+not in the checkout. Rated none, it refuses a touched file the instruction-file
+guard, .claude/guard-hooks/instruction-file-guard.py, protects, because an item
+that adds words the user has not approved to such a file is shown to him.
+Rated weak, it refuses only a touched Markdown file, a `.md` file, the guard
+protects, because the user reviews the English agents follow and lets other code,
+hooks included, settle; the agent judges what code cannot, that the case
+against names only cost and that the change neither widens an agent's
+permissions nor turns off a guard. The guard's own functions decide which files
+it protects. The minutes write the answer as `not asked, case against none`,
+or, rated weak, `not asked, case against weak, cost only`.
+
+`--now-over-later-already-decided` is --already-decided with the citation
+supplied by the program, NOW_OVER_LATER_USER_RULING_CITATION, the user-ruling
+that he is always for building now when the agents recommend now over later;
+what this docstring says of --already-decided holds for it. It is for an item whose
+only choice is whether to build something now or later and which recommends
+now, and APPROVAL-WALK-WAITING-ITEM-COLD-READ-FAST-READ, below, says so in the
+line that tells the agent to present the item. Before it writes anything, it
+refuses an item that holds a `Part N.` paragraph, as the walk-me-through
+UserPromptSubmit hook's part_starts finds one, a line opening `Option N`, or
+a `#new_if_d` mark, since each of those is a choice the user makes, and
+lists each such line by its line number in the walk-document.
 
 The open approval-walk and its waiting items are found with
 walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py,
@@ -137,7 +168,8 @@ the text is the rest of the line, without one pair of surrounding quotation
 marks. Before it reads them, CHECK refuses, writing nothing, for every answer but
 --deferred, --moved-on-no-decision and --moved-on, which add no text, when
 any `#new` or `#new_if_d` line of the item has no text after its mark,
-is inside fenced or indented code, or opens a paragraph that runs onto the
+is inside fenced or indented code, has text cut from its own line as an HTML
+comment, even one inside a code span, or opens a paragraph that runs onto the
 lines right below it, since those texts would miss their fast read; the
 refusal lists each such mark by its line number, gives the text joined into
 one line where it can find it, from the run-on lines, from the rest of the
@@ -207,7 +239,9 @@ minutes' last line, naming the next item: walking the walk-document's items in
 order, unnumbered items included, a once-deferred item placed just before the
 summary item, from the item after the answered one, and round again from the
 first, the first item the minutes do not record; `none, closed` when there is
-none. The summary item is the one whose heading's point, after its running
+none. The minutes record an item with sub-steps, such as 3 with 3.1 and 3.2,
+once they decide every one of its sub-steps, unless its own answer is held
+and no line decides it yet. The summary item is the one whose heading's point, after its running
 count, or its whole title when it has no number, opens with "summary". When
 the next item is unnumbered, a `## <title>` heading as the walk finder reads
 one, CLOSE first writes its running count into that heading, `## Item K of M:
@@ -222,7 +256,10 @@ and, for each answered item and each item whose held answer it decides with
 it, posts on every pull request with a review holding the line
 `#held_on_ruling <walk name> item <number>` the comment `#ruling_given <walk
 name> item <number> <word>`, naming the same walk and item, so that a pull
-request held on two items gets a comment for each that tells them apart.
+request held on two items gets a comment for each that tells them apart. An
+item the answer decides through its last sub-step gets a comment too, its word
+its sub-steps' one word, moved_on ones left out, or part_answers when they
+differ.
 The walk name is the walk-minutes' file name without `-minutes.md`; a
 review line matches only when, whitespace at its ends aside, it is that line
 exactly. The word is `approved` for an answer recorded `<accepted>`, an
@@ -344,7 +381,7 @@ beside the walk-minutes: `<key>.md` holds the text, the one an
 `<key>-outcome.json` the read's outcome, done with its report and the fast
 read's notes or failed with its FAILED line, with the item and the time it
 ended; `<key>-started.json` the read-ahead worker's pid; and `<key>.log` the
-worker's output. docs/walk/ is gitignored, and scripts/walk-files-ship.py ships
+worker's output. docs/walk/ is gitignored, and nc-systems/skills/walk-me-through/walk-files-ship.py ships
 only the walk's own files, not this directory: each read's cold-read-record
 keeps its own copy of the text read. The step
 approval-walk-item-cold-read-fast-read-review-background-worker is that
@@ -353,8 +390,8 @@ detached read-ahead worker, which only close and the step above start.
 No open approval-walk, or an item the walk-minutes or the walk-document do not
 let the program find, is a failure: one line on stderr, exit 1.
 
-Agent-facing messages follow
-docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+Tool-messages-to-agent follow
+docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 """
 import argparse
 import collections
@@ -405,6 +442,8 @@ CASE_AGAINST_HASHTAG = " #case_against_{rating}"
 NOT_ASKED_RATINGS = ("none", "weak")
 NOT_ASKED_KINDS = (1, 2, 3, 4, 5, 6)
 NOT_ASKED_RATED_NONE = "none"
+NOT_ASKED_RATED_WEAK = "weak"
+NOT_ASKED_WEAK_COST_ONLY_LABEL = "case against weak, cost only"
 INSTRUCTION_FILE_GUARD_FILE = REPOSITORY_TOP / ".claude" / "guard-hooks" / "instruction-file-guard.py"
 OPTION_NUMBERS = (2, 3)
 EVIDENCE_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*(#not_asked_(?:touches|test|source|unused|rename|glossary_term|hashtag_marker))"
@@ -509,7 +548,7 @@ MORE_THAN_ONE_UNCLOSED_APPROVAL_WALK = (
     "work, each prerequisite before the item it blocks; related items next to each other; and older items before "
     "newer ones; and renumber the items after it that he has not yet seen; then close each other approval-walk: add "
     "the line `#next_to_present none, closed` as the last line of its walk-minutes, and run "
-    "`scripts/walk-files-ship.py <its name>`.\n"
+    "`nc-systems/skills/walk-me-through/walk-files-ship.py <its name>`.\n"
     "Then run the command you just ran again.\n"
     "From now on, add a new subject that needs the user's rulings to the open approval-walk instead of opening a "
     "second one.")
@@ -563,6 +602,10 @@ CLOSED_MARKER_VALUE = "none, closed"
 PROGRAM_LINE_ITEMS = re.compile(r"^(items?\s[^:]*): ", re.I)
 
 
+def minutes_time(moment):
+    return moment.astimezone(datetime.timezone.utc).strftime("%Y-%m-%d %H:%MZ")
+
+
 def _one_of(values):
     return "(?:" + "|".join(re.escape(str(value)) for value in values) + ")"
 
@@ -572,7 +615,8 @@ _PART_VALUE = r"part \d+ " + _one_of(f"{word} {outcome}" for word, outcome in OU
 PLACEHOLDER_VALUES = {
     "answered": _one_of([APPROVED, DISAPPROVED] + [f"{APPROVED} option {number}" for number in OPTION_NUMBERS]
                         + [f"not asked, kind {kind}" for kind in NOT_ASKED_KINDS]
-                        + [f"not asked, case against {NOT_ASKED_RATED_NONE}"]),
+                        + [f"not asked, case against {NOT_ASKED_RATED_NONE}",
+                           f"not asked, {NOT_ASKED_WEAK_COST_ONLY_LABEL}"]),
     "outcome": _one_of(OUTCOMES.values()),
     "parts": rf"{_PART_VALUE}(?:, {_PART_VALUE})*",
     "ruling": ".+",
@@ -593,6 +637,8 @@ def after_the_items_pattern(template):
 DECIDING_LINES = tuple(after_the_items_pattern(template) for template in (
     CLOSE_TOOK_EFFECT_MINUTES, CLOSE_PARTS_TOOK_EFFECT_MINUTES, CLOSE_ALREADY_DECIDED_MINUTES, CLOSE_MOVED_ON_MINUTES,
     CLOSE_MOVED_ON_NO_DECISION_MINUTES))
+# The `#ruling_given` word of each of DECIDING_LINES; None where the line's outcome tag gives it.
+DECIDING_LINE_WORDS = (None, "part_answers", None, "moved_on", "moved_on")
 DEFERRING_LINES = tuple(after_the_items_pattern(template)
                         for template in (CLOSE_DEFERRED_MINUTES, CLOSE_DEFERRED_AGAIN_MINUTES))
 # A one-item count as it stands in the heading's own line, after its heading or bold marks.
@@ -710,6 +756,31 @@ NAVIGATION_WORD_REFUSED = (
     "walk-me-through skill lets a navigation word alone advance only when no recommendation is outstanding.\n"
     "If {item} asks for no decision, such as a summary item, run `python3 {program} check --moved-on-no-decision "
     "--user-reply-as-typed {quoted_words}`, then close.")
+MOVED_ON_NO_DECISION_REFUSED = (
+    "nothing written: {item} recommends \"{recommendation}\", so it asks for a decision, and --moved-on-no-decision "
+    "records only a move on from an item that asks for none.\n"
+    "If the user's reply already answers {item}, do not ask him again: run check with the flag for his answer, "
+    "as below.\n"
+    "If it does not, ask him to answer {item}, because the walk-me-through skill lets the walk move on from an "
+    "item only once its recommendation is answered.\n"
+    "The check command for each answer, with REPLY replaced by his reply as he typed it:\n{commands}")
+MOVED_ON_NO_DECISION_HIDDEN_RECOMMENDATION = (
+    "nothing written: {item} in the walk-document {document} shows no recommendation as this program cuts HTML "
+    "comments, but recommends \"{recommendation}\" once a `<!--` inside an HTML tag opens no comment, as when the "
+    "`<!--` in an attribute, such as `<div title=\"<!--\">`, hides the text after it. So check "
+    "cannot tell whether {item} asks for a decision.\n"
+    "If the user is meant to see that recommendation: rewrite each `<!--` in {item} that opens no comment, such as "
+    "one in an attribute, as `&lt;!--`, then ask him to answer {item}, because the walk-me-through skill lets "
+    "the walk move on from an item only once its recommendation is answered.\n"
+    "If the recommendation is a hidden note: put it inside a comment that opens with `<!--` outside any tag and "
+    "closes with `-->`, then run `python3 {program} check --moved-on-no-decision --user-reply-as-typed {quoted_words}` "
+    "again.")
+MOVED_ON_NO_DECISION_ANSWER_COMMANDS = (
+    ("A", ""), ("AO", " --obvious"), ("Aa", " --after-advisor"), ("D", " --disapproved"), ("Z", " --deferred"))
+MOVED_ON_NO_DECISION_OPTION_LINE = ("O{number}, for an item with an \"Option {number}\" paragraph: python3 {program} check "
+                                    "--option {number} --user-reply-as-typed REPLY")
+MOVED_ON_NO_DECISION_PART_LINE = ("An answer to each part of an item with parts, one flag per part: python3 {program} "
+                                  "check --part-answer 1=A --part-answer 2=D --user-reply-as-typed REPLY")
 UNREADABLE_NEW_MARKS = (
     "nothing written: {item} in the walk-document {document} has `#new` or `#new_if_d` marks whose text this "
     "program would not read whole, so an answer that adds such a text would be recorded without that text's "
@@ -724,6 +795,8 @@ UNREADABLE_NEW_MARKS = (
     "For a mark whose text runs onto the lines below it: write the line its entry gives after \"joined onto it:\" "
     "in place of the mark's line, or the mark followed by the text you meant, and delete the lines its text ran "
     "onto.\n"
+    "For a mark whose line holds `<!--`: move any HTML comment on that line to a line of its own, and if the "
+    "mark's text holds `<!--`, write it there in words, as in `an HTML comment opening`.\n"
     "For a mark with no text after it: if a text was meant, write it after the mark, on the mark's line, and "
     "delete any lines below that held it; if none was meant, delete the mark.\n"
     "Then run `{command}` again.\n"
@@ -732,6 +805,8 @@ UNREADABLE_NEW_MARKS = (
 UNREADABLE_BARE = "- line {line}: `{mark}` has no text after it on its line."
 UNREADABLE_FENCED = "- line {line}: `{mark}` is inside fenced or indented code, where no mark's text is read."
 UNREADABLE_RUN_ON = "- line {line}: the text of `{mark}` runs onto {below} right below it, where it is not read."
+UNREADABLE_COMMENT_CUT = ("- line {line}: the line of `{mark}` holds `<!--`, so this program cuts text from it as an "
+                          "HTML comment, even inside a code span, and would not read the line as written.")
 UNREADABLE_JOINED = " The mark's line with its text joined onto it: {mark} {text}"
 NOT_ASKED_REFUSED = (
     "nothing written: {item} cannot be settled without asking the user as {label}, because:\n{problems}\n"
@@ -742,8 +817,13 @@ NOT_ASKED_REFUSED = (
 NOT_ASKED_RATING_PROBLEM = ("- its `#case_against` line rates the case against {rating}; only an item rated none, "
                             "or weak with a case against that names only cost, settles without the user.")
 NOT_ASKED_NO_LINE_PROBLEM = "- it has no `{marker}` line; {why}"
-NOT_ASKED_NOT_RATED_NONE_PROBLEM = ("- its `#case_against` line rates the case against {rating}; an item of none of "
-                                    "the kinds settles without the user only when its case against is rated none.")
+NOT_ASKED_KINDS_NAMED = "none of the kinds 1 to 6 that `--help` lists under `--not-asked`"
+NOT_ASKED_NOT_RATED_NONE_PROBLEM = ("- its `#case_against` line rates the case against {rating}; an item of "
+                                    + NOT_ASKED_KINDS_NAMED + " settles without the user only when its case "
+                                    "against is rated none, or weak with a case against that names only cost.")
+NOT_ASKED_WEAK_GUARDED_MARKDOWN_PROBLEM = (
+    "- `{marker}` names {path}, a Markdown file the instruction-file guard protects; this item is of "
+    + NOT_ASKED_KINDS_NAMED + " and rated weak, and it changes such a file, so it is shown to the user.")
 NOT_ASKED_GUARDED_FILE_PROBLEM = ("- `{marker}` names {path}, which the instruction-file guard protects; an item "
                                   "that adds words the user has not approved to such a file is shown to him, and "
                                   "one whose words a ruling of his gives settles as kind 1.")
@@ -788,6 +868,10 @@ NOT_ASKED_JUDGEMENT_LINES = (
     "present {item} to the user and run check with the flag for his answer, as `--help` lists it; that writes a new "
     "answer line, and close records only the last one, so this line is then set aside.",
 )
+# Code cannot see these in a change, so an item of no kind rated weak leaves them to the agent.
+NOT_ASKED_WEAK_JUDGEMENT_LINE = (
+    "{item} is of " + NOT_ASKED_KINDS_NAMED + " and its case against is rated weak: if its change "
+    "widens an agent's permissions, as a settings change can, or turns off a guard, do not run close: present {item} to the user.")
 GIT_GREP_FAILED = ("`git grep` failed with exit {code} in {top} while checking {item}'s evidence: {error}\n"
                    "Run `python3 {program} check --not-asked {kind}` again once; if it fails the same way, "
                    "present {item} to the user and run check with the flag for his answer, as `--help` lists it.")
@@ -832,6 +916,7 @@ ITEM_READS_DIRECTORY_SUFFIX = "-item-cold-read-fast-read-review-status-per-text-
 READ_DONE, READ_FAILED = "done", "failed"
 READ_POLL_SECONDS = 2
 FACT_LABELS = ("Recommendation:", "The alternative:")
+# Spelled as the short-answer hook's RECOMMENDATION, so the two programs agree on which items hold a recommendation.
 AUTOLINK = r"<[A-Za-z][A-Za-z0-9+.-]*:[^>\s]*>"
 # A backquoted span, a Markdown link, an autolink, or any other run of non-space characters.
 FACT_TOKEN = re.compile(r"`[^`\n]+`|!?\[[^\]\n]*\]\([^)\s]*\)|" + AUTOLINK + r"|\S+")
@@ -853,13 +938,30 @@ ITEM_READ_RUN_FACTS = ", because your changes since its last cold-read-fast-read
 ITEM_READ_NOT_RUN = ("{item}: no new cold-read-fast-read: your changes since its last one ({report}) touch no "
                      "number, path, file or program name, link, or line holding \"Recommendation:\", "
                      "\"The alternative:\" or `#case_against`.")
+NOW_OVER_LATER_FLAG = "--now-over-later-already-decided"
+NOW_OVER_LATER_USER_RULING_CITATION = (
+    "the user-ruling at line 361 of nedlern@ned-box:/home/nedlern/agents/cold-read-improvement/docs/walk/"
+    "walk-me-through-skill-refactor-approval-walk-2026-11-02-minutes.md, given with his answer to item 42 on "
+    "2026-11-09: \"If the agents recommend now versus later, I'm always for now.\"")
+OPTION_LINE = re.compile(LINE_OPENING_MARKERS + r"Option\s+\d")
+NOW_OVER_LATER_REFUSED = (
+    "nothing written: {item} in {document} was not recorded as already decided by the user-ruling that he is "
+    "always for building now when the agents recommend now over later, because that user-ruling settles only an "
+    "item whose one choice is now or later, and {item} holds other choices:\n{problems}\n"
+    "Present {item} to the user, then run check with the flag for his answer, as `--help` lists it.")
+NOW_OVER_LATER_PARTS = "- a `Part N.` paragraph, each part answered on its own, on line {lines}"
+NOW_OVER_LATER_OPTIONS = "- a line opening `Option N`, another option he can pick, on line {lines}"
+NOW_OVER_LATER_NEW_IF_D = "- a `#new_if_d` text, what his disapproval would do instead, on line {lines}"
+SHORT_ANSWER_HOOK_FILE = HERE / ("walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-"
+                                 "user-prompt-submit-hook.py")
 ITEM_READ_LINES = (
     "Read that report and apply each finding that holds to {item} in the walk-document {document}; a finding that "
     "would change what the item decides becomes a new item, numbered as the walk-me-through skill's Re-planning "
     "section says.",
     "If you change {item} after this, run `{command}` and do what it prints; it reads {item} again only when your "
     "changes touch a fact.",
-    "Then present {item}.",
+    "Then present {item}, unless its only choice is whether to build something now or later and it recommends now: "
+    "then run `python3 {program} check " + NOW_OVER_LATER_FLAG + " --cwd {top}`, then the close command it prints.",
 )
 ITEM_READ_NOT_RUN_NEXT = "Present {item}."
 ITEM_READ_FAILED_LINES = (
@@ -972,21 +1074,35 @@ def item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_
     return document, text, tokens, ranges
 
 
+# CommonMark's open tag, as the Markdown parser reads one; no `<!--` in it opens a comment.
+HTML_OPEN_TAG = re.compile(r"""<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][A-Za-z0-9:._-]*"""
+                           r"""(?:\s*=\s*(?:[^"'=<>`\x00-\x20]+|'[^']*'|"[^"]*"))?)*\s*/?>""")
+
+
+def comment_openings_in_tags_escaped(text):
+    """Return text with each `<!--` inside an HTML open tag, such as `<div title="<!--">`, written as `&lt;!--`."""
+    return HTML_OPEN_TAG.sub(lambda tag: tag[0].replace("<!--", "&lt;!--"), text)
+
+
 def item_lines(walk_finder, minutes, value, numbers, total, parser):
     """Return (walk-document path, the lines of the items numbered, outside fenced code, the items' marks as
-    new_marks returns them, the problem line of each mark whose text would not be read whole)."""
+    new_marks returns them, the problem line of each mark whose text would not be read whole, the same lines
+    as the first read with no `<!--` inside an HTML open tag opening a comment)."""
     document, text, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
     lines = walk_finder.prose_lines(text, parser, tokens)
-    marks = new_marks(text, tokens, ranges)
+    marks = new_marks(text, tokens, ranges, lines)
+    tag_comments_kept = walk_finder.prose_lines(comment_openings_in_tags_escaped(text), parser)
     return (document, [line for first, end in ranges for line in lines[first:end]], marks,
-            unreadable_new_marks(marks))
+            unreadable_new_marks(marks),
+            [line for first, end in ranges for line in tag_comments_kept[first:end]])
 
 
 def item_text(walk_finder, minutes, value, numbers, total, parser, named_by=None, refused_unless_marks_read=None):
     """Return (walk-document path, the items' text as the user is shown it, heading and fenced code included).
     With refused_unless_marks_read, (item, command), a Failure when a mark's text would not be read whole."""
     document, text, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_by)
-    unreadable = unreadable_new_marks(new_marks(text, tokens, ranges)) if refused_unless_marks_read else []
+    unreadable = (unreadable_new_marks(new_marks(text, tokens, ranges, walk_finder.prose_lines(text, parser, tokens)))
+                  if refused_unless_marks_read else [])
     if unreadable:
         item, command = refused_unless_marks_read
         raise Failure(UNREADABLE_NEW_MARKS.format(item=item, document=document, problems="\n".join(unreadable),
@@ -1053,60 +1169,64 @@ def block_right_below(lines, first, end):
     return []
 
 
-NewMark = collections.namedtuple("NewMark", "mark number in_code text_lines below")
+NewMark = collections.namedtuple("NewMark", "mark number in_code comment_cut text_lines below")
 NewMark.__doc__ = """One `#new` or `#new_if_d` mark: mark, its 0-based line number, whether it is inside fenced or
-indented code, text_lines, the mark's own text as written followed by every line its text runs onto, and below,
+indented code, whether text was cut from its line as an HTML comment, text_lines, the mark's own text as written followed by every line its text runs onto, and below,
 for a mark in code or with no text, the lines it may have meant; lines below the mark's own line lose their
 quotation markers."""
 
 
-def new_marks(text, tokens, ranges):
-    """Return a NewMark for each `#new` or `#new_if_d` mark in the ranges outside an HTML comment, in order.
+def new_marks(text, tokens, ranges, shown):
+    """Return a NewMark for each `#new` or `#new_if_d` mark in the ranges outside an HTML comment, in order;
+    shown are the walk finder's prose_lines of text, from which every HTML comment is cut.
     This is the one place that decides where a marked text ends, so that check reads the text
     unreadable_new_marks judged: at the end of its Markdown paragraph, or before the first line below it that
     this program reads on its own, such as the next `#new` or a `#case_against` line, even when Markdown keeps
     that line in the same paragraph."""
     lines = text.split("\n")
-    code, comments, paragraphs = {}, set(), []
+    code, paragraphs = {}, []
     for token in tokens:
         if token.map is None:
             continue
         if token.type in ("fence", "code_block"):
             code.update((number, token.map[1]) for number in range(*token.map))
-        elif token.type == "html_block" and token.content.lstrip().startswith("<!--"):
-            comments.update(range(*token.map))
         elif token.type == "paragraph_open":
             paragraphs.append(token.map)
     marks = []
     for first, end in ranges:
         for number in range(first, end):
-            match = NEW_LINE.match(lines[number])
-            if not match or number in comments:
+            match = NEW_LINE.match(lines[number] if number in code else shown[number])
+            if not match:
                 continue
             if number in code:
                 below = lines_until_blank_or_fence(lines, number + 1, min(code[number], end))
-                marks.append(NewMark(match[1], number, True, [match[2]], below))
+                marks.append(NewMark(match[1], number, True, False, [match[2]], below))
                 continue
+            comment_cut = shown[number] != lines[number]
             if not unquoted(match[2]):
-                marks.append(NewMark(match[1], number, False, [match[2]], block_right_below(lines, number + 1, end)))
+                marks.append(NewMark(match[1], number, False, comment_cut, [match[2]],
+                                     block_right_below(lines, number + 1, end)))
                 continue
             paragraph_end = max((paragraph[1] for paragraph in paragraphs if paragraph[0] <= number < paragraph[1]),
                                 default=number + 1)
             text_end = next((below for below in range(number + 1, paragraph_end)
                              if any(marker.match(lines[below]) for marker in MARKER_LINES_READ_ON_THEIR_OWN)),
                             paragraph_end)
-            marks.append(NewMark(match[1], number, False,
+            marks.append(NewMark(match[1], number, False, comment_cut,
                                  [match[2]] + unquoted_lines(lines[number + 1:min(text_end, end)]), []))
     return marks
 
 
 def unreadable_new_marks(marks):
     """Return one problem line for each of new_marks' marks whose text check would not read whole: one with no
-    text on its line, one inside fenced or indented code, and one whose text runs onto the lines right below it."""
+    text on its line, one inside fenced or indented code, one with text cut from its line as an HTML comment, and
+    one whose text runs onto the lines right below it."""
     problems = []
     for found in marks:
         mark, line = found.mark, found.number + 1
-        if found.in_code or not unquoted(found.text_lines[0]):
+        if found.comment_cut:
+            problems.append(UNREADABLE_COMMENT_CUT.format(line=line, mark=mark))
+        elif found.in_code or not unquoted(found.text_lines[0]):
             problem = UNREADABLE_FENCED if found.in_code else UNREADABLE_BARE
             joined = lines_joined(([found.text_lines[0]] if found.in_code else []) + found.below)
             problems.append(problem.format(line=line, mark=mark)
@@ -1223,8 +1343,9 @@ def run_fast_read(text, name, fast_read_program):
     return Path(lines[-1]).parent, notes
 
 
-def excerpt(text):
-    return text if len(text) <= 60 else text[:57].rstrip() + "..."
+def excerpt(walk_finder, text):
+    """The start of text, as a code span, so that no marker in it is read from the minutes."""
+    return walk_finder.text_wrapped_as_markdown_code_span(text if len(text) <= 60 else text[:57].rstrip() + "...")
 
 
 def file_name_part(text):
@@ -1248,7 +1369,7 @@ def part_answer(value):
 
 def not_asked_kind(value):
     """Return the --not-asked value: a kind, 1 to 6, or `none` for an item of no kind whose case against is
-    rated none."""
+    rated none, or weak with a case against that names only cost."""
     if value.strip().lower() == NOT_ASKED_RATED_NONE:
         return NOT_ASKED_RATED_NONE
     if value.strip() in {str(kind) for kind in NOT_ASKED_KINDS}:
@@ -1257,9 +1378,12 @@ def not_asked_kind(value):
     raise argparse.ArgumentTypeError(f"`{value}` is not a kind: give {kinds} or none")
 
 
-def not_asked_label(kind):
-    """How the minutes and messages name a --not-asked value: `kind 3`, or `case against none`."""
-    return "case against none" if kind == NOT_ASKED_RATED_NONE else f"kind {kind}"
+def not_asked_label(kind, rating=None):
+    """How the minutes and messages name a --not-asked value: `kind 3`, `case against none`, or, for `none` on an
+    item rated weak, `case against weak, cost only`."""
+    if kind != NOT_ASKED_RATED_NONE:
+        return f"kind {kind}"
+    return NOT_ASKED_WEAK_COST_ONLY_LABEL if rating == NOT_ASKED_RATED_WEAK else "case against none"
 
 
 def guarded_paths(top, paths):
@@ -1269,7 +1393,7 @@ def guarded_paths(top, paths):
         guard.is_protected, guard.is_reusable_prompt, guard.is_reviewed_document))]
 
 
-def answered_word(arguments):
+def answered_word(arguments, walk_finder, rating=None):
     """The answer as the walk-minutes write it: approved, disapproved, approved option N, or each part's word,
     as in `part 1 approved #approved_obvious, part 2 disapproved`."""
     if arguments.part_answer:
@@ -1283,11 +1407,11 @@ def answered_word(arguments):
     if arguments.option is not None:
         return f"{APPROVED} option {arguments.option}"
     if arguments.not_asked is not None:
-        return f"not asked, {not_asked_label(arguments.not_asked)}"
+        return f"not asked, {not_asked_label(arguments.not_asked, rating)}"
     if arguments.already_decided is not None:
-        return ALREADY_DECIDED_PREFIX + arguments.already_decided
+        return ALREADY_DECIDED_PREFIX + walk_finder.text_wrapped_as_markdown_code_span(arguments.already_decided)
     if arguments.moved_on is not None:
-        return MOVED_ON_PREFIX + arguments.moved_on
+        return MOVED_ON_PREFIX + walk_finder.text_wrapped_as_markdown_code_span(arguments.moved_on)
     return APPROVED
 
 
@@ -1309,6 +1433,15 @@ def answer_hashtag(arguments):
     return ""
 
 
+def answer_check_commands(program):
+    """The check command for each answer an item can take, to print where the agent chose the wrong flag."""
+    commands = [f"{answer}: python3 {program} check{flag} --user-reply-as-typed REPLY"
+                for answer, flag in MOVED_ON_NO_DECISION_ANSWER_COMMANDS]
+    commands += [MOVED_ON_NO_DECISION_OPTION_LINE.format(number=number, program=program) for number in OPTION_NUMBERS]
+    commands.append(MOVED_ON_NO_DECISION_PART_LINE.format(program=program))
+    return "\n".join(commands)
+
+
 def check_flags(arguments):
     """The flags this check step was run with, to repeat in the command it tells the agent to rerun."""
     flags = ""
@@ -1328,7 +1461,9 @@ def check_flags(arguments):
         flags += f" --option {arguments.option}"
     if arguments.not_asked is not None:
         flags += f" --not-asked {arguments.not_asked}"
-    if arguments.already_decided is not None:
+    if arguments.now_over_later_already_decided:
+        flags += " " + NOW_OVER_LATER_FLAG
+    elif arguments.already_decided is not None:
         flags += f" --already-decided {shlex.quote(arguments.already_decided)}"
     for number, letter in arguments.part_answer or []:
         flags += f" --part-answer {number}={letter}"
@@ -1426,7 +1561,7 @@ def not_asked_problems(kind, rating, lines, marks, top, item):
     problems = []
     found = evidence(lines)
     if kind == NOT_ASKED_RATED_NONE:
-        if rating != NOT_ASKED_RATED_NONE:
+        if rating not in NOT_ASKED_RATINGS:
             problems.append(NOT_ASKED_NOT_RATED_NONE_PROBLEM.format(rating=rating))
         # An empty touches line is a change that touches no file; only a missing line is refused.
         if TOUCHES not in found:
@@ -1436,7 +1571,10 @@ def not_asked_problems(kind, rating, lines, marks, top, item):
             if not (top / path).exists():
                 problems.append(NOT_ASKED_MISSING_PATH_PROBLEM.format(marker=TOUCHES, path=path, top=top))
         for path in guarded_paths(top, touched):
-            problems.append(NOT_ASKED_GUARDED_FILE_PROBLEM.format(marker=TOUCHES, path=path))
+            if rating != NOT_ASKED_RATED_WEAK:
+                problems.append(NOT_ASKED_GUARDED_FILE_PROBLEM.format(marker=TOUCHES, path=path))
+            elif path.endswith(".md"):
+                problems.append(NOT_ASKED_WEAK_GUARDED_MARKDOWN_PROBLEM.format(marker=TOUCHES, path=path))
         return problems
     if rating not in NOT_ASKED_RATINGS:
         problems.append(NOT_ASKED_RATING_PROBLEM.format(rating=rating))
@@ -1526,7 +1664,27 @@ def glossary_term_or_marker_problems(found, touched, top, item):
     return problems
 
 
+def now_over_later_problems(walk_finder, minutes, value, numbers, total, parser):
+    """Return (walk-document path, one line for each kind of choice besides now or later that the item holds:
+    `Part N.` paragraphs, `Option N` lines and `#new_if_d` marks, each with its 1-based line numbers)."""
+    document, text, tokens, ranges = item_line_ranges(walk_finder, minutes, value, numbers, total, parser)
+    lines = walk_finder.prose_lines(text, parser, tokens)
+    hook = load_module("walk_me_through_user_short_answer_hook", SHORT_ANSWER_HOOK_FILE)
+    found = {
+        NOW_OVER_LATER_PARTS: [line for line, _ in hook.part_starts(tokens)
+                               if any(first <= line < end for first, end in ranges)],
+        NOW_OVER_LATER_OPTIONS: [number for first, end in ranges for number in range(first, end)
+                                 if OPTION_LINE.match(lines[number])],
+        NOW_OVER_LATER_NEW_IF_D: [mark.number for mark in new_marks(text, tokens, ranges, lines)
+                                  if mark.mark == NEW_IF_D_MARK],
+    }
+    return document, [problem.format(lines=", ".join(str(number + 1) for number in sorted(set(numbers))))
+                      for problem, numbers in found.items() if numbers]
+
+
 def check(arguments):
+    if arguments.now_over_later_already_decided:
+        arguments.already_decided = NOW_OVER_LATER_USER_RULING_CITATION
     part_numbers = [number for number, _ in arguments.part_answer or []]
     repeated = sorted({number for number in part_numbers if part_numbers.count(number) > 1})
     if repeated:
@@ -1540,6 +1698,7 @@ def check(arguments):
     words = " ".join((arguments.user_reply_as_typed or "").split())
     program = Path(__file__).resolve()
     not_shown_flag = ("--not-asked" if arguments.not_asked is not None
+                      else NOW_OVER_LATER_FLAG if arguments.now_over_later_already_decided
                       else "--already-decided" if arguments.already_decided is not None
                       else "--moved-on" if arguments.moved_on is not None else None)
     if not_shown_flag and words:
@@ -1547,17 +1706,34 @@ def check(arguments):
     if not not_shown_flag and not words:
         raise Failure(USER_WORDS_MISSING.format(program=program, flags=check_flags(arguments)))
     if NAVIGATION_WORD_ALONE.match(words) and not arguments.moved_on_no_decision:
-        raise Failure(NAVIGATION_WORD_REFUSED.format(words=words, item=item, answered=answered_word(arguments),
+        raise Failure(NAVIGATION_WORD_REFUSED.format(words=words, item=item,
+                                                     answered=answered_word(arguments, walk_finder),
                                                      program=program, quoted_words=shlex.quote(words)))
-    in_his_words = USER_WORDS.format(words=words) if words else ""
-    document, lines, marks, unreadable = item_lines(walk_finder, minutes, value, numbers, total, parser)
+    if arguments.now_over_later_already_decided:
+        document, problems = now_over_later_problems(walk_finder, minutes, value, numbers, total, parser)
+        if problems:
+            raise Failure(NOW_OVER_LATER_REFUSED.format(item=item, document=document, problems="\n".join(problems)))
+    in_his_words = USER_WORDS.format(words=walk_finder.text_wrapped_as_markdown_code_span(words)) if words else ""
+    document, lines, marks, unreadable, tag_comments_kept = item_lines(walk_finder, minutes, value, numbers, total,
+                                                                       parser)
     rating = case_against_rating(lines, item, document, arguments)
     rated = CASE_AGAINST_HASHTAG.format(rating=rating.replace(" ", "_")) if rating else ""
+    recommendation = walk_finder.approval_walk_item_last_recommendation_text_from_item_lines(lines)
+    if arguments.moved_on_no_decision and recommendation is not None:
+        raise Failure(MOVED_ON_NO_DECISION_REFUSED.format(
+            item=item, recommendation=recommendation,
+            commands=answer_check_commands(program)))
+    hidden = (walk_finder.approval_walk_item_last_recommendation_text_from_item_lines(tag_comments_kept)
+              if arguments.moved_on_no_decision and recommendation is None else None)
+    if hidden is not None:
+        raise Failure(MOVED_ON_NO_DECISION_HIDDEN_RECOMMENDATION.format(
+            item=item, document=document, recommendation=hidden, program=program, quoted_words=shlex.quote(words)))
     if arguments.deferred or arguments.moved_on_no_decision or arguments.moved_on is not None:
         now = datetime.datetime.now().astimezone()
         no_change = CHECK_MOVED_ON_MINUTES if arguments.moved_on is not None else CHECK_DEFERRED_MINUTES
-        append_to_minutes(minutes, [no_change.format(item=item, answered=answered_word(arguments), rating=rated,
-                                                     words=in_his_words, date_and_time=f"{now:%Y-%m-%d %H:%M}")])
+        append_to_minutes(minutes, [no_change.format(item=item, answered=answered_word(arguments, walk_finder),
+                                                     rating=rated,
+                                                     words=in_his_words, date_and_time=minutes_time(now))])
         print(CHECK_CLOSE_LINE.format(program=Path(__file__).resolve(), top=shlex.quote(str(top))))
         return 0
     if unreadable:
@@ -1567,7 +1743,7 @@ def check(arguments):
         problems = not_asked_problems(arguments.not_asked, rating, lines, marks, top, item)
         if problems:
             raise Failure(NOT_ASKED_REFUSED.format(item=item, kind=arguments.not_asked,
-                                                   label=not_asked_label(arguments.not_asked),
+                                                   label=not_asked_label(arguments.not_asked, rating),
                                                    problems="\n".join(problems),
                                                    document=document, program=Path(__file__).resolve()))
     texts = proposed_texts(marks, marks_the_answer_adds(arguments))
@@ -1584,13 +1760,14 @@ def check(arguments):
         record = fast_read_record_holding(text, record_directories, walk_name)
         if record is not None:
             already_done += 1
-            statuses.append(STATUS_ALREADY_DONE.format(mark=mark, number=number, excerpt=excerpt(text),
+            statuses.append(STATUS_ALREADY_DONE.format(mark=mark, number=number, excerpt=excerpt(walk_finder, text),
                                                        record=record))
             continue
         name = walk_fast_read_name(walk_name, item, mark, number)
         record, notes = run_fast_read(text, name, arguments.fast_read_program)
         had_to_be_run += 1
-        statuses.append(STATUS_HAD_TO_BE_RUN.format(mark=mark, number=number, excerpt=excerpt(text), record=record)
+        statuses.append(STATUS_HAD_TO_BE_RUN.format(mark=mark, number=number, excerpt=excerpt(walk_finder, text),
+                                                    record=record)
                         + "".join(STATUS_FAST_READ_NOTE.format(note=note) for note in notes))
         for note in notes:
             if note.startswith(FAST_READ_RECORD_NOT_SHIPPED_MARKERS):
@@ -1602,16 +1779,18 @@ def check(arguments):
     now = datetime.datetime.now().astimezone()
     not_asked = arguments.not_asked is not None or arguments.already_decided is not None
     answer_minutes = CHECK_NOT_ASKED_MINUTES if not_asked else CHECK_MINUTES
-    append_to_minutes(minutes, [answer_minutes.format(item=item, answered=answered_word(arguments),
+    append_to_minutes(minutes, [answer_minutes.format(item=item, answered=answered_word(arguments, walk_finder, rating),
                                                       hashtag=answer_hashtag(arguments), rating=rated,
-                                                      words=in_his_words, date_and_time=f"{now:%Y-%m-%d %H:%M}")]
+                                                      words=in_his_words, date_and_time=minutes_time(now))]
                       + [STATUS_LINE_PREFIX + status for status in statuses])
     output = list(statuses)
     if had_to_be_run:
         output += [line.format(document=document, item=item) for line in CHECK_JUDGEMENT_LINES]
     if arguments.not_asked is not None:
-        output += [line.format(item=item, label=not_asked_label(arguments.not_asked))
+        output += [line.format(item=item, label=not_asked_label(arguments.not_asked, rating))
                    for line in NOT_ASKED_JUDGEMENT_LINES]
+        if arguments.not_asked == NOT_ASKED_RATED_NONE and rating == NOT_ASKED_RATED_WEAK:
+            output.append(NOT_ASKED_WEAK_JUDGEMENT_LINE.format(item=item))
     output.append(CHECK_CLOSE_LINE.format(program=Path(__file__).resolve(), top=shlex.quote(str(top))))
     log = arguments.counts_log or (log_store_records.parent / COUNTS_LOG_FILE_NAME if log_store_records else None)
     try:
@@ -1719,8 +1898,10 @@ def start_read_ahead_of_item_after(walk_finder, top, minutes, parser, numbers, t
     try:
         count, order, summary, units, placing = walk_document_items(walk_finder, minutes, named, numbers, total,
                                                                     parser, WAITING_ITEM_READ_STEP, top)
-        decided, deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
-        after = next_item(order, summary, numbers, numbers, decided | set(numbers), deferrals, placing)
+        text = minutes.read_text(encoding="utf-8")
+        decided, deferrals = minutes_record(walk_finder, text, parser)
+        after = next_item(order, summary, numbers, numbers, decided | set(numbers), deferrals, placing,
+                          held_answers_unresolved(walk_finder, text, parser))
         if not after:
             return None
         if isinstance(after[0], int):
@@ -1843,7 +2024,8 @@ def waiting_item_read(arguments):
         how = ITEM_READ_HOW_RUN.format(why=why)
     notes = "".join(STATUS_FAST_READ_NOTE.format(note=note) for note in outcome["notes"])
     print("\n".join([ITEM_READ_USED.format(item=item, how=how, report=outcome["report"], notes=notes)]
-                    + [line.format(item=item, document=document, command=command) for line in ITEM_READ_LINES]))
+                    + [line.format(item=item, document=document, command=command, program=program,
+                                   top=shlex.quote(str(top))) for line in ITEM_READ_LINES]))
     return 0
 
 
@@ -2122,7 +2304,8 @@ def new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numb
     HOLD_ANSWER_FLAG asks, and return the `#next_to_present` value naming it; raise Failure, writing nothing, when
     the unit right after is not unnumbered, or when it waits on an item still to come: an unshown item of placing,
     the walk-document's placing of its unshown items, the summary item, or a numbered item that is neither answered
-    now nor among decided, the items the minutes decide."""
+    now nor among decided, the items the minutes decide, an item whose sub-steps are all answered now or decided
+    counting as decided."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     text = document.read_text(encoding="utf-8")
     units = walk_finder.item_unit_spans(text, parser)
@@ -2137,10 +2320,13 @@ def new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numb
         raise Failure(NO_UNNUMBERED_ITEM_AFTER.format(document=document, item=" and ".join(answered_numbers),
                                                       found=found))
     lines = text.split(NEWLINE)
+    decided = decided_with_items_whose_sub_steps_are_all_decided(
+        [number for unit in units for number in unit[0]], decided | set(answered_numbers),
+        held_answers_unresolved(walk_finder, minutes.read_text(encoding="utf-8"), parser))
     # An unnumbered item is keyed by its heading's line index, an int; a numbered one by its number, a str.
     to_come = sorted((other for other in placing.get(units[after][3], (None, set()))[1]
                       if other in placing or other == summary
-                      or (isinstance(other, str) and other not in decided and other not in answered_numbers)),
+                      or (isinstance(other, str) and other not in decided)),
                      key=str)
     if to_come:
         raise Failure(HELD_NEW_ITEM_WAITS_ON_UNSHOWN.format(
@@ -2179,13 +2365,20 @@ def deferred_item_heading_noted(walk_finder, minutes, numbers, total, parser, no
 def minutes_record(walk_finder, minutes_text, parser):
     """Return (the item numbers a line this program wrote decides, a Counter of how many lines this program
     wrote defer each item); every other line, an agent's note included, records nothing."""
-    decided, deferrals = set(), collections.Counter()
+    words, deferrals = minutes_ruling_words(walk_finder, minutes_text, parser)
+    return set(words), deferrals
+
+
+def minutes_ruling_words(walk_finder, minutes_text, parser):
+    """Return ({each item number a line this program wrote decides: the `#ruling_given` word of the last such
+    line}, a Counter of how many lines this program wrote defer each item), read as minutes_record reads."""
+    words, deferrals = {}, collections.Counter()
     for line in walk_finder.prose_lines(minutes_text, parser):
         match = PROGRAM_LINE_ITEMS.match(line)
         if not match:
             continue
         rest = line[match.end():]
-        decides = any(pattern.match(rest) for pattern in DECIDING_LINES)
+        decides = [index for index, pattern in enumerate(DECIDING_LINES) if pattern.match(rest)]
         if not decides and not any(pattern.match(rest) for pattern in DEFERRING_LINES):
             continue
         try:
@@ -2193,13 +2386,62 @@ def minutes_record(walk_finder, minutes_text, parser):
         except walk_finder.UnusableRange:
             continue
         if decides:
-            decided.update(items)
+            word = DECIDING_LINE_WORDS[decides[0]] or RULING_GIVEN_WORDS[rest.rsplit(" ", 1)[-1]]
+            words.update(dict.fromkeys(items, word))
         else:
             deferrals.update(items)
-    return decided, deferrals
+    return words, deferrals
 
 
-def next_item(order, summary, answered_numbers, waiting_numbers, decided, deferrals, placing=None):
+def held_answers(walk_finder, minutes_text, parser):
+    """Return [(held items' text, their numbers, new items' text, their numbers)] for each held-answer line."""
+    holds = []
+    for line in walk_finder.prose_lines(minutes_text, parser):
+        match = HELD_ANSWER_LINE.match(line)
+        if not match:
+            continue
+        try:
+            holds.append((match[1], set(walk_finder.parse_items(match[1])[0]), match[2],
+                          set(walk_finder.parse_items(match[2])[0])))
+        except walk_finder.UnusableRange:
+            continue
+    return holds
+
+
+def held_answers_unresolved(walk_finder, minutes_text, parser):
+    """Return the item numbers a held-answer line holds and no line this program wrote decides."""
+    decided, _ = minutes_record(walk_finder, minutes_text, parser)
+    return {number for _, held_numbers, _, _ in held_answers(walk_finder, minutes_text, parser)
+            for number in held_numbers} - decided
+
+
+def items_decided_through_sub_steps(items, words, unresolved=frozenset()):
+    """Return {item: its `#ruling_given` word} for each item of items, such as 3, not in words, the decided items
+    with their words, nor in unresolved, the items whose held answer is unresolved, that has sub-steps among items,
+    such as 3.1 and 3.2, every one of them in words or, deeper, decided through its own sub-steps; an item is never
+    decided through its parent. Its word is its sub-steps' one word once moved_on is left out, moved_on when that
+    leaves none, and part_answers when it leaves more than one."""
+    words, inferred = dict(words), {}
+    numbered = [item for item in items if isinstance(item, str)]
+    # Deepest first, so a sub-step decided through its own sub-steps, as 5.2 through 5.2.1, counts for its parent.
+    for item in sorted(numbered, key=lambda number: -number.count(".")):
+        if item in words or item in unresolved:
+            continue
+        sub_steps = [other for other in numbered if other.rsplit(".", 1)[0] == item and other != item]
+        if sub_steps and all(other in words for other in sub_steps):
+            ruled = {words[other] for other in sub_steps} - {RULING_GIVEN_MOVED_ON}
+            words[item] = inferred[item] = (RULING_GIVEN_MOVED_ON if not ruled else ruled.pop() if len(ruled) == 1
+                                            else RULING_GIVEN_PART_ANSWERS)
+    return inferred
+
+
+def decided_with_items_whose_sub_steps_are_all_decided(items, decided, unresolved=frozenset()):
+    """decided, plus each item items_decided_through_sub_steps finds decided through its sub-steps."""
+    return set(decided) | set(items_decided_through_sub_steps(items, dict.fromkeys(decided), unresolved))
+
+
+def next_item(order, summary, answered_numbers, waiting_numbers, decided, deferrals, placing=None,
+              unresolved=frozenset()):
     """Return the item numbers the `#next_to_present` line must name next, or [] when the minutes record
     every item.
 
@@ -2211,9 +2453,11 @@ def next_item(order, summary, answered_numbers, waiting_numbers, decided, deferr
     item after it in the walk-document that is not deferred, and goes round once. The unshown items placing
     holds come together, in the order unshown_items_in_walk_order gives, where the first of them comes on that
     round, or just before the summary item or a deferred item when one of those comes sooner; an item is passed
-    over while an item it waits on is still to come.
+    over while an item it waits on is still to come. An item whose sub-steps are all decided counts as decided,
+    unless it is in unresolved, as decided_with_items_whose_sub_steps_are_all_decided says.
     """
     placing = placing or {}
+    decided = decided_with_items_whose_sub_steps_are_all_decided(order, decided, unresolved)
     recorded = {item for item in order if item in decided or deferrals[item] > 1}
     still_waiting = [item for item in waiting_numbers if item not in recorded and item not in answered_numbers]
     if still_waiting:
@@ -2241,16 +2485,7 @@ def held_items_decided_with(walk_finder, minutes, parser, answered_numbers, item
     items, directly or through a chain of held items, and that no close line decides yet."""
     text = minutes.read_text(encoding="utf-8")
     decided, _ = minutes_record(walk_finder, text, parser)
-    holds = []
-    for line in walk_finder.prose_lines(text, parser):
-        match = HELD_ANSWER_LINE.match(line)
-        if not match:
-            continue
-        try:
-            holds.append((match[1], set(walk_finder.parse_items(match[1])[0]), match[2],
-                          set(walk_finder.parse_items(match[2])[0])))
-        except walk_finder.UnusableRange:
-            continue
+    holds = held_answers(walk_finder, text, parser)
     # An item held for an item this close decides is decided too, so it releases the items held for it in turn.
     released, lines = set(answered_numbers), []
     progress = True
@@ -2400,6 +2635,9 @@ def close(arguments):
                   + list(CLOSE_TOOK_EFFECT_NEXT))
     if answered != DEFERRED:
         deferred_item_heading_noted(walk_finder, minutes, answered_numbers, total, parser, noted=False)
+    before = minutes.read_text(encoding="utf-8")
+    inferred_before = items_decided_through_sub_steps(order, minutes_ruling_words(walk_finder, before, parser)[0],
+                                                      held_answers_unresolved(walk_finder, before, parser))
     append_to_minutes(minutes, [recorded])
     word = RULING_GIVEN_WORDS[held_outcome] if held_outcome else word
     rulings = [(number, word) for number in answered_numbers]
@@ -2413,8 +2651,14 @@ def close(arguments):
         output += [CLOSE_HELD_DECIDED.format(item=item, held=line.split(": ")[0]) for line in held]
         rulings += [(number, word) for line in held
                     for number in walk_finder.parse_items(line.split(": ")[0])[0]]
-    decided, deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
-    numbers = next_item(order, summary, answered_numbers, waiting_numbers, decided, deferrals, placing)
+    after = minutes.read_text(encoding="utf-8")
+    words, deferrals = minutes_ruling_words(walk_finder, after, parser)
+    unresolved = held_answers_unresolved(walk_finder, after, parser)
+    # An item this close decides through its last sub-step gets its ruling too, so a pull request held on it moves.
+    rulings += [(number, inferred_word) for number, inferred_word
+                in items_decided_through_sub_steps(order, words, unresolved).items() if number not in inferred_before]
+    numbers = next_item(order, summary, answered_numbers, waiting_numbers, set(words), deferrals, placing,
+                        unresolved)
     if numbers and isinstance(numbers[0], int):
         first = numbers[0]
         if first in placing:  # Not the summary item, which stays where it is.
@@ -2453,6 +2697,12 @@ def main(argv=None):
     answer.add_argument("--already-decided", metavar="USER_RULING",
                         help="check: not shown, since an earlier user-ruling decides the item as it recommends; "
                              "USER_RULING cites it")
+    answer.add_argument(NOW_OVER_LATER_FLAG, action="store_true",
+                        help="check: not shown, since its only choice is whether to build something now or later "
+                             "and it recommends now; records it as already decided by the user's answer to item 42 "
+                             "of walk-me-through-skill-refactor-approval-walk-2026-11-02, \"If the agents recommend "
+                             "now versus later, I'm always for now.\"; refused for an item with parts, Option "
+                             "paragraphs or `#new_if_d` texts")
     answer.add_argument("--moved-on", metavar="REASON",
                         help="check: not shown, and the walk moves on from the item with no decision, for REASON")
     answer.add_argument("--part-answer", type=part_answer, action="append", metavar="N=ANSWER",
@@ -2460,10 +2710,12 @@ def main(argv=None):
     answer.add_argument("--not-asked", type=not_asked_kind, metavar="KIND",
                         help="check: the user is not asked; settle the item as kind KIND, 1 to 6, of the "
                              "walk-me-through skill's list of items that need no answer, if its evidence lines pass, "
-                             "or, as `none`, an item of no kind whose case against is rated none")
+                             "or, as `none`, an item of no kind whose case against is rated none, or weak with "
+                             "a case against that names only cost")
     parser.add_argument("--user-reply-as-typed", metavar="REPLY",
                         help="check: the user's reply exactly as he typed it, written into the minutes beside the "
-                             "answer; needed for every answer but --not-asked, --already-decided and --moved-on")
+                             "answer; needed for every answer but --not-asked, --already-decided, "
+                             f"{NOW_OVER_LATER_FLAG} and --moved-on")
     parser.add_argument(HOLD_ANSWER_FLAG, action="store_true",
                         help="close: a fast-read finding raised the new item written right after the answered "
                              "one; number it and hold the answer until the user answers it")

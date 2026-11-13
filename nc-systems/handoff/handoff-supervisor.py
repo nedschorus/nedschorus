@@ -35,14 +35,11 @@ The cycle, per reincarnation:
      extraction fails, the successor's prompt is a recovery note saying the
      session-dialog could not be extracted and where the retiring session's
      transcript is, or that it was not found, then the instruction to put
-     items needing the user in one approval-walk, then the lines step 6 says
+     items needing the user in one approval-walk, then the lines step 5 says
      the initial agent instructions carry, such as the launch-time-git-sync's
      line and the leftovers, and last the handoff's next step.
   4. Each generation opens the same launcher-pinned task list.
-  5. Print one queue-status line — to the console only. It does not ride
-     the initial agent instructions (user-ruled 2026-08-29: "Also useless is the
-     reminder there are files in the queues. Thats what queues are for.").
-  6. Launch the successor with the initial agent instructions. Beside the
+  5. Launch the successor with the initial agent instructions. Beside the
      launch-time-git-sync's line they carry, for agent-instructions-editor alone, one
      line per system whose code moved on
      main past the commit its overview was checked against, until the user has been shown
@@ -61,7 +58,7 @@ The cycle, per reincarnation:
      first prompt(s))"; the branches the first-prompt list deleted go above
      the leftovers' opening sentence, under a line that opens with their
      heading (launch_prompt_with_leftovers_before_the_next_step).
-  7. Keep the current and previous handoff and conversation-tail; delete older ones.
+  6. Keep the current and previous handoff and conversation-tail; delete older ones.
 
 The handoff file the agent writes (simple `key: value` lines):
   written-at:           UTC timestamp, ISO 8601
@@ -149,9 +146,9 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIRECTORY = REPOSITORY_ROOT / "scripts"
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
     REPOSITORY_ROOT / "nc-systems" / "general-tools"
-    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+    / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 
@@ -384,6 +381,7 @@ BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX = (
     "background-task-started-during-handoff-deferral-")
 COLD_READ_FULL_RUN_COMMAND_REFUSED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX = (
     "cold-read-full-run-command-refused-during-handoff-deferral-")
+BACKGROUND_TASK_PAST_WAIT_LIMIT_FIELD_PREFIX = "background-task-past-wait-limit-"
 WRITTEN_BY_SESSION_UNKNOWN_VALUE = "unknown"
 
 # The prompt goes on to the next step; a stop must hold that back too.
@@ -396,8 +394,7 @@ def launch_time_git_sync_git_failure_next_steps(error) -> str:
     """The next-step lines for a GitCommandFailed the launch-time-git-sync reports."""
     rerun = f"`{shlex.join(['git', '-C', str(error.directory), *error.arguments])}`"
     return next_step_lines.git_failure_next_step_lines(
-        rerun, include_the_misspelt_branch_commit_or_path_line=False,
-        rerun_fails_when=LAUNCH_TIME_GIT_SYNC_RERUN_FAILS_WHEN, which_lines_to_quote_in_the_report=LAUNCH_TIME_GIT_SYNC_WHICH_LINES_TO_QUOTE_IN_THE_REPORT,
+        rerun, rerun_fails_when=LAUNCH_TIME_GIT_SYNC_RERUN_FAILS_WHEN, which_lines_to_quote_in_the_report=LAUNCH_TIME_GIT_SYNC_WHICH_LINES_TO_QUOTE_IN_THE_REPORT,
         read_by_a_subagent=False,
         next_step_to_skip_when_the_rerun_fails_too=LAUNCH_TIME_GIT_SYNC_STOP_HOLDS_BACK)
 
@@ -576,6 +573,14 @@ BACKGROUND_TASKS_STARTED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE = (
     "The session you are replacing started {task_count} background Bash task(s) during its "
     "handoff-deferral that were still running when it ended, so they were stopped: "
     "{joined_tasks}. Run again any whose result you still need."
+)
+
+BACKGROUND_TASKS_PAST_WAIT_LIMIT_SENTENCE_TEMPLATE = (
+    "When the session you are replacing ended, it had {task_count} background Bash task(s), none "
+    "of them a waiting-task, each still running past its kind's wait-limit, so they were stopped: "
+    "{joined_tasks}. Run each again, then look first for a way to make it faster, such as removing "
+    "repeated work or running its steps in parallel, and raise its kind's wait-limit in the "
+    "wait-limit table only when you find no such way."
 )
 
 COLD_READ_FULL_RUN_COMMANDS_REFUSED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE = (
@@ -824,50 +829,32 @@ def process_exists_by_signal(process_id: int) -> bool:
         return True
 
 
-def process_is_supervisor_for_agent(process_id, agent_name: str,
-                                    read_command_line=read_process_command_line,
-                                    lock_path: Optional[Path] = None):
-    """Return (is_supervisor, explanation), assuming ownership when a live PID cannot be identified."""
+SUPERVISOR_LIVENESS_WATCHING = "watching"
+SUPERVISOR_LIVENESS_NOT_WATCHING = "not watching"
+SUPERVISOR_LIVENESS_CANNOT_TELL = "cannot tell"
+
+
+def _supervisor_process_identity(process_id, agent_name: str, read_command_line):
+    """Return (answer, explanation): one of SUPERVISOR_LIVENESS_WATCHING, SUPERVISOR_LIVENESS_NOT_WATCHING or SUPERVISOR_LIVENESS_CANNOT_TELL."""
     # PIDs survive in locks and can be reused; heartbeat freshness does not prove ownership.
-    # An unidentified live PID must block another supervisor, which could kill and relaunch the same session.
-    # Tests must pass read_command_line explicitly; replacing the module attribute cannot change the bound default.
     try:
         process_id = int(process_id)
     except (TypeError, ValueError):
-        return False, f"process id {process_id!r} is not a number"
+        return SUPERVISOR_LIVENESS_NOT_WATCHING, f"process id {process_id!r} is not a number"
     if process_id <= 0:
-        return False, f"process id {process_id} cannot name a process"
+        return SUPERVISOR_LIVENESS_NOT_WATCHING, f"process id {process_id} cannot name a process"
 
     command_line, ps_answered = read_command_line(process_id)
     if not ps_answered:
         if not process_exists_by_signal(process_id):
-            return False, (f"process {process_id} is not running — ps could not be run, or "
-                           "ran and failed, but os.kill reports no such process")
-        program = Path(sys.argv[0]).name or "the program that asked"
-        lock = (f"the supervisor lock {lock_path}" if lock_path is not None
-                else f"the supervisor lock of {agent_name} in the handoff directory")
-        print(f"handoff-supervisor: could not identify process {process_id}: ps could not be "
-              "run, or it ran and failed, in which case ps's own error was printed just before "
-              f"this message. A process with id {process_id} exists, so {program} is told a "
-              f"supervisor of {agent_name} is running, and treats {agent_name} as supervised "
-              f"until ps answers or the lock is gone.\n"
-              f"To find out whether a supervisor of {agent_name} is running, the user runs "
-              f"`ps -ww -p {process_id} -o args=`, the command {program} itself ran.\n"
-              f"If its output shows {SUPERVISOR_SCRIPT_FILE_NAME} with --agent {agent_name}, "
-              "a supervisor is running, and the lock stays.\n"
-              f"If its output shows any other command, none is, and the user removes {lock}.\n"
-              "If it prints nothing, or fails with an error, ps has still not answered, so the "
-              "lock stays: when the process has ended, the next check finds that by itself; "
-              "otherwise the user runs the command again once ps works.\n"
-              "An agent that sees this message tells the user what it says, and does not "
-              "remove the lock itself.",
-              file=sys.stderr)
-        return True, (f"cannot tell whether process {process_id} is the supervisor of "
-                      f"{agent_name} — ps could not be run, or ran and failed, and a process "
-                      "with that id exists, so a supervisor is assumed present rather than "
-                      "risk starting a second one")
+            return SUPERVISOR_LIVENESS_NOT_WATCHING, (
+                f"process {process_id} is not running — ps could not be run, or ran and failed, "
+                "but os.kill reports no such process")
+        return SUPERVISOR_LIVENESS_CANNOT_TELL, (
+            f"cannot tell whether process {process_id} is the supervisor of {agent_name} — ps "
+            "could not be run, or ran and failed, and a process with that id exists")
     if command_line is None:
-        return False, f"process {process_id} is not running"
+        return SUPERVISOR_LIVENESS_NOT_WATCHING, f"process {process_id} is not running"
 
     words = command_line.split()
     runs_this_script = any(word.rpartition("/")[2] == SUPERVISOR_SCRIPT_FILE_NAME
@@ -876,29 +863,98 @@ def process_is_supervisor_for_agent(process_id, agent_name: str,
     named_agents += [words[position + 1] for position, word in enumerate(words)
                      if word == "--agent" and position + 1 < len(words)]
     if runs_this_script and agent_name in named_agents:
-        return True, f"process {process_id} is the supervisor of {agent_name}"
-    return False, (f"process {process_id} is live but not a supervisor of {agent_name}: "
-                   f"{command_line}")
+        return SUPERVISOR_LIVENESS_WATCHING, f"process {process_id} is the supervisor of {agent_name}"
+    return SUPERVISOR_LIVENESS_NOT_WATCHING, (f"process {process_id} is live but not a supervisor of "
+                                     f"{agent_name}: {command_line}")
 
 
-def supervisor_liveness(state_path: Path):
-    """Return (is_alive, explanation) for the supervisor owning this state file."""
+def process_is_supervisor_for_agent(process_id, agent_name: str,
+                                    read_command_line=read_process_command_line,
+                                    lock_path: Optional[Path] = None):
+    """Return (is_supervisor, explanation), assuming ownership when a live PID cannot be identified."""
+    # An unidentified live PID must block another supervisor, which could kill and relaunch the same session.
+    # Tests must pass read_command_line explicitly; replacing the module attribute cannot change the bound default.
+    answer, explanation = _supervisor_process_identity(process_id, agent_name, read_command_line)
+    if answer != SUPERVISOR_LIVENESS_CANNOT_TELL:
+        return answer == SUPERVISOR_LIVENESS_WATCHING, explanation
+    program = Path(sys.argv[0]).name or "the program that asked"
+    lock = (f"the supervisor lock {lock_path}" if lock_path is not None
+            else f"the supervisor lock of {agent_name} in the handoff directory")
+    print(f"handoff-supervisor: could not identify process {process_id}: ps could not be "
+          "run, or it ran and failed, in which case ps's own error was printed just before "
+          f"this message. A process with id {process_id} exists, so {program} is told a "
+          f"supervisor of {agent_name} is running, and treats {agent_name} as supervised "
+          f"until ps answers or the lock is gone.\n"
+          f"To find out whether a supervisor of {agent_name} is running, the user runs "
+          f"`ps -ww -p {process_id} -o args=`, the command {program} itself ran.\n"
+          f"If its output shows {SUPERVISOR_SCRIPT_FILE_NAME} with --agent {agent_name}, "
+          "a supervisor is running, and the lock stays.\n"
+          f"If its output shows any other command, none is, and the user removes {lock}.\n"
+          "If it prints nothing, or fails with an error, ps has still not answered, so the "
+          "lock stays: when the process has ended, the next check finds that by itself; "
+          "otherwise the user runs the command again once ps works.\n"
+          "An agent that sees this message tells the user what it says, and does not "
+          "remove the lock itself.",
+          file=sys.stderr)
+    return True, (f"{explanation}, so a supervisor is assumed present rather than risk "
+                  "starting a second one")
+
+
+def _supervisor_lock_holder(state_path: Path):
+    """Return (agent_name, lock_path, holder, no_holder): the PID in the lock, or None and why.
+
+    no_holder is None when holder is a PID, else (answer, explanation): the
+    answer is SUPERVISOR_LIVENESS_NOT_WATCHING when no state or no lock exists, and
+    SUPERVISOR_LIVENESS_CANNOT_TELL when the lock cannot be read.
+    """
     # Read the PID from the lock: the state file holds none.
     if not state_path.is_file():
-        return False, f"no supervisor state at {state_path} — none has ever run for this agent"
-
+        return "", None, None, (SUPERVISOR_LIVENESS_NOT_WATCHING, f"no supervisor state at {state_path} — "
+                                "none has ever run for this agent")
     agent_name = agent_name_from_supervisor_file(state_path)
     lock_path = supervisor_lock_path(state_path.parent, agent_name)
     # Callers reuse this common opening when reporting why recovery may proceed.
     if not lock_path.is_file():
-        return False, (f"no supervisor is watching — no supervisor lock at {lock_path}, "
-                       "and a supervisor removes it when it stops cleanly")
+        return agent_name, lock_path, None, (
+            SUPERVISOR_LIVENESS_NOT_WATCHING, f"no supervisor is watching — no supervisor lock at "
+                                     f"{lock_path}, and a supervisor removes it when it stops "
+                                     "cleanly")
     try:
         holder = int(lock_path.read_text(encoding="utf-8").strip())
     except (ValueError, OSError) as error:
-        return False, (f"no supervisor is watching — the supervisor lock at {lock_path} "
-                       f"is unreadable: {error}")
+        return agent_name, lock_path, None, (
+            SUPERVISOR_LIVENESS_CANNOT_TELL, f"the supervisor lock at {lock_path} is unreadable: "
+                                             f"{error}")
+    return agent_name, lock_path, holder, None
 
+
+def supervisor_liveness_or_cannot_tell(state_path: Path,
+                                       read_command_line=read_process_command_line):
+    """Return (answer, explanation): SUPERVISOR_LIVENESS_WATCHING, SUPERVISOR_LIVENESS_NOT_WATCHING or SUPERVISOR_LIVENESS_CANNOT_TELL."""
+    agent_name, _lock_path, holder, no_holder = _supervisor_lock_holder(state_path)
+    if no_holder is not None:
+        answer, explanation = no_holder
+        if answer == SUPERVISOR_LIVENESS_CANNOT_TELL:
+            return answer, f"cannot tell whether a supervisor is watching — {explanation}"
+        return answer, explanation
+    answer, identity = _supervisor_process_identity(holder, agent_name, read_command_line)
+    if answer == SUPERVISOR_LIVENESS_WATCHING:
+        return answer, f"supervisor alive — {identity}{heartbeat_age_sentence(state_path)}"
+    if answer == SUPERVISOR_LIVENESS_NOT_WATCHING:
+        return answer, f"no supervisor is watching — {identity}"
+    return answer, identity
+
+
+def supervisor_liveness(state_path: Path):
+    """Return (is_alive, explanation) for the supervisor owning this state file."""
+    # Callers that cannot yet act on "cannot tell" keep this reading: an unidentified live
+    # holder counts as alive, so nothing recovers over it; an unreadable lock counts as dead.
+    agent_name, lock_path, holder, no_holder = _supervisor_lock_holder(state_path)
+    if no_holder is not None:
+        answer, explanation = no_holder
+        if answer == SUPERVISOR_LIVENESS_CANNOT_TELL:
+            return False, f"no supervisor is watching — {explanation}"
+        return False, explanation
     running, identity = process_is_supervisor_for_agent(holder, agent_name, lock_path=lock_path)
     if running:
         return True, f"supervisor alive — {identity}{heartbeat_age_sentence(state_path)}"
@@ -1012,7 +1068,7 @@ def agent_seat_github_token_unreadable_so_agent_seat_not_started_message_build(p
     start_again_instruction says how to start the agent-seat again once the file is fixed;
     it depends on the program that refused.
     """
-    # docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md
+    # docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md
     machine = ("ned-box" if handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box()
                else "the Mac")
     unix_user = getpass.getuser()
@@ -1076,24 +1132,6 @@ def transcript_unreadable_stop_message(agent: str, handoff_directory: Path, sess
             f"be decided, because its transcript could not be read: "
             f"{error.filename}: {error.strerror}.\n"
             + unreadable_path_restart_instruction(agent, handoff_directory, error.filename))
-
-
-def queue_status_line(working_directory: Path) -> str:
-    """Return each queue's depth and oldest item for the console."""
-    reports = []
-    for queue_directory in ("nc-queue", "docs/issues/queue", "docs/nedschorus-wiki/queue", "legacy-feature-queue"):
-        directory = working_directory / queue_directory
-        if not directory.is_dir():
-            continue
-        entries = sorted(
-            item for item in directory.glob("*.md") if item.name.lower() != "readme.md"
-        )
-        if not entries:
-            reports.append(f"{queue_directory}: empty")
-            continue
-        oldest = min(entries, key=lambda item: item.name)
-        reports.append(f"{queue_directory}: {len(entries)}, oldest {oldest.name}")
-    return "queues — " + ("; ".join(reports) if reports else "none found")
 
 
 def extract_dialog(session_id: str, working_directory: Path, output_path: Path) -> bool:
@@ -1168,6 +1206,11 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
     if late_tasks:
         lines.append(BACKGROUND_TASKS_STARTED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE.format(
             task_count=len(late_tasks), joined_tasks="; ".join(late_tasks)))
+    past_wait_limit_tasks = numbered_field_values_from(
+        handoff_fields, BACKGROUND_TASK_PAST_WAIT_LIMIT_FIELD_PREFIX)
+    if past_wait_limit_tasks:
+        lines.append(BACKGROUND_TASKS_PAST_WAIT_LIMIT_SENTENCE_TEMPLATE.format(
+            task_count=len(past_wait_limit_tasks), joined_tasks="; ".join(past_wait_limit_tasks)))
     refused_commands = numbered_field_values_from(
         handoff_fields, COLD_READ_FULL_RUN_COMMAND_REFUSED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX)
     if refused_commands:
@@ -1392,7 +1435,8 @@ def launch_time_git_sync(working_directory: Path) -> str:
         return (f"launch-time-git-sync: {branch} left as is — {error}{fetch_note}\n"
                 f"{launch_time_git_sync_git_failure_next_steps(error)}")
 
-    merged = run_git_here(["merge", "--ff-only", "origin/main"], working_directory)
+    merged = run_git_here(["merge", "--ff-only", "--no-overwrite-ignore", "origin/main"],
+                          working_directory)
     if merged.returncode != 0:
         error = "; ".join(line.strip() for line in merged.stderr.splitlines()
                           if line.strip())
@@ -1647,10 +1691,12 @@ def uncommitted_work_snapshot_text(agent: str, working_directory: Path,
 
 NEXT_STEP_HEADING = "\n\nThen take the next step:\n"
 LEFTOVERS_BEFORE_THE_NEXT_STEP_SENTENCE = (
-    "Before you take the next step, keep, delete or hand on each leftover listed below, which "
-    "an earlier agent-session of this agent-seat left, as its list says; you may instead hand "
-    "that work to a background subagent and take the next step while it runs. Each leftover's "
-    "entry opens with how many first prompts have listed it, this one included.")
+    "Give the leftovers listed below, which an earlier agent-session of this agent-seat left, "
+    "to a background subagent. It deletes each leftover that no open task or pull request of "
+    "this agent-seat needs, and reports the rest to you. Take the next step while it runs. "
+    "Then, for each leftover it reports, carry it on yourself, or name in your session-handoff "
+    "the agent-seat that will. Each leftover's entry opens with how many first prompts have "
+    "listed it, this one included.")
 LEFTOVER_PROMPT_LISTING_COUNTS_FILE_SUFFIX = "-leftovers-prompt-listing-counts.json"
 # The entries whose count is kept: a branch, a worktree or a work-snapshot, by what opens the entry.
 LEFTOVER_ENTRY_PREFIXES = ("- branch ", "- worktree ", "- refs/work-snapshots/")
@@ -2219,8 +2265,6 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
     prune_old_generations(settings.handoff_directory, f"{settings.agent}-dialog")
     prune_old_generations(settings.handoff_directory, f"{settings.agent}-handoff")
 
-    print(f"handoff-supervisor: {queue_status_line(settings.working_directory)}")
-
     successor_session_id = str(uuid.uuid4())
     plan = DialogIgnitionPlan(
         extract_path, handoff_fields,
@@ -2575,9 +2619,9 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                                                          session_id, error), file=sys.stderr)
                 return 5
         else:
-            consecutive_resumes_without_new_work = 0
+            consecutive_resumes_without_new_work = 0  # pragma: no mutate, the None below makes the death path reset the count before any read of it
             substantive_turns_at_the_last_resume = None
-        verb = "resuming" if next_launch_resumes_the_session else "launching"
+        verb ="resuming" if next_launch_resumes_the_session else "launching"
         print(f"handoff-supervisor: {verb} session {session_id} (generation {generation})")
         # Read at each launch: a resume after a crash is when a dead agent's work-snapshots appear.
         leftover_work_snapshots = uncommitted_work_snapshot_text(

@@ -2,7 +2,7 @@
   "env": {
     "DISABLE_AUTOUPDATER": "1"
   },
-  "idleCompaction": false,
+  "idleCompaction": true,
   "statusLine": {
     "type": "command",
     "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}\"/scripts/session-statusline-command.py"
@@ -14,6 +14,16 @@
     ]
   },
   "hooks": {
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/agent-seat-worktree-create-with-owner-file-claude-code-worktree-create-hook.py"
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "matcher": "compact",
@@ -265,7 +275,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/python-edit-changed-agent-facing-message-check-reminder-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/python-edit-changed-tool-message-to-agent-strings-check-reminder-hook.py",
             "timeout": 30
           }
         ]

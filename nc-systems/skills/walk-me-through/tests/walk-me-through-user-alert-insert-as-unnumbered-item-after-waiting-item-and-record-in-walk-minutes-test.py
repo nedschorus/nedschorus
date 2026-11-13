@@ -2,7 +2,8 @@
 """Cases for the program that adds claimed user alerts to the open approval-walk right after its waiting item.
 
 Each case runs the program as a subprocess, with HOME pointed at a scratch directory holding the claimed alerts,
-in a scratch checkout holding one approval-walk. Prints one line per case and exits non-zero if any case fails.
+in a scratch checkout holding one approval-walk, except the heading_title case, which calls that function
+in-process because a title it would prefix differently ends in the same refusal either way. Prints one line per case and exits non-zero if any case fails.
 """
 import importlib.util
 import json
@@ -10,6 +11,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 _git_environment_fixture_spec = importlib.util.spec_from_file_location(
@@ -163,7 +165,7 @@ def run_several_alert_cases(root):
         check(f"an alert titled {title!r} becomes the unnumbered item `## User alert: {title}`, not a refusal",
               result.returncode == 0 and f"\n## User alert: {title}\n" in document
               and sum(map(walk_finder.approval_walk_unit_is_unnumbered_item, units)) == 1
-              and f"`## User alert: {title}`" in result.stdout and f"User alert: {title}." in minutes,
+              and f"`## User alert: {title}`" in result.stdout and f"`User alert: {title}`." in minutes,
               result.stderr + document)
 
     sub_item = WALK_DOCUMENT.replace("## Items 5 and 6", "### Item 4.1 of 9: a part\n\n## Items 5 and 6")
@@ -186,6 +188,22 @@ def run_several_alert_cases(root):
           "alert by hand, and change nothing",
           result.returncode == 1 and "`##` part headings" in result.stderr and "alert-e" in result.stderr
           and "Traceback" not in result.stderr and files(checkout) == before, result.stderr)
+
+
+def run_marker_in_title_cases(root):
+    for number, title in enumerate(("pause it with #approval_walk_paused", "close it: #next_to_present none",
+                                    "quote `#next_to_present none` first", "two lines,\n#next_to_present none")):
+        checkout, home = walk_checkout(root, f"marker-{number}")
+        claimed_alert(home, "alert-m", title)
+        result = run(checkout, home, "alert-m")
+        _, minutes = files(checkout)
+        parser = walk_finder.markdown_parser()
+        found = walk_finder.open_walk(checkout / "docs" / "walk", parser)
+        check(f"a marker in the alert title {title!r} is written to the walk-minutes as a quotation, so the walk "
+              "stays open on its waiting item",
+              result.returncode == 0 and found is not None and found[1] == "item 4 of 9"
+              and walk_finder.text_wrapped_as_markdown_code_span(title) in minutes,
+              f"{result.stderr} {found!r} {minutes}")
 
 
 def run_refusal_cases(root):
@@ -262,11 +280,69 @@ def run_refusal_cases(root):
           and f"Then run again: python3 {PROGRAM.resolve()} --cwd {checkout} alert-a" in result.stderr
           and after == before, result.stderr)
 
+
+def run_repeated_id_and_title_spanning_two_headings_cases(root):
+    checkout, home = walk_checkout(root, "unreadable-given-twice")
+    claimed_alert(home, "alert-a", "first")
+    result = run(checkout, home, "alert-gone", "alert-a", "alert-gone")
+    check("an unreadable alert id given twice is left out both times from the command to run again",
+          result.returncode == 1
+          and f"leaving out alert-gone: python3 {PROGRAM.resolve()} --cwd {checkout} alert-a\n" in result.stderr,
+          result.stderr)
+
+    program_spec = importlib.util.spec_from_file_location("user_alert_insert", PROGRAM)
+    program = importlib.util.module_from_spec(program_spec)
+    program_spec.loader.exec_module(program)
+    title = program.heading_title("first\n## second", walk_finder, walk_finder.markdown_parser())
+    check("a title whose `##` heading would be two unnumbered items, not one, gets the prefix",
+          title == "User alert: first\n## second", repr(title))
+
+def run_walk_order_cases(root):
+    close_spec = importlib.util.spec_from_file_location(
+        "check_and_close", HERE / "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py")
+    close = importlib.util.module_from_spec(close_spec)
+    close_spec.loader.exec_module(close)
+    checkout, home = walk_checkout(root, "walk-order")
+    claimed_alert(home, "alert-a", "merge-lane-2 is down")
+    result = run(checkout, home, "alert-a")
+    document, _ = files(checkout)
+    day = datetime.fromisoformat("2026-10-27T12:00:00+00:00").astimezone().date().isoformat()
+    check("the added item holds the first-entered line with the day the alert was written, right under its heading",
+          f"## merge-lane-2 is down\n\n{close.WALK_FIRST_ENTERED_TAG} {day}\n" in document, document)
+    tags = [close.WALK_CATEGORY_TAG + category for category in close.WALK_CATEGORIES]
+    check("the output tells the agent to write a category line, naming every category tag the close step reads",
+          all(f"`{tag}`" in result.stdout for tag in tags) and close.WALK_WAITS_ON_TAG in result.stdout,
+          result.stdout)
+    tagged = document.replace("## merge-lane-2 is down\n", f"## merge-lane-2 is down\n\n{tags[0]}\n", 1)
+    parser = walk_finder.markdown_parser()
+    units = walk_finder.item_unit_spans(tagged, parser)
+    try:
+        placing = close.unshown_items_placing(walk_finder, tagged, units, parser, "walk.md", "2026-11-11")
+    except close.WalkOrderUnusable as problem:
+        placing = problem
+    check("once the agent adds the category line, the close step places the item by that category and the "
+          "alert's day", isinstance(placing, dict) and [key[:2] for key, _ in placing.values()] == [(0, day)],
+          placing)
+
+    checkout, home = walk_checkout(root, "unreadable-written-at")
+    (home / ".local/state/nedschorus/user-alerts/claimed" / "alert-t.json").write_text(
+        json.dumps({"id": "alert-t", "written_at": "yesterday", "title": "t", "alert_text": "x", "action": "y"}),
+        encoding="utf-8")
+    before = files(checkout)
+    result = run(checkout, home, "alert-t")
+    check("an alert whose written_at is no ISO 8601 time makes the program exit 1, naming it, and change nothing",
+          result.returncode == 1 and "the alert alert-t cannot be read from" in result.stderr
+          and "Traceback" not in result.stderr and files(checkout) == before, result.stderr)
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     scratch = Path(temporary_directory)
     run_one_alert_cases(scratch)
     run_several_alert_cases(scratch)
+    run_marker_in_title_cases(scratch)
     run_refusal_cases(scratch)
+    run_repeated_id_and_title_spanning_two_headings_cases(scratch)
+    run_walk_order_cases(scratch)
 
 if failures:
     print(f"\n{len(failures)} case(s) failed")

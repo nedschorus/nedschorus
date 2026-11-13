@@ -12,7 +12,7 @@ On ned-box, in a checkout at main e9460a4e:
 python3 scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py --head 53b49b16aa116b4b84ccfcef2164cfe17bdbe9ca --base 0ca5650eabbb27cb7f30d9b81e7ee3bd65d781da --cosmic-ray-venv /tmp/cosmic-ray-venv
 ```
 
-It exits 2 and prints `pull-request-mutation-testing-survivors: not run — the suites for nc-systems/general-tools/failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py could not be run on the unmutated head, so no mutant can be judged`, followed by cosmic-ray's traceback, which ends `OSError: [Errno 7] Argument list too long: 'sh'`. Pull request [git_failure_next_step_lines takes program only with the misspelt-name line](https://github.com/nedschorus/nedschorus/pull/1937) changes that module at head 53b49b16, and 71 test suites depend on it. The agent-seat MD-skills hit the same failure while preparing that pull request, on 2026-10-25 UTC.
+It exits 2 and prints `pull-request-mutation-testing-survivors: not run — the suites for nc-systems/general-tools/failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py could not be run on the unmutated head, so no mutant can be judged`, followed by cosmic-ray's traceback, which ends `OSError: [Errno 7] Argument list too long: 'sh'`. Pull request [git_failure_next_step_lines takes program only with the misspelt-name line](https://github.com/nedschorus/nedschorus/pull/1937) changes that module at head 53b49b16, and 71 test suites depend on it. The agent-seat MD-skills hit the same failure while preparing that pull request, on 2026-10-25 UTC.
 
 ## What is wrong
 

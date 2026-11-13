@@ -753,7 +753,7 @@ def fast_forward_seat_checkout(seat_dir: Path) -> str:
     if count == 0:
         return ""
 
-    merged = git(["merge", "--ff-only", "origin/main"], timeout=120)
+    merged = git(["merge", "--ff-only", "--no-overwrite-ignore", "origin/main"], timeout=120)  # pragma: no mutate, a limit a second longer or shorter on a fast-forward changes nothing a test can see without a git merge that runs for two minutes
     if merged.returncode != 0:
         return (f"ghi-guide-agent-ask: the seat checkout is {count} behind origin/main and would "
                 f"not fast-forward ({merged.stderr.strip() or 'no detail'}); answering from "

@@ -37,9 +37,9 @@ _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
     Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
-    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+    / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 
@@ -50,7 +50,7 @@ LINT_OVERVIEW_PATH_MODULE = Path(__file__).with_name(
 GIT_OUTPUT_MODULE = (Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
                      / "git-machine-readable-output-runner-and-parser-common.py")
 NEXT_STEP_LINES_MODULE = GIT_OUTPUT_MODULE.with_name(
-    "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+    "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 
 failures = []
 
@@ -193,6 +193,10 @@ A backticked path that is absent: `scripts/absent-program.py`.
 
 A backticked path that is present: `scripts/already-here.py`.
 
+An absent path cited with a line range: `scripts/absent-ranged.py:40-44`.
+
+A present path cited with a line range: `scripts/already-here.py:40-44`.
+
 A bare name with no directory: `dispositions.md`, which the user ruled on
 2026-09-17 is not checked at all.
 
@@ -205,6 +209,10 @@ scripts/inside-a-fence.py
           "scripts/absent-program.py" in out, out)
     check("a present backticked path is not reported",
           "already-here" not in out, out)
+    check("an absent path cited with a line range is reported",
+          "scripts/absent-ranged.py" in out, out)
+    check("a present path cited with a line range is not reported",
+          "already-here.py:40" not in out, out)
     check("a bare name with no directory is not reported (user-ruled 2026-09-17)",
           "dispositions.md" not in out, out)
     check("a path inside a code fence is not reported",
@@ -1095,8 +1103,7 @@ with tempfile.TemporaryDirectory() as workspace:
         return (code == 2 and INJECTED_GIT_ERROR in err and "a git command failed" in err
                 and "finding(s)" not in err
                 and next_step_lines.git_failure_next_step_lines(
-                    rerun, "dangling-path-citation-check", text_the_failure_line_contains="could not check, because a git command failed",
-                    include_the_misspelt_branch_commit_or_path_line=True) in err)
+                    rerun, "dangling-path-citation-check", text_the_failure_line_contains="could not check, because a git command failed") in err)
 
     for failing_arguments, what in (
             ("ls-tree -z HEAD --name-only -d", "listing the root directories"),

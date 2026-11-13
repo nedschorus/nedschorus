@@ -92,8 +92,6 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/clean-worktrees.py": 3,
     "scripts/code-review-codex-cell-test.py": 12,
     "scripts/code-review-codex-cell.py": 25,
-    "scripts/daily-full-test-run-of-main-test.py": 4,
-    "scripts/daily-full-test-run-of-main.py": 11,
     "scripts/dangling-path-citation-check-test.py": 11,
     "scripts/design-to-main/design-to-main-state-diagram-generator.py": 5,
     "scripts/design-to-main/tests/design-to-main-counters-contract-revision-and-redesign-ceilings-and-zeroing-test.py": 2,
@@ -137,7 +135,6 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/obsolete-file-edit-warning-hook-test.py": 6,
     "scripts/open-iterm-window-running-command-test.py": 3,
     "scripts/post-compaction-session-continues-hook-test.py": 1,
-    "scripts/pr-reviewer-instructions-copies-test.py": 5,
     "scripts/recover-crashed-seats-test.py": 170,
     "scripts/recover-crashed-seats.py": 32,
     "scripts/restart-live-seats-at-login-test.py": 39,
@@ -150,6 +147,8 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/sanity-check-adversarial-prompts.py": 19,
     "scripts/sanity-check-record-ship-test.py": 4,
     "scripts/sanity-check-record-ship.py": 5,
+    "scripts/scheduled-full-test-run-of-main-test.py": 4,
+    "scripts/scheduled-full-test-run-of-main.py": 11,
     "scripts/seat-shared-file-ship-test.py": 10,
     "scripts/seat-task-list-read-nbd-test.py": 7,
     "scripts/session-statusline-command-test.py": 3,
@@ -159,9 +158,9 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/system-glossaries-listed-on-the-project-glossary-test.py": 11,
     "scripts/test-suites-run-directly-ignore-git-redirecting-environment-test.py": 4,
     "scripts/transcript-mirror-to-log-store.py": 9,
-    "scripts/walk-file-endings-match-the-skill-test.py": 3,
-    "scripts/walk-files-ship-test.py": 12,
-    "scripts/walk-files-ship.py": 1,
+    "nc-systems/skills/walk-me-through/tests/walk-file-endings-match-the-skill-test.py": 3,
+    "nc-systems/skills/walk-me-through/tests/walk-files-ship-test.py": 12,
+    "nc-systems/skills/walk-me-through/walk-files-ship.py": 1,
 }
 
 # Lines whose marker is data the code needs, not history: (path, text): reason.
