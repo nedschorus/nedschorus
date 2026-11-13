@@ -2426,8 +2426,12 @@ time.sleep(300)
         may hand a signal sent to the process to any of its threads.
         DRIVER_HOLD_MAIN_THREAD_ONCE_EVERY_CELL_ENDED holds the main thread
         in its wait for the cells once no cell is left to wait for, before the
-        run counts the saved reports, until that file exists (`<file>.held`
-        again). DRIVER_HOLD_STOP_HANDLER holds the stop signal's handler
+        run counts the saved reports, until that file exists or the run is
+        stopped (`<file>.held` again). Once the file
+        DRIVER_SIGTERM_AT_MAIN_THREAD_LOCK_REACQUIRE names exists, the main
+        thread's next wait for the cells sends SIGTERM to the runner at the
+        start of a condition's lock re-acquire, after the timed wait has
+        returned and before the lock is held again. DRIVER_HOLD_STOP_HANDLER holds the stop signal's handler
         before it sets RUN_STOPPED, as a busy machine may delay the main
         thread, until that file exists (`<file>.held` again).
         DRIVER_PROBE_VERSIONS, set to any
@@ -2447,10 +2451,10 @@ if not os.environ.get("DRIVER_PROBE_VERSIONS"):
 if hasattr(module, "STOPPED_PROCESS_GRACE_SECONDS"):
     module.STOPPED_PROCESS_GRACE_SECONDS = 3.0
 
-def held_until(path):
+def held_until(path, or_until=lambda: False):
     pathlib.Path(path + ".held").write_text("", encoding="utf-8")
     deadline = time.monotonic() + 60
-    while not pathlib.Path(path).exists() and time.monotonic() < deadline:
+    while not pathlib.Path(path).exists() and not or_until() and time.monotonic() < deadline:
         time.sleep(0.02)
 
 stop_handler_hold = os.environ.get("DRIVER_HOLD_STOP_HANDLER")
@@ -2503,9 +2507,26 @@ if cells_ended_hold:
     def main_thread_held_once_every_cell_ended(*arguments, **keywords):
         finished, waiting = wait_for_cells(*arguments, **keywords)
         if not waiting:
-            held_until(cells_ended_hold)
+            held_until(cells_ended_hold, module.RUN_STOPPED.is_set)
         return finished, waiting
     module.concurrent.futures.wait = main_thread_held_once_every_cell_ended
+reacquire_go = os.environ.get("DRIVER_SIGTERM_AT_MAIN_THREAD_LOCK_REACQUIRE")
+if reacquire_go:
+    import signal, threading
+    wait_for_cells = module.concurrent.futures.wait
+    reacquire = threading.Condition._acquire_restore
+    armed = []
+    def sigterm_then_reacquire(condition, state):
+        if armed and threading.current_thread() is threading.main_thread():
+            armed.clear()
+            signal.raise_signal(signal.SIGTERM)
+        return reacquire(condition, state)
+    threading.Condition._acquire_restore = sigterm_then_reacquire
+    def wait_armed_once_told(*arguments, **keywords):
+        if pathlib.Path(reacquire_go).exists() and not armed and not module.RUN_STOPPED.is_set():
+            armed.append(1)
+        return wait_for_cells(*arguments, **keywords)
+    module.concurrent.futures.wait = wait_armed_once_told
 ship_hold = os.environ.get("DRIVER_HOLD_FIRST_SHIP")
 if ship_hold:
     ship = module.ship_record
@@ -2660,6 +2681,50 @@ sys.exit(module.main())
                     process.kill()
                     process.communicate()
                 end_stand_ins(recorded)
+
+    # Case 63: SIGTERM that the main thread takes inside its wait for the
+    # cells, between the timed wait's return and the re-acquire of the
+    # condition's lock. A handler that raised there left the lock released,
+    # `with` then released it again, and RuntimeError replaced the stop: exit
+    # 1, a traceback, no STOPPED line and no record shipped.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        target = "docs/stopped-at-a-lock-reacquire.md"
+        repo = scratch_repository_with_design(base, target)
+        programs, recorded = stand_in_agent_binaries(base)
+        reacquire_go = base / "sigterm-at-lock-reacquire"
+        environment = runner_process_environment(programs, recorded, codex="report")
+        environment["DRIVER_SIGTERM_AT_MAIN_THREAD_LOCK_REACQUIRE"] = str(reacquire_go)
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(runner_driver(base, repo)),
+             "--target", target, "--adversarial-prompt", "cut"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            records_root = repo / "sanity-check-records"
+            started = wait_until(
+                lambda: len(recorded_process_ids(recorded, "claude")) == 1
+                and any(records_root.glob("*/cut-adversarial-prompt-codex.md")))
+            reacquire_go.write_text("", encoding="utf-8")
+            try:
+                out, err = process.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                out, err = process.communicate()
+            check("a SIGTERM the main thread takes as it re-acquires a lock in its wait "
+                  "for the cells ends the run with its STOPPED line, its record shipped",
+                  started and process.returncode == -signal.SIGTERM
+                  and "Traceback" not in err
+                  and "STOPPED: SIGTERM ended this run" in out
+                  and out.splitlines()[-1:] != []
+                  and out.splitlines()[-1].startswith("record: shipped: ")
+                  and left_in_copies_root(base) == [],
+                  f"started {started}, exit {process.returncode}, "
+                  f"copies root {left_in_copies_root(base)}, stdout {out!r}, stderr {err!r}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            end_stand_ins(recorded)
 
     # Case 45: SIGINT sent to the runner's whole process group, as Ctrl-C at a
     # terminal sends it. The agent-binaries are in sessions of their own, so
