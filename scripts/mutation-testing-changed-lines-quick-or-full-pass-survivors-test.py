@@ -1129,16 +1129,27 @@ def run_log_directories_parent_retention_and_stop_signal_cases():
     with tempfile.TemporaryDirectory() as scratch_name:
         scratch = Path(scratch_name)
         old, fresh, other = scratch / f"{prefix}old", scratch / f"{prefix}fresh", scratch / "other-old"
-        for each in (old, fresh, other):
+        one_day_old = scratch / f"{prefix}one-day-old"
+        for each in (old, fresh, other, one_day_old):
             (each / "a-log-dir").mkdir(parents=True)
         three_days_ago = now - 3 * 24 * 3600
         for each in (old, other):
             os.utime(each, (three_days_ago, three_days_ago))
-        survivors.test_suite_runner_log_directories_parents_past_retention_removed(scratch, now)
+        os.utime(one_day_old, (now - 24 * 3600, now - 24 * 3600))
+        # stat() of a dangling symlink raises FileNotFoundError, as it does for a parent another
+        # run removes between the glob and the stat.
+        (scratch / f"{prefix}dangling").symlink_to(scratch / "no-such-directory")
+        try:
+            survivors.test_suite_runner_log_directories_parents_past_retention_removed(scratch, now)
+            raised = None
+        except Exception as error:  # A crash is this case's failure, not the suite's.
+            raised = error
         check("at start, a log directories parent an earlier run left more than two days ago is "
-              "removed, and a fresh one and a directory of another name are left",
-              not old.exists() and fresh.exists() and other.exists(),
-              sorted(p.name for p in scratch.iterdir()))
+              "removed; a fresh one, a day-old one and a directory of another name are left; and "
+              "a parent whose stat() fails is skipped without an error",
+              raised is None and not old.exists() and fresh.exists() and one_day_old.exists()
+              and other.exists(),
+              f"raised={raised!r} left={sorted(p.name for p in scratch.iterdir())}")
 
     with tempfile.TemporaryDirectory() as scratch_name:
         parent = Path(scratch_name) / f"{prefix}stopped"
