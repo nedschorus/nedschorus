@@ -486,6 +486,13 @@ UNREADABLE_MARK_CASES = (
     ("a mark with no text whose text runs on right below it", '#new\n"The page lists\none poem."\n',
      ["- line 5: `#new` has no text after it on its line. The mark's line with its text joined onto it: "
       '#new "The page lists one poem."']),
+    ("a mark with no text, on the line below a line of prose, whose text runs on right below it",
+     'The line above.\n#new\n"The page lists\none poem."\n',
+     ["- line 6: `#new` has no text after it on its line. The mark's line with its text joined onto it: "
+      '#new "The page lists one poem."']),
+    ("a mark whose text runs onto a last line holding only an empty quotation", '#new "The page lists\n""\n',
+     ["- line 5: the text of `#new` runs onto line 6 right below it, where it is not read. The mark's line with "
+      'its text joined onto it: #new "The page lists ""']),
     ("a mark inside fenced code", 'Before.\n\n```\n#new "The page lists\none poem."\n```\n',
      ["- line 8: `#new` is inside fenced or indented code, where no mark's text is read. The mark's line with its text joined onto "
       'it: #new "The page lists one poem."']),
