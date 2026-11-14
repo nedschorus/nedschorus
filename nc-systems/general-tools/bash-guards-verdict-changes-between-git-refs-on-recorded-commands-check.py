@@ -1217,11 +1217,12 @@ def run_log_directory_made(runs_directory):
 
 
 def remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures(scratch, run_log_directory, status):
-    """Remove the scratch directory, and the run log directory after an exit 0; return a line for each path
-    that could not be removed."""
+    """Remove the scratch directory, and the run log directory after an exit 0 whose scratch directory was
+    removed; return a line for each path that could not be removed. A scratch directory that could not be removed
+    makes the replay exit 2, so its run log directory is kept."""
     could_not_remove = []
     shutil.rmtree(scratch, onexc=lambda _, path, error: could_not_remove.append(f"{path}: {error}"))
-    if status == 0:
+    if status == 0 and not could_not_remove:
         shutil.rmtree(run_log_directory, onexc=lambda _, path, error: could_not_remove.append(f"{path}: {error}"))
     return could_not_remove
 
