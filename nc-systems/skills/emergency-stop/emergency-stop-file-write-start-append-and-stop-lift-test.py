@@ -147,6 +147,21 @@ def main():
               status == 1 and out.startswith("FAILED") and "not the one in force" in out
               and "Lifted" in out and "pushes and merges are not refused" in out, out)
 
+        another_in_force = root / "read-back-another" / "emergency-stop"
+        another_in_force.parent.mkdir()
+        other_file = another_in_force / "2099-01-01T00-00-00Z.md"
+        program.common.read_state = lambda f: (common.NoStop(f) if not f.exists() or not any(f.iterdir())
+                                               else common.InForce(other_file, "someone else's stop\n"))
+        program.now_utc = lambda: datetime(2026, 11, 14, 12, 0, 0, tzinfo=timezone.utc)
+        try:
+            status, out = run(another_in_force, "start", "--words", "stop")
+        finally:
+            program.common.read_state = _real_read_state
+            program.now_utc = _real_now_utc
+        check("start whose read-back finds another stop file in force: FAILED, naming that file",
+              status == 1 and out.startswith("FAILED") and "not the one in force" in out
+              and "InForce" in out and str(other_file) in out, out)
+
         status, out = run(folder, "start", "--words", "again", agent_seat=None)
         check("no agent-seat known: FAILED", status == 1 and "GIT_AUTHOR_NAME" in out, out)
 
