@@ -130,7 +130,9 @@ def require_in_force(folder):
     if isinstance(state, common.Unreadable):
         return None, f"the emergency-stop file {state.path} cannot be read: {state.error}"
     if isinstance(state, common.FolderUnreachable):
-        return None, f"the emergency-stop folder {state.folder} cannot be reached: {state.error}"
+        return None, (f"the emergency-stop folder {state.folder} cannot be reached: {state.error}; nothing was "
+                      "written.\nRun the same command again once this machine can reach that folder; until then, "
+                      "tell the user that it cannot.")
     return None, f"no emergency stop is in force in {folder}"
 
 
@@ -144,11 +146,16 @@ def start(folder, agent_seat, kind, words, jobs_file, moment):
         append(state.path, f"{moment.isoformat()} {kind} added by {agent_seat}: {one_line(words)}")
         return f"added to the emergency stop in force, {state.path}"
     if isinstance(state, common.Unreadable):
-        raise StartRefused(f"the emergency-stop file {state.path} cannot be read: {state.error}; it counts as "
-                           "an emergency stop in force, a new stop file would hide it, and only the user "
-                           "repairs or moves it")
+        raise StartRefused(f"start wrote nothing: the newest emergency-stop file, {state.path}, cannot be read: "
+                           f"{state.error}. That unreadable file already counts as an emergency stop in force, "
+                           "so pushes and merges stay refused; a newer emergency-stop file would take its place "
+                           "as the one in force and hide it.\nTell the user the file's path and this error, and "
+                           "leave the file as it is: only the user repairs or moves it.")
     if isinstance(state, common.FolderUnreachable):
-        raise OSError(f"the emergency-stop folder {state.folder} cannot be reached: {state.error}")
+        raise StartRefused(f"start wrote nothing: the emergency-stop folder {state.folder} cannot be reached: "
+                           f"{state.error}. No emergency stop was started, so pushes and merges are not "
+                           "refused.\nTell the user at once that the emergency stop was not started, and why; "
+                           "run start again once this machine can reach that folder.")
     folder.mkdir(exist_ok=True)
     named = name_moment_after(moment, state.path) if isinstance(state, common.Lifted) else moment
     path = folder / stop_file_name(named)
@@ -172,10 +179,22 @@ def in_force_check(folder, path, report):
     state = common.read_state(folder)
     if isinstance(state, common.InForce) and state.path == path:
         return report
-    found = getattr(state, "path", None) or folder
-    raise StartRefused(f"{path} was written, but the folder read back answers {type(state).__name__} "
-                       f"for {found}, so the stop written is not the one in force; pushes and merges are not "
-                       f"refused. Run start again; if this repeats, tell the user what this line says")
+    raise StartRefused(f"{path} was written, but reading the emergency-stop folder back afterwards did not find "
+                       f"it in force: {read_back_description(state)}. So pushes and merges are not refused."
+                       "\nRun start again at once, with the same --words or --evidence."
+                       "\nWhen start fails this way a second time, tell the user this whole message.")
+
+
+def read_back_description(state):
+    if isinstance(state, common.InForce):
+        return f"the emergency-stop file in force is {state.path}"
+    if isinstance(state, common.Lifted):
+        return f"the newest emergency-stop file, {state.path}, is lifted"
+    if isinstance(state, common.Unreadable):
+        return f"the newest emergency-stop file, {state.path}, cannot be read: {state.error}"
+    if isinstance(state, common.FolderUnreachable):
+        return f"the folder cannot be reached: {state.error}"
+    return "no emergency-stop file is in force there"
 
 
 def current_umask():
@@ -213,7 +232,9 @@ def run(arguments, environment):
         print(type(common.read_state(folder)).__name__)
         return 0
     if not agent_seat:
-        return failed("no agent-seat is known: GIT_AUTHOR_NAME is unset; pass --as-agent-seat")
+        return failed(f"{options.command} wrote nothing: no agent-seat is known, because GIT_AUTHOR_NAME is "
+                      f"unset.\nRun the command again with --as-agent-seat and your agent-seat's name placed "
+                      f"before {options.command}, as in: --as-agent-seat prime-intellect {options.command} ...")
     try:
         if options.command == "start":
             kind, words = ("words", options.words) if options.words is not None else ("evidence", options.evidence)
@@ -239,7 +260,10 @@ def run(arguments, environment):
     except StartRefused as refusal:
         return failed(str(refusal))
     except OSError as error:
-        return failed(f"the emergency-stop file could not be written: {error}")
+        return failed(f"{options.command} could not finish writing to the emergency-stop folder {folder}: "
+                      f"{error}.\nRun this program's status command to see whether an emergency stop is in force "
+                      f"now: it prints InForce when one is, and when it does not, pushes and merges are not "
+                      f"refused.\nTell the user this error and what status printed.")
 
 
 def main():

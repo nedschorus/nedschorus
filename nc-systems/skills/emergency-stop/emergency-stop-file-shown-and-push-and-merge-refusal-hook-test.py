@@ -151,7 +151,7 @@ def main():
         shown = decoded(hook.output_for(payload(), environment))
         check("unreadable file: says why, and to tell the user",
               shown and "cannot be read" in shown["additionalContext"]
-              and "Tell the user its path" in shown["additionalContext"], shown)
+              and "Tell the user the file's path" in shown["additionalContext"], shown)
 
         stop.write_text("started\n#emergency_stop_lifted all clear\n")
         session = uuid.uuid4().hex

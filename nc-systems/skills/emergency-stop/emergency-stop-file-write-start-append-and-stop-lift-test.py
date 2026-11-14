@@ -144,15 +144,17 @@ def main():
             program.common.read_state = _real_read_state
             program.now_utc = _real_now_utc
         check("start whose stop is not the one in force when read back: FAILED, and says pushes are not refused",
-              status == 1 and out.startswith("FAILED") and "not the one in force" in out
-              and "Lifted" in out and "pushes and merges are not refused" in out, out)
+              status == 1 and out.startswith("FAILED") and "did not find it in force" in out
+              and "is lifted" in out and "pushes and merges are not refused" in out, out)
 
         status, out = run(folder, "start", "--words", "again", agent_seat=None)
-        check("no agent-seat known: FAILED", status == 1 and "GIT_AUTHOR_NAME" in out, out)
+        check("no agent-seat known: FAILED, saying where --as-agent-seat goes", status == 1
+              and "GIT_AUTHOR_NAME" in out and "--as-agent-seat prime-intellect start" in out, out)
 
         unreachable = root / "gone" / "emergency-stop"
         status, out = run(unreachable, "start", "--words", "stop")
-        check("start with unreachable folder: FAILED, no retry", status == 1 and out.startswith("FAILED"), out)
+        check("start with unreachable folder: FAILED, no retry, and says no stop was started", status == 1
+              and out.startswith("FAILED: start wrote nothing") and "No emergency stop was started" in out, out)
 
         if os.geteuid() != 0:
             blocked = root / "blocked"
@@ -161,7 +163,8 @@ def main():
             (blocked / "emergency-stop").chmod(0o500)
             try:
                 status, out = run(blocked / "emergency-stop", "start", "--words", "stop")
-                check("stop file cannot be written: FAILED", status == 1 and out.startswith("FAILED"), out)
+                check("stop file cannot be written: FAILED, pointing at status", status == 1
+                      and out.startswith("FAILED") and "status command" in out, out)
             finally:
                 (blocked / "emergency-stop").chmod(0o755)
 
@@ -190,7 +193,7 @@ def main():
         (unreadable_folder / "2029-01-01T00-00-00Z.md").write_bytes(b"\xff\xfe not utf-8")
         status, out = run(unreadable_folder, "start", "--words", "stop")
         check("start while the newest stop file is unreadable: FAILED, and no new stop file hides it",
-              status == 1 and out.startswith("FAILED: the emergency-stop file") and "only the user" in out
+              status == 1 and out.startswith("FAILED: start wrote nothing") and "only the user" in out
               and sorted(p.name for p in unreadable_folder.iterdir()) == ["2029-01-01T00-00-00Z.md"], out)
 
         jobs_without_a_program = root / "jobs-without-a-program.json"
