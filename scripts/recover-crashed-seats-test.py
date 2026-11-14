@@ -588,7 +588,8 @@ def run_reach_clause_cases(root: Path):
     real_launcher_path = recovery.launcher_path
     mac_launcher = recovery.durable_checkout / recovery.LAUNCH_CLAUDE_MAC_WITHIN_A_CHECKOUT
     machines = [
-        ("the Mac", lambda: mac_launcher, "; reach it with: launch-claude-mac seat-a"),
+        ("the Mac", lambda: mac_launcher,
+         "; reach it with: /Users/el/Projects/nedschorus/scripts/launch-claude-mac seat-a"),
         ("ned-box", lambda: None,
          "; reach it with: /Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu seat-a "
          "from the Mac, or tmux -L seat-a attach -t seat-a here"),
@@ -1714,9 +1715,10 @@ with tempfile.TemporaryDirectory() as temporary:
                   "seat-consulted: NOT RELAUNCHED, AT ITS OWN REQUEST — an unconsumed "
                   "handoff (counter 11) asks to be consulted before a relaunch: the user "
                   "asked to be consulted before a relaunch. Nothing was launched. To bring "
-                  "it back, launch it by hand (launch-claude-mac seat-consulted or "
-                  "launch-claude-ubuntu seat-consulted) and answer its supervisor's restart "
-                  "question"),
+                  "it back, launch it by hand from the Mac "
+                  "(/Users/el/Projects/nedschorus/scripts/launch-claude-mac seat-consulted for an "
+                  "agent-seat on the Mac, /Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu "
+                  "seat-consulted for one on ned-box) and answer its supervisor's restart question"),
               report)
     check("and its handoff is left unconsumed, for its supervisor's own restart question",
           consulted_handoff_path.read_text(encoding="utf-8") == consulted_handoff_text
@@ -4078,7 +4080,7 @@ with tempfile.TemporaryDirectory() as temporary:
           and workspace.launches == [],
           (report_dry, report))
     expected_launcher_word = (str(recovery.launcher_path()) if recovery.launcher_path()
-                              else "launch-claude-ubuntu")
+                              else "/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu")
     resume_command_words = shlex.split(resume_command.replace(" (on the Mac)", ""))
     # The agents-root word rides only the Mac form: launch-claude-ubuntu reads
     # no root (user-ruled 2026-09-22, merge-lane-2's walk).
@@ -4126,8 +4128,9 @@ with tempfile.TemporaryDirectory() as temporary:
             workspace.name, workspace.seat_directory, workspace.handoffs, "")
     finally:
         patch("launcher_path", real_launcher_path)
-    check("EXIT RECORD: off the Mac the by-hand command names launch-claude-ubuntu, on the Mac",
-          box_command.endswith(f" launch-claude-ubuntu {workspace.name} (on the Mac)"),
+    check("EXIT RECORD: off the Mac the by-hand command names launch-claude-ubuntu by its full path, on the Mac",
+          box_command.endswith(
+              f" /Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu {workspace.name} (on the Mac)"),
           box_command)
     check("EXIT RECORD: off the Mac the by-hand command carries no agents root, which "
           "launch-claude-ubuntu does not read",

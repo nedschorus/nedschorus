@@ -157,8 +157,8 @@ _mac_reference_checkout_path_constant_specification = importlib.util.spec_from_f
     / "mac-reference-checkout-launcher-scripts-directory-path-constant-common.py")
 mac_reference_checkout_path_constant = importlib.util.module_from_spec(_mac_reference_checkout_path_constant_specification)
 _mac_reference_checkout_path_constant_specification.loader.exec_module(mac_reference_checkout_path_constant)
-MAC_REFERENCE_CHECKOUT_LAUNCHER_SCRIPTS_DIRECTORY_PATH = (
-    mac_reference_checkout_path_constant.MAC_REFERENCE_CHECKOUT_LAUNCHER_SCRIPTS_DIRECTORY_PATH)
+mac_launcher_command = (
+    mac_reference_checkout_path_constant.mac_reference_checkout_launcher_path_agent_seat_start_command_text_for_user_to_type)
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
     "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
@@ -734,8 +734,8 @@ def no_terminal_to_ask_user_before_restart_stop_message(agent_seat: str, handoff
             "before restarting, and this handoff-supervisor has no terminal to ask on, so it "
             f"stopped {agent_seat} without restarting it.\n"
             "To start it again, run its launcher from the Mac: "
-            f"`{MAC_REFERENCE_CHECKOUT_LAUNCHER_SCRIPTS_DIRECTORY_PATH}/launch-claude-ubuntu {agent_seat}` for an agent-seat on ned-box, "
-            f"`{MAC_REFERENCE_CHECKOUT_LAUNCHER_SCRIPTS_DIRECTORY_PATH}/launch-claude-mac {agent_seat}` for one on the Mac. The new session is not given "
+            f"`{mac_launcher_command('launch-claude-ubuntu', agent_seat)}` for an agent-seat on ned-box, "
+            f"`{mac_launcher_command('launch-claude-mac', agent_seat)}` for one on the Mac. The new session is not given "
             f"the session-handoff's next step, which stays in {handoff_path}.")
 
 
@@ -2851,8 +2851,10 @@ def main(argv=None) -> int:
         print(
             "handoff-supervisor: startup stopped because the agent-seat was not started "
             "by a launcher that pins its task list; CLAUDE_CODE_TASK_LIST_ID is unset or empty.\n"
-            "For an agent-seat on the Mac, start it on the Mac with scripts/launch-claude-mac.\n"
-            "For an agent-seat on ned-box, start it on the Mac with scripts/launch-claude-ubuntu, "
+            "For an agent-seat on the Mac, start it on the Mac with "
+            f"`{mac_launcher_command('launch-claude-mac', arguments.agent)}`.\n"
+            "For an agent-seat on ned-box, start it on the Mac with "
+            f"`{mac_launcher_command('launch-claude-ubuntu', arguments.agent)}`, "
             "which reaches ned-box over ssh.",
             file=sys.stderr,
         )
@@ -2864,8 +2866,8 @@ def main(argv=None) -> int:
         print(agent_seat_github_token_unreadable_so_agent_seat_not_started_message_build(
             "handoff-supervisor", error,
             "start the agent-seat again with its launcher, from the Mac: "
-            f"`{MAC_REFERENCE_CHECKOUT_LAUNCHER_SCRIPTS_DIRECTORY_PATH}/launch-claude-ubuntu {arguments.agent}` for an agent-seat on ned-box, "
-            f"`{MAC_REFERENCE_CHECKOUT_LAUNCHER_SCRIPTS_DIRECTORY_PATH}/launch-claude-mac {arguments.agent}` for one on the Mac. If the launcher left a "
+            f"`{mac_launcher_command('launch-claude-ubuntu', arguments.agent)}` for an agent-seat on ned-box, "
+            f"`{mac_launcher_command('launch-claude-mac', arguments.agent)}` for one on the Mac. If the launcher left a "
             "shell open in the agent-seat's tmux session, exit that shell first."),
             file=sys.stderr)
         return AGENT_SEAT_GITHUB_TOKEN_UNREADABLE_EXIT_STATUS

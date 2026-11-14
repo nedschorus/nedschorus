@@ -75,8 +75,8 @@ def run_unpinned_task_list_startup_refusal_cases(workspace: Path):
                   and "startup stopped" in result.stderr
                   and "not started by a launcher that pins its task list" in result.stderr
                   and "CLAUDE_CODE_TASK_LIST_ID is unset or empty" in result.stderr
-                  and "scripts/launch-claude-mac" in result.stderr
-                  and "scripts/launch-claude-ubuntu" in result.stderr
+                  and "`/Users/el/Projects/nedschorus/scripts/launch-claude-mac unpinned`" in result.stderr
+                  and "`/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu unpinned`" in result.stderr
                   and "start it on the Mac" in result.stderr
                   and not (workspace / "unpinned").exists(), result.stderr)
         result = subprocess.run(
