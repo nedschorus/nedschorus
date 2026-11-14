@@ -113,6 +113,11 @@ if tool == "cr-filter-git":
 if tool in ("cr-filter-pragma", "cr-filter-lines"):
     sys.exit(plan.get(tool + "_exit", 0))
 command = arguments[0]
+if command == "baseline" and plan.get("baseline_cannot_import_cosmic_ray"):
+    # As a venv whose attrs sources /tmp's cleaner deleted: cosmic-ray dies on import.
+    print("ImportError: cannot import name 'asdict' from 'attrs' (unknown location)",
+          file=sys.stderr)
+    sys.exit(1)
 if command == "baseline":
     config_text = pathlib.Path(arguments[-1]).read_text()
     (control / "config.toml").write_text(config_text)
@@ -2865,6 +2870,26 @@ def run_cases():
               json.dumps(recorded))
         check("the worktree is removed after a failing baseline",
               len(worktrees_of(repository)) == 1, worktrees_of(repository))
+
+    # A cosmic-ray that cannot start writes no baseline session: it is reported as such, with
+    # how to rebuild its venv, not as failing suites.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+        venv, control = fake_venv(scratch_name, {"baseline_cannot_import_cosmic_ray": True})
+        completed = run_script(repository, control, "--head", head, "--base", base,
+                               "--cosmic-ray-venv", str(venv))
+        check("a cosmic-ray that cannot import its packages: exit 2, naming it, its error and "
+              "how to rebuild its venv, not failing suites, and nothing dumped",
+              completed.returncode == 2
+              and f"{venv.resolve() / 'bin' / 'cosmic-ray'} exited 1 without making its "
+              f"baseline session, so no suite ran" in completed.stderr
+              and "cannot import name 'asdict' from 'attrs'" in completed.stderr
+              and f"  rm -rf {venv.resolve()}\n" in completed.stderr
+              and f"  {venv.resolve()}/bin/pip install cosmic-ray==" in completed.stderr
+              and "fail on the unmutated head" not in completed.stderr
+              and [c["arguments"][0] for c in calls(control)] == ["baseline"]
+              and len(worktrees_of(repository)) == 1,
+              f"rc={completed.returncode} err={completed.stderr} calls={calls(control)}")
 
     # ------------------------------------------------------------------
     # A baseline that ran out of time is reported as a timeout, not as

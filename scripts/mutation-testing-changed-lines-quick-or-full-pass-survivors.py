@@ -254,7 +254,7 @@ check exits as its own paragraph says: 0 every mutant was killed or no longer
 exists, 1 one survived, 2 one could not be judged or the check could not run,
 a suite failing without a mutant included; never 3):
 0 every mutant was killed, 1 a mutant survived, errored or was
-not run, or a changed file has no suite, 2 could not run (cosmic-ray missing,
+not run, or a changed file has no suite, 2 could not run (cosmic-ray missing or unable to start,
 a git step failed, the nc-head-commit is already in the base, the worktree could
 not be made, a changed file the quick mutation pass reads is not valid Python,
 the JSON file could not be written, or a suite runs out of time, cannot be
@@ -1255,6 +1255,21 @@ def mutation_test_one_file(path, suites, worktrees, scratch, tools, head, merge_
             what=f"cosmic-ray dump for {path}"), mutant_timeout_seconds, runner)
     baseline = run([*cosmic_ray, "baseline", "--session-file",
                     str(baseline_session), str(config)], worktree, environment)
+    if not baseline_session.exists():
+        # Removed first: pip finds a hollowed venv's metadata and reports cosmic-ray installed.
+        venv = shlex.quote(str(Path(tools["cosmic-ray"]).parents[1]))
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — {tools['cosmic-ray']} exited {baseline.returncode} without "
+            f"making its baseline session, so no suite ran and no mutant of {path} can be "
+            f"judged:\n{(baseline.stderr or baseline.stdout).strip()}\n"
+            f"If that error is an ImportError or ModuleNotFoundError, the venv holding "
+            f"cosmic-ray is broken; rebuild it on {socket.gethostname()}, the machine this "
+            f"ran on:\n"
+            f"  rm -rf {venv}\n"
+            f"  python3 -m venv {venv}\n"
+            f"  {venv}/bin/pip install cosmic-ray=={COSMIC_RAY_VERSION}\n"
+            f"Then run again:\n"
+            f"  python3 {shlex.join(sys.argv)}")
     if baseline.returncode != 0:
         # cosmic-ray writes the baseline's result before it exits 1; a baseline that crashed
         # before writing it leaves nothing to dump, and is reported as failing suites.
