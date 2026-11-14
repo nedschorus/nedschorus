@@ -246,6 +246,80 @@ The next item's text.
           and "the second sub-step's text" not in page, page)
 
 
+def run_sub_step_selection_cases(scratch):
+    no_parent_opening = """# A walk
+
+## Items 12 to 12.2 of 13: a group
+
+The group's introduction.
+
+**Item 12.1:** the first sub-step's text.
+
+**Item 12.2:** the second sub-step's text.
+
+## Item 13 of 13: next
+
+The next item's text.
+"""
+    result, page = built(scratch, "12", document=no_parent_opening)
+    check("when the item has no opening of its own under the heading it shares with its sub-steps, each sub-step's "
+          "text is on its page once",
+          result.returncode == 0 and "The group's introduction." in page
+          and page.count("the first sub-step's text") == 1 and page.count("the second sub-step's text") == 1, page)
+    result, page = built(scratch, "12", document=no_parent_opening.replace(
+        "**Item 12.2:**", "#### Withdrawn version 1 of item 12.1\n\nThe withdrawn sub-step text.\n\n**Item 12.2:**"))
+    check("with a Withdrawn heading between the sub-steps, the sub-step after it is still on the item's page, once",
+          result.returncode == 0 and page.count("the first sub-step's text") == 1
+          and page.count("the second sub-step's text") == 1 and "withdrawn sub-step" not in page, page)
+    older_sub_step_elsewhere = """# A walk
+
+## Item 1 of 10: older
+
+### Item 3.2 of 9: an older version's sub-step
+
+Old.
+
+## Item 3 of 10: the opening sentence
+
+### Item 3.1 of 10: the first half
+
+One.
+"""
+    result, page = built(scratch, "3", document=older_sub_step_elsewhere)
+    check("an item's page takes its sub-steps only from the units right after its own, so an older `3.2 of 9` "
+          "under item 1 stays off item 3's page",
+          result.returncode == 0 and "One." in page and "Old." not in page and "3.2 of 9" not in page, page)
+    openings_out_of_number_order = """# A walk
+
+## Items 12 to 12.2 of 13: a group
+
+**Item 12:** the item's own text.
+
+**Item 12.2:** the second sub-step's text.
+
+**Item 12.1:** the first sub-step's text.
+"""
+    result, page = built(scratch, "12", document=openings_out_of_number_order)
+    check("the item's page puts the sub-steps under its heading in the walk-document's order, not in number order",
+          result.returncode == 0 and 0 < page.find("the item's own text") < page.find("the second sub-step's text")
+          < page.find("the first sub-step's text"), page)
+    sub_step_without_opening = """# A walk
+
+## Items 12 to 12.2 of 13: a group
+
+The group's introduction.
+
+**Item 12:** the item's own text.
+
+**Item 12.1:** the first sub-step's text.
+"""
+    result, page = built(scratch, "12", document=sub_step_without_opening)
+    check("a sub-step with no opening of its own, here 12.2, is left off its item's page, so the heading's lines "
+          "above the item's opening stay off it too",
+          result.returncode == 0 and page.count("the item's own text") == 1
+          and page.count("the first sub-step's text") == 1 and "The group's introduction." not in page, page)
+
+
 def run_refusal_cases(scratch):
     result, page = built(scratch, "7")
     check("an item no heading names, here one only inside code, is refused with exit 1 and no page",
@@ -330,6 +404,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_page_cases(scratch)
     run_unit_cases(scratch)
     run_parent_with_sub_steps_case(scratch)
+    run_sub_step_selection_cases(scratch)
     run_refusal_cases(scratch)
     run_parser_missing_case(scratch)
 
