@@ -168,9 +168,7 @@ def ask_user_to_start_agent_seat_from_mac_terminal(agent_seat: str) -> str:
 
 
 def mac_launcher_command_for_agent_seat_on_this_machine(agent_seat: str) -> str:
-    return mac_launcher_command(
-        "launch-claude-ubuntu" if handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box()
-        else "launch-claude-mac", agent_seat)
+    return mac_launcher_command(agent_seat, handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box())
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
     "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",

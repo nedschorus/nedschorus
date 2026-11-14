@@ -654,8 +654,7 @@ def launcher_path():
 def reach_clause_for_a_running_seat(name: str) -> str:
     """Return the report clause naming how the operator opens a seat recovery left running."""
     # Recovery launches detached on the seat's own tmux socket, where a plain `tmux attach` finds nothing.
-    launcher_name = "launch-claude-mac" if launcher_path() is not None else "launch-claude-ubuntu"
-    return f"; the user reaches it by running {mac_launcher_command(launcher_name, name)} in a Terminal on his Mac"
+    return f"; the user reaches it by running {mac_launcher_command(name, launcher_path() is None)} in a Terminal on his Mac"
 
 
 WINDOW_SENDER_PATH = Path(__file__).resolve().with_name(
@@ -761,7 +760,7 @@ def by_hand_launch_command_for_seat(name: str, seat_directory: Path, handoff_dir
         "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS=" + shlex.quote(
             compose_supervisor_arguments_for_seat_launch(handoff_directory,
                                                          extra_supervisor_arguments)),
-        mac_launcher_command("launch-claude-ubuntu", shlex.quote(name)) if launcher is None
+        mac_launcher_command(shlex.quote(name), agent_seat_is_on_ned_box=True) if launcher is None
         else f"{shlex.quote(str(launcher))} {shlex.quote(name)}",
     ]
     if first_prompt_file is not None:
