@@ -1306,7 +1306,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
               code == runner.EXIT_COULD_NOT_RUN and "could not be written" in printed
               and "SUMMARY: 1 passed" in printed, (code, printed[-800:]))
 
-        # --- A selective run leaves the no-sandbox suites out ---------------------------
+        # --- A selective run runs a no-sandbox suite only when the change edits a file it reads ---
         left_out_repository = scratch / "left-out-repository"
         (left_out_repository / "scripts").mkdir(parents=True)
         subprocess.run(["git", "init", "-q"], cwd=left_out_repository, check=True)
@@ -1344,11 +1344,25 @@ with tempfile.TemporaryDirectory() as scratch_name:
 
         code, printed = left_out_run("selective", "--only-suites-whose-recorded-inputs-changed-since",
                                      "HEAD")
+        check("a selective run in nc-test-sandboxes runs a no-sandbox suite whose own file "
+              "changed, its SELECTED line naming that file and the lock it waits for",
+              code == runner.EXIT_ALL_PASSED
+              and sorted(suites_started) == ["a-test.py", "outside-test.py"]
+              and runner.NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX not in printed
+              and re.search(r"^SELECTED outside-test\.py: .*reads outside-test\.py, which differs, "
+                            r"so it runs once it holds the lock", printed, re.MULTILINE)
+              and "no-sandbox suites left out" not in printed, (code, suites_started, printed[-1500:]))
+
+        # The suite's own file back as committed: only the missing recording selects it.
+        (left_out_repository / "outside-test.py").write_text("print('PASS  only case')\n")
+        (left_out_repository / "a-test.py").write_text("print('PASS  changed case')\n")
+        code, printed = left_out_run("selective-no-recording",
+                                     "--only-suites-whose-recorded-inputs-changed-since", "HEAD")
         left_out_lines = [line for line in printed.splitlines()
                           if line.startswith(runner.NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX)]
-        check("a selective run in nc-test-sandboxes leaves out a no-sandbox suite whose own file "
-              "changed, prints its LEFT OUT line with the command that runs it by hand, counts "
-              "it in the SUMMARY, and exits 0 on the suites it ran",
+        check("a selective run in nc-test-sandboxes leaves out a no-sandbox suite selected only "
+              "because it has no recording, prints its LEFT OUT line with the command that runs "
+              "it by hand, counts it in the SUMMARY, and exits 0 on the suites it ran",
               code == runner.EXIT_ALL_PASSED and suites_started == ["a-test.py"]
               and len(left_out_lines) == 1 and left_out_lines[0].startswith(
                   f"{runner.NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX}outside-test.py: ")
@@ -1356,6 +1370,41 @@ with tempfile.TemporaryDirectory() as scratch_name:
               and "SELECTED outside-test.py" not in printed
               and "1 no-sandbox suites left out" in printed
               and "0 suites not selected" in printed, (code, suites_started, printed[-1500:]))
+        (left_out_repository / "outside-test.py").write_text("print('PASS  changed case')\n")
+        subprocess.run(["git", "checkout", "-q", "--", "a-test.py"], cwd=left_out_repository,
+                       check=True)
+
+        def recording_reading(*paths):
+            return {"format": runner.RECORDED_INPUTS_FORMAT_VERSION,
+                    "reads": {path: "0" * 40 for path in paths}}
+
+        def kept_and_left_out(recording, files_only_strace_saw=None,
+                              differ=("scripts/tested.py",)):
+            selection = [("outside-test.py", True, "it reads scripts/tested.py, which differs")]
+            return runner.selective_test_run_selection_without_no_sandbox_suites(
+                selection, applies=True, differ={path: "M" for path in differ},
+                recordings={"outside-test.py": recording},
+                files_only_strace_saw_by_suite={"outside-test.py": files_only_strace_saw})
+
+        kept, left_out = kept_and_left_out(recording_reading("scripts/tested.py"))
+        check("a no-sandbox suite whose recording read a file that differs stays in the selection",
+              left_out == [] and len(kept) == 1 and kept[0][1] is True
+              and "reads scripts/tested.py, which differs, so it runs once it holds the lock"
+              in kept[0][2], (kept, left_out))
+        kept, left_out = kept_and_left_out(
+            recording_reading("scripts/other.py"),
+            {"files_only_strace_saw": ["scripts/tested.py"], "recorded_at": "2026-11-13T00:00:00Z"})
+        check("a no-sandbox suite whose last strace run alone saw a file that differs stays in "
+              "the selection", left_out == [] and len(kept) == 1, (kept, left_out))
+        kept, left_out = kept_and_left_out(recording_reading("scripts/other.py"))
+        check("a no-sandbox suite selected while no file it read differs is left out",
+              kept == [] and [suite for suite, _ in left_out] == ["outside-test.py"],
+              (kept, left_out))
+        kept, left_out = kept_and_left_out(
+            dict(recording_reading("scripts/tested.py"),
+                 format=runner.RECORDED_INPUTS_FORMAT_VERSION - 1))
+        check("a no-sandbox suite whose recording is of an older format, whose reads may mean "
+              "something else, is left out", kept == [] and len(left_out) == 1, (kept, left_out))
 
         code, printed = left_out_run("named", "--only-suites-whose-recorded-inputs-changed-since",
                                      "HEAD", "--only-suites-named", "outside-test.py")
