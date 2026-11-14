@@ -155,7 +155,7 @@ def cold_read_fast_read_scratch_repository_whose_stub_agy_answers_in_chat(scratc
         (stubs / name).write_text(text, encoding="utf-8")
         (stubs / name).chmod(0o755)
     install_fake_sandbox_programs(stubs)
-    # The agy cell scans HOME for credential files at launch, and the real home takes seconds to walk.
+    # A scratch HOME, so the agy cell's sandbox masks paths in it, not the real home's.
     home = scratch / "fast-read-scratch-home"
     home.mkdir()
     environment = dict(os.environ, HOME=str(home),
@@ -237,14 +237,15 @@ os.execvpe(command[0], command, environment)
 
 def install_fake_sandbox_programs(directory):
     """Write the pass-through stand-ins for bwrap and sandbox-exec into
-    `directory`, which the caller puts on PATH ahead of the real ones.
+    `directory`, made if absent under a parent that exists, which the caller
+    puts on PATH ahead of the real ones.
     Returns `directory`. The first line names this Python by its full path,
     so a stand-in started with a PATH that holds no python3 still runs."""
     directory = Path(directory)
-    directory.mkdir(parents=True, exist_ok=True)
+    directory.mkdir(exist_ok=True)
     for name in ("bwrap", "sandbox-exec"):
         (directory / name).write_text(
             f"#!{sys.executable}\n" + FAKE_SANDBOX_PROGRAM_PASSING_THE_COMMAND_THROUGH,
             encoding="utf-8")
-        (directory / name).chmod(0o755)
+        (directory / name).chmod(0o755)  # pragma: no mutate, 0o754 and 0o756 differ only in other users' bits, and the tests start the stand-ins as their owner
     return directory

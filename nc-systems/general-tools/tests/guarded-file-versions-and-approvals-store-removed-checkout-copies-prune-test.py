@@ -11,12 +11,14 @@ Prints one line per case and exits non-zero if any case fails.
 import hashlib
 import importlib.util
 import os
+import re
 import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -297,6 +299,19 @@ def test_volume_that_may_not_be_mounted_kept():
         check("a checkout removed outside any volume is pruned", not removed.exists())
 
 
+def test_default_mount_parents_keep_copies_under_a_missing_volume():
+    prune = load_program()
+    for parent in ("/Volumes", "/mnt", "/media"):
+        volume = Path(parent) / f"nc-prune-test-volume-{uuid.uuid4().hex}"
+        try:
+            prune.removed_checkout(f"{volume}/repo/CLAUDE.md", lambda root, relative: True)
+            told = None
+        except RuntimeError as error:
+            told = str(error)
+        check(f"a path under a missing {parent}/<name> is kept by default",
+              told is not None and str(volume) in told and "may not be mounted" in told, told)
+
+
 def test_run_stopped_between_two_unlinks_names_every_deleted_copy():
     # The wrapper makes the run wait forever, after creating a marker file, once the first unlink
     # of the run has finished: the stop lands between two unlinks of one path.
@@ -444,6 +459,10 @@ def test_git_failure_fails():
               and "injected failure" in result.stderr, result.stderr)
         check("and keeps that checkout's copy", copy.exists())
         check("and goes on to the end", "1 failures" in result.stdout, result.stdout)
+        check("and the summary points to the failures after this run's start line",
+              f"1 failures, each named on stderr; in a log that holds both stdout and stderr, "
+              f"they come after the line '{result.stdout.splitlines()[0]}'" in result.stdout,
+              result.stdout)
         check("the other checkout is still pruned, and named", not other.exists()
               and f"deleting {other}\n" in result.stdout,
               result.stdout)
@@ -610,7 +629,64 @@ def test_mac_deadline_names_what_was_deleted():
               and "not pruned" not in result.stderr, result.stderr)
 
 
+def run_appending_to_log(store, log, **variables):
+    """Run the program with stdout and stderr appended to one file, as the scheduled job runs."""
+    environment = dict(os.environ, GUARDED_FILE_VERSIONS_MACHINE="ned-box",
+                       GUARDED_FILE_VERSIONS_STORE_DIRECTORY=str(store))
+    environment.update(variables)
+    with open(log, "a") as log_file:
+        process = subprocess.Popen([sys.executable, str(PROGRAM)], stdout=log_file,
+                                   stderr=subprocess.STDOUT, env=environment,
+                                   start_new_session=True)
+    try:
+        return process.wait(timeout=120)
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def test_stop_message_points_past_earlier_runs_in_the_log():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory).resolve()
+        store, agents, _ = scratch(root)
+        log = root / "prune.log"
+        earlier = add_version(store, f"{agents}/removed-earlier/CLAUDE.md", "one\n", approved=True)
+        first_exit = run_appending_to_log(store, log)
+        mount_point = root / "mount"
+        table = root / "mount-table"
+        table.write_text(f"//nedlern@ned-box/nedlern on {mount_point} (smbfs)\n")
+        later = add_version(store, f"{agents}/removed-later/CLAUDE.md", "two\n", approved=True)
+        hanging = later.parent / "inner"
+        hanging.mkdir()
+        (hanging / blob("three\n")).write_text("three\n")
+        os.mkfifo(hanging / hook.LOG_FILE_NAME)
+        second_exit = run_appending_to_log(store, log, GUARDED_FILE_VERSIONS_MACHINE="mac",
+                                           GUARDED_FILE_VERSIONS_MOUNT_TABLE=str(table),
+                                           GUARDED_FILE_VERSIONS_MOUNT_POINT=str(mount_point),
+                                           GUARDED_FILE_VERSIONS_DEADLINE_SECONDS="2")
+        lines = log.read_text().splitlines()
+        starts = [line for line in lines
+                  if re.fullmatch(rf"{re.escape(PROGRAM.name)}: process \d+ started at \S+", line)]
+        check("both runs went as set up, the second stopped at the deadline",
+              first_exit == 0 and second_exit == 1 and not earlier.exists()
+              and not later.exists(), (first_exit, second_exit, lines))
+        check("each run prints one start line, the Mac's deadline child none",
+              len(starts) == 2 and len(set(starts)) == 2, starts)
+        stop = [line for line in lines if " stopped: " in line]
+        quoted = [start for start in starts if stop and f"after the line '{start}'" in stop[-1]]
+        check("the stop message names the stopped run's own start line",
+              len(starts) == 2 and quoted == starts[1:], (stop, starts))
+        after = lines[lines.index(quoted[0]) + 1:] if quoted else []
+        check("and the lines after that start line name this run's deletion and not the "
+              "earlier run's", f"deleting {later}" in after and f"deleting {earlier}" not in after,
+              lines)
+
+
 if __name__ == "__main__":
+    test_default_mount_parents_keep_copies_under_a_missing_volume()
+    test_stop_message_points_past_earlier_runs_in_the_log()
     test_removed_checkouts_pruned_and_others_kept()
     test_copies_of_paths_with_a_version_not_approved_kept()
     test_outside_checkout_files_kept()

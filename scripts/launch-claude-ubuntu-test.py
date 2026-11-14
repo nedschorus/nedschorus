@@ -1004,20 +1004,25 @@ def main() -> int:
         harness = LaunchHarness(root / "update-lock-bound")
         harness.update_timeout_seconds = 30
         with AnotherUpdateHoldsTheLock(harness.update_lock_path()):
-            started = time.monotonic()
             result = harness.run(["seat-v", "--no-attach"])
-            elapsed = time.monotonic() - started
         check("update lock (box): a held lock skips this update immediately",
               harness.claude_updates() == [], harness.claude_updates())
         check("update lock (box): the skip is reported in exactly one line",
               "Another claude update is running; this launch uses the claude already installed.\n"
               == result["replay"].stderr,
               result["replay"].stderr[:400])
-        check("update lock (box): the seat is still prepared, without hanging",
-              result["replay"].returncode == 0 and harness.prepare_ran()
-              and elapsed < 15,
-              (result["replay"].returncode, f"{elapsed:.1f}s",
-               result["replay"].stderr[:300]))
+        # The skip line above is the marker that the lock was tried without
+        # waiting; handoff-supervisor-session-launch-and-seat-lock-test.py counts
+        # the helper's lock attempts.
+        check("update lock (box): the seat is still prepared",
+              result["replay"].returncode == 0 and harness.prepare_ran(),
+              (result["replay"].returncode, result["replay"].stderr[:300]))
+
+        # The timed-out outcome and the killed command are what show the
+        # helper's timeout fired; elapsed time is only a backstop, at
+        # least ten times the timeout so a busy machine cannot fail it.
+        helper_timeout_seconds = 2
+        helper_timeout_backstop_seconds = 15 * helper_timeout_seconds
 
         # --- the pseudo-terminal helper: a command that closes its terminal
         # and its stderr and then keeps running is stopped at the timeout
@@ -1030,7 +1035,8 @@ def main() -> int:
                  "import os, sys, time; "
                  f"open({str(pid_file)!r}, 'w').write(str(os.getpid())); "
                  "os.close(1); os.close(2); time.sleep(600)"],
-                str(root), dict(os.environ), timeout_seconds=2)
+                str(root), dict(os.environ),
+                timeout_seconds=helper_timeout_seconds)
             closed_streams_timed_out = False
         except subprocess.TimeoutExpired:
             closed_streams_timed_out = True
@@ -1047,7 +1053,7 @@ def main() -> int:
         check("pseudo-terminal helper: a command that closes both streams "
               "and keeps running is stopped at the timeout and does not "
               "survive",
-              closed_streams_timed_out and elapsed < 15
+              closed_streams_timed_out and elapsed < helper_timeout_backstop_seconds
               and pid_file.is_file() and not closed_streams_command_survived,
               (closed_streams_timed_out, f"{elapsed:.1f}s",
                pid_file.is_file(), closed_streams_command_survived))

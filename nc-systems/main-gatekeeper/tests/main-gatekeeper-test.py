@@ -471,6 +471,22 @@ with tempfile.TemporaryDirectory() as workspace_name:
           git(["show", "main:README.md"], remote).stdout == "seed\nracer one\n"
           and git(["show", "main:keep.txt"], remote).stdout == "racer two\n")
 
+    # A racer's push holds its incoming objects in a quarantine directory inside the remote's
+    # object store, which a file-by-file copy of that store can catch half-written. A planted
+    # quarantine makes the copy visible without needing the race's timing.
+    remote, work, base = make_fixture(workspace, "quarantine")
+    quarantine = remote / "objects" / "tmp_objdir-incoming-planted" / "53"
+    quarantine.mkdir(parents=True)
+    (quarantine / "tmp_obj_planted").write_bytes(b"a push still being received")
+    screening = workspace / "quarantine-screening"
+    screening.mkdir()
+    clone = gatekeeper.prepare_clone(screening, str(remote))
+    check("T4 the candidate clone does not copy a push still in a local remote's quarantine",
+          not list((clone / ".git" / "objects").glob("tmp_objdir-incoming-*")),
+          sorted(path.name for path in (clone / ".git" / "objects").iterdir()))
+    check("T4 the candidate clone still holds main",
+          git(["rev-parse", "origin/main"], clone).stdout.strip() == base)
+
     # --- T5: a real conflict refuses rather than guessing -------------------
     remote, work, base = make_fixture(workspace, "conflict")
     rival = workspace / "conflict-rival"
@@ -706,7 +722,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
     accepted = load_payload(completed.stdout)
     b4d_digest = accepted.get("digest", "")
 
-    # One writer for worker.pid (ruled 2026-08-12, applied 2026-08-13). check_in
+    # One writer for main-gatekeeper-check-in-request-holder.pid (ruled 2026-08-12, applied 2026-08-13). check_in
     # stamped "<pid> 0" immediately after Popen and then raced the worker for the
     # file; a worker dying before its own stamp left that placeholder forever,
     # and worker_state skips the start-time comparison on a placeholder, so the
@@ -715,17 +731,17 @@ with tempfile.TemporaryDirectory() as workspace_name:
     # detached worker had not yet booted far enough to overwrite it.
     b4d_workspace = state_home / "nedschorus-gatekeeper" / b4d_digest
     try:
-        spawn_tokens = (b4d_workspace / "worker.pid").read_text(
+        spawn_tokens = (b4d_workspace / "main-gatekeeper-check-in-request-holder.pid").read_text(
             encoding="utf-8").split()
     except OSError:
         spawn_tokens = []
-    check("check_in writes no worker.pid placeholder in --no-wait mode",
+    check("check_in writes no main-gatekeeper-check-in-request-holder.pid placeholder in --no-wait mode",
           len(spawn_tokens) < 2 or spawn_tokens[1] != "0", spawn_tokens)
     stamp_deadline = time.time() + 10
     stamped: list[str] = []
     while time.time() < stamp_deadline and len(stamped) < 2:
         try:
-            stamped = (b4d_workspace / "worker.pid").read_text(
+            stamped = (b4d_workspace / "main-gatekeeper-check-in-request-holder.pid").read_text(
                 encoding="utf-8").split()
         except OSError:
             stamped = []
@@ -737,7 +753,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
     check("B4d the paused submission was accepted",
           accepted.get("outcome") == "accepted", accepted)
     check("the worker announces the phase it is held at",
-          wait_for(lambda: (b4d_workspace / ".reached-before-git").exists()),
+          wait_for(lambda: (b4d_workspace / ".main-gatekeeper-test-worker-reached-before-git").exists()),
           sorted(p.name for p in b4d_workspace.iterdir()))
     code, payload = run_gatekeeper(["status", b4d_digest, "--repo", str(work)],
                                    state_home)
@@ -754,7 +770,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
     # Released only now that the rival's conflicting commit is on main, so the
     # worker's push is guaranteed to lose. The old form raced the rival's git
     # work against a three-second sleep.
-    (b4d_workspace / ".release-before-git").write_text("", encoding="utf-8")
+    (b4d_workspace / ".main-gatekeeper-test-worker-paused-at-before-git-release-signal-from-test").write_text("", encoding="utf-8")
     deadline = time.time() + 60
     while time.time() < deadline:
         code, payload = run_gatekeeper(["status", b4d_digest, "--repo", str(work)],
@@ -780,7 +796,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
         capture_output=True, text=True, check=False, env=paused_environment)
     cancel_digest = load_payload(completed.stdout).get("digest", "")
     cancel_workspace = state_home / "nedschorus-gatekeeper" / cancel_digest
-    wait_for(lambda: (cancel_workspace / ".reached-before-git").exists())
+    wait_for(lambda: (cancel_workspace / ".main-gatekeeper-test-worker-reached-before-git").exists())
     code, payload = run_gatekeeper(["cancel", cancel_digest, "--repo", str(work)],
                                    state_home)
     check("T8 cancelling a live worker answers cancelled",
@@ -810,7 +826,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
     race_digest = load_payload(completed.stdout).get("digest", "")
     race_workspace = state_home / "nedschorus-gatekeeper" / race_digest
     check("the worker reaches the pre-push phase",
-          wait_for(lambda: (race_workspace / ".reached-before-push").exists()),
+          wait_for(lambda: (race_workspace / ".main-gatekeeper-test-worker-reached-before-push").exists()),
           race_digest)
     race_environment = {**os.environ, "XDG_STATE_HOME": str(state_home)}
     race_environment.pop("CLAUDE_CODE_SESSION_ID", None)
@@ -823,7 +839,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
         # of margin, and overshooting cannot pass wrongly — SIGKILL would end
         # the worker with nothing pushed and the case would fail, not invert.
         time.sleep(1)
-        (race_workspace / ".release-before-push").write_text("", encoding="utf-8")
+        (race_workspace / ".main-gatekeeper-test-worker-paused-at-before-push-release-signal-from-test").write_text("", encoding="utf-8")
         race_stdout, _ = canceller.communicate(timeout=120)
     finally:
         if canceller.poll() is None:
@@ -846,8 +862,8 @@ with tempfile.TemporaryDirectory() as workspace_name:
     unstoppable_digest = "8" * 64
     unstoppable = state_home / "nedschorus-gatekeeper" / unstoppable_digest
     unstoppable.mkdir(parents=True)
-    (unstoppable / "request.json").write_text("{}", encoding="utf-8")
-    (unstoppable / "worker.pid").write_text(
+    (unstoppable / "main-gatekeeper-check-in-request-record-resolved-at-screening.json").write_text("{}", encoding="utf-8")
+    (unstoppable / "main-gatekeeper-check-in-request-holder.pid").write_text(
         f"1 {gatekeeper.process_start_time(1)}", encoding="utf-8")
     code, payload, signal_calls = cancel_with_signals_recorded(
         GATEKEEPER_SOURCE, unstoppable_digest, work, state_home)
@@ -872,8 +888,8 @@ with tempfile.TemporaryDirectory() as workspace_name:
           and mutated_source != GATEKEEPER_SOURCE)
     shutil.rmtree(unstoppable)
     unstoppable.mkdir(parents=True)
-    (unstoppable / "request.json").write_text("{}", encoding="utf-8")
-    (unstoppable / "worker.pid").write_text(
+    (unstoppable / "main-gatekeeper-check-in-request-record-resolved-at-screening.json").write_text("{}", encoding="utf-8")
+    (unstoppable / "main-gatekeeper-check-in-request-holder.pid").write_text(
         f"1 {gatekeeper.process_start_time(1)}", encoding="utf-8")
     canary = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"])
     try:
@@ -899,8 +915,8 @@ with tempfile.TemporaryDirectory() as workspace_name:
     fake_digest = "f" * 64
     fake_workspace = state_home / "nedschorus-gatekeeper" / fake_digest
     fake_workspace.mkdir(parents=True)
-    (fake_workspace / "request.json").write_text("{}", encoding="utf-8")
-    (fake_workspace / "worker.pid").write_text("999999 0", encoding="utf-8")
+    (fake_workspace / "main-gatekeeper-check-in-request-record-resolved-at-screening.json").write_text("{}", encoding="utf-8")
+    (fake_workspace / "main-gatekeeper-check-in-request-holder.pid").write_text("999999 0", encoding="utf-8")
     code, payload = run_gatekeeper(["status", fake_digest, "--repo", str(work)],
                                    state_home)
     check("T7 a dead-worker workspace reports abandoned",
@@ -963,10 +979,10 @@ with tempfile.TemporaryDirectory() as workspace_name:
     recycled_digest = "9" * 64
     recycled_workspace = state_home / "nedschorus-gatekeeper" / recycled_digest
     recycled_workspace.mkdir(parents=True)
-    (recycled_workspace / "request.json").write_text("{}", encoding="utf-8")
+    (recycled_workspace / "main-gatekeeper-check-in-request-record-resolved-at-screening.json").write_text("{}", encoding="utf-8")
     # A live pid (this test's own) recorded against a start time that is not its
     # own: the pid was recycled, so the worker it named is gone.
-    (recycled_workspace / "worker.pid").write_text(
+    (recycled_workspace / "main-gatekeeper-check-in-request-holder.pid").write_text(
         f"{os.getpid()} not-the-start-time", encoding="utf-8"
     )
     code, payload = run_gatekeeper(["status", recycled_digest, "--repo", str(work)],
@@ -1023,20 +1039,20 @@ with tempfile.TemporaryDirectory() as workspace_name:
           secret.read_text(encoding="utf-8") == "OUTSIDE CONTENT\n", payload)
 
     # Death requires positive evidence (ruled 2026-08-12). An unreadable or
-    # absent worker.pid used to read as "dead", the strongest conclusion from
+    # absent main-gatekeeper-check-in-request-holder.pid used to read as "dead", the strongest conclusion from
     # the weakest evidence: status called a running request abandoned, and a
     # twin submission deleted the live worker's clone and spawned a rival.
     for torn_label, torn_bytes in (("an empty", ""), ("a garbage", "not-a-pid")):
         torn_digest = ("a" if torn_label == "an empty" else "b") * 64
         torn_workspace = state_home / "nedschorus-gatekeeper" / torn_digest
         torn_workspace.mkdir(parents=True)
-        (torn_workspace / "request.json").write_text("{}", encoding="utf-8")
-        (torn_workspace / "worker.pid").write_text(torn_bytes, encoding="utf-8")
+        (torn_workspace / "main-gatekeeper-check-in-request-record-resolved-at-screening.json").write_text("{}", encoding="utf-8")
+        (torn_workspace / "main-gatekeeper-check-in-request-holder.pid").write_text(torn_bytes, encoding="utf-8")
         code, payload = run_gatekeeper(["status", torn_digest, "--repo", str(work)],
                                        state_home)
-        check(f"{torn_label} worker.pid is not evidence of death",
+        check(f"{torn_label} main-gatekeeper-check-in-request-holder.pid is not evidence of death",
               payload.get("outcome") == "in-progress", payload)
-        check(f"{torn_label} worker.pid leaves the workspace intact",
+        check(f"{torn_label} main-gatekeeper-check-in-request-holder.pid leaves the workspace intact",
               torn_workspace.is_dir(), payload)
 
     # The retained refusal record survives a status that lands mid-write, and is
@@ -1047,7 +1063,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
     unreadable_digest = "c" * 64
     unreadable_workspace = state_home / "nedschorus-gatekeeper" / unreadable_digest
     unreadable_workspace.mkdir(parents=True)
-    (unreadable_workspace / "refusal.json").write_text("{half-written",
+    (unreadable_workspace / "main-gatekeeper-refusal-record-kept-for-status-command.json").write_text("{half-written",
                                                        encoding="utf-8")
     code, payload = run_gatekeeper(["status", unreadable_digest, "--repo", str(work)],
                                    state_home)
@@ -1057,7 +1073,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
           unreadable_workspace.is_dir(), payload)
 
     # Kill scope (ruled 2026-08-12): a recorded pid that does not lead its own
-    # process group is signalled alone. worker.pid is written above the
+    # process group is signalled alone. main-gatekeeper-check-in-request-holder.pid is written above the
     # --no-wait branch, so a waiting check-in records its own pid, whose group
     # belongs to the invoking shell or harness — and cancel's group kill reached
     # every process in it. Demonstrated during the PR #49 review by killing a
@@ -1065,7 +1081,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
     scope_digest = "d" * 64
     scope_workspace = state_home / "nedschorus-gatekeeper" / scope_digest
     scope_workspace.mkdir(parents=True)
-    (scope_workspace / "request.json").write_text("{}", encoding="utf-8")
+    (scope_workspace / "main-gatekeeper-check-in-request-record-resolved-at-screening.json").write_text("{}", encoding="utf-8")
     # The launcher stands in for the caller's harness: its own session, holding
     # a child whose pid is recorded as the worker. A group kill takes the
     # launcher down with the child; a correctly scoped kill does not.
@@ -1085,7 +1101,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
     )
     try:
         recorded_pid = int(launcher.stdout.readline().strip())
-        (scope_workspace / "worker.pid").write_text(f"{recorded_pid} 0",
+        (scope_workspace / "main-gatekeeper-check-in-request-holder.pid").write_text(f"{recorded_pid} 0",
                                                     encoding="utf-8")
         code, payload = run_gatekeeper(
             ["cancel", scope_digest, "--repo", str(work)], state_home
@@ -1123,7 +1139,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
             (victim / "keep.txt").write_text("PRECIOUS\n", encoding="utf-8")
             # A refusal record makes the status path reach its sweep, and the
             # climbing form needs the root to exist for '..' to resolve.
-            (victim / "refusal.json").write_text('{"outcome": "planted"}',
+            (victim / "main-gatekeeper-refusal-record-kept-for-status-command.json").write_text('{"outcome": "planted"}',
                                                  encoding="utf-8")
             (state_home / "nedschorus-gatekeeper").mkdir(parents=True, exist_ok=True)
             code, payload = run_gatekeeper(
@@ -1141,7 +1157,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
     old_stamp = time.time() - 31 * 24 * 3600
     aged_record = state_home / "nedschorus-gatekeeper" / ("e" * 64)
     aged_record.mkdir(parents=True)
-    (aged_record / "refusal.json").write_text("{}", encoding="utf-8")
+    (aged_record / "main-gatekeeper-refusal-record-kept-for-status-command.json").write_text("{}", encoding="utf-8")
     os.utime(aged_record, (old_stamp, old_stamp))
     aged_scratch = state_home / "nedschorus-gatekeeper" / "screening-stale"
     aged_scratch.mkdir()

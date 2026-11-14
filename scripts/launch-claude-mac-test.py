@@ -511,18 +511,19 @@ def main() -> int:
 
         sandbox = MacLaunchSandbox(root / "update-lock-bound")
         with AnotherUpdateHoldsTheLock(sandbox.update_lock_path()):
-            started = time.monotonic()
             result = sandbox.run(str(root / "update-lock-bound-agents"),
                                  update_timeout_seconds=30)
-            elapsed = time.monotonic() - started
         check("update lock: a held lock skips this update immediately",
               sandbox.claude_updates() == [], sandbox.claude_updates())
         check("update lock: the skip is reported in exactly one line",
               "Another claude update is running; this launch uses the claude already installed.\n"
               == result.stderr, result.stderr[:400])
-        check("update lock: the skipped launch still completes, without hanging",
-              result.returncode == 0 and sandbox.tmux_argv() and elapsed < 15,
-              (result.returncode, f"{elapsed:.1f}s", result.stderr[:300]))
+        # The skip line above is the marker that the lock was tried without
+        # waiting; handoff-supervisor-session-launch-and-seat-lock-test.py counts
+        # the helper's lock attempts.
+        check("update lock: the skipped launch still completes",
+              result.returncode == 0 and sandbox.tmux_argv(),
+              (result.returncode, result.stderr[:300]))
 
         with AnotherUpdateHoldsTheLock(sandbox.update_lock_path()):
             result = subprocess.run(
@@ -957,6 +958,12 @@ def main() -> int:
                   (sandbox.invoked_commands()[:200],
                    sorted(str(p) for p in sandbox.workdir.iterdir())))
 
+        # The timed-out outcome and the killed command are what show the
+        # helper's timeout fired; elapsed time is only a backstop, at
+        # least ten times the timeout so a busy machine cannot fail it.
+        helper_timeout_seconds = 2
+        helper_timeout_backstop_seconds = 15 * helper_timeout_seconds
+
         # --- the pseudo-terminal helper itself. A command that fills the
         # stderr pipe before it writes to or closes the terminal must not
         # hang the helper, and a command that never closes the terminal must
@@ -992,14 +999,15 @@ def main() -> int:
         try:
             run_with_stdout_on_terminal(
                 [sys.executable, "-c", "import time; time.sleep(600)"],
-                str(root), dict(os.environ), timeout_seconds=2)
+                str(root), dict(os.environ),
+                timeout_seconds=helper_timeout_seconds)
             timed_out = False
         except subprocess.TimeoutExpired:
             timed_out = True
         elapsed = time.monotonic() - started
         check("pseudo-terminal helper: a command that never closes the "
               "terminal is stopped at the timeout",
-              timed_out and elapsed < 15,
+              timed_out and elapsed < helper_timeout_backstop_seconds,
               (timed_out, f"{elapsed:.1f}s"))
 
         # --- the pseudo-terminal helper: a command that closes its terminal
@@ -1013,7 +1021,8 @@ def main() -> int:
                  "import os, sys, time; "
                  f"open({str(pid_file)!r}, 'w').write(str(os.getpid())); "
                  "os.close(1); os.close(2); time.sleep(600)"],
-                str(root), dict(os.environ), timeout_seconds=2)
+                str(root), dict(os.environ),
+                timeout_seconds=helper_timeout_seconds)
             closed_streams_timed_out = False
         except subprocess.TimeoutExpired:
             closed_streams_timed_out = True
@@ -1030,7 +1039,7 @@ def main() -> int:
         check("pseudo-terminal helper: a command that closes both streams "
               "and keeps running is stopped at the timeout and does not "
               "survive",
-              closed_streams_timed_out and elapsed < 15
+              closed_streams_timed_out and elapsed < helper_timeout_backstop_seconds
               and pid_file.is_file() and not closed_streams_command_survived,
               (closed_streams_timed_out, f"{elapsed:.1f}s",
                pid_file.is_file(), closed_streams_command_survived))

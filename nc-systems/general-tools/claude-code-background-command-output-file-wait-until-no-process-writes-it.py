@@ -8,19 +8,28 @@ process does. A loop on `pgrep -f <pattern>` cannot tell this, because the
 pattern also matches the command line of the shell running the loop.
 
 Run: python3 <this file> <output file> [--time-limit-seconds N]
+N is 110, the constant DEFAULT_TIME_LIMIT_SECONDS below, when it is not given.
 
 Exits 0 once no process holds the file open for writing. Exits 1 when the time
-limit runs out while a process still does; running the same command again
-keeps waiting. Exits 2, saying why, when the file does not exist, when no
-writer is seen at the first look, or when the writers cannot be listed. No
-writer at the first look is never read as "finished": the command may have
+limit runs out while a process still does, which may be up to one poll
+interval (5 seconds) early, since a sleep that would reach the limit is not
+begun, and also when an lsof look after the first is cut short by the limit;
+running the same command again keeps waiting, unless the command has ended in
+between, when the rerun sees no writer at its first look and exits 2. Exits 2,
+saying why, when the file does not exist, when no writer is seen at the first
+look, when the time limit cuts the first look short, or when the writers cannot
+be listed: /proc cannot be read, an fdinfo file has no flags line, or lsof
+fails. No writer at the first look is never read as "finished": the command may have
 ended already, or its processes may be hidden from this program, as a process
 in another process namespace is.
 
 Writers are found through /proc/<pid>/fd and /proc/<pid>/fdinfo on Linux, and
-through lsof on macOS. A process that exits during a scan, or whose open files
-this program may not read, is skipped, so a writer owned by another user is
-not seen. A process that opens the file anew after every writer has exited is
+through lsof on macOS. No look starts after the time limit, even when a sleep
+overruns it, and each lsof look is cut to the time that remains; a /proc look
+is not cut, as it takes well under a second. A single process that exits
+during a scan, or whose open files this program may not read, is skipped
+rather than counted as the writers not being listable, so a writer owned by
+another user is not seen. A process that opens the file anew after every writer has exited is
 not waited for. The program only reads: it sends no signal and changes no file.
 """
 
@@ -51,8 +60,12 @@ class WritersCannotBeListed(Exception):
     """The processes that hold a file open cannot be listed on this machine."""
 
 
-def linux_processes_writing_file(path, proc_root=Path("/proc")):
-    """Return the process ids that hold path open for writing, read from /proc."""
+class WritersLookTimeLimitReached(Exception):
+    """The time limit ran out before the processes that hold a file open were listed."""
+
+
+def linux_processes_writing_file(path, seconds_left=None, proc_root=Path("/proc")):
+    """Return the process ids that hold path open for writing, read from /proc; seconds_left is unused."""
     try:
         entries = os.listdir(proc_root)
     except OSError as error:
@@ -83,11 +96,17 @@ def linux_processes_writing_file(path, proc_root=Path("/proc")):
     return writers
 
 
-def macos_processes_writing_file(path, runner=subprocess.run):
-    """Return the process ids that hold path open for writing, read from lsof."""
+def macos_processes_writing_file(path, seconds_left=LSOF_TIMEOUT_SECONDS, runner=subprocess.run):
+    """Return the process ids that hold path open for writing, read from lsof within seconds_left."""
+    timeout = min(LSOF_TIMEOUT_SECONDS, seconds_left)
     try:
         completed = runner(["lsof", "-w", "-F", "pa", "--", path], capture_output=True, text=True,
-                           timeout=LSOF_TIMEOUT_SECONDS, stdin=subprocess.DEVNULL)
+                           timeout=timeout, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired as error:
+        if seconds_left < LSOF_TIMEOUT_SECONDS:
+            raise WritersLookTimeLimitReached(
+                "lsof had not listed them when the time limit ran out") from error
+        raise WritersCannotBeListed(f"lsof could not run: {error}") from error
     except (OSError, subprocess.SubprocessError) as error:
         raise WritersCannotBeListed(f"lsof could not run: {error}") from error
     # lsof exits 1, printing nothing, when no process has the file open.
@@ -119,7 +138,15 @@ def wait_until_no_process_writes(path, time_limit_seconds, list_writers,
     path = os.path.realpath(path)
     deadline = clock() + time_limit_seconds
     try:
-        writers = list_writers(path)
+        try:
+            writers = list_writers(path, time_limit_seconds)
+        except WritersLookTimeLimitReached as error:
+            return EXIT_CANNOT_WAIT, (
+                f"Not waiting: the processes writing to {path} could not be listed within "
+                f"--time-limit-seconds {time_limit_seconds:g}: {error}\n"
+                f"Run python3 {Path(__file__).resolve()} {path} instead, without "
+                f"--time-limit-seconds: its default of {DEFAULT_TIME_LIMIT_SECONDS} seconds leaves "
+                f"lsof the {LSOF_TIMEOUT_SECONDS} seconds one look may take.")
         if not writers:
             return EXIT_CANNOT_WAIT, (
                 f"Not waiting: no process has {path} open for writing, so this program cannot tell "
@@ -130,16 +157,18 @@ def wait_until_no_process_writes(path, time_limit_seconds, list_writers,
                 f"program, for example in another process namespace: wait for Claude Code's "
                 f"notice instead, and say in your report that this program could not see them.")
         while writers:
-            remaining = deadline - clock()
-            if remaining <= 0:
-                return EXIT_TIME_LIMIT_REACHED, (
-                    f"Still running after {time_limit_seconds:g} seconds: process "
-                    f"{', '.join(map(str, sorted(writers)))} still has {path} open for writing.\n"
-                    f"To keep waiting, run the same command again.\n"
-                    f"If you give the Bash tool a timeout, make it longer than "
-                    f"--time-limit-seconds, so that this program ends the wait with this message.")
-            sleep(min(POLL_SECONDS, remaining))
-            writers = list_writers(path)
+            # A sleep that would reach the time limit would leave no time for the look after it.
+            if deadline - clock() <= POLL_SECONDS:
+                return time_limit_reached(path, time_limit_seconds, writers)
+            sleep(POLL_SECONDS)
+            # A sleep can overrun the time asked for, as on a loaded machine.
+            seconds_left = deadline - clock()
+            if seconds_left <= 0:
+                return time_limit_reached(path, time_limit_seconds, writers)
+            try:
+                writers = list_writers(path, seconds_left)
+            except WritersLookTimeLimitReached:
+                return time_limit_reached(path, time_limit_seconds, writers)
     except WritersCannotBeListed as error:
         return EXIT_CANNOT_WAIT, (
             f"Not waiting: the processes writing to {path} cannot be listed: {error}\n"
@@ -149,6 +178,15 @@ def wait_until_no_process_writes(path, time_limit_seconds, list_writers,
     return EXIT_NO_WRITER_LEFT, (
         f"Finished: no process has {path} open for writing any more, so the background command "
         f"has ended. Read {path} for its output.")
+
+
+def time_limit_reached(path, time_limit_seconds, writers):
+    return EXIT_TIME_LIMIT_REACHED, (
+        f"Still running after {time_limit_seconds:g} seconds: process "
+        f"{', '.join(map(str, sorted(writers)))} still has {path} open for writing.\n"
+        f"To keep waiting, run the same command again.\n"
+        f"If you give the Bash tool a timeout, make it longer than "
+        f"--time-limit-seconds, so that this program ends the wait with this message.")
 
 
 def main(argv=None):

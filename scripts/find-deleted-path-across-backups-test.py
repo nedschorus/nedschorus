@@ -4072,7 +4072,7 @@ with tempfile.TemporaryDirectory() as tmp:
                  "--skip", "timemachine"]
     rerun_lines = finder.next_step_lines.git_failure_next_step_lines(
         shlex.join(["python3", program] + arguments), "scripts/find-deleted-path-across-backups.py",
-        text_the_failure_line_contains="git's failure:", include_the_misspelt_branch_commit_or_path_line=True)
+        text_the_failure_line_contains="git's failure:")
     checkout = str(Path(program).parents[1])
     for how, typed, directory in (("by absolute path from another directory", program, str(elsewhere)),
                                   ("by a path relative to its checkout", os.path.relpath(program, checkout),

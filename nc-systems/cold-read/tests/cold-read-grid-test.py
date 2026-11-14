@@ -55,7 +55,7 @@ WHAT IS PINNED HERE.
     model; the lift machinery stays.
 
   - The read is seven cells: the defect-hunt pass on both tiers of both
-    runtimes, the terminology pass (user-ruled 2026-09-05) on the
+    agent-binaries, the terminology pass (user-ruled 2026-09-05) on the
     `deep` tier of both, and the defect-hunt pass on agy, on Gemini Argon at
     high. The terminology cells and the agy cell run
     at the effort the grid pins, which the stub reads off its own command
@@ -64,7 +64,7 @@ WHAT IS PINNED HERE.
     the nc-test-sandbox, where the real bwrap cannot start.
 
   - The model's echoed words are not the cell's status. The cell re-emits its
-    runtime's stderr into the log the grid lifts from, and the Codex CLI
+    agent-binary's stderr into the log the grid lifts from, and the Codex CLI
     copies the model's own text onto stderr — so on 2026-09-02 a reviewed
     document that quoted a code comment containing "fell back to" made two
     cells read as fallen back when both had run on the models asked for
@@ -220,7 +220,7 @@ def reviews_saved_lines(result):
     return [line for line in result.stdout.splitlines()
             if line.startswith("saved:") and not line.endswith("/" + QUESTION_4_REPORT_NAME)]
 
-# A stand-in for both runtimes. It takes the report path from the prompt it
+# A stand-in for both agent-binaries. It takes the report path from the prompt it
 # was given rather than from the environment, because the grid gives each of
 # its four cells a different one and only the prompt carries which: the
 # Claude leg feeds the prompt on stdin, the Codex leg passes it as an
@@ -455,8 +455,8 @@ def run_grid(repository, stub_directory, environment_overrides=None,
         stub.write_text(STUB_MODEL_RUNTIME, encoding="utf-8")
         stub.chmod(0o755)
     scratch_repository_fixture.install_fake_sandbox_programs(stub_directory)
-    # Every Codex cell scans HOME for credential files at launch, and the
-    # real home takes seconds to walk.
+    # A scratch HOME, so every cell's credential rules name paths in it, not
+    # the real home's.
     scratch_home = repository.parent / "scratch-home"
     scratch_home.mkdir(exist_ok=True)
     environment = dict(os.environ)
@@ -1257,7 +1257,7 @@ try:
           f"{decisions(result.stdout)} vs {decisions(result_plain.stdout)}")
 
     # --- The terminology cells run at the effort the grid pins ---------------
-    # max on both runtimes (user-ruled 2026-09-05, measured on the final
+    # max on both agent-binaries (user-ruled 2026-09-05, measured on the final
     # prompt: opus-max 20/15/28 flags on three targets, sol-max 44/41/49).
     # The grid passes it explicitly; the defect-hunt cells carry no override
     # and run at their launchers' own pins, which this case does not restate.
@@ -1317,7 +1317,7 @@ try:
     # The 2026-09-02 false positive (nedschorus#244): the Codex CLI copies the
     # model's text onto stderr, the cell re-emits that stderr into the log the
     # grid reads, and a reviewed document that quoted a comment containing
-    # "fell back to" made two cells read as fallen back. Here every runtime
+    # "fell back to" made two cells read as fallen back. Here every agent-binary
     # echoes a passage carrying all four lifted phrases mid-line, and nothing
     # is lifted. This case used to carry its own positive control, one cell
     # that really fell back; since the 2026-09-04 ruling no pinned chain has

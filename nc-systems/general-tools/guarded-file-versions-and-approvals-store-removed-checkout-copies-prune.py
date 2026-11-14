@@ -11,8 +11,10 @@ since only that machine has the checkouts its paths name and can tell whether on
 
     python3 <this file> [--dry-run]
 
-A real run prints `deleting <copy path>`, flushed, before it deletes each copy, so the log
-names every copy a run stopped part way may have deleted; then a line for each removed checkout
+Each run first prints a start line naming this process and the time, flushed, since the
+scheduled job appends every day's output to one log. A real run then prints
+`deleting <copy path>`, flushed, before it deletes each copy, so the lines after its start line
+name every copy a run stopped part way may have deleted; then a line for each removed checkout
 whose approved copies it deleted, with the total size of those copy files in bytes, and a
 summary line. --dry-run prints the same lines,
 with "would delete" for "deleted", and deletes nothing.
@@ -50,7 +52,10 @@ not exist; when it cannot tell, as for a directory this process may not search, 
 are kept and the failure is reported. So are the copies of a path under a volume that may not be
 mounted: a path under /Volumes/<name>, /mnt/<name> or /media/<name> whose <name> directory is
 missing or empty. A removed checkout that was the only content of its volume is kept too, and
-reported. The hook's files outside any
+reported. Two udisks layouts are not detected, and the copies of a path on such a volume that
+is not mounted are pruned: /media/<user>/<label>, while /media/<user> holds anything, and
+/run/media/<user>/<label> always, since /run/media is not among the parents checked. The hook's
+files outside any
 checkout, ~/.claude/CLAUDE.md and ~/.claude/settings.json, are never pruned.
 
 WHAT IS KEPT OF A REMOVED CHECKOUT. Of the copies no commit holds, a copy whose version is in
@@ -92,6 +97,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 HOOK_PATH = (Path(__file__).resolve().parents[2] / ".claude" / "guard-hooks"
@@ -114,7 +120,7 @@ EXIT_FAILED = 1
 def is_missing(path: Path):
     """True when path does not exist. Any failure but "no such file" or "not a directory" is
     raised, since a directory that cannot be searched still exists. A volume not mounted looks
-    missing here; removed_checkout keeps its paths."""
+    missing here; removed_checkout keeps the paths of the volumes unmounted_volume_root finds."""
     try:
         os.lstat(path)
     except (FileNotFoundError, NotADirectoryError):
@@ -311,14 +317,20 @@ def main(arguments=None):
     parser.add_argument("--dry-run", action="store_true",
                         help="list what would be deleted, and delete nothing")
     options = parser.parse_args(arguments)
+    start_line = (f"{Path(__file__).name}: process {os.getpid()} started at "
+                  f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')}")
+    # Flushed before the Mac's deadline child is forked, so the child cannot print it again.
+    print(start_line, flush=True)
     try:
         result = run(options.dry_run)
     except (hook.StoreUnreachable, OSError, RuntimeError, subprocess.SubprocessError) as error:
         sys.stdout.flush()
         print(f"{Path(__file__).name}: the prune of the store "
               f"{hook.store_directory(hook.this_machine())} stopped: {error}. Every copy it "
-              f"may have deleted is named above on a line that starts with 'deleting', printed "
-              f"before the copy was deleted; with no such line, it deleted nothing.", file=sys.stderr)
+              f"may have deleted is named on stdout on a line that starts with 'deleting', printed "
+              f"before the copy was deleted, after the line '{start_line}'; with no 'deleting' "
+              f"line after that start line, the run deleted nothing. The scheduled job writes "
+              f"stdout and stderr to ~/.claude/{Path(__file__).stem}.log.", file=sys.stderr)
         return EXIT_FAILED
     verb = "would delete" if options.dry_run else "deleted"
     for checkout, size in sorted(result["checkouts"].items()):
@@ -326,7 +338,8 @@ def main(arguments=None):
     sys.stdout.flush()
     for failure in result["failures"]:
         print(failure, file=sys.stderr)
-    failures = (f"{len(result['failures'])} failures, each named on stderr above"
+    failures = (f"{len(result['failures'])} failures, each named on stderr; in a log that holds both "
+                f"stdout and stderr, they come after the line '{start_line}'"
                 if result["failures"] else "no failures")
     print(f"{verb} {result['held_by_commits']} copies whose version a commit on a branch, a tag "
           f"or a remote-tracking branch holds, whether the file's checkout still exists or not, "

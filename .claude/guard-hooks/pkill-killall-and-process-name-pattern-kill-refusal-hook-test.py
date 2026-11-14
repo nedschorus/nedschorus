@@ -111,6 +111,12 @@ REFUSED += [
         LOOP_CONDITION),
     ("pgrep -f in a loop condition inside an ssh remote command",
         "ssh nedlern@ned-box 'until ! pgrep -f x; do sleep 5; done'", LOOP_CONDITION),
+    ("pgrep -f inside bash -c in a while condition, which the loop's own shell matches",
+        "while bash -c 'pgrep -f x'; do sleep 5; done", LOOP_CONDITION),
+    ("pgrep -f inside bash -c inside sh -c in an until condition",
+        "until ! sh -c \"bash -c 'pgrep -f x'\"; do sleep 5; done", LOOP_CONDITION),
+    ("pgrep -f in a loop inside an unquoted heredoc's substitution",
+        "cat <<EOF\n$(while pgrep -f x; do sleep 5; done)\nEOF", LOOP_CONDITION),
 ]
 
 for name, command, what in REFUSED:
@@ -160,6 +166,9 @@ ALLOWED += [
     ("pgrep -ufoo in a loop condition, whose f is part of -u's value",
         "while pgrep -ufoo x; do :; done"),
     ("pgrep -- -f in a loop condition, whose -f is the pattern", "while pgrep -- -f; do :; done"),
+    ("pgrep -f inside bash -c in a loop's body", "while true; do bash -c 'pgrep -f x' || break; sleep 5; done"),
+    ("pgrep -f run by ssh in a loop condition, which runs on the other machine, outside the loop's shell",
+        "while ssh host 'pgrep -f x'; do sleep 5; done"),
 ]
 
 for name, command in ALLOWED:
@@ -178,10 +187,14 @@ check("the loop condition refusal names the wait program, which exists, with an 
 # counts its turns and stops at 3, where the unbounded loop would go on for ever.
 token = f"pgrep-self-match-reproduction-{os.getpid()}"
 self_matching_loop = f'n=0; while pgrep -f "{token}" >/dev/null && [ "$n" -lt 3 ]; do n=$((n+1)); done; echo "$n"'
+# macOS's BSD pgrep leaves out its own ancestors unless given -a, so there the loop's shell matches only
+# with -a; procps pgrep, on ned-box, matches it without, and reads -a as another option.
+reproduced_loop = (self_matching_loop.replace("pgrep -f", "pgrep -a -f") if sys.platform == "darwin"
+                   else self_matching_loop)
 if shutil.which("pgrep") is None:
-    print("SKIP  the self-match reproduction needs pgrep [this machine cannot run it]")
+    print("SKIP  [this machine cannot run it] the self-match reproduction: pgrep is not on PATH")
 else:
-    looped = subprocess.run(["bash", "-c", self_matching_loop], capture_output=True, text=True, timeout=60)
+    looped = subprocess.run(["bash", "-c", reproduced_loop], capture_output=True, text=True, timeout=60)
     check("reproduced: pgrep -f in a loop condition matches the loop's own shell, so the loop runs to its "
           "bound, and the hook refuses that loop",
           looped.stdout.strip() == "3" and LOOP_CONDITION in (refusal(self_matching_loop) or ""),

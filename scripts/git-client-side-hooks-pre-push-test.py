@@ -84,13 +84,18 @@ FAKE_SESSION = "session_0FakePrePushTestSessionAAAA"
 SHELLS_FOR_THE_HOOK = [shell for shell in ("/bin/sh", "/bin/dash")
                        if os.path.exists(shell)]
 
-OUTER_PUSH_TIMEOUT_SECONDS = 30
+HANGING_CHECK_BUDGET_SECONDS = "1"
+# A backstop only: the stop message and the stopped processes are what show a
+# hung check or test run was stopped at its budget. The hook may wait the
+# budget plus its grace for SIGTERM, up to 1 + 5 seconds, so this is ten times
+# that, which a busy machine cannot reach.
+HANGING_CASE_WALL_CLOCK_LIMIT_SECONDS = 60
+# Above the backstop, so a slow stop fails the backstop's own case first.
+OUTER_PUSH_TIMEOUT_SECONDS = 90
 # A hanging fake check sleeps this long. Longer than the outer timeout, so a
 # hook that fails to stop it still fails its case; short enough that one
 # missed by every cleanup exits on its own soon after the suite does.
-FAKE_HANG_SECONDS = 90
-HANGING_CHECK_BUDGET_SECONDS = "1"
-HANGING_CASE_WALL_CLOCK_LIMIT_SECONDS = 15
+FAKE_HANG_SECONDS = 120
 
 REFUSAL_HEADER = "pre-push: branch %s conflicts with origin/main; this push is refused."
 CLOSING_INSTRUCTION = "Do what scripts/branch-conflict-check.py reports above."
@@ -1918,13 +1923,17 @@ def run_worktree_without_checks_cases(scratch):
              {"conflict_check": FAKE_CHECK_ALWAYS_CLEAN, "revert_check": None},
              ((HAND_REVERT_CHECK_LINE, REAL_REVERT_CHECK, no_copy_text),)))
     # The first case's command comes from the sh hook, the second's from the Python file; a
-    # reference checkout whose path holds a space must still give a command that runs.
-    spaced_cases = tuple((label + ", with a space in the reference checkout's path", arguments,
-                          lines, True) for label, arguments, lines in cases[:2])
-    for case_number, (label, layout_arguments, expected_lines, spaced) in enumerate(
-            tuple(case + (False,) for case in cases) + spaced_cases):
+    # reference checkout whose path holds a space or a single quote must still give a command
+    # that runs. A single quote is what the sh hook's sed escape handles.
+    quoting_cases = tuple(
+        (label + ", with %s in the reference checkout's path" % what, arguments, lines, parent)
+        for what, parent in (("a space", "reference checkout parent"),
+                             ("a single quote", "reference checkout's parent"))
+        for label, arguments, lines in cases[:2])
+    for case_number, (label, layout_arguments, expected_lines, parent) in enumerate(
+            tuple(case + (None,) for case in cases) + quoting_cases):
         name = "worktree-without-checks-%d" % case_number
-        layout_parent = scratch / "reference checkout parent" if spaced else scratch
+        layout_parent = scratch / parent if parent else scratch
         hooks = make_layout(layout_parent, "layout-" + name, **layout_arguments)
         scenario = Scenario(scratch, name, hooks, worktree_has_checks=False)
         scenario.git(scenario.clone, "switch", "--quiet", "clean")

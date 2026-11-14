@@ -12,6 +12,7 @@ Usage:
                                  [--leave-recorded-inputs-and-failure-history-unchanged]
                                  [--stop-at-first-failing-suite]
                                  [--only-suites-named SUITE [SUITE ...]]
+                                 [--run-time-limit-seconds-not-counting-admission-waits SECONDS]
 
   --checkout    the top directory of the checkout to test; default, the
                 checkout this file is in
@@ -23,7 +24,7 @@ Usage:
                 of suites to run when that is fewer
   --log-dir     where each suite's output and the report are written;
                 default, a new directory under the system temp directory,
-                removed two days after its run ends. Two runs cannot share
+                on Linux removed two days after its run ends. Two runs cannot share
                 one --log-dir: the second exits 3
   --lock-file   default ~/.claude/.run-all-test-suites.lock. Where each suite
                 runs in an nc-test-sandbox (Linux with bwrap), no lock is taken: the
@@ -46,13 +47,13 @@ Usage:
                 ~/.cache/nedschorus-test-suite-recorded-inputs
   --record-inputs-with-strace
                 on Linux, record with strace as well as the audit hook; see
-                RECORDED INPUTS below. scripts/daily-full-test-run-of-main.py
+                RECORDED INPUTS below. scripts/scheduled-full-test-run-of-main.py
                 passes it; without it the audit hook records alone
   --suite-files-only-strace-saw-lists-directory
                 where a run given --record-inputs-with-strace keeps, for each
                 suite, the files only strace saw it read, and where every
                 selective run reads them; default
-                ~/.cache/nedschorus-test-suite-recorded-inputs, where the daily
+                ~/.cache/nedschorus-test-suite-recorded-inputs, where the scheduled
                 full run keeps them
   --leave-recorded-inputs-and-failure-history-unchanged
                 record no suite's inputs, save no recording and add nothing
@@ -69,6 +70,13 @@ Usage:
                 run only these suites, each named by its path from the
                 checkout's top directory, as git lists it; a name git does
                 not list stops the run with exit 2
+  --run-time-limit-seconds-not-counting-admission-waits SECONDS
+                once the run has lasted SECONDS, not counting the time in
+                which a suite of the run waited for ADMISSION, kill the
+                suites running, as a stop signal does, start no other, and
+                print a line opening with RUN_STOPPED_AT_RUN_TIME_LIMIT_NOT_COUNTING_ADMISSION_WAITS_LINE_PREFIX;
+                the run exits 1 when a suite had failed, otherwise 2. Each
+                suite killed is reported as stopped, not as failed
 
 WHY THIS EXISTS (user-ruled 2026-09-21, walk "redesigning how pull requests
 are processed", items 3 and 6). Until this program, every full run of the
@@ -321,10 +329,15 @@ psutil; at most 4 suites start per second and at most 64 run at once on the
 machine, each holding an flock on one of 64 slot files, so the kernel frees
 the slot of a killed run. A suite run without any sandbox first takes the
 lock those suites share, then a slot, so it never holds a slot while it waits.
-A suite that cannot start waits with no time limit, and once a minute the run
-reports what its suites wait for. A failure to decide, such as a machine
-reading that fails or a slot file that cannot be opened, stops the run with
-exit 2. Every suite runs at nice 10, in a cgroup scope of its own
+A suite that cannot start waits, and once a minute the run reports what its
+suites wait for. A suite that has waited TEST_SUITE_ADMISSION_WAIT_CEILING_SECONDS,
+eight hours, stops the run as a failure to decide does, below, its line opening
+with TEST_SUITE_ADMISSION_WAIT_CEILING_PASSED_LINE_PREFIX: no test slot came. The
+ceiling counts from when the suite began to wait, which is the run's start for
+every suite where all of the run's suites start at once, the default here. A
+failure to decide, such as a machine reading that fails or a slot file that
+cannot be opened, stops the run with exit 2. Every suite runs at nice 10, in a
+cgroup scope of its own
 (`systemd-run --user --scope`), whose counters give the suite's CPU seconds
 and peak memory, every process it starts included. systemd-run reaches the
 user's systemd through $XDG_RUNTIME_DIR/bus; when the run is started without
@@ -387,15 +400,32 @@ which the floor covers; no pass exceeded this limit measured from the suite's
 fastest pass. 1800 s is six times the longest pass seen. A suite past its limit
 has its process group killed with SIGKILL; each suite starts in a session of
 its own, so the group holds every process it started except one that starts a
-session of its own. In an nc-test-sandbox the group holds the init of the suite's
-PID namespace, whose end ends every process inside, so nothing is left; outside
-one, such a process is not reached. A suite outside an nc-test-sandbox runs
-with TMPDIR set to a directory of its own in the system temp directory, which
-the runner removes once the suite has ended, however it ended, so what a
-killed suite made through TMPDIR is not left behind; when that removal fails,
-the suite's line is followed by one naming the directory and the command that
-removes it. A runner killed with SIGKILL leaves that directory; a later run
-that uses the default --lock-file removes it once nothing in it has changed for
+session or process group of its own. In an nc-test-sandbox the group holds the init of the suite's
+PID namespace, whose end ends every process inside, so nothing is left. The
+runner also reads the tree of processes below the suite from /proc just before
+the kill and sends SIGKILL to each, so outside an nc-test-sandbox such a process
+is reached too. On Linux a suite outside an nc-test-sandbox is started through
+ONE_SUITE_CHILD_SUBREAPER_LAUNCHER_PATH, a child subreaper, so a process
+whose parent ends is reparented to it and stays in the tree. The runner stops
+the group with SIGSTOP and sends SIGKILL to each process it reads in the tree
+outside the group, leaving the stopped subreaper alive, until a read that
+began after every killed process had ended finds nothing new; only then does it
+kill the group and with it the subreaper, so a process whose parent ends during
+the kill is reparented to the subreaper before that last read begins. The runner then
+waits up to TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS, 10, for each of them
+to end. Elsewhere, as on macOS, there is neither a subreaper nor /proc, so only
+the process group is killed.
+A suite outside an nc-test-sandbox runs with TMPDIR set to a directory of its
+own in the system temp directory, which the runner removes once the suite has
+ended, however it ended, so what a killed suite made through TMPDIR is not
+left behind; when that removal fails, the suite's line is followed by one
+naming the directory and the command that removes it. When a process the kill
+reached still runs after that wait, the directory is kept for it, and the
+suite's line is followed by one naming the processes, the directory and the
+command that removes it. Where the runner cannot read a suite's processes, as
+on macOS, the directory of a killed suite is always kept, and the suite's line
+says so, with the command that removes it. A runner killed with SIGKILL leaves that directory; a
+later run that uses the default --lock-file removes it once nothing in it has changed for
 two days, on every platform. It is reported FAIL with `TIMEOUT after
 <n>s (limit <m>s, <k> times recorded <r>s)`, `(limit <m>s, the floor, more than
 <k> times recorded <r>s)` or `(limit <m>s from no passing recording)`; its
@@ -478,7 +508,7 @@ suite depends on. Two recorders, whose findings are added together:
   -E or -S, or with an environment that drops PYTHONPATH, is not recorded.
 
   strace, on Linux, only in a run given --record-inputs-with-strace, which
-  scripts/daily-full-test-run-of-main.py gives, when strace is installed and
+  scripts/scheduled-full-test-run-of-main.py gives, when strace is installed and
   this program is not itself being traced: `strace -f -ff --seccomp-bpf -z -y -e trace=%file` around
   each suite, which sees every path any process opens, stats or executes,
   git and shells included. --seccomp-bpf stops a traced process only at the
@@ -497,17 +527,17 @@ suite depends on. Two recorders, whose findings are added together:
   files only strace saw it read: those a git command or a shell script
   read. A run that records with the audit hook alone replaces the
   recording, and a run given its own --recorded-inputs-directory, such as
-  merge-lane-2's head runs, never sees the daily run's recordings, so
+  merge-lane-2's head runs, never sees the scheduled run's recordings, so
   selection reads these lists from
   --suite-files-only-strace-saw-lists-directory, whose default is where the
-  daily full run keeps its recordings: a suite also runs when a file on its
+  scheduled full run keeps its recordings: a suite also runs when a file on its
   list differs. A run with the audit hook alone records the files on the
   list among the files read, with their blob hashes in its checkout. A
   strace run in which the suite failed or skipped cases leaves the last list
   as it is. A selective run on Linux names how many suites have no list
   from a strace run in the last
   FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE hours, which a
-  missed daily run causes.
+  missed scheduled run causes.
 
 A recording keeps, per suite: its exit code and seconds; each file read,
 with its git blob hash; each path it opened or checked for, and whether the
@@ -531,7 +561,7 @@ every clone, shares the same paths, so a recording made in one serves them
 all. Every run not given --leave-recorded-inputs-and-failure-history-unchanged
 replaces the recordings of the suites it ran, a failed or
 killed run's included, so the last recording always says how the suite's
-last run ended; the daily full run refreshes them all. Each recording is
+last run ended; the scheduled full run refreshes them all. Each recording is
 written to a temporary file of its own and renamed into place under a short
 lock held per suite, so runs in two checkouts saving one suite at once never
 mix their contents, and a reader sees one whole recording. A run reads each
@@ -659,7 +689,7 @@ lists (strace's view of a directory opened is left out, because the import
 system opens every directory on the path); outside a strace run, what a
 shell script or a git command a suite runs reads, unless the last strace
 run saw it; an ignored file; anything outside the checkout (a
-tool upgrade, leftover machine state). The daily full run covers all of
+tool upgrade, leftover machine state). The scheduled full run covers all of
 these.
 
 EXIT. 0 when every suite exited 0; 1 when any suite failed, even in a run
@@ -668,7 +698,8 @@ failed but the run gave no full verdict: a suite was not run because its
 nc-test-sandbox did not start, the run was not run to the end, its records
 could not be written, or the run could not start (not a checkout's top
 directory, no suites listed, git or the interpreter unusable, a COMMIT git
-cannot resolve, a suite --only-suites-named names that git does not list);
+cannot resolve, a suite --only-suites-named names that git does not list, a
+--log-dir that cannot be created or written to);
 3 when another run holds the lock, where a lock is taken.
 """
 
@@ -699,7 +730,9 @@ import time
 import xml.etree.ElementTree
 from pathlib import Path
 
-PROGRAM = "run-all-test-suites"
+# Messages open with the path an agent can run; file names in the temporary directory cannot hold "/".
+PROGRAM = "scripts/run-all-test-suites.py"
+PROGRAM_FILE_NAME_STEM = "run-all-test-suites"
 
 TEST_SUITE_PATHSPEC = "*-test.py"
 # Python audit hooks cannot see shell reads; without strace, a shell recording
@@ -729,10 +762,13 @@ _next_step_lines_spec.loader.exec_module(next_step_lines)
 
 # Whether a user attends the agent-session changes what some messages under test say, so a suite
 # is launched without them and each test sets them itself.
-AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES = (
-    "CLAUDE_CODE_SESSION_ATTENDED",
-    "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
-)
+_attendance_check_spec = importlib.util.spec_from_file_location(
+    "agent_session_unattended_by_user_check_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "agent-session-unattended-by-user-check-common.py")
+_attendance_check = importlib.util.module_from_spec(_attendance_check_spec)
+_attendance_check_spec.loader.exec_module(_attendance_check)
+AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES = _attendance_check.AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES
 
 # Suites run as the same account as every agent-seat, so a stray kill(-1) or
 # killpg from a suite reaches all of them. In its own PID namespace a suite can
@@ -865,13 +901,16 @@ SUITES_RUN_WITHOUT_ANY_SANDBOX = {
     "scripts/mac-request-from-ned-box-forced-command-test.py":
         "it runs the real ssh, which refuses its root-owned config files because "
         "inside the sandbox's user namespace they show as owned by nobody",
+    "nc-systems/general-tools/tests/agent-seat-worktree-create-with-owner-file-claude-code-worktree-create-hook-real-claude-code-test.py":
+        "it runs the real claude, which needs the real HOME it is logged in from and an "
+        "agent-seat of this machine, and the sandbox's HOME is empty",
 }
 
 # Suites that must write the git directory of the repository under test, such as with
 # `git worktree add`. Their git directory is a copy-on-write overlay instead of read-only,
 # so the writes work inside the suite and vanish when it ends.
 SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY = {
-    "nc-systems/general-tools/tests/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check-test.py":
+    "nc-systems/general-tools/tests/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check-test.py":
         "it replays at two refs, each in a worktree it adds to this repository",
 }
 
@@ -900,6 +939,9 @@ TEST_SUITE_ADMISSION_STARTS_PER_SECOND = 4
 TEST_SUITE_ADMISSION_SUITES_RUNNING_AT_ONCE_CEILING = 64
 TEST_SUITE_ADMISSION_WAIT_REPORT_INTERVAL_SECONDS = 60
 TEST_SUITE_ADMISSION_RETRY_SECONDS = 0.25
+# Above the longest admission wait of one suite yet seen on ned-box, 17,299 s, so only a
+# machine busy for longer than ever seen stops a run here.
+TEST_SUITE_ADMISSION_WAIT_CEILING_SECONDS = 8 * 3600
 # Beside the lock file, so a test that passes its own lock file also gets its own admission.
 TEST_SUITE_ADMISSION_DIRECTORY_SUFFIX = ".test-suite-admission"
 TEST_SUITE_ADMISSION_START_TIMES_FILE_NAME = "start-times"
@@ -910,6 +952,9 @@ TEST_SUITE_NICE_INCREMENT = 10
 # Short, because a suite binds AF_UNIX sockets under its TMPDIR and macOS caps a socket path at
 # 104 bytes; mkdtemp adds 8 characters to it.
 SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX = "rts-"
+ONE_SUITE_CHILD_SUBREAPER_LAUNCHER_PATH = (
+    Path(__file__).resolve().with_name(
+        "run-all-test-suites-one-suite-child-subreaper-launcher.py"))
 MACHINE_READINGS_INTERVAL_SECONDS = 1
 MACHINE_CPU_AND_MEMORY_READINGS_FILE_NAME = "machine-cpu-and-memory-readings.tsv"
 TEST_SUITE_RESOURCE_USE_FILE_NAME = "test-suite-resource-use.tsv"
@@ -928,6 +973,9 @@ FIRST_REPORT_LINE_LOG_DIRECTORY_MARK = "; logs in "
 TEST_CASE_LINE = re.compile(r"^\s*(?P<verdict>PASS|FAIL|ok)\b:?\s*(?P<text>.*)$")
 # A process a suite run without any sandbox leaves running can hold its output open.
 TEST_SUITE_OUTPUT_DRAIN_SECONDS = 10
+# A process sent SIGKILL ends within milliseconds unless it waits in the kernel, as on a
+# hung network file system.
+TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS = 10
 # A suite's time limit is the larger of the floor and the multiple of its last passing
 # run's seconds; see PER-SUITE TIMEOUT in the docstring for why these numbers.
 TEST_SUITE_TIMEOUT_FLOOR_SECONDS = 600
@@ -960,7 +1008,7 @@ TEST_SUITE_MEMORY_CEILING_BYTES = 4 * 10**9
 TEST_SUITE_CGROUP_SLICE = r"nc\x2dtest\x2dsuites.slice"
 TEST_SUITE_CGROUP_SLICE_CPU_WEIGHT = 10
 TEST_SUITE_MEMORY_CEILING_BYTES_OF_SUITES_THAT_NEED_MORE = {
-    "scripts/daily-full-test-run-of-main-test.py": 24 * 10**9,
+    "scripts/scheduled-full-test-run-of-main-test.py": 24 * 10**9,
 }
 
 
@@ -1003,8 +1051,8 @@ PYTHON_INPUT_RECORDER_MARKER_FILE_NAME = "run-all-test-suites-python-input-recor
 PYTHON_INPUT_RECORDER_METHOD = "python-audit-hook"
 STRACE_INPUT_RECORDER_METHOD = "strace"
 FILES_ONLY_STRACE_SAW_FILE_SUFFIX = ".files-only-strace-saw.json"
-# The daily full run records them once a day; the 12 hours over cover its hour of waiting
-# for the machine's lock and its own length, so one missed daily run is reported.
+# The scheduled full run records them once a day; the 12 hours over cover its hour of waiting
+# for the machine's lock and its own length, so one missed scheduled run is reported.
 FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE = 36
 # The runner, hooks and settings can affect every suite or session a suite starts.
 EVERY_SUITE_RUNS_WHEN_THESE_CHANGE = (
@@ -1014,7 +1062,7 @@ EVERY_SUITE_RUNS_WHEN_THESE_CHANGE = (
 GIT_COMMANDS_THAT_ONLY_LIST = frozenset((
     "ls-files", "ls-tree", "rev-parse", "rev-list", "log", "branch", "config",
     "remote", "worktree", "for-each-ref", "symbolic-ref", "merge-base",
-    "describe", "show-ref", "check-ignore", "var", "version", "fetch", "init"))
+    "describe", "show-ref", "check-ignore", "var", "version", "fetch", "init", "ls-remote"))
 # These options read repository location, not checkout files.
 GIT_REV_PARSE_OPTIONS_THAT_SEE_NO_FILE = frozenset((
     "--show-toplevel", "--git-dir", "--absolute-git-dir", "--git-common-dir",
@@ -1475,7 +1523,7 @@ def git_failure_next_step_lines(program_file):
     """The lines that end a refusal after a git failure, for a run of program_file."""
     return next_step_lines.git_failure_next_step_lines(
         f"the same {program_file} command", program_file,
-        text_the_failure_line_contains="not run — git", include_the_misspelt_branch_commit_or_path_line=True)
+        text_the_failure_line_contains="not run — git")
 
 
 def first_line_of_error(completed):
@@ -1622,6 +1670,15 @@ def process_start_ticks(pid, proc=Path("/proc")):
     if fields[0] == "Z":
         return None
     return int(fields[19])
+
+
+def process_group_id(pid, proc=Path("/proc")):
+    """The process's process group id, or None when it is gone."""
+    try:
+        stat = (proc / str(pid) / "stat").read_text()
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    return int(stat.rsplit(")", 1)[1].split()[2])
 
 
 def process_alive(pid, start_ticks, proc=Path("/proc")):
@@ -1804,7 +1861,7 @@ def remove_old_temporary_log_directories_without_run_records(
         with contextlib.suppress(OSError, ValueError, KeyError):
             named.add(Path(json.loads(path.read_text())["log_dir"]))
     removed, failures = [], []
-    for log_dir in sorted(temp_dir.glob(f"{PROGRAM}-*")):
+    for log_dir in sorted(temp_dir.glob(f"{PROGRAM_FILE_NAME_STEM}-*")):
         if log_dir in named or not log_dir.is_dir():
             continue
         if (log_dir / LOG_DIRECTORY_LOCK_FILE_NAME).exists():
@@ -1905,6 +1962,10 @@ class MachineWideTestSuiteAdmissionCancelled(Exception):
     """The run stopped admitting suites, so a suite still waiting does not start."""
 
 
+class MachineWideTestSuiteAdmissionWaitedPastCeiling(Exception):
+    """A suite waited TEST_SUITE_ADMISSION_WAIT_CEILING_SECONDS and was not admitted."""
+
+
 class TestSuiteAdmissionMachineCpuAndMemoryReadingsSampler:
     """The machine's CPU use, available memory and load, read every second by a thread.
 
@@ -2000,8 +2061,9 @@ class MachineWideTestSuiteAdmission:
     and only then a slot, so it never holds a slot while it waits for that lock;
     when no slot is free, it lets the lock go before it waits, so it never holds
     the lock while it waits for room.
-    A suite that cannot start waits, with no time limit; once a minute the run
-    reports what the suites wait for."""
+    A suite that cannot start waits; once a minute the run reports what the suites
+    wait for. One that has waited TEST_SUITE_ADMISSION_WAIT_CEILING_SECONDS raises
+    MachineWideTestSuiteAdmissionWaitedPastCeiling."""
 
     def __init__(self, directory, readings, say, clock=time.monotonic, sleep=time.sleep,
                  machine_clock=time.monotonic):
@@ -2016,6 +2078,10 @@ class MachineWideTestSuiteAdmission:
         self.lock = threading.Lock()
         self.waiting = {}
         self.last_report = None
+        # Counted apart from self.waiting, which holds only suites a reason has held back.
+        self.suites_waiting = 0
+        self.some_suite_waiting_since = None
+        self.seconds_a_suite_waited_before = 0.0
         self.cancelled = threading.Event()
         try:
             self.directory.mkdir(parents=True, exist_ok=True)
@@ -2113,6 +2179,22 @@ class MachineWideTestSuiteAdmission:
                  f"{'wait' if count != 1 else 'waits'} to start: " + "; ".join(reasons)
                  + ". Each suite starts by itself once the reason it waits for clears.")
 
+    def suite_starts_or_stops_waiting(self, change):
+        with self.lock:
+            now = self.clock()
+            if self.suites_waiting == 0:
+                self.some_suite_waiting_since = now
+            self.suites_waiting += change
+            if self.suites_waiting == 0:
+                self.seconds_a_suite_waited_before += now - self.some_suite_waiting_since
+
+    def seconds_while_any_suite_of_this_run_waited_for_admission(self):
+        """The seconds so far in which at least one suite of this run waited to be admitted."""
+        with self.lock:
+            if self.suites_waiting == 0:
+                return self.seconds_a_suite_waited_before
+            return self.seconds_a_suite_waited_before + self.clock() - self.some_suite_waiting_since
+
     def cancel(self):
         """Stop admitting: every suite still waiting raises MachineWideTestSuiteAdmissionCancelled."""
         self.cancelled.set()
@@ -2127,13 +2209,26 @@ class MachineWideTestSuiteAdmission:
         """Hold a slot, and for a suite run without any sandbox that lock first, while the suite runs.
 
         Yields the seconds the suite waited. Raises MachineWideTestSuiteAdmissionCancelled
-        once cancel() is called while the suite waits."""
+        once cancel() is called while the suite waits, and
+        MachineWideTestSuiteAdmissionWaitedPastCeiling once it has waited
+        TEST_SUITE_ADMISSION_WAIT_CEILING_SECONDS."""
         started = self.clock()
         held = []
+        self.suite_starts_or_stops_waiting(1)
+        waiting = True
         try:
             # Polled rather than a blocking flock, so a cancel reaches a suite waiting here.
             while True:
                 self.raise_if_cancelled(suite)
+                waited = self.clock() - started
+                if waited >= TEST_SUITE_ADMISSION_WAIT_CEILING_SECONDS:
+                    with self.lock:
+                        why = self.waiting.get(suite, "no reason was recorded")
+                    raise MachineWideTestSuiteAdmissionWaitedPastCeiling(
+                        f"{suite} waited {waited:.0f} s, past "
+                        f"TEST_SUITE_ADMISSION_WAIT_CEILING_SECONDS, "
+                        f"{TEST_SUITE_ADMISSION_WAIT_CEILING_SECONDS} s; it last waited because "
+                        f"{why}")
                 outside_lock = None
                 if without_any_sandbox:
                     outside_lock = self.open_locked(
@@ -2152,6 +2247,8 @@ class MachineWideTestSuiteAdmission:
                     raise
                 if slot is not None:
                     held.extend(handle for handle in (outside_lock, slot) if handle is not None)
+                    self.suite_starts_or_stops_waiting(-1)
+                    waiting = False
                     break
                 # Held through a wait for room, the lock would keep every other run's
                 # suites run without any sandbox waiting while this one runs nothing.
@@ -2163,6 +2260,8 @@ class MachineWideTestSuiteAdmission:
                 self.waiting.pop(suite, None)
             yield self.clock() - started
         finally:
+            if waiting:
+                self.suite_starts_or_stops_waiting(-1)
             with self.lock:
                 self.waiting.pop(suite, None)
             for handle in reversed(held):
@@ -2331,7 +2430,7 @@ def write_case_times_suite_resources_and_junit_xml_of_run(log_dir, results):
                 f"{'' if result.get('cpu_seconds') is None else format(result['cpu_seconds'], '.3f')}\t"
                 f"{'' if result.get('peak_memory_bytes') is None else result['peak_memory_bytes']}\t"
                 f"{result.get('resources_note') or ''}\n")
-    root = xml.etree.ElementTree.Element("testsuites", name=PROGRAM)
+    root = xml.etree.ElementTree.Element("testsuites", name=PROGRAM_FILE_NAME_STEM)
     for result in results:
         cases = result.get("cases") or []
         failed = sum(1 for case in cases if case["verdict"] == "FAIL")
@@ -2751,7 +2850,7 @@ def empty_file_bound_over_a_listening_socket_in_test_sandbox():
 
     Fails rather than return a file that is not empty, which would hand a suite that
     content."""
-    path = Path(tempfile.gettempdir()) / f"{PROGRAM}-empty-file-covering-sockets-{os.getuid()}"
+    path = Path(tempfile.gettempdir()) / f"{PROGRAM_FILE_NAME_STEM}-empty-file-covering-sockets-{os.getuid()}"
     descriptor = os.open(path, os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW, 0o444)
     try:
         status = os.fstat(descriptor)
@@ -3009,11 +3108,16 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
 
     time_limit is (limit seconds, recorded seconds or None) from
     suite_timeout_and_the_recorded_seconds_it_came_from(); a suite still running at its limit
-    has its process group killed, and its result carries "timeout". Once run_stops,
+    is killed by kill_test_suite_process_group_and_descendants(), and its result carries
+    "timeout". Once run_stops,
     a list naming what stopped the run, is not empty, the suite is killed the same way,
     and its result carries "stopped by". A suite outside an nc-test-sandbox gets TMPDIR set to
     a directory of its own, removed once the suite has ended; a removal that fails is named,
-    with its command, in the result's "output_note".
+    with its command, in the result's "output_note", as is a killed process still running,
+    for which the directory is kept. On Linux such a suite starts under
+    ONE_SUITE_CHILD_SUBREAPER_LAUNCHER_PATH, so the kill finds a process whose parent
+    ended first; on another platform, where the kill cannot look below the process group,
+    a killed suite's directory is kept and "output_note" says so.
 
     With in_cgroup_scope, the suite runs in a cgroup scope of its own and its CPU seconds
     and peak memory are read from there; with nice, at low priority. Inside its
@@ -3063,6 +3167,11 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         suite_temporary_directory = tempfile.mkdtemp(
             prefix=SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX)
         environment["TMPDIR"] = suite_temporary_directory
+        if platform.startswith("linux"):
+            # A process whose parent ends is reparented to the launcher, not to PID 1, so it
+            # stays below the suite where the kill looks.
+            command = [sys.executable, "-I", str(ONE_SUITE_CHILD_SUBREAPER_LAUNCHER_PATH),
+                       *command]
     status_read = status_write = None
     if sandbox_prefix and note_suite_process is not None:
         status_read_fd, status_write = os.pipe()
@@ -3098,6 +3207,7 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
     started = time.monotonic()
     copier = None
     timed_out = stopped_by = None
+    killed_but_running = []
     try:
         log = open_for_writing_without_following_symlinks(log_file, binary=True)
         try:
@@ -3141,7 +3251,7 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
                 timed_out = time_limit
             else:
                 continue
-            kill_test_suite_process_group(process)
+            killed_but_running = kill_test_suite_process_group_and_descendants(process)
             exit_code = process.wait()
             break
         seconds = time.monotonic() - started
@@ -3157,8 +3267,32 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         # Closed only after bwrap exits: bwrap writes its exit status to this pipe last.
         if status_read is not None:
             status_read.close()
+        # Without /proc the kill cannot see past the process group, so a killed suite may
+        # have left a process running that still uses the directory.
+        killed_unchecked = (suite_temporary_directory is not None
+                            and not platform.startswith("linux")
+                            and (timed_out is not None or stopped_by is not None))
+        # Kept for processes still running, which would otherwise lose their files mid-run.
         temporary_directory_left = (None if suite_temporary_directory is None
+                                    or killed_but_running or killed_unchecked
                                     else remove_tree_or_say_why(suite_temporary_directory))
+    if killed_unchecked:
+        output_note = "; ".join(filter(None, (
+            output_note,
+            f"the suite was killed, and on {platform} the runner cannot find the processes it "
+            f"started outside its process group, so the temporary directory the suite was "
+            f"given, {suite_temporary_directory}, is kept for any still running; once none "
+            f"is, remove it with `rm -rf {shlex.quote(suite_temporary_directory)}`")))
+    if killed_but_running:
+        output_note = "; ".join(filter(None, (
+            output_note,
+            f"{len(killed_but_running)} process(es) the suite started, pid(s) "
+            f"{', '.join(str(pid) for pid, _ in killed_but_running)}, still ran "
+            f"{TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS} s after they were sent SIGKILL"
+            + ("" if suite_temporary_directory is None else
+               f", so the temporary directory the suite was given, {suite_temporary_directory}, "
+               f"is kept for them; once they have ended, remove it with "
+               f"`rm -rf {shlex.quote(suite_temporary_directory)}`"))))
     if temporary_directory_left is not None:
         output_note = "; ".join(filter(None, (
             output_note,
@@ -3212,16 +3346,106 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
     return result
 
 
-def kill_test_suite_process_group(process):
-    """SIGKILL the suite's process group, which every process it started stays in unless
-    it starts a session of its own.
+def descendant_processes_and_ended_children(pid, proc=Path("/proc")):
+    """Each running descendant of pid as (pid, start ticks), read from
+    /proc/<pid>/task/*/children, and the set of pids listed as a child that had ended, or
+    become a zombie, by the time its start ticks were read.
 
-    In an nc-test-sandbox the group holds the init of the suite's PID namespace, since bwrap
-    is not given --new-session, and the init's end ends every process in the namespace.
-    Called before the suite's first process is reaped, so its process group id is still
-    its own."""
+    A process that ends while the tree is read is left out of the running descendants.
+    Where there is no /proc, as on macOS, both are empty.
+
+    An ended child's own children are reparented as it ends, possibly to a process whose
+    children this read has already passed, so a read that meets an ended child it has not
+    met before may have missed them."""
+    found = []
+    ended = set()
+    parents = [pid]
+    while parents:
+        parent = parents.pop()
+        for children_file in sorted((proc / str(parent) / "task").glob("*/children")):
+            try:
+                children = children_file.read_text().split()
+            except (FileNotFoundError, ProcessLookupError):
+                continue
+            for child in map(int, children):
+                start_ticks = process_start_ticks(child, proc)
+                if start_ticks is None:
+                    ended.add(child)
+                else:
+                    found.append((child, start_ticks))
+                    parents.append(child)
+    return found, ended
+
+
+def kill_test_suite_process_group_and_descendants(process, proc=Path("/proc"), kill=os.kill,
+                                                  killpg=os.killpg, clock=time.monotonic,
+                                                  sleep=time.sleep):
+    """SIGKILL the suite's process group and every process below the suite, wait up to
+    TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS for those to end, and return the
+    (pid, start ticks) of each still running.
+
+    Every process the suite started stays in its group unless it starts a session or
+    process group of its own; such a process is reached through the tree of processes.
+    The group is first stopped with SIGSTOP, so no process in it can fork or end. Then the
+    tree is read, and each process found in it outside the suite's group is sent SIGKILL;
+    a process in the group stays stopped until the group is killed. The tree is read again
+    and again, and a read counts as the last only when every process sent SIGKILL had ended
+    before the read began, the read finds no process not already found, and it meets no
+    ended child that an earlier read had not met; only then is the group killed. Outside an nc-test-sandbox on Linux,
+    the suite runs under ONE_SUITE_CHILD_SUBREAPER_LAUNCHER_PATH, a child subreaper in the
+    suite's group, either as the suite's process or below it when the suite runs in a cgroup
+    scope. Stopped and never sent SIGKILL on its own, it lives until the group is killed, so
+    a process whose parent ends, before the kill or during it, is reparented to it, and the
+    last read finds it, because a process is reparented as it ends and the last read begins
+    only after every killed process has ended. In an nc-test-sandbox the group also holds the
+    init of the suite's PID namespace, since bwrap is not given --new-session, and the
+    init's end ends every process in the namespace. The reads stop at
+    TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS, which also bounds the wait. Where there
+    is no /proc, as on macOS, only the process group is killed. Called before the suite's
+    first process is reaped, so its process group id is still its own."""
+    deadline = clock() + TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS
+    descendants = []
+    sent_sigkill = []
+    ended_children_met = set()
+    # Stopped, the subreaper can neither reap the suite's command nor end with it, so it is
+    # still there to adopt an orphan whose parent ends while the tree is read.
     with contextlib.suppress(ProcessLookupError):
-        os.killpg(process.pid, signal.SIGKILL)
+        killpg(process.pid, signal.SIGSTOP)
+    while clock() < deadline:
+        # Taken before the read: a killed process that ends during the read may have its
+        # children reparented to a process the read has already passed.
+        every_killed_process_ended_before_read = not any(
+            process_alive(pid, start_ticks, proc) for pid, start_ticks in sent_sigkill)
+        found, ended_children = descendant_processes_and_ended_children(process.pid, proc)
+        new = [entry for entry in found if entry not in descendants]
+        descendants += new
+        for pid, start_ticks in new:
+            # A process in the suite's group is stopped and ends with the group; killing it
+            # on its own would kill the subreaper while orphans may still be reparented to it.
+            if process_group_id(pid, proc) == process.pid:
+                continue
+            # The start time, so a pid another process took since the tree was read is not hit.
+            if process_alive(pid, start_ticks, proc):
+                with contextlib.suppress(ProcessLookupError):
+                    kill(pid, signal.SIGKILL)
+                sent_sigkill.append((pid, start_ticks))
+        if new:
+            continue
+        if not every_killed_process_ended_before_read:
+            sleep(0.05)
+            continue
+        if not ended_children <= ended_children_met:
+            ended_children_met |= ended_children
+            continue
+        break
+    with contextlib.suppress(ProcessLookupError):
+        killpg(process.pid, signal.SIGKILL)
+    while True:
+        running = [(pid, start_ticks) for pid, start_ticks in descendants
+                   if process_alive(pid, start_ticks, proc)]
+        if not running or clock() >= deadline:
+            return running
+        sleep(0.05)
 
 
 def unescaped_strace_string(text):
@@ -3561,14 +3785,14 @@ def suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
             f"{FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE} hours in {directory}, "
             f"so this selective run does not select such a suite when the "
             f"change edits a file the suite reads only through git or a shell script. "
-            f"scripts/daily-full-test-run-of-main.py makes those lists once a day on ned-box, so "
+            f"scripts/scheduled-full-test-run-of-main.py makes those lists once a day on ned-box, so "
             f"it has not recorded every suite {since}. The verdicts of the suites this run ran "
             f"stand; carry on with your work.\n"
-            f"If you have not yet told the user in this agent-session that the daily full test "
-            f"run's lists are stale: tell him \"The daily full test run on ned-box has not "
+            f"If you have not yet told the user in this agent-session that the scheduled full test "
+            f"run's lists are stale: tell him \"The scheduled full test run on ned-box has not "
             f"recorded every suite {since}, so selective test runs there can miss a suite whose "
-            f"git or shell reads changed. The daily run's records are in "
-            f"nedlern@ned-box:/home/nedlern/nedschorus-logs/daily-full-test-runs/ned-box/.\" "
+            f"git or shell reads changed. The scheduled run's records are in "
+            f"nedlern@ned-box:/home/nedlern/nedschorus-logs/scheduled-full-test-runs-of-main/ned-box/.\" "
             f"A subagent passes that sentence to the agent that dispatched it instead.")
 
 
@@ -3868,6 +4092,13 @@ SUITE_FAILED_LINE = re.compile(
     r"^FAIL (?P<suite>\S.*?) (?:exit \d+|killed by (?:signal \d+|\S+))"
     r"(?:, OUT OF MEMORY: [^(]*?)?(?: \(| — log )")
 NOT_RUN_TO_THE_END_LINE_PREFIX = f"{PROGRAM}: not run to the end"
+# A runner from before its messages opened with the file path prints the bare-name form, and a
+# frozen-head or a saved result can come from such a runner, so a reader matches either.
+TEST_RUNNER_WHOLE_RUN_NOT_RUN_TO_THE_END_LINE_PREFIXES_FILE_PATH_AND_BARE_NAME_FORMS = (
+    NOT_RUN_TO_THE_END_LINE_PREFIX, "run-all-test-suites: not run to the end")
+RUN_STOPPED_AT_RUN_TIME_LIMIT_NOT_COUNTING_ADMISSION_WAITS_LINE_PREFIX = f"{NOT_RUN_TO_THE_END_LINE_PREFIX} — the run passed its run time limit"
+TEST_SUITE_ADMISSION_WAIT_CEILING_PASSED_LINE_PREFIX = (
+    f"{NOT_RUN_TO_THE_END_LINE_PREFIX} — a suite could not get a test slot")
 
 
 def run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal(text):
@@ -3876,7 +4107,7 @@ def run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_b
     A nonzero exit without that, such as an empty output, a run cut short, or records that
     could not be written after every suite passed, judged no suite."""
     lines = text.splitlines()
-    if any(line.startswith(NOT_RUN_TO_THE_END_LINE_PREFIX) for line in lines):
+    if any(line.startswith(TEST_RUNNER_WHOLE_RUN_NOT_RUN_TO_THE_END_LINE_PREFIXES_FILE_PATH_AND_BARE_NAME_FORMS) for line in lines):
         return False
     return any(SUITE_FAILED_LINE.match(line) for line in lines)
 
@@ -3971,11 +4202,16 @@ def parse_arguments(argv):
                         dest="leave_records_unchanged", action="store_true")
     parser.add_argument("--stop-at-first-failing-suite", action="store_true")
     parser.add_argument("--only-suites-named", nargs="+", metavar="SUITE")
+    parser.add_argument("--run-time-limit-seconds-not-counting-admission-waits",
+                        dest="run_time_limit_seconds", type=float, metavar="SECONDS")
     arguments = parser.parse_args(argv)
     if arguments.jobs is not None and arguments.jobs < 1:
         parser.error("-j takes a whole number of at least 1")
     if arguments.wait_for_lock_seconds < 0:
         parser.error("--wait-for-lock-seconds takes a number of seconds of at least 0")
+    if arguments.run_time_limit_seconds is not None and arguments.run_time_limit_seconds <= 0:
+        parser.error("--run-time-limit-seconds-not-counting-admission-waits takes a number of "
+                     "seconds above 0")
     return arguments
 
 
@@ -4052,15 +4288,21 @@ def main(argv=None, platform=None):
         globals().update(sandbox_lists)
         if arguments.log_dir:
             log_dir = Path(arguments.log_dir).resolve()
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_dir_handle = lock_explicit_log_directory(log_dir)
+            try:
+                log_dir.mkdir(parents=True, exist_ok=True)
+                log_dir_handle = lock_explicit_log_directory(log_dir)
+            except OSError as error:
+                print(f"{PROGRAM}: not run — could not write to the log directory {log_dir} "
+                      f"({error}).\nRun this again with a --log-dir that this account can create "
+                      f"and write to.", file=sys.stderr)
+                return EXIT_COULD_NOT_RUN
             if log_dir_handle is None:
                 print(f"{PROGRAM}: not run — another run is writing to the log directory "
                       f"{log_dir}.\nRun this again with another --log-dir, or after that "
                       f"run has finished.", file=sys.stderr)
                 return EXIT_LOCKED
         else:
-            log_dir = Path(tempfile.mkdtemp(prefix=f"{PROGRAM}-"))
+            log_dir = Path(tempfile.mkdtemp(prefix=f"{PROGRAM_FILE_NAME_STEM}-"))
         if platform.startswith("linux"):
             run_record = RunRecord(run_records_directory_for_lock_file(arguments.lock_file), log_dir,
                                    log_dir_is_temporary=not arguments.log_dir)
@@ -4194,9 +4436,10 @@ def main(argv=None, platform=None):
                             f"--only-suites-named {suite}")
 
         run_stop_signals = []
-        # What stopped the run: a stop signal's name, or, with --stop-at-first-failing-suite,
-        # the first failing suite. Each suite's thread acts on its first entry.
+        # What stopped the run: a stop signal's name, with --stop-at-first-failing-suite the
+        # first failing suite, or the run time limit. Each suite's thread acts on its first entry.
         run_stops = []
+        run_time_limit_passed = False
 
         def run_admitted(suite, **options):
             if run_stops:
@@ -4298,10 +4541,18 @@ def main(argv=None, platform=None):
                        for suite in chosen]
             pending = set(running)
             stop_acted_on = False
+            run_started = time.monotonic()
             while pending:
                 done, pending = concurrent.futures.wait(
                     pending, timeout=RUN_STOP_SIGNAL_CHECK_SECONDS,
                     return_when=concurrent.futures.FIRST_COMPLETED)
+                if arguments.run_time_limit_seconds is not None and not run_stops and \
+                        time.monotonic() - run_started - (
+                            admission.seconds_while_any_suite_of_this_run_waited_for_admission()
+                            if admission is not None else 0.0) \
+                        > arguments.run_time_limit_seconds:
+                    run_time_limit_passed = True
+                    run_stops.append(f"the run time limit of {arguments.run_time_limit_seconds:g} s")
                 if run_stops and not stop_acted_on:
                     stop_acted_on = True
                     for waiting in running:
@@ -4318,13 +4569,23 @@ def main(argv=None, platform=None):
                         if run_stops:
                             continue
                         raise
-                    except (MachineWideTestSuiteAdmissionCouldNotDecide, SignalSandboxCouldNotStart,
+                    except (MachineWideTestSuiteAdmissionCouldNotDecide,
+                            MachineWideTestSuiteAdmissionWaitedPastCeiling, SignalSandboxCouldNotStart,
                             OSError) as error:
                         for waiting in running:
                             waiting.cancel()
                         # A suite already waiting for admission is running as far as its future knows.
                         if admission is not None:
                             admission.cancel()
+                        if isinstance(error, MachineWideTestSuiteAdmissionWaitedPastCeiling):
+                            report.line(f"{TEST_SUITE_ADMISSION_WAIT_CEILING_PASSED_LINE_PREFIX}: "
+                                        f"{error}")
+                            report.line("The machine stayed too busy to start it. Run this again "
+                                        "once the machine is quieter. The suites already running "
+                                        "finish first.")
+                            report.close()
+                            return (EXIT_SOME_FAILED if any(map(suite_failed, results))
+                                    else EXIT_COULD_NOT_RUN)
                         what = ("admission failed" if isinstance(error, MachineWideTestSuiteAdmissionCouldNotDecide)
                                 else "a suite's nc-test-sandbox could not be built"
                                 if isinstance(error, SignalSandboxCouldNotStart)
@@ -4345,18 +4606,21 @@ def main(argv=None, platform=None):
         if run_stop_signals and (len(results) < len(chosen)
                                  or any(result.get("stopped by") for result in results)):
             report.line(f"{PROGRAM}: not run to the end — stopped by {run_stop_signals[0]}. "
-                        f"The process group of every suite still running was killed, which "
-                        f"in an nc-test-sandbox ends every process the suite started; outside "
-                        f"one, a process a suite started in a session of its own is not "
-                        f"reached and may still be running. The suites not yet started "
-                        f"were not run.")
+                        f"The process group of every suite still running was killed, and "
+                        f"every process below the suite, which in an nc-test-sandbox ends "
+                        f"every process the suite started; outside one, a process a suite "
+                        f"started in a session or process group of its own is not reached, and "
+                        f"may still be running, when its parent had ended before the kill or "
+                        f"it started as the kill began. The suites not yet started were not "
+                        f"run.")
             report.close()
             if run_record is not None:
                 run_record.finish()
             return EXIT_SOME_FAILED if any(map(suite_failed, results)) else EXIT_COULD_NOT_RUN
 
         results.sort(key=lambda result: result["suite"])
-        # Here only --stop-at-first-failing-suite stops a suite: a stop signal returned above.
+        # Here only --stop-at-first-failing-suite or the run time limit stops a suite: a stop
+        # signal returned above.
         stopped = [result for result in results if result.get("stopped by")]
         not_run = [result for result in results if result.get("test sandbox did not start")]
         failed = [result for result in results if suite_failed(result)]
@@ -4374,7 +4638,14 @@ def main(argv=None, platform=None):
             for result in not_run:
                 report.line(f"{NOT_RUN_SUITE_LINE_PREFIX}{result['suite']} {why_suite_failed(result)}"
                             f"{SUITE_LINE_LOG_MARK}{result['log']}")
-        if run_stops:
+        if run_time_limit_passed:
+            report.line("")
+            report.line(f"{RUN_STOPPED_AT_RUN_TIME_LIMIT_NOT_COUNTING_ADMISSION_WAITS_LINE_PREFIX} of "
+                        f"{arguments.run_time_limit_seconds:g} s, not counting the time in which "
+                        f"a suite waited for admission: {len(stopped)} suites killed while they "
+                        f"ran, {len(chosen) - len(results)} not started "
+                        f"(--run-time-limit-seconds-not-counting-admission-waits)")
+        elif run_stops:
             report.line("")
             report.line(f"stopped at {run_stops[0]}: {len(stopped)} suites killed while they "
                         f"ran, {len(chosen) - len(results)} not started "
@@ -4438,7 +4709,8 @@ def main(argv=None, platform=None):
         # reads exit 2 as "no verdict" would otherwise let a failure through.
         if failed:
             return EXIT_SOME_FAILED
-        return EXIT_COULD_NOT_RUN if not_run or records_failed else EXIT_ALL_PASSED
+        return (EXIT_COULD_NOT_RUN if not_run or records_failed or run_time_limit_passed
+                else EXIT_ALL_PASSED)
     finally:
         restore_signal_handlers(signal_handlers_replaced)
         if readings is not None:

@@ -217,6 +217,22 @@ def running(process_id):
     return bool(state) and not state.startswith("Z")
 
 
+def ps_state_once_it_is(process_id, stopped):
+    """Wait up to 60 seconds for ps to show process_id stopped (T, or t under a tracer) or not,
+    and return the state ps last showed.
+
+    SIGSTOP takes effect only when the kernel next schedules its target, so under heavy load the
+    stop can show in the process table well after kill returns.
+    """
+    deadline = time.monotonic() + 60
+    while True:
+        state = subprocess.run(["ps", "-o", "stat=", "-p", str(process_id)], capture_output=True,
+                               text=True).stdout.strip()
+        if (state[:1] in ("T", "t")) == stopped or time.monotonic() >= deadline:
+            return state
+        time.sleep(0.05)
+
+
 def stop_fake(process_id):
     with contextlib.suppress(OSError):
         os.kill(process_id, signal.SIGCONT)
@@ -225,6 +241,12 @@ def stop_fake(process_id):
 
 def quick_sleep(seconds):
     time.sleep(min(seconds, 0.2))
+
+
+def settle_until_stopped(process_id):
+    """A sleep for foreground() that waits until ps shows process_id stopped, instead of
+    freeze()'s fixed settle, which under heavy load can end before the stop shows."""
+    return lambda seconds: ps_state_once_it_is(process_id, stopped=True)
 
 
 @contextlib.contextmanager
@@ -420,7 +442,8 @@ def foreground_cases():
 
     def failing_start(path):
         raise OSError("no room to start")
-    status, _, errors = run_foreground(start_second_half=failing_start, sleep=quick_sleep)
+    status, _, errors = run_foreground(start_second_half=failing_start,
+                                       sleep=settle_until_stopped(supervisor_id))
     time.sleep(0.2)
     check("foreground: a second half that cannot start leaves the handoff-supervisor unfrozen",
           status == 1 and "no room to start" in errors and "unfrozen with SIGCONT" in errors
@@ -435,14 +458,24 @@ def foreground_cases():
 
     started = []
     status, output, errors = run_foreground(start_second_half=lambda path: started.append(path) or 4242,
-                                            sleep=quick_sleep)
+                                            sleep=settle_until_stopped(supervisor_id))
     state = json.loads(started[0].read_text()) if started else {}
     check("foreground: the handoff-supervisor is frozen and the agent-seat told to write its session-handoff",
           status == 0 and program.process_is_stopped(supervisor_id)
-          and "write your session-handoff now" in output and "result.txt" in output, output + errors)
+          and "write your session-handoff now" in output and program.HANDOFF_SUPERVISOR_RESTART_RESULT_FILE_NAME in output, output + errors)
     check("foreground: the state for the second half names both processes and the agent-home's processes",
           state.get("supervisor_id") == supervisor_id and state.get("claude_id") == claude_id
           and str(claude_id) in state.get("agent_home_processes", {}), state)
+    check("foreground: the state for the second half is written under its own file name",
+          started and started[0].name
+          == program.HANDOFF_SUPERVISOR_RESTART_SIGSTOP_FROZEN_HANDOFF_SUPERVISOR_DETAILS_FOR_DETACHED_SECOND_HALF_FILE_NAME,
+          started)
+    check("foreground: the state names the result file the agent-seat is told to read, and both notice files",
+          started and "result_path" in state and state["result_path"] in output
+          and state.get("result_path") == str(started[0].parent / program.HANDOFF_SUPERVISOR_RESTART_RESULT_FILE_NAME)
+          and state.get("notice_path") == str(started[0].parent / program.HANDOFF_SUPERVISOR_RESTART_SECOND_HALF_FAILURE_NOTICE_TO_USER_FILE_NAME)
+          and state.get("notice_page_path") == str(started[0].parent / program.HANDOFF_SUPERVISOR_RESTART_SECOND_HALF_FAILURE_NOTICE_TO_USER_HTML_PAGE_FILE_NAME),
+          state)
     return supervisor_id, claude_id, started[0] if started else None
 
 
@@ -488,7 +521,7 @@ def fresh_state(**changes):
              "agent_home_processes": {str(claude_id): table[claude_id][1],
                                       str(supervisor_id): table[supervisor_id][1]}}
     state.update(changes)
-    state_path = directory / "state.json"
+    state_path = directory / program.HANDOFF_SUPERVISOR_RESTART_SIGSTOP_FROZEN_HANDOFF_SUPERVISOR_DETAILS_FOR_DETACHED_SECOND_HALF_FILE_NAME
     state_path.write_text(json.dumps(state))
     return supervisor_id, claude_id, state_path
 
@@ -508,10 +541,10 @@ def second_half_cases():
     check("second half: no session-handoff within the limit unfreezes the old handoff-supervisor",
           status == 1 and not program.process_is_stopped(supervisor_id) and running(supervisor_id)
           and "unfrozen with SIGCONT" in output
-          and "step 4" not in (state_path.parent / "result.txt").read_text(), output)
+          and "step 4" not in (state_path.parent / program.HANDOFF_SUPERVISOR_RESTART_RESULT_FILE_NAME).read_text(), output)
     check("second half: that failure is a notice for the user and a line in the result file",
-          opened and (state_path.parent / "notice.txt").is_file()
-          and "FAILED" in (state_path.parent / "result.txt").read_text(), opened)
+          opened and (state_path.parent / program.HANDOFF_SUPERVISOR_RESTART_SECOND_HALF_FAILURE_NOTICE_TO_USER_FILE_NAME).is_file()
+          and "FAILED" in (state_path.parent / program.HANDOFF_SUPERVISOR_RESTART_RESULT_FILE_NAME).read_text(), opened)
     stop_fake(claude_id)
     stop_fake(supervisor_id)
 
@@ -524,7 +557,7 @@ def second_half_cases():
     opened = []
     status, half, output = second_half(state_path, opened)
     time.sleep(0.3)
-    result = (state_path.parent / "result.txt").read_text()
+    result = (state_path.parent / program.HANDOFF_SUPERVISOR_RESTART_RESULT_FILE_NAME).read_text()
     check("second half: the old handoff-supervisor and its claude are ended",
           not running(supervisor_id) and not running(claude_id), output)
     check("second half: resupervise-seat.py --prepare-only and recover-crashed-seats.py run from the reference-checkout",
@@ -616,13 +649,13 @@ def second_half_cases():
     status, half, output = second_half(state_path, opened, now=lambda: next(clock))
     check("second half: no reply from the successor within 5 minutes is a notice with what ps shows",
           status == 1 and opened and "no new transcript" in output and "as ps lists them" in output
-          and "tmux -L restart-test-seat attach" in (state_path.parent / "notice.txt").read_text(),
+          and "tmux -L restart-test-seat attach" in (state_path.parent / program.HANDOFF_SUPERVISOR_RESTART_SECOND_HALF_FAILURE_NOTICE_TO_USER_FILE_NAME).read_text(),
           output)
-    notice_text = (state_path.parent / "notice.txt").read_text()
+    notice_text = (state_path.parent / program.HANDOFF_SUPERVISOR_RESTART_SECOND_HALF_FAILURE_NOTICE_TO_USER_FILE_NAME).read_text()
     check("second half: off the Mac, the notice's attach command is wrapped in ssh to ned-box, "
           "and it names the result file for an agent-seat to read",
           "`ssh -t nedlern@ned-box 'tmux -L restart-test-seat attach -t restart-test-seat'`" in notice_text
-          and f"to read {state_path.parent / 'result.txt'}" in notice_text, notice_text)
+          and f"to read {state_path.parent / program.HANDOFF_SUPERVISOR_RESTART_RESULT_FILE_NAME}" in notice_text, notice_text)
 
     reset_control()
     control("resupervise-exit-codes", "0")
@@ -685,7 +718,7 @@ def step_4_and_leftover_cases():
     supervisor_id, claude_id, state_path = fresh_state(supervisor_command="python3 a command no process runs")
     write_session_handoff()
     status, half, output = second_half(state_path)
-    result = (state_path.parent / "result.txt").read_text()
+    result = (state_path.parent / program.HANDOFF_SUPERVISOR_RESTART_RESULT_FILE_NAME).read_text()
     check("step 4: an old handoff-supervisor whose process ID now names another command gets no SIGKILL",
           f"the old handoff-supervisor {supervisor_id} had already ended" in result
           and "was ended with SIGKILL" not in result, result)
@@ -731,7 +764,7 @@ def step_4_and_leftover_cases():
     write_session_handoff()
     status, half, output = second_half(state_path)
     time.sleep(0.2)
-    result = (state_path.parent / "result.txt").read_text()
+    result = (state_path.parent / program.HANDOFF_SUPERVISOR_RESTART_RESULT_FILE_NAME).read_text()
     ended_line = f"step 5: process {leftover_id} (sleep 600) ended"
     check("step 5: a failed resupervise-seat.py ends step 2's leftovers before it is run once more",
           status == 0 and not running(leftover_id) and ended_line in result
@@ -745,7 +778,7 @@ def step_4_and_leftover_cases():
     write_session_handoff()
     status, half, output = second_half(state_path)
     time.sleep(0.2)
-    result = (state_path.parent / "result.txt").read_text()
+    result = (state_path.parent / program.HANDOFF_SUPERVISOR_RESTART_RESULT_FILE_NAME).read_text()
     ended_line = f"step 5: process {leftover_id} (sleep 600) ended"
     check("step 5: a leftover of step 2 that outlives step 4 is ended before recover-crashed-seats.py runs",
           status == 0 and not running(leftover_id) and ended_line in result
@@ -862,12 +895,13 @@ def process_cases():
     stoppable = subprocess.Popen(["sleep", "600"])
     started_process_ids.append(stoppable.pid)
     os.kill(stoppable.pid, signal.SIGSTOP)
-    time.sleep(0.2)
+    stopped_state = ps_state_once_it_is(stoppable.pid, stopped=True)
     stopped = program.process_is_stopped(stoppable.pid)
     os.kill(stoppable.pid, signal.SIGCONT)
-    time.sleep(0.2)
+    running_state = ps_state_once_it_is(stoppable.pid, stopped=False)
     check("process_is_stopped: true for a stopped process, false for a running one",
-          stopped and not program.process_is_stopped(stoppable.pid))
+          stopped and not program.process_is_stopped(stoppable.pid),
+          f"stopped: {stopped} with ps state {stopped_state!r}; then ps state {running_state!r}")
     stoppable.kill()
 
 
@@ -877,13 +911,33 @@ def notice_cases():
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
         half.notice("something failed <badly>")
-    page = (state_path.parent / "notice.html").read_text()
+    page = (state_path.parent / program.HANDOFF_SUPERVISOR_RESTART_SECOND_HALF_FAILURE_NOTICE_TO_USER_HTML_PAGE_FILE_NAME).read_text()
     check("a notice page that does not open is reported, and the notice stays on disk",
           "was not opened on the Mac (exit 1): the Mac is asleep" in output.getvalue()
-          and (state_path.parent / "notice.txt").read_text().startswith("something failed")
+          and (state_path.parent / program.HANDOFF_SUPERVISOR_RESTART_SECOND_HALF_FAILURE_NOTICE_TO_USER_FILE_NAME).read_text().startswith("something failed")
           and "&lt;badly&gt;" in page, output.getvalue())
     stop_fake(claude_id)
     stop_fake(supervisor_id)
+
+    directory = Path(tempfile.mkdtemp())
+    supervisor_id, claude_id, state_path = fresh_state(
+        result_path=str(directory / "result-named-by-the-foreground.txt"),
+        notice_path=str(directory / "notice-named-by-the-foreground.txt"),
+        notice_page_path=str(directory / "notice-named-by-the-foreground.html"))
+    half = program.SecondHalf(state_path, open_notice_page=lambda page: (0, ""))
+    with contextlib.redirect_stdout(io.StringIO()):
+        half.fail("a step failed")
+    check("the second half writes its result and notices where the foreground's state file says, "
+          "so a fast-forward between the two halves cannot move them",
+          (directory / "result-named-by-the-foreground.txt").is_file()
+          and (directory / "result-named-by-the-foreground.txt").read_text().startswith("FAILED: a step failed")
+          and (directory / "notice-named-by-the-foreground.txt").is_file()
+          and (directory / "notice-named-by-the-foreground.html").is_file()
+          and not (state_path.parent / program.HANDOFF_SUPERVISOR_RESTART_RESULT_FILE_NAME).exists(),
+          sorted(path.name for path in directory.iterdir()))
+    stop_fake(claude_id)
+    stop_fake(supervisor_id)
+    shutil.rmtree(directory, ignore_errors=True)
 
 
 def mac_cases():
@@ -911,13 +965,14 @@ def mac_cases():
     stoppable = subprocess.Popen(["sleep", "600"])
     started_process_ids.append(stoppable.pid)
     os.kill(stoppable.pid, signal.SIGSTOP)
-    time.sleep(0.2)
+    stopped_state = ps_state_once_it_is(stoppable.pid, stopped=True)
     with replaced(program, "PROCESS_TABLE_DIRECTORY", SCRATCH_HOME / "no-proc-here"):
         stopped = program.process_is_stopped(stoppable.pid)
         os.kill(stoppable.pid, signal.SIGCONT)
-        time.sleep(0.2)
+        running_state = ps_state_once_it_is(stoppable.pid, stopped=False)
         check("process_is_stopped without /proc reads ps, as on the Mac",
-              stopped and not program.process_is_stopped(stoppable.pid))
+              stopped and not program.process_is_stopped(stoppable.pid),
+              f"stopped: {stopped} with ps state {stopped_state!r}; then ps state {running_state!r}")
     stoppable.kill()
 
     saved = os.environ.pop("NEDSCHORUS_HANDOFF_SUPERVISOR_RESTART_LOG_DIRECTORY")
@@ -934,7 +989,7 @@ def mac_cases():
 
 def detached_start_cases():
     directory = Path(tempfile.mkdtemp(dir=SCRATCH_HOME))
-    state_path = directory / "state.json"
+    state_path = directory / program.HANDOFF_SUPERVISOR_RESTART_SIGSTOP_FROZEN_HANDOFF_SUPERVISOR_DETAILS_FOR_DETACHED_SECOND_HALF_FILE_NAME
     state_path.write_text("{}")
     process_id = program.start_second_half(state_path)
     started_process_ids.append(process_id)
@@ -942,8 +997,8 @@ def detached_start_cases():
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline and running(process_id):
         time.sleep(0.1)
-    log = (directory / "detached-output.log").read_text()
-    check("the second half starts in a session of its own, with its output in detached-output.log",
+    log = (directory / program.HANDOFF_SUPERVISOR_RESTART_DETACHED_SECOND_HALF_OUTPUT_FILE_NAME).read_text()
+    check("the second half starts in a session of its own, with its output in the detached second half's output file",
           session != os.getsid(0) and "KeyError" in log, log)
 
 

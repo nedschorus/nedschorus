@@ -10,6 +10,9 @@ line in each walk's docs/walk/<name>-minutes.md. The marker is found anywhere
 outside code, the last one in a minutes file counts, and one inside a code
 span is a quotation; a value inside a code span is read without its
 backticks, and a colon after the hashtag is read as the old form's colon was.
+A program that writes text it was given into the minutes, such as the user's
+reply, writes it with text_wrapped_as_markdown_code_span, so that a marker
+inside that text is a quotation too.
 The old marker `Next to present:` is read too, so that a caller can migrate
 it. A value is `none` or `closed` for a closed walk, or opens with a running
 count, `item N`, `item 4.1`, `items 5 and 6`, `items 10 to 12`, with or
@@ -81,8 +84,8 @@ falls in; in a unit that names several items it ends only the item it falls
 in, and the unit's next opening starts the next item, so a version the walk-document keeps after replacing it is never
 read for the item's recommendation, its `#new` lines or its parts. Every search of a walk file for its
 structure, here and in the programs that load this module, reads the lines
-prose_lines returns, in which fenced and indented code and HTML comment blocks
-are empty, or the parser's own tokens, as item starts are, so a line in code or
+prose_lines returns, in which fenced and indented code is empty and HTML comments
+are cut out, or the parser's own tokens, as item starts are, so a line in code or
 in a comment is never an item's start, a marker, a recommendation or a recorded
 answer.
 
@@ -118,6 +121,9 @@ import importlib.util
 import os
 import re
 from pathlib import Path
+
+HTML_COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.S)
+RECOMMENDATION = re.compile(r"Recommendation:(.*)$", re.I | re.M)
 
 REPOSITORY_TOP = Path(__file__).resolve().parents[3]
 SUITE_RUNNER_FILE = REPOSITORY_TOP / "scripts" / "run-all-test-suites.py"
@@ -227,19 +233,45 @@ def markdown_parser():
                        MARKDOWN_PARSER_MODULE_FILE).markdown_parser()
 
 
+def approval_walk_item_last_recommendation_text_from_item_lines(lines):
+    """The last recommendation in an item's prose_lines, the text after `Recommendation:` as written, without
+    emphasis or one trailing period; or None when there is none, or the last one has no text after it."""
+    found = [match[1].strip(" *_") for match in RECOMMENDATION.finditer("\n".join(lines))]
+    found = [text[:-1].rstrip(" *_") if text.endswith(".") else text for text in found]
+    return found[-1] if found and found[-1] else None
+
+
+def without_html_comments(lines):
+    """Return lines with each HTML comment in them, `<!--` to `-->` or to the end, cut out, keeping the count of
+    lines, so that text after a comment's `-->` stays."""
+    cut = HTML_COMMENT.sub(lambda comment: "\n" * comment[0].count("\n"), "\n".join(lines))
+    return cut.split("\n")
+
+
 def prose_lines(text, parser, tokens=None):
-    """Return text's lines with every line of fenced or indented code, or of an HTML comment block, made
-    empty, keeping each line's index; tokens are parser.parse(text) when the caller has them already.
+    """Return text's lines with every line of fenced or indented code made empty and every HTML comment cut
+    out, keeping each line's index; tokens are parser.parse(text) when the caller has them already.
 
     Every search of a walk file for its structure, such as a marker, a `#new` line, a recommendation, an
     answer line or an outcome tag, runs over these lines, so that an example in code, or a note in a
-    comment the reader never sees, is never read as structure. Other HTML blocks stay, since they show."""
-    hidden = set()
+    comment the reader never sees, is never read as structure. A comment is cut from every HTML block, also
+    one that opens with another tag, as in `<div><!-- Recommendation: x --></div>`. Text that shows stays: the
+    rest of an HTML block, and text after a comment's `-->`, as in `<!-- note --> Recommendation: x`. In a
+    paragraph that holds a comment, a code span with comment text in it, such as `<!-- x -->` in backquotes, is
+    cut too. A comment in an HTML block that a blank line ends is cut only to the block's end, so its lines after
+    the blank line stay."""
+    lines = text.split("\n")
     for token in parser.parse(text) if tokens is None else tokens:
-        if token.map is not None and (token.type in ("fence", "code_block")
-                                      or token.type == "html_block" and token.content.lstrip().startswith("<!--")):
-            hidden.update(range(*token.map))
-    return ["" if number in hidden else line for number, line in enumerate(text.split("\n"))]
+        if token.map is None:
+            continue
+        first, end = token.map
+        if token.type in ("fence", "code_block"):
+            lines[first:end] = [""] * (end - first)
+        elif (token.type == "html_block"
+              or token.type == "inline" and any(child.type == "html_inline" and child.content.startswith("<!--")
+                                                for child in token.children or [])):
+            lines[first:end] = without_html_comments(lines[first:end])
+    return lines
 
 
 def item_opening_lines(text, parser, tokens=None):
@@ -320,6 +352,20 @@ def next_to_present(minutes_text, parser):
         return None
     hashtag, value = markers[last]
     return value, not hashtag, last < len(markers) - 1
+
+
+def text_wrapped_as_markdown_code_span(text):
+    """Return text as a code span CODE_SPAN reads whole, on one line, its whitespace runs squeezed to single spaces.
+
+    CODE_SPAN matches line by line, so a line break left in the text would put what follows it outside the span,
+    where a `#next_to_present` is read as the walk's marker. The delimiter is one backtick longer than the longest
+    backtick run inside the text, and a text that opens or ends with a backtick gets a space on each side, so that
+    the text's own backticks neither end the span early nor join its delimiter."""
+    text = " ".join(text.split())
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    delimiter = "`" * (longest + 1)
+    padding = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{delimiter}{padding}{text}{padding}{delimiter}"
 
 
 def newest_item_page_link_per_item_from_walk_minutes(minutes_text, parser):
@@ -558,6 +604,18 @@ def approval_walk_item_line_range_within_heading_shared_by_several_items(opening
         return first, min(withdrawn + [end])
     later = [line for line in withdrawn + list(starts.values()) if line > starts[number]]
     return starts[number], min(later + [end])
+
+
+def approval_walk_item_sub_step_units_right_after(all_units, unit):
+    """Return the units of all_units, as item_unit_spans gives them, right after unit that are sub-steps of any
+    item unit names, such as `### Item 3.1 of 9` and `### Item 3.1.1 of 9` after item 3, up to the first that is
+    not, so an older version's `3.1 of 9` elsewhere in the walk-document is not among them."""
+    found = []
+    for each in [each for each in all_units if each[3] > unit[3]]:
+        if not each[0] or not all(any(part.startswith(number + ".") for number in unit[0]) for part in each[0]):
+            break
+        found.append(each)
+    return found
 
 
 def approval_walk_unit_is_unnumbered_item(unit):

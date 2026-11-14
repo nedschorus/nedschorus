@@ -704,6 +704,18 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
 
     # A cleaner stopped by the handoff's timeout partway through a removal
     # leaves the announcement and no confirmation.
+    force_deleted_line = ("branch closed-head-branch: deleted with git branch -D, its last commit abc "
+                          "being the head of pull request #1 (closed)")
+    force_summary = supervisor.summarize_worktree_cleanup_output([
+        "branch orphaned-branch: deleted", force_deleted_line])
+    check("WORKTREE CLEANUP: a branch deleted with git branch -D is reported on its own, not among "
+          "the branches with nothing beyond main",
+          force_summary == ("worktree cleanup: 0 finished worktree(s) removed, "
+                            "1 branch ref(s) with nothing beyond main deleted; "
+                            "1 finished pull request's head branch(es), holding commits main lacks, "
+                            "deleted with git branch -D: " + force_deleted_line),
+          force_summary)
+
     stopped_summary = supervisor.summarize_worktree_cleanup_output([
         "first-wt: removing it will discard 1 uncommitted, untracked or ignored file(s): one.txt",
         "first-wt: removed, branch first-branch deleted",

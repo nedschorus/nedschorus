@@ -67,6 +67,11 @@ _failed_command_lines_spec = importlib.util.spec_from_file_location(
     Path(__file__).resolve().with_name("failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py"))
 _failed_command_lines = importlib.util.module_from_spec(_failed_command_lines_spec)
 _failed_command_lines_spec.loader.exec_module(_failed_command_lines)
+_attendance_check_spec = importlib.util.spec_from_file_location(
+    "agent_session_unattended_by_user_check_common",
+    Path(__file__).resolve().with_name("agent-session-unattended-by-user-check-common.py"))
+_attendance_check = importlib.util.module_from_spec(_attendance_check_spec)
+_attendance_check_spec.loader.exec_module(_attendance_check)
 
 REQUIREMENTS_FILE = python_libraries_pinned_requirements_install_if_missing_then_import_common.PINNED_REQUIREMENTS_FILE
 # The Bash guards run in parallel with a 30-second hook timeout; a cached wheel installs in about a second.
@@ -485,8 +490,7 @@ def parser():
 
 
 def _session_unattended(environment):
-    return bool(environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
-                or environment.get("CLAUDE_CODE_SESSION_ATTENDED") == "0")
+    return _attendance_check.agent_session_unattended_by_user(environment)
 
 
 @contextlib.contextmanager
@@ -496,8 +500,8 @@ def agent_session_attendance_environment_variables_temporarily_set_for_test(atte
     A test of a message that names whom to tell sets both, so it reads the same in any
     agent-session it runs in.
     """
-    values = {"CLAUDE_CODE_SESSION_ATTENDED": attended,
-              "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": reincarnation_owned_by_caller}
+    values = {_attendance_check.SESSION_ATTENDED_VARIABLE: attended,
+              _attendance_check.REINCARNATION_OWNED_BY_CALLER_VARIABLE: reincarnation_owned_by_caller}
     saved = {name: os.environ.get(name) for name in values}
 
     def put(settings):
@@ -922,7 +926,7 @@ def _redirect_text_before_operator(node, operator, source, glob_markers):
     touching the operator before it. After a blank, bash reads that text as the
     operator's descriptor when it is decimal digits, and as a word otherwise.
     Text that touches the escaped blanks is the end of the word before, as the 2
-    of `>f\\<tab>2>&-`, which this reader does not read.
+    of `>f\\<tab>2>&-`: see _text_ending_word_before_redirect.
     """
     before = [child for child in node.named_children
               if child.type != "file_descriptor" and child.end_byte <= operator.start_byte]
@@ -939,6 +943,25 @@ def _redirect_text_before_operator(node, operator, source, glob_markers):
     if _digits_are_whole_token(source, first, operator.start_byte):
         return text.decode(), gap_words
     return "", gap_words + [prefix + _unescape_unquoted(text.decode("utf-8", SHELL_TEXT_ERRORS), glob_markers)]
+
+
+def _text_ending_word_before_redirect(node, source, word_end, glob_markers):
+    """Return the text inside a redirect before its operator that ends the word before it, or "".
+
+    tree-sitter-bash ends a word before an escaped tab and starts the redirect
+    after it at the backslash, so in `zzq a\\<tab>2>f` it puts the 2 inside the
+    redirect; bash passes the word "a<tab>2" and writes standard output to f.
+    word_end is where the word before ends, after the escaped blanks that continue it.
+    """
+    operator = next((child for child in node.children if not child.is_named), None)
+    if operator is None or node.start_byte >= word_end:
+        return ""
+    before = [child for child in node.named_children
+              if child.type != "file_descriptor" and child.end_byte <= operator.start_byte]
+    if not before or before[0].start_byte != word_end:
+        return ""
+    return _unescape_unquoted(source[word_end:operator.start_byte].decode("utf-8", SHELL_TEXT_ERRORS),
+                              glob_markers)
 
 
 def _digits_are_whole_token(source, start, end):
@@ -1054,17 +1077,19 @@ class _Collector:
         substitution is a child shell of its own, apart from every other body's.
         """
         for command in _heredoc_body_substitution_commands(taken.body, self.glob_markers):
-            identity = tuple(shell.placed(
+            command.child_shell = tuple(shell.placed(
                 lambda offset: -1 - offset - taken.number * BODY_IDENTITY_STRIDE)
                 for shell in command.child_shell)
-            self.commands.append(SimpleCommand(list(command), child_shell + identity,
-                                               command.redirects, command.heredocs))
+            self.adopt([command], child_shell)
 
     def adopt(self, commands, child_shell):
-        """Add commands read from a second parse, inside the child shell they run in."""
+        """Add commands read from a second parse, inside the child shell they run in.
+
+        Each command is moved, not rebuilt, so every attribute the second parse gave it stays.
+        """
         for command in commands:
-            self.commands.append(SimpleCommand(list(command), child_shell + command.child_shell,
-                                               command.redirects, command.heredocs))
+            command.child_shell = child_shell + command.child_shell
+            self.commands.append(command)
 
     def follows_process_id(self, node):
         return _follows_process_id(self.source, node.start_byte)
@@ -1109,23 +1134,43 @@ class _Collector:
                 unit_shell = (child_shell + (ChildShell(first.start_byte, PIPELINE_STAGE,
                                                         pipeline_start),)
                               if len(pipeline) > 1 else child_shell)
-                redirects, trailing_words = [], []
+                redirects, trailing_words, command_word_end = [], [], ""
                 previous_end = (_escaped_blanks_continuing_word(
                     self.source, unit["children"][-1].end_byte)[1] if unit["children"] else None)
+                # Where the word written last before the next redirection is held: the
+                # command's words, trailing_words, or the last redirection's target.
+                last_word = ("command" if unit["children"]
+                             and unit["children"][-1].type not in REDIRECT_NODE_TYPES else None)
                 for redirect, limit in unit["redirects"]:
                     if previous_end is not None:
-                        trailing_words.extend(_escaped_blank_words_before_operator(
-                            self.source[previous_end:redirect.start_byte]))
+                        gap_words = _escaped_blank_words_before_operator(
+                            self.source[previous_end:redirect.start_byte])
+                        trailing_words.extend(gap_words)
+                        last_word = "trailing" if gap_words else last_word
+                        text = _text_ending_word_before_redirect(
+                            redirect, self.source, previous_end, self.glob_markers)
+                        if text and last_word == "trailing":
+                            trailing_words[-1] = _word_with_text(trailing_words[-1], trailing_words[-1] + text)
+                        elif text and last_word == "target":
+                            redirects[-1] = (redirects[-1][0], redirects[-1][1] + text)
+                        elif text and last_word == "command":
+                            command_word_end += text
                         previous_end = _redirect_end_with_escaped_blanks_continuing_target(
                             self.source, redirect, limit)
+                    words_before, redirects_before = len(trailing_words), len(redirects)
                     shared_heredocs.extend(
                         self.redirect(redirect, unit_shell, redirects, trailing_words, limit))
+                    if len(trailing_words) > words_before:
+                        last_word = "trailing"
+                    elif len(redirects) > redirects_before:
+                        last_word = "target" if redirects[-1][1] else None
                 if previous_end is not None:
                     trailing_words.extend(_escaped_blank_words_ending_command(
                         self.source, previous_end))
                 if unit["children"] is not None:
                     self.simple_command(unit["node"], unit["children"], unit_shell,
-                                        list(shared_heredocs), redirects, trailing_words)
+                                        list(shared_heredocs), redirects, trailing_words,
+                                        command_word_end)
                 else:
                     self.visit(unit["node"], unit_shell, list(shared_heredocs))
 
@@ -1212,7 +1257,9 @@ class _Collector:
             self.expanded_heredoc_body(taken, child_shell)
         return [Heredoc(body, taken.expanded, taken.delimiter_as_written)]
 
-    def simple_command(self, node, children, child_shell, heredocs, redirects, trailing_words):
+    def simple_command(self, node, children, child_shell, heredocs, redirects, trailing_words,
+                       last_word_end=""):
+        """Read one simple command; last_word_end is text a redirection after it adds to its last word."""
         words, own_redirects, own_heredocs = [], [], []
         joined = None
         previous_end = None
@@ -1258,6 +1305,8 @@ class _Collector:
                 continues = previous_end > child.end_byte
         if joined is not None:
             words.append(word_value(joined, self.glob_markers, self.restored))
+        if last_word_end and words:
+            words[-1] = _word_with_text(words[-1], words[-1] + last_word_end)
         words.extend(trailing_words)
         if words:
             self.commands.append(SimpleCommand(words, child_shell, own_redirects + list(redirects),
@@ -1351,9 +1400,7 @@ def _escaped_blank_words_ending_command(source, start):
     """Return the words of the escaped blanks from start to the text that ends a command.
 
     tree-sitter-bash ends a command at its last word and leaves escaped blanks
-    after it outside every node, so `zzq \\ ;` loses the " " bash passes. The
-    blanks count only when a separator, a comment, a closing parenthesis or
-    backtick, a line end or the end of the source follows them.
+    after it outside every node, so `zzq \\ ;` loses the " " bash passes.
     """
     end = start
     while True:
@@ -1364,10 +1411,6 @@ def _escaped_blank_words_ending_command(source, start):
             end += 1
         else:
             break
-    # A # here starts a comment: the source corrections make a # just after an escaped blank
-    # part of a word.
-    if source[end:end + 1] not in (b"", b"\n", b";", b"&", b"|", b")", b"`", b"#"):
-        return []
     return _escaped_blank_words_before_operator(source[start:end])
 
 
@@ -1657,8 +1700,8 @@ _new_process_runner = subprocess.run
 def _use_a_new_process(runner=subprocess.run):
     """Read every later command in a new process, started and answered through runner.
 
-    runner is called as subprocess.run is; the Bash guards replay passes one that answers from a
-    process it keeps running, started with
+    runner is called as subprocess.run is; nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py passes
+    one that answers from a process it keeps running, started with
     NEW_PROCESS_READ_ONE_REQUEST_PER_LINE_UNTIL_INPUT_CLOSES_FLAG.
     """
     global _read_in_a_new_process, _new_process_runner
