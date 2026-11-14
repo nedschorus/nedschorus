@@ -824,6 +824,12 @@ def restore_refusal(repo, snapshot, keep, environment):
     return None
 
 
+def branch_may_exist(repo, branch):
+    """False only when git answers that the branch does not exist; a git that fails counts as
+    may exist, so the caller tries the removal and names its failure."""
+    return run_git(repo, "rev-parse", "--verify", "-q", f"refs/heads/{branch}").returncode != 1
+
+
 def remove_worktree_and_branch_of_failed_work_snapshot_restore(repo, worktree, branch, out):
     """Remove the worktree and the branch restore made; name each that cannot be removed, and
     say so when neither is left."""
@@ -833,18 +839,19 @@ def remove_worktree_and_branch_of_failed_work_snapshot_restore(repo, worktree, b
             out(f"The worktree {worktree} restore made could not be removed "
                 f"({git_failure_text(removal)}); remove it with: "
                 f"git worktree remove --force --force {shlex.quote(str(worktree))}")
-    if current_ref_value(repo, f"refs/heads/{branch}") is not None:
+    if branch_may_exist(repo, branch):
         deletion = run_git(repo, "branch", "-D", branch)
         if deletion.returncode:
             out(f"The branch {branch} restore made could not be deleted "
                 f"({git_failure_text(deletion)}); delete it with: git branch -D {branch}")
-    if not worktree.exists() and current_ref_value(repo, f"refs/heads/{branch}") is None:
+    if not worktree.exists() and not branch_may_exist(repo, branch):
         out(f"Neither the worktree {worktree} nor the branch {branch} is left, "
             f"so restore can be run again once the cause is fixed.")
 
 
 def restore_work_snapshot(repo, ref, keep, environment=None, out=print):
-    """The restore command; returns its exit code."""
+    """The restore command; returns its exit code. Raises WorkSnapshotError only before it
+    changes anything, because command_exit_code tells the user nothing was changed."""
     environment = os.environ if environment is None else environment
     snapshot = work_snapshot_of_ref(repo, ref, out)
     if snapshot is None:
@@ -856,6 +863,7 @@ def restore_work_snapshot(repo, ref, keep, environment=None, out=print):
     branch = restored_branch_name(ref)
     worktree = common_git_directory(repo).parent / ".claude" / "worktrees" / branch
     agent_seat = environment[AGENT_SEAT_ENVIRONMENT_VARIABLE]
+    dropped = [path for _status, path in changed_files(repo, snapshot["commit"]) if path not in keep]
 
     def undo_after(step, detail):
         out(f"FAILED: {step} failed ({detail}).")
@@ -876,11 +884,18 @@ def restore_work_snapshot(repo, ref, keep, environment=None, out=print):
             # file during `git worktree add`, naming GIT_AUTHOR_NAME's agent-seat as restore does.
             written = owners.worktree_owner_file_read(worktree)
             if written != owner:
+                hooks_path = run_git(repo, "config", "--show-origin", "--get", "core.hooksPath")
+                origin, _tab, value = hooks_path.stdout.strip().partition("\t")
+                hooks_path_setting = (
+                    f"core.hooksPath is {value}, set in {origin.removeprefix('file:')}"
+                    if hooks_path.returncode == 0 else
+                    f"core.hooksPath is not set, so the hook ran from {common_git_directory(repo)}/hooks")
                 raise owners.WorktreeOwnerFileError(
                     f"git worktree add left an owner file naming {json.dumps(written)}, where "
                     f"restore names {json.dumps(owner)}. scripts/git-client-side-hooks/post-checkout "
                     f"writes that file and should name GIT_AUTHOR_NAME's agent-seat as restore does; a "
-                    f"likely cause is a core.hooksPath naming another clone's older hook. restore never "
+                    f"likely cause is a core.hooksPath naming another clone's older hook. In {repo}, "
+                    f"{hooks_path_setting}. restore never "
                     f"overwrites an owner file that names another owner, because scripts/clean-worktrees.py decides from the "
                     f"owner when to remove the worktree") from None
     except Exception as error:
@@ -899,7 +914,14 @@ def restore_work_snapshot(repo, ref, keep, environment=None, out=print):
     committed = run_git(worktree, "commit", "-q", "-m", RESTORE_COMMIT_MESSAGE_TEMPLATE.format(ref=ref))
     if committed.returncode:
         return undo_after("git commit", git_failure_text(committed))
-    restore_commit = git_output(worktree, "rev-parse", "HEAD")
+    head = run_git(worktree, "rev-parse", "HEAD")
+    if head.returncode:
+        out(f"FAILED: git rev-parse HEAD in {worktree} failed ({git_failure_text(head)}).\n"
+            f"restore made the worktree {worktree} and the branch {branch}, and committed the kept "
+            f"files there; it opened no task and kept the ref {ref}. Tell the user what failed, and "
+            f"that the restored work is on the branch {branch}.")
+        return EXIT_STEP_FAILED
+    restore_commit = head.stdout.strip()
 
     exit_code = EXIT_DONE
     subject = restored_branch_task_subject(branch)
@@ -927,7 +949,6 @@ def restore_work_snapshot(repo, ref, keep, environment=None, out=print):
             f"{'and the task are' if task_id else 'is'} kept.\nRun: git update-ref -d {ref}")
     out(f"branch: {branch}\nworktree: {worktree}\n"
         f"task: {task_id if task_id is not None else 'not opened, as the FAILED line above says'}")
-    dropped = [path for _status, path in changed_files(repo, snapshot["commit"]) if path not in keep]
     out(f"summary: restored {ref}: kept {', '.join(keep)}; dropped "
         f"{', '.join(dropped) if dropped else 'nothing'}; on the branch {branch} in the worktree "
         f"{worktree}")
@@ -935,7 +956,8 @@ def restore_work_snapshot(repo, ref, keep, environment=None, out=print):
 
 
 def discard_work_snapshot(repo, ref, out=print):
-    """The discard command; returns its exit code."""
+    """The discard command; returns its exit code. Raises WorkSnapshotError only before it
+    changes anything, because command_exit_code tells the user nothing was changed."""
     snapshot = work_snapshot_of_ref(repo, ref, out)
     if snapshot is None:
         return EXIT_REFUSED
@@ -1079,9 +1101,8 @@ def command_exit_code(run):
     try:
         return run()
     except WorkSnapshotError as error:
-        print(f"FAILED: {error}. Nothing after that step was done, and what the steps before it made, "
-              f"such as a restore's new worktree, branch and commit, is left in place; tell the user "
-              f"what failed.")
+        print(f"FAILED: {error}. Nothing was changed, so the command can be run again once the "
+              f"cause is fixed; tell the user what failed.")
         return EXIT_STEP_FAILED
 
 
