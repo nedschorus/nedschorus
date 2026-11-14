@@ -442,10 +442,10 @@ GH_TIMEOUT_SECONDS = 120
 PUSH_TIME_MARGIN_SECONDS = 120
 ADJUDICATION_TIMEOUT_SECONDS = 420
 # scripts/ghi-guide-agent-ask.py's EXIT_NOT_ABOUT_ISSUES and EXIT_RULING_QUESTION:
-# ghi-guide-agent answered, but with an `out-of-scope` or `escalate:` reply rather
-# than a verdict. Copied rather than imported, because this program runs that
-# one as a subprocess and loads nothing from it; ghi-issue-write-test.py
-# checks the two stay equal.
+# ghi-guide-agent answered, but with a `not-about-issues` or
+# `ask-user-about-ruling:` reply rather than a verdict. Copied rather than
+# imported, because this program runs that one as a subprocess and loads
+# nothing from it; ghi-issue-write-test.py checks the two stay equal.
 GHI_GUIDE_AGENT_ASK_REPLIED_WITHOUT_A_LIST_EXIT_CODES = (2, 3)
 # How each of those two exits' messages opens: NOT_ABOUT_ISSUES_MESSAGE's first
 # line, and RULING_QUESTION_MESSAGE_TEMPLATE up to its {sentence}. The message
