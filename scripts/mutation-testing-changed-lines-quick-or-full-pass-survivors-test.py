@@ -626,6 +626,7 @@ def run_recorded_mutant_killed_check_cases():
               and {name: verdict["verdict"] for name, verdict
                    in written.get("verdicts", {}).items()} == {first: "survived",
                                                                second: "killed"}
+              and written["verdicts"][first]["why"].startswith(f"at head {head[:12]}, every suite")
               and written["verdicts"][second]["why"].startswith(f"at head {head[:12]}")
               and worktrees_of(repository) == worktrees_before
               and (repository / "scripts/thing.py").read_text() == HEAD_FILES["scripts/thing.py"],
@@ -706,7 +707,7 @@ def run_recorded_mutant_killed_check_cases():
     # without the pragma it is in both functions, read exactly only in twice(), which no suite
     # tests, so applying it there would make the mutant survive.
     with tempfile.TemporaryDirectory() as scratch_name:
-        completed, _, _, _ = run_recorded_mutant_killed_check(
+        completed, _, _, head = run_recorded_mutant_killed_check(
             scratch_name, {**killing_files, "scripts/thing.py":
                            "def double(x):\n    # doubled\n    return x + x  # pragma: no mutate\n"
                            "\n\ndef twice(x):\n    return x + x\n"},
@@ -716,7 +717,7 @@ def run_recorded_mutant_killed_check_cases():
               "exit 2, and is not applied at the untagged twin",
               completed.returncode == 2
               and f"{could_not_be_judged_line}{Path(scratch_name) / 'mutant.diff'}: in "
-                  f"scripts/thing.py at head" in "\n" + completed.stdout
+                  f"scripts/thing.py at head {head[:12]}, the lines" in "\n" + completed.stdout
               and "which copy is the mutant's own line cannot be told" in completed.stdout
               and survived_line not in "\n" + completed.stdout,
               f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
@@ -731,11 +732,14 @@ def run_recorded_mutant_killed_check_cases():
         with tempfile.TemporaryDirectory() as scratch_name:
             completed, _, _, _ = run_recorded_mutant_killed_check(
                 scratch_name, killing_files, SURVIVOR_DIFF.replace("thing.py", "gone.py"),
-                origin_main_files=origin_main_files)
+                origin_main_files=origin_main_files, more_diff_texts=[SURVIVOR_DIFF])
             check(f"a recorded mutant whose file and suites are gone from the head is judged by "
-                  f"whether it still exists before whether a suite reads it: {case_name}",
+                  f"whether it still exists before whether a suite reads it, and the mutant "
+                  f"given after it is still judged: {case_name}",
                   completed.returncode == wanted_exit
                   and f"{wanted_line}{Path(scratch_name) / 'mutant.diff'}: " in "\n" + completed.stdout
+                  and f"{killed_line}{Path(scratch_name) / 'mutant-2.diff'}: "
+                      in "\n" + completed.stdout
                   and "no recorded suite reads" not in completed.stdout,
                   f"rc={completed.returncode} out={completed.stdout} err={completed.stderr}")
 
@@ -926,6 +930,16 @@ def run_recorded_mutant_killed_check_cases():
           apply_mutant("def double(y):\n    return x + x\n", hunks))
     check("a recorded mutant whose lines appear twice away from its own line does not apply",
           apply_mutant("import os\n" + source + "\n" + source, hunks) is None)
+    # The hunk starts at an even line, 2: an odd one turned into its index by `^ 1` would give
+    # what `- 1` gives.
+    twice_source = "import os\n" + source + source
+    own_line_hunks = [(2, ["def double(x):", "    return x + x"],
+                       ["def double(x):", "    return x * x"])]
+    check("a recorded mutant whose lines appear twice, once at its own line, applies at its "
+          "own line",
+          apply_mutant(twice_source, own_line_hunks)
+          == "import os\ndef double(x):\n    return x * x\n" + source,
+          apply_mutant(twice_source, own_line_hunks))
     check("a recorded mutant whose lines are gone does not apply",
           apply_mutant("def double(x):\n    return 2 * x\n", hunks) is None)
     two_hunks = [(1, ["a"], ["A"]), (3, ["c"], ["C"])]
@@ -1449,6 +1463,8 @@ class WorkDB:
             for mutation in item["mutations"]])
             for item in self.data["items"] if item["job_id"] not in self.data["results"])
     def set_result(self, job_id, result):
+        if result.diff == "diff of set-result-fails":
+            raise RuntimeError("the session's database is locked")
         self.data["results"][job_id] = {
             "worker_outcome": result.worker_outcome.value, "output": result.output,
             "test_outcome": None if result.test_outcome is None else result.test_outcome.value,
@@ -1518,12 +1534,15 @@ def run_parallel_mutant_workers_cases_with_fake_cosmic_ray_package():
             scratch_name, ["first", "second", "third", "fourth"], ["one", "two"])
         outputs = [result["output"] for result in session["results"].values()]
         check("the parallel workers record a result for every pending mutant, each run in one "
-              "of the worktrees with the config's test command and limit, and exit 0",
+              "of the worktrees with the config's test command and limit, with the worker's "
+              "test outcome, and exit 0",
               completed.returncode == 0 and len(session["results"]) == 4
               and all(Path(output.split(" ")[0]).resolve() in
                       [worktree.resolve() for worktree in worktrees]
                       and output.endswith(" run the suites 12.5") for output in outputs)
-              and session["results"]["job-1"]["diff"] == "diff of second",
+              and session["results"]["job-1"]["diff"] == "diff of second"
+              and all(result["test_outcome"] == "killed"
+                      for result in session["results"].values()),
               f"rc={completed.returncode} err={completed.stderr} session={session}")
     # Two mutants that each take two seconds, and two workers: each worker takes one before
     # either finishes, so each must have run in a worktree of its own.
@@ -1564,6 +1583,19 @@ def run_parallel_mutant_workers_cases_with_fake_cosmic_ray_package():
               "with no result, and exit 0",
               completed.returncode == 0 and sorted(session["results"]) == ["job-1", "job-3"],
               f"rc={completed.returncode} err={completed.stderr} session={session}")
+    # The worker given runs-15-seconds is still running its mutant when the session refuses the
+    # other worker's result; a worker the program waits for would hold its exit for 15 seconds.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        started = time.monotonic()
+        completed, session, _ = run_parallel_mutant_workers_with_fake_cosmic_ray_package(
+            scratch_name, ["set-result-fails", "runs-15-seconds"], ["one", "two"])
+        seconds = time.monotonic() - started
+        check("the parallel workers' program, when recording a result fails with an error it "
+              "does not handle, exits nonzero naming the error without waiting for a worker "
+              "still running its mutant",
+              completed.returncode != 0 and "the session's database is locked" in completed.stderr
+              and seconds < 10,
+              f"rc={completed.returncode} seconds={seconds:.1f} err={completed.stderr}")
     for case_name, operators, stop_after_seconds, wanted in [
             ("a time already come: no mutant is started", ["first", "second"], 0, 0),
             ("a time not yet come: every mutant is run", ["first", "second"], 600, 2),
