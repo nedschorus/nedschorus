@@ -49,10 +49,11 @@ escalated; one that answers a rule 2 message with a tool call and a fresh promis
 because a tool call that ended a promise wait would let an agent-seat that makes a fresh promise
 at each rule 2 message be nudged again forever and never escalated.
 
-How it fails, and what the user sees: a sender that sends a text other than the one code wrote
-still reached the agent-seat, so the text it sent is logged as a sent_text_differs_from_code_text event, the
-delivery check looks for that text, and OWNING_AGENT_SEAT gets a task to find why, one task at a
-time; only a failure to write that task is a user-alert. A headless agent-session that fails, is
+How it fails, and what the user sees: when a sender sends a text other than the one code wrote,
+the text it sent is logged as a sent_text_differs_from_code_text event, step 4's delivery check
+looks for that text, and the agent-seat ned-box-helper, OWNING_AGENT_SEAT, gets a task to find why,
+one task at a time. The difference is this program's defect, with nothing for the user to do, so
+only a failure to write that task is a user-alert. A headless agent-session that fails, is
 stopped, answers JSON code cannot use, or sends to the wrong entry; a message missing from the
 agent-seat's transcript; and a read failure slice 1 reports for the same agent-seat with the same
 text at every run for 2 minutes or more, each become a user-alert, written once, and the invocation
@@ -561,8 +562,7 @@ class Sweep:
 
     def sent_texts_differ(self, outcome, seats, text, step):
         """Log each text a sender sent in place of code's, and give OWNING_AGENT_SEAT a task to
-        find why: the message still reached the agent-seat, so the difference is this program's
-        defect, with nothing for the user to do."""
+        find why: the difference is this program's defect, with nothing for the user to do."""
         differing = sent_texts_other_than_code_wrote(outcome, seats, text)
         for seat, sent_text in differing:
             self.record({"event": "sent_text_differs_from_code_text", "agent_seat": seat, "step": step,
