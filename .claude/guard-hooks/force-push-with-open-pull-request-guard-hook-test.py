@@ -1128,12 +1128,6 @@ for payload in [
     check(f"passes through untouched: {json.dumps(payload)[:56]}",
           code == 0 and output is None, f"{code} {output}")
 
-stdout = io.StringIO()
-with contextlib.redirect_stdout(stdout):
-    code = guard.main(stdin=io.StringIO("not json"), runner=ProbeRunner(),
-                      clock=SteppingClock())
-check("an unreadable payload exits 0 and says nothing",
-      code == 0 and not stdout.getvalue().strip(), f"{code} {stdout.getvalue()}")
 
 result = subprocess.run(
     [sys.executable, str(HOOK_SCRIPT)],

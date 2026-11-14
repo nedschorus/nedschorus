@@ -53,16 +53,21 @@ def _load(module_name, path):
     return module
 
 
-shell_reader = _load(
-    "shell_command_tree_sitter_bash_reader_common",
-    _REPOSITORY_ROOT / "nc-systems" / "general-tools"
-    / "shell-command-tree-sitter-bash-reader-common.py")
-_marker_common = _load("guard_approval_marker_common",
-                       _REPOSITORY_ROOT / ".claude" / "guard-hooks" / "guard-approval-marker-common.py")
-# The instruction-file guard's checkout-root and marker-root lookups, so both
-# guards place their marker files at the same root.
-_instruction_file_guard = _load("instruction_file_guard",
-                                _HOOKS_DIRECTORY / "instruction-file-guard.py")
+_crash_notice = _load("guard_hook_crash_fail_open_with_notice_common",
+                      _HOOKS_DIRECTORY / "guard-hook-crash-fail-open-with-notice-common.py")
+
+with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(
+        __file__, __name__ == "__main__"):
+    shell_reader = _load(
+        "shell_command_tree_sitter_bash_reader_common",
+        _REPOSITORY_ROOT / "nc-systems" / "general-tools"
+        / "shell-command-tree-sitter-bash-reader-common.py")
+    _marker_common = _load("guard_approval_marker_common",
+                           _REPOSITORY_ROOT / ".claude" / "guard-hooks" / "guard-approval-marker-common.py")
+    # The instruction-file guard's checkout-root and marker-root lookups, so both
+    # guards place their marker files at the same root.
+    _instruction_file_guard = _load("instruction_file_guard",
+                                    _HOOKS_DIRECTORY / "instruction-file-guard.py")
 
 REASON_MARKER_NAME = ".ghi-md-whole-file-replacement-reason"
 GHI_MD_DIRECTORY_PARTS = ("docs", "issues")
@@ -212,10 +217,7 @@ def deny(reason):
 
 
 def main(stdin=sys.stdin):
-    try:
-        payload = json.load(stdin)
-    except ValueError:
-        return 0
+    payload = json.load(stdin)
     if not isinstance(payload, dict):
         return 0
     tool_name = payload.get("tool_name")
@@ -246,4 +248,5 @@ def main(stdin=sys.stdin):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(__file__, True):
+        sys.exit(main())

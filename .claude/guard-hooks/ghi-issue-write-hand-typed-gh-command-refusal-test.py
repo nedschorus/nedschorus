@@ -336,11 +336,6 @@ for tool_name in ("Edit", "Write"):
     check(f"a {tool_name} call passes", decision_for("gh issue comment 1 -b x",
                                                    tool_name=tool_name) is None)
 check("an empty command passes", decision_for("") is None)
-stdout = io.StringIO()
-with contextlib.redirect_stdout(stdout):
-    code = guard.main(stdin=io.StringIO("not json"))
-check("an unreadable payload exits 0 and says nothing",
-      code == 0 and not stdout.getvalue().strip(), f"{code} {stdout.getvalue()}")
 
 # The shared shell reader is imported, not copied: a change there reaches
 # this guard, and a broken import fails here instead of failing open at runtime.

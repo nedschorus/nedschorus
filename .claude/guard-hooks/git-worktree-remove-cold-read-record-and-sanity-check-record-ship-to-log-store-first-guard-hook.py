@@ -136,24 +136,39 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
-_shell_reader_spec = importlib.util.spec_from_file_location(
-    "shell_command_tree_sitter_bash_reader_common",
-    REPOSITORY_ROOT / "nc-systems" / "general-tools" / "shell-command-tree-sitter-bash-reader-common.py")
-shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
-_shell_reader_spec.loader.exec_module(shell_reader)
+_crash_notice_spec = importlib.util.spec_from_file_location(
+    "guard_hook_crash_fail_open_with_notice_common",
+    Path(__file__).resolve().parent / "guard-hook-crash-fail-open-with-notice-common.py")
+_crash_notice = importlib.util.module_from_spec(_crash_notice_spec)
+_crash_notice_spec.loader.exec_module(_crash_notice)
+
+with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(
+        __file__, __name__ == "__main__"):
+    _shell_reader_spec = importlib.util.spec_from_file_location(
+        "shell_command_tree_sitter_bash_reader_common",
+        REPOSITORY_ROOT / "nc-systems" / "general-tools" / "shell-command-tree-sitter-bash-reader-common.py")
+    shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
+    _shell_reader_spec.loader.exec_module(shell_reader)
+
+    _git_output_spec = importlib.util.spec_from_file_location(
+        "git_machine_readable_output_runner_and_parser_common",
+        REPOSITORY_ROOT / "nc-systems" / "general-tools" / "git-machine-readable-output-runner-and-parser-common.py")
+    git_output = importlib.util.module_from_spec(_git_output_spec)
+    _git_output_spec.loader.exec_module(git_output)
+
+    _ned_box_home_spec = importlib.util.spec_from_file_location(
+        "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
+        REPOSITORY_ROOT / "nc-systems" / "general-tools" / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+    ned_box_home_paths = importlib.util.module_from_spec(_ned_box_home_spec)
+    _ned_box_home_spec.loader.exec_module(ned_box_home_paths)
+
+    _next_step_lines_spec = importlib.util.spec_from_file_location(
+        "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
+        REPOSITORY_ROOT / "nc-systems" / "general-tools"
+        / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
+    next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+    _next_step_lines_spec.loader.exec_module(next_step_lines)
 is_program = shell_reader.is_program
-
-_git_output_spec = importlib.util.spec_from_file_location(
-    "git_machine_readable_output_runner_and_parser_common",
-    REPOSITORY_ROOT / "nc-systems" / "general-tools" / "git-machine-readable-output-runner-and-parser-common.py")
-git_output = importlib.util.module_from_spec(_git_output_spec)
-_git_output_spec.loader.exec_module(git_output)
-
-_ned_box_home_spec = importlib.util.spec_from_file_location(
-    "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
-    REPOSITORY_ROOT / "nc-systems" / "general-tools" / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
-ned_box_home_paths = importlib.util.module_from_spec(_ned_box_home_spec)
-_ned_box_home_spec.loader.exec_module(ned_box_home_paths)
 
 CLEAN_WORKTREES_SCRIPT = REPOSITORY_ROOT / "scripts" / "clean-worktrees.py"
 GIT_WORKTREE_REMOVE_DEFERRED_WAITER_SCRIPT = (
@@ -169,12 +184,6 @@ GIT_TIMEOUT_SECONDS = 10
 GIT_GLOBAL_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env",
                             "--exec-path"}
 
-_next_step_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
-    REPOSITORY_ROOT / "nc-systems" / "general-tools"
-    / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
-next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
-_next_step_lines_spec.loader.exec_module(next_step_lines)
 TELL_THE_USER_OR_DISPATCHING_AGENT = "tell " + next_step_lines.REPORT_RECIPIENT_PHRASE_USER_OR_DISPATCHING_AGENT
 
 SHIPMENT_FAILED_REFUSAL_TEMPLATE = (
@@ -690,10 +699,7 @@ def note_unchecked(notice):
 
 def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic, start_waiter=None):
     start_waiter = start_waiter or git_worktree_remove_deferred_waiter_start_unless_one_already_waits
-    try:
-        payload = json.load(stdin)
-    except ValueError:
-        return 0
+    payload = json.load(stdin)
     if not isinstance(payload, dict) or payload.get("tool_name") != "Bash":
         return 0
     command = (payload.get("tool_input") or {}).get("command")
@@ -771,4 +777,5 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic, start_wai
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(__file__, True):
+        sys.exit(main())

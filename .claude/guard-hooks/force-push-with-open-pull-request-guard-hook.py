@@ -474,10 +474,7 @@ PARSER_UNAVAILABLE_NEXT_STEP_LINES = (
 
 
 def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
-    try:
-        payload = json.load(stdin)
-    except (json.JSONDecodeError, ValueError):
-        return 0
+    payload = json.load(stdin)
     if payload.get("tool_name") != "Bash":
         return 0
     command = (payload.get("tool_input") or {}).get("command") or ""
