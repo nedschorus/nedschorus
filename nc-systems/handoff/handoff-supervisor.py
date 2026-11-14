@@ -10,12 +10,18 @@ trips the safety classifier.
 The cycle, per reincarnation:
   1. Watch the handoff file for a session-handoff-sequence-number above the last consumed.
   2. Kill the running session, and remove the agent-seat's finished worktrees.
+     When the handoff carries ask-user-before-restart, print "restart? y/n" on
+     this program's own terminal, the agent-seat's tmux window, and stop the
+     agent-seat unless the answer is y; with no terminal, stop it without
+     asking, and print which agent-seat stopped and the launcher command that
+     starts it again.
   2a. Unless the handoff carries ask-user-before-restart, fast-forward the checkout this
      program runs from to origin/main, and, when the checkout is then on
      main's commit, whether it moved or was already there, replace this
      process with a fresh start of this program from that checkout
      (os.execv, so the process ID stays, and the lock file keeps naming it).
-     The handoff is still unconsumed, so the fresh process carries out steps
+     An ask-user-before-restart handoff skips this step, because the fresh
+     process would ask "restart? y/n" again at startup. The handoff is still unconsumed, so the fresh process carries out steps
      3 to 6 below at startup, as after a reboot: it extracts the dialog
      (step 3); when the dialog cannot be extracted, the successor starts with
      no conversation-tail, and has the recovery note step 3 describes
@@ -65,8 +71,9 @@ The handoff file the agent writes (simple `key: value` lines):
   next-step:            the first action the successor takes
   session-handoff-sequence-number: predecessor's number plus one (a session-handoff
                         written before the rename carries it as restart-counter)
-  ask-user-before-restart: optional; any value makes the supervisor ask before
-                        relaunching (a session-handoff written before the rename
+  ask-user-before-restart: optional; any value makes the supervisor ask the user
+                        "restart? y/n" on its terminal before relaunching, as
+                        step 2 of the cycle says (a session-handoff written before the rename
                         carries it as dont-restart)
   spawned-subagent-<n>: optional, one per subagent still working when the
                         handoff was written; the reincarnation kills them, so the
@@ -144,6 +151,8 @@ from typing import Optional
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIRECTORY = REPOSITORY_ROOT / "scripts"
+# The launchers are not on the Mac's PATH, so a command for the user to type there names them by path.
+MAC_CHECKOUT_SCRIPTS_DIRECTORY = "/Users/el/Projects/nedschorus/scripts"
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
     "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
@@ -712,6 +721,16 @@ def clear_agent_exit_record_from_supervisor_state(state: dict) -> None:
     state.pop(AGENT_EXIT_CODE_STATE_KEY, None)
     state.pop(AGENT_EXIT_RECORDED_AT_STATE_KEY, None)
     state.pop(AGENT_EXIT_REASON_STATE_KEY, None)
+
+
+def ask_user_before_restart_with_no_terminal_stopping_message(agent_seat: str, handoff_path: Path) -> str:
+    return (f"handoff-supervisor: the agent-seat {agent_seat}'s session-handoff asks the user "
+            "before restarting, and this handoff-supervisor has no terminal to ask on, so it "
+            f"stopped {agent_seat} without restarting it.\n"
+            "To start it again, run its launcher from the Mac: "
+            f"`{MAC_CHECKOUT_SCRIPTS_DIRECTORY}/launch-claude-ubuntu {agent_seat}` for an agent-seat on ned-box, "
+            f"`{MAC_CHECKOUT_SCRIPTS_DIRECTORY}/launch-claude-mac {agent_seat}` for one on the Mac. The new session is not given "
+            f"the session-handoff's next step, which stays in {handoff_path}.")
 
 
 def agent_exit_record_is_a_stop_at_an_ask_user_before_restart_handoff(state: dict) -> bool:
@@ -2520,7 +2539,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             if read_ask_user_before_restart_reason_from_session_handoff_fields(boot_fields):
                 # Boot recovery must honor ask-user-before-restart too; a deliberate stand-down needs an exit record.
                 if not sys.stdin.isatty():
-                    print("handoff-supervisor: ask-user-before-restart, and no terminal to ask on; stopping")
+                    print(ask_user_before_restart_with_no_terminal_stopping_message(settings.agent, settings.handoff_path))
                     state["consumed_counter"] = boot_counter
                     record_agent_exit_in_supervisor_state(
                         settings.state_path, state, None, reason=AGENT_EXIT_REASON_STOPPED_AT_AN_ASK_USER_BEFORE_RESTART_HANDOFF)
@@ -2711,7 +2730,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         if read_ask_user_before_restart_reason_from_session_handoff_fields(handoff_fields):
             if not sys.stdin.isatty():
                 # Without a terminal, asking would raise EOFError before consuming the handoff and trigger it again next time.
-                print("handoff-supervisor: ask-user-before-restart, and no terminal to ask on; stopping")
+                print(ask_user_before_restart_with_no_terminal_stopping_message(settings.agent, settings.handoff_path))
                 answer = "n"
             else:
                 answer = input("handoff-supervisor: restart? y/n ").strip().lower()
