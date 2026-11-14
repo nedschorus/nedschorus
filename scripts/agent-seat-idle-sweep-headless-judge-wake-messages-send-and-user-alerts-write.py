@@ -304,8 +304,8 @@ class SweepLog:
             self.add_newline = (self.truncate_to is None and bool(data)
                                 and not data.endswith(b"\n"))
 
-    def append(self, event, now):
-        event = {"at": iso(now), **event}
+    def append(self, event, now, invoked_at):
+        event = {"at": iso(now), "invoked_at": iso(invoked_at), **event}
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.truncate_to is not None:
             os.truncate(self.path, self.truncate_to)
@@ -368,12 +368,12 @@ class SweepLog:
                 if event.get("event") == "message_sent" and event["message_id"] not in checked]
 
     def read_failure_first_seen(self, seat, text):
-        """When the failure's current run began: its latest read_failure, unless a
+        """The event that began the failure's current run: its latest read_failure, unless a
         read_failure_ended follows it."""
         first_seen = None
         for event in self.of_seat(seat, "read_failure", "read_failure_ended"):
             if event["error"] == text:
-                first_seen = event["at"] if event["event"] == "read_failure" else None
+                first_seen = event if event["event"] == "read_failure" else None
         return first_seen
 
     def read_failures_open(self):
@@ -398,6 +398,16 @@ def iso(moment):
 
 def parse_time(stamp):
     return verdicts_print.parse_time(stamp)
+
+
+def invoked_at(event):
+    """The time of the invocation that logged the event. The judge's ask-again and a read
+    failure's user-alert count their minutes from that invocation, and compare this time with a
+    later invocation's: the event's "at" adds the seconds the invocation had taken, a judge's
+    included, so a step due a whole number of minutes later would come a minute late. A wait's
+    steps and a limit wake count from "at", the time their message went out. An event logged
+    before "invoked_at" was logged has only its "at"."""
+    return event.get("invoked_at", event["at"])
 
 
 def seconds_between(earlier, later):
@@ -535,7 +545,7 @@ class Sweep:
         return self.now + timedelta(seconds=int(time.monotonic() - self.started_monotonic))
 
     def record(self, event):
-        return self.log.append(event, self.current())
+        return self.log.append(event, self.current(), self.now)
 
     def alert(self, key, title, text, action, failure=True):
         """Write a user-alert once for each key, and log it."""
@@ -733,12 +743,13 @@ class Sweep:
         if first_seen is None:
             self.record({"event": "read_failure", "agent_seat": seat, "error": text})
             return
-        if seconds_between(first_seen, self.now) >= READ_FAILURE_ALERT_AFTER_SECONDS:
+        if seconds_between(invoked_at(first_seen), self.now) >= READ_FAILURE_ALERT_AFTER_SECONDS:
             # Keyed by the text alone: two readers of one broken file, such as ~/.claude.json,
             # report it in the same words.
             self.alert(f"read-failure:{text}",
                        f"The idle sweep cannot read what it needs for {seat}",
-                       f"Since {first_seen} the idle sweep has failed, each minute, to read: {text}",
+                       f"Since {first_seen['at']} the idle sweep has failed, each minute, to "
+                       f"read: {text}",
                        "An agent on ned-box can open the file the failure names and repair it, or "
                        "tell the user what is wrong with it; until then the idle sweep does not "
                        f"check {seat}.")
@@ -870,7 +881,7 @@ class Sweep:
         answer = self.log.last_judge_answer(seat)
         if (answer and answer["session_id"] == verdict[fields.SESSION_ID]
                 and answer["last_activity"] == stretch
-                and seconds_between(answer["at"], self.now) < JUDGE_ASK_AGAIN_SECONDS):
+                and seconds_between(invoked_at(answer), self.now) < JUDGE_ASK_AGAIN_SECONDS):
             return
         facts = dict(self.facts(seat, verdict), step=NUDGE)
         idle_minutes = int(seconds_between(stretch, self.now) // 60) if stretch else None
