@@ -27,8 +27,10 @@ command is that one `git worktree remove` and nothing else, so that the shell
 surely runs it, the hook defers the removal: for each such worktree it starts, detached, the
 waiter GIT_WORKTREE_REMOVE_DEFERRED_WAITER_SCRIPT, which waits until no record in the
 worktree is being written, ships the worktree's records, runs `git worktree
-remove` on it, with -f when that removal gave -f or --force, and writes a
-user-alert when that fails. Before starting it the hook takes an flock on the
+remove` on it, with -f when that removal gave -f or --force, and, when any of
+these steps fails, writes a pending task on the task list of the agent-seat
+whose session ran the removal, or a user-alert when it finds no such task
+list. Before starting it the hook takes an flock on the
 worktree's directory and hands the descriptor to the waiter, which holds it
 until it exits; when another process already holds that flock, a waiter
 already waits on the worktree, and the hook starts none. Each waiter's output

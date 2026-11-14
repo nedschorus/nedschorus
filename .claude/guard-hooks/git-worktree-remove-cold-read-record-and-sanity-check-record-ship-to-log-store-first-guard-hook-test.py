@@ -21,7 +21,9 @@ detached, with a scratch ned-box home for its log and user-alert and short
 waits; a writer that finishes, one killed early, git refusing the removal
 (untracked files and no -f) and a second removal while the waiter waits each
 run on a worktree of their own. The waiter's other failures are injected
-in-process through its main.
+in-process through its main. No waiter here sees the CLAUDE_CODE_TASK_LIST_ID
+of the agent-session running the tests: a case that tests the waiter's task
+gives it a task list under a scratch home.
 
 Run: python3 .claude/guard-hooks/git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -65,6 +67,11 @@ os.environ[SHIP_DESTINATION_VARIABLE] = str(STORE / "cold-read-records")
 SCRATCH_NED_BOX_HOME = _scratch / "ned-box-home"
 WAITER_LOGS = SCRATCH_NED_BOX_HOME / "nedschorus-logs" / hook.GIT_WORKTREE_REMOVE_DEFERRED_WAITER_LOG_STORE_DIRECTORY_NAME
 PENDING_ALERTS = SCRATCH_NED_BOX_HOME / ".local" / "state" / "nedschorus" / "user-alerts" / "pending"
+# A waiter writes its failure task on the task list CLAUDE_CODE_TASK_LIST_ID names, and a waiter the hook starts
+# inherits the variable, so a test run started by an agent-session would write tasks on that agent-seat's real
+# list: every waiter here starts without it, except where a case names a list under SCRATCH_HOME.
+os.environ.pop(waiter.TASK_LIST_ID_ENVIRONMENT_VARIABLE, None)
+SCRATCH_HOME = _scratch / "home"
 # Before anything runs git, so a run started with GIT_DIR or another redirecting variable set builds its
 # scratch repositories here and not in the repository the variable names.
 _git_environment_fixture_spec = importlib.util.spec_from_file_location(
@@ -882,11 +889,38 @@ check("env without a directory option still resolves the path against the cwd",
 
 
 # The deferred removal, end to end: the hook starts the real waiter, detached, which waits for the writer,
-# ships the records and removes the worktree, or writes a user-alert.
+# ships the records and removes the worktree, or writes a task or a user-alert.
 def start_waiter_quickly(worktree, force, records, git_directory):
     return hook.git_worktree_remove_deferred_waiter_start_unless_one_already_waits(
         worktree, force, records, git_directory, ned_box_home=SCRATCH_NED_BOX_HOME,
         waiter_options=["--poll-seconds", "0.2", "--writer-own-shipment-grace-seconds", "2"])
+
+
+def scratch_task_list(list_id):
+    """A task list folder under SCRATCH_HOME; its id names no folder under a real home."""
+    directory = SCRATCH_HOME / waiter.TASK_LISTS_DIRECTORY_UNDER_HOME / list_id
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def tasks_in(list_directory):
+    return [json.loads(path.read_text()) for path in sorted(list_directory.glob("*.json"))]
+
+
+def start_waiter_quickly_with_scratch_task_list(list_id):
+    """A start function whose waiter inherits HOME=SCRATCH_HOME and the task list id, as from an agent-session."""
+    def start(worktree, force, records, git_directory):
+        given = {name: os.environ.get(name) for name in ("HOME", waiter.TASK_LIST_ID_ENVIRONMENT_VARIABLE)}
+        os.environ.update({"HOME": str(SCRATCH_HOME), waiter.TASK_LIST_ID_ENVIRONMENT_VARIABLE: list_id})
+        try:
+            return start_waiter_quickly(worktree, force, records, git_directory)
+        finally:
+            for name, value in given.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+    return start
 
 
 def waiter_logs_of(worktree):
@@ -899,11 +933,12 @@ def alerts_naming(worktree):
 
 
 def waiter_ended(worktree):
-    """True once the worktree's waiter has logged the line it writes last: its removal, or its user-alert.
+    """True once the worktree's waiter has logged the line it writes last: its removal, its task or its user-alert.
 
     Git deletes the worktree before the waiter logs the removal, so a gone worktree does not mean the waiter
     has ended."""
-    return any(line.partition(" ")[2].startswith(("removed: ", "user-alert written: "))
+    return any(line.partition(" ")[2].startswith(("removed: ", "user-alert written: ", "agent-seat task written: ",
+                                                  "agent-seat task already pending for this worktree: "))
                for path in waiter_logs_of(worktree) for line in path.read_text().splitlines())
 
 
@@ -916,7 +951,7 @@ def waited_until(condition, seconds=60):
     return condition()
 
 
-def deferred_removal_case(name, command_options, writer_mode=()):
+def deferred_removal_case(name, command_options, writer_mode=(), start_waiter=start_waiter_quickly):
     """Start a writer in a new worktree and run the hook's removal of it; return (checkout, worktree, record,
     writer, refusal text)."""
     case_checkout, case_worktree = checkout_with_worktree(name)
@@ -924,7 +959,7 @@ def deferred_removal_case(name, command_options, writer_mode=()):
     case_writer, case_held = record_writer_started(record, *writer_mode)
     check(f"{name}: the writer holds its record's being-written lock", case_held)
     _, case_output = run_hook(payload_for(f"git worktree remove {command_options}{case_worktree}", case_checkout),
-                              start_waiter=start_waiter_quickly)
+                              start_waiter=start_waiter)
     return case_checkout, case_worktree, record, case_writer, refusal(case_output) or ""
 
 
@@ -1025,19 +1060,31 @@ check("the waiter that process started removes the worktree once the writer fini
       waited_until(lambda: waiter_ended(detached_worktree)) and not detached_worktree.exists(),
       [path.read_text() for path in waiter_logs_of(detached_worktree)])
 
-# Git refuses the removal: the worktree holds untracked files and the command gave no -f.
-_, refused_worktree, refused_record, writer, reason = deferred_removal_case("deferred-git-refuses", "")
+# Git refuses the removal: the worktree holds untracked files and the command gave no -f. The waiter inherits the
+# agent-session's task list id through the hook, so it writes a pending task on that list.
+refused_tasks = scratch_task_list("deferred-git-refuses-tasks")
+_, refused_worktree, refused_record, writer, reason = deferred_removal_case(
+    "deferred-git-refuses", "", start_waiter=start_waiter_quickly_with_scratch_task_list(refused_tasks.name))
 writer.communicate("")
-check("when git refuses the deferred removal, the waiter writes a user-alert",
-      waited_until(lambda: waiter_ended(refused_worktree)) and alerts_naming(refused_worktree) != [],
-      [path.read_text() for path in waiter_logs_of(refused_worktree)])
-alert = (alerts_naming(refused_worktree) or [{}])[0]
-check("the user-alert names the worktree, its Record line, the git command that failed and the log",
-      alert.get("title") == f"A deferred `git worktree remove` did not run: {refused_worktree}"
-      and f"Record {refused_record} (worktree {refused_worktree})\n" in alert.get("alert_text", "")
-      and f"worktree remove {refused_worktree}` exited 128: " in alert.get("alert_text", "")
-      and f"The second program's log file: {waiter_logs_of(refused_worktree)[0]}" in alert.get("alert_text", "")
-      and alert.get("action") == waiter.GIT_WORKTREE_REMOVE_DEFERRED_FAILED_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO, alert)
+check("when git refuses the deferred removal, the waiter writes one pending task on the task list of the "
+      "agent-session that ran the removal, and no user-alert",
+      waited_until(lambda: waiter_ended(refused_worktree)) and len(tasks_in(refused_tasks)) == 1
+      and alerts_naming(refused_worktree) == [],
+      ([path.read_text() for path in waiter_logs_of(refused_worktree)], tasks_in(refused_tasks)))
+task = (tasks_in(refused_tasks) or [{}])[0]
+description = task.get("description", "")
+check("the task names the worktree, the git command, git's output, its Record line, the log and the fix instruction",
+      task.get("status") == "pending"
+      and task.get("subject", "").startswith(f"Deferred `git worktree remove` of {refused_worktree} did not run: `git -C ")
+      and f"\nWorktree: {refused_worktree}\n" in description
+      and f"\nGit command: git -C " in description and f" worktree remove {refused_worktree}\n" in description
+      and f"worktree remove {refused_worktree}` exited 128: " in description
+      and "\nGit's output, or the error's traceback:\nfatal: " in description
+      and f"Record {refused_record} (worktree {refused_worktree})\n" in description
+      and f"The second program's log file: {waiter_logs_of(refused_worktree)[0]}\n" in description
+      and description.endswith(waiter.GIT_WORKTREE_REMOVE_DEFERRED_FAILED_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO
+                               + "\nFind the cause and fix it. Go to the user only when the fix needs a change to a "
+                               "guarded file, or when you cannot find the cause and fix it."), task)
 check("git refusing leaves the worktree in place, with its record shipped",
       refused_worktree.is_dir() and (STORE / "cold-read-records" / refused_record.name / "fast-read.md").is_file())
 
@@ -1056,15 +1103,17 @@ check("a log that cannot be written starts no waiter, and says why",
 
 
 # The waiter's other failures, injected in-process through its main.
-def waiter_run(worktree, *options, runner=subprocess.run, injected_hook=hook):
-    """Run the waiter's main in-process on worktree; return (exit code, its log, the alerts this run wrote)."""
+def waiter_run(worktree, *options, runner=subprocess.run, injected_hook=hook, task_list_id=None):
+    """Run the waiter's main in-process on worktree, with home SCRATCH_HOME and, when given, the task list id;
+    return (exit code, its log, the alerts this run wrote)."""
     alerts_before = alerts_naming(worktree)
     log_output = io.StringIO()
+    environment = {} if task_list_id is None else {waiter.TASK_LIST_ID_ENVIRONMENT_VARIABLE: task_list_id}
     with contextlib.redirect_stdout(log_output):
         code = waiter.main(["--worktree", str(worktree), "--git-directory", str(worktree),
                             "--ned-box-home", str(SCRATCH_NED_BOX_HOME), "--poll-seconds", "0.05",
                             "--writer-own-shipment-grace-seconds", "0", *options],
-                           runner=runner, hook=injected_hook)
+                           runner=runner, hook=injected_hook, home=SCRATCH_HOME, environment=environment)
     return code, log_output.getvalue(), [alert for alert in alerts_naming(worktree) if alert not in alerts_before]
 
 
@@ -1187,6 +1236,94 @@ check("an error raised in a bounded log-store call reaches the waiter, whose use
 check("a record gone holds no being-written lock",
       waiter.record_directory_being_written_lock_is_held_by_any_process({kind[0]: kind for kind in hook.record_kinds()},
                           failing_worktree / "cold-read-records" / "never-written") is False)
+
+# With a task list id that names a folder under the waiter's home, the failure goes to that list as a pending task.
+written_tasks = scratch_task_list("waiter-task-written-tasks")
+code, log_text, alerts = waiter_run(failing_worktree, injected_hook=HookWhoseRecordReadingFails(),
+                                    task_list_id=written_tasks.name)
+task = (tasks_in(written_tasks) or [{}])[0]
+description = task.get("description", "")
+check("a failure with a task list writes one pending task there and no user-alert, and logs the task",
+      code == 1 and alerts == [] and len(tasks_in(written_tasks)) == 1 and task.get("status") == "pending"
+      and f"agent-seat task written: {task.get('id')} in {written_tasks}\n" in log_text, (code, log_text, alerts))
+check("the task's subject names the worktree and what failed, and its description the git command the waiter "
+      "would have run and, before git ran, no output section",
+      task.get("subject") == f"Deferred `git worktree remove` of {failing_worktree} did not run: "
+      "it could not read the worktree's records (ImportError: shipper module missing)."
+      and f"\nWorktree: {failing_worktree}\n" in description
+      and f"\nGit command: git -C {failing_worktree} worktree remove {failing_worktree}\n" in description
+      and "Git's output" not in description, task)
+code, log_text, alerts = waiter_run(failing_worktree, runner=shipper_failing_runner, task_list_id=written_tasks.name)
+check("a second failure on the same worktree, while its task is pending, writes no second task and no user-alert",
+      code == 1 and alerts == [] and len(tasks_in(written_tasks)) == 1
+      and f"agent-seat task already pending for this worktree: {task.get('id')} in {written_tasks}\n" in log_text,
+      (log_text, tasks_in(written_tasks)))
+task_path = written_tasks / f"{task.get('id')}.json"
+task_path.write_text(json.dumps({**task, "status": "completed"}))
+waiter_run(failing_worktree, runner=shipper_failing_runner, task_list_id=written_tasks.name)
+check("a completed task naming the worktree does not stop a new task",
+      [listed.get("status") for listed in tasks_in(written_tasks)] == ["completed", "pending"], tasks_in(written_tasks))
+
+sibling_tasks = scratch_task_list("waiter-task-sibling-tasks")
+(sibling_tasks / "1.json").write_text(json.dumps({
+    "id": "1", "subject": "a sibling worktree's task", "status": "pending", "blocks": [], "blockedBy": [],
+    "description": f"Worktree: {failing_worktree}-1\nWorktree:{failing_worktree}"}))
+(sibling_tasks / "2.json").write_text("{ not json")
+code, log_text, alerts = waiter_run(failing_worktree, runner=shipper_failing_runner, task_list_id=sibling_tasks.name)
+check("a pending task naming another worktree whose path starts with this one's, and a task file that is not "
+      "JSON, do not stop a new task",
+      code == 1 and alerts == [] and f"agent-seat task written: 3 in {sibling_tasks}\n" in log_text, log_text)
+
+traceback_tasks = scratch_task_list("waiter-task-traceback-tasks")
+code, log_text, alerts = waiter_run(failing_worktree, injected_hook=object(), task_list_id=traceback_tasks.name)
+description = (tasks_in(traceback_tasks) or [{}])[0].get("description", "")
+check("an unexpected error's task holds the error's traceback",
+      code == 1 and alerts == [] and "\nWhat failed: the waiter stopped on an error: AttributeError: " in description
+      and "\nGit's output, or the error's traceback:\nTraceback (most recent call last):\n" in description
+      and "\nAttributeError: " in description, description)
+
+(SCRATCH_HOME / waiter.TASK_LISTS_DIRECTORY_UNDER_HOME / "nested" / "list").mkdir(parents=True)
+for list_id in ("no-such-task-list", "", ".", "..", "nested/list"):
+    named = SCRATCH_HOME / waiter.TASK_LISTS_DIRECTORY_UNDER_HOME / list_id
+    json_files_before = sorted(named.glob("*.json")) if named.is_dir() else []
+    code, log_text, alerts = waiter_run(failing_worktree, runner=shipper_failing_runner, task_list_id=list_id)
+    check(f"a task list id {list_id!r}, which names no task list folder, writes a user-alert and no task",
+          code == 1 and len(alerts) == 1 and "agent-seat task" not in log_text and not (
+              SCRATCH_HOME / waiter.TASK_LISTS_DIRECTORY_UNDER_HOME / "no-such-task-list").exists()
+          and (sorted(named.glob("*.json")) if named.is_dir() else []) == json_files_before, (log_text, alerts))
+
+unreadable_first_tasks = scratch_task_list("waiter-task-unreadable-first-tasks")
+(unreadable_first_tasks / "1.json").write_text("{ not json")
+(unreadable_first_tasks / "2.json").write_text(json.dumps({
+    "id": "2", "subject": "this worktree's task", "status": "pending", "blocks": [], "blockedBy": [],
+    "description": f"Worktree: {failing_worktree}"}))
+code, log_text, alerts = waiter_run(failing_worktree, runner=shipper_failing_runner,
+                                    task_list_id=unreadable_first_tasks.name)
+check("a task file that is not JSON does not hide a later pending task naming the worktree",
+      f"agent-seat task already pending for this worktree: 2 in {unreadable_first_tasks}\n" in log_text, log_text)
+
+
+def git_refusing_runner(stdout, stderr):
+    def runner(argv, **keywords):
+        if argv[0] == "git":
+            return subprocess.CompletedProcess(argv, 1, stdout, stderr)
+        return subprocess.run(argv, **keywords)
+    return runner
+
+
+for stdout, stderr, failure_end, output_section in (
+        ("git's stdout line\n", "warning: first line\nfatal: last line\n", "exited 1: fatal: last line",
+         "Git's output, or the error's traceback:\ngit's stdout line\nwarning: first line\nfatal: last line\n"),
+        ("", "", "exited 1: it printed nothing", None)):
+    git_output_tasks = scratch_task_list(f"waiter-task-git-output-{bool(stderr)}-tasks")
+    waiter_run(failing_worktree, "--force", runner=git_refusing_runner(stdout, stderr),
+               task_list_id=git_output_tasks.name)
+    task = (tasks_in(git_output_tasks) or [{}])[0]
+    description = task.get("description", "")
+    check(f"git refusing with stderr {stderr!r}: the subject ends with git's last stderr line, and the task holds "
+          f"git's whole output when git printed any",
+          task.get("subject", "").endswith(failure_end) and (
+              output_section in description if output_section else "Git's output" not in description), task)
 
 print()
 if failures:

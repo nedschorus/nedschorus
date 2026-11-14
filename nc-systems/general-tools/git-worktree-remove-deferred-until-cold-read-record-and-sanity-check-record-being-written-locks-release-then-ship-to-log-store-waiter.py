@@ -34,21 +34,30 @@ thread is left to end with this program. It writes one line per step to its stan
 to this run's log file in the log-store.
 
 How it can fail: when the limit runs out, a shipment fails or git refuses, or
-anything else raises, it leaves the worktree in place, writes a user-alert
-naming the worktree, the records and what failed, and exits 1. A record
-written after step 4's check and before git runs is deleted with the
+anything else raises, it leaves the worktree in place, reports the failure and
+exits 1. The report is a pending task on the task list of the agent-seat whose
+agent-session ran the removal: the folder that CLAUDE_CODE_TASK_LIST_ID, which
+this program inherits from the hook, names under this machine's
+~/.claude/tasks/. The task names the worktree, the git command, what failed,
+with git's output or the error's traceback, the records and the log file, and
+tells the agent-seat to find the cause and fix it. When a pending task of that
+list already names the worktree, it writes no second one. When the variable is
+unset, or names no existing folder there, it writes a user-alert with the same
+facts instead, under --ned-box-home, which on the Mac is the mount of ned-box's
+home: while it is not mounted, the alert and the log are lost, and the hook
+starts no waiter at all, since it cannot open the log. A task or user-alert
+that cannot be written raises, and the traceback goes to the log alone. A
+record written after step 4's check and before git runs is deleted with the
 worktree. This program killed, as by a reboot, leaves the worktree in place
-and writes no alert. The user-alert is written under --ned-box-home, which on
-the Mac is the mount of ned-box's home: while it is not mounted, the alert and
-the log are lost, and the hook starts no waiter at all, since it cannot open
-the log.
+and reports nothing.
 
-The user-alert follows
+The task and the user-alert follow
 docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 """
 
 import argparse
 import importlib.util
+import json
 import os
 import socket
 import subprocess
@@ -68,6 +77,8 @@ POLL_SECONDS = 5
 # A writer ships its record within seconds of releasing the lock on ned-box; from the Mac, over ssh, longer.
 WRITER_OWN_SHIPMENT_GRACE_SECONDS = 120
 GIT_TIMEOUT_SECONDS = 60
+TASK_LIST_ID_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_TASK_LIST_ID"
+TASK_LISTS_DIRECTORY_UNDER_HOME = Path(".claude") / "tasks"
 
 ALERT_TITLE_TEMPLATE = "A deferred `git worktree remove` did not run: {worktree}"
 ALERT_TEXT_TEMPLATE = (
@@ -89,6 +100,26 @@ LOG_STORE_CALL_TIME_LIMIT_RAN_OUT_USER_ALERT_FAILURE_SENTENCE = (
 RECORDS_NOT_READ_FAILURE_TEMPLATE = "it could not read the worktree's records ({error})."
 GIT_FAILURE_TEMPLATE = "`{command}` exited {code}: {error}"
 UNEXPECTED_FAILURE_TEMPLATE = "the waiter stopped on an error: {error}"
+
+TASK_SUBJECT_TEMPLATE = "Deferred `git worktree remove` of {worktree} did not run: {failure}"
+# The duplicate test matches this line whole, so a task for /wt/a-1 does not stand for one for /wt/a.
+TASK_WORKTREE_LINE_TEMPLATE = "Worktree: {worktree}"
+TASK_DESCRIPTION_TEMPLATE = (
+    "On {machine}, a `git worktree remove` that your agent-session ran was refused because a program was still "
+    "writing a record in the worktree. A second program, started to remove the worktree once its records were "
+    "written and shipped to the log-store, has stopped without removing it, so the worktree is still there.\n"
+    + TASK_WORKTREE_LINE_TEMPLATE + "\n"
+    "Git command: {command}\n"
+    "What failed: {failure}\n"
+    "{output}"
+    "{records}"
+    "The second program's log file: {log}\n"
+    "{action}\n"
+    "{fix}")
+TASK_OUTPUT_TEMPLATE = "Git's output, or the error's traceback:\n{output}\n"
+GIT_WORKTREE_REMOVE_DEFERRED_FAILED_TASK_FIX_INSTRUCTION = (
+    "Find the cause and fix it. Go to the user only when the fix needs a change to a guarded file, or when you "
+    "cannot find the cause and fix it.")
 
 
 def module_at(path, name):
@@ -136,9 +167,9 @@ def finished_by(wall_deadline, function, *arguments):
 
 
 class WaiterFailed(Exception):
-    def __init__(self, failure, records_text):
+    def __init__(self, failure, records_text, output=""):
         super().__init__(failure)
-        self.failure, self.records_text = failure, records_text
+        self.failure, self.records_text, self.output = failure, records_text, output
 
 
 def being_written_lines(hook, worktree, records):
@@ -198,8 +229,11 @@ def ship_until_none_is_being_written(hook, kinds, worktree, records, deadline, w
         log(f"still being written, waiting again: {', '.join(map(str, records))}")
 
 
-def remove_worktree(worktree, git_directory, force, records_text, runner):
-    command = ["git", "-C", str(git_directory), "worktree", "remove", *(["-f"] if force else []), str(worktree)]
+def removal_command(worktree, git_directory, force):
+    return ["git", "-C", str(git_directory), "worktree", "remove", *(["-f"] if force else []), str(worktree)]
+
+
+def remove_worktree(command, records_text, runner):
     try:
         removal = runner(command, capture_output=True, text=True, timeout=GIT_TIMEOUT_SECONDS, check=False)
     except subprocess.TimeoutExpired:
@@ -208,12 +242,59 @@ def remove_worktree(worktree, git_directory, force, records_text, runner):
         error_lines = removal.stderr.strip().splitlines()
         raise WaiterFailed(GIT_FAILURE_TEMPLATE.format(
             command=" ".join(command), code=removal.returncode,
-            error=error_lines[-1] if error_lines else "it printed nothing"), records_text)
+            error=error_lines[-1] if error_lines else "it printed nothing"), records_text,
+            "\n".join(part for part in (removal.stdout.strip(), removal.stderr.strip()) if part))
     log(f"removed: {' '.join(command)}")
 
 
+def agent_seat_task_list_of_removing_agent_session(home, environment):
+    """The task list folder CLAUDE_CODE_TASK_LIST_ID names under home, or None when it names no existing folder."""
+    list_id = environment.get(TASK_LIST_ID_ENVIRONMENT_VARIABLE, "")
+    if not list_id or "/" in list_id or list_id in (".", ".."):
+        return None
+    directory = home / TASK_LISTS_DIRECTORY_UNDER_HOME / list_id
+    return directory if directory.is_dir() else None
+
+
+def pending_task_naming_worktree(list_directory, worktree):
+    """The id of a pending task of the list whose description has the worktree's line, else None."""
+    line = TASK_WORKTREE_LINE_TEMPLATE.format(worktree=worktree)
+    for path in sorted(list_directory.glob("*.json")):
+        try:
+            task = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if (isinstance(task, dict) and task.get("status") == "pending"
+                and line in str(task.get("description", "")).splitlines()):
+            return task.get("id", path.stem)
+    return None
+
+
+def agent_seat_task_write(list_directory, worktree, command, failure, output, records_text, log_path):
+    """Write the failure as a pending task on the list, unless a pending task there names the worktree.
+
+    Returns the line to log."""
+    already = pending_task_naming_worktree(list_directory, worktree)
+    if already is not None:
+        return f"agent-seat task already pending for this worktree: {already} in {list_directory}"
+    task_list = module_at(REPOSITORY_ROOT / "nc-systems" / "general-tools"
+                          / "agent-seat-task-list-new-pending-task-write-common.py",
+                          "agent_seat_task_list_new_pending_task_write_common")
+    task_id = task_list.agent_seat_task_list_new_pending_task_write(
+        list_directory,
+        TASK_SUBJECT_TEMPLATE.format(worktree=worktree, failure=" ".join(failure.split())),
+        TASK_DESCRIPTION_TEMPLATE.format(
+            machine=socket.gethostname(), worktree=worktree, command=" ".join(command), failure=failure,
+            output=TASK_OUTPUT_TEMPLATE.format(output=output.strip()) if output.strip() else "",
+            records=records_text, log=log_path,
+            action=GIT_WORKTREE_REMOVE_DEFERRED_FAILED_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO,
+            fix=GIT_WORKTREE_REMOVE_DEFERRED_FAILED_TASK_FIX_INSTRUCTION))
+    return f"agent-seat task written: {task_id} in {list_directory}"
+
+
 def user_alert_write(ned_box_home, worktree, failure, records_text, log_path):
-    """Write the user-alert under ned_box_home, which the user-alerts module reads from HOME."""
+    """Write the user-alert under ned_box_home, which the user-alerts module reads from HOME; for a removal whose
+    agent-session has no task list to write a task on."""
     alerts = module_at(REPOSITORY_ROOT / "nc-systems" / "general-tools"
                        / "user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py",
                        "user_alerts_pending_and_claimed_files_write_claim_release_and_delete_common")
@@ -232,7 +313,8 @@ def user_alert_write(ned_box_home, worktree, failure, records_text, log_path):
             os.environ["HOME"] = home_as_given
 
 
-def main(argv=None, clock=time.monotonic, sleep=time.sleep, runner=subprocess.run, hook=None):
+def main(argv=None, clock=time.monotonic, sleep=time.sleep, runner=subprocess.run, hook=None, home=None,
+         environment=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--worktree", type=Path, required=True, help="the worktree to remove, as an absolute path")
     parser.add_argument("--git-directory", type=Path, required=True,
@@ -241,8 +323,9 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep, runner=subprocess.ru
     parser.add_argument("--record", type=Path, action="append", default=[],
                         help="a record whose being-written lock to wait for; repeat for each")
     parser.add_argument("--ned-box-home", type=Path, required=True,
-                        help="ned-box's home directory as this machine reaches it, where the user-alert goes")
-    parser.add_argument("--log-file", default="", help="this run's log file, named in the user-alert")
+                        help="ned-box's home directory as this machine reaches it, where the user-alert goes "
+                             "when no agent-seat task list is found")
+    parser.add_argument("--log-file", default="", help="this run's log file, named in the task or user-alert")
     parser.add_argument("--total-limit-seconds", type=float, default=TOTAL_LIMIT_SECONDS)
     parser.add_argument("--poll-seconds", type=float, default=POLL_SECONDS)
     parser.add_argument("--writer-own-shipment-grace-seconds", type=float, default=WRITER_OWN_SHIPMENT_GRACE_SECONDS)
@@ -250,7 +333,8 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep, runner=subprocess.ru
     deadline = clock() + arguments.total_limit_seconds
     # The same limit in real seconds: an injected clock cannot bound a stalled call.
     wall_deadline = time.monotonic() + arguments.total_limit_seconds
-    records_text = ""
+    records_text = output = ""
+    command = removal_command(arguments.worktree, arguments.git_directory, arguments.force)
     log(f"waiting to remove {arguments.worktree}{' with -f' if arguments.force else ''}; records: "
         + ", ".join(map(str, arguments.record)))
     try:
@@ -260,14 +344,21 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep, runner=subprocess.ru
         ship_until_none_is_being_written(hook, kinds, arguments.worktree, arguments.record, deadline, wall_deadline,
                                          clock, sleep, arguments.poll_seconds,
                                          arguments.writer_own_shipment_grace_seconds, runner)
-        remove_worktree(arguments.worktree, arguments.git_directory, arguments.force, records_text, runner)
+        remove_worktree(command, records_text, runner)
         return 0
     except WaiterFailed as failed:
-        failure, records_text = failed.failure, failed.records_text or records_text
+        failure, records_text, output = failed.failure, failed.records_text or records_text, failed.output
     except Exception as error:
-        traceback.print_exc(file=sys.stdout)
+        output = traceback.format_exc()
+        print(output, end="")
         failure = UNEXPECTED_FAILURE_TEMPLATE.format(error=f"{type(error).__name__}: {error}")
     log(f"FAILED, worktree left in place: {failure}")
+    list_directory = agent_seat_task_list_of_removing_agent_session(
+        Path(home or Path.home()), os.environ if environment is None else environment)
+    if list_directory is not None:
+        log(agent_seat_task_write(list_directory, arguments.worktree, command, failure, output, records_text,
+                                  arguments.log_file))
+        return 1
     alert_id = user_alert_write(arguments.ned_box_home, arguments.worktree, failure, records_text,
                                 arguments.log_file)
     log(f"user-alert written: {alert_id}")
