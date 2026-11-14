@@ -10,7 +10,10 @@ file's reading rules are in emergency-stop-file-in-force-read-common.py.
 Subcommands:
   start --words TEXT | --evidence TEXT
       Starts a stop, or, when one is in force, appends the new words or
-      evidence to it. The stop file is named by the UTC time. Its whole text
+      evidence to it. The stop file is named by the UTC time, or, when the
+      newest stop file is lifted and this machine's clock is behind the one
+      that wrote it, by the second after that file's, so the new file sorts
+      newest and is the one in force. Its whole text
       is written to a temporary file in the folder first, which is then
       hard-linked to the stop file's name, so a failed write leaves no
       partial stop file, and of two agent-sessions starting in the same second
@@ -19,6 +22,8 @@ Subcommands:
       beside it, a pending push notification, and the scheduled jobs, which
       keep running. When the newest stop file cannot be read, start prints
       FAILED: that file counts as a stop in force, and a new file would hide it.
+      After writing, start reads the folder again and prints FAILED when the
+      stop it wrote or added to is not the one in force.
   coordinate --agent-seat NAME --words TEXT
       Names another coordinating agent-seat, on the user's word.
   push-notification sent | failed [--error TEXT]
@@ -44,7 +49,7 @@ import json
 import os
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -62,8 +67,20 @@ def now_utc():
     return datetime.now(timezone.utc).replace(microsecond=0)
 
 
+STOP_FILE_NAME_TIME_FORMAT = "%Y-%m-%dT%H-%M-%SZ"
+
+
 def stop_file_name(moment):
-    return moment.strftime("%Y-%m-%dT%H-%M-%SZ") + ".md"
+    return moment.strftime(STOP_FILE_NAME_TIME_FORMAT) + ".md"
+
+
+def name_moment_after(moment, newest_path):
+    """moment, or the second after newest_path's name when moment does not sort after it.
+
+    The stop in force is the newest by file name, and machines' clocks differ, so a new stop file must be
+    named after the newest one whatever this machine's clock says."""
+    newest = datetime.strptime(newest_path.stem, STOP_FILE_NAME_TIME_FORMAT).replace(tzinfo=timezone.utc)
+    return moment if moment > newest else newest + timedelta(seconds=1)
 
 
 def one_line(text):
@@ -133,7 +150,8 @@ def start(folder, agent_seat, kind, words, jobs_file, moment):
     if isinstance(state, common.FolderUnreachable):
         raise OSError(f"the emergency-stop folder {state.folder} cannot be reached: {state.error}")
     folder.mkdir(exist_ok=True)
-    path = folder / stop_file_name(moment)
+    named = name_moment_after(moment, state.path) if isinstance(state, common.Lifted) else moment
+    path = folder / stop_file_name(named)
     text = new_stop_text(moment, path, agent_seat, kind, words, jobs_file)
     descriptor, temporary = tempfile.mkstemp(dir=folder, prefix=".", suffix=".partial")
     try:
@@ -143,10 +161,21 @@ def start(folder, agent_seat, kind, words, jobs_file, moment):
         os.link(temporary, path)
     except FileExistsError:
         append(path, f"{moment.isoformat()} {kind} added by {agent_seat}: {one_line(words)}")
-        return f"added to the emergency stop started at the same second, {path}"
+        return in_force_check(folder, path, f"added to the emergency stop started at the same second, {path}")
     finally:
         os.unlink(temporary)
-    return f"started the emergency stop {path}"
+    return in_force_check(folder, path, f"started the emergency stop {path}")
+
+
+def in_force_check(folder, path, report):
+    """report when the stop file at path is the one in force; else raises StartRefused saying which is."""
+    state = common.read_state(folder)
+    if isinstance(state, common.InForce) and state.path == path:
+        return report
+    found = getattr(state, "path", None) or folder
+    raise StartRefused(f"{path} was written, but the folder read back answers {type(state).__name__} "
+                       f"for {found}, so the stop written is not the one in force; pushes and merges are not "
+                       f"refused. Run start again; if this repeats, tell the user what this line says")
 
 
 def current_umask():

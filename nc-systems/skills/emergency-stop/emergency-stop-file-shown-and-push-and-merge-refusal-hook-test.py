@@ -18,6 +18,8 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -71,11 +73,13 @@ def main():
               "gh -R o/r pr merge 5", "gh --repo o/r pr merge 5", "gh pr -R o/r merge 5", "gh --repo=o/r pr merge 5",
               "gh -Ro/r pr merge 5", "gh api -X PUT repos/o/r/pulls/5/merge", "gh api --method put /repos/o/r/pulls/5/merge",
               "gh api repos/o/r/pulls/5/merge -XPUT", "gh api --method=PUT repos/o/r/pulls/5/merge",
-              "gh -R o/r api -X PUT repos/o/r/pulls/5/merge"]
+              "gh -R o/r api -X PUT repos/o/r/pulls/5/merge",
+              "ssh nedlern@ned-box 'cd ~/Projects/nedschorus && git push'", "ssh -p 22 ned-box git push origin b",
+              "ssh ned-box 'gh pr merge 5 --squash'", "zsh -c 'git push'"]
     not_pushes = ["git log --grep push", "git status", "echo git push-notes", "gh pr view 12", "git pushd",
                   "gh -R o/r pr view 5", "gh pr -R o/r view 5", "gh api repos/o/r/pulls/5/merge",
                   "gh api -X PUT repos/o/r/pulls/5/requested_reviewers", "gh api -X GET repos/o/r/pulls/5/merge",
-                  "gh api -X"]
+                  "gh api -X", "ssh ned-box 'git status'"]
     check("push and merge commands are recognised", all(hook.bash_command_pushes_or_merges(c) for c in pushes),
           [c for c in pushes if not hook.bash_command_pushes_or_merges(c)])
     check("other commands are not", not any(hook.bash_command_pushes_or_merges(c) for c in not_pushes),
@@ -166,6 +170,37 @@ def main():
               first and "emergency-stop state unknown" in first["additionalContext"]
               and "carry on with your work" in first["additionalContext"]
               and "tell the user" in first["additionalContext"] and second is None, (first, second))
+        hung_session = uuid.uuid4().hex
+        released = threading.Event()
+
+        def hung_read(_folder):
+            released.wait(30)
+            return hook.common.NoStop(_folder)
+
+        started = time.monotonic()
+        state = hook.read_state_within_deadline(folder, deadline_seconds=0.5, reader=hung_read)
+        waited = time.monotonic() - started
+        hung = decoded(hook.output_for(payload(session=hung_session), environment,
+                                       read_state=lambda f: hook.read_state_within_deadline(f, 0.5, hung_read)))
+        released.set()
+        check("hung folder read: given up at the deadline, as state unknown, and work continues",
+              isinstance(state, hook.common.FolderUnreachable) and "took longer than 0.5 seconds" in state.error
+              and waited < 5 and hung and "emergency-stop state unknown" in hung["additionalContext"],
+              (state, waited, hung))
+        check("the deadline sits under Claude Code's 30-second hook timeout", 0 < hook.READ_DEADLINE_SECONDS < 30)
+        check("folder read returning in time: its state is used",
+              isinstance(hook.read_state_within_deadline(root / "gone"), hook.common.NoStop))
+
+        def failing_read(_folder):
+            raise RuntimeError("injected")
+
+        try:
+            hook.read_state_within_deadline(folder, reader=failing_read)
+            raised = None
+        except RuntimeError as error:
+            raised = error
+        check("an error inside the folder read is raised, not taken for an unreachable folder",
+              str(raised) == "injected", raised)
         check("unsafe session id: note shown each time, nothing written",
               hook.note_record_path("../x") is None and hook.output_for(payload(session="../x"), gone) is not None)
 

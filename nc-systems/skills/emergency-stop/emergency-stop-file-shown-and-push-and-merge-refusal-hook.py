@@ -13,8 +13,9 @@ What it shows:
 - Newest stop file unreadable: the same rules and why the file could not be
   read; the stop is treated as in force, and no agent-seat is coordinating, so
   every push and merge is refused.
-- Log-store unreachable, as on a Mac whose mount of ned-box is gone:
-  "emergency-stop state unknown" once per agent-session, and work continues.
+- Log-store unreachable, as on a Mac whose mount of ned-box is gone, or not
+  read within READ_DEADLINE_SECONDS, as when that mount hangs: "emergency-stop
+  state unknown" once per agent-session, and work continues.
 - Lifted: a note saying so and that held-back work resumes, once per
   agent-session for each stop file.
 - No stop: nothing.
@@ -23,7 +24,7 @@ The refusal matches `git push`, `gh pr merge` with -R or --repo anywhere
 before `merge`, and `gh api` with method PUT on a `pulls/<number>/merge` path,
 in a Bash call, read by
 nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py, also
-inside a `bash -c` string; a command the reader cannot read is refused too; a
+inside a `bash -c` string and inside the remote command of `ssh`; a command the reader cannot read is refused too; a
 push made inside another program, or by a scheduled job, is not refused.
 
 The rules the hook shows hold, word for word, the first four rules of the
@@ -43,6 +44,7 @@ import os
 import re
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -57,6 +59,8 @@ shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
 _shell_reader_spec.loader.exec_module(shell_reader)
 
 MAX_FILE_CHARACTERS = 4000
+# Under Claude Code's 30-second hook timeout, so a hung mount gives the state-unknown note, not a killed hook.
+READ_DEADLINE_SECONDS = 5
 NOTE_RECORD_DIRECTORY_NAME = "nedschorus-emergency-stop-hook-notes"
 SESSION_ID_SAFE_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,128}")
 GIT_OPTIONS_TAKING_A_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
@@ -111,7 +115,7 @@ def bash_command_pushes_or_merges(command):
         if index is None:
             continue
         program, arguments = words[index], words[index + 1:]
-        inner = shell_reader.shell_command_string(arguments) if Path(program).name in ("bash", "sh", "zsh") else None
+        inner = nested_command_string(program, arguments)
         if inner is not None and bash_command_pushes_or_merges(inner):
             return True
         if shell_reader.is_program(program, "gh") and gh_arguments_merge_a_pull_request(arguments):
@@ -123,6 +127,15 @@ def bash_command_pushes_or_merges(command):
             if position < len(arguments) and arguments[position] == "push":
                 return True
     return False
+
+
+def nested_command_string(program, arguments):
+    """The command program runs as a string: ssh's remote command, or a shell's -c string; else None."""
+    if shell_reader.is_program(program, "ssh"):
+        return shell_reader.ssh_remote_command(arguments)
+    if any(shell_reader.is_program(program, runner) for runner in shell_reader.SHELL_STRING_RUNNERS):
+        return shell_reader.shell_command_string(arguments)
+    return None
 
 
 def gh_words_without_repository_options(arguments):
@@ -195,9 +208,33 @@ def refusal_output(reason):
                                               "permissionDecisionReason": reason}}, ensure_ascii=False)
 
 
-def output_for(payload, environment):
+def read_state_within_deadline(folder, deadline_seconds=READ_DEADLINE_SECONDS, reader=None):
+    """common.read_state(folder), or FolderUnreachable when it has not returned within deadline_seconds.
+
+    An error the read raises is raised here, so main() reports the hook as failed."""
+    reader = reader or common.read_state
+    outcome = {}
+
+    def read():
+        try:
+            outcome["state"] = reader(folder)
+        except BaseException as error:
+            outcome["error"] = error
+
+    # A daemon thread, because a read blocked on a hung mount cannot be interrupted, and must not hold the exit.
+    worker = threading.Thread(target=read, daemon=True)
+    worker.start()
+    worker.join(deadline_seconds)
+    if "error" in outcome:
+        raise outcome["error"]
+    if "state" in outcome:
+        return outcome["state"]
+    return common.FolderUnreachable(folder, f"reading {folder} took longer than {deadline_seconds} seconds")
+
+
+def output_for(payload, environment, read_state=read_state_within_deadline):
     event = payload.get("hook_event_name") or "UserPromptSubmit"
-    state = common.read_state(common.emergency_stop_folder(environment))
+    state = read_state(common.emergency_stop_folder(environment))
     record_path = note_record_path(payload.get("session_id"))
     if isinstance(state, common.NoStop):
         return None

@@ -87,7 +87,13 @@ def main():
         moment = datetime(2030, 1, 1, tzinfo=timezone.utc)
         clash = folder / program.stop_file_name(moment)
         clash.write_text("someone else's file\n")
-        program.common.read_state = lambda f: common.NoStop(f)
+        reads = []
+
+        def no_stop_then_real(f):
+            reads.append(f)
+            return common.NoStop(f) if len(reads) == 1 else _real_read_state(f)
+
+        program.common.read_state = no_stop_then_real
         try:
             message = program.start(folder, "md-skills", "words", "same second", program.SCHEDULED_JOBS_FILE, moment)
         finally:
@@ -113,6 +119,33 @@ def main():
         lifted = common.read_state(folder)
         check("lift writes the lift line last", status == 0 and isinstance(lifted, common.Lifted)
               and lifted.lift_line == "#emergency_stop_lifted all clear", lifted)
+
+        skewed = root / "clock-skew" / "emergency-stop"
+        skewed.parent.mkdir()
+        lifted_at = datetime(2026, 11, 14, 12, 0, 10, tzinfo=timezone.utc)
+        program.start(skewed, "ned-box-helper", "words", "first", program.SCHEDULED_JOBS_FILE, lifted_at)
+        program.append(skewed / program.stop_file_name(lifted_at), "#emergency_stop_lifted all clear")
+        behind = datetime(2026, 11, 14, 12, 0, 7, tzinfo=timezone.utc)
+        message = program.start(skewed, "mac-claude", "words", "clock behind", program.SCHEDULED_JOBS_FILE, behind)
+        skew_state = common.read_state(skewed)
+        check("start on a clock behind the lifted newest stop file's: the new stop is named after it and is in force",
+              isinstance(skew_state, common.InForce) and skew_state.path.name == "2026-11-14T12-00-11Z.md"
+              and message == f"started the emergency stop {skew_state.path}"
+              and "words: clock behind" in skew_state.text, (message, skew_state))
+
+        written_but_lifted = root / "read-back" / "emergency-stop"
+        written_but_lifted.parent.mkdir()
+        program.common.read_state = lambda f: (common.NoStop(f) if not f.exists() or not any(f.iterdir())
+                                               else common.Lifted(f / "2099-01-01T00-00-00Z.md", "#emergency_stop_lifted x"))
+        program.now_utc = lambda: datetime(2026, 11, 14, 12, 0, 0, tzinfo=timezone.utc)
+        try:
+            status, out = run(written_but_lifted, "start", "--words", "stop")
+        finally:
+            program.common.read_state = _real_read_state
+            program.now_utc = _real_now_utc
+        check("start whose stop is not the one in force when read back: FAILED, and says pushes are not refused",
+              status == 1 and out.startswith("FAILED") and "not the one in force" in out
+              and "Lifted" in out and "pushes and merges are not refused" in out, out)
 
         status, out = run(folder, "start", "--words", "again", agent_seat=None)
         check("no agent-seat known: FAILED", status == 1 and "GIT_AUTHOR_NAME" in out, out)

@@ -64,6 +64,8 @@ def run(script, stdin_text, checkout):
     # The hook passes every reply in an unattended session or one whose caller owns reincarnation,
     # so a caller's own values of these would hide the block a case expects.
     environment = attendance_check.environment_without_agent_session_attendance_variables(os.environ)
+    # The hook passes every reply during an emergency stop, so a real stop in force would hide the block too.
+    environment["NEDSCHORUS_EMERGENCY_STOP_FOLDER"] = str(Path(checkout) / "no-emergency-stop")
     return subprocess.run([sys.executable, str(script), "an-argument"], input=stdin_text,
                           capture_output=True, text=True, cwd=checkout, env=environment)
 
