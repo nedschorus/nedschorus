@@ -3166,7 +3166,7 @@ PERMISSIONS_JUDGEMENT = ("item 1 of 3 is of none of the kinds 1 to 6 that `--hel
 
 def test_an_item_of_no_kind_rated_weak_settles_and_the_agent_is_told_to_judge_permissions_and_guards():
     case = rated_none_case(rating=WEAK_COST_ONLY)
-    result = case.run("check", "--not-asked", "none")
+    result = case.run("check", "--not-asked", "weak-cost-only")
     minutes = case.minutes.read_text()
     check("an item of no kind rated weak is settled: the minutes say not asked, case against weak, cost only",
           result.returncode == 0
@@ -3192,7 +3192,7 @@ def test_an_item_of_no_kind_rated_weak_settles_when_it_touches_guarded_code_but_
     for path in (".claude/guard-hooks/poem-guard.py", ".claude/settings.json"):
         case = rated_none_case(touches=f"#not_asked_touches tools/counter.py {path}\n\n", rating=WEAK_COST_ONLY,
                                files=(path,))
-        result = case.run("check", "--not-asked", "none")
+        result = case.run("check", "--not-asked", "weak-cost-only")
         check(f"an item of no kind rated weak that touches {path}, guarded but not Markdown, is settled",
               result.returncode == 0 and WEAK_COST_ONLY_SETTLED in result.stdout, described(result))
         case = rated_none_case(touches=f"#not_asked_touches tools/counter.py {path}\n\n", files=(path,))
@@ -3204,7 +3204,7 @@ def test_an_item_of_no_kind_rated_weak_settles_when_it_touches_guarded_code_but_
         case = rated_none_case(touches=f"#not_asked_touches tools/counter.py {path}\n\n", rating=WEAK_COST_ONLY,
                                files=(path,))
         before = case.minutes.read_text()
-        result = case.run("check", "--not-asked", "none")
+        result = case.run("check", "--not-asked", "weak-cost-only")
         check(f"an item of no kind rated weak that touches {path}, guarded Markdown, is refused",
               result.returncode == 1
               and "cannot be settled without asking the user as case against weak, cost only, because:" in result.stderr
@@ -3216,7 +3216,7 @@ def test_an_item_of_no_kind_rated_weak_settles_when_it_touches_guarded_code_but_
               and case.minutes.read_text() == before and case.calls.read_text() == "", described(result))
     case = rated_none_case(touches="", rating=WEAK_COST_ONLY)
     before = case.minutes.read_text()
-    result = case.run("check", "--not-asked", "none")
+    result = case.run("check", "--not-asked", "weak-cost-only")
     check("an item of no kind rated weak with no touches line is refused, so it comes to the user",
           result.returncode == 1
           and "cannot be settled without asking the user as case against weak, cost only, because:" in result.stderr
@@ -3233,12 +3233,108 @@ def test_an_item_of_no_kind_with_an_empty_touches_line_settles_as_a_change_that_
           described(result))
 
 
-def test_a_not_asked_value_other_than_a_kind_or_none_is_refused_as_usage():
+WEAK_EARLIER_APPROVED_TEXT_ONLY = "weak: the change alters a sentence the user approved word for word on 2026-11-02."
+
+
+def test_an_item_of_no_kind_rated_weak_settled_as_alters_earlier_approved_text_only_names_that_ground():
+    case = rated_none_case(rating=WEAK_EARLIER_APPROVED_TEXT_ONLY)
+    result = case.run("check", "--not-asked", "weak-alters-earlier-approved-text-only")
+    minutes = case.minutes.read_text()
+    check("an item of no kind rated weak whose case against names only the earlier approval is settled, and the "
+          "minutes and the messages name that ground, not cost",
+          result.returncode == 0
+          and re.search(r"\nitem 1 of 3: settled without asking the user, not asked, case against weak, alters earlier "
+                        r"approved text only #case_against_weak \(\d{4}-\d\d-\d\d \d\d:\d\dZ\), which makes its "
+                        r"change\. Fast reads:\n", minutes) is not None
+          and "item 1 of 3 is recorded as settled without asking the user, case against weak, alters earlier approved text "
+              "only;" in result.stdout
+          and PERMISSIONS_JUDGEMENT in result.stdout and "cost only" not in result.stdout + minutes,
+          described(result) + minutes)
+    closed = case.run("close")
+    check("close records the item settled as weak and alters earlier approved text only as accepted, and moves on past it",
+          closed.returncode == 0
+          and "\nitem 1 of 3: not asked, case against weak, alters earlier approved text only; every text the change adds "
+              "has had a fast read. <accepted>\n" in case.minutes.read_text()
+          and int(re.search(r"#next_to_present item (\d+) of 3$", case.minutes.read_text().rstrip())[1]) > 1,
+          described(closed) + case.minutes.read_text())
+    case = rated_none_case(touches="", rating=WEAK_EARLIER_APPROVED_TEXT_ONLY)
+    before = case.minutes.read_text()
+    result = case.run("check", "--not-asked", "weak-alters-earlier-approved-text-only")
+    check("a refusal of an item settled as weak and alters earlier approved text only names that ground and its value",
+          result.returncode == 1
+          and "cannot be settled without asking the user as case against weak, alters earlier approved text only, because:"
+              in result.stderr
+          and "check --not-asked weak-alters-earlier-approved-text-only` again" in result.stderr
+          and case.minutes.read_text() == before, described(result))
+
+
+def test_not_asked_none_for_an_item_of_no_kind_rated_weak_writes_nothing_and_gives_both_ground_values():
+    case = rated_none_case(rating=WEAK_COST_ONLY)
+    before = case.minutes.read_text()
+    result = case.run("check", "--not-asked", "none")
+    check("`--not-asked none` on an item rated weak writes nothing, says it is not a refusal of the item, and gives "
+          "the command for each ground and for any other case against",
+          result.returncode == 1
+          and "item 1 of 3's `#case_against` line rates the case against weak, and `--not-asked none` is only for an "
+              "item of no kind rated none" in result.stderr
+          and "This is not a refusal of item 1 of 3" in result.stderr
+          and "check --not-asked weak-cost-only`" in result.stderr
+          and "check --not-asked weak-alters-earlier-approved-text-only`" in result.stderr
+          and "If the case against names anything else, present item 1 of 3 to the user" in result.stderr
+          and case.minutes.read_text() == before and case.calls.read_text() == "", described(result))
+
+
+def test_a_weak_ground_value_for_an_item_of_no_kind_rated_none_writes_nothing_and_gives_the_none_value():
+    for value in ("weak-cost-only", "weak-alters-earlier-approved-text-only"):
+        case = rated_none_case()
+        before = case.minutes.read_text()
+        result = case.run("check", "--not-asked", value)
+        check(f"`--not-asked {value}` on an item rated none writes nothing and gives `--not-asked none`",
+              result.returncode == 1
+              and f"item 1 of 3's `#case_against` line rates the case against none, and `--not-asked {value}` is "
+                  "only for an item of no kind rated weak" in result.stderr
+              and "check --not-asked none`" in result.stderr
+              and case.minutes.read_text() == before and case.calls.read_text() == "", described(result))
+
+
+# Lines as the walk check program wrote them for an item of no kind rated weak before the agent named the ground,
+# when `--not-asked none` settled it and the minutes always said cost only.
+WALK_MINUTES_CHECK_LINE_BEFORE_THE_GROUND_WAS_NAMED = (
+    "item 1 of 3: settled without asking the user, not asked, case against weak, cost only #case_against_weak "
+    "(2026-11-12 10:00Z), which makes its change. Fast reads:\n- no proposed text marked\n")
+WALK_MINUTES_CLOSE_LINE_BEFORE_THE_GROUND_WAS_NAMED = (
+    "item 1 of 3: not asked, case against weak, cost only; every text the change adds has had a fast read. "
+    "<accepted>\n")
+
+
+def test_walk_minutes_written_before_the_ground_was_named_are_still_read():
+    case = rated_none_case(rating=WEAK_COST_ONLY)
+    case.minutes.write_text(case.minutes.read_text() + WALK_MINUTES_CHECK_LINE_BEFORE_THE_GROUND_WAS_NAMED)
+    closed = case.run("close")
+    check("close records an old check line of an item settled as weak and cost only as accepted, and moves on",
+          closed.returncode == 0
+          and "\n" + WALK_MINUTES_CLOSE_LINE_BEFORE_THE_GROUND_WAS_NAMED in case.minutes.read_text()
+          and int(re.search(r"#next_to_present item (\d+) of 3$", case.minutes.read_text().rstrip())[1]) > 1,
+          described(closed) + case.minutes.read_text())
+    case = rated_none_case(next_to_present="item 2 of 3")
+    case.minutes.write_text(case.minutes.read_text() + WALK_MINUTES_CLOSE_LINE_BEFORE_THE_GROUND_WAS_NAMED)
+    case.run("check", "--not-asked", "weak-cost-only")
+    closed = case.run("close")
+    check("an old close line of an item settled as weak and cost only still decides that item, so the walk moves on "
+          "to item 3, not back to item 1",
+          closed.returncode == 0
+          and case.minutes.read_text().rstrip().endswith("#next_to_present item 3 of 3"),
+          described(closed) + case.minutes.read_text())
+
+
+def test_a_not_asked_value_other_than_a_kind_or_a_no_kind_value_is_refused_as_usage():
     for value in ("7", "0", "weak"):
         case = rated_none_case()
         result = case.run("check", "--not-asked", value)
         check(f"`--not-asked {value}` is refused as usage, writing nothing",
-              result.returncode == 2 and f"`{value}` is not a kind: give 1, 2, 3, 4, 5, 6 or none" in result.stderr
+              result.returncode == 2
+              and f"`{value}` is not a kind: give 1, 2, 3, 4, 5, 6, or, for an item of no kind, none, "
+                  "weak-cost-only or weak-alters-earlier-approved-text-only" in result.stderr
               and case.minutes.read_text().rstrip().endswith("#next_to_present item 1 of 3"), described(result))
 
 
