@@ -5,14 +5,14 @@ Terms that belong to the design-to-main workflow alone, for agents working on th
 The state names of the machine are in the design, `docs/design-to-main/design-to-main-state-machine-design.md`, §3.1, and are not repeated here.
 
 - **acceptance-check** — a check of one finished artifact against its acceptance criteria, which passes or fails, made by a program, an agent or the user.
-- **can-not-be-tested** — a `no-tests` reason: no machine or safe way to exercise the requirement here.
-- **code-based-test**, **prompt-based-test**, **CPC-based-test**, **user-based-test** — a test named in prose by what it is based on: coverage-type `script`, `prompt` (agent-instructions run by a single-purpose agent that reports pass or fail), `script-and-prompt`, and a design-requirement's by-hand demonstration.
+- **can-not-be-tested** — a `no-tests` reason: no way to test the requirement here, by machine or by hand.
+- **code-based-test**, **prompt-based-test**, **CPC-based-test**, **user-based-test** — a test named in prose by what it is based on: coverage-type `script`, `prompt` (agent-instructions run by a single-purpose agent that reports pass or fail), `script-and-prompt`, and a test-requirement of coverage-type `user`, a design-requirement's by-hand demonstration.
 - **component-consumer** — anything that invokes a component or reads what it leaves. A script's component-consumers are whoever runs it and whatever reads the files, branches or output it leaves behind.
 - **component-consumer-receives** — the design-contract group holding the postconditions on what a component-consumer gets back, per case, and how each outcome is observed.
 - **component-consumer-supplies** — the design-contract group holding the preconditions on what a component-consumer passes in, each with what makes it invalid and what the component does then.
 - **contract-revision** — a re-write of the design-contract in `contract-revising` after a rejection or a failed check against it, once the design is approved.
 - **could-not-run** — the test suite's third outcome, beside pass and fail: the runner or a launched test agent produced no result at all.
-- **coverage-type** — the word on an implementation or a test saying what kind of thing it is: `script`, `prompt` (agent-instructions; for a test, a prompt-based-test), or `script-and-prompt`. A test-requirement in the test-design carries the same field for the test that will cover it and may instead be `no-tests`.
+- **coverage-type** — the word on an implementation or a test saying what kind of thing it is: `script`, `prompt` (agent-instructions; for a test, a prompt-based-test), or `script-and-prompt`. A test-requirement in the test-design carries the same field for the test that will cover it and may instead be `user`, for a test-requirement a person tests by hand, or `no-tests`.
 - **do-not-know-how-to-test** — a `no-tests` reason: an open question, which reaches the user.
 - **escalate-to-user** — the state-exit an agent takes for a problem it believes is in the design or the test-design, when it needs the user; it opens an investigation.
 - **flaky-test** — the arbitrator's verdict that a test gives different results on the same inputs while the implementation does not; routes to `test-writing`. The standard term.
