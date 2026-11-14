@@ -120,7 +120,9 @@ sys.exit(1 if failing else 2 if not_run else 0)
 
 # Stands in for scripts/branch-conflict-check.py in every scratch repository's base commit. FAKE_CONFLICT_CHECK
 # picks its report: unset or "clean" for no conflict, "replace" or "rebase" for a conflict with that answer,
-# "fail" for a run that could not answer, and "killed" for a run a signal ended before it printed anything. FAKE_CONFLICT_CHECK_CALLS records its arguments.
+# "fail" for a run that could not answer, "crash" for an uncaught exception, which Python ends with exit 1 and no
+# verdict, "killed" for a run a signal ended before it printed anything, and "replace-then-exit-2" and
+# "replace-then-killed" for a run that printed a replace answer and then failed. FAKE_CONFLICT_CHECK_CALLS records its arguments.
 FAKE_CONFLICT_CHECK = r'''import json, os, sys
 if os.environ.get("FAKE_CONFLICT_CHECK_CALLS"):
     with open(os.environ["FAKE_CONFLICT_CHECK_CALLS"], "a") as calls:
@@ -132,12 +134,19 @@ if kind == "clean":
 if kind == "fail":
     print("UNFETCHED: git fetch origin failed; do not act on any conflict answer until a run succeeds.")
     sys.exit(2)
+if kind == "crash":
+    raise RuntimeError("the fake conflict check crashed")
 if kind == "killed":
     import signal
     os.kill(os.getpid(), signal.SIGTERM)
 print("VERDICT: CONFLICT -- abc conflicts with origin/main.")
 print("ANSWER: %s -- the fake's answer." % kind)
-print("Cut a new nc-topic-branch from current origin/main.")
+print("Cut a new nc-topic-branch from current origin/main.", flush=True)
+if kind == "replace-then-exit-2":
+    sys.exit(2)
+if kind == "replace-then-killed":
+    import signal
+    os.kill(os.getpid(), signal.SIGTERM)
 sys.exit(1)
 '''
 
@@ -2372,6 +2381,19 @@ def conflict_check_cases(root, repository, _base, frozen_head):
     check("conflict check: a check that cannot answer fails with exit 2, its output quoted, and prints no brief",
           code == 2 and err.startswith("FAILED: ") and "exited 2, so whether this pull request conflicts with main "
           "is not known" in err and "UNFETCHED: git fetch origin failed" in err and out == "", err + out)
+
+    code, out, err = run(root, repository, routes, environment_extra={"FAKE_CONFLICT_CHECK": "crash"})
+    check("conflict check: a check that crashes with exit 1 and no conflict verdict fails with exit 2, "
+          "its traceback quoted, and prints no brief",
+          code == 2 and err.startswith("FAILED: ") and "exited 1, so whether this pull request conflicts with main "
+          "is not known" in err and "RuntimeError: the fake conflict check crashed" in err and out == "", err + out)
+
+    for kind, exit_text in (("replace-then-exit-2", "exited 2"), ("replace-then-killed", "exited -15")):
+        code, out, err = run(root, repository, routes, environment_extra={"FAKE_CONFLICT_CHECK": kind})
+        check(f"conflict check: a check that prints a replace answer and then {exit_text} fails with exit 2 "
+              "and prints neither the replace steps nor the brief",
+              code == 2 and err.startswith("FAILED: ") and exit_text in err and "ANSWER: replace" in err
+              and out == "", err + out)
 
     code, out, err = run(root, repository, routes, environment_extra={"FAKE_CONFLICT_CHECK": "killed"})
     check("conflict check: a check a signal ended fails with exit 2 and prints no brief",
