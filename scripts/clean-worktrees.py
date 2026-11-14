@@ -160,11 +160,12 @@ When GitHub cannot be reached, it deletes no branch with `-D`. It names each
 deleted branch in the report modes. origin/main is read as fetched; a stale
 ref only keeps more. A task list under ~/.claude/tasks/nedschorus-*-tasks
 that cannot be read in full, or a ~/.claude/tasks that exists but cannot be
-listed, stops every `-D` deletion, as GitHub out of reach does; GitHub out of
-reach is named on a line of its own outside --only-done, and a task list not
-read on a line opening `FAILED: ` in every mode, and the run exits 1. The
-report modes also name a branch that only a done worktree has checked out,
-which --remove deletes once it has removed that worktree.
+listed, stops every `-D` deletion, as GitHub out of reach does. GitHub out of
+reach is named on a line of its own outside --only-done, and is no failure.
+A task list not read is named, in every mode, on a line opening `FAILED: `,
+and the run exits 1. The report modes also name a branch that only a done
+worktree has checked out, which --remove deletes once it has removed that
+worktree.
 
 ONE NAMED WORKTREE OR BRANCH. --remove-worktree-and-force-delete-its-branch
 PATH and --force-delete-branch NAME act on the one worktree or branch named,
@@ -1881,7 +1882,9 @@ def clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done):
     if not_judged and not only_done:
         print(f"branches: none deleted with git branch -D, since {not_judged}")
     if task_lists_unreadable:
-        print(f"FAILED: no branch deleted with git branch -D, since {task_lists_unreadable}")
+        print(f"FAILED: no branch deleted with git branch -D, since {task_lists_unreadable}; "
+              f"each branch is kept, and the next scripts/clean-worktrees.py --remove judges it "
+              f"again once every task list can be read in full")
         failures += 1
     if force_deletable:
         if remove:
