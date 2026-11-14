@@ -45,9 +45,12 @@ A section covers the branches deleted with git branch -D: a merged and a
 closed pull request's head branch at its refs/pull/<number>/head on the
 scratch origin are deleted and logged; a branch moved after its pull request
 closed, one with an open pull request, one an open task holds and one a
-worktree has checked out are kept; and gh failing, origin unreachable, a task
-list not read in full, an unreadable task lists' directory and a refused
-git branch -D each delete nothing with -D.
+worktree has checked out are kept; gh failing, origin unreachable, git
+ls-remote running past its timeout, a task list not read in full, a task
+lists' directory that cannot be listed or whose parent cannot be entered, and
+a refused git branch -D each delete nothing with -D; and the report modes
+name the branch of a done worktree, which --remove deletes with -D after
+removing that worktree.
 
 A section covers the owner rules under a scratch HOME: an owner that runs, an
 agent-session's `claude` process standing in as a helper process, an
@@ -3683,13 +3686,14 @@ with tempfile.TemporaryDirectory() as scratch:
         "id": "1", "subject": "holds a branch, badly", "status": "pending",
         "metadata": {"branches": "closed-head-branch"}}), encoding="utf-8")
     malformed = run_head_branch_clean("--remove", tasks=malformed_tasks)
-    check("when a task list cannot be read in full, --remove deletes no branch with -D and says "
-          "which list",
+    check("when a task list cannot be read in full, --remove deletes no branch with -D, says "
+          "which list on a FAILED line, and exits 1",
           every_head_branch <= local_branches()
-          and "branches: none deleted with git branch -D, since the task list "
+          and "FAILED: no branch judged for deletion with git branch -D, since the task list "
               f"{malformed_tasks / 'nedschorus-other-seat-tasks'} could not be read in full"
-              in malformed.stdout,
-          malformed.stdout + malformed.stderr)
+              in malformed.stdout
+          and malformed.returncode == 1,
+          f"{malformed.returncode}\n{malformed.stdout}{malformed.stderr}")
 
     sealed_tasks = scratch / "sealed-task-lists"
     sealed_tasks.mkdir()
@@ -3698,10 +3702,72 @@ with tempfile.TemporaryDirectory() as scratch:
         sealed = run_head_branch_clean("--remove", tasks=sealed_tasks)
     finally:
         sealed_tasks.chmod(0o755)
-    check("when the task lists' directory cannot be read, --remove deletes no branch with -D",
+    check("when the task lists' directory cannot be read, --remove deletes no branch with -D "
+          "and exits 1",
           every_head_branch <= local_branches()
-          and f"since the task lists' directory {sealed_tasks} cannot be read" in sealed.stdout,
-          sealed.stdout + sealed.stderr)
+          and f"FAILED: no branch judged for deletion with git branch -D, since the task lists' directory "
+              f"{sealed_tasks} cannot be listed (PermissionError" in sealed.stdout
+          and sealed.returncode == 1,
+          f"{sealed.returncode}\n{sealed.stdout}{sealed.stderr}")
+
+    # ~/.claude itself untraversable: Path.exists() answers False for ~/.claude/tasks, as if absent.
+    untraversable_parent = scratch / "untraversable-claude"
+    behind_untraversable = untraversable_parent / "tasks"
+    (behind_untraversable / "nedschorus-some-seat-tasks").mkdir(parents=True)
+    untraversable_parent.chmod(0)
+    try:
+        untraversable = run_head_branch_clean("--remove", tasks=behind_untraversable)
+        untraversable_report = run_head_branch_clean("--only-done", tasks=behind_untraversable)
+    finally:
+        untraversable_parent.chmod(0o755)
+    check("when the directory holding the task lists' directory cannot be entered, --remove "
+          "deletes no branch with -D, names the directory on FAILED lines, and exits 1",
+          every_head_branch <= local_branches()
+          and f"FAILED: no branch judged for deletion with git branch -D, since the task lists' directory "
+              f"{behind_untraversable} cannot be listed (PermissionError" in untraversable.stdout
+          and f"FAILED: the task lists' directory {behind_untraversable} could not be listed "
+              f"(PermissionError" in untraversable.stdout
+          and untraversable.returncode == 1,
+          f"{untraversable.returncode}\n{untraversable.stdout}{untraversable.stderr}")
+    check("--only-done also names task lists it cannot list on a FAILED line and exits 1",
+          "FAILED: no branch judged for deletion with git branch -D" in untraversable_report.stdout
+          and untraversable_report.returncode == 1,
+          f"{untraversable_report.returncode}\n{untraversable_report.stdout}"
+          f"{untraversable_report.stderr}")
+
+    head_branch_module = load_clean_worktrees_module()
+    check("a task lists' directory that does not exist holds no task list",
+          head_branch_module.nedschorus_task_list_directories(scratch / "no-such-task-lists") == [])
+    unenterable_tasks = scratch / "unenterable-task-lists"
+    (unenterable_tasks / "nedschorus-some-seat-tasks").mkdir(parents=True)
+    unenterable_tasks.chmod(0o444)
+    try:
+        unenterable_error = raised_by(
+            lambda: head_branch_module.nedschorus_task_list_directories(unenterable_tasks))
+    finally:
+        unenterable_tasks.chmod(0o755)
+    check("a task lists' directory that can be listed but not entered raises rather than hiding "
+          "its task lists", isinstance(unenterable_error, PermissionError), repr(unenterable_error))
+
+    head_branch_module.PULL_REQUEST_HEAD_REFS_LISTING_TIMEOUT_SECONDS = 1
+    slow_ls_remote = scratch / "slow-ls-remote-stubs"
+    slow_ls_remote.mkdir()
+    (slow_ls_remote / "git").write_text(
+        '#!/bin/sh\ncase " $* " in *" ls-remote "*) exec sleep 30 ;; esac\n'
+        f'exec {shlex.quote(shutil.which("git"))} "$@"\n', encoding="utf-8")
+    (slow_ls_remote / "git").chmod(0o755)
+    saved_path = os.environ["PATH"]
+    os.environ["PATH"] = f"{slow_ls_remote}{os.pathsep}{saved_path}"
+    started = time.monotonic()
+    try:
+        slow_heads, slow_failure = head_branch_module.pull_request_head_commits_or_failure(checkout)
+    finally:
+        os.environ["PATH"] = saved_path
+    check("a git ls-remote that runs past its timeout is stopped and named as not finished",
+          slow_heads is None and time.monotonic() - started < 20
+          and (slow_failure or "").startswith(
+              "`git ls-remote origin 'refs/pull/*/head'` did not finish: "),
+          f"{slow_heads} {slow_failure}")
 
     # A ref lock git branch -D cannot take, as a concurrent git command holds.
     ref_lock = Path(git(checkout, "rev-parse", "--git-path",
@@ -3778,6 +3844,27 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the log of removals names each branch deleted with -D and its last commit",
           f"branch=closed-head-branch\tcommit={closed_tip}" in logged
           and f"branch=merged-head-branch\tcommit={merged_tip}" in logged, logged)
+
+    # A done worktree on a closed pull request's head branch: --remove removes the worktree, then
+    # deletes its branch with -D, so the report modes name that branch too.
+    done_worktree_tip = finished_head_branch("done-worktree-head-branch", 7, "CLOSED")
+    done_worktree = scratch / "done-head-branch-wt"
+    git(checkout, "worktree", "add", "-q", str(done_worktree), "done-worktree-head-branch")
+    give_stopped_owner(done_worktree)
+    done_report = run_head_branch_clean()
+    done_only_report = run_head_branch_clean("--only-done")
+    check("the report modes name for -D the branch only a done worktree has checked out",
+          "done-head-branch-wt: done" in done_report.stdout
+          and "done-worktree-head-branch" in force_deletable_named(done_report.stdout)
+          and "done-worktree-head-branch" in force_deletable_named(done_only_report.stdout)
+          and "checked-out-head-branch" not in force_deletable_named(done_report.stdout),
+          done_report.stdout + done_report.stderr + done_only_report.stdout)
+    done_removal = run_head_branch_clean("--remove")
+    check("--remove removes the done worktree, then deletes its branch with -D",
+          not done_worktree.exists() and "done-worktree-head-branch" not in local_branches()
+          and f"branch done-worktree-head-branch: deleted with git branch -D, its last commit "
+              f"{done_worktree_tip}" in done_removal.stdout,
+          done_removal.stdout + done_removal.stderr)
 
 check("no run of the suite shipped into the store every run defaults to",
       not any(Path(_ship_store_for_every_run).iterdir()),
