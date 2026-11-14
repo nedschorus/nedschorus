@@ -83,6 +83,7 @@ Code keeps a log of each message sent and each verdict, with its time, in the lo
 
 - the agent-seat makes a tool call, in its agent-session's own transcript, later than the nudge that opened the wait;
 - rule 4 applies: nothing to do;
+- every rule 2 message sent on the wait named only promises to act after an event and holds, and after the last of them the agent-seat makes a TaskCreate or TaskUpdate call that sets `prerequisites` or `addBlockedBy`, the task call those messages ask for;
 - rule 1 applies: a usage limit;
 - the agent-seat starts a new agent-session;
 - the agent-seat spends tokens after the user was told.
