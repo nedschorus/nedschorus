@@ -272,11 +272,17 @@ def state_file_path(home: Path, list_id: str) -> Path:
 
 
 def read_tasks(directory: Path, unreadable: "list | None" = None) -> dict:
-    """Every readable task in the list, by id; a missing directory holds none.
+    """Every readable task in the list, by id; a missing directory holds none, and one that
+    exists but cannot be listed raises OSError.
 
     A malformed file is skipped, and its path is appended to `unreadable` when one is given."""
+    # Not Path.glob: it answers a directory it cannot list, even on EIO, as an empty one.
+    try:
+        names = os.listdir(directory)
+    except FileNotFoundError:
+        return {}
     tasks = {}
-    for path in sorted(directory.glob("*.json")):
+    for path in sorted(directory / name for name in names if name.endswith(".json")):
         try:
             task = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):

@@ -811,8 +811,8 @@ def test_unreadable_task_list_hides_nothing():
     finally:
         directory.chmod(0o755)
     check(not failed and "branch seat-v-other;" in text and "branch seat-v-held;" in text
-          and f"task list could not be read in full (PermissionError: no permission to read "
-              f"{directory})" in text,
+          and f"task list could not be read in full (PermissionError: [Errno 13] Permission "
+              f"denied: {str(directory)!r})" in text,
           "a task list directory that cannot be read hides nothing and says so", text)
     saved = listing.due_task_raise_hook_module
     listing.due_task_raise_hook_module = lambda: (_ for _ in ()).throw(OSError("stand-in"))

@@ -76,6 +76,7 @@ Run: python3 scripts/clean-worktrees-test.py
 """
 
 import atexit
+import errno
 import importlib.util
 import io
 import json
@@ -3737,17 +3738,44 @@ with tempfile.TemporaryDirectory() as scratch:
 
     head_branch_module = load_clean_worktrees_module()
     check("a task lists' directory that does not exist holds no task list",
-          head_branch_module.nedschorus_task_list_directories(scratch / "no-such-task-lists") == [])
+          head_branch_module.agent_seat_task_list_directories_in_claude_tasks_directory_list(scratch / "no-such-task-lists") == [])
     unenterable_tasks = scratch / "unenterable-task-lists"
     (unenterable_tasks / "nedschorus-some-seat-tasks").mkdir(parents=True)
     unenterable_tasks.chmod(0o444)
     try:
         unenterable_error = raised_by(
-            lambda: head_branch_module.nedschorus_task_list_directories(unenterable_tasks))
+            lambda: head_branch_module.agent_seat_task_list_directories_in_claude_tasks_directory_list(unenterable_tasks))
     finally:
         unenterable_tasks.chmod(0o755)
     check("a task lists' directory that can be listed but not entered raises rather than hiding "
           "its task lists", isinstance(unenterable_error, PermissionError), repr(unenterable_error))
+
+    # EIO cannot be caused for real here, so the listing calls raise it for one task list.
+    failing_disk_tasks = scratch / "failing-disk-task-lists"
+    failing_disk_list = failing_disk_tasks / "nedschorus-some-seat-tasks"
+    failing_disk_list.mkdir(parents=True)
+    (failing_disk_list / "1.json").write_text(json.dumps({
+        "id": "1", "subject": "holds nothing", "status": "pending"}), encoding="utf-8")
+    real_listdir, real_scandir = os.listdir, os.scandir
+
+    def failing_disk(real):
+        def listing(path="."):
+            if Path(os.fsdecode(path)) == failing_disk_list:
+                raise OSError(errno.EIO, os.strerror(errno.EIO), os.fsdecode(path))
+            return real(path)
+        return listing
+    os.listdir, os.scandir = failing_disk(real_listdir), failing_disk(real_scandir)
+    try:
+        failing_disk_held, failing_disk_failure = (
+            head_branch_module.open_task_held_branches_or_unreadable_text(failing_disk_tasks))
+    finally:
+        os.listdir, os.scandir = real_listdir, real_scandir
+    check("a task list that fails to list with EIO is named as not read in full, so no branch is "
+          "judged for git branch -D",
+          failing_disk_held is None
+          and (failing_disk_failure or "").startswith(
+              f"the task list {failing_disk_list} could not be read in full: OSError: [Errno 5]"),
+          f"{failing_disk_held} {failing_disk_failure}")
 
     head_branch_module.PULL_REQUEST_HEAD_REFS_LISTING_TIMEOUT_SECONDS = 1
     slow_ls_remote = scratch / "slow-ls-remote-stubs"
