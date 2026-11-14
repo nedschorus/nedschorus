@@ -700,11 +700,11 @@ def fast_forward_seat_checkout(seat_dir: Path) -> str:
     the remaining half of nedschorus#334.
 
     NOT checkout-freshness-catch-up.py's fast_forward_reference_checkout.
-    That one requires the checkout to be parked on main and treats any other
-    branch as a blocker — which is exactly the guarantee a REFERENCE copy
-    needs, and this checkout sits on its own `ghi-guide-agent` branch. Loosening it
-    for this caller would weaken it for the reference copy, so this is a
-    second, narrower function rather than a shared one.
+    That one requires the checkout to be parked on main and treats a detached
+    HEAD as a blocker — which is exactly the guarantee a REFERENCE copy needs,
+    and this checkout is an agent-home, resting detached at origin/main.
+    Loosening it for this caller would weaken it for the reference copy, so
+    this is a second, narrower function rather than a shared one.
 
     FRESHNESS MUST NEVER FAIL AN ASK. Every failure path here returns a line
     and lets the ask proceed against whatever is on disk. A slightly stale
@@ -736,8 +736,8 @@ def fast_forward_seat_checkout(seat_dir: Path) -> str:
     tracked_changes = [entry for entry in git_output.status_entries(status.stdout)
                        if entry.code != "??"]
     if tracked_changes:
-        # ghi-guide-agent's document-side link repairs go through ghi-issue-write.py's
-        # pull requests, so uncommitted tracked changes here are real work, not debris.
+        # The ask writes no tracked file here, so a tracked change is work
+        # someone left in the agent-home, not debris to move past.
         return (f"ghi-guide-agent-ask: the seat checkout has {len(tracked_changes)} uncommitted "
                 f"tracked change(s); not refreshing it")
 
