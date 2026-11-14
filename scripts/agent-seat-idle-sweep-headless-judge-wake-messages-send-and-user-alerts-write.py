@@ -133,7 +133,8 @@ LIMIT_ENDED_BY_ACCOUNT = "the claude.ai account logged in on {machine} changed"
 ACCOUNT_NOTICE_TEXT = (
     "The claude.ai account logged in on {machine} changed at {time}. Usage limits are now the new "
     "account's, so a limit message you saw before then, with its reset time, may no longer apply. "
-    "Retry now any work a usage limit stopped, such as a subagent or a cold-read-cell; if the retry "
+    "Retry now any work a usage limit stopped that has not run again since, such as a subagent or "
+    "a cold-read-cell; if the retry "
     "stops on a limit again, that limit is the new account's. A page you published to claude.ai "
     "under the earlier account, such as an approval-walk item page, may not open for the user; "
     "GitHub issue [A read-only web server on ned-box renders Markdown files as web pages on the "
@@ -217,8 +218,9 @@ commands it launched, under own_running_background_commands, still run. Say so, 
 those commands with how long it has run, such as "Your subagent ae10c20d94ca876c9 reported 124 \
 minutes ago, but background command bgyicuvln, which it started 131 minutes ago, has not \
 finished. Is it still needed?". \
-With nothing running, ask what is going on, such as "You said "I'm starting the PR 1633 work now" 6 \
-minutes ago and have made no tool call since. What's going on?". If it could not act now, write \
+With nothing running, ask what is going on, such as "Your task "Open the pull request for the \
+reviewed fix" is open and nothing holds it, and you have made no tool call for 12 minutes. What's \
+going on?". If it could not act now, write \
 no message. Send nothing yourself: the program sends the message.
 
 Answer: send, whether the agent-seat should get a message; message, the message, or an empty string \
