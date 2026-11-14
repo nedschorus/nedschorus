@@ -851,6 +851,38 @@ try:
     machine = Machine()
     machine.seat("alpha", [user("go"), assistant("Done."), turn_end()])
     machine.seat("beta", [user("go"), assistant("Done."), turn_end()])
+    machine.task("alpha", "1")
+    machine.task("beta", "1", metadata={"prerequisites": [{"pr_merged": 50}]})
+    machine.gh_responses.write_text(json.dumps({"pr:50": {"state": "OPEN"}}))
+    unlistable_tasks = machine.tasks / "nedschorus-alpha-tasks"
+    unlistable_tasks.chmod(0o000)
+    try:
+        code, verdicts, _ = machine.run("--agent-seat", "alpha", "--agent-seat", "beta")
+    finally:
+        unlistable_tasks.chmod(0o755)
+    check("a task list that cannot be listed: that agent-seat's error, and the next agent-seat "
+          "still gets its verdict",
+          code == 1 and verdicts.get("alpha", {}).get("rule", "no verdict") is None
+          and verdicts["alpha"]["errors"][0].startswith(f"the task list {unlistable_tasks} could not "
+                                                        "be listed")
+          and verdicts.get("beta", {}).get("errors") == [] and verdicts["beta"]["rule"] == 4,
+          (code, verdicts))
+    unlistable_tasks = Path(tempfile.mkdtemp(dir=str(SUITE_ROOT)))
+    unlistable_tasks.chmod(0o000)
+    try:
+        program.open_tasks_nothing_holds(unlistable_tasks, checker=None)
+        message = None
+    except program.ReadFailure as error:
+        message = str(error)
+    finally:
+        unlistable_tasks.chmod(0o755)
+    check("open tasks nothing holds, from a task list that cannot be listed: a read failure",
+          message is not None
+          and message.startswith(f"the task list {unlistable_tasks} could not be listed")
+          and "holds the agent-seat's work is unknown" in message, message)
+    machine = Machine()
+    machine.seat("alpha", [user("go"), assistant("Done."), turn_end()])
+    machine.seat("beta", [user("go"), assistant("Done."), turn_end()])
     machine.task("alpha", "1", metadata={"prerequisites": [{"pr_merged": 51}]})
     machine.task("beta", "1", metadata={"prerequisites": [{"pr_merged": 50}]})
     machine.gh_responses.write_text(json.dumps({"pr:50": {"state": "MERGED"}}))

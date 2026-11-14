@@ -451,17 +451,28 @@ def logged_in_account(claude_json):
     return account.get("accountUuid") if isinstance(account, dict) else None
 
 
+def tasks_of_task_list(task_directory, unknown_without_them):
+    """Every task in the agent-seat's task list, by id, as the due-task hook reads it; a missing
+    task list holds none. Raises ReadFailure, completed by unknown_without_them, such as "whether it
+    backs a promise of the agent-seat", when the list or one of its task files cannot be read."""
+    unreadable = []
+    try:
+        tasks = due_task_hook.read_tasks(task_directory, unreadable)
+    except OSError as error:
+        raise ReadFailure(f"the task list {task_directory} could not be listed ({error}), so "
+                          f"{unknown_without_them} is unknown. Repair the directory so that it "
+                          "can be listed, then run this program again.") from error
+    if unreadable:
+        raise ReadFailure(f"{unreadable[0]} could not be read as a task with an id, so "
+                          f"{unknown_without_them} is unknown. Repair the file so that it holds a "
+                          "task with an id, or remove it if it is not a task, then run this program "
+                          "again.")
+    return tasks
+
+
 def open_tasks_nothing_holds(task_directory, checker):
     """Open tasks nothing recorded holds back, as the due-task hook counts them for its idle check."""
-    if not task_directory.is_dir():
-        return []
-    unreadable = []
-    tasks = due_task_hook.read_tasks(task_directory, unreadable)
-    if unreadable:
-        raise ReadFailure(f"{unreadable[0]} could not be read as a task with an id, so whether it "
-                          "holds the agent-seat's work is unknown. Repair the file so that it holds "
-                          "a task with an id, or remove it if it is not a task, then run this "
-                          "program again.")
+    tasks = tasks_of_task_list(task_directory, "whether it holds the agent-seat's work")
     # The checker is shared by every agent-seat, so only the failures appended here are this one's.
     failures_before = len(checker.gh_failures)
     free, _ = due_task_hook.unheld_and_held_tasks(tasks, task_directory, checker)
@@ -474,15 +485,7 @@ def open_tasks_nothing_holds(task_directory, checker):
 def open_tasks_with_prerequisites_or_blocked_by(task_directory):
     """Every open task that waits on something, whenever it was created: any of them may be the
     one that backs a promise or a hold."""
-    if not task_directory.is_dir():
-        return []
-    unreadable = []
-    tasks = due_task_hook.read_tasks(task_directory, unreadable)
-    if unreadable:
-        raise ReadFailure(f"{unreadable[0]} could not be read as a task with an id, so whether it "
-                          "backs a promise of the agent-seat is unknown. Repair the file so that "
-                          "it holds a task with an id, or remove it if it is not a task, then run "
-                          "this program again.")
+    tasks = tasks_of_task_list(task_directory, "whether it backs a promise of the agent-seat")
     waiting = []
     for task_id, task in tasks.items():
         prerequisites = (task.get("metadata") or {}).get("prerequisites")
