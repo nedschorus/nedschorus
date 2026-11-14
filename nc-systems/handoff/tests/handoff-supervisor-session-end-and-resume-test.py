@@ -1334,6 +1334,13 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
           all(supervisor.AGENT_EXIT_CODE_STATE_KEY not in launched_state
               for launched_state in looping.state_at_each_launch),
           str(looping.state_at_each_launch))
+    looping_session_id = looping.launches[0][0]
+    check("BUDGET: the console says launching for the first launch and resuming for the resume",
+          [line for line in looping.printed.splitlines()
+           if f" session {looping_session_id} (generation 0)" in line]
+          == [f"handoff-supervisor: launching session {looping_session_id} (generation 0)",
+              f"handoff-supervisor: resuming session {looping_session_id} (generation 0)"],
+          looping.printed[-600:])
 
     # 4. THE BUDGET RESETS. The second session does real work before dying, so
     # the resume that produced it is not a workless one and the budget comes
