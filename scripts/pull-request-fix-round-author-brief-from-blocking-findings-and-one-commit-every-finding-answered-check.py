@@ -261,9 +261,11 @@ WORKTREE_CREATOR_FILE_NAME = "agent-seat-worktree-create-with-owner-file.py"
 # git fetch, then git worktree add, which checks out the whole tree.
 WORKTREE_CREATOR_TIMEOUT_SECONDS = 300
 PULL_REQUEST_FIELDS = ("url", "headRefOid", "headRefName")
-# scripts/branch-conflict-check.py's exit code for a conflict, and the answer line that replaces the pull request.
+# scripts/branch-conflict-check.py's exit code for a conflict, its verdict line for one, and the answer line that
+# replaces the pull request. Python exits 1 on an uncaught exception too, so exit 1 is a conflict only with the line.
 CONFLICT_CHECK_EXIT_CONFLICT = 1
 CONFLICT_CHECK_EXIT_NO_CONFLICT = 0
+CONFLICT_CHECK_CONFLICT_VERDICT_PREFIX = "VERDICT: CONFLICT"
 CONFLICT_CHECK_REPLACE_ANSWER_PREFIX = "ANSWER: replace"
 # The check reads GitHub up to 6 times, 10 seconds apart, after a fetch.
 CONFLICT_CHECK_TIMEOUT_SECONDS = 300
@@ -650,7 +652,8 @@ def conflict_check_report(number):
     report = completed.stdout.splitlines()
     if completed.returncode == CONFLICT_CHECK_EXIT_NO_CONFLICT:
         return None
-    if completed.returncode != CONFLICT_CHECK_EXIT_CONFLICT:
+    if (completed.returncode != CONFLICT_CHECK_EXIT_CONFLICT
+            or not any(line.startswith(CONFLICT_CHECK_CONFLICT_VERDICT_PREFIX) for line in report)):
         raise StepFailed(f"{shlex.join(command)} exited {completed.returncode}, so whether this pull request "
                          "conflicts with main is not known. It printed:\n"
                          + (completed.stdout + completed.stderr).strip())
