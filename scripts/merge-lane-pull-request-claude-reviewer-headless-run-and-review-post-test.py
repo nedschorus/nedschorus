@@ -714,7 +714,13 @@ def main():
                 ("not JSON", "{", "is not JSON ("),
                 ("not a JSON object", "[]", "is JSON but not a JSON object"),
                 ("not JSON, with its next step", "{",
-                 "main's settings file.\nFix .claude/settings.json through a pull request to main"),
+                 "main's settings file.\nFix .claude/settings.json through a pull request to main, "
+                 "then review pull request 7 again; until that fix merges, every Claude review is "
+                 "refused this way.\nIf the cause above"),
+                ("not a JSON object, with its next step", "[]",
+                 "main's settings file.\nFix .claude/settings.json through a pull request to main, "
+                 "then review pull request 7 again; until that fix merges, every Claude review is "
+                 "refused this way.\nIf the cause above"),
                 ("naming the project directory in a form this program does not rewrite",
                  json.dumps({"hooks": {"Stop": [{"hooks": [
                      {"type": "command",
@@ -732,7 +738,13 @@ def main():
                      {"type": "command",
                       "command": 'python3 "$CLAUDE_PROJECT_DIR"/scripts/stop-hook.py'}]}]}}),
                  "Each string that still names it, by its JSON path:\n  $.env: key "
-                 "CLAUDE_PROJECT_DIR_COPY\nThrough a pull request to main, either change each one listed")):
+                 "CLAUDE_PROJECT_DIR_COPY\nThrough a pull request to main, either change each one listed"),
+                ("naming the project directory in a form this program does not rewrite, with its "
+                 "next step",
+                 json.dumps({"hooks": {"Stop": [{"hooks": [
+                     {"type": "command",
+                      "command": 'python3 "${CLAUDE_PROJECT_DIR%/}"/scripts/stop-hook.py'}]}]}}),
+                 "; once that pull request merges, review pull request 7 again.\nIf the cause above")):
             case = Case(scratch)
             if settings_text is None:
                 case.main_settings_file.unlink()
@@ -747,7 +759,7 @@ def main():
                   and expected in case.stdout, case.detail)
 
         repository_settings = load_program().claude_code_project_settings_read_from_review_tools_worktree_at_main_with_claude_project_dir_replaced_by_its_path(
-            PROGRAM.resolve().parents[1])
+            PROGRAM.resolve().parents[1], 7)
         check("this repository's own .claude/settings.json is rewritten whole, so no command in "
               "it runs a head worktree's script",
               lambda: "CLAUDE_PROJECT_DIR" not in json.dumps(repository_settings)

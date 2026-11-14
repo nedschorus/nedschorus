@@ -247,7 +247,7 @@ def hand_over_note(note, record, number):
 
 
 def claude_code_project_settings_read_from_review_tools_worktree_at_main_with_claude_project_dir_replaced_by_its_path(
-        review_tools_worktree_at_main):
+        review_tools_worktree_at_main, number):
     """Return its project settings with each project directory reference naming it."""
     settings_file = review_tools_worktree_at_main / PROJECT_SETTINGS_FILE
     text = read_text(settings_file)
@@ -257,15 +257,15 @@ def claude_code_project_settings_read_from_review_tools_worktree_at_main_with_cl
         raise Refused(f"main's project settings file {settings_file} is not JSON ({error}), so "
                       f"the reviewer was not started, since the reviewer must run with the Claude Code "
                       f"hooks in main's settings file.\n"
-                      f"Fix {PROJECT_SETTINGS_FILE} through a pull request to main, then review this "
-                      f"pull request again; until that fix merges, every Claude review is refused "
+                      f"Fix {PROJECT_SETTINGS_FILE} through a pull request to main, then review pull "
+                      f"request {number} again; until that fix merges, every Claude review is refused "
                       f"this way")
     if not isinstance(settings, dict):
         raise Refused(f"main's project settings file {settings_file} is JSON but not a JSON "
                       f"object, so the reviewer was not started, since the reviewer must run with the "
                       f"Claude Code hooks in main's settings file.\n"
-                      f"Fix {PROJECT_SETTINGS_FILE} through a pull request to main, then review this "
-                      f"pull request again; until that fix merges, every Claude review is refused "
+                      f"Fix {PROJECT_SETTINGS_FILE} through a pull request to main, then review pull "
+                      f"request {number} again; until that fix merges, every Claude review is refused "
                       f"this way")
 
     def rewritten(value):
@@ -302,7 +302,8 @@ def claude_code_project_settings_read_from_review_tools_worktree_at_main_with_cl
                       f"Through a pull request to main, either change each one listed so it names "
                       f"CLAUDE_PROJECT_DIR only in one of those three forms, in {PROJECT_SETTINGS_FILE}, "
                       f"or add its form to the regular expression PROJECT_DIRECTORY_REFERENCE in "
-                      f"{Path(__file__).resolve()}; then review this pull request again")
+                      f"{Path(__file__).resolve()}; once that pull request merges, review pull request "
+                      f"{number} again")
     return settings
 
 
@@ -436,7 +437,7 @@ def main(argv=None):
                 f"would fail after the reviewer ran.\nAdd each key named above to the schema's "
                 f"top-level \"required\" list, making the list if the schema has none")
         main_project_settings = claude_code_project_settings_read_from_review_tools_worktree_at_main_with_claude_project_dir_replaced_by_its_path(
-            arguments.review_tools_worktree_at_main)
+            arguments.review_tools_worktree_at_main, number)
         if not (here / POST_SCRIPT_NAME).is_file():
             raise Refused(f"the posting script {here / POST_SCRIPT_NAME} is missing")
         at = git(head_worktree, "rev-parse", "HEAD")
