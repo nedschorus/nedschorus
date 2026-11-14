@@ -1323,16 +1323,32 @@ def test_close_records_that_the_answer_took_effect():
     case = Case(next_to_present="item 4 of 9")
     case.run("check")
     result = case.run("close")
-    check("close records an approval that took effect, repeats the status lines, and says to start ready work",
+    check("close records an approval that took effect, prints no status line, and says to start ready work",
           result.returncode == 0
           and result.stdout.rstrip("\n").split("\n") == [
-              "item 4 of 9's answer is recorded in the minutes, and its change may now be made.",
-              "Your next message must include these lines, as they are:",
-              "no proposed text marked"] + took_effect_next(case)
+              "item 4 of 9's answer is recorded in the minutes, and its change may now be made."]
+          + took_effect_next(case)
           and case.minutes.read_text().rstrip().endswith(
               "item 4 of 9: approved; every text the change adds has had a fast read. <accepted>\n"
               f"#next_to_present item 6 of {WALK_DOCUMENT_COUNTED_M}"),
           described(result))
+
+
+NEXT_MESSAGE_LINES_HEADER = "Your next message must include these lines, as they are:"
+
+
+def test_an_answer_that_takes_effect_prints_no_fast_read_lines():
+    for flags in ((), ("--obvious",), ("--disapproved",)):
+        case = Case()
+        checked = case.run("check", *flags)
+        closed = case.run("close")
+        check(f"close after check {' '.join(flags) or 'with no flag'} prints neither the fast-read lines check "
+              "wrote nor the line telling the agent to pass them on",
+              checked.returncode == 0 and "fast read" in checked.stdout and closed.returncode == 0
+              and closed.stdout.split("\n")[0] == ("item 3 of 9's answer is recorded in the minutes, and its change "
+                                                   "may now be made.")
+              and "fast read" not in closed.stdout and NEXT_MESSAGE_LINES_HEADER not in closed.stdout,
+              described(checked) + described(closed))
 
 
 def test_each_answer_is_recorded_as_its_word():
@@ -1676,6 +1692,7 @@ def test_close_holds_the_answer_for_a_waiting_new_item():
           and lines[0] == ("item 3 of 9's answer does not take effect yet: item 5 of 9, which a fast-read finding "
                            "raised, waits for the user's answer, and the minutes record item 3 of 9's answer as held "
                            "until he answers item 5 of 9.")
+          and lines[1] == NEXT_MESSAGE_LINES_HEADER
           and sum("fast read had to be run" in line for line in lines) == 2
           and lines[-1] == (f"Then run `python3 {PROGRAM} approval-walk-waiting-item-cold-read-fast-read --cwd "
                             f"{shlex.quote(str(case.checkout.resolve()))}`, which gives item 5 of 9 its "
@@ -1840,8 +1857,8 @@ def test_a_deferral_is_recorded_and_the_item_comes_back_before_the_summary_item(
     closed = case.run("close")
     check("close records a deferral as open and names the item after it, with no line about undoing a committed change",
           closed.returncode == 0
-          and closed.stdout.split("\n")[0] == ("item 2 of 5 is deferred, and the minutes record it; it comes back "
-                                              "just before the summary item.")
+          and closed.stdout.split("\n")[:2] == ["item 2 of 5 is deferred, and the minutes record it; it comes back "
+                                               "just before the summary item.", NEXT_MESSAGE_LINES_HEADER]
           and UNDO_COMMITTED_CHANGE_LINE not in closed.stdout
           and "item 2 of 5: deferred; it moves to just before the summary item. <open>\n" in case.minutes.read_text()
           and marker(case) == "#next_to_present item 3 of 5", described(closed) + case.minutes.read_text())
@@ -2865,9 +2882,8 @@ def test_each_parts_answer_is_recorded_and_close_records_each_parts_outcome():
               "included, and moves on to the next item",
               closed.returncode == 0
               and closed.stdout.rstrip("\n").split("\n") == [
-                  "item 4 of 9's answer is recorded in the minutes, and its change may now be made.",
-                  "Your next message must include these lines, as they are:",
-                  "no proposed text marked"] + took_effect_next(case)
+                  "item 4 of 9's answer is recorded in the minutes, and its change may now be made."]
+              + took_effect_next(case)
               and case.minutes.read_text().rstrip().endswith(
                   f"item 4 of 9: {recorded}; every text the change adds has had a fast read.\n"
                   f"#next_to_present item 6 of {WALK_DOCUMENT_COUNTED_M}"), described(closed) + case.minutes.read_text())
@@ -3498,8 +3514,8 @@ def test_an_item_an_earlier_ruling_decides_is_fast_read_recorded_and_not_shown()
               "it. <accepted>\n" in case.minutes.read_text()
           and lines[:3] == ["item 3 of 9 is recorded in the minutes as settled without being shown to the user.",
                             "List it, with its number, in one line of your next message to the user.",
-                            "Its change may now be made; the fast reads of the texts it adds:"]
-          and sum("fast read had to be run" in line for line in lines) == 2
+                            "Its change may now be made."]
+          and not any("fast read" in line for line in lines)
           and marker(case) == f"#next_to_present item 4 of {WALK_DOCUMENT_COUNTED_M}",
           described(closed) + case.minutes.read_text())
 
