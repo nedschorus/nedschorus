@@ -65,9 +65,8 @@ with the design:
   4. THE TRIAGE FILE IS REPLACED, AND EACH DISPLACED COPY'S sha256 IS ANNOUNCED
      (user-ruled 2026-09-20, item 4 of the walk
      md-skills-seat-open-decisions-2026-09-20). The triage file is
-     cold-read-triage.md; an older record, and a sanity-check record, names
-     it triage.md. The shipper replaces whichever of the two the record
-     holds; when it holds both, it replaces cold-read-triage.md and leaves
+     cold-read-triage.md; an older record names it triage.md. The shipper
+     replaces whichever of the two the record holds; when it holds both, it replaces cold-read-triage.md and leaves
      triage.md as it is. The store treats the two names as two separate
      files. When the store holds the triage file under one name and the
      record holds it only under the other, rule 2's check for a store file
@@ -1509,8 +1508,9 @@ def ship_from_command_line(description: str, records_dir: pathlib.Path,
     holding a second copy, so the two cannot drift on what --all skips or what
     each exit code means.
 
-    RULE 4 REACHES THAT KIND ONLY THROUGH THE NAME triage.md, which a
-    sanity-check record does not use: its twice-written file is
+    RULE 4 REACHES THAT KIND ONLY THROUGH THE NAMES cold-read-triage.md AND
+    triage.md, which a sanity-check record written today does not use: its
+    twice-written file is
     sanity-check-finding-dispositions.md, written at the run's close and updated as the
     findings' status moves, and it stays add-only and refused on difference.
     That is the same defect rule 4 fixes here, left open in that kind.
