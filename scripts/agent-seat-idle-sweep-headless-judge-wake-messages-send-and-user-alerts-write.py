@@ -379,13 +379,10 @@ class SweepLog:
 
     def read_failures_open(self):
         open_failures = set()
+        record = {"read_failure": open_failures.add, "read_failure_ended": open_failures.discard}
         for event in self.events:
-            if event.get("event") in ("read_failure", "read_failure_ended"):
-                key = (event["agent_seat"], event["error"])
-                if event["event"] == "read_failure":
-                    open_failures.add(key)
-                else:
-                    open_failures.discard(key)
+            if event.get("event") in record:
+                record[event["event"]]((event["agent_seat"], event["error"]))
         return open_failures
 
     def alerted(self, key):
