@@ -88,6 +88,17 @@ for case_name, arguments in [
           line is None and "text_the_failure_line_contains" in said
           and "which_lines_to_quote_in_the_report" in said, line)
 
+try:
+    line = next_step_lines.git_failure_next_step_lines("`p --x`", "p", "p: could not")
+    said = None
+except TypeError as error:
+    line = None
+    said = str(error)
+check("the failure text, given third by position, is refused by the signature: every argument after "
+      "program is text, so one given by position could land in another's role unnoticed",
+      line is None and "positional" in said
+      and "which_lines_to_quote_in_the_report" not in said, (line, said))
+
 line = next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
     "at your next Edit", "h:")
 check("a hook's line names the prefix to look for, says any git failure counts, when to "
