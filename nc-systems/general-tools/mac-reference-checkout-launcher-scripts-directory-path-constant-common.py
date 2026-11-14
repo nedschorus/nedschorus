@@ -20,3 +20,14 @@ def mac_reference_checkout_launcher_path_agent_seat_start_command_text_for_user_
     launcher_name is launch-claude-ubuntu, for an agent-seat on ned-box, or launch-claude-mac.
     """
     return f"{MAC_REFERENCE_CHECKOUT_LAUNCHER_SCRIPTS_DIRECTORY_PATH}/{launcher_name} {agent_seat}"
+
+
+def mac_reference_checkout_launcher_agent_seat_start_command_agent_instruction_to_ask_user_to_type_in_mac_terminal(
+        agent_seat: str, agent_seat_is_on_ned_box: bool) -> str:
+    """Return the clause, starting "ask the user", that tells an agent how to have agent_seat started.
+
+    The user runs it because an agent on ned-box cannot run a command on the Mac.
+    """
+    launcher_name = "launch-claude-ubuntu" if agent_seat_is_on_ned_box else "launch-claude-mac"
+    return (f"ask the user to run `{mac_reference_checkout_launcher_path_agent_seat_start_command_text_for_user_to_type(launcher_name, agent_seat)}` "
+            "in a Terminal on his Mac")

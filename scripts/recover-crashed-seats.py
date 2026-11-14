@@ -654,10 +654,8 @@ def launcher_path():
 def reach_clause_for_a_running_seat(name: str) -> str:
     """Return the report clause naming how the operator opens a seat recovery left running."""
     # Recovery launches detached on the seat's own tmux socket, where a plain `tmux attach` finds nothing.
-    if launcher_path() is not None:
-        return f"; reach it with: {mac_launcher_command('launch-claude-mac', name)}"
-    return (f"; reach it with: {mac_launcher_command('launch-claude-ubuntu', name)} "
-            f"from the Mac, or tmux -L {name} attach -t {name} here")
+    launcher_name = "launch-claude-mac" if launcher_path() is not None else "launch-claude-ubuntu"
+    return f"; the user reaches it by running {mac_launcher_command(launcher_name, name)} in a Terminal on his Mac"
 
 
 WINDOW_SENDER_PATH = Path(__file__).resolve().with_name(
@@ -1251,10 +1249,9 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
                     f"answer it in the seat's tmux session{reach_clause_for_a_running_seat(name)}")
         return (f"{name}: {SEAT_ASKED_TO_BE_CONSULTED_REPORT_MARKER} — an unconsumed handoff "
                 f"(counter {counter}) asks to be consulted before a relaunch: {reason}. Nothing "
-                f"was launched. To bring it back, launch it by hand from the Mac "
-                f"({mac_launcher_command('launch-claude-mac', name)} for an agent-seat on the Mac, "
-                f"{mac_launcher_command('launch-claude-ubuntu', name)} for one on ned-box) "
-                "and answer its supervisor's restart question")
+                "was launched. To bring it back, "
+                f"{mac_reference_checkout_path_constant.mac_reference_checkout_launcher_agent_seat_start_command_agent_instruction_to_ask_user_to_type_in_mac_terminal(name, launcher_path() is None)} "
+                "and to answer its supervisor's restart question in that Terminal")
 
     if verdict == "offer-after-recorded-exit":
         exit_code, recorded_at, session_id = detail
