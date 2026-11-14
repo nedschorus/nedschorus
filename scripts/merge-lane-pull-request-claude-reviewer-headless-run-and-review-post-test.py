@@ -758,6 +758,18 @@ def main():
                   and str(case.main_settings_file) in case.stdout
                   and expected in case.stdout, case.detail)
 
+        case = Case(scratch)
+        case.main_settings_file.write_text(json.dumps(
+            {**MAIN_PROJECT_SETTINGS, "env": {"${CLAUDE_PROJECT_DIR}_COPY": "x"}}))
+        case.run("valid")
+        settings_given = (case.claude_calls[0]["argv"][case.claude_calls[0]["argv"].index("--settings") + 1]
+                          if case.claude_calls else "")
+        check("a key naming the project directory in a form this program rewrites is rewritten "
+              "like a value, so the reviewer runs",
+              lambda: case.code == 0
+              and json.loads(settings_given)["env"] == {f"{case.main_worktree}_COPY": "x"},
+              case.detail)
+
         repository_settings = load_program().claude_code_project_settings_read_from_review_tools_worktree_at_main_with_claude_project_dir_replaced_by_its_path(
             PROGRAM.resolve().parents[1], 7)
         check("this repository's own .claude/settings.json is rewritten whole, so no command in "
