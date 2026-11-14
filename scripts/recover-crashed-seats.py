@@ -655,16 +655,21 @@ def reach_clause_for_a_running_seat(name: str) -> str:
     """Return the report clause naming how the operator opens a seat recovery left running."""
     # Recovery launches detached on the seat's own tmux socket, where a plain `tmux attach` finds nothing.
     if launcher_path() is not None:
-        return f"; reach it with: launch-claude-mac {name}"
-    return (f"; reach it with: {LAUNCH_CLAUDE_UBUNTU_SCRIPT_PATH_IN_MAC_REPOSITORY_CLONE} {name} "
+        return f"; reach it with: {mac_launcher_command('launch-claude-mac', name)}"
+    return (f"; reach it with: {mac_launcher_command('launch-claude-ubuntu', name)} "
             f"from the Mac, or tmux -L {name} attach -t {name} here")
 
 
 WINDOW_SENDER_PATH = Path(__file__).resolve().with_name(
     "open-mac-window-from-ned-box.py")
-# The Mac's own clone; this path is shown to the user, who runs it in a Mac Terminal.
-LAUNCH_CLAUDE_UBUNTU_SCRIPT_PATH_IN_MAC_REPOSITORY_CLONE = (
-    "/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu")
+_mac_reference_checkout_path_constant_specification = importlib.util.spec_from_file_location(
+    "mac_reference_checkout_launcher_scripts_directory_path_constant_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "mac-reference-checkout-launcher-scripts-directory-path-constant-common.py")
+mac_reference_checkout_path_constant = importlib.util.module_from_spec(_mac_reference_checkout_path_constant_specification)
+_mac_reference_checkout_path_constant_specification.loader.exec_module(mac_reference_checkout_path_constant)
+mac_launcher_command = (
+    mac_reference_checkout_path_constant.mac_reference_checkout_launcher_path_agent_seat_start_command_text_for_user_to_type)
 AGENT_SEAT_MAC_WINDOW_NOT_OPENED_REPORT_TEXT = "WINDOW NOT OPENED"
 ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_OPEN_FAILED_EXIT_STATUS = 3
 
@@ -758,8 +763,8 @@ def by_hand_launch_command_for_seat(name: str, seat_directory: Path, handoff_dir
         "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS=" + shlex.quote(
             compose_supervisor_arguments_for_seat_launch(handoff_directory,
                                                          extra_supervisor_arguments)),
-        "launch-claude-ubuntu" if launcher is None else shlex.quote(str(launcher)),
-        shlex.quote(name),
+        mac_launcher_command("launch-claude-ubuntu", shlex.quote(name)) if launcher is None
+        else f"{shlex.quote(str(launcher))} {shlex.quote(name)}",
     ]
     if first_prompt_file is not None:
         words += ["--first-prompt-file", shlex.quote(str(first_prompt_file))]
@@ -1246,8 +1251,10 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
                     f"answer it in the seat's tmux session{reach_clause_for_a_running_seat(name)}")
         return (f"{name}: {SEAT_ASKED_TO_BE_CONSULTED_REPORT_MARKER} — an unconsumed handoff "
                 f"(counter {counter}) asks to be consulted before a relaunch: {reason}. Nothing "
-                f"was launched. To bring it back, launch it by hand (launch-claude-mac {name} "
-                f"or launch-claude-ubuntu {name}) and answer its supervisor's restart question")
+                f"was launched. To bring it back, launch it by hand from the Mac "
+                f"({mac_launcher_command('launch-claude-mac', name)} for an agent-seat on the Mac, "
+                f"{mac_launcher_command('launch-claude-ubuntu', name)} for one on ned-box) "
+                "and answer its supervisor's restart question")
 
     if verdict == "offer-after-recorded-exit":
         exit_code, recorded_at, session_id = detail

@@ -151,8 +151,14 @@ from typing import Optional
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIRECTORY = REPOSITORY_ROOT / "scripts"
-# The launchers are not on the Mac's PATH, so a command for the user to type there names them by path.
-MAC_CHECKOUT_SCRIPTS_DIRECTORY = "/Users/el/Projects/nedschorus/scripts"
+_mac_reference_checkout_path_constant_specification = importlib.util.spec_from_file_location(
+    "mac_reference_checkout_launcher_scripts_directory_path_constant_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    / "mac-reference-checkout-launcher-scripts-directory-path-constant-common.py")
+mac_reference_checkout_path_constant = importlib.util.module_from_spec(_mac_reference_checkout_path_constant_specification)
+_mac_reference_checkout_path_constant_specification.loader.exec_module(mac_reference_checkout_path_constant)
+mac_launcher_command = (
+    mac_reference_checkout_path_constant.mac_reference_checkout_launcher_path_agent_seat_start_command_text_for_user_to_type)
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
     "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
@@ -723,13 +729,13 @@ def clear_agent_exit_record_from_supervisor_state(state: dict) -> None:
     state.pop(AGENT_EXIT_REASON_STATE_KEY, None)
 
 
-def ask_user_before_restart_with_no_terminal_stopping_message(agent_seat: str, handoff_path: Path) -> str:
+def no_terminal_to_ask_user_before_restart_stop_message(agent_seat: str, handoff_path: Path) -> str:
     return (f"handoff-supervisor: the agent-seat {agent_seat}'s session-handoff asks the user "
             "before restarting, and this handoff-supervisor has no terminal to ask on, so it "
             f"stopped {agent_seat} without restarting it.\n"
             "To start it again, run its launcher from the Mac: "
-            f"`{MAC_CHECKOUT_SCRIPTS_DIRECTORY}/launch-claude-ubuntu {agent_seat}` for an agent-seat on ned-box, "
-            f"`{MAC_CHECKOUT_SCRIPTS_DIRECTORY}/launch-claude-mac {agent_seat}` for one on the Mac. The new session is not given "
+            f"`{mac_launcher_command('launch-claude-ubuntu', agent_seat)}` for an agent-seat on ned-box, "
+            f"`{mac_launcher_command('launch-claude-mac', agent_seat)}` for one on the Mac. The new session is not given "
             f"the session-handoff's next step, which stays in {handoff_path}.")
 
 
@@ -2539,7 +2545,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             if read_ask_user_before_restart_reason_from_session_handoff_fields(boot_fields):
                 # Boot recovery must honor ask-user-before-restart too; a deliberate stand-down needs an exit record.
                 if not sys.stdin.isatty():
-                    print(ask_user_before_restart_with_no_terminal_stopping_message(settings.agent, settings.handoff_path))
+                    print(no_terminal_to_ask_user_before_restart_stop_message(settings.agent, settings.handoff_path))
                     state["consumed_counter"] = boot_counter
                     record_agent_exit_in_supervisor_state(
                         settings.state_path, state, None, reason=AGENT_EXIT_REASON_STOPPED_AT_AN_ASK_USER_BEFORE_RESTART_HANDOFF)
@@ -2730,7 +2736,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         if read_ask_user_before_restart_reason_from_session_handoff_fields(handoff_fields):
             if not sys.stdin.isatty():
                 # Without a terminal, asking would raise EOFError before consuming the handoff and trigger it again next time.
-                print(ask_user_before_restart_with_no_terminal_stopping_message(settings.agent, settings.handoff_path))
+                print(no_terminal_to_ask_user_before_restart_stop_message(settings.agent, settings.handoff_path))
                 answer = "n"
             else:
                 answer = input("handoff-supervisor: restart? y/n ").strip().lower()
@@ -2845,8 +2851,10 @@ def main(argv=None) -> int:
         print(
             "handoff-supervisor: startup stopped because the agent-seat was not started "
             "by a launcher that pins its task list; CLAUDE_CODE_TASK_LIST_ID is unset or empty.\n"
-            "For an agent-seat on the Mac, start it on the Mac with scripts/launch-claude-mac.\n"
-            "For an agent-seat on ned-box, start it on the Mac with scripts/launch-claude-ubuntu, "
+            "For an agent-seat on the Mac, start it on the Mac with "
+            f"`{mac_launcher_command('launch-claude-mac', arguments.agent)}`.\n"
+            "For an agent-seat on ned-box, start it on the Mac with "
+            f"`{mac_launcher_command('launch-claude-ubuntu', arguments.agent)}`, "
             "which reaches ned-box over ssh.",
             file=sys.stderr,
         )
@@ -2858,8 +2866,8 @@ def main(argv=None) -> int:
         print(agent_seat_github_token_unreadable_so_agent_seat_not_started_message_build(
             "handoff-supervisor", error,
             "start the agent-seat again with its launcher, from the Mac: "
-            f"`launch-claude-ubuntu {arguments.agent}` for an agent-seat on ned-box, "
-            f"`launch-claude-mac {arguments.agent}` for one on the Mac. If the launcher left a "
+            f"`{mac_launcher_command('launch-claude-ubuntu', arguments.agent)}` for an agent-seat on ned-box, "
+            f"`{mac_launcher_command('launch-claude-mac', arguments.agent)}` for one on the Mac. If the launcher left a "
             "shell open in the agent-seat's tmux session, exit that shell first."),
             file=sys.stderr)
         return AGENT_SEAT_GITHUB_TOKEN_UNREADABLE_EXIT_STATUS

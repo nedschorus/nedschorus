@@ -75,8 +75,8 @@ def run_unpinned_task_list_startup_refusal_cases(workspace: Path):
                   and "startup stopped" in result.stderr
                   and "not started by a launcher that pins its task list" in result.stderr
                   and "CLAUDE_CODE_TASK_LIST_ID is unset or empty" in result.stderr
-                  and "scripts/launch-claude-mac" in result.stderr
-                  and "scripts/launch-claude-ubuntu" in result.stderr
+                  and "`/Users/el/Projects/nedschorus/scripts/launch-claude-mac unpinned`" in result.stderr
+                  and "`/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu unpinned`" in result.stderr
                   and "start it on the Mac" in result.stderr
                   and not (workspace / "unpinned").exists(), result.stderr)
         result = subprocess.run(
@@ -938,7 +938,7 @@ def run_launched_session_github_token_cases(workspace: Path):
         prepare(token_file)
         completed, recorded = start_supervisor("merge-lane-2", home=home)
         check(f"a {label} token file: the supervisor starts no session and exits 5, "
-              "naming the agent-seat, the account and the file",
+              "naming the agent-seat, the account, the file and the launchers by their path in the Mac checkout",
               completed.returncode == supervisor.AGENT_SEAT_GITHUB_TOKEN_UNREADABLE_EXIT_STATUS == 5
               and recorded == "no session"
               and "the agent-seat merge-lane-2 was not started" in completed.stderr
@@ -947,7 +947,8 @@ def run_launched_session_github_token_cases(workspace: Path):
               and "Do not start the agent-seat any other way" in completed.stderr
               and remedy in completed.stderr
               and "If you are an agent, do not open, write or change the file" in completed.stderr
-              and "`launch-claude-ubuntu merge-lane-2`" in completed.stderr,
+              and "`/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu merge-lane-2`" in completed.stderr
+              and "`/Users/el/Projects/nedschorus/scripts/launch-claude-mac merge-lane-2`" in completed.stderr,
               f"{recorded!r}; exit {completed.returncode}: {completed.stderr[-800:]}")
         if token_file.exists():
             token_file.chmod(0o600)
