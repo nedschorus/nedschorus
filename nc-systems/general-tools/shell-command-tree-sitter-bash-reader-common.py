@@ -563,10 +563,11 @@ def parser_unavailable_hook_output(guard_name, error, next_step_lines, environme
                 f"{COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION}, then say whether it did what "
                 f"{guard_name} exists to stop.",
                 environment))
-        return json.dumps({"hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "additionalContext": message,
-        }})
+        user_notice = (
+            f"{guard_name} let a command through unchecked on {host}, because the shell command "
+            f"reader failed on it ({error.install_output}). The agent has been told to check "
+            f"what the command did.")
+        return _parser_unavailable_hook_output_json(message, user_notice)
     message = (
         f"{guard_name} let this command through without checking it, and the command has run: "
         f"the shell parser tree-sitter-bash is missing on {host}, and installing it failed.\n"
@@ -581,10 +582,19 @@ def parser_unavailable_hook_output(guard_name, error, next_step_lines, environme
             + f"\nThen {COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION}, and say whether it did what "
             f"{guard_name} exists to stop.",
             environment))
-    return json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "additionalContext": message,
-    }})
+    user_notice = (
+        f"{guard_name} let a command through unchecked on {host}: tree-sitter-bash is missing "
+        f"there and installing it failed ({error.install_output}). The agent has been told to "
+        f"check what the command did and how to install it by hand.")
+    return _parser_unavailable_hook_output_json(message, user_notice)
+
+
+def _parser_unavailable_hook_output_json(agent_notice, user_notice):
+    """Return the PreToolUse JSON giving agent_notice to the agent and user_notice to the user."""
+    return json.dumps({
+        "hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": agent_notice},
+        "systemMessage": user_notice,
+    })
 
 
 def report_to_user_or_dispatching_agent_instruction_build(words, environment=os.environ):
