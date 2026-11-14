@@ -20,6 +20,7 @@ Run: python3 nc-systems/handoff/tests/uncommitted-work-snapshots-test.py
 """
 
 import atexit
+import contextlib
 import importlib.util
 import io
 import json
@@ -1282,6 +1283,10 @@ def test_restore_step_failures():
                  '{"owner_kind": "agent-seat", "agent_seat": "seat-six"}, where restore names '
                  '{"owner_kind": "agent-seat", "agent_seat": "seat-five"}. '
                  'scripts/git-client-side-hooks/post-checkout writes that file')
+    failing_case("whose git worktree add wrote another agent-seat's owner file, naming the "
+                 "core.hooksPath setting and the config file that sets it",
+                 worktree_add_writes_another_seats_owner_file,
+                 f"core.hooksPath is {REPOSITORY_ROOT / 'scripts' / 'git-client-side-hooks'}, set in ")
 
     real_run_git = snapshots.run_git
 
@@ -1310,6 +1315,95 @@ def test_restore_step_failures():
           and not any(line.startswith("Neither the worktree") for line in lines),
           "a worktree or branch restore cannot remove is named, with the command that removes it",
           lines)
+
+
+def test_restore_failures_say_what_restore_made():
+    real_run_git = snapshots.run_git
+
+    def run_git_failing(failing):
+        def run_git(directory, *arguments, **keywords):
+            if failing(directory, arguments):
+                return subprocess.CompletedProcess(arguments, 128, "", "refused by the test")
+            return real_run_git(directory, *arguments, **keywords)
+        return run_git
+
+    empty_restore_task_list()
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "head-fails", {"new.txt": "work\n"}, "9-7")
+    target = restored_worktree_of(main, ref)
+    branch = snapshots.restored_branch_name(ref)
+    snapshots.run_git = run_git_failing(
+        lambda directory, arguments: arguments == ("rev-parse", "HEAD") and Path(directory) == target)
+    try:
+        code, lines = run_restore(main, ref, ["new.txt"])
+    finally:
+        snapshots.run_git = real_run_git
+    check(code == snapshots.EXIT_STEP_FAILED and target.is_dir()
+          and snapshots.current_ref_value(main, ref) is not None and not restored_branch_tasks()
+          and git(target, "log", "-1", "--format=%s") == f"Restore work from {ref}"
+          and any(f"the restored work is on the branch {branch}" in line for line in lines),
+          "a restore whose commit cannot be read back says the worktree, the branch and the commit "
+          "are made, no task is opened and the ref is kept", lines)
+
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "files-fail", {"new.txt": "work\n"}, "9-8")
+    real_changed_files = snapshots.changed_files
+
+    def changed_files(*arguments):
+        raise snapshots.WorkSnapshotError("git diff-tree refused by the test")
+    snapshots.changed_files = changed_files
+    printed = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(printed):
+            code = snapshots.command_exit_code(
+                lambda: snapshots.restore_work_snapshot(main, ref, ["new.txt"], RESTORE_ENVIRONMENT,
+                                                        out=lambda text: None))
+    finally:
+        snapshots.changed_files = real_changed_files
+    branch = snapshots.restored_branch_name(ref)
+    check(code == snapshots.EXIT_STEP_FAILED and not restored_worktree_of(main, ref).exists()
+          and snapshots.current_ref_value(main, f"refs/heads/{branch}") is None
+          and printed.getvalue().startswith("FAILED: git diff-tree refused by the test. Nothing was "
+                                            "changed"),
+          "a git failure that ends restore early comes before restore changes anything, as its "
+          "message says", printed.getvalue())
+
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "branch-check-fails", {"new.txt": "trailing space \n"},
+                                       "9-10")
+    git(main, "config", "apply.whitespace", "error")
+    worktree_added = []
+
+    def branch_check_after_worktree_add(directory, arguments):
+        if arguments[:2] == ("worktree", "add"):
+            worktree_added.append(True)
+        return bool(worktree_added) and arguments[:3] == ("rev-parse", "--verify", "-q")
+    snapshots.run_git = run_git_failing(branch_check_after_worktree_add)
+    try:
+        code, lines = run_restore(main, ref, ["new.txt"])
+    finally:
+        snapshots.run_git = real_run_git
+    branch = snapshots.restored_branch_name(ref)
+    check(code == snapshots.EXIT_STEP_FAILED
+          and snapshots.current_ref_value(main, f"refs/heads/{branch}") is None
+          and not any(line.startswith("Neither the worktree") for line in lines),
+          "when git cannot say whether restore's branch is left, restore deletes it and does not "
+          "say that neither is left", lines)
+
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "hooks-unset", {"new.txt": "work\n"}, "9-11")
+    undo = git_client_side_hooks_installed_for_agent_seat(main, "seat-six")
+    snapshots.run_git = run_git_failing(
+        lambda directory, arguments: arguments[:2] == ("config", "--show-origin"))
+    try:
+        code, lines = run_restore(main, ref, ["new.txt"])
+    finally:
+        snapshots.run_git = real_run_git
+        undo()
+    hooks = Path(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir")) / "hooks"
+    check(code == snapshots.EXIT_STEP_FAILED
+          and any(f"core.hooksPath is not set, so the hook ran from {hooks}" in line for line in lines),
+          "the owner-file failure says where the hook ran from when core.hooksPath is not set", lines)
 
 
 def test_restore_task_and_ref_deletion_failures():
@@ -2265,6 +2359,7 @@ def main():
                      test_restore_reads_a_kept_name_as_a_literal_path,
                      test_restore_refusals_change_nothing, test_restore_step_failures,
                      test_restore_accepts_the_owner_file_git_worktree_add_wrote_naming_its_agent_seat,
+                     test_restore_failures_say_what_restore_made,
                      test_restore_task_and_ref_deletion_failures, test_discard,
                      test_command_line_of_restore_and_discard, test_entries_end_with_their_command,
                      test_the_cleaner_closes_a_restored_branch_task_by_its_commit,
