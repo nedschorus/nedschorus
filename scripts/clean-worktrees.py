@@ -48,7 +48,7 @@ worktree whose verdict needs a pull request is kept.
   work-snapshot (nc-systems/handoff/uncommitted-work-snapshots.py) owned by
   this invocation's own process and carrying the owner file's agent-seat, so
   the agent-seat's next agent-session is told of it once this invocation has
-  ended. The branch keeps its commits.
+  ended. The branch is kept, unless BRANCHES deletes it.
 
 IDLE WORKTREES. A worktree is idle, and is removed, owner file or not,
 when all of these hold: it is not an agent-home, which is a worktree directly
@@ -60,8 +60,8 @@ fetched; no open pull request has its branch as head branch or its HEAD as
 head commit; and no rebase, merge, cherry-pick or revert is in progress in it.
 The mtimes are read before any git command, and the cleaner's `git status`
 runs with --no-optional-locks, so that its own index refresh does not reset
-the clock. Removing an idle worktree loses nothing: its branch keeps its
-commits, as BRANCHES says. When any of these cannot be read, such as gh
+the clock. Removing an idle worktree loses nothing: its branch is kept, unless BRANCHES
+deletes it. When any of these cannot be read, such as gh
 failing or a file that cannot be read, the worktree is not idle and the other
 rules judge it. A locked worktree is not idle, since the lock is judged first,
 nor is one whose ended Claude Code lock --remove unlocks, since writing its
@@ -140,8 +140,7 @@ after the removal is reported and logged, or its log line failed, so a run
 killed or failing at any point of the removal leaves it whole. Each later --remove first finishes the removal of
 every record: it deletes what is left of the worktree's directory and of its
 registration, unless that registration's gitdir file names another worktree,
-then deletes the branch as for any removal, --remove with `git branch -d`,
-as BRANCHES says, and logs the removal with the record's discarded files.
+then deletes the branch as for any removal, --remove as BRANCHES says, and logs the removal with the record's discarded files.
 --remove-worktree-and-force-delete-its-branch PATH finishes the record of
 PATH the same way, deleting the branch with `git branch -D`. A record whose
 worktree still has its .git file and a registration git would not prune
@@ -151,11 +150,17 @@ the dead-registration line leaves it out. A record that cannot be read is,
 for --remove, a failure named with its file, and the run exits 1;
 --remove-worktree-and-force-delete-its-branch names it as kept and goes on.
 
-BRANCHES. The cleaner deletes a local branch other than main whose commits
-are all on origin/main and which no worktree has checked out, with
-`git branch -d`, and no other branch: the removed worktree's branch when it
-qualifies, and every other such branch, named on one line in the report
-modes. origin/main is read as fetched; a stale ref only keeps more.
+BRANCHES. The cleaner deletes a local branch other than main that no
+worktree has checked out, and no other branch: with `git branch -d`, one
+whose commits are all on origin/main; otherwise with `git branch -D`, one
+that is the head branch of a merged or closed pull request and whose tip
+equals that pull request's `refs/pull/<number>/head`, as GitHub reports just
+before, and that no open task on that machine names in its `branches` field.
+When GitHub cannot be reached, it deletes no branch with `-D`. It names each
+deleted branch in the report modes. origin/main is read as fetched; a stale
+ref only keeps more. A task list under ~/.claude/tasks/nedschorus-*-tasks
+that cannot be read in full stops every `-D` deletion, as GitHub out of reach
+does, and either is named on a line of its own outside --only-done.
 
 ONE NAMED WORKTREE OR BRANCH. --remove-worktree-and-force-delete-its-branch
 PATH and --force-delete-branch NAME act on the one worktree or branch named,
@@ -415,6 +420,17 @@ MAIN_BRANCH = "main"
 # One listing of every pull request serves the whole invocation; gh pages through them all.
 PULL_REQUEST_LISTING_TIMEOUT_SECONDS = 300
 PULL_REQUEST_LISTING_LIMIT = 100000
+PULL_REQUEST_HEAD_REFS_LISTING_TIMEOUT_SECONDS = 120
+PULL_REQUEST_HEAD_REF = re.compile(r"refs/pull/(\d+)/head")
+FINISHED_PULL_REQUEST_STATES = ("MERGED", "CLOSED")
+FORCE_DELETABLE_BRANCH_LINE_START = (
+    "branch ref(s) with no worktree, at the head of a merged or closed pull request, for "
+    "git branch -D: ")
+
+# Its reader of the open tasks' `branches` fields decides which branches a task holds.
+FIRST_PROMPT_LIST = (REPO_ROOT / "nc-systems" / "handoff"
+                     / "agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py")
+_first_prompt_list = None
 
 # No next-step line may contain FAILED: the handoff-supervisor counts each such line as a failure.
 WORKTREE_KEPT_AFTER_FAILURE_NEXT_REMOVE_RUN_RETRIES_LINE_TEMPLATE = (
@@ -642,6 +658,143 @@ def delete_orphaned_branch_ref(branch, repo):
     print(f"branch {branch}: deleted (no worktree, nothing beyond origin/main)")
     return append_removed_worktree_or_deleted_branch_log_lines(
         [("deleted-branch", {"branch": branch, "commit": commit})], repo, f"branch {branch}")
+
+
+def branch_refs_and_tips_with_no_worktree_not_fully_on_main(repo):
+    """Return (branch, tip commit) for each local branch other than main that no worktree holds
+    and that carries a commit origin/main lacks; raise git_output.GitCommandFailed when git cannot
+    list either."""
+    listing = git_output.run_git(repo, ["worktree", "list", "--porcelain", "-z"])
+    attached = {local_branch_name_of_full_ref(record.branch)
+                for record in git_output.worktree_records(listing)}
+    unlanded = git_output.run_git(repo, ["for-each-ref", "--format=%(objectname) %(refname:lstrip=2)",
+                                         "--no-merged", "origin/main", "refs/heads/"])
+    refs = [line.split(" ", 1) for line in os.fsdecode(unlanded).splitlines()]
+    return [(branch, tip) for tip, branch in refs if branch not in attached and branch != MAIN_BRANCH]
+
+
+def first_prompt_list_module():
+    """The first prompt's list as a module, loaded on first use, for its reader of the task-held
+    branches; only a run with a branch to judge for `git branch -D` needs it."""
+    global _first_prompt_list
+    if _first_prompt_list is None:
+        spec = importlib.util.spec_from_file_location(
+            "agent_seat_worktrees_and_branches_with_no_pull_request_first_prompt_list", FIRST_PROMPT_LIST)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _first_prompt_list = module
+    return _first_prompt_list
+
+
+def open_task_held_branches_or_unreadable_text(task_lists_directory):
+    """Return (the names the open tasks of every agent-seat task list name in their `branches`
+    field, None), or (None, why a task list could not be read in full)."""
+    directory = Path(task_lists_directory)
+    # A glob of a directory it may not read finds nothing, silently.
+    if directory.exists() and not os.access(directory, os.R_OK | os.X_OK):
+        return None, f"the task lists' directory {directory} cannot be read"
+    held = set()
+    for list_directory in sorted(directory.glob(NEDSCHORUS_TASK_LISTS_GLOB)):
+        if not list_directory.is_dir():
+            continue
+        holding = first_prompt_list_module().tasks_holding(None, list_directory)
+        if holding.unreadable:
+            return None, (f"the task list {list_directory} could not be read in full: "
+                          f"{', '.join(holding.unreadable)}")
+        held.update(holding.held)
+    return held, None
+
+
+def pull_request_head_commits_or_failure(repo):
+    """Return ({pull request number: the commit its refs/pull/<number>/head names}, None), as
+    origin reports now, or (None, why origin could not be asked)."""
+    arguments = ["ls-remote", "origin", "refs/pull/*/head"]
+    try:
+        listing = subprocess.run(["git", "-C", str(repo), *arguments], capture_output=True,
+                                 text=True, check=False,
+                                 timeout=PULL_REQUEST_HEAD_REFS_LISTING_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as error:
+        return None, f"`git {shlex.join(arguments)}` did not finish: {error}"
+    if listing.returncode != 0:
+        return None, (f"`git {shlex.join(arguments)}` exited {listing.returncode}: "
+                      f"{' '.join(listing.stderr.split())[:200] or 'no error text'}")
+    heads = {}
+    for line in listing.stdout.splitlines():
+        commit, _, ref = line.partition("\t")
+        number = PULL_REQUEST_HEAD_REF.fullmatch(ref)
+        if number:
+            heads[int(number.group(1))] = commit
+    return heads, None
+
+
+def finished_pull_request_head_branches_to_force_delete(repo, pull_requests):
+    """Return ([(branch, tip, pull request)] for each branch BRANCHES deletes with `git branch -D`,
+    None), or ([], why no branch may be deleted with -D this run); raise
+    git_output.GitCommandFailed when git cannot list the branches."""
+    candidates = branch_refs_and_tips_with_no_worktree_not_fully_on_main(repo)
+    if not candidates:
+        return [], None
+    try:
+        by_head_branch = pull_requests.by_head_branch()
+    except PullRequestListingFailed as error:
+        return [], f"GitHub could not be reached: {error}"
+    finished = [(branch, tip, [pull_request for pull_request in by_head_branch.get(branch, ())
+                               if pull_request["state"] in FINISHED_PULL_REQUEST_STATES])
+                for branch, tip in candidates]
+    finished = [entry for entry in finished if entry[2]]
+    if not finished:
+        return [], None
+    held, unreadable = open_task_held_branches_or_unreadable_text(
+        task_lists_directory_from_override_or_home_claude_tasks())
+    if unreadable:
+        return [], unreadable
+    heads, failure = pull_request_head_commits_or_failure(repo)
+    if failure:
+        return [], f"GitHub could not be reached: {failure}"
+    chosen = []
+    for branch, tip, pull_requests_of_branch in finished:
+        at_head = [pull_request for pull_request in pull_requests_of_branch
+                   if heads.get(pull_request["number"]) == tip]
+        if at_head and branch not in held:
+            chosen.append((branch, tip, at_head[0]))
+    return chosen, None
+
+
+def force_delete_finished_pull_request_head_branch(branch, tip, pull_request, repo):
+    """Delete the branch with `git branch -D` and log it; return whether git deleted it at the
+    checked tip and its log line was written."""
+    # git branch -D deletes by name, so another agent may have moved the branch since its tip was
+    # checked; git's own "(was <sha>)" says which commit it deleted. LC_ALL=C keeps that text English.
+    deletion = subprocess.run(["git", "-C", str(repo), "branch", "-D", branch],
+                              capture_output=True, text=True, check=False,
+                              env={**os.environ, "LC_ALL": "C"})
+    if deletion.returncode != 0:
+        print(f"branch {branch}: deletion FAILED — git branch -D exited {deletion.returncode}: "
+              f"{deletion.stderr.strip()[:120] or 'no error text'}")
+        return False
+    was = re.search(r"\(was ([0-9a-f]+)\)", deletion.stdout)
+    deleted = was and run_git(repo, "rev-parse", "--verify", "--quiet",
+                              f"{was.group(1)}^{{commit}}").stdout.strip()
+    if deleted == tip:
+        print(f"branch {branch}: deleted with git branch -D, its last commit {tip} being the head of "
+              f"{pull_request_text(pull_request)}")
+        return append_removed_worktree_or_deleted_branch_log_lines(
+            [("deleted-branch", {"branch": branch, "commit": tip})], repo, f"branch {branch}")
+    # One line each, so the handoff-supervisor's summary, which keeps FAILED lines, keeps the restore command.
+    restore = f"git -C {shlex.quote(str(repo))} branch {shlex.quote(branch)} {deleted or tip}"
+    if not deleted:
+        print(f"branch {branch}: deletion FAILED to be confirmed — git branch -D deleted it without "
+              f"saying which commit it pointed at, so commits made on it after its tip {tip} was "
+              f"checked may have no branch now; restore the checked tip with: {restore}, and look "
+              f"for newer commits with: git -C {shlex.quote(str(repo))} fsck --lost-found")
+    else:
+        print(f"branch {branch}: deletion FAILED — it had moved after its check, so git branch -D "
+              f"deleted its commit {deleted}, not the checked tip {tip} of "
+              f"{pull_request_text(pull_request)}; restore it with: {restore}")
+    append_removed_worktree_or_deleted_branch_log_lines(
+        [("deleted-branch", {"branch": branch, "commit": deleted or "unknown"})], repo,
+        f"branch {branch}")
+    return False
 
 
 def in_progress_git_operation_keep_reason(worktree):
@@ -1159,7 +1312,7 @@ def classify_unlocked(worktree, branch, record, pull_requests, owner_to_write=No
     # A merged or closed pull request counts only for the commit it was opened on, so a new
     # worktree on a reused branch name is not judged by an earlier pull request.
     finished_pull_requests = [pull_request for pull_request in pull_requests_of_branch
-                              if pull_request["state"] in ("MERGED", "CLOSED")
+                              if pull_request["state"] in FINISHED_PULL_REQUEST_STATES
                               and pull_request["headRefOid"] == record.head]
 
     detached_commit = None
@@ -1255,7 +1408,7 @@ def merge_lane_review_checkout_verdict(worktree, pull_requests):
     if pull_request is None:
         return Verdict(False, f"it is a merge-lane review checkout of pull request #{number}, "
                               f"which gh's listing does not hold", KEPT_NO_OWNER_FILE)
-    if pull_request["state"] not in ("MERGED", "CLOSED"):
+    if pull_request["state"] not in FINISHED_PULL_REQUEST_STATES:
         return Verdict(False, f"it is a merge-lane review checkout of "
                               f"{pull_request_text(pull_request)}", KEPT_OPEN_PULL_REQUEST)
     try:
@@ -1602,7 +1755,7 @@ def report_removal_and_delete_branch(worktree, branch, repo, head, discarded, on
                      f"{deletion.returncode}: {deletion.stderr.strip()[:120] or 'no error text'}")
     elif branch and branch != MAIN_BRANCH:
         if not fully_on_origin_main(repo, branch):
-            line += f", branch {branch} kept, since it holds commits origin/main lacks"
+            line += f", branch {branch} not deleted with git branch -d, since it holds commits origin/main lacks"
         else:
             branch_deleted = run_git(repo, "branch", "-d", branch).returncode == 0
             if branch_deleted:
@@ -1711,6 +1864,21 @@ def clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done):
         else:
             print("branch ref(s) with no worktree, nothing beyond origin/main: "
                   + ", ".join(orphaned_refs)
+                  + " — remove with: scripts/clean-worktrees.py --remove")
+
+    force_deletable, not_judged = finished_pull_request_head_branches_to_force_delete(
+        repo, pull_requests)
+    if not_judged and not only_done:
+        print(f"branches: none deleted with git branch -D, since {not_judged}")
+    if force_deletable:
+        if remove:
+            for branch, tip, pull_request in force_deletable:
+                if not force_delete_finished_pull_request_head_branch(branch, tip, pull_request, repo):
+                    failures += 1
+        else:
+            print(f"{FORCE_DELETABLE_BRANCH_LINE_START}"
+                  + ", ".join(f"{branch} (#{pull_request['number']})"
+                              for branch, _, pull_request in force_deletable)
                   + " — remove with: scripts/clean-worktrees.py --remove")
 
     if not only_done:
