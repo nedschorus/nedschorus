@@ -1261,15 +1261,17 @@ def mutation_test_one_file(path, suites, worktrees, scratch, tools, head, merge_
         raise CouldNotRun(
             f"{PROGRAM}: not run — {tools['cosmic-ray']} exited {baseline.returncode} without "
             f"making its baseline session, so no suite ran and no mutant of {path} can be "
-            f"judged:\n{(baseline.stderr or baseline.stdout).strip()}\n"
-            f"If that error is an ImportError or ModuleNotFoundError, the venv holding "
-            f"cosmic-ray is broken; rebuild it on {socket.gethostname()}, the machine this "
-            f"ran on:\n"
+            f"judged. cosmic-ray's output follows; its last line names the error it stopped "
+            f"on:\n{(baseline.stderr or baseline.stdout).strip()}\n"
+            f"If cosmic-ray's last line names an ImportError or ModuleNotFoundError, the venv "
+            f"holding cosmic-ray is broken: on {socket.gethostname()}, the machine this ran on, "
+            f"rebuild it and run again:\n"
             f"  rm -rf {venv}\n"
             f"  python3 -m venv {venv}\n"
             f"  {venv}/bin/pip install cosmic-ray=={COSMIC_RAY_VERSION}\n"
-            f"Then run again:\n"
-            f"  python3 {shlex.join(sys.argv)}")
+            f"  python3 {shlex.join(sys.argv)}\n"
+            f"If cosmic-ray's last line names any other error, running again unchanged fails "
+            f"the same way: fix that error, then run only the last of the four commands above.")
     if baseline.returncode != 0:
         # cosmic-ray writes the baseline's result before it exits 1; a baseline that crashed
         # before writing it leaves nothing to dump, and is reported as failing suites.
