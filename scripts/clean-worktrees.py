@@ -159,8 +159,12 @@ before, and that no open task on that machine names in its `branches` field.
 When GitHub cannot be reached, it deletes no branch with `-D`. It names each
 deleted branch in the report modes. origin/main is read as fetched; a stale
 ref only keeps more. A task list under ~/.claude/tasks/nedschorus-*-tasks
-that cannot be read in full stops every `-D` deletion, as GitHub out of reach
-does, and either is named on a line of its own outside --only-done.
+that cannot be read in full, or a ~/.claude/tasks that exists but cannot be
+listed, stops every `-D` deletion, as GitHub out of reach does; GitHub out of
+reach is named on a line of its own outside --only-done, and a task list not
+read on a line opening `FAILED: ` in every mode, and the run exits 1. The
+report modes also name a branch that only a done worktree has checked out,
+which --remove deletes once it has removed that worktree.
 
 ONE NAMED WORKTREE OR BRANCH. --remove-worktree-and-force-delete-its-branch
 PATH and --force-delete-branch NAME act on the one worktree or branch named,
@@ -318,6 +322,7 @@ or --force-delete-branch that is exit 1 with a FAILED line.
 """
 
 import contextlib
+import fnmatch
 import hashlib
 import importlib.util
 import json
@@ -325,6 +330,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -660,13 +666,13 @@ def delete_orphaned_branch_ref(branch, repo):
         [("deleted-branch", {"branch": branch, "commit": commit})], repo, f"branch {branch}")
 
 
-def branch_refs_and_tips_with_no_worktree_not_fully_on_main(repo):
-    """Return (branch, tip commit) for each local branch other than main that no worktree holds
-    and that carries a commit origin/main lacks; raise git_output.GitCommandFailed when git cannot
-    list either."""
+def branch_refs_and_tips_with_no_worktree_not_fully_on_main(repo, freed_branches=frozenset()):
+    """Return (branch, tip commit) for each local branch other than main that no worktree holds,
+    or that only a worktree in freed_branches' removal holds, and that carries a commit origin/main
+    lacks; raise git_output.GitCommandFailed when git cannot list either."""
     listing = git_output.run_git(repo, ["worktree", "list", "--porcelain", "-z"])
     attached = {local_branch_name_of_full_ref(record.branch)
-                for record in git_output.worktree_records(listing)}
+                for record in git_output.worktree_records(listing)} - set(freed_branches)
     unlanded = git_output.run_git(repo, ["for-each-ref", "--format=%(objectname) %(refname:lstrip=2)",
                                          "--no-merged", "origin/main", "refs/heads/"])
     refs = [line.split(" ", 1) for line in os.fsdecode(unlanded).splitlines()]
@@ -689,14 +695,13 @@ def first_prompt_list_module():
 def open_task_held_branches_or_unreadable_text(task_lists_directory):
     """Return (the names the open tasks of every agent-seat task list name in their `branches`
     field, None), or (None, why a task list could not be read in full)."""
-    directory = Path(task_lists_directory)
-    # A glob of a directory it may not read finds nothing, silently.
-    if directory.exists() and not os.access(directory, os.R_OK | os.X_OK):
-        return None, f"the task lists' directory {directory} cannot be read"
+    try:
+        list_directories = nedschorus_task_list_directories(task_lists_directory)
+    except OSError as error:
+        return None, (f"the task lists' directory {task_lists_directory} cannot be listed "
+                      f"({type(error).__name__}: {error})")
     held = set()
-    for list_directory in sorted(directory.glob(NEDSCHORUS_TASK_LISTS_GLOB)):
-        if not list_directory.is_dir():
-            continue
+    for list_directory in list_directories:
         holding = first_prompt_list_module().tasks_holding(None, list_directory)
         if holding.unreadable:
             return None, (f"the task list {list_directory} could not be read in full: "
@@ -727,37 +732,38 @@ def pull_request_head_commits_or_failure(repo):
     return heads, None
 
 
-def finished_pull_request_head_branches_to_force_delete(repo, pull_requests):
+def finished_pull_request_head_branches_to_force_delete(repo, pull_requests, freed_branches=frozenset()):
     """Return ([(branch, tip, pull request)] for each branch BRANCHES deletes with `git branch -D`,
-    None), or ([], why no branch may be deleted with -D this run); raise
+    None, None), or ([], why GitHub could not tell which, None), or ([], None, why the task lists
+    could not); a branch in freed_branches counts as checked out in no worktree. Raise
     git_output.GitCommandFailed when git cannot list the branches."""
-    candidates = branch_refs_and_tips_with_no_worktree_not_fully_on_main(repo)
+    candidates = branch_refs_and_tips_with_no_worktree_not_fully_on_main(repo, freed_branches)
     if not candidates:
-        return [], None
+        return [], None, None
     try:
         by_head_branch = pull_requests.by_head_branch()
     except PullRequestListingFailed as error:
-        return [], f"GitHub could not be reached: {error}"
+        return [], f"GitHub could not be reached: {error}", None
     finished = [(branch, tip, [pull_request for pull_request in by_head_branch.get(branch, ())
                                if pull_request["state"] in FINISHED_PULL_REQUEST_STATES])
                 for branch, tip in candidates]
     finished = [entry for entry in finished if entry[2]]
     if not finished:
-        return [], None
+        return [], None, None
     held, unreadable = open_task_held_branches_or_unreadable_text(
         task_lists_directory_from_override_or_home_claude_tasks())
     if unreadable:
-        return [], unreadable
+        return [], None, unreadable
     heads, failure = pull_request_head_commits_or_failure(repo)
     if failure:
-        return [], f"GitHub could not be reached: {failure}"
+        return [], f"GitHub could not be reached: {failure}", None
     chosen = []
     for branch, tip, pull_requests_of_branch in finished:
         at_head = [pull_request for pull_request in pull_requests_of_branch
                    if heads.get(pull_request["number"]) == tip]
         if at_head and branch not in held:
             chosen.append((branch, tip, at_head[0]))
-    return chosen, None
+    return chosen, None, None
 
 
 def force_delete_finished_pull_request_head_branch(branch, tip, pull_request, repo):
@@ -1825,6 +1831,8 @@ def clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done):
     failures, recorded = finish_or_drop_recorded_removals(repo, main_checkout, remove)
     pull_requests = PullRequestsByHeadBranchLazyCache(repo)
     kept_verdicts = []
+    # --remove deletes with -D a branch whose done worktree it has just removed; the report says so too.
+    branches_of_done_worktrees = set()
     for worktree, branch, record in list_worktrees(repo, main_checkout):
         if worktree.resolve() in recorded:
             continue
@@ -1842,6 +1850,8 @@ def clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done):
             verdict = classify(worktree, branch, record, pull_requests)
         if not verdict.done:
             kept_verdicts.append((worktree, verdict))
+        elif branch is not None:
+            branches_of_done_worktrees.add(branch)
         if remove:
             if verdict.done and not remove_worktree(worktree, branch, repo, verdict):
                 failures += 1
@@ -1866,10 +1876,13 @@ def clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done):
                   + ", ".join(orphaned_refs)
                   + " — remove with: scripts/clean-worktrees.py --remove")
 
-    force_deletable, not_judged = finished_pull_request_head_branches_to_force_delete(
-        repo, pull_requests)
+    force_deletable, not_judged, task_lists_unreadable = finished_pull_request_head_branches_to_force_delete(
+        repo, pull_requests, frozenset() if remove else branches_of_done_worktrees)
     if not_judged and not only_done:
         print(f"branches: none deleted with git branch -D, since {not_judged}")
+    if task_lists_unreadable:
+        print(f"FAILED: no branch deleted with git branch -D, since {task_lists_unreadable}")
+        failures += 1
     if force_deletable:
         if remove:
             for branch, tip, pull_request in force_deletable:
@@ -1904,6 +1917,20 @@ def task_lists_directory_from_override_or_home_claude_tasks():
 
 
 NEDSCHORUS_TASK_LISTS_GLOB = "nedschorus-*-tasks"
+
+
+def nedschorus_task_list_directories(task_lists_directory):
+    """Return the agent-seat task lists' directories in task_lists_directory, sorted, and none when
+    it does not exist; raise OSError when it, or one of them, exists but cannot be listed or
+    looked at."""
+    # Path.exists and Path.glob both answer an unreadable path as an absent one.
+    try:
+        names = os.listdir(task_lists_directory)
+    except FileNotFoundError:
+        return []
+    return [path for path in sorted(Path(task_lists_directory) / name for name in names
+                                    if fnmatch.fnmatchcase(name, NEDSCHORUS_TASK_LISTS_GLOB))
+            if stat.S_ISDIR(os.stat(path).st_mode)]
 RESTORED_BRANCH_TASKS_CLOSE_GIT_FETCH_TIMEOUT_SECONDS = 300
 
 
@@ -1911,9 +1938,13 @@ def open_restored_branch_tasks(task_lists_directory, out):
     """(task file, task) for each task restore opened that is not marked completed, and the
     number of task files that could not be read, each named in a FAILED line."""
     tasks, failures = [], 0
-    for list_directory in sorted(Path(task_lists_directory).glob(NEDSCHORUS_TASK_LISTS_GLOB)):
-        if not list_directory.is_dir():
-            continue
+    try:
+        list_directories = nedschorus_task_list_directories(task_lists_directory)
+    except OSError as error:
+        out(f"FAILED: the task lists' directory {task_lists_directory} could not be listed "
+            f"({type(error).__name__}: {error}), so no restored branch's task in it was judged")
+        return tasks, 1
+    for list_directory in list_directories:
         try:
             task_files = sorted(list_directory.iterdir())
         except OSError as error:
