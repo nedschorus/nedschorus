@@ -713,6 +713,8 @@ def main():
                 ("missing", None, "could not read"),
                 ("not JSON", "{", "is not JSON ("),
                 ("not a JSON object", "[]", "is JSON but not a JSON object"),
+                ("not JSON, with its next step", "{",
+                 "main's settings file.\nFix .claude/settings.json through a pull request to main"),
                 ("naming the project directory in a form this program does not rewrite",
                  json.dumps({"hooks": {"Stop": [{"hooks": [
                      {"type": "command",
@@ -730,7 +732,7 @@ def main():
                      {"type": "command",
                       "command": 'python3 "$CLAUDE_PROJECT_DIR"/scripts/stop-hook.py'}]}]}}),
                  "Each string that still names it, by its JSON path:\n  $.env: key "
-                 "CLAUDE_PROJECT_DIR_COPY\nWrite each")):
+                 "CLAUDE_PROJECT_DIR_COPY\nThrough a pull request to main, either change each one listed")):
             case = Case(scratch)
             if settings_text is None:
                 case.main_settings_file.unlink()
