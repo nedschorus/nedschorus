@@ -717,7 +717,20 @@ def main():
                  json.dumps({"hooks": {"Stop": [{"hooks": [
                      {"type": "command",
                       "command": 'python3 "${CLAUDE_PROJECT_DIR%/}"/scripts/stop-hook.py'}]}]}}),
-                 "still names CLAUDE_PROJECT_DIR")):
+                 "still names CLAUDE_PROJECT_DIR after each $CLAUDE_PROJECT_DIR"),
+                ("naming the project directory in a form this program does not rewrite, by the "
+                 "string's JSON path",
+                 json.dumps({"hooks": {"Stop": [{"hooks": [
+                     {"type": "command",
+                      "command": 'python3 "${CLAUDE_PROJECT_DIR%/}"/scripts/stop-hook.py'}]}]}}),
+                 "by its JSON path:\n  $.hooks.Stop[0].hooks[0].command: python3 "
+                 "\"${CLAUDE_PROJECT_DIR%/}\"/scripts/stop-hook.py\n"),
+                ("naming the project directory in a key, beside a rewritten command",
+                 json.dumps({"env": {"CLAUDE_PROJECT_DIR_COPY": "x"}, "hooks": {"Stop": [{"hooks": [
+                     {"type": "command",
+                      "command": 'python3 "$CLAUDE_PROJECT_DIR"/scripts/stop-hook.py'}]}]}}),
+                 "Each string that still names it, by its JSON path:\n  $.env: key "
+                 "CLAUDE_PROJECT_DIR_COPY\nWrite each")):
             case = Case(scratch)
             if settings_text is None:
                 case.main_settings_file.unlink()
