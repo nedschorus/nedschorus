@@ -108,9 +108,13 @@ class TopicBranchGitRecord:
                 "the run does not start and the checkout is as it was.\n"
                 "Make a worktree for the run, detached at origin/main, with: cd %s && python3 "
                 "scripts/agent-seat-worktree-create-with-owner-file.py --detach %s origin/main\n"
-                "Then start the run again with that worktree, the path the command prints, as the checkout; "
-                "the run cuts its topic branch there." % (
-                    self.component, self.repository_dir, self.repository_dir, self.component))
+                "Then build the run again over that worktree: a new TopicBranchGitRecord "
+                "(scripts/design-to-main/design-to-main-git-record.py) with the path the command prints as its "
+                "repository_dir and the same component, component_directory and design_path as this one, "
+                "and a new DesignToMainStateMachineFlow (scripts/design-to-main/design-to-main-state-machine.py) "
+                "over that record and the same launcher, then call start(%r) on that flow; "
+                "the machine's first row cuts the topic branch in that worktree." % (
+                    self.component, self.repository_dir, self.repository_dir, self.component, self.component))
 
     def require_topic_branch_start_point(self):
         """Raise TopicBranchCutRefused when the start point is absent, GitCommandFailed when git fails."""
