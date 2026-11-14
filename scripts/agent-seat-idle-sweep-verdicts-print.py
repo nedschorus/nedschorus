@@ -12,8 +12,9 @@ verdict_for_seat itself, judges the cases marked "judge", sends, and runs on a s
 What it reads, for each agent-seat that has a handoff-supervisor state file
 (`<handoff directory>/<seat>-supervisor-state.json`):
 - the agent-session the supervisor launched last, and its transcript under the projects root,
-  with every subagent transcript under that agent-session's `subagents/` folder, the Workflow-tool
-  agents' under `subagents/workflows/` included;
+  with every subagent transcript under that agent-session's `subagents/` folder, including those
+  under `subagents/workflows/` of the agents a Workflow-tool run starts (Claude Code's Workflow
+  tool runs a script that starts several subagents in the background);
 - the walk-minutes in the agent-seat's `docs/walk/`, the handoff deferral marker file, the task
   list `<tasks root>/nedschorus-<seat>-tasks/`, and, for a usage limit, `oauthAccount.accountUuid`
   in `~/.claude.json`;
