@@ -37,6 +37,7 @@ It is a hook for every tool, registered under PostToolUse and PostToolUseFailure
 ### Which files it checks
 
 - **In the checkout of the tool call's working directory:** every guarded file in it, tracked, untracked or ignored, decided with the guard's own functions, `is_protected`, `is_reusable_prompt` and `is_reviewed_document`, imported from `.claude/guard-hooks/instruction-file-guard.py`, so the two hooks cannot disagree. Ignored files are listed with `git ls-files --others --ignored --exclude-standard` restricted to the paths the guard can protect (`CLAUDE.local.md` at any depth, and under `.claude/`, `.claude/settings.local.json` included), so the large ignored trees, such as `__pycache__/`, are never read.
+- **Left out:** every `scheduled_tasks.lock` under a `.claude/` directory, which Claude Code rewrites itself, and every file under `cold-read-records/`, `md-review-records/` or `sanity-check-records/` at the top of a checkout, which hold frozen copies of the documents a review read.
 - **Outside every checkout:** `~/.claude/CLAUDE.md` and `~/.claude/settings.json`, checked after every tool call, including one whose working directory is in no checkout, where these two are the only files checked and no git step runs.
 
 A write a session makes into another checkout is noticed by the next session that runs in that checkout, not by the writer.
