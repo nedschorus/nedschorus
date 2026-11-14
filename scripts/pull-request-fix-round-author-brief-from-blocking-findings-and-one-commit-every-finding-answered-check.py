@@ -4,6 +4,7 @@
 Usage:
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number>
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --check [--answers FILE] [--commit REV] [--confirm-dispatching-agent-checked-new-shared-names]
+      [--overview-write-architecture-overview-claim-check-report-directory DIR]
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --move-change-to-own-pull-request-cut-new-topic-branch NEW_TOPIC_BRANCH [PATH ...]
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --move-change-to-own-pull-request-finish --title TITLE --body-file FILE
 
@@ -71,7 +72,9 @@ topic-worktree's path.
 
 With --check, run in the topic-worktree, and refuse anywhere else, naming the topic-worktree when this
 clone has one: the commits from the frozen-head to --commit (default
-HEAD) must be none, or one non-merge commit. The answers file holds one entry per blocking finding
+HEAD) must be none, or one non-merge commit, which may be followed by one more non-merge commit that changes
+only nc-architecture-overview pages, since an overview in a pull request that changes the code it describes
+names a commit earlier than the overview edit. The answers file holds one entry per blocking finding
 and per nit, each starting "<n>. " on its own line; an entry that starts with MOVED_TO_PULL_REQUEST_PREFIX_PATTERN,
 in any case, must go on with MOVED_TO_PULL_REQUEST_PATTERN naming a pull request gh pr view finds, or --check refuses it;
 --check also refuses when, for any file of that pull request's gh pr diff, the file's whole patch reversed
@@ -91,6 +94,11 @@ the frozen-head to the checked commit changes, leaving out names the frozen-head
 names and SUBAGENT_REPORT_HEADING_ABOVE_NEW_SHARED_NAMES_FOR_DISPATCHING_AGENT_TO_CHECK, since a forked subagent cannot start the
 naming fresh-agent and must hand the names to the agent that dispatched it before the push, so that
 the renames go into the round's one commit; it fails when git cannot list them. Then it runs
+scripts/pull-request-review-plan.py's two nc-architecture-overview checks of its rule 4 on the checked
+commit, against its merge base with origin/main, and refuses when either would refuse: the plan is refused
+at every head where they fail, so a pushed round that fails them costs a second push under review. The
+claim-check reports are read from --overview-write-architecture-overview-claim-check-report-directory, by
+default the review plan's default. Then it runs
 the nc-test-suites, as the pull request ready command runs them, in a scratch worktree of the checked
 commit; each suite that fails there is run again in a scratch worktree of the frozen-head, with that
 checkout's own runner, recording nothing. It refuses when a suite fails at the checked commit and not
@@ -160,6 +168,11 @@ _lister_spec = importlib.util.spec_from_file_location(
     "new_shared_names_in_changed_files_list", Path(__file__).resolve().parent / "new-shared-names-in-changed-files-list.py")
 new_shared_names_lister = importlib.util.module_from_spec(_lister_spec)
 _lister_spec.loader.exec_module(new_shared_names_lister)
+
+_review_plan_spec = importlib.util.spec_from_file_location(
+    "pull_request_review_plan", Path(__file__).resolve().parent / "pull-request-review-plan.py")
+review_plan = importlib.util.module_from_spec(_review_plan_spec)
+_review_plan_spec.loader.exec_module(review_plan)
 
 REPLACES_READER_FILE_NAME = "pull-request-description-replaces-line-replaced-pull-request-chain-reader-common.py"
 _replaces_reader_spec = importlib.util.spec_from_file_location(
@@ -784,7 +797,9 @@ def print_brief(number, reviewer_login):
                                                            worktree=shlex.quote(str(worktree)),
                                                            pull_request_branch=branch),
         "4. Put every change in one commit on top of the branch as step 1 left it. "
-        "If no finding holds, make no commit.",
+        "If no finding holds, make no commit. The one other commit a round may have is the one "
+        "nc-architecture-overview commit the check in step 6 asks for when the round changes code an overview "
+        "of the pull request describes.",
         f"5. Write the answers file {worktree / answers_name}, replacing any earlier round's file there, with "
         "one entry per finding above, each starting \"<n>. \" on its own line, with any further lines of the "
         "entry after it: what you fixed, why the finding does not hold, or, for a change moved as "
@@ -797,7 +812,9 @@ def print_brief(number, reviewer_login):
         "push; first stage each changed file with git add <path>, never the answers file) and run the "
         "check again. Before the push, the check runs the nc-test-suites, which can "
         "take many minutes, and refuses when one fails because of the round's change. Before the suites, "
-        "it refuses when the round's commit adds shared names no agent has checked; do what it prints.",
+        "it refuses when the round's commit adds shared names no agent has checked, or when an "
+        "nc-architecture-overview the pull request changes would make merge-lane-2's review plan refuse the "
+        "round's head; do what it prints.",
         f"7. When it passes with a commit not yet pushed, push once, with: {in_worktree}git push origin HEAD:{shlex.quote(branch)}",
         "   Then run the same check command "
         "again. When it passes and prints a message for merge-lane-2, which it does at once if you "
@@ -967,18 +984,32 @@ def commits_since(frozen_head, commit):
     return [(fields[0], fields[1:]) for fields in (line.split() for line in listing.splitlines())]
 
 
+def commit_changes_only_architecture_overviews(commit):
+    changed = git_output.nul_separated_fields(git(["diff", "-z", "--name-only", "--no-renames", f"{commit}^", commit]))
+    return bool(changed) and all(
+        review_plan.overview_claim_check.nc_architecture_overview_described_system_name_from_page_path(path)
+        for path in changed)
+
+
 def fix_commit_range(frozen_head, commits):
-    """Check the shape of the round; return (base, fix commit) for its file list, or None."""
+    """Check the shape of the round; return (base, the round's last commit) for its file list, or None."""
     if not commits:
         return None
     if len(commits) == 1 and commits[0][1] == [frozen_head]:
         return frozen_head, commits[0][0]
+    # An overview in a pull request that changes the code it describes names a commit earlier than the overview
+    # edit, which the round's own fix commit can only be when the edit is a commit of its own.
+    if (len(commits) == 2 and commits[0][1] == [frozen_head] and commits[1][1] == [commits[0][0]]
+            and commit_changes_only_architecture_overviews(commits[1][0])):
+        return frozen_head, commits[1][0]
     described = ", ".join(f"{sha[:12]} ({len(parents)} parent{'' if len(parents) == 1 else 's'})"
                           for sha, parents in commits)
     raise Refused(f"The round has {len(commits)} commits after the frozen-head {frozen_head[:12]}: "
-                  f"{described}. A fix-round is one non-merge commit whose parent is the frozen-head.\n"
+                  f"{described}. A fix-round is one non-merge commit whose parent is the frozen-head, "
+                  "followed at most by one non-merge commit that changes only nc-architecture-overview pages.\n"
                   "If the commits are not pushed, squash them into one commit on top of the "
-                  "frozen-head; drop any merge of main.\n"
+                  "frozen-head; drop any merge of main. If an overview must name that commit, run this check "
+                  "again once it is squashed, and do what it prints.\n"
                   "If they are pushed, tell merge-lane-2 with SendMessage; do not force-push.")
 
 
@@ -1088,6 +1119,57 @@ def suites_failing_at_frozen_head_too_recorded_for(commit):
     return record["suites"] if record["commit"] == commit else []
 
 
+def refuse_fix_round_commit_whose_architecture_overviews_the_review_plan_would_refuse(number, commit, report_directory):
+    """Runs pull-request-review-plan.py's nc-architecture-overview checks on the round's last commit, before the
+    push, since a refusal there after the push costs a second push under review."""
+    repository = Path(worktree_root())
+    merge_base = git(["merge-base", "refs/remotes/origin/main", commit]).strip()
+    try:
+        changed_files = [{"status": status, "path": path} for status, path in
+                         review_plan.changed_file_statuses_and_paths(repository, merge_base, commit)]
+        problems = review_plan.architecture_overview_checked_against_commit_problems(repository, commit, changed_files)
+        shortfalls = [] if problems else review_plan.architecture_overview_claim_check_shortfalls(
+            repository, commit, changed_files, report_directory)
+    except review_plan.ReviewPlanRefusal as refusal:
+        raise StepFailed(f"scripts/pull-request-review-plan.py's nc-architecture-overview check could not read the "
+                         f"round's commit {commit[:12]}: {refusal}") from None
+    claim_check = "python3 nc-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py"
+    if problems:
+        paths = [problem["path"] for problem in problems]
+        raise Refused("\n".join([
+            f"The round does not pass, and nothing may be pushed yet: pull request {number} changes "
+            f"{len(problems)} nc-architecture-overview(s) whose **Checked against:** commit does not hold the code "
+            f"the overview describes at the round's commit {commit[:12]}. scripts/pull-request-review-plan.py "
+            "refuses to plan a review of such a head, so pushing it would cost a second push under review.",
+            *review_plan.architecture_overview_checked_against_commit_refusal_message_lines_one_per_overview(commit, problems),
+            "Do these steps in this topic-worktree on ned-box, where the claim check's reports are kept:",
+            "  1. Keep every change to the code an overview describes in the round's fix commit, the one commit "
+            "on top of the frozen-head; if the round already has an overview commit on top of it, first run "
+            "git reset --mixed HEAD~1, which keeps the overview edit uncommitted.",
+            "  2. Make one more commit, on top of the fix commit, that changes only the overview(s) listed: set each "
+            "one's **Checked against:** line to name the fix commit's full id, as the section \"Keeping an overview "
+            "true\" of docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md says. An overview "
+            "cannot name the commit it is in, so this is the one second commit a round may have; it holds only "
+            "nc-architecture-overview pages.",
+            *(f"  3. Run the claim check: {claim_check} --overview {shlex.quote(path)}" for path in paths),
+            "  4. Do what the claim check prints. Put each fix to an overview into the overview commit with git add "
+            "<path> and git commit --amend, never the answers file, and run the claim check again until its report "
+            "shows no must-fix claim remains.",
+            "  5. Run this check again. Push only when it passes, so that the round is pushed once."]))
+    if shortfalls:
+        raise Refused("\n".join([
+            f"The round does not pass, and nothing may be pushed yet: for each nc-architecture-overview pull request "
+            f"{number} changes that is listed below, no claim-check report on the overview's text at the round's "
+            f"commit {commit[:12]} shows that no must-fix claim remains. scripts/pull-request-review-plan.py refuses "
+            "to plan a review of such a head, so pushing it would cost a second push under review.",
+            *review_plan.architecture_overview_claim_check_refusal_message_lines_one_per_overview(shortfalls, report_directory),
+            "In this topic-worktree on ned-box, where the claim check's reports are kept, for each overview listed:",
+            *(f"  Run: {claim_check} --overview {shlex.quote(shortfall['path'])}" for shortfall in shortfalls),
+            "Do what it prints. Put each fix to an overview into the round's overview commit with git add <path> and "
+            "git commit --amend, never the answers file, and run the claim check again until its report shows no "
+            "must-fix claim remains; then run this check again."]))
+
+
 def refuse_new_shared_names_the_dispatching_agent_has_not_checked(number, frozen_head, commit):
     try:
         names = new_shared_names_lister.new_shared_names_in_files_changed_since(Path.cwd(), frozen_head, commit)
@@ -1149,7 +1231,8 @@ def origin_branch_head(url, branch):
 
 
 def check_round(number, reviewer_login, answers_path, commit_name,
-                confirm_dispatching_agent_checked_new_shared_names=False):
+                confirm_dispatching_agent_checked_new_shared_names=False,
+                overview_claim_check_report_directory=None):
     (url, _github_head, branch, review_link, frozen_head, blocking, nits,
      _fix_round_number, unrecorded_review_ids, review_submitted_at) = round_facts(number, reviewer_login)
     findings = blocking + nits
@@ -1161,7 +1244,8 @@ def check_round(number, reviewer_login, answers_path, commit_name,
     commit = git(["rev-parse", "--verify", f"{commit_name}^{{commit}}"]).strip()
     refuse_moved_change_still_here(answers, commit, answers_path)
     git(["cat-file", "-e", f"{frozen_head}^{{commit}}"])
-    fix_range = fix_commit_range(frozen_head, commits_since(frozen_head, commit))
+    round_commits = commits_since(frozen_head, commit)
+    fix_range = fix_commit_range(frozen_head, round_commits)
     refuse_committed_answers_file(frozen_head, commit)
     leftovers = unnamed_files(*(fix_range or (None, None)), findings)
     lines = [f"PASS: the fix-round on {url} keeps to its rules; {len(findings)} findings answered."]
@@ -1178,6 +1262,9 @@ def check_round(number, reviewer_login, answers_path, commit_name,
     if head == frozen_head and commit != frozen_head:
         if not confirm_dispatching_agent_checked_new_shared_names:
             refuse_new_shared_names_the_dispatching_agent_has_not_checked(number, frozen_head, commit)
+        refuse_fix_round_commit_whose_architecture_overviews_the_review_plan_would_refuse(
+            number, commit, overview_claim_check_report_directory
+            or review_plan.overview_claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_REPORT_DIRECTORY)
         broken, failing_at_frozen_head_too = suites_the_round_broke_and_suites_failing_at_frozen_head_too(
             frozen_head, commit)
         if broken:
@@ -1187,7 +1274,9 @@ def check_round(number, reviewer_login, answers_path, commit_name,
                           f"and not at the frozen-head {frozen_head[:12]}, so the round's change broke them: "
                           f"{', '.join(broken)}. Each one's log is named in the runner's output above.{too}\n"
                           "Fix the cause of each failure in the round's commit, which is not pushed yet, amend "
-                          "it with git commit --amend, and run the check again.\n"
+                          "it with git commit --amend, and run the check again. If the round also has an "
+                          "nc-architecture-overview commit on top of it, first run git reset --mixed HEAD~1, and "
+                          "after the amend make that overview commit again as the check prints.\n"
                           "If a suite named here fails for a cause outside the round's change, such as a test "
                           "case that fails only now and then, run the check again once; if that suite fails "
                           "again, tell merge-lane-2 with SendMessage the suite and its log, and do not push.")
@@ -1201,7 +1290,8 @@ def check_round(number, reviewer_login, answers_path, commit_name,
                   "for merge-lane-2."]
         print("\n".join(lines))
         return
-    pushed = (f"New head {commit}, one fix-round on top of the frozen-head {frozen_head}."
+    pushed = (f"New head {commit}, the round's {len(round_commits)} commit{'' if len(round_commits) == 1 else 's'} "
+              f"on top of the frozen-head {frozen_head}."
               if commit != frozen_head else
               f"Nothing pushed; the head stays the frozen-head {frozen_head}.")
     message = [f"Fix-round on pull request {url}, answering the round's reviews "
@@ -1430,6 +1520,9 @@ def main(argv=None):
     parser.add_argument(new_shared_names_lister.CONFIRM_DISPATCHING_AGENT_CHECKED_NEW_SHARED_NAMES_COMMAND_LINE_FLAG, action="store_true",
                         help="with --check: the agent that dispatched the round has checked the shared names "
                              "the round's commit adds, and its renames are in that commit")
+    parser.add_argument("--overview-write-architecture-overview-claim-check-report-directory", type=Path,
+                        help="with --check: where the nc-architecture-overview claim-check reports are (default: "
+                             f"{review_plan.overview_claim_check.OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_REPORT_DIRECTORY})")
     parser.add_argument("--reviewer-login", default=MERGE_LANE_2_REVIEWER_LOGIN,
                         help=f"merge-lane-2's GitHub account (default: {MERGE_LANE_2_REVIEWER_LOGIN})")
     parser.add_argument("--move-change-to-own-pull-request-cut-new-topic-branch", dest="move_start", nargs="+",
@@ -1453,7 +1546,8 @@ def main(argv=None):
         elif arguments.check:
             check_round(arguments.number, arguments.reviewer_login, arguments.answers,
                         arguments.commit,
-                        arguments.confirm_dispatching_agent_checked_new_shared_names)
+                        arguments.confirm_dispatching_agent_checked_new_shared_names,
+                        arguments.overview_write_architecture_overview_claim_check_report_directory)
         else:
             print_brief(arguments.number, arguments.reviewer_login)
     except Refused as refusal:

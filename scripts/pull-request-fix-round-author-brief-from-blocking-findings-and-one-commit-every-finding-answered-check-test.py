@@ -934,6 +934,7 @@ def check_cases(root, repository, base, frozen_head):
     check("check: a round's commit whose new shared names git cannot list fails with exit 2, before any suite runs",
           code == 2 and "the new shared names the round's commit adds could not be listed: git rev-parse exited 128"
           in err and "Not pushed yet" not in out, out + err)
+    git(repository, "update-ref", "refs/remotes/origin/main", "main-line")
     code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews), "--check",
                          CONFIRMED)
     check("check: the same fix without the answers file passes", code == 0 and "Not pushed yet" in out,
@@ -2065,6 +2066,107 @@ def suite_cases(root, repository, _base, _frozen_head):
     runner_calls(root)
 
 
+DEMO_OVERVIEW = "docs/nedschorus-wiki/nedschorus-demo-architecture-overview.md"
+
+
+def demo_overview_text(checked_against, extra=""):
+    return (f"# Demo\n\n## Components\n\n- `nc-systems/demo/demo.py` runs the demo.\n{extra}\n"
+            f"**Checked against:** commit [{checked_against}](https://github.com/nedschorus/nedschorus/commit/"
+            f"{checked_against})\n")
+
+
+def write_claim_check_report(report_directory, repository, revision, result="no must-fix claim remains"):
+    blob = git(repository, "rev-parse", f"{revision}:{DEMO_OVERVIEW}")
+    directory = report_directory / Path(DEMO_OVERVIEW).stem
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{blob}-20261114T000000Z.md").write_text(f"result: {result}\n\nclaims\n")
+
+
+def architecture_overview_cases(root, repository, _base, _frozen_head):
+    """PRs 3571 and 3591: the pull request changes the demo overview, and the round changes code it describes."""
+    (repository / "nc-systems" / "demo").mkdir(parents=True)
+    described = commit_file(repository, "nc-systems/demo/demo.py", "one\n", "demo code")
+    (repository / "docs" / "nedschorus-wiki").mkdir(parents=True)
+    frozen_head = commit_file(repository, DEMO_OVERVIEW, demo_overview_text(described), "demo overview")
+    reviews = [review(commit_id=frozen_head)]
+    answers = answers_file(root, GOOD_ANSWERS)
+    report_directory = root / "claim-check-reports"
+    write_claim_check_report(report_directory, repository, frozen_head)
+    environment = {"FAKE_RUNNER_CALLS": str(root / "runner-calls.jsonl")}
+
+    def check_round_at(head):
+        return run(root, repository, routes_for(head, reviews), "--check", "--answers", answers, CONFIRMED,
+                   "--overview-write-architecture-overview-claim-check-report-directory", str(report_directory),
+                   environment_extra=environment)
+
+    commit_file(repository, "hook.py", "fixed\n", "round changes no described code")
+    code, out, err = check_round_at(frozen_head)
+    check("overview: a round that changes no code an overview describes passes",
+          code == 0 and "Not pushed yet" in out, out + err)
+    runner_calls(root)
+
+    git(repository, "reset", "-q", "--hard", frozen_head)
+    fix = commit_file(repository, "nc-systems/demo/demo.py", "two\n", "round changes described code")
+    code, out, err = check_round_at(frozen_head)
+    check("overview: a round whose commit changes code the overview describes, while its **Checked against:** "
+          "names an earlier commit, refuses with exit 1 before the suites and the push, naming the overview, the "
+          "code and the claim check",
+          code == 1 and "Not pushed yet" not in out and runner_calls(root) == []
+          and f"{DEMO_OVERVIEW} names commit {described}, and later commits of the pull request change code the "
+          "overview describes: nc-systems/demo/demo.py." in err
+          and "set each one's **Checked against:** line to name the fix commit's full id" in err
+          and f"overview-write-architecture-overview-claim-check-by-fresh-agent.py --overview {DEMO_OVERVIEW}" in err
+          and "so pushing it would cost a second push under review" in err, out + err)
+
+    overview_commit = commit_file(repository, DEMO_OVERVIEW, demo_overview_text(fix), "overview checked against the fix")
+    code, out, err = check_round_at(frozen_head)
+    check("overview: an overview commit naming the fix commit, with no claim-check report on its text, refuses "
+          "with exit 1 naming where it looked",
+          code == 1 and "no claim-check report on the overview's text at the round's commit" in err
+          and str(report_directory / Path(DEMO_OVERVIEW).stem) in err and runner_calls(root) == [], out + err)
+
+    write_claim_check_report(report_directory, repository, overview_commit)
+    code, out, err = check_round_at(frozen_head)
+    check("overview: the fix commit and one overview-only commit naming it, with a clean claim-check report, pass "
+          "and run the suites", code == 0 and "Not pushed yet" in out and len(runner_calls(root)) == 1, out + err)
+    code, out, err = check_round_at(overview_commit)
+    check("overview: after the push, the message for merge-lane-2 counts the round's two commits",
+          code == 0 and f"New head {overview_commit}, the round's 2 commits on top of the frozen-head" in out, out + err)
+
+    commit_file(repository, "hook.py", "third\n", "a third commit")
+    code, out, err = check_round_at(frozen_head)
+    check("overview: a third commit after the overview commit refuses as a round of too many commits",
+          code == 1 and "The round has 3 commits" in err, out + err)
+    git(repository, "reset", "-q", "--hard", fix)
+    (repository / DEMO_OVERVIEW).write_text(demo_overview_text(fix))
+    commit_file(repository, "hook.py", "also\n", "overview and other code in the second commit")
+    code, out, err = check_round_at(frozen_head)
+    check("overview: a second commit that changes more than nc-architecture-overview pages refuses",
+          code == 1 and "The round has 2 commits" in err and "changes only nc-architecture-overview pages" in err,
+          out + err)
+
+
+def architecture_overview_check_cannot_read_case(_root, repository, _base, frozen_head):
+    program = load_program()
+
+    def refuse(*_arguments):
+        raise program.review_plan.ReviewPlanRefusal("git could not read changed files")
+
+    program.review_plan.changed_file_statuses_and_paths = refuse
+    original_directory = os.getcwd()
+    os.chdir(repository)
+    try:
+        program.refuse_fix_round_commit_whose_architecture_overviews_the_review_plan_would_refuse(NUMBER, frozen_head, repository)
+        raised = None
+    except Exception as error:
+        raised = error
+    finally:
+        os.chdir(original_directory)
+    check("overview: a review plan check that cannot read the round's commit raises StepFailed naming it",
+          isinstance(raised, program.StepFailed) and "could not read the round's commit" in str(raised)
+          and "git could not read changed files" in str(raised), repr(raised))
+
+
 def pushed_head_read_from_origin_cases(root, repository, _base, frozen_head):
     """GitHub's headRefOid can still name the frozen-head for seconds after the push moved origin's branch."""
     reviews = [review(commit_id=frozen_head)]
@@ -2393,6 +2495,8 @@ def conflict_check_cases(root, repository, _base, frozen_head):
 
 gh_timeout_case()
 case("suites", suite_cases)
+case("architecture overview", architecture_overview_cases)
+case("architecture overview check cannot read", architecture_overview_check_cannot_read_case)
 case("nits", nit_cases)
 case("move", move_cases)
 case("move hand commit", move_hand_commit_cases)
