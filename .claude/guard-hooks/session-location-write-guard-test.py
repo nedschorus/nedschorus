@@ -438,11 +438,13 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a seat's write to its OWN .git is not this guard's business",
           result.returncode == 0, result.stderr)
 
-    # The detached refusal must teach marker creation by shell, because such a
-    # session cannot write the marker with the tool this guard blocks.
     result = run_hook(detached, str(detached / "notes.md"), decoy)
     check("the detached refusal says to create the marker with a shell command",
           "printf" in result.stderr or "echo" in result.stderr, result.stderr)
+    # The repository's .gitignore ignores the marker, and this guard lets a detached
+    # session write an ignored file, so the Write tool can create the marker there.
+    check("the detached refusal does not say the Write tool cannot create the marker",
+          "Write tool" not in result.stderr, result.stderr)
     check("the detached refusal gives one instruction to a line, each under its condition",
           len(result.stderr.strip().splitlines()) == 6
           and result.stderr.strip().splitlines()[1].startswith(
