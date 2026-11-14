@@ -118,8 +118,8 @@ TASK_DESCRIPTION_TEMPLATE = (
     "{fix}")
 TASK_OUTPUT_TEMPLATE = "Git's output, or the error's traceback:\n{output}\n"
 GIT_WORKTREE_REMOVE_DEFERRED_FAILED_TASK_FIX_INSTRUCTION = (
-    "Find the cause and fix it. Go to the user only when the fix needs a change to a guarded file, or when you "
-    "cannot find the cause and fix it.")
+    "Find the cause and fix it. Go to the user only when the fix needs a change to a guarded-file, when you "
+    "cannot find the cause, or when you find the cause but cannot fix it.")
 
 
 def module_at(path, name):
