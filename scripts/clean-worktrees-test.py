@@ -2389,6 +2389,29 @@ with tempfile.TemporaryDirectory() as scratch:
           and origin_tip("moved-pull-request-branch") == ""
           and "pushed to origin" not in held_by_unfetched_ref.stdout,
           held_by_unfetched_ref.stdout + held_by_unfetched_ref.stderr + moved_tip)
+    git(other_machine, "commit", "--quiet", "--allow-empty", "-m", "tip no clone here has")
+    git(other_machine, "push", "--quiet", "origin", "HEAD:refs/heads/unfetched-elsewhere")
+    fetch_refused_tip = branch_with_a_commit("fetch-refused-branch")
+    fetch_refused = run_one_named(FORCE_DELETE_BRANCH_FLAG, "fetch-refused-branch",
+                                  git_refuses=" --no-write-fetch-head ")
+    check(f"{FORCE_DELETE_BRANCH_FLAG} keeps the branch and fails, without pushing it, when the "
+          "fetch of an origin tip the clone lacks fails",
+          kept_and_failed(fetch_refused, "branch fetch-refused-branch")
+          and git(checkout, "rev-parse", "fetch-refused-branch").strip() == fetch_refused_tip
+          and "git fetch origin exited 1" in fetch_refused.stdout
+          and origin_tip("fetch-refused-branch") == "",
+          fetch_refused.stdout + fetch_refused.stderr)
+    git(other_machine, "commit", "--quiet", "--allow-empty", "-m", "commit only a tag names")
+    git(other_machine, "tag", "-a", "-m", "annotated", "only-tagged")
+    git(other_machine, "push", "--quiet", "origin", "refs/tags/only-tagged")
+    beside_peeled_tag_tip = branch_with_a_commit("beside-peeled-tag-branch")
+    beside_peeled_tag = run_one_named(FORCE_DELETE_BRANCH_FLAG, "beside-peeled-tag-branch")
+    check(f"{FORCE_DELETE_BRANCH_FLAG} pushes and deletes a branch when origin advertises a peeled "
+          "annotated tag the clone lacks",
+          beside_peeled_tag.returncode == 0
+          and git(checkout, "branch", "--list", "beside-peeled-tag-branch") == ""
+          and origin_tip("beside-peeled-tag-branch") == beside_peeled_tag_tip,
+          beside_peeled_tag.stdout + beside_peeled_tag.stderr)
     conflicting_holder = scratch / "conflicting-branch-holder"
     git(checkout, "worktree", "add", "-b", "conflicting-branch", str(conflicting_holder), "origin/main")
     (conflicting_holder / "README.md").write_text("# the branch's line\n", encoding="utf-8")

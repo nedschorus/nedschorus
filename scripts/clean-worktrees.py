@@ -1905,7 +1905,10 @@ def push_branch_unless_origin_holds_its_last_commit_failure(repo, branch):
     for line in listing.stdout.splitlines():
         if line:
             sha, _, ref = line.partition("\t")
-            ref_of_tip.setdefault(sha, ref)
+            # A peeled annotated tag, refs/tags/<tag>^{}, is no refspec git fetch takes; the tag's
+            # own line brings its commit.
+            if not ref.endswith("^{}"):
+                ref_of_tip.setdefault(sha, ref)
     known = commits_the_clone_holds(repo, ref_of_tip)
     unreached = commit_unreached_from(repo, tip, known)
     missing = sorted(set(ref_of_tip) - known)
