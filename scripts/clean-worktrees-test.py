@@ -2369,6 +2369,26 @@ with tempfile.TemporaryDirectory() as scratch:
           and origin_tip("closed-pull-request-branch") == ""
           and "pushed to origin" not in held_by_pull_ref.stdout,
           held_by_pull_ref.stdout + held_by_pull_ref.stderr + closed_tip)
+    moved_tip = branch_with_a_commit("moved-pull-request-branch")
+    git(checkout, "push", "origin", "moved-pull-request-branch:refs/pull/9/head")
+    other_machine = scratch / "other-machine-clone"
+    git(scratch, "clone", "--quiet", str(origin), str(other_machine))
+    git(other_machine, "config", "user.email", "test@test.invalid")
+    git(other_machine, "config", "user.name", "clean-worktrees test")
+    git(other_machine, "fetch", "--quiet", "origin", "refs/pull/9/head")
+    git(other_machine, "checkout", "--quiet", "-b", "moved", "FETCH_HEAD")
+    descendant_tip = commit_in(other_machine, "moved-on-another-machine")
+    git(other_machine, "push", "--quiet", "origin", "HEAD:refs/pull/9/head")
+    unfetched = subprocess.run(["git", "-C", str(checkout), "cat-file", "-e", descendant_tip],
+                               capture_output=True, check=False).returncode != 0
+    held_by_unfetched_ref = run_one_named(FORCE_DELETE_BRANCH_FLAG, "moved-pull-request-branch")
+    check(f"{FORCE_DELETE_BRANCH_FLAG} deletes a branch whose last commit only an origin ref this "
+          "clone has not fetched holds, a descendant another machine pushed, without pushing it",
+          unfetched and held_by_unfetched_ref.returncode == 0
+          and git(checkout, "branch", "--list", "moved-pull-request-branch") == ""
+          and origin_tip("moved-pull-request-branch") == ""
+          and "pushed to origin" not in held_by_unfetched_ref.stdout,
+          held_by_unfetched_ref.stdout + held_by_unfetched_ref.stderr + moved_tip)
     conflicting_holder = scratch / "conflicting-branch-holder"
     git(checkout, "worktree", "add", "-b", "conflicting-branch", str(conflicting_holder), "origin/main")
     (conflicting_holder / "README.md").write_text("# the branch's line\n", encoding="utf-8")
@@ -2927,7 +2947,7 @@ with tempfile.TemporaryDirectory() as scratch:
           "the worktree and its branch, and fails, when the push of a last commit origin lacks fails",
           unpushed_run.returncode == 1 and unpushed_record.exists()
           and git(checkout, "rev-parse", "stopped-partway-unpushed-wt-branch").strip() == unpushed_commit
-          and "stopped-partway-unpushed-wt: kept — an earlier run stopped partway" in unpushed_run.stdout
+          and "stopped-partway-unpushed-wt: kept — an earlier run of scripts/clean-worktrees.py stopped partway" in unpushed_run.stdout
           and unpushed_run.stdout.splitlines()[-1].startswith("FAILED: "),
           unpushed_run.stdout + unpushed_run.stderr)
     unpushed_rerun = run_clean(checkout, "--remove-worktree-and-force-delete-its-branch",
