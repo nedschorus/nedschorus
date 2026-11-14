@@ -62,8 +62,7 @@ scripts/agent-seat-worktree-create-with-owner-file.py, so it has an owner file f
 of that program is a failure here, its message passed on. Refuse when the topic-worktree has uncommitted
 changes or untracked files, ignored files apart, or its HEAD is not the frozen-head. Then print the brief:
 the frozen-head, ADVISOR_FIX_ROUND_INSTRUCTION when the round's number is ADVISOR_FIX_ROUND_NUMBER and on
-no other, each blocking finding word for word, with a note under one whose file origin/main has and the
-frozen-head does not, saying it needs a merge of origin/main, then each nit word for word, numbered on from the blocking
+no other, each blocking finding word for word, then each nit word for word, numbered on from the blocking
 findings, to fix in the same round, how to dispatch the fix-round subagent, a fork without Claude Code's
 worktree isolation, to work in the topic-worktree, what the author does when the subagent hands back new
 shared names, that nothing is removed by hand afterwards, the round's rules, and the --check command to
@@ -757,10 +756,6 @@ def print_brief(number, reviewer_login):
     for index, finding in enumerate(findings, 1):
         lines += ["", f"{index}. {finding_place(finding)} ({finding.get('html_url')})",
                   (finding.get("body") or "").strip()]
-        path = finding.get("path")
-        if path and not file_exists_at(frozen_head, path) and file_exists_at("origin/main", path):
-            lines += [f"   Only origin/main has {path}, not the frozen-head, so this finding needs the merge of "
-                      "origin/main that step 1 describes."]
     if nits:
         lines += ["", f"Nits to fix in this round too ({len(nits)}), word for word, numbered on from the "
                       "blocking findings:"]

@@ -394,8 +394,6 @@ def brief_cases(root, repository, base, frozen_head):
           "4. Put every change in one commit on top of the branch as step 1 left it, after the merge when step 1 "
           "made one. If no finding holds, or the merge alone fixes every finding that holds, make no commit of "
           "your own." in out, out)
-    check("brief: no finding whose file the frozen-head has gets the origin/main note",
-          "Only origin/main has" not in out, out)
     check("brief: says what to do when the push itself fails, and numbers the steps after the check on",
           "7. When it passes with a commit not yet pushed" in out and "8. If anything fails after the push" in out
           and "9. " not in out and "step 7" not in out
@@ -1009,19 +1007,8 @@ def comments_route(review_id, comments):
 def merge_of_origin_main_cases(root, repository, base, frozen_head):
     """A merge of origin/main that git makes without a conflict is a fix-round, alone or with one commit after it;
     any other merge is refused. The scratch origin/main adds main.txt to base, and the frozen-head adds hook.py."""
-    main_tip = git(repository, "rev-parse", "origin/main")
     reviews = [review(commit_id=frozen_head)]
     answers = answers_file(root, GOOD_ANSWERS)
-
-    # As in pull request 3070, a blocking finding is on a file main gained after the branch was cut.
-    main_only_comments = [comment("hook.py", "**Blocks.** hook.py swallows the error.", comment_id=1),
-                          comment("main.txt", "**Blocks.** main.txt still names the old function.", comment_id=3)]
-    code, out, err = run(root, repository, routes_for(frozen_head, reviews, comments=main_only_comments))
-    check("merge brief: a finding on a file only origin/main has gets a note that it needs the merge, and a "
-          "finding on a file the frozen-head has gets none",
-          code == 0 and "main.txt still names the old function.\n   Only origin/main has main.txt, not the "
-          "frozen-head, so this finding needs the merge of origin/main that step 1 describes." in out
-          and out.count("Only origin/main has") == 1, out + err)
 
     # As in pull request 3164, main changed a function's signature, and the branch's lines do not conflict with it.
     git(repository, "checkout", "-q", "main-line")
