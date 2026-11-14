@@ -886,18 +886,27 @@ def restore_work_snapshot(repo, ref, keep, environment=None, out=print):
             if written != owner:
                 hooks_path = run_git(repo, "config", "--show-origin", "--get", "core.hooksPath")
                 origin, _tab, value = hooks_path.stdout.strip().partition("\t")
-                hooks_path_setting = (
-                    f"core.hooksPath is {value}, set in {origin.removeprefix('file:')}"
-                    if hooks_path.returncode == 0 else
-                    f"core.hooksPath is not set, so the hook ran from {common_git_directory(repo)}/hooks")
+                if hooks_path.returncode == 0:
+                    hooks_path_setting = (
+                        f"git's core.hooksPath setting for {repo} is {value}, and the config file "
+                        f"that sets it is {origin.removeprefix('file:')}")
+                elif hooks_path.returncode == 1:
+                    hooks_path_setting = (
+                        f"git's core.hooksPath setting for {repo} is not set, so the hook ran from "
+                        f"{common_git_directory(repo)}/hooks")
+                else:
+                    hooks_path_setting = (
+                        f"where the hook ran from is not known, because git config --show-origin "
+                        f"--get core.hooksPath in {repo} {git_failure_text(hooks_path)}")
                 raise owners.WorktreeOwnerFileError(
                     f"git worktree add left an owner file naming {json.dumps(written)}, where "
-                    f"restore names {json.dumps(owner)}. scripts/git-client-side-hooks/post-checkout "
-                    f"writes that file and should name GIT_AUTHOR_NAME's agent-seat as restore does; a "
-                    f"likely cause is a core.hooksPath naming another clone's older hook. In {repo}, "
-                    f"{hooks_path_setting}. restore never "
-                    f"overwrites an owner file that names another owner, because scripts/clean-worktrees.py decides from the "
-                    f"owner when to remove the worktree") from None
+                    f"uncommitted-work-snapshots.py restore names {json.dumps(owner)}. "
+                    f"scripts/git-client-side-hooks/post-checkout writes that file and should name "
+                    f"GIT_AUTHOR_NAME's agent-seat as restore does; a likely cause is a "
+                    f"core.hooksPath naming another clone's older hook: {hooks_path_setting}. "
+                    f"uncommitted-work-snapshots.py restore never overwrites an owner file that names another "
+                    f"owner, because scripts/clean-worktrees.py decides from the owner when to remove "
+                    f"the worktree") from None
     except Exception as error:
         return undo_after(f"writing the owner file of {worktree}", f"{type(error).__name__}: {error}")
     diff = subprocess.run(["git", "--literal-pathspecs", "-C", str(worktree), "diff", "--binary",
@@ -1096,13 +1105,13 @@ def head_commit_or_raise(worktree):
 # ---------------------------------------------------------------- command line
 
 
-def command_exit_code(run):
+def command_exit_code(run, command):
     """Run a restore or discard; a git failure outside its own steps is printed, exit 1."""
     try:
         return run()
     except WorkSnapshotError as error:
-        print(f"FAILED: {error}. Nothing was changed, so the command can be run again once the "
-              f"cause is fixed; tell the user what failed.")
+        print(f"FAILED: {error}. {command} changed nothing. Tell the user what failed; once the "
+              f"cause is fixed, {command} can be run again.")
         return EXIT_STEP_FAILED
 
 
@@ -1124,12 +1133,14 @@ def main(argv=None):
         if len(rest) < 2 or rest[1] != "--keep" or "--keep" in rest[2:]:
             print(__doc__, file=sys.stderr)
             return EXIT_BAD_INVOCATION
-        return command_exit_code(lambda: restore_work_snapshot(repo, rest[0], rest[2:]))
+        return command_exit_code(lambda: restore_work_snapshot(repo, rest[0], rest[2:]),
+                                 f"uncommitted-work-snapshots.py restore {rest[0]}")
     if arguments[:1] == ["discard"]:
         if len(arguments) != 2:
             print(__doc__, file=sys.stderr)
             return EXIT_BAD_INVOCATION
-        return command_exit_code(lambda: discard_work_snapshot(repo, arguments[1]))
+        return command_exit_code(lambda: discard_work_snapshot(repo, arguments[1]),
+                                 f"uncommitted-work-snapshots.py discard {arguments[1]}")
     if arguments[:1] == ["list"]:
         agent_seat = None
         rest = arguments[1:]

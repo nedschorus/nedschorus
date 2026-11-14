@@ -1280,13 +1280,15 @@ def test_restore_step_failures():
 
     failing_case("whose git worktree add wrote an owner file naming another agent-seat",
                  worktree_add_writes_another_seats_owner_file,
-                 '{"owner_kind": "agent-seat", "agent_seat": "seat-six"}, where restore names '
+                 '{"owner_kind": "agent-seat", "agent_seat": "seat-six"}, where '
+                 'uncommitted-work-snapshots.py restore names '
                  '{"owner_kind": "agent-seat", "agent_seat": "seat-five"}. '
                  'scripts/git-client-side-hooks/post-checkout writes that file')
     failing_case("whose git worktree add wrote another agent-seat's owner file, naming the "
                  "core.hooksPath setting and the config file that sets it",
                  worktree_add_writes_another_seats_owner_file,
-                 f"core.hooksPath is {REPOSITORY_ROOT / 'scripts' / 'git-client-side-hooks'}, set in ")
+                 f"/main is {REPOSITORY_ROOT / 'scripts' / 'git-client-side-hooks'}, and the config "
+                 f"file that sets it is ")
 
     real_run_git = snapshots.run_git
 
@@ -1348,23 +1350,28 @@ def test_restore_failures_say_what_restore_made():
     main = new_clone()
     ref, _worktree = leftover_snapshot(main, "files-fail", {"new.txt": "work\n"}, "9-8")
     real_changed_files = snapshots.changed_files
+    snapshot_commit = git(main, "rev-parse", ref)
 
-    def changed_files(*arguments):
-        raise snapshots.WorkSnapshotError("git diff-tree refused by the test")
+    def changed_files(repo, commit):
+        if commit == snapshot_commit:
+            raise snapshots.WorkSnapshotError("git diff-tree refused by the test")
+        return real_changed_files(repo, commit)
     snapshots.changed_files = changed_files
     printed = io.StringIO()
     try:
         with contextlib.redirect_stdout(printed):
             code = snapshots.command_exit_code(
                 lambda: snapshots.restore_work_snapshot(main, ref, ["new.txt"], RESTORE_ENVIRONMENT,
-                                                        out=lambda text: None))
+                                                        out=lambda text: None),
+                f"uncommitted-work-snapshots.py restore {ref}")
     finally:
         snapshots.changed_files = real_changed_files
     branch = snapshots.restored_branch_name(ref)
     check(code == snapshots.EXIT_STEP_FAILED and not restored_worktree_of(main, ref).exists()
           and snapshots.current_ref_value(main, f"refs/heads/{branch}") is None
-          and printed.getvalue().startswith("FAILED: git diff-tree refused by the test. Nothing was "
-                                            "changed"),
+          and printed.getvalue().startswith(
+              f"FAILED: git diff-tree refused by the test. uncommitted-work-snapshots.py restore {ref} "
+              f"changed nothing."),
           "a git failure that ends restore early comes before restore changes anything, as its "
           "message says", printed.getvalue())
 
@@ -1393,8 +1400,14 @@ def test_restore_failures_say_what_restore_made():
     main = new_clone()
     ref, _worktree = leftover_snapshot(main, "hooks-unset", {"new.txt": "work\n"}, "9-11")
     undo = git_client_side_hooks_installed_for_agent_seat(main, "seat-six")
-    snapshots.run_git = run_git_failing(
-        lambda directory, arguments: arguments[:2] == ("config", "--show-origin"))
+    def config_lookup_exits(exit_code):
+        def run_git(directory, *arguments, **keywords):
+            if arguments[:2] == ("config", "--show-origin"):
+                return subprocess.CompletedProcess(arguments, exit_code, "", "refused by the test")
+            return real_run_git(directory, *arguments, **keywords)
+        return run_git
+
+    snapshots.run_git = config_lookup_exits(1)
     try:
         code, lines = run_restore(main, ref, ["new.txt"])
     finally:
@@ -1402,8 +1415,25 @@ def test_restore_failures_say_what_restore_made():
         undo()
     hooks = Path(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir")) / "hooks"
     check(code == snapshots.EXIT_STEP_FAILED
-          and any(f"core.hooksPath is not set, so the hook ran from {hooks}" in line for line in lines),
+          and any(f"core.hooksPath setting for {main} is not set, so the hook ran from {hooks}" in line
+                  for line in lines),
           "the owner-file failure says where the hook ran from when core.hooksPath is not set", lines)
+
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "hooks-lookup-fails", {"new.txt": "work\n"}, "9-12")
+    undo = git_client_side_hooks_installed_for_agent_seat(main, "seat-six")
+    snapshots.run_git = config_lookup_exits(128)
+    try:
+        code, lines = run_restore(main, ref, ["new.txt"])
+    finally:
+        snapshots.run_git = real_run_git
+        undo()
+    check(code == snapshots.EXIT_STEP_FAILED
+          and any("where the hook ran from is not known, because git config --show-origin --get "
+                  f"core.hooksPath in {main} exited 128: refused by the test" in line for line in lines)
+          and not any("is not set" in line for line in lines),
+          "the owner-file failure says the core.hooksPath lookup failed when git config exits with an "
+          "error other than 1, not that the setting is unset", lines)
 
 
 def test_restore_task_and_ref_deletion_failures():
