@@ -634,6 +634,11 @@ def read_markdown_push_reminder(guard, command, working_directory, search_file_d
             "\n\n".join(messages) or None]
 
 
+def read_emergency_stop(guard, command, working_directory, search_file_directory):
+    # The hook refuses only while an emergency stop is in force, and no replay has one in force.
+    return "passed", None
+
+
 # A renamed guard's former file path, which a base ref's settings.json may still run, to its path in GUARDS.
 # The line does nothing once main's settings.json no longer runs the former path, and may then be removed.
 BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = {
@@ -675,6 +680,7 @@ GUARDS = {
         read_handoff_deferral_cold_read_full_run_launch,
     ".claude/guard-hooks/git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook.py":
         read_git_worktree_remove_records_ship_first,
+    "nc-systems/skills/emergency-stop/emergency-stop-file-shown-and-push-and-merge-refusal-hook.py": read_emergency_stop,
 }
 SEARCH_FILE_GUARD = ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py"
 
