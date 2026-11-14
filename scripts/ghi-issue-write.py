@@ -732,7 +732,7 @@ def refuse_heading_with_date(heading: str):
     flight and one already on main, so a rerun on a source that is either is
     told that and not to change the heading, which would file a second
     issue; by `create --dry-run`, which judges the heading as a new filing's
-    real run does but reads neither GitHub nor main (see `main`); and by
+    real run does but reads neither the open issues nor main (see `main`); and by
     `edit` only when step 4 will set the title to the heading, so an issue
     already filed under such a title can still be edited, and a filing
     resumed after an earlier run is never refused for a title GitHub
@@ -2044,15 +2044,23 @@ def link_body(repo: str, number: int, repository_root: Path, runner, report,
     return True
 
 
-def create(path: Path, repo: str, repository_root: Path, runner, report):
-    """The whole sequence, and the one function the tests drive."""
+def issue_whose_filing_stopped_before_step_5(path: Path, repo: str, runner):
+    """The issue number when `path` is a filed GHI-MD whose issue's body is
+    still the placeholder a create wrote, else None. Step 4 is what puts a
+    file at a filed name, so for such a file step 5 is what is left. Both
+    create and its dry run ask this first, so a dry run takes the path the
+    real run takes."""
     filed_number = issue_number_in_file_name(path)
     if (filed_number is not None and path.is_file()
             and issue_body_carries_pairing_key(repo, filed_number, runner)):
-        # The file this run was given is named for an issue whose body is
-        # still the placeholder a create wrote, so that filing stopped
-        # before step 5. Step 4 is what puts a file at a filed name, so
-        # step 5 is what is left, and this run touches nothing else.
+        return filed_number
+    return None
+
+
+def create(path: Path, repo: str, repository_root: Path, runner, report):
+    """The whole sequence, and the one function the tests drive."""
+    filed_number = issue_whose_filing_stopped_before_step_5(path, repo, runner)
+    if filed_number is not None:
         report(f"resuming issue {filed_number} on its landed file: the "
                "issue's body still carries a pairing key, so an earlier run "
                "stopped before step 5")
@@ -3184,7 +3192,8 @@ def main_with_stop_signals_raising_system_exit(argv):
     creator.add_argument(
         "--dry-run", action="store_true",
         help="validate the file and its heading and print what would be "
-             "filed, changing neither GitHub nor git")
+             "filed, or the step a filing that stopped partway would resume "
+             "at, changing neither GitHub nor git")
     editor = sub.add_parser(
         "edit", help="land an edit to a filed GHI-MD, after which the "
                      "issue's title and body follow it")
@@ -3217,8 +3226,12 @@ def main_with_stop_signals_raising_system_exit(argv):
             # still be validated, and create's own root lookup comes later.
             # The heading is judged as a new filing's real run judges it.
             #
-            # A NEW FILING'S, because the dry run reads neither GitHub nor
-            # main, so it cannot see a source whose filing is in flight, is
+            # A filed GHI-MD is the exception: the one gh read below tells
+            # the dry run, as it tells create, that the file resumes at
+            # step 5, and nothing else is judged.
+            #
+            # A NEW FILING'S, because the dry run reads neither the open
+            # issues nor main, so it cannot see a source whose filing is in flight, is
             # already on main, or resumes by its pairing key: for such a
             # source with a dated heading it prints the heading
             # refusal where the real run would refuse otherwise or resume,
@@ -3227,10 +3240,18 @@ def main_with_stop_signals_raising_system_exit(argv):
             # issue (review of PR [GHI heading check runs after the
             # duplicate refusals](https://github.com/nedschorus/nedschorus/pull/838)).
             # Left so on purpose. Reading those states would make the dry
-            # run fetch main and call gh, and it promises to change neither
+            # run fetch main and list the open issues, and it promises to change neither
             # git nor GitHub; and none of the three states can hold a heading
             # this check refuses unless a filing started before 2026-09-30
             # left one.
+            resumed = issue_whose_filing_stopped_before_step_5(
+                path, arguments.repo, run)
+            if resumed is not None:
+                report(f"would resume issue {resumed} at step 5: its body "
+                       "still carries a pairing key, so the real run files "
+                       "nothing and links the body to the issue's files "
+                       "once they are on main")
+                return 0
             text, title = validate(path)
             refuse_heading_with_date(title)
             report(f"would file: {title}")
