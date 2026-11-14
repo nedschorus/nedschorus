@@ -36,16 +36,10 @@ A forced update this check lets through is sent only after its replaced commit i
 under refs/force-pushed-old-heads/<branch>/<commit hash>, fetched from origin first when this
 repository lacks it; when it cannot be saved, the push is refused. Nothing deletes these refs.
 A push made with --no-verify skips this hook, and so skips the save.
-
-ESCAPE_HATCH_ASSIGNMENT in front of the git push command lets a push merge-lane-2 asked for
-through without the open pull request check; its forced updates' replaced commits are still
-saved. .claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py reads the same
-assignment.
 """
 
 import importlib.util
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -67,8 +61,6 @@ GH_TIMEOUT_SECONDS = 10.0
 GIT_TIMEOUT_SECONDS = 10.0
 GIT_FETCH_TIMEOUT_SECONDS = 60.0
 FORCE_PUSHED_OLD_HEAD_REF_PREFIX = "refs/force-pushed-old-heads/"
-ESCAPE_HATCH_VARIABLE = "CLAUDE_MERGE_LANE_ASKED_FOR_THIS_REWRITE"
-ESCAPE_HATCH_ASSIGNMENT = ESCAPE_HATCH_VARIABLE + "=1"
 
 REWRITE_REFUSAL = (
     "this push is refused, because its update to branch {branch} does not build on "
@@ -98,9 +90,6 @@ DELETION_INSTRUCTIONS = [
     "If the pull request should be closed: close it with a comment that says why (gh pr close "
     "{number} --comment '<why>'), then push the deletion again.",
 ]
-ESCAPE_HATCH_INSTRUCTION = (
-    "If merge-lane-2 asked you for this push: run it again with " + ESCAPE_HATCH_ASSIGNMENT
-    + " directly in front of the git push command.")
 LOOKUP_FAILED_REFUSAL = (
     "this push is refused, because it {action} branch {branch} on origin, and whether {branch} "
     "has an open pull request could not be checked: {detail}.")
@@ -290,22 +279,6 @@ def old_heads_save(forced_updates, runner):
     return [], notes
 
 
-def forced_updates_unchecked_for_pull_requests(pushed_refs_text, runner):
-    """Return ((branch, remote object ID) for each update that is not a fast-forward, and
-    (branch, detail) for each update git could not say is a fast-forward)."""
-    forced_updates = []
-    fast_forward_check_failures = []
-    for branch, local_object_id, remote_object_id in updates_to_check(pushed_refs_text):
-        if set(local_object_id) == {"0"}:
-            continue
-        try:
-            if not is_fast_forward(remote_object_id, local_object_id, runner):
-                forced_updates.append((branch, remote_object_id))
-        except FastForwardCheckFailed as error:
-            fast_forward_check_failures.append((branch, str(error)))
-    return forced_updates, fast_forward_check_failures
-
-
 def pull_request_name(pull_request):
     return f"#{pull_request.get('number')} ({pull_request.get('url')})"
 
@@ -363,35 +336,28 @@ def refusal_lines(pushed_refs_text, runner):
         return [refusal.format(branch=branch, pull_request=pull_request_name(pull_request),
                                ready_state=ready_state),
                 *(line.format(branch=branch, number=pull_request.get("number"))
-                  for line in instructions),
-                ESCAPE_HATCH_INSTRUCTION], fast_forward_check_failures, forced_updates
+                  for line in instructions)], fast_forward_check_failures, forced_updates
     if lookup_failures:
         branch, deletes, detail = lookup_failures[0]
         return [LOOKUP_FAILED_REFUSAL.format(action="deletes" if deletes else "forces an update to",
                                              branch=branch, detail=detail),
-                LOOKUP_FAILED_INSTRUCTION.format(branch=branch),
-                ESCAPE_HATCH_INSTRUCTION], fast_forward_check_failures, forced_updates
+                LOOKUP_FAILED_INSTRUCTION.format(branch=branch)
+                ], fast_forward_check_failures, forced_updates
     if ready_lookup_failures:
         branch, pull_request, detail = ready_lookup_failures[0]
         return [READY_LOOKUP_FAILED_REFUSAL.format(
                     branch=branch, pull_request=pull_request_name(pull_request), detail=detail),
-                LOOKUP_FAILED_INSTRUCTION.format(branch=branch),
-                ESCAPE_HATCH_INSTRUCTION], fast_forward_check_failures, forced_updates
+                LOOKUP_FAILED_INSTRUCTION.format(branch=branch)
+                ], fast_forward_check_failures, forced_updates
     return [], fast_forward_check_failures, forced_updates
 
 
-def main(argv, pushed_refs_text, stderr, environment, runner=subprocess.run):
+def main(argv, pushed_refs_text, stderr, runner=subprocess.run):
     """Return EXIT_ALLOW_PUSH or EXIT_REFUSE_PUSH for one push."""
     remote_name = argv[0] if argv else ""
     if remote_name != CHECKED_REMOTE_NAME:
         return EXIT_ALLOW_PUSH
-    if environment.get(ESCAPE_HATCH_VARIABLE) == "1":
-        lines = []
-        forced_updates, fast_forward_check_failures = forced_updates_unchecked_for_pull_requests(
-            pushed_refs_text, runner)
-    else:
-        lines, fast_forward_check_failures, forced_updates = refusal_lines(pushed_refs_text,
-                                                                           runner)
+    lines, fast_forward_check_failures, forced_updates = refusal_lines(pushed_refs_text, runner)
     saved_notes = []
     if not lines and fast_forward_check_failures:
         branch = fast_forward_check_failures[0][0]
@@ -412,4 +378,4 @@ def main(argv, pushed_refs_text, stderr, environment, runner=subprocess.run):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:], sys.stdin.read(), sys.stderr, os.environ))
+    sys.exit(main(sys.argv[1:], sys.stdin.read(), sys.stderr))
