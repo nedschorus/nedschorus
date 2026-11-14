@@ -499,6 +499,13 @@ def open_tasks_with_prerequisites_or_blocked_by(task_directory):
 
 # --- One agent-seat's verdict ---
 
+def sets_prerequisites_or_blocked_by(task_tool_input):
+    """Whether a TaskCreate or TaskUpdate call records what a task waits on: the only call that can
+    back a promise to act after an event or a hold."""
+    return bool((task_tool_input.get("metadata") or {}).get("prerequisites")
+                or task_tool_input.get("addBlockedBy"))
+
+
 def code_reading_of_sentence(kind, turn_started_at, task_tool_calls, open_waiting_tasks):
     """What code settles about one matched sentence: not_raised, unbacked, or judge.
 
@@ -511,8 +518,7 @@ def code_reading_of_sentence(kind, turn_started_at, task_tool_calls, open_waitin
             return fields.JUDGE
         backing_candidates = [call for call in task_tool_calls
                               if call[0] and turn_started_at and call[0] >= turn_started_at
-                              and ((call[2].get("metadata") or {}).get("prerequisites")
-                                   or call[2].get("addBlockedBy"))]
+                              and sets_prerequisites_or_blocked_by(call[2])]
         return fields.JUDGE if backing_candidates else fields.UNBACKED
     return fields.JUDGE
 
@@ -613,6 +619,9 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
                                     "source": str(source) if last_spend else None}
         verdict[fields.LAST_TOOL_CALL_AT] = iso(max(
             (moment for moment, _, _ in facts.tool_calls if moment), default=None))
+        verdict[fields.LAST_TASK_CALL_SETTING_PREREQUISITES_OR_BLOCKED_BY_AT] = iso(max(
+            (moment for moment, _, tool_input in facts.task_tool_calls
+             if moment and sets_prerequisites_or_blocked_by(tool_input)), default=None))
 
         last = facts.last_model_turn_record or {}
         limit = is_usage_limit(last)

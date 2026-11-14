@@ -555,6 +555,49 @@ for opener in ("rule 5", "rule 3"):
           (machine.events("wait_step"), machine.alerts()))
 
 ANNOUNCED = "I'm starting the PR 1633 work now."
+
+# An agent-seat that records the task a promise message asked for, and then sits idle waiting on it.
+RECORDED_TASK = assistant(tool=("TaskCreate", {"subject": "report on PR 927", "metadata": {
+    "prerequisites": [{"pr_merged": 927}]}}), when=at(0.8))
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
+machine.script(sent_ok())
+machine.run(0)
+machine.append("alpha", cross_session(machine.events("message_sent")[-1]["text"], at(0.5)),
+               RECORDED_TASK,
+               assistant("Recorded.", at(1)), turn_end(at(1)))
+machine.script()
+machine.run(7)
+check("rule 2: a task call recording what a task waits on, after the promise message, ends the wait",
+      [event["why"] for event in machine.events("wait_ended")]
+      == ["it recorded what a task waits on after the promise message"], machine.events())
+machine.script(sent_ok())
+machine.run(16)
+machine.script()
+machine.run(32)
+check("rule 2: the agent-seat that recorded the task is neither escalated nor reported to the user",
+      [event["step"] for event in machine.events("wait_step")] == ["nudge"]
+      and not machine.events("message_sent")[1:] and not machine.alerts(),
+      (machine.events("wait_step"), machine.events("message_sent"), machine.alerts()))
+
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(f"{PROMISE} {ANNOUNCED}"), turn_end()])
+machine.script({"answer": {"sentences": [{"index": 0, "backed": False, "reason": "no tool call"}]}},
+               sent_ok())
+machine.run(0)
+machine.append("alpha", cross_session(machine.events("message_sent")[-1]["text"], at(0.5)),
+               RECORDED_TASK,
+               assistant("Recorded.", at(1)), turn_end(at(1)))
+machine.script()
+machine.run(7)
+machine.script(sent_ok())
+machine.run(16)
+check("rule 2: a task call does not end a wait whose message also named an announced action, "
+      "which only the judge can find done",
+      not machine.events("wait_ended")
+      and [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"],
+      (machine.events("wait_step"), machine.events("wait_ended")))
+
 machine = Machine()
 machine.seat("alpha", [user("go"), assistant(ANNOUNCED), turn_end()])
 machine.script({"answer": {"sentences": [{"index": 0, "backed": True, "reason": "a test runs"}]}})

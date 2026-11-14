@@ -811,6 +811,29 @@ try:
     check("an agent-session with no tool call: last tool call null",
           "last_tool_call_at" in verdicts["alpha"] and verdicts["alpha"]["last_tool_call_at"] is None,
           verdicts["alpha"])
+    machine = Machine()
+    machine.seat("alpha", [user("go"),
+                           assistant(tool=("TaskCreate", {"metadata": {"prerequisites": [
+                               {"pr_merged": 927}]}}), at="2026-11-02T11:38:00Z"),
+                           assistant(tool=("TaskUpdate", {"taskId": "3", "addBlockedBy": ["2"]}),
+                                     at="2026-11-02T11:40:00Z"),
+                           assistant(tool=("TaskCreate", {"subject": "plain"}),
+                                     at="2026-11-02T11:45:00Z"),
+                           assistant(tool=("Bash", {"command": "ls"}), at="2026-11-02T11:46:00Z"),
+                           assistant("Done.", at="2026-11-02T11:48:00Z"), turn_end()])
+    _, verdicts, _ = machine.run()
+    check("the newest task call that sets prerequisites or addBlockedBy is printed; a later task "
+          "call that sets neither, and a later tool call of another kind, do not move it",
+          verdicts["alpha"].get("last_task_call_setting_prerequisites_or_blocked_by_at")
+          == "2026-11-02T11:40:00Z", verdicts["alpha"])
+    machine = Machine()
+    machine.seat("alpha", [user("go"), assistant(tool=("TaskCreate", {"subject": "plain"})),
+                           assistant("Done."), turn_end()])
+    _, verdicts, _ = machine.run()
+    check("an agent-session whose task calls set neither prerequisites nor addBlockedBy: null",
+          "last_task_call_setting_prerequisites_or_blocked_by_at" in verdicts["alpha"]
+          and verdicts["alpha"]["last_task_call_setting_prerequisites_or_blocked_by_at"] is None,
+          verdicts["alpha"])
 
     # --- the task list is read as the due-task hook reads it ------------------------------------
     machine = Machine()
