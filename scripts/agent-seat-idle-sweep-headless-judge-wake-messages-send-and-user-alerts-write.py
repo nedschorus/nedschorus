@@ -759,7 +759,7 @@ class Sweep:
     def read_failures_end(self):
         """A failure this invocation did not meet again has ended, so that one coming back later
         is dated from its return."""
-        for seat, text in sorted(self.log.read_failures_open() - self.read_failures_this_run):
+        for seat, text in sorted(self.log.read_failures_open() - self.read_failures_this_run):  # pragma: no mutate, read_failure records each failure it adds to read_failures_this_run as open unless it already is, and only this method ends one, so read_failures_this_run is a subset of the open failures and ^ gives what - gives
             self.record({"event": "read_failure_ended", "agent_seat": seat, "error": text})
 
     # --- One idle agent-seat ---
