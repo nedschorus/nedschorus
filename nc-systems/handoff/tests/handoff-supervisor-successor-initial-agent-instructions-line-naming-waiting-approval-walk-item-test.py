@@ -51,7 +51,7 @@ def walk_in(root, minutes, document=WALK_DOCUMENT, name=WALK):
 
 
 def approved_line(walk, count_and_point, link, count):
-    """The approved text of item 5.2.2.8 of approval-walk ned-box-helper-open-items-2026-10-27, filled in."""
+    """The line the user approved for a waiting item with a page link, filled in."""
     return (f"Approval-walk {walk}: item {count_and_point} is waiting for the user; its last page link is "
             f"{link}. Before your first message, open that page with the Artifact tool. If it is gone, publish "
             f"the item again from docs/walk/{walk}.md and append the line \"#item_page item {count} <new link>\" "
