@@ -1189,18 +1189,6 @@ def item_text(walk_finder, minutes, value, numbers, total, parser, named_by=None
     return document, "\n".join(line for first, end in ranges for line in lines[first:end]).strip()
 
 
-def approval_walk_item_sub_step_units_right_after(all_units, unit):
-    """Return the units of all_units, as item_unit_spans gives them, right after unit that are sub-steps of any
-    item unit names, such as `### Item 3.1 of 9` and `### Item 3.1.1 of 9` after item 3, up to the first that is
-    not, so an older version's `3.1 of 9` elsewhere in the walk-document is not among them."""
-    found = []
-    for each in [each for each in all_units if each[3] > unit[3]]:
-        if not each[0] or not all(any(part.startswith(number + ".") for number in unit[0]) for part in each[0]):
-            break
-        found.append(each)
-    return found
-
-
 def approval_walk_item_word_counted_line_ranges(walk_finder, text, tokens, parser, spans, numbers):
     """Return the (first, end) line ranges counted for the items numbered, one per text the skill counts on its
     own: each numbered item's own lines, even under a heading it shares with other items; when several items
@@ -1229,7 +1217,7 @@ def approval_walk_item_word_counted_line_ranges(walk_finder, text, tokens, parse
         ranges.append(own_range(unit, number))
         if len(numbers) > 1 and len(unit[0]) > 1:
             ranges += shared_heading_text(unit)
-        for each in approval_walk_item_sub_step_units_right_after(all_units, unit):
+        for each in walk_finder.approval_walk_item_sub_step_units_right_after(all_units, unit):
             parts = [part for part in each[0] if part.startswith(number + ".") and part not in numbers]
             ranges += [own_range(each, part) for part in parts]
             if parts and len(each[0]) > 1:
@@ -2276,7 +2264,7 @@ def approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minut
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     all_units = walk_finder.item_unit_spans(document.read_text(encoding="utf-8"), parser)
     unit = walk_finder.waiting_item_units(document, value, numbers, total, parser, all_units)[1][0]
-    sub_steps = [part for each in approval_walk_item_sub_step_units_right_after(all_units, unit)
+    sub_steps = [part for each in walk_finder.approval_walk_item_sub_step_units_right_after(all_units, unit)
                  for part in each[0] if part.startswith(numbers[0] + ".")]
     text = minutes.read_text(encoding="utf-8")
     decided, deferrals = minutes_record(walk_finder, text, parser)
