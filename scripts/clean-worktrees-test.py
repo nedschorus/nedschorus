@@ -3624,12 +3624,18 @@ with tempfile.TemporaryDirectory() as scratch:
         "metadata": {"branches": ["closed-head-branch"]}}), encoding="utf-8")
     removals_log = scratch / "removals-log.txt"
 
-    def run_head_branch_clean(*flags, gh_exit=None, tasks=task_lists):
+    def run_head_branch_clean(*flags, gh_exit=None, tasks=task_lists, git_stub_body=None):
         environment = dict(os.environ, FAKE_GH_PULL_REQUESTS=json.dumps(pull_requests),
                            **{TASK_LISTS_DIRECTORY_OVERRIDE_VARIABLE: str(tasks),
                               REMOVALS_LOG_OVERRIDE_VARIABLE: str(removals_log)})
         if gh_exit is not None:
             environment["FAKE_GH_EXIT_CODE"] = str(gh_exit)
+        if git_stub_body is not None:
+            stubs = scratch / f"head-branch-stubs-{len(list(scratch.glob('head-branch-stubs-*')))}"
+            stubs.mkdir()
+            (stubs / "git").write_text("#!/bin/sh\n" + git_stub_body, encoding="utf-8")
+            (stubs / "git").chmod(0o755)
+            environment["PATH"] = f"{stubs}{os.pathsep}{environment['PATH']}"
         return subprocess.run([sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), *flags],
                               capture_output=True, text=True, check=False, env=environment)
 
@@ -3712,6 +3718,44 @@ with tempfile.TemporaryDirectory() as scratch:
           and "branch closed-head-branch: deletion FAILED — git branch -D exited " in locked.stdout
           and locked.returncode == 1,
           f"{locked.returncode}\n{locked.stdout}{locked.stderr}")
+
+    real_git = shutil.which("git")
+    # Another agent commits on the branch between the cleaner's tip check and its deletion.
+    raced_commit = git(checkout, "commit-tree", "-m", "raced", "-p", "closed-head-branch",
+                       "origin/main^{tree}").strip()
+    raced = run_head_branch_clean("--remove", git_stub_body=(
+        'case " $* " in *" branch -D closed-head-branch "*) '
+        f'{real_git} -C {shlex.quote(str(checkout))} update-ref refs/heads/closed-head-branch '
+        f'{raced_commit} ;; esac\n'
+        f'exec {real_git} "$@"\n'))
+    raced_log = text_or_none(removals_log) or ""
+    check("a branch moved between its check and git branch -D is named FAILED with the commit "
+          "deleted and its restore command, logged with that commit, and exits 1",
+          f"branch closed-head-branch: deletion FAILED — it had moved after its check, so git branch "
+          f"-D deleted its commit {raced_commit}, not the checked tip {closed_tip} of pull request #1 "
+          f"(closed); restore it with: git -C {checkout} branch closed-head-branch {raced_commit}"
+          in raced.stdout
+          and f"branch=closed-head-branch\tcommit={raced_commit}" in raced_log
+          and raced.returncode == 1,
+          f"{raced.returncode}\n{raced.stdout}{raced.stderr}")
+    git(checkout, "branch", "closed-head-branch", closed_tip)
+    git(checkout, "branch", "merged-head-branch", merged_tip)
+
+    silent = run_head_branch_clean("--remove", git_stub_body=(
+        'case " $* " in *" branch -D closed-head-branch "*) '
+        f'{real_git} "$@" >/dev/null; exit $? ;; esac\n'
+        f'exec {real_git} "$@"\n'))
+    check("a git branch -D that does not say which commit it deleted is named FAILED with the "
+          "checked tip's restore command, and exits 1",
+          "branch closed-head-branch: deletion FAILED to be confirmed — git branch -D deleted it "
+          "without saying which commit it pointed at" in silent.stdout
+          and f"restore the checked tip with: git -C {checkout} branch closed-head-branch "
+              f"{closed_tip}," in silent.stdout
+          and silent.returncode == 1,
+          f"{silent.returncode}\n{silent.stdout}{silent.stderr}")
+    git(checkout, "branch", "closed-head-branch", closed_tip)
+    git(checkout, "branch", "merged-head-branch", merged_tip)
+    removals_log.unlink()
 
     removal = run_head_branch_clean("--remove")
     check("--remove deletes the closed and the merged pull request's head branch at its pull "

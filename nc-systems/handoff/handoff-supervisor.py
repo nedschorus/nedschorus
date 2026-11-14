@@ -1851,11 +1851,19 @@ LOG_OF_REMOVALS_RECORD_BY_HAND_PHRASES = (
     ": if that printf command fails too, do not run scripts/clean-worktrees.py again; ")
 
 
+# clean-worktrees.py prints this for a branch it deleted with git branch -D, which held commits
+# origin/main lacks, so it is not counted among the branches with nothing beyond main.
+FORCE_DELETED_BRANCH_MARKER = ": deleted with git branch -D, its last commit "
+
+
 def summarize_worktree_cleanup_output(lines) -> str:
     """Return one report line from the cleaner's output."""
     removed = sum(1 for line in lines if ": removed" in line)
+    force_deleted = [line for line in lines
+                     if line.startswith("branch ") and FORCE_DELETED_BRANCH_MARKER in line]
     deleted = sum(1 for line in lines
-                  if (line.startswith("branch ") and ": deleted" in line)
+                  if (line.startswith("branch ") and ": deleted" in line
+                      and FORCE_DELETED_BRANCH_MARKER not in line)
                   or (": removed" in line and line.endswith(" deleted")))
     kept_for_records = [line for line in lines if KEPT_FOR_RECORDS_MARKER in line]
     # A kept-for-records line holds FAILED, so it is counted here and not again among the failures.
@@ -1889,6 +1897,9 @@ def summarize_worktree_cleanup_output(lines) -> str:
               for line in failed]
     report = (f"worktree cleanup: {removed} finished worktree(s) removed, "
               f"{deleted} branch ref(s) with nothing beyond main deleted")
+    if force_deleted:
+        report += (f"; {len(force_deleted)} finished pull request's head branch(es), holding commits "
+                   f"main lacks, deleted with git branch -D: " + "; ".join(force_deleted))
     if discarded:
         report += (f"; {len(discarded)} of the removed held uncommitted, untracked or "
                    f"ignored files: " + "; ".join(discarded))

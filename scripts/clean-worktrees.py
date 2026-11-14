@@ -761,17 +761,40 @@ def finished_pull_request_head_branches_to_force_delete(repo, pull_requests):
 
 
 def force_delete_finished_pull_request_head_branch(branch, tip, pull_request, repo):
-    """Delete the branch with `git branch -D` and log it; return whether git deleted it and its
-    log line was written."""
-    deletion = run_git(repo, "branch", "-D", branch)
+    """Delete the branch with `git branch -D` and log it; return whether git deleted it at the
+    checked tip and its log line was written."""
+    # git branch -D deletes by name, so another agent may have moved the branch since its tip was
+    # checked; git's own "(was <sha>)" says which commit it deleted. LC_ALL=C keeps that text English.
+    deletion = subprocess.run(["git", "-C", str(repo), "branch", "-D", branch],
+                              capture_output=True, text=True, check=False,
+                              env={**os.environ, "LC_ALL": "C"})
     if deletion.returncode != 0:
         print(f"branch {branch}: deletion FAILED — git branch -D exited {deletion.returncode}: "
               f"{deletion.stderr.strip()[:120] or 'no error text'}")
         return False
-    print(f"branch {branch}: deleted with git branch -D, its last commit {tip} being the head of "
-          f"{pull_request_text(pull_request)}")
-    return append_removed_worktree_or_deleted_branch_log_lines(
-        [("deleted-branch", {"branch": branch, "commit": tip})], repo, f"branch {branch}")
+    was = re.search(r"\(was ([0-9a-f]+)\)", deletion.stdout)
+    deleted = was and run_git(repo, "rev-parse", "--verify", "--quiet",
+                              f"{was.group(1)}^{{commit}}").stdout.strip()
+    if deleted == tip:
+        print(f"branch {branch}: deleted with git branch -D, its last commit {tip} being the head of "
+              f"{pull_request_text(pull_request)}")
+        return append_removed_worktree_or_deleted_branch_log_lines(
+            [("deleted-branch", {"branch": branch, "commit": tip})], repo, f"branch {branch}")
+    # One line each, so the handoff-supervisor's summary, which keeps FAILED lines, keeps the restore command.
+    restore = f"git -C {shlex.quote(str(repo))} branch {shlex.quote(branch)} {deleted or tip}"
+    if not deleted:
+        print(f"branch {branch}: deletion FAILED to be confirmed — git branch -D deleted it without "
+              f"saying which commit it pointed at, so commits made on it after its tip {tip} was "
+              f"checked may have no branch now; restore the checked tip with: {restore}, and look "
+              f"for newer commits with: git -C {shlex.quote(str(repo))} fsck --lost-found")
+    else:
+        print(f"branch {branch}: deletion FAILED — it had moved after its check, so git branch -D "
+              f"deleted its commit {deleted}, not the checked tip {tip} of "
+              f"{pull_request_text(pull_request)}; restore it with: {restore}")
+    append_removed_worktree_or_deleted_branch_log_lines(
+        [("deleted-branch", {"branch": branch, "commit": deleted or "unknown"})], repo,
+        f"branch {branch}")
+    return False
 
 
 def in_progress_git_operation_keep_reason(worktree):
