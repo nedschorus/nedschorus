@@ -340,7 +340,7 @@ def task_events_from_claude_code_transcript_line(
         line: str, where: str, *, should_raise_on_unparseable_spawn_or_resume_line: bool) -> list:
     """Return the task events one transcript line records, as ClaudeCodeTranscriptTaskEvent, in
     this order: a subagent's spawn, a resume by SendMessage, a TaskStop, then one event for each
-    task-id of each <task-notification> in the line's text, whatever record holds it.
+    task-id of each <task-notification> in the record's decoded strings, whatever record holds it.
 
     Every task-id is returned, a background command's too, and every repeat of a notification,
     so each caller applies its own rules. `where` names the line in the refusal.
@@ -383,14 +383,29 @@ def task_events_from_claude_code_transcript_line(
     if TASK_STOP_TOOL_RESULT_MARKER_KEY in tool_result and isinstance(stopped_id, str):
         events.append(ClaudeCodeTranscriptTaskEvent(STOPPED_BY_TASK_STOP_EVENT, stopped_id, record))
     if has_notification:
-        for notification in TASK_NOTIFICATION_PATTERN.findall(line):
-            is_interim = interim_recognizer.task_notification_is_interim(notification)
-            status = TASK_NOTIFICATION_STATUS_PATTERN.search(notification)
-            for task_id in TASK_NOTIFICATION_TASK_ID_PATTERN.findall(notification):
-                events.append(ClaudeCodeTranscriptTaskEvent(
-                    TASK_NOTIFICATION_TASK_EVENT, task_id, record,
-                    status=status.group(1) if status else None, is_interim=is_interim))
+        # Read the decoded strings: in the line's JSON text, a <result> that opens with a newline
+        # opens with the two characters \n, which the recognizer does not take for whitespace.
+        for text in _strings_in_document_order(record):
+            for notification in TASK_NOTIFICATION_PATTERN.findall(text):
+                is_interim = interim_recognizer.task_notification_is_interim(notification)
+                status = TASK_NOTIFICATION_STATUS_PATTERN.search(notification)
+                for task_id in TASK_NOTIFICATION_TASK_ID_PATTERN.findall(notification):
+                    events.append(ClaudeCodeTranscriptTaskEvent(
+                        TASK_NOTIFICATION_TASK_EVENT, task_id, record,
+                        status=status.group(1) if status else None, is_interim=is_interim))
     return events
+
+
+def _strings_in_document_order(value):
+    """Yield every string value inside a parsed JSON value, decoded, in the order the line holds them."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _strings_in_document_order(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _strings_in_document_order(item)
 
 
 def background_bash_commands_by_tool_use_id_from_line(line: str) -> dict:

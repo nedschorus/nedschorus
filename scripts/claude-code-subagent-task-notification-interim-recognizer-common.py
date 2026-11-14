@@ -24,10 +24,8 @@ _RESULT_PATTERN = re.compile(r"<result>(.*?)</result>", re.S)
 
 
 def task_notification_is_interim(notification_body: str) -> bool:
-    """Return True when one <task-notification> block says its subagent will notify again.
-
-    The body may be the plain text or the JSON-escaped text of a transcript line.
-    """
+    """Return True when one <task-notification> block, as decoded text, says its subagent will
+    notify again."""
     # A report can quote a <note>; only the harness's own tags precede <result>.
     harness_tags = notification_body.split("<result>", 1)[0]
     note = _NOTE_PATTERN.search(harness_tags)
