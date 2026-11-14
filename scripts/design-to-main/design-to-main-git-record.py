@@ -106,15 +106,17 @@ class TopicBranchGitRecord:
                 "refused to cut the topic branch %r in %s, because that checkout is an agent-home: "
                 "an agent-home holds no topic work and rests on a detached HEAD at origin/main; "
                 "the run does not start and the checkout is as it was.\n"
-                "Make a worktree for the run, detached at origin/main, with: cd %s && python3 "
-                "scripts/agent-seat-worktree-create-with-owner-file.py --detach %s origin/main\n"
-                "Then build the run again over that worktree: a new TopicBranchGitRecord "
-                "(scripts/design-to-main/design-to-main-git-record.py) with the path the command prints as its "
-                "repository_dir and the same component, component_directory and design_path as this one, "
-                "and a new DesignToMainStateMachineFlow (scripts/design-to-main/design-to-main-state-machine.py) "
-                "over that record and the same launcher, then call start(%r) on that flow; "
-                "the machine's first row cuts the topic branch in that worktree." % (
-                    self.component, self.repository_dir, self.repository_dir, self.component, self.component))
+                "Make a worktree for the run, detached at origin/main, by running this shell command:\n"
+                "cd %s && python3 scripts/agent-seat-worktree-create-with-owner-file.py --detach %s origin/main\n"
+                "Then, in the Python program that called start(%r) and received this error, build the run again "
+                "over that worktree: a new TopicBranchGitRecord (scripts/design-to-main/design-to-main-git-record.py) "
+                "with the path the command prints as its repository_dir, and the component, component_directory "
+                "and design_path of the refused record; and a new DesignToMainStateMachineFlow "
+                "(scripts/design-to-main/design-to-main-state-machine.py) over the new record, with the launcher "
+                "the refused flow was given. Then call start(%r) on the new flow; "
+                "the run's first step cuts the topic branch in that worktree." % (
+                    self.component, self.repository_dir, self.repository_dir, self.component, self.component,
+                    self.component))
 
     def require_topic_branch_start_point(self):
         """Raise TopicBranchCutRefused when the start point is absent, GitCommandFailed when git fails."""

@@ -912,11 +912,13 @@ class TopicBranchRefusedAtRow1(unittest.TestCase):
             with self.assertRaises(M.TopicBranchCutRefused) as refused:
                 machine.start(fixture.COMPONENT)
             self.assertIn("agent-home", str(refused.exception))
-            self.assertIn("--detach %s origin/main" % fixture.COMPONENT, str(refused.exception))
+            self.assertIn("--detach %s origin/main\nThen, in the Python program that called start(%r) "
+                          "and received this error" % (fixture.COMPONENT, fixture.COMPONENT), str(refused.exception))
             self.assertIn("a new TopicBranchGitRecord (scripts/design-to-main/design-to-main-git-record.py) "
                           "with the path the command prints as its repository_dir", str(refused.exception))
             self.assertIn("a new DesignToMainStateMachineFlow (scripts/design-to-main/design-to-main-state-machine.py) "
-                          "over that record and the same launcher, then call start(%r) on that flow" % fixture.COMPONENT,
+                          "over the new record, with the launcher the refused flow was given. "
+                          "Then call start(%r) on the new flow" % fixture.COMPONENT,
                           str(refused.exception))
             self.assertEqual(machine.launcher.launched, [])
             self.assertEqual(fixture.git(agent_home, "rev-parse", "--abbrev-ref", "HEAD").strip(), "HEAD")
