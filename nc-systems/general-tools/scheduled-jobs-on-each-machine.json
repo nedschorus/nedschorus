@@ -35,14 +35,14 @@
       }
     },
     {
-      "name": "daily-full-test-run-of-main",
-      "program": "scripts/daily-full-test-run-of-main.py",
+      "name": "scheduled-full-test-run-of-main",
+      "program": "scripts/scheduled-full-test-run-of-main.py",
       "arguments": [],
-      "output": ".claude/daily-full-test-run-of-main.log",
+      "output": ".claude/scheduled-full-test-run-of-main.log",
       "on": {
         "mac": {
           "scheduler": "launchd",
-          "label": "com.nedschorus.daily-full-test-run-of-main",
+          "label": "com.nedschorus.scheduled-full-test-run-of-main",
           "launchd_keys": {"StartCalendarInterval": {"Hour": 3, "Minute": 30}}
         },
         "ned-box": {"scheduler": "cron", "schedule": "0 0 * * *"}
@@ -109,14 +109,14 @@
       }
     },
     {
-      "name": "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check",
-      "program": "nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py",
+      "name": "uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner",
+      "program": "nc-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py",
       "arguments": [],
-      "output": ".claude/weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check.log",
+      "output": ".claude/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.log",
       "on": {
         "mac": {
           "scheduler": "launchd",
-          "label": "com.nedschorus.weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check",
+          "label": "com.nedschorus.uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner",
           "launchd_keys": {"StartCalendarInterval": {"Weekday": 0, "Hour": 4, "Minute": 30}}
         },
         "ned-box": {"scheduler": "cron", "schedule": "30 4 * * 0"}
@@ -161,10 +161,28 @@
     {
       "name": "claude-code-temp-folders-of-exited-agent-sessions-delete",
       "program": "nc-systems/general-tools/claude-code-temp-folders-of-exited-agent-sessions-delete.py",
-      "arguments": [],
+      "arguments": ["--then-tmp-and-reviewer-scratch-folders-unchanged-a-day-and-unused-delete"],
       "output": ".claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log",
       "on": {
         "ned-box": {"scheduler": "cron", "schedule": "30 7 * * *"}
+      }
+    },
+    {
+      "name": "merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge",
+      "program": "scripts/merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge.py",
+      "arguments": [],
+      "output": ".claude/merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "*/5 * * * *"}
+      }
+    },
+    {
+      "name": "cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write",
+      "program": "nc-systems/cold-read/cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write.py",
+      "arguments": [],
+      "output": ".claude/cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "45 7 * * *"}
       }
     }
   ]

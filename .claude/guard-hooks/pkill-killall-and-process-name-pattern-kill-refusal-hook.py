@@ -20,7 +20,11 @@ in until ! kill -0 $(pgrep -f x | head -1); do sleep 5; done. The pattern
 also matches the command line of the shell running the loop, which holds the
 same words, so the condition never changes and the loop never ends. The
 refusal names the program that waits on a background command's output file
-instead. pgrep -f outside a loop's condition, as in its body, is allowed.
+instead. pgrep -f outside a loop's condition, as in its body, is allowed. A
+pgrep -f that bash, sh or zsh -c runs in a loop's condition, as in
+while bash -c 'pgrep -f x'; do sleep 5; done, is in that condition too; one
+that ssh runs there is allowed, as its remote command runs on the other
+machine.
 
 pkill -P <process id>, which signals the children of one process and matches
 no name, is allowed when every other argument is a signal, as in -TERM, -9,
@@ -199,19 +203,26 @@ def nested_command_string(program, arguments):
     return None
 
 
-def refusal_for(command):
+def refusal_for(command, in_while_or_until_loop_condition=False):
+    """Return the refusal for command, or None.
+
+    in_while_or_until_loop_condition is True when command is the string bash, sh or zsh -c runs
+    in a while or until loop's condition, so every command in it runs in that condition too.
+    """
     commands = shell_reader.simple_commands(command)
     for words in commands:
         found = program_and_arguments(list(words))
         if found is None:
             continue
         program, arguments, run_by_xargs = found
+        in_condition = in_while_or_until_loop_condition or words.in_while_or_until_loop_condition
         inner = nested_command_string(program, arguments)
         if inner is not None:
-            reason = refusal_for(inner)
+            # ssh runs its remote command on the other machine, where the loop's shell is not.
+            reason = refusal_for(inner, in_condition and not is_program(program, "ssh"))
             if reason:
                 return reason
-        if (is_program(program, "pgrep") and words.in_while_or_until_loop_condition
+        if (is_program(program, "pgrep") and in_condition
                 and pgrep_matches_full_command_line(arguments)):
             return PGREP_FULL_COMMAND_LINE_LOOP_CONDITION_REFUSAL
         if (is_program(program, "pkill") and not run_by_xargs

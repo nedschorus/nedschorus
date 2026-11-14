@@ -17,8 +17,8 @@ whose source holds the text __doc__ anywhere, comments and strings included,
 since argparse prints __doc__ for --help. A string written in a function's return statement is a message too when a
 call of that function, by its bare name, reaches one of the forms above the way a local name
 may, below, as print(stopped_line(...)) does, or is carried by the binding of a local name that is
-followed, as in text = f"failed: {detail()}" then print(text); a string that function's returned
-call carries in turn follows the same way. The function is matched by its name alone, so every function of
+followed, as in text = f"failed: {detail()}" then print(text); when that function's return
+statement holds a call of another function, that function is followed the same way. The function is matched by its name alone, so every function of
 that name in the file is followed. A dict literal's keys, a subscript's index and a comprehension's
 if-conditions are not text, so in raise Answer(400, {"error": text}) only text is a message; nor is
 a name a comprehension binds as its target, so " ".join(note for note in items) carries items, not
@@ -28,9 +28,11 @@ alone. An empty string literal is no message either. A message built with + is o
 its literal pieces joined and each other operand shown as {source}; an f-string
 field in the chain keeps its conversion and format spec, {x!r} and {x:.1f}, as ast.unparse writes
 the field of a standalone f-string. Each entry also holds literal_text, the message's literal
-pieces alone, outside every {...} placeholder, and text_as_agent_reads_it_with_placeholder_stand_ins,
-the message as the agent reads it, with each placeholder shown as <its source>, or as its value
-when it names a module-level string constant whose one assignment is the only binding of that
+pieces with each f-string field or non-literal + operand replaced by the literal text of the
+strings its value may carry, space-separated, so {'up' if ok else 'down'} gives up down, while
+{name}, a subscript's key and a format spec give nothing; a plain string's braces stay as
+written. It also holds text_as_agent_reads_it_with_placeholder_stand_ins, the message as the
+agent reads it, with each placeholder shown as <its source>, or as its value when it names a module-level string constant whose one assignment is the only binding of that
 name anywhere in the file, as module_level_string_values_whose_name_the_file_binds_only_once says.
 A message held in a local name is found when its own function's body binds the name, with =, an annotation or +=, to a
 non-empty string literal, an f-string, a + chain holding a string literal, a string literal
@@ -131,14 +133,13 @@ def f_string_field_text(field):
 
 def message_text_of_addition_chain(operands, literal_only=False):
     """The literal pieces joined; an f-string field or another operand is shown as {source},
-    or left out when literal_only."""
+    or, when literal_only, as literal_text_carried_by_placeholder gives it."""
     pieces = []
     for operand in operands:
         if isinstance(operand, ast.Constant) and isinstance(operand.value, str):
             pieces.append(operand.value)
         elif literal_only:
-            if isinstance(operand, ast.JoinedStr):
-                pieces.extend(part.value for part in operand.values if isinstance(part, ast.Constant))
+            pieces.append(literal_text_carried_by_placeholder(operand))
         elif isinstance(operand, ast.JoinedStr):
             pieces.extend(part.value if isinstance(part, ast.Constant) else f_string_field_text(part)
                           for part in operand.values)
@@ -236,12 +237,22 @@ def render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins(node, m
 
 
 def literal_text_of_string_node(node):
-    """The node's literal words alone, outside every {...} placeholder."""
+    """The words the node's string literals give: its literal pieces, with each f-string field or
+    non-literal + operand replaced by literal_text_carried_by_placeholder. A plain string literal
+    is its value, braces included, since its braces reach the agent as written."""
     if isinstance(node, ast.BinOp):
         return message_text_of_addition_chain(addition_chain_operands(node), literal_only=True)
     if isinstance(node, ast.JoinedStr):
-        return "".join(part.value for part in node.values if isinstance(part, ast.Constant))
+        return "".join(part.value if isinstance(part, ast.Constant)
+                       else literal_text_carried_by_placeholder(part.value) for part in node.values)
     return node.value
+
+
+def literal_text_carried_by_placeholder(expression):
+    """The literal text of each string the expression's value may carry, space-separated, as
+    string_nodes_without_f_string_parts finds them: up and down in {'up' if ok else 'down'};
+    nothing from a name, a subscript's key, a join's separator or a format spec."""
+    return " ".join(literal_text_of_string_node(node) for node in string_nodes_without_f_string_parts(expression))
 
 
 PRINTING_CALL_NAMES = ("print", "sys.stderr.write", "sys.stdout.write")

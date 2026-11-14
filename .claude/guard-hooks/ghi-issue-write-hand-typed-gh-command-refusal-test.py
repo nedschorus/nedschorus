@@ -68,11 +68,10 @@ def decision_for(command, tool_name="Bash"):
 # The refusals as they read when the issue's files cannot be looked up, as in
 # these cases, whose checkout does not exist.
 CLOSE_WITH_COMMENT_FALLBACK = guard.CLOSE_WITH_COMMENT_REFUSAL.format(
-    record_line=guard.record_line(guard.CLOSE_OUTCOME, None))
+    close_lines=guard.close_lines(None))
 REOPEN_WITH_COMMENT_FALLBACK = guard.REOPEN_WITH_COMMENT_REFUSAL.format(
     record_line=guard.record_line(guard.REOPEN_OUTCOME, None))
-DELETE_FALLBACK = guard.DELETE_REFUSAL.format(
-    record_line=guard.record_line(guard.CLOSE_OUTCOME, None))
+DELETE_FALLBACK = guard.DELETE_REFUSAL.format(close_lines=guard.close_lines(None))
 COMMENT_FALLBACK = guard.comment_refusal(None)
 EDIT_BODY_FALLBACK = guard.edit_body_refusal(None)
 EDIT_TITLE_FALLBACK = guard.edit_title_refusal(None)
@@ -301,12 +300,12 @@ for files in RECORD_LINE_CASES:
     REFUSAL_TEXTS += [
         guard.comment_refusal(files), guard.edit_body_refusal(files),
         guard.edit_title_refusal(files),
-        guard.CLOSE_WITH_COMMENT_REFUSAL.format(
-            record_line=guard.record_line(guard.CLOSE_OUTCOME, files)),
         guard.REOPEN_WITH_COMMENT_REFUSAL.format(
-            record_line=guard.record_line(guard.REOPEN_OUTCOME, files)),
-        guard.DELETE_REFUSAL.format(
-            record_line=guard.record_line(guard.CLOSE_OUTCOME, files))]
+            record_line=guard.record_line(guard.REOPEN_OUTCOME, files))]
+    if files != []:
+        REFUSAL_TEXTS += [
+            guard.CLOSE_WITH_COMMENT_REFUSAL.format(close_lines=guard.close_lines(files)),
+            guard.DELETE_REFUSAL.format(close_lines=guard.close_lines(files))]
 OPENING_WORDS = ("Do not", "Put", "If", "Write", "Edit", "To change", "Close",
                  "Run", "Record", "Change", "This", "The", "Otherwise")
 for text in REFUSAL_TEXTS:
@@ -397,21 +396,24 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     refusal = refusal_in_checkout("gh issue close 46 -c done")
     check("close: an issue with one file on main is told to record the outcome in it",
           refusal is not None and refusal.split("\n")[1] ==
-          "Record the outcome in docs/issues/46-the-only-file.md, then open the edit's pull "
-          "request with: python3 scripts/ghi-issue-write.py edit docs/issues/46-the-only-file.md",
-          refusal)
-    check("close: the refusal says to close only after that edit has merged and its rerun",
-          refusal is not None and refusal.split("\n")[2].startswith(
-              "Close the issue after that edit's pull request has merged and its rerun has "
-              "finished, without --comment"), refusal)
+          "Record the outcome in docs/issues/46-the-only-file.md, then close the issue with "
+          "the line below that fits.", refusal)
+    check("close: the refusal names the close operation on that file, not gh issue close",
+          refusal is not None and refusal.split("\n")[3] ==
+          "If the issue's work is done: python3 scripts/ghi-issue-write.py close "
+          "docs/issues/46-the-only-file.md --reason completed"
+          and "gh issue close" not in refusal, refusal)
 
     refusal = refusal_in_checkout("gh issue close 47 --comment done")
     check("close: an issue with several files on main is given all of them to choose among",
           refusal is not None and refusal.split("\n")[1] ==
           "The issue's files on main are: docs/issues/47-supporting-notes.md, "
           "docs/issues/47-the-ghi-md.md. Record the outcome in the issue's GHI-MD among "
-          "them, then open the edit's pull request with: python3 "
-          "scripts/ghi-issue-write.py edit <that path>", refusal)
+          "them, then close the issue with the line below that fits, giving that path.",
+          refusal)
+    check("close: with several files, the close lines say <that path>",
+          refusal is not None and refusal.split("\n")[3].endswith(
+              "close <that path> --reason completed"), refusal)
 
     refusal = refusal_in_checkout("gh issue close 48 -c done")
     check("close: an issue with no file on main is told to stop, and the message ends there",
@@ -430,7 +432,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           refusal is not None and refusal.split("\n")[1].startswith(
               "Record the outcome in docs/issues/46-the-only-file.md"), refusal)
     check("delete: the duplicate line comes first among the close lines",
-          refusal is not None and refusal.split("\n")[3].startswith(
+          refusal is not None and refusal.split("\n")[2].startswith(
               "If this issue covers the same work as another issue: "), refusal)
 
     refusal = refusal_in_checkout("gh issue delete 48 --yes")

@@ -208,7 +208,7 @@ def run_cell(stub_directory, stub_body, *arguments, cwd=None):
     environment = dict(os.environ)
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
     # A scratch home, so the credential profile names paths in it and the
-    # launch never scans or names the real home's credential files.
+    # launch never names the real home's credential directories.
     environment["HOME"] = str(scratch_home_for(stub_directory))
     return subprocess.run(
         [sys.executable, str(CELL_SCRIPT), *arguments],

@@ -13,7 +13,7 @@ The hook finds its owner by walking up its parent processes to one named
 claude. The cases run the hook's main() in this process, with that walk
 reading a fake /proc, so no binary named claude is needed; see
 FakeProcessTreeClaude. A real claude runs the hook once a week on each machine
-in nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py.
+in nc-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py.
 No case sends a signal.
 
 Run: python3 nc-systems/handoff/tests/uncommitted-work-snapshots-test.py
@@ -49,6 +49,8 @@ OWNER_FILE_MODULE_RELATIVE = Path("scripts/worktree-owner-file-read-and-write.py
 CLEANER_RELATIVE = Path("scripts/clean-worktrees.py")
 GIT_OUTPUT_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
+TASK_WRITE_MODULE_RELATIVE = Path(
+    "nc-systems/general-tools/agent-seat-task-list-new-pending-task-write-common.py")
 NEXT_STEP_LINES_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 LOG_STORE_WRITER_MODULE_RELATIVE = Path(
@@ -56,12 +58,14 @@ LOG_STORE_WRITER_MODULE_RELATIVE = Path(
 NED_BOX_HOME_CONSTANTS_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
 # The cleaner reads the review checkouts directory from the merge-lane helpers' common module,
-# which loads the test runner, which loads the git-redirecting variables module.
+# which loads the test runner, which loads the git-redirecting variables module and the attendance check.
 MERGE_LANE_COMMON_MODULE_RELATIVE = Path(
     "scripts/merge-lane-pull-request-helpers-common-options-paths-and-token.py")
 TEST_RUNNER_RELATIVE = Path("scripts/run-all-test-suites.py")
 GIT_REDIRECTING_REMOVAL_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py")
+ATTENDANCE_CHECK_MODULE_RELATIVE = Path(
+    "nc-systems/general-tools/agent-session-unattended-by-user-check-common.py")
 
 # The cleaner's --remove run below would otherwise append to the real log-store's log of removals.
 _removals_log_directory = tempfile.mkdtemp(prefix="uncommitted-work-snapshots-test-removals-log-")
@@ -78,6 +82,9 @@ def load(path, name):
 
 
 snapshots = load(REPOSITORY_ROOT / MODULE_RELATIVE, "uncommitted_work_snapshots")
+first_prompt_list = load(
+    SYSTEM_DIRECTORY / "agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py",
+    "agent_seat_worktrees_and_branches_with_no_pull_request_first_prompt_list")
 
 failures = []
 SKIPPED = []
@@ -148,10 +155,11 @@ def new_clone():
     main = base / "main"
     git(SCRATCH, "clone", "-q", str(origin), str(main))
     for relative in (MODULE_RELATIVE, HOOK_RELATIVE, CLEANER_RELATIVE, OWNER_FILE_MODULE_RELATIVE,
-                     GIT_OUTPUT_MODULE_RELATIVE, NEXT_STEP_LINES_MODULE_RELATIVE,
+                     GIT_OUTPUT_MODULE_RELATIVE, TASK_WRITE_MODULE_RELATIVE,
+                     NEXT_STEP_LINES_MODULE_RELATIVE,
                      LOG_STORE_WRITER_MODULE_RELATIVE, NED_BOX_HOME_CONSTANTS_MODULE_RELATIVE,
                      MERGE_LANE_COMMON_MODULE_RELATIVE, TEST_RUNNER_RELATIVE,
-                     GIT_REDIRECTING_REMOVAL_MODULE_RELATIVE):
+                     GIT_REDIRECTING_REMOVAL_MODULE_RELATIVE, ATTENDANCE_CHECK_MODULE_RELATIVE):
         (main / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPOSITORY_ROOT / relative, main / relative)
     (main / "tracked.txt").write_text("one\n")
@@ -182,7 +190,7 @@ class FakeProcessTreeClaude:
     a real helper process's, so the owner key and the owner's liveness are the
     real platform's. The walk is the module's own function, given the fake
     /proc. A real claude runs the hook once a week in
-    nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py.
+    nc-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py.
     """
 
     started = 0
@@ -1026,6 +1034,11 @@ def test_restore_a_subset():
               and f"\nRestore commit: {restore_commit}\n" in task.get("description", "")
               and ref in task.get("description", "") and str(target) in task.get("description", ""),
               f"restore opens the restored branch's task, naming its restore commit, {where}", task)
+        holding = first_prompt_list.tasks_holding("seat-five", restore_task_list())
+        check(holding.holders(branch) and holding.holders(target)
+              and not holding.unreadable,
+              f"the first prompt's list reads the task restore opens as holding its branch and "
+              f"worktree, so it does not list them, {where}", task)
         check((restore_task_list() / ".highwatermark").read_text() == next(iter(new_tasks), ""),
               "restore raises the task list's .highwatermark to the new task's id")
         check(f"branch: {branch}" in lines and f"worktree: {target}" in lines
@@ -1073,35 +1086,6 @@ def unchanged_after_refusal(main, ref, code, lines, name, text):
     check(code == snapshots.EXIT_REFUSED and lines[:1] and lines[0].startswith("REFUSED: ")
           and any(text in line for line in lines),
           f"restore refuses {name}", lines)
-
-
-def test_task_written_beside_one_claude_code_writes_at_the_same_moment():
-    list_directory = SCRATCH / "task-list-race"
-    list_directory.mkdir()
-    (list_directory / "1.json").write_text("{}")
-    real_link = snapshots.os.link
-    links_tried = []
-
-    def link_racing_claude_code(source, target):
-        links_tried.append(target)
-        if len(links_tried) > 5:
-            raise RuntimeError("the task writer kept retrying one id")
-        if Path(target).name == "2.json" and not Path(target).exists():
-            Path(target).write_text('{"id": "2", "by": "claude code"}')
-        return real_link(source, target)
-
-    snapshots.os.link = link_racing_claude_code
-    try:
-        task_id = snapshots.agent_seat_task_list_new_pending_task_write(list_directory, "subject",
-                                                                         "description")
-    finally:
-        snapshots.os.link = real_link
-    check(task_id == 3 and json.loads((list_directory / "2.json").read_text())["by"] == "claude code"
-          and json.loads((list_directory / "3.json").read_text())["subject"] == "subject"
-          and (list_directory / ".highwatermark").read_text() == "3"
-          and not list(list_directory.glob("*.partial")),
-          "a task id Claude Code takes at the same moment is skipped and its file kept",
-          sorted(path.name for path in list_directory.iterdir()))
 
 
 def test_restore_refusals_change_nothing():
@@ -1185,7 +1169,9 @@ def git_client_side_hooks_installed_for_agent_seat(main, agent_seat):
     record.write_text("# session-handoff\n")
     identity = {"GIT_AUTHOR_NAME": agent_seat, "GIT_COMMITTER_NAME": agent_seat,
                 "GIT_AUTHOR_EMAIL": f"{agent_seat}@nedschorus.invalid",
-                "GIT_COMMITTER_EMAIL": f"{agent_seat}@nedschorus.invalid"}
+                "GIT_COMMITTER_EMAIL": f"{agent_seat}@nedschorus.invalid",
+                # The Mac's own NEDSCHORUS_AGENTS_ROOT would point the hook past HOME's agents.
+                "NEDSCHORUS_AGENTS_ROOT": str(home / "agents")}
     real = {name: os.environ.get(name) for name in identity}
     os.environ.update(identity)
 
@@ -1341,9 +1327,10 @@ def test_restore_task_and_ref_deletion_failures():
     check(code == 1 and target.is_dir() and snapshots.current_ref_value(main, ref) is None
           and any(line.startswith("FAILED: the task could not be opened") for line in lines)
           and f"subject: Restored branch {branch}: open its pull request or delete it" in lines
-          and any(line.startswith("Restore commit: ") for line in lines),
+          and any(line.startswith("Restore commit: ") for line in lines)
+          and f"metadata: {json.dumps({'branches': [branch, str(target)]})}" in lines,
           "a task restore cannot open keeps the branch, still deletes the ref, and prints the "
-          "task's subject and description for TaskCreate", lines)
+          "task's subject, description and metadata for TaskCreate", lines)
     main = new_clone()
     ref, _worktree = leftover_snapshot(main, "ref-deletion-fails", {"new.txt": "work\n"}, "9-6")
     lock = Path(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir")) / f"{ref}.lock"
@@ -2261,7 +2248,6 @@ def main():
                      test_live_and_dead_owners_listed, test_list_caps_and_failure,
                      test_supervisor_appends_the_list, test_restore_a_subset,
                      test_restore_reads_a_kept_name_as_a_literal_path,
-                     test_task_written_beside_one_claude_code_writes_at_the_same_moment,
                      test_restore_refusals_change_nothing, test_restore_step_failures,
                      test_restore_accepts_the_owner_file_git_worktree_add_wrote_naming_its_agent_seat,
                      test_restore_task_and_ref_deletion_failures, test_discard,

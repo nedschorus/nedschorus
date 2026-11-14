@@ -89,8 +89,11 @@ def markdown_table_cells_under_header(design_text, header, cell_count):
     into its cells. A row with another number of cells is malformed."""
     lines = design_text.splitlines()
     if lines.count(header) != 1:
-        raise DesignTableMalformed("expected one table headed %r, found %d"
-                                   % (header, lines.count(header)))
+        raise DesignTableMalformed(
+            f"this suite expects exactly one table in {DESIGN_RELATIVE_PATH} headed %r, and found "
+            "%d; the tests that read that table compare nothing until the design has exactly one "
+            "line that is that header, character for character."
+            % (header, lines.count(header)))
     start = lines.index(header)
     rows = []
     for line in lines[start + 2:]:
@@ -98,10 +101,20 @@ def markdown_table_cells_under_header(design_text, header, cell_count):
             break
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         if len(cells) != cell_count:
-            raise DesignTableMalformed("%d cells, not %d: %s" % (len(cells), cell_count, line))
+            raise DesignTableMalformed(
+                f"a row of a table this suite reads in {DESIGN_RELATIVE_PATH} has %d columns where "
+                "its header has %d, so the suite cannot tell which column each cell of the row belongs "
+                "to, and the tests that read that table compare nothing; this suite splits a row at "
+                "every |, so a | inside a cell's text, even inside backticks, adds a column. The "
+                "row: %s"
+                % (len(cells), cell_count, line))
         rows.append(cells)
     if not rows:
-        raise DesignTableMalformed("no rows under %r" % header)
+        raise DesignTableMalformed(
+            f"the table in {DESIGN_RELATIVE_PATH} headed %r has no rows, so the tests that read "
+            "that table have nothing to compare; this suite reads rows from the second line below "
+            "the header, after the separator line, up to the first line that does not start with "
+            "|, and that second line does not start with |." % header)
     return rows
 
 
@@ -110,7 +123,11 @@ def section_3_2_prose_rows(design_text):
     for number, from_cell, trigger_cell, to_cell, _counter in markdown_table_cells_under_header(
             design_text, SECTION_3_2_TABLE_HEADER, 5):
         if not re.fullmatch(r"[1-9][0-9]*", number):
-            raise DesignTableMalformed("section 3.2 row number %r is not a number" % number)
+            raise DesignTableMalformed(
+                f"section 3.2 of {DESIGN_RELATIVE_PATH} has %r in its Row column; this suite pairs "
+                "each row with the TRANSITION_TABLE row of the same number, so every Row value "
+                "must be a whole number from 1 up, with no leading zero, and the tests that read "
+                "section 3.2 compare nothing until every Row value is." % number)
         rows.append(DesignTransitionProseRow(number, from_cell, trigger_cell, to_cell))
     return rows
 
@@ -146,7 +163,7 @@ FROM_CELLS_THE_MATCHER_CANNOT_READ = {
 TRIGGER_CELL_PHRASES_NAMING_VERDICTS = {
     # Row 67: a reviewer's or the arbitrator's `reject contract`, and a
     # writer's `input-quick-check-failed` against the design-contract.
-    "a reject of, or a failed check against, the design-contract":
+    T.G_A_REJECT_OF_OR_A_FAILED_CHECK_AGAINST_THE_DESIGN_CONTRACT:
         (T.V_REJECT_CONTRACT, T.V_INPUT_QUICK_CHECK_FAILED),
 }
 
@@ -157,7 +174,7 @@ TO_CELL_PHRASE_OF_DESTINATION_MARKER = {
     T.TO_BOTH_WORK_STREAMS_RE_ENTER: "both work-streams re-enter their writing states",
     T.TO_THE_NEXT_ACCEPTANCE_CHECK: "the state's next acceptance-check",
     T.TO_WHEREVER_THAT_REVIEWING_STATES_ADVANCE_GOES:
-        "wherever that reviewing state's own `advance` goes",
+        T.TO_WHEREVER_THAT_REVIEWING_STATES_ADVANCE_GOES.replace(" advance ", " `advance` "),
     T.TO_THE_WRITER_THE_VERDICT_NAMES: "that writer anyway, fresh",
     T.TO_BOTH_WRITERS_FRESH: "both writers",
     T.TO_RESUME_DESTINATION: "the earliest state downstream of what the user changed",
@@ -268,6 +285,13 @@ def transition_row_pairing_mismatches(prose_rows, transition_table, state_table)
     return mismatches
 
 
+SECTION_3_1_STATE_CELL_NOT_ONE_STATE_MESSAGE = (
+    f"section 3.1 of {DESIGN_RELATIVE_PATH} has the State cell %r, which names %d states in "
+    "backticks; this suite takes each row's state from its State cell, which must name exactly "
+    "one state in backticks, so the tests that read section 3.1 compare nothing until every "
+    "State cell does.")
+
+
 def section_3_1_states_and_sub_states(design_text):
     """(state, sub-states in the order listed) for each row of section 3.1."""
     states = []
@@ -275,7 +299,7 @@ def section_3_1_states_and_sub_states(design_text):
             design_text, SECTION_3_1_TABLE_HEADER, 4):
         names = backticked_tokens(state_cell)
         if len(names) != 1:
-            raise DesignTableMalformed("section 3.1 State cell %r names %d states"
+            raise DesignTableMalformed(SECTION_3_1_STATE_CELL_NOT_ONE_STATE_MESSAGE
                                        % (state_cell, len(names)))
         states.append((names[0], tuple(backticked_tokens(sub_states_cell))))
     return states
@@ -294,7 +318,7 @@ def section_3_1_packages_beyond_standard(design_text):
             design_text, SECTION_3_1_TABLE_HEADER, 4):
         names = backticked_tokens(state_cell)
         if len(names) != 1:
-            raise DesignTableMalformed("section 3.1 State cell %r names %d states"
+            raise DesignTableMalformed(SECTION_3_1_STATE_CELL_NOT_ONE_STATE_MESSAGE
                                        % (state_cell, len(names)))
         packages[names[0]] = "" if package_cell == SECTION_3_1_EMPTY_PACKAGE_CELL else package_cell
     return packages
@@ -378,6 +402,16 @@ def assert_the_design_and_the_code_pair(test, prose_rows):
         TRANSITION_ROWS_DISAGREE_FAILURE_MESSAGE)
 
 
+def assert_the_section_3_1_states_pair(test, section_3_1_states):
+    test.assertEqual(state_pairing_mismatches(section_3_1_states, T.STATE_TABLE), [],
+                     STATES_DISAGREE_FAILURE_MESSAGE)
+
+
+def assert_the_section_3_1_packages_pair(test, section_3_1_packages):
+    test.assertEqual(package_column_mismatches(section_3_1_packages, T.STATE_TABLE), [],
+                     PACKAGES_DISAGREE_FAILURE_MESSAGE)
+
+
 def assert_every_phrase_the_matcher_reads_is_used(test, prose_rows):
     from_cells = [row.from_cell for row in prose_rows]
     trigger_cells = [row.trigger_cell for row in prose_rows]
@@ -416,14 +450,11 @@ class DesignRowsPairWithTheCode(unittest.TestCase):
         assert_the_design_and_the_code_pair(self, self.prose_rows)
 
     def test_every_section_3_1_state_is_a_state_table_state_and_back(self):
-        self.assertEqual(
-            state_pairing_mismatches(section_3_1_states_and_sub_states(self.design_text),
-                                     T.STATE_TABLE), [], STATES_DISAGREE_FAILURE_MESSAGE)
+        assert_the_section_3_1_states_pair(self, section_3_1_states_and_sub_states(self.design_text))
 
     def test_every_section_3_1_package_cell_is_the_state_table_row_s_text(self):
-        self.assertEqual(
-            package_column_mismatches(section_3_1_packages_beyond_standard(self.design_text),
-                                      T.STATE_TABLE), [], PACKAGES_DISAGREE_FAILURE_MESSAGE)
+        assert_the_section_3_1_packages_pair(
+            self, section_3_1_packages_beyond_standard(self.design_text))
 
     def test_every_phrase_the_matcher_reads_is_in_the_design(self):
         # A phrase the design no longer uses would make its reading dead
@@ -545,6 +576,14 @@ class TheMatcherFailsOnDrift(unittest.TestCase):
                          ["state %s" % T.TEST_SUITE_EXECUTING])
 
 
+SECTION_3_1_FIX_LINES = [
+    "If your change edited one copy by mistake, undo that edit.",
+    "If your change edited a copy on purpose, make the same change in the other copy, so "
+    "that both say the same.",
+    RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(DESIGN_RELATIVE_PATH),
+    RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE]
+
+
 class EachFailureMessageNamesTheRuleAndOneFixPerCause(unittest.TestCase):
     """Each real-design assertion, made to fail on a planted input, prints the approved lines."""
 
@@ -555,7 +594,7 @@ class EachFailureMessageNamesTheRuleAndOneFixPerCause(unittest.TestCase):
 
     def failure_message(self, assertion, *arguments):
         class Collector(unittest.TestCase):
-            maxDiff = None
+            maxDiff = DesignRowsPairWithTheCode.maxDiff
 
             def runTest(inner):
                 assertion(inner, *arguments)
@@ -584,24 +623,34 @@ class EachFailureMessageNamesTheRuleAndOneFixPerCause(unittest.TestCase):
             RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(DESIGN_RELATIVE_PATH),
             RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])), message)
 
-    def test_the_section_3_1_messages_name_both_copies_and_end_with_the_same_fix_lines(self):
-        fix_lines = [
-            "If your change edited one copy by mistake, undo that edit.",
-            "If your change edited a copy on purpose, make the same change in the other copy, so "
-            "that both say the same.",
-            RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(DESIGN_RELATIVE_PATH),
-            RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE]
-        self.assertEqual(STATES_DISAGREE_FAILURE_MESSAGE.split("\n"), [
+    def test_section_3_2_rows_past_unittest_s_diff_limit_are_all_printed(self):
+        dropped = self.prose_rows[-20:]
+        message = self.failure_message(assert_the_design_and_the_code_pair, self.prose_rows[:-20])
+        self.assertNotIn("Set self.maxDiff to None", message)
+        for row in dropped:
+            self.assertIn(f"row {row.row}: in TRANSITION_TABLE, no section 3.2 row", message)
+
+    def test_a_section_3_1_state_dropped_prints_the_state_then_the_rule_and_one_fix_per_cause(self):
+        section_3_1 = section_3_1_states_and_sub_states(self.design_text)
+        message = self.failure_message(assert_the_section_3_1_states_pair, section_3_1[:-1])
+        self.assertIn("state ended: in STATE_TABLE, not in section 3.1", message)
+        self.assertTrue(message.rstrip().endswith("\n".join([
             "section 3.1 of docs/design-to-main/design-to-main-state-machine-design.md and "
             "STATE_TABLE in scripts/design-to-main/design-to-main-state-tables-common.py disagree "
             "on the states listed above; both copies of the states and their sub-states are edited "
-            "by hand and must list the same."] + fix_lines)
-        self.assertEqual(PACKAGES_DISAGREE_FAILURE_MESSAGE.split("\n"), [
+            "by hand and must list the same."] + SECTION_3_1_FIX_LINES)), message)
+
+    def test_a_section_3_1_package_cell_emptied_prints_the_state_then_the_rule_and_one_fix_per_cause(self):
+        packages = dict(section_3_1_packages_beyond_standard(self.design_text),
+                        **{T.TEST_SUITE_EXECUTING: ""})
+        message = self.failure_message(assert_the_section_3_1_packages_pair, packages)
+        self.assertIn("state %s" % T.TEST_SUITE_EXECUTING, message)
+        self.assertTrue(message.rstrip().endswith("\n".join([
             "section 3.1's package column in docs/design-to-main/design-to-main-state-machine-design.md "
             "and STATE_TABLE's package_beyond_standard in "
             "scripts/design-to-main/design-to-main-state-tables-common.py disagree on the states "
             "listed above; the code's text is what a launched agent receives, so the design's "
-            "column must say the same."] + fix_lines)
+            "column must say the same."] + SECTION_3_1_FIX_LINES)), message)
 
     def test_a_from_cell_phrase_no_row_uses_prints_where_to_change_it(self):
         edited = [dataclasses.replace(row, from_cell=row.from_cell.replace(
@@ -629,6 +678,60 @@ class EachFailureMessageNamesTheRuleAndOneFixPerCause(unittest.TestCase):
         self.assertIn(f'has a To cell containing "{phrase}"', message)
         self.assertIn("change that value of TO_CELL_PHRASE_OF_DESTINATION_MARKER in this suite",
                       message)
+
+
+class AnUnreadableDesignTableRaisesNamingTheDesignAndWhatIsWrong(unittest.TestCase):
+    """Each way a planted table cannot be read raises, naming the design file and the fault."""
+
+    SECTION_3_2_SEPARATOR = "|---|---|---|---|---|"
+    SECTION_3_1_SEPARATOR = "|---|---|---|---|"
+
+    def raised(self, read, text):
+        with self.assertRaises(DesignTableMalformed) as raised:
+            read(text)
+        message = str(raised.exception)
+        self.assertIn(DESIGN_RELATIVE_PATH, message)
+        return message
+
+    def section_3_2(self, *rows):
+        return "\n".join((SECTION_3_2_TABLE_HEADER, self.SECTION_3_2_SEPARATOR) + rows)
+
+    def section_3_1(self, *rows):
+        return "\n".join((SECTION_3_1_TABLE_HEADER, self.SECTION_3_1_SEPARATOR) + rows)
+
+    def test_a_missing_header_raises_with_the_header_and_the_count(self):
+        message = self.raised(section_3_2_prose_rows, "no table here")
+        self.assertIn("exactly one table in %s headed %r, and found 0;"
+                      % (DESIGN_RELATIVE_PATH, SECTION_3_2_TABLE_HEADER), message)
+
+    def test_a_header_written_twice_raises_with_the_count(self):
+        table = self.section_3_2("| 1 | `a` | b | `c` | — |")
+        message = self.raised(section_3_2_prose_rows, table + "\n\n" + table)
+        self.assertIn("and found 2;", message)
+
+    def test_a_row_with_too_few_columns_raises_with_both_counts_and_the_row(self):
+        message = self.raised(section_3_2_prose_rows, self.section_3_2("| 1 | `a` | b | `c` |"))
+        self.assertIn("has 4 columns where its header has 5,", message)
+        self.assertTrue(message.endswith("The row: | 1 | `a` | b | `c` |"), message)
+
+    def test_a_table_with_no_rows_raises_with_the_header(self):
+        message = self.raised(section_3_2_prose_rows, self.section_3_2("", "| 1 | a | b | c | d |"))
+        self.assertIn("headed %r has no rows," % SECTION_3_2_TABLE_HEADER, message)
+
+    def test_a_row_number_with_a_leading_zero_raises_with_the_number(self):
+        message = self.raised(section_3_2_prose_rows, self.section_3_2("| 01 | `a` | b | `c` | — |"))
+        self.assertIn("has '01' in its Row column;", message)
+
+    def test_a_state_cell_naming_two_states_raises_in_both_section_3_1_readers(self):
+        table = self.section_3_1("| `a` `b` | — | — | x |")
+        for read in (section_3_1_states_and_sub_states, section_3_1_packages_beyond_standard):
+            self.assertIn("has the State cell '`a` `b`', which names 2 states",
+                          self.raised(read, table))
+
+    def test_a_state_cell_naming_no_state_raises_in_both_section_3_1_readers(self):
+        table = self.section_3_1("| plain | — | — | x |")
+        for read in (section_3_1_states_and_sub_states, section_3_1_packages_beyond_standard):
+            self.assertIn("has the State cell 'plain', which names 0 states", self.raised(read, table))
 
 
 if __name__ == "__main__":

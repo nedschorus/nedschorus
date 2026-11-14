@@ -482,7 +482,7 @@ def main() -> int:
         # it refuses to start without its sandbox, captured by running the
         # launcher with a PATH that holds no sandbox program. Red: a launcher
         # line missing, the instruction to tell him missing or before the
-        # lines, or the runtime's chatter or the fast read's own line passed
+        # lines, or the agent-binary's chatter or the fast read's own line passed
         # on. Before the fix only the fast read's FAILED line reached the
         # agent, never the install that clears the refusal (Codex's finding).
         empty_path_directory = scratch / "empty-path"

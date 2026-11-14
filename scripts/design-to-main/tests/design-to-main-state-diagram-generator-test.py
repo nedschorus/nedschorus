@@ -220,7 +220,7 @@ class WhatEachViewDraws(unittest.TestCase):
     def test_a_row_with_no_verdict_is_labelled_with_its_guard_alone(self):
         self.assertIn(
             "    test_suite_arbitrating --> investigate_workflow: "
-            "[entered for the third time in the design version] / "
+            f"[{T.G_ENTERED_FOR_THE_THIRD_TIME_IN_THE_DESIGN_VERSION}] / "
             "escalate-to-user [no investigation-focus named by the agent]",
             self.lines[T.DIAGRAM_VIEW_INVESTIGATION])
 
@@ -255,17 +255,17 @@ class WhatEachViewDraws(unittest.TestCase):
         ])
         self.assertIn(
             "    row_69_from_states --> investigate_workflow: "
-            "escalate-to-user [investigation-focus design or test-design as the agent names it]",
+            f"escalate-to-user [{T.G_FOCUS_NAMED_DESIGN_OR_TEST_DESIGN}]",
             self.lines[view])
         self.assertIn(
             "    row_67_from_states --> contract_acceptance_by_user: "
             "reject contract, input-quick-check-failed "
-            "[a reject of, or a failed check against, the design-contract]",
+            f"[{T.G_A_REJECT_OF_OR_A_FAILED_CHECK_AGAINST_THE_DESIGN_CONTRACT}]",
             self.lines[T.DIAGRAM_VIEW_INSIDE_THE_REVIEWING_STATES])
         for line in edge_lines(self.all_lines):
-            if "[investigation-focus design or test-design" in line:
+            if f"[{T.G_FOCUS_NAMED_DESIGN_OR_TEST_DESIGN}]" in line:
                 self.assertTrue(line.startswith("    row_69_from_states -->"), line)
-            if "[a reject of, or a failed check against" in line:
+            if f"[{T.G_A_REJECT_OF_OR_A_FAILED_CHECK_AGAINST_THE_DESIGN_CONTRACT}]" in line:
                 self.assertTrue(line.startswith("    row_67_from_states -->"), line)
 
     def test_a_state_in_two_boxes_in_one_view_is_an_error(self):

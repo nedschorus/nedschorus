@@ -283,7 +283,8 @@ def merge_lane_cases(scratch):
             ("a finding opening with a hand-written blocking mark",
              [finding(2, "must-fix-now", "**Blocks** b")], "REQUEST_CHANGES",
              "comment on scripts/thing.py:2 whose body already opens with the blocking mark "
-             "**Blocks**"),
+             "**Blocks**; this program writes that mark for each must-fix-now comment, so remove the mark "
+             "from the start of its \"body\""),
             ("a fix-next finding opening, after spaces, with a hand-written mark",
              [finding(3, "fix-next", "  **Blocks:** b")], "APPROVE",
              "already opens with the blocking mark **Blocks:**"),
@@ -441,8 +442,10 @@ def merge_lane_cases(scratch):
         arguments=MERGE_LANE_ARGUMENTS)
     found = fix_round_blocking_findings(fix_round, [moved.posted])
     check("round trip: a must-fix-now comment moved into the body counts in the posted count, "
-          "so the fix-round program refuses the round instead of missing the finding",
-          isinstance(found, str) and "says **Blocking: 2**, but 1" in found,
+          "and the fix-round program briefs it beside the inline one",
+          isinstance(found, list) and moved.posted["body"].startswith("REQUEST_CHANGES\n\n**Blocking: 2**\n\n")
+          and [(item["path"], item["line"], item["body"]) for item in found]
+          == [("scripts/thing.py", 2, "**Blocks** Finding on line 2."), ("scripts/other.py", 1, "**Blocks** Outside.")],
           f"{found}\n{moved.detail}")
 
     marks = [load_posting_program().review_comment_opening_mark_for_finding_category(category)
@@ -630,8 +633,11 @@ def main():
                 ("a comment whose line is true", review("APPROVE", comments=[
                     {"path": "p", "line": True, "body": "b"}]), "a number \"line\"")):
             result = run_program(scratch, text)
-            check(f"a review file with {name} exits 2, says why, and calls no gh",
+            check(f"a review file with {name} exits 2, says why, calls no gh, and says not to run the "
+                  "reviewer's run again, since it should have refused the file",
                   result.code == 2 and reason in result.stderr and "review not posted" in result.stderr
+                  and "should have refused this file" in result.stderr
+                  and "fix it and run the same command again" not in result.stderr
                   and not result.calls, result.detail)
 
         result = run_program(scratch, review("APPROVE"), token=None)

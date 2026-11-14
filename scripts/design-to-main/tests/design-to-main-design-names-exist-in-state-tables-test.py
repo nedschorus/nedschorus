@@ -119,13 +119,13 @@ MACHINE_NAMES_DEFINED_OUTSIDE_THE_STATE_TABLES_MODULE = {
     "investigation-report": ("design-to-main-state-machine.py",
                              "the state-package's key for the investigation report's path "
                              "(sections 2 and 9)"),
-    "tests-begun": ("design-to-main-run-state.py", "a run-state.json field (section 9)"),
+    "tests-begun": ("design-to-main-run-state.py", "a design-to-main-run-state.json field (section 9)"),
 }
 
 # Backticked words that are not the machine's names, each with its reason.
 BACKTICKED_TOKENS_THAT_ARE_NOT_MACHINE_NAMES = {
-    "a": "the suffix of a refusal-clause-pair's first clause number (section 5.2)",
-    "b": "the suffix of a refusal-clause-pair's second clause number (section 5.2)",
+    "a": "the suffix of a refusal-design-requirement-pair's first design-requirement number (section 5.2)",
+    "b": "the suffix of a refusal-design-requirement-pair's second design-requirement number (section 5.2)",
     "adjudicator": "a word scrubbed from the fleet glossary, cited as history",
     "nit": "the word the sixth walk restored, cited as history",
     "green": "the seat's old word for a passing suite, cited as history (section 2)",
@@ -146,12 +146,12 @@ BACKTICKED_TOKENS_THAT_ARE_NOT_MACHINE_NAMES = {
     "design-review": "a skill of this workflow, run outside the run (section 2)",
     "test-design-review": "a skill of this workflow, run outside the run (section 2)",
     "contract-review": "a skill of this workflow, run outside the run (section 2)",
-    "unchecked": "a design-contract clause's declaration (section 5.2)",
-    "component-consumer-supplies": "a design-contract clause group (section 5.2)",
-    "world-requires": "a design-contract clause group (section 5.2)",
-    "component-consumer-receives": "a design-contract clause group (section 5.2)",
-    "world-changes": "a design-contract clause group (section 5.2)",
-    "world-unchanged": "a design-contract clause group (section 5.2)",
+    "unchecked": "the declaration of a design-contract's design-requirement (section 5.2)",
+    "component-consumer-supplies": "a design-contract's design-requirement group (section 5.2)",
+    "world-requires": "a design-contract's design-requirement group (section 5.2)",
+    "component-consumer-receives": "a design-contract's design-requirement group (section 5.2)",
+    "world-changes": "a design-contract's design-requirement group (section 5.2)",
+    "world-unchanged": "a design-contract's design-requirement group (section 5.2)",
     "network-down": "a gatekeeper error code, the gatekeeper's catalog (section 3.4)",
     "push-auth-failed": "a gatekeeper error code, the gatekeeper's catalog (section 3.4)",
     "workspace-io-error": "a gatekeeper error code, the gatekeeper's catalog (section 3.4)",

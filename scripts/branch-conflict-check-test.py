@@ -1593,8 +1593,8 @@ def real_repository_cases(root):
                                  % (sys.executable, root / "stub-gh.py"))
     (stub_bin / "gh").chmod(0o755)
 
-    # origin is an ordinary repository that commits are made in directly, so
-    # the cases never push; work fetches from it as a seat's checkout does.
+    # origin is an ordinary repository that commits are made in directly; work
+    # fetches from it as a seat's checkout does.
     origin.mkdir()
     git_in(origin, "init", "-q", "-b", "main")
     commit_in(origin, "f", "one\ntwo\n", "base")
@@ -2088,25 +2088,43 @@ def real_repository_cases(root):
              and any("--head pr-branch " in call + " " for call in calls))
 
     # A detached HEAD gives git no namespace for a destination origin lacks, so
-    # the printed push must name refs/heads/ in full; it is run here for real.
+    # the printed push must name refs/heads/ in full; it is run here for real,
+    # on the holder-merge path and on the rebase path, whose commit no branch
+    # of origin holds.
+    def printed_push_creates_branch(checkout, branch):
+        commit_hash = git_in(checkout, "rev-parse", "HEAD").strip()
+        status, lines, _ = run_here("--head", commit_hash, "--branch", branch,
+                                    gh=dict(NUMBER="[]"))
+        push_lines = [line for line in lines
+                      if line.startswith("Push it with git push -u")]
+        pushed = None
+        if push_lines:
+            command = push_lines[0][len("Push it with "):].split(",")[0].split()
+            pushed = subprocess.run(command, cwd=checkout, env=REAL_ENV,
+                                    capture_output=True, text=True, timeout=60)
+        return (status == CHECK.EXIT_CONFLICT
+                and any(line.startswith("No local branch is at the checked commit")
+                        for line in lines)
+                and pushed is not None and pushed.returncode == 0
+                and git_in(origin, "rev-parse", branch).strip() == commit_hash), lines
+
     detached = root / "detached-fix"
     git_in(work, "worktree", "add", "-q", "--detach", str(detached), "conflict-topic")
     commit_in(detached, "detached.txt", "on no branch\n", "commit on no branch")
-    detached_hash = git_in(detached, "rev-parse", "HEAD").strip()
-    status, lines, _ = run_here("--head", detached_hash, "--branch", "brand-new-fix",
-                                gh=dict(NUMBER="[]"))
-    push_lines = [line for line in lines if line.startswith("Push it with git push -u")]
-    pushed = None
-    if push_lines:
-        command = push_lines[0][len("Push it with "):].split(",")[0].split()
-        pushed = subprocess.run(command, cwd=detached, capture_output=True, text=True)
+    created, _ = printed_push_creates_branch(detached, "brand-new-fix")
     case("real: the printed push of a commit on no local branch creates the branch "
-         "origin lacks",
-         status == CHECK.EXIT_CONFLICT
-         and any(line.startswith("No local branch is at the checked commit")
-                 for line in lines)
-         and pushed is not None and pushed.returncode == 0
-         and git_in(origin, "rev-parse", "brand-new-fix").strip() == detached_hash)
+         "origin lacks", created)
+
+    detached_rebase = root / "detached-rebase-fix"
+    git_in(work, "worktree", "add", "-q", "--detach", str(detached_rebase),
+           "conflict-topic~1")
+    commit_in(detached_rebase, "f", "one\ntwo, rebase fix\n",
+              "rebase fix on no branch")
+    created, lines = printed_push_creates_branch(detached_rebase,
+                                                 "brand-new-rebase-fix")
+    case("real: on the rebase path, the printed push of a commit on no local "
+         "branch creates the branch origin lacks",
+         created and any(line.startswith("ANSWER: rebase") for line in lines))
 
     # main's side came in through a pull request's merge, by another agent-seat.
     git_in(origin, "checkout", "-q", "-b", "side-work", "main")

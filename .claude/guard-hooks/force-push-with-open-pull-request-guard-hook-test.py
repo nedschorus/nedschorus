@@ -204,8 +204,8 @@ check("the refusal sends a conflict with main to scripts/branch-conflict-check.p
       "--head origin/the-pr-branch --branch the-pr-branch and do what it reports." in lines, reason)
 check("the refusal no longer sends a fix for a conflict to a new commit on top",
       reason and "including any fix for a conflict with main" not in reason, reason)
-check("the refusal names the escape hatch",
-      reason and guard.ESCAPE_HATCH_ASSIGNMENT in reason, reason)
+check("the refusal offers no way past it",
+      reason and "CLAUDE_MERGE_LANE_ASKED_FOR_THIS_REWRITE" not in reason, reason)
 # The incident's own shape: the agent had ALREADY rebased locally, so a plain
 # push is rejected as non-fast-forward. The refusal must say how to get back
 # to the pushed head, with the real branch name so the commands paste.
@@ -333,8 +333,8 @@ check("D2 an unexpanded directory is refused as unresolvable",
 check("D2 that refusal asks for the path written out and probes nothing",
       reason and "written out" in reason and "$WORKTREE" in reason
       and "<checkout path>" in reason and not runner.calls, reason)
-check("D2 the unresolvable refusal names the escape hatch",
-      reason and guard.ESCAPE_HATCH_ASSIGNMENT in reason, reason)
+check("D2 the unresolvable refusal offers no way past it",
+      reason and "CLAUDE_MERGE_LANE_ASKED_FOR_THIS_REWRITE" not in reason, reason)
 
 runner = ProbeRunner(branch="the-pr-branch",
                      open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
@@ -575,10 +575,10 @@ for command in [
 
 runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
 decision, reason = decide(
-    f"env {guard.ESCAPE_HATCH_ASSIGNMENT} git push --force origin the-pr-branch",
+    "env CLAUDE_MERGE_LANE_ASKED_FOR_THIS_REWRITE=1 git push --force origin the-pr-branch",
     runner)
-check("the escape hatch after env sanctions the push like a leading one",
-      decision is None and not runner.calls,
+check("the retired exemption after env does not let the push through",
+      decision == "deny" and runner.calls,
       f"{decision}: {reason} {runner.calls}")
 
 runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
@@ -676,9 +676,6 @@ with tempfile.TemporaryDirectory() as place:
         check(f"the guard finds the directory the real env runs in: {wrappers}",
               os.path.normpath(os.path.join(place, found)) == real.stdout.strip(),
               (found, real.stdout.strip()))
-runner = ProbeRunner(branch="the-pr-branch", open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
-decision, _ = decide(f"env {guard.ESCAPE_HATCH_ASSIGNMENT} git push --force origin", runner)
-check("the escape hatch after env still sanctions the push", decision is None, decision)
 
 # ---------------------------------------------------------------------------
 # Prose is data. The guard's own commit message and pull request body say
@@ -904,37 +901,15 @@ check("a cd inside a heredoc body's substitution moves the push inside the same 
       in runner.calls, f"{decision}: {reason} {runner.calls}")
 
 # ---------------------------------------------------------------------------
-# The escape hatch: the one sanctioned rewrite, and the one form of it.
+# Environment assignments in front of the push: none lets a rewrite through.
 # ---------------------------------------------------------------------------
 
 runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
 decision, reason = decide(
-    f"{guard.ESCAPE_HATCH_ASSIGNMENT} git push --force origin the-pr-branch",
+    "CLAUDE_MERGE_LANE_ASKED_FOR_THIS_REWRITE=1 git push --force origin the-pr-branch",
     runner)
-check("the escape hatch allows the sanctioned rewrite",
-      decision is None, f"{decision}: {reason}")
-check("the escape hatch skips the probes entirely",
-      not runner.calls, str(runner.calls))
-
-runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
-decision, _ = decide(
-    f'echo "{guard.ESCAPE_HATCH_ASSIGNMENT}" && git push --force origin the-pr-branch',
-    runner)
-check("the escape hatch inside a quoted string is data and does not authorize",
-      decision == "deny", str(decision))
-
-refusal = decide("git push --force origin the-pr-branch", ProbeRunner(
-    open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST}))[1]
-check("the refusal says the escape hatch goes directly on the git push",
-      refusal and "directly in front of the git push command" in refusal, refusal)
-
-# The prefix sanctions only the command it sits on. An agent that puts it on
-# the `cd` of `cd $WORKTREE && git push --force` has not sanctioned the push.
-runner = ProbeRunner()
-decision, _ = decide(
-    f"{guard.ESCAPE_HATCH_ASSIGNMENT} cd $WORKTREE && git push --force", runner)
-check("the escape hatch on a preceding cd does not sanction the push after it",
-      decision == "deny", str(decision))
+check("the retired exemption in front of the push does not let the rewrite through",
+      decision == "deny" and runner.calls, f"{decision}: {reason} {runner.calls}")
 
 runner = ProbeRunner(branch="the-pr-branch",
                      open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
@@ -942,12 +917,6 @@ decide("SOME_SETTING=1 cd /elsewhere/wt-fast-read && git push --force", runner)
 check("a cd carrying an environment assignment still moves the checkout",
       ["git", "-C", "/elsewhere/wt-fast-read", "rev-parse", "--abbrev-ref", "HEAD"]
       in runner.calls, str(runner.calls))
-
-runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
-decision, _ = decide(
-    f"{guard.ESCAPE_HATCH_VARIABLE}=0 git push --force origin the-pr-branch", runner)
-check("only the documented =1 form authorizes a rewrite",
-      decision == "deny", str(decision))
 
 # ---------------------------------------------------------------------------
 # Several pushes, several branches, and one question per branch.
@@ -979,14 +948,6 @@ check("a force push later in a chain is still found",
 # ---------------------------------------------------------------------------
 
 SETTINGS_PATH = HOOK_SCRIPT.resolve().parents[2] / ".claude" / "settings.json"
-settings = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
-guard_entries = [
-    hook
-    for matcher_block in settings.get("hooks", {}).get("PreToolUse", [])
-    if matcher_block.get("matcher") == "Bash"
-    for hook in matcher_block.get("hooks", [])
-    if HOOK_SCRIPT.name in hook.get("command", "")
-]
 
 
 def guard_not_wired_once_failure_detail(entries):
@@ -1016,17 +977,45 @@ def registered_timeout_not_above_budget_failure_detail(timeout, budget):
         RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
 
 
-check("the guard is wired exactly once as a PreToolUse Bash hook",
-      len(guard_entries) == 1, guard_not_wired_once_failure_detail(guard_entries))
-registered_timeout = guard_entries[0].get("timeout") if guard_entries else None
-check("the registered timeout exceeds the guard's probe budget",
-      isinstance(registered_timeout, (int, float))
-      and registered_timeout > guard.PROBE_BUDGET_SECONDS,
-      registered_timeout_not_above_budget_failure_detail(
-          registered_timeout, guard.PROBE_BUDGET_SECONDS))
+WIRED_ONCE_CASE = "the guard is wired exactly once as a PreToolUse Bash hook"
+TIMEOUT_ABOVE_BUDGET_CASE = "the registered timeout exceeds the guard's probe budget"
+
+
+def guard_wiring_cases(settings, probe_budget_seconds):
+    """Both wiring cases, as (case name, passed, detail) triples, given the
+    parsed settings and the guard's budget, so planted settings print the
+    messages the real ones would."""
+    guard_entries = [
+        hook
+        for matcher_block in settings.get("hooks", {}).get("PreToolUse", [])
+        if matcher_block.get("matcher") == "Bash"
+        for hook in matcher_block.get("hooks", [])
+        if HOOK_SCRIPT.name in hook.get("command", "")
+    ]
+    registered_timeout = guard_entries[0].get("timeout") if guard_entries else None
+    return [
+        (WIRED_ONCE_CASE, len(guard_entries) == 1,
+         guard_not_wired_once_failure_detail(guard_entries)),
+        (TIMEOUT_ABOVE_BUDGET_CASE,
+         isinstance(registered_timeout, (int, float))
+         and registered_timeout > probe_budget_seconds,
+         registered_timeout_not_above_budget_failure_detail(
+             registered_timeout, probe_budget_seconds)),
+    ]
+
+
+def wiring_case_outcome(cases, case_name):
+    return next((passed, detail) for name, passed, detail in cases if name == case_name)
+
+
+for case_name, passed, detail in guard_wiring_cases(
+        json.loads(SETTINGS_PATH.read_text(encoding="utf-8")), guard.PROBE_BUDGET_SECONDS):
+    check(case_name, passed, detail)
+unregistered_passed, unregistered_detail = wiring_case_outcome(
+    guard_wiring_cases({}, 40.0), WIRED_ONCE_CASE)
 check("an unregistered guard's failure says where it must be registered and why, the fix, the "
       "guarded-file line and the line for a rule main broke",
-      guard_not_wired_once_failure_detail([]).split("\n") == [
+      not unregistered_passed and unregistered_detail.split("\n") == [
           "found []; .claude/settings.json must register "
           ".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py exactly once, in the PreToolUse "
           "block whose matcher is Bash, so that the guard runs once before each Bash command.",
@@ -1034,10 +1023,16 @@ check("an unregistered guard's failure says where it must be registered and why,
           "that block.",
           RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(".claude/settings.json"),
           RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
-      guard_not_wired_once_failure_detail([]))
+      unregistered_detail)
+short_timeout_passed, short_timeout_detail = wiring_case_outcome(
+    guard_wiring_cases(
+        {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
+            {"type": "command", "command": f"python3 {HOOK_SCRIPT.name}", "timeout": 30}]}]}},
+        40.0),
+    TIMEOUT_ABOVE_BUDGET_CASE)
 check("a timeout not above the budget fails with why, one fix per cause, the guarded-file line "
       "and the line for a rule main broke",
-      registered_timeout_not_above_budget_failure_detail(30, 40.0).split("\n") == [
+      not short_timeout_passed and short_timeout_detail.split("\n") == [
           "timeout 30 vs budget 40.0; the guard must finish its probes and answer before the "
           "harness stops it, so the timeout .claude/settings.json registers for it must be a "
           "number above PROBE_BUDGET_SECONDS in "
@@ -1050,7 +1045,7 @@ check("a timeout not above the budget fails with why, one fix per cause, the gua
           "back a number above the budget.",
           RULE_FAILURE_LINES.guarded_file_fix_failure_message_line_pointing_to_approval_page_and_guard_refusal(".claude/settings.json"),
           RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
-      registered_timeout_not_above_budget_failure_detail(30, 40.0))
+      short_timeout_detail)
 
 # ---------------------------------------------------------------------------
 # The harness contract: what main() writes, and what it ignores.

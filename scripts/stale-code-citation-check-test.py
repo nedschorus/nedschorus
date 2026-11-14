@@ -150,8 +150,7 @@ def reports_the_git_failure_and_no_result(root, arguments, code, out, err):
     return (code == 2 and INJECTED_GIT_ERROR in err and "a git command failed" in err
             and "finding(s)" not in err
             and next_step_lines.git_failure_next_step_lines(
-                rerun, "stale-code-citation-check", text_the_failure_line_contains="could not check, because a git command failed",
-                include_the_misspelt_branch_commit_or_path_line=True) in err)
+                rerun, "stale-code-citation-check", text_the_failure_line_contains="could not check, because a git command failed") in err)
 
 
 def document(stamp="2026-05-01", status="design", body=""):
@@ -215,6 +214,19 @@ with tempfile.TemporaryDirectory() as workspace:
     code, out, err = run(root, "docs/suffix.md")
     check("a backticked path with a line suffix is reported",
           code == 1 and "line 428" in out, f"{code} {out}")
+
+    for dash in ("-", "–"):
+        write_document(root, "docs/suffix-range.md",
+                       document(body=f"Today's test is `scripts/moved.py:40{dash}44`."))
+        code, out, err = run(root, "docs/suffix-range.md")
+        check(f"a backticked path with a line-range suffix written with {dash!r} is reported",
+              code == 1 and "lines 40-44" in out, f"{code} {out}")
+    write_code(root, "scripts/settled.py", CODE, date="2026-04-01")
+    write_document(root, "docs/suffix-range-settled.md",
+                   document(body="Today's test is `scripts/settled.py:40-44`."))
+    code, out, err = run(root, "docs/suffix-range-settled.md")
+    check("a line-range suffix on a file unchanged since the stamp is not reported",
+          code == 0 and out == "", f"{code} {out}")
 
     write_document(root, "docs/singular.md",
                    document(body="It is named in `scripts/moved.py` line 375."))

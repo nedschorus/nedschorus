@@ -50,6 +50,12 @@ log names every folder a run stopped part way may have deleted, then a summary l
 prints "would delete" and deletes nothing. A parent with no claude-<uid>/ folder is not a
 failure: /home/nedlern/.cache/claude-code-tmp has none until an agent-session launched with it writes.
 
+SECOND STEP. Given --then-tmp-and-reviewer-scratch-folders-unchanged-a-day-and-unused-delete,
+the program then runs tmp-and-reviewer-scratch-folders-unchanged-a-day-and-unused-delete.py,
+beside this file, with the same --proc-filesystem-directory, and with --dry-run when it was
+given, whatever its own step found; that program's output goes to the same streams. The exit
+status is 1 when either step failed.
+
 SCHEDULE. Once a day at 07:30 on ned-box, installed by
 nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py from the table beside it,
 scheduled-jobs-on-each-machine.json, where a change to the schedule is made. Linux only: it
@@ -57,7 +63,7 @@ reads /proc.
 
   ned-box: one cron line.
 
-    30 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/claude-code-temp-folders-of-exited-agent-sessions-delete.py >> /home/nedlern/.claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log 2>&1
+    30 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/claude-code-temp-folders-of-exited-agent-sessions-delete.py --then-tmp-and-reviewer-scratch-folders-unchanged-a-day-and-unused-delete >> /home/nedlern/.claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log 2>&1
 
 
 Exit status: 0 when done; 1 when a failure stopped a deletion or the whole run. When the live set
@@ -75,7 +81,9 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -93,6 +101,15 @@ FAILURES_INSTRUCTION = (
     "If you cannot fix the cause yourself, such as a folder only root may delete, tell the user "
     "which folder is kept and why, since ned-box's /tmp can fill up and stop every agent-session's "
     "shell commands; a subagent tells the agent that dispatched it instead.")
+
+TMP_AND_REVIEWER_SCRATCH_FOLDERS_UNCHANGED_A_DAY_AND_UNUSED_DELETE_PROGRAM_PATH = (
+    Path(__file__).resolve().parent / "tmp-and-reviewer-scratch-folders-unchanged-a-day-and-unused-delete.py")
+TMP_AND_REVIEWER_SCRATCH_FOLDERS_UNCHANGED_A_DAY_AND_UNUSED_DELETE_STEP_COULD_NOT_START_ERROR_TEMPLATE = (
+    "The daily 07:30 job's second step, the sweep of throwaway folders, could not be started as "
+    "`{command}`: {error}. The first step, above, ran; no throwaway folder was deleted "
+    "today.\n"
+    "Fix the cause the error names, then on ned-box run that same command with --dry-run added "
+    "at its end, and when that exits 0, run the command again without --dry-run.")
 
 DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES = ["/tmp", "/home/nedlern/.cache/claude-code-tmp"]
 SESSION_FOLDER_NAME = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -255,6 +272,11 @@ def main(arguments=None):
                         help="where Claude Code keeps each project's transcripts")
     parser.add_argument("--minimum-age-seconds", type=float, default=3600,
                         help="keep a folder changed more recently than this")
+    parser.add_argument("--then-tmp-and-reviewer-scratch-folders-unchanged-a-day-and-unused-delete",
+                        action="store_true",
+                        help="after this program's own work, run "
+                             + TMP_AND_REVIEWER_SCRATCH_FOLDERS_UNCHANGED_A_DAY_AND_UNUSED_DELETE_PROGRAM_PATH.name
+                             + "; --dry-run is passed on")
     options = parser.parse_args(arguments)
     result = claude_code_temp_folders_of_exited_agent_sessions_delete(
         options.claude_code_temp_folder_parents or DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES,
@@ -272,7 +294,20 @@ def main(arguments=None):
           f"{result['kept_resumable']}; "
           f"folders kept because they changed in the last {options.minimum_age_seconds:g} "
           f"seconds: {result['kept_recent']}; failures: {len(result['failures'])}", flush=True)
-    return EXIT_FAILED if result["failures"] else EXIT_DONE
+    exit_status = EXIT_FAILED if result["failures"] else EXIT_DONE
+    if options.then_tmp_and_reviewer_scratch_folders_unchanged_a_day_and_unused_delete:
+        command = [sys.executable, str(TMP_AND_REVIEWER_SCRATCH_FOLDERS_UNCHANGED_A_DAY_AND_UNUSED_DELETE_PROGRAM_PATH),
+                   "--proc-filesystem-directory", str(options.proc_filesystem_directory)]
+        command += ["--dry-run"] if options.dry_run else []
+        try:
+            step = subprocess.run(command, check=False).returncode
+        except OSError as error:
+            print(TMP_AND_REVIEWER_SCRATCH_FOLDERS_UNCHANGED_A_DAY_AND_UNUSED_DELETE_STEP_COULD_NOT_START_ERROR_TEMPLATE.format(command=shlex.join(command),
+                                                                    error=error), file=sys.stderr)
+            step = EXIT_FAILED
+        if step != EXIT_DONE:
+            exit_status = EXIT_FAILED
+    return exit_status
 
 
 if __name__ == "__main__":

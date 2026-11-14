@@ -127,7 +127,11 @@ cannot be used, so the waiting item is unknown. ON A
 FAULT, such as input that is not JSON or a file it cannot read, the hook
 prints one line naming it on stderr and exits 1: Claude Code records a Stop
 hook's exit 1 as a non-blocking error and still ends the turn.
-"""
+
+DURING AN EMERGENCY STOP, while the emergency-stop file is in force or cannot
+be read, this hook is silent: an agent-seat shows no approval-walk item then,
+and every reply goes through. The stop is read by
+nc-systems/skills/emergency-stop/emergency-stop-file-in-force-read-common.py."""
 import importlib.util
 import json
 import os
@@ -140,9 +144,13 @@ _walk_finder_spec = importlib.util.spec_from_file_location(
     "walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common", WALK_FINDER_FILE)
 walk_finder = importlib.util.module_from_spec(_walk_finder_spec)
 _walk_finder_spec.loader.exec_module(walk_finder)
+EMERGENCY_STOP_READER_FILE = (Path(__file__).resolve().parent.parent / "emergency-stop"
+                              / "emergency-stop-file-in-force-read-common.py")
 STOP_HOOKS_STAY_SILENT_RULE_FILE = (
     walk_finder.REPOSITORY_TOP / "nc-systems" / "general-tools"
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
+ATTENDANCE_CHECK_FILE = (walk_finder.REPOSITORY_TOP / "nc-systems" / "general-tools"
+                         / "agent-session-unattended-by-user-check-common.py")
 TRANSCRIPT_READER_FILE = (walk_finder.REPOSITORY_TOP / "scripts"
                           / "claude-code-session-transcript-records-read-backward-common.py")
 # The answer hook holds the closing line's answer letters, which its test checks against the walk-me-through skill.
@@ -377,8 +385,12 @@ def run(stdin_text, environment):
 
 def output_for(payload, environment):
     """A block naming the waiting items the reply leaves out, or why they are unknown; or None."""
-    if (environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
-            or environment.get("CLAUDE_CODE_SESSION_ATTENDED") == "0"):
+    if walk_finder.load_module("agent_session_unattended_by_user_check_common",
+                               ATTENDANCE_CHECK_FILE).agent_session_unattended_by_user(environment):
+        return None
+    emergency_stop = walk_finder.load_module("emergency_stop_file_in_force_read_common", EMERGENCY_STOP_READER_FILE)
+    stop_state = emergency_stop.read_state(emergency_stop.emergency_stop_folder(environment))
+    if isinstance(stop_state, (emergency_stop.InForce, emergency_stop.Unreadable)):
         return None
     transcript_path = payload.get("transcript_path")
     if not transcript_path or not Path(transcript_path).expanduser().is_file():

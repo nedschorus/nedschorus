@@ -43,9 +43,6 @@ PROBE_BUDGET_SECONDS = 20.0
 GH_TIMEOUT_SECONDS = 10.0
 GIT_TIMEOUT_SECONDS = 5.0
 
-ESCAPE_HATCH_VARIABLE = "CLAUDE_MERGE_LANE_ASKED_FOR_THIS_REWRITE"
-ESCAPE_HATCH_ASSIGNMENT = ESCAPE_HATCH_VARIABLE + "=1"
-
 # --force-if-includes alone does not force a push.
 FORCE_LONG_FLAGS = {"--force", "--force-with-lease"}
 
@@ -79,9 +76,7 @@ DENY_REASON_TEMPLATE = (
     "If you already rebased or amended it locally, keep that work on another "
     "branch (git branch {branch}-rewritten), go back to the pushed head (git "
     "switch -C {branch} origin/{branch}), and redo your change as a new "
-    "commit.\n"
-    "If merge-lane-2 asked you for this force push, run it again with {escape} "
-    "directly in front of the git push command."
+    "commit."
 )
 
 UNRESOLVED_REASON_TEMPLATE = (
@@ -89,9 +84,7 @@ UNRESOLVED_REASON_TEMPLATE = (
     "branch has an open pull request.\n"
     "Run the push again with the checkout path and the branch name written "
     "out, so this guard can check it: git -C <checkout path> push --force "
-    "origin <branch>\n"
-    "If merge-lane-2 asked you for this force push, run it again with {escape} "
-    "directly in front of the git push command."
+    "origin <branch>"
 )
 
 UNCHECKED_NOTE_FIRST_LINE = (
@@ -151,11 +144,10 @@ BUDGET_SPENT_DETAIL = (
 
 
 def find_git_push_invocation(words):
-    """Return sanctioned status, push words and directory override, or None for a non-push."""
+    """Return push words and directory override, or None for a non-push."""
     index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
     if index is None or not is_program(words[index], "git"):
         return None
-    sanctioned = ESCAPE_HATCH_ASSIGNMENT in words[:index]
     wrapper_directory = directory_a_wrapper_sets(words)
     index += 1
     directory_override = None
@@ -181,8 +173,7 @@ def find_git_push_invocation(words):
     if wrapper_directory is not None:
         directory_override = (wrapper_directory if directory_override is None
                               else directory_joined(wrapper_directory, directory_override))
-    return {"sanctioned": sanctioned,
-            "push_words": words[index + 1:],
+    return {"push_words": words[index + 1:],
             "directory_override": directory_override}
 
 
@@ -359,12 +350,10 @@ def analyze_push(invocation, effective_directory, directory_is_unresolved, guard
     override = invocation["directory_override"]
     if override is not None:
         if UNEXPANDED_PATTERN.search(override):
-            return "deny", UNRESOLVED_REASON_TEMPLATE.format(
-                word=override, escape=ESCAPE_HATCH_ASSIGNMENT)
+            return "deny", UNRESOLVED_REASON_TEMPLATE.format(word=override)
         directory = resolve_directory(effective_directory, override)
     elif directory_is_unresolved:
-        return "deny", UNRESOLVED_REASON_TEMPLATE.format(
-            word=directory_is_unresolved, escape=ESCAPE_HATCH_ASSIGNMENT)
+        return "deny", UNRESOLVED_REASON_TEMPLATE.format(word=directory_is_unresolved)
 
     branches, unchecked = [], []
     if not refspecs:
@@ -378,8 +367,7 @@ def analyze_push(invocation, effective_directory, directory_is_unresolved, guard
         if destination is None:
             continue
         if UNEXPANDED_PATTERN.search(destination):
-            return "deny", UNRESOLVED_REASON_TEMPLATE.format(
-                word=destination, escape=ESCAPE_HATCH_ASSIGNMENT)
+            return "deny", UNRESOLVED_REASON_TEMPLATE.format(word=destination)
         if destination == "HEAD":
             branch, detail = current_branch(directory, guard)
             if detail:
@@ -397,7 +385,7 @@ def analyze_push(invocation, effective_directory, directory_is_unresolved, guard
                 == rebase_or_replace.REPLACE_WITH_NEW_PULL_REQUEST):
             return "deny", DENY_REASON_TEMPLATE.format(
                 branch=branch, title=pull_request.get("title") or branch,
-                url=pull_request.get("url"), escape=ESCAPE_HATCH_ASSIGNMENT)
+                url=pull_request.get("url"))
         if detail:
             unchecked.append((branch, detail))
 
@@ -441,7 +429,7 @@ def analyze_command_text(command, payload_cwd, guard):
             directories[substitution] = (effective_directory, directory_is_unresolved)
             continue
         invocation = find_git_push_invocation(words)
-        if invocation is None or invocation["sanctioned"]:
+        if invocation is None:
             continue
         decision, reason = analyze_push(
             invocation, effective_directory, directory_is_unresolved, guard)

@@ -139,9 +139,11 @@ NEVER_PUSHED_ADVICE = (
 # whether it is rebased or its pull request replaced.
 PUSHED_ADVICE = (
     "This branch is pushed, so its review may be running: do not rebase or amend "
-    "it. A fix for this topic is a new commit on top. If the branch conflicts with "
-    "main, as python3 scripts/branch-conflict-check.py run in its checkout reports, "
-    "do what that report says. Your next topic starts with "
+    "it. A fix for this topic is a new commit on top. To learn whether the branch "
+    "conflicts with main, run python3 scripts/branch-conflict-check.py in this "
+    "checkout. If it prints `VERDICT: CONFLICT`, do what its report says. If it exits "
+    "2, it has no answer: do what its lines say, then run it again. Your next "
+    "topic starts with "
     "`git checkout -b <name> origin/main`."
 )
 # `git pull --rebase` moves only the commits origin/<branch> lacks, which are
@@ -225,7 +227,9 @@ PUSHED_OVERLAP_LINE = (
     "rebase; then do what `python3 scripts/branch-conflict-check.py` reports."
 )
 # git's rename detection carries an edit at the old path to the new one, in a
-# rebase and in a merge alike, so a moved file needs no hand-carrying.
+# rebase and in a merge alike, but only when the merge-base-to-main diff pairs
+# the two paths; when main rewrote the file after moving it, it does not, and a
+# rebase or merge stops on a modify/delete conflict at the old path.
 MAIN_MOVED_FILE_LINE = (
     "main moved {path} to {new_path}. After you make the branch and commit your edit "
     "at {path}, run `git rebase origin/main`: git follows the move and applies your "
@@ -236,6 +240,21 @@ MAIN_MOVED_FILE_PUSHED_LINE = (
     "rebase: when the pull request merges, git follows the move and carries your edit "
     "to {new_path}. If `python3 scripts/branch-conflict-check.py` reports a conflict, "
     "do what its report says."
+)
+MAIN_MOVED_AND_REWRITTEN_FILE_LINE = (
+    "main moved {path} to {new_path} and then changed it so much that git no longer "
+    "pairs the two paths, so neither a rebase nor a merge carries your edit there: "
+    "both stop on a modify/delete conflict at {path}. Drop the edit with `git "
+    "checkout -- {path}`. After you make the branch, run `git rebase origin/main`, "
+    "then make the same change by hand in {new_path}."
+)
+MAIN_MOVED_AND_REWRITTEN_FILE_PUSHED_LINE = (
+    "main moved {path} to {new_path} and then changed it so much that git no longer "
+    "pairs the two paths, so when the pull request merges, git does not carry your "
+    "edit there: the merge stops on a modify/delete conflict at {path}. Do not commit "
+    "the edit: drop it with `git checkout -- {path}`, start a topic branch with `git "
+    "switch -c <a-branch-name> origin/main`, and make the same change by hand in "
+    "{new_path} there."
 )
 MAIN_DELETED_FILE_LINE = (
     "main deleted {path}{deleted_in}, so your edit has no file to land in. Read why "
@@ -474,10 +493,12 @@ def git_operation_in_progress(freshness, git_directory: Path):
 def main_lost_file_line(freshness, checkout: Path, merge_base: str,
                         repository_path: str, pushed: bool):
     """(line, whether the line reports a git failure) for an edit at a path
-    origin/main no longer has: the moved line naming main's new path when main
-    renamed the file, else the deleted line, naming the deleting commit when git
-    can find it; the unknown line, with git's text, when git could not list main's
-    renames."""
+    origin/main no longer has: the moved line naming main's new path when the
+    merge-base-to-main diff pairs the two paths, so git carries the edit; the
+    moved-and-rewritten line, which says to carry the edit by hand, when only the
+    diff of the commit that removed the path pairs them; else the deleted line, naming that commit when git
+    names one; the unknown line, with git's text, when any of those git steps
+    fails."""
     renamed = freshness.run_git(
         ["diff", "-z", "--name-status", "-M", "--diff-filter=R", merge_base,
          "origin/main"], checkout, timeout=OBSOLETE_DIFF_TIMEOUT_SECONDS)
@@ -491,7 +512,25 @@ def main_lost_file_line(freshness, checkout: Path, merge_base: str,
     deleting = freshness.run_git(
         ["log", "-1", "--format=%h (%s)", "origin/main", "--", repository_path],
         checkout, timeout=COMMIT_COUNT_TIMEOUT_SECONDS)
-    commit = deleting.stdout.strip() if deleting.returncode == 0 else ""
+    if deleting.returncode != 0:
+        text = (deleting.stderr or "").strip() or "git log exited %d" % deleting.returncode
+        return MAIN_LOST_FILE_UNKNOWN_LINE.format(path=repository_path, text=text), True
+    commit = deleting.stdout.strip()
+    if commit:
+        # The merge-base-to-main diff misses a move when main also changed the file
+        # enough afterwards; the removing commit's own diff still pairs the two paths,
+        # but rebase and merge use the endpoint diff, so they do not follow the move.
+        removing = freshness.run_git(
+            ["show", "-z", "--name-status", "-M", "--format=", commit.split(" ", 1)[0]],
+            checkout, timeout=COMMIT_COUNT_TIMEOUT_SECONDS)
+        if removing.returncode != 0:
+            text = (removing.stderr or "").strip() or "git show exited %d" % removing.returncode
+            return MAIN_LOST_FILE_UNKNOWN_LINE.format(path=repository_path, text=text), True
+        for entry in freshness.git_output.name_status_entries(removing.stdout):
+            if entry.status[:1] == "R" and entry.origin_path == repository_path and entry.path:
+                moved = (MAIN_MOVED_AND_REWRITTEN_FILE_PUSHED_LINE if pushed
+                         else MAIN_MOVED_AND_REWRITTEN_FILE_LINE)
+                return moved.format(path=repository_path, new_path=entry.path), False
     return MAIN_DELETED_FILE_LINE.format(
         path=repository_path, deleted_in=f" in commit {commit}" if commit else ""), False
 

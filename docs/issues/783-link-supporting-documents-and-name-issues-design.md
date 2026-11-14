@@ -132,14 +132,15 @@ The operation renames nothing and lands nothing: the author commits the changed 
 
 ### Names and titles
 
-- **The author gives the name.** The author writes the GHI-MD as `<name>.md`, and create-GHI lands it as `docs/issues/<number>-<name>.md`. The tool no longer cuts a name from the first heading, and `SLUG_WORD_LIMIT` is deleted.
+- **The author gives the name.** The author writes the GHI-MD as `<name>.md`, and create-GHI lands it as `docs/issues/<number>-<name>.md`. The tool no longer cuts a name from the first heading; the filing branch and the log-store file names hold the name the author gives where they held the cut heading.
 - **A GHI-MD with no number.** A GHI-MD that moves beside its code is named `<name>.md` there: the move drops the number and keeps the name, so the name of a GHI-MD with no number is its file name without `.md`, and the GHI's title does not change.
 - **The checks.** create-GHI refuses, with a hard-block, exit 64, a name that:
   - is not 3 to 9 words, a word being one piece between hyphens, so `link-supporting-documents-and-name-issues-design` is 7 words;
   - is not lowercase letters and digits joined by single hyphens;
   - has a first word made only of digits, such as `2026-summary-of-reviews`, which the tool would read as a GHI number; `3d-graphics-export` passes;
   - carries a date in the form the check PR [GHI titles name the work](https://github.com/nedschorus/nedschorus/pull/829) built for the first heading recognizes, which moves to the name; a file path cannot pass the character check;
-  - is already the name of another GHI-MD on main, or the title of another GHI, open or closed.
+  - is already the name of another GHI-MD on main, or the title of another GHI, open or closed;
+  - is longer than 180 characters, so that every file name built on it stays under 255 bytes.
   The refusal says which check failed and how to fix the name. edit-GHI runs the same checks when the GHI-MD's name differs from its name on main, or when the GHI has no GHI-MD on main, and none when the name is unchanged. Two filings that both pass the checks before either creates its GHI, and choose the same name, are not caught.
 - **What a program cannot check.** That the name names the work in full words, without abbreviations, status, ruling, provenance, or a date in a form the check does not recognize, is the author's to meet; the /ghi-write skill is to say so (§ What the build changes outside the tool). A name changes only when the user asks for it; the skill is to say that too, because nothing in a file records whether the user asked.
 - **The title is the name, set on main.** The title is the name as written, hyphens included: this GHI's title becomes `link-supporting-documents-and-name-issues-design`. create-GHI files the GHI under the name. After that, only `relink-and-retitle-issues` sets the title, from the name of the GHI-MD on main, when the two differ. edit-GHI does not set the title, so an edit whose pull request is closed unmerged leaves the title as it was. The `issue:` line cites the GHI under its title. edit-GHI writes as the text of the `issue:` line the title the GHI will have once the rebuild has run: the GHI-MD's name when the GHI is open and the name passes the checks, otherwise the GHI's current title, since a closed GHI's title never changes. So the pull request that renames a GHI-MD also brings its `issue:` line to the name; the tool reads only the line's URL, so a line whose text lags breaks nothing.

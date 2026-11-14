@@ -76,30 +76,19 @@ def agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
             f"{which_lines_to_quote_in_the_report}.")
 
 
-def git_failure_next_step_lines(rerun, program=None, *, include_the_misspelt_branch_commit_or_path_line,
-                                text_the_failure_line_contains=None, rerun_fails_when=None,
-                                which_lines_to_quote_in_the_report=None, read_by_a_subagent=True,
-                                next_step_to_skip_when_the_rerun_fails_too=None):
+def git_failure_next_step_lines(rerun, program=None, *, text_the_failure_line_contains=None,
+                                rerun_fails_when=None, which_lines_to_quote_in_the_report=None,
+                                read_by_a_subagent=True, next_step_to_skip_when_the_rerun_fails_too=None):
     """The lines for a git command that failed in a program the agent ran.
 
-    Include the misspelt-name line only for a program that takes a branch,
-    commit or path on its command line; elsewhere no name of the agent's can
-    be wrong. program is the name that line gives the program, so it is
-    required with that line, which raises TypeError without it, and unused
-    otherwise.
+    Pass program, the name the misspelt-name line gives the program, only for
+    a program that takes a branch, commit or path on its command line: the
+    misspelt-name line is included exactly when program is given, because
+    elsewhere no name of the agent's can be wrong.
     """
-    if include_the_misspelt_branch_commit_or_path_line and program is None:
-        raise TypeError(
-            "include_the_misspelt_branch_commit_or_path_line=True needs program: the name of the program "
-            "the agent ran, whose git failure these next-step lines report, such as "
-            "program='run-all-test-suites.py'. With include_the_misspelt_branch_commit_or_path_line=True, "
-            'the lines include "If a branch, commit or path you gave <program> on its command line is '
-            'misspelt or does not exist, ...". Pass program if the program the agent ran takes a branch, '
-            "commit or path on its command line; if it takes none, pass "
-            "include_the_misspelt_branch_commit_or_path_line=False instead.")
     lines = [f"{LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION}, such as .git/index.lock, "
              f"{lock_file_named_by_git_error_wait_then_rerun_instruction(f'exactly {rerun}')}."]
-    if include_the_misspelt_branch_commit_or_path_line:
+    if program is not None:
         lines += [f"If a branch, commit or path you gave {program} on its command line is "
                   f"misspelt or does not exist, correct it in your command, then run the "
                   f"corrected command.",

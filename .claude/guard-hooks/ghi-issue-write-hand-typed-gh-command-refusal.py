@@ -179,7 +179,6 @@ RECORD_LINE_LOOKUP_FAILED = (
     "or a design in a system's docs/ directory, then open the edit's pull request "
     "with: python3 scripts/ghi-issue-write.py edit <path>"
 )
-CLOSE_OUTCOME = "the outcome"
 REOPEN_OUTCOME = "why the issue is reopening"
 COMMENT_OUTCOME = "what the comment would say"
 EDIT_BODY_OUTCOME = "the change"
@@ -198,13 +197,30 @@ LABELS_ONLY_LINE = (
     "--title, --body, --body-file and --attach; that needs no file."
 )
 COMMENT_REFUSAL = NO_COMMENTS_LINE + "\n{record_line}"
-CLOSE_WITH_COMMENT_REFUSAL = (
-    NO_COMMENTS_LINE + "\n"
-    "{record_line}\n"
-    "Close the issue after that edit's pull request has merged and its rerun has "
-    "finished, without --comment: gh issue close <number> --reason completed, or "
-    "--reason \"not planned\", or --duplicate-of <the other issue's number>."
+# Close and delete send the agent to the close operation, which runs the edit
+# itself: running edit first leaves a pull request the close then refuses on.
+CLOSE_RECORD_LINE_ONE_FILE = (
+    "Record the outcome in {path}, then close the issue with the line below that fits."
 )
+CLOSE_RECORD_LINE_SEVERAL_FILES = (
+    "The issue's files on main are: {paths}. Record the outcome in the issue's GHI-MD "
+    "among them, then close the issue with the line below that fits, giving that path."
+)
+CLOSE_RECORD_LINE_LOOKUP_FAILED = (
+    "Record the outcome in the issue's GHI-MD, a file named docs/issues/<number>-*.md "
+    "or a design in a system's docs/ directory, then close the issue with the line "
+    "below that fits, giving that path."
+)
+CLOSE_LINES = (
+    "If this issue covers the same work as another issue: python3 "
+    "scripts/ghi-issue-write.py close {path} --reason duplicate <the other issue's "
+    "number>\n"
+    "If the issue's work is done: python3 scripts/ghi-issue-write.py close {path} "
+    "--reason completed\n"
+    "If the issue will not be done, or was filed by mistake and duplicates no other "
+    "issue: python3 scripts/ghi-issue-write.py close {path} --reason \"not planned\""
+)
+CLOSE_WITH_COMMENT_REFUSAL = NO_COMMENTS_LINE + "\n{close_lines}"
 CLOSE_WITH_COMMENT_REFUSAL_NO_FILE = NO_COMMENTS_LINE + "\n" + RECORD_LINE_NO_FILE
 REOPEN_WITH_COMMENT_REFUSAL = (
     NO_COMMENTS_LINE + "\n"
@@ -260,14 +276,7 @@ TITLE_LINES_LOOKUP_FAILED = (
 )
 DELETE_REFUSAL = (
     "Do not delete this project's issues: a deleted issue cannot be restored.\n"
-    "{record_line}\n"
-    "Close the issue after that edit's pull request has merged and its rerun has "
-    "finished, with the line below that fits.\n"
-    "If this issue covers the same work as another issue: gh issue close <number> "
-    "--duplicate-of <the other issue's number>\n"
-    "If the issue's work is done: gh issue close <number> --reason completed\n"
-    "If the issue will not be done, or was filed by mistake and duplicates no other "
-    "issue: gh issue close <number> --reason \"not planned\""
+    "{close_lines}"
 )
 DELETE_REFUSAL_NO_FILE = (
     "Do not delete this project's issues: a deleted issue cannot be restored.\n"
@@ -444,6 +453,19 @@ def record_line(outcome, files):
     return RECORD_LINE_SEVERAL_FILES.format(outcome=outcome, paths=", ".join(files))
 
 
+def close_lines(files):
+    """The record line and the close lines of the close and delete refusals,
+    for an issue with at least one file on main or an unknown number."""
+    if files is None:
+        return (CLOSE_RECORD_LINE_LOOKUP_FAILED + "\n"
+                + CLOSE_LINES.format(path="<path>"))
+    if len(files) == 1:
+        return (CLOSE_RECORD_LINE_ONE_FILE.format(path=files[0]) + "\n"
+                + CLOSE_LINES.format(path=files[0]))
+    return (CLOSE_RECORD_LINE_SEVERAL_FILES.format(paths=", ".join(files)) + "\n"
+            + CLOSE_LINES.format(path="<that path>"))
+
+
 def title_line(files):
     if files is None:
         return TITLE_LINES_LOOKUP_FAILED
@@ -502,8 +524,7 @@ def refusal_for(subcommand, arguments, repository_from_environment,
         if subcommand == "close":
             if files == []:
                 return CLOSE_WITH_COMMENT_REFUSAL_NO_FILE
-            return CLOSE_WITH_COMMENT_REFUSAL.format(
-                record_line=record_line(CLOSE_OUTCOME, files))
+            return CLOSE_WITH_COMMENT_REFUSAL.format(close_lines=close_lines(files))
         return REOPEN_WITH_COMMENT_REFUSAL.format(
             record_line=record_line(REOPEN_OUTCOME, files))
     if subcommand == "create":
@@ -519,7 +540,7 @@ def refusal_for(subcommand, arguments, repository_from_environment,
         files = issue_files_on_main(issue_number_named(positionals), working_directory)
         if files == []:
             return DELETE_REFUSAL_NO_FILE
-        return DELETE_REFUSAL.format(record_line=record_line(CLOSE_OUTCOME, files))
+        return DELETE_REFUSAL.format(close_lines=close_lines(files))
     return None
 
 

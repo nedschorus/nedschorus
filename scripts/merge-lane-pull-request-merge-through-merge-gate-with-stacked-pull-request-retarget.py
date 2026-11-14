@@ -277,13 +277,12 @@ def after_merge_test_run(arguments, merge_commit):
         print(f"selecting the nc-test-suites whose recorded inputs changed since the head "
               f"commit {since[:12]}, which selects more suites than "
               f"the merge changed: {why_not}.\n"
-              f"Nothing to do: this run still tests every suite the merge could have changed.",
-              flush=True)
+              f"Nothing to do: this run still tests every suite the merge could have changed.")
     else:
         print(f"selecting the nc-test-suites whose recorded inputs changed since "
               f"{since[:12]}, the commit the head test run passed on: "
               f"pull request {arguments.pull_request}'s head merged with main as main was "
-              f"when that run started", flush=True)
+              f"when that run started")
     by_hand = (f"python3 scripts/run-all-test-suites.py "
                f"--only-suites-whose-recorded-inputs-changed-since {since}")
     if not merge_commit:
