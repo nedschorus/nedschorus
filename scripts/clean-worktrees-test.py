@@ -3689,7 +3689,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("when a task list cannot be read in full, --remove deletes no branch with -D, says "
           "which list on a FAILED line, and exits 1",
           every_head_branch <= local_branches()
-          and "FAILED: no branch deleted with git branch -D, since the task list "
+          and "FAILED: no branch judged for deletion with git branch -D, since the task list "
               f"{malformed_tasks / 'nedschorus-other-seat-tasks'} could not be read in full"
               in malformed.stdout
           and malformed.returncode == 1,
@@ -3705,7 +3705,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("when the task lists' directory cannot be read, --remove deletes no branch with -D "
           "and exits 1",
           every_head_branch <= local_branches()
-          and f"FAILED: no branch deleted with git branch -D, since the task lists' directory "
+          and f"FAILED: no branch judged for deletion with git branch -D, since the task lists' directory "
               f"{sealed_tasks} cannot be listed (PermissionError" in sealed.stdout
           and sealed.returncode == 1,
           f"{sealed.returncode}\n{sealed.stdout}{sealed.stderr}")
@@ -3723,14 +3723,14 @@ with tempfile.TemporaryDirectory() as scratch:
     check("when the directory holding the task lists' directory cannot be entered, --remove "
           "deletes no branch with -D, names the directory on FAILED lines, and exits 1",
           every_head_branch <= local_branches()
-          and f"FAILED: no branch deleted with git branch -D, since the task lists' directory "
+          and f"FAILED: no branch judged for deletion with git branch -D, since the task lists' directory "
               f"{behind_untraversable} cannot be listed (PermissionError" in untraversable.stdout
           and f"FAILED: the task lists' directory {behind_untraversable} could not be listed "
               f"(PermissionError" in untraversable.stdout
           and untraversable.returncode == 1,
           f"{untraversable.returncode}\n{untraversable.stdout}{untraversable.stderr}")
     check("--only-done also names task lists it cannot list on a FAILED line and exits 1",
-          "FAILED: no branch deleted with git branch -D" in untraversable_report.stdout
+          "FAILED: no branch judged for deletion with git branch -D" in untraversable_report.stdout
           and untraversable_report.returncode == 1,
           f"{untraversable_report.returncode}\n{untraversable_report.stdout}"
           f"{untraversable_report.stderr}")

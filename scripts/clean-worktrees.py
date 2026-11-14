@@ -1882,9 +1882,10 @@ def clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done):
     if not_judged and not only_done:
         print(f"branches: none deleted with git branch -D, since {not_judged}")
     if task_lists_unreadable:
-        print(f"FAILED: no branch deleted with git branch -D, since {task_lists_unreadable}; "
-              f"each branch is kept, and the next scripts/clean-worktrees.py --remove judges it "
-              f"again once every task list can be read in full")
+        print(f"FAILED: no branch judged for deletion with git branch -D, since {task_lists_unreadable}; "
+              f"every merged or closed pull request's head branch is kept, and the next "
+              f"scripts/clean-worktrees.py --remove judges those branches again once every task "
+              f"list can be read in full")
         failures += 1
     if force_deletable:
         if remove:
