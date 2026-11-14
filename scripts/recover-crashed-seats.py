@@ -662,9 +662,15 @@ def reach_clause_for_a_running_seat(name: str) -> str:
 
 WINDOW_SENDER_PATH = Path(__file__).resolve().with_name(
     "open-mac-window-from-ned-box.py")
-# The Mac's own clone; this path is shown to the user, who runs it in a Mac Terminal.
+_mac_reference_checkout_path_constant_specification = importlib.util.spec_from_file_location(
+    "mac_reference_checkout_launcher_scripts_directory_path_constant_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "mac-reference-checkout-launcher-scripts-directory-path-constant-common.py")
+mac_reference_checkout_path_constant = importlib.util.module_from_spec(_mac_reference_checkout_path_constant_specification)
+_mac_reference_checkout_path_constant_specification.loader.exec_module(mac_reference_checkout_path_constant)
 LAUNCH_CLAUDE_UBUNTU_SCRIPT_PATH_IN_MAC_REPOSITORY_CLONE = (
-    "/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu")
+    mac_reference_checkout_path_constant.MAC_REFERENCE_CHECKOUT_LAUNCHER_SCRIPTS_DIRECTORY_PATH
+    + "/launch-claude-ubuntu")
 AGENT_SEAT_MAC_WINDOW_NOT_OPENED_REPORT_TEXT = "WINDOW NOT OPENED"
 ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_OPEN_FAILED_EXIT_STATUS = 3
 
