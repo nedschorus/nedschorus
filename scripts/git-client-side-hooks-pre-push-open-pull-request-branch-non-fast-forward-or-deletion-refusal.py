@@ -115,7 +115,8 @@ EVER_READY_QUERY = (
     "query($id: ID!) { node(id: $id) { ... on PullRequest { timelineItems(itemTypes: "
     "[READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT]) { filteredCount } } } }")
 LOOKUP_FAILED_INSTRUCTION = (
-    "Tell the user this whole message, and do not push {branch} again until he answers.")
+    "Unless merge-lane-2 asked you for this push: tell the user this whole message, and do not "
+    "push {branch} again until he answers.")
 OLD_HEAD_SAVE_FAILED_REFUSAL = (
     "this push is refused, because it forces an update to branch {branch} on origin, and the "
     "commit that update replaces there, {old_head}, could not first be saved under {ref}: "

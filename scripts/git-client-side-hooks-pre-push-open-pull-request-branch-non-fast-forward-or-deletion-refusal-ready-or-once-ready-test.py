@@ -229,9 +229,10 @@ def main():
               and "A draft's head may be rewritten only while it has never been ready for "
               "review, because until then nobody reviews it; once it has been ready, a review "
               "may hold its pushed commits, and the update would replace them." in printed
-              and "Tell the user this whole message, and do not push clean again until he "
-              "answers." in printed
-              and check_module.ESCAPE_HATCH_ASSIGNMENT in printed, (status, printed))
+              and "\nUnless merge-lane-2 asked you for this push: tell the user this whole "
+              "message, and do not push clean again until he answers.\nIf merge-lane-2 asked "
+              "you for this push: run it again with " + check_module.ESCAPE_HATCH_ASSIGNMENT
+              in printed, (status, printed))
 
     # A failed timeline lookup for one branch does not stop the check of the others: a rewrite
     # of a ready pull request's head later in the same push is refused as a rewrite.
