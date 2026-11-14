@@ -376,7 +376,9 @@ check("a new agent-session ends the wait and starts a new nudge, not the escalat
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
 machine.task("alpha", "1")
-machine.script(judged(False, reason="a subagent started 3 minutes ago is still running"))
+# The judge takes over a second, as under load, so its answer is logged after the invocation's time.
+machine.script(dict(judged(False, reason="a subagent started 3 minutes ago is still running"),
+                    sleep=1.2))
 code, _ = machine.run(0)
 calls = machine.claude_calls()
 check("rule 5: the judge is handed the open task and the agent-seat's last message, and no tool",
@@ -840,7 +842,10 @@ for case, answer, words in FAILURES + EXACT_FAILURES:
     machine.seat("alpha", DONE_TURN)
     machine.handoff_put_off()
     machine.script(answer)
-    code, output = machine.run(0, "--headless-timeout-seconds", "1")
+    # Only the case that runs past its time gets the 1-second limit: under load, starting the fake
+    # claude alone can take a second, which would turn any other case into a stop.
+    code, output = machine.run(0, *(("--headless-timeout-seconds", "1")
+                                    if case == "runs past its time" else ()))
     failed = machine.events("headless_failed")
     exact = (case, answer, words) in EXACT_FAILURES
     check(f"a sender that {case}: logged, a user-alert, exit 1, no delivery check pending",
@@ -1121,6 +1126,36 @@ check("a nudge logged after an earlier headless agent-session carries the time i
       set(nudges) == {"alpha", "beta"} and max(datetime.fromisoformat(stamp.replace("Z", "+00:00"))
                                                for stamp in nudges.values())
       >= START + timedelta(seconds=2), nudges)
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+machine.seat("beta", DONE_TURN)
+(machine.handoffs / "beta-supervisor-state.json").write_text("{not json")
+machine.script(dict(sent_ok(), sleep=1.2))
+machine.run(0)
+machine.script()
+code, _ = machine.run(2)
+check("a read failure logged after an earlier headless agent-session: alerted 2 minutes after the "
+      "invocation that logged it",
+      code == 1 and any("for beta" in alert["title"] for alert in machine.alerts()),
+      (code, machine.alerts()))
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.task("alpha", "1")
+machine.log.parent.mkdir()
+machine.log.write_text(json.dumps(
+    {"event": "judge_answer", "at": at(0), "agent_seat": "alpha", "rule": 5, "session_id": "s-1",
+     "last_activity": LONG_AGO, "send": False, "reason": "r", "failed": False}) + "\n")
+machine.script(judged(False))
+machine.run(14)
+asked_at_14 = machine.claude_calls()
+machine.script(judged(False))
+machine.run(15)
+check("a judge answer logged without agent_seat_idle_sweep_invocation_started_at: "
+      "the next ask is counted from its at",
+      not asked_at_14 and len(machine.claude_calls()) == 1, (asked_at_14, machine.events()))
 
 # --- a read failure that persists keeps the run failing ---------------------------------------------
 machine = Machine()
