@@ -959,8 +959,8 @@ def test_suite_runner_log_directories_parent_removed_or_named_as_kept(log_direct
         shutil.rmtree(log_directories_parent, ignore_errors=True)
     elif any(log_directories_parent.iterdir()):
         print(f"{TEST_SUITE_RUNNER_LOGS_KEPT_LINE_PREFIX}{log_directories_parent}; "
-              f"remove that directory once you have read them; a later run of {PROGRAM}.py "
-              f"removes it once it has not changed for two days.", file=sys.stderr)
+              f"a later run of scripts/{PROGRAM}.py removes that directory once it has not "
+              f"changed for two days, so you need not remove it yourself.", file=sys.stderr)
     else:
         log_directories_parent.rmdir()
 
