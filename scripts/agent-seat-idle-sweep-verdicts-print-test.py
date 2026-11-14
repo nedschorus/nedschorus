@@ -527,8 +527,41 @@ try:
     check("a subagent and a background command running, each with its start: rule 5",
           verdicts["alpha"]["running"] == {
               "subagents": [{"id": "agent-1", "started": "2026-11-02T11:20:00Z"}],
-              "background_commands": [{"id": "bash-1", "started": "2026-11-02T11:25:00Z"}]}
+              "background_commands": [{"id": "bash-1", "started": "2026-11-02T11:25:00Z"}],
+              "workflows": []}
           and verdicts["alpha"]["rule"] == 5, verdicts["alpha"])
+
+    # The Workflow tool's result, trimmed from a real transcript: a taskId, and no agentId or
+    # backgroundTaskId.
+    WORKFLOW_LAUNCH = user("", at="2026-11-02T11:20:00Z",
+                           tool_result={"status": "async_launched", "taskId": "wn6fctb8y",
+                                        "taskType": "local_workflow",
+                                        "workflowName": "grade-cold-read-findings"})
+    machine = Machine()
+    machine.seat("alpha", [user("go"), WORKFLOW_LAUNCH, assistant("Waiting on the workflow."),
+                           turn_end()])
+    _, verdicts, _ = machine.run()
+    check("a Workflow-tool run with no notification since its launch is running, with its start: "
+          "rule 5",
+          verdicts["alpha"]["running"] == {
+              "subagents": [], "background_commands": [],
+              "workflows": [{"id": "wn6fctb8y", "started": "2026-11-02T11:20:00Z"}]}
+          and verdicts["alpha"]["rule"] == 5, verdicts["alpha"])
+    marker = machine.handoffs / "s-1-handoff-deferred"
+    marker.write_text("")
+    _, verdicts, _ = machine.run()
+    check("a handoff put off while a Workflow-tool run is running: not rule 3, which says nothing "
+          "is running",
+          verdicts["alpha"]["rule"] == 5, verdicts["alpha"])
+    machine = Machine()
+    machine.seat("alpha", [user("go"), WORKFLOW_LAUNCH,
+                           user("<task-notification><task-id>wn6fctb8y</task-id><status>completed"
+                                "</status><result>done</result></task-notification>"),
+                           assistant("Done."), turn_end()])
+    _, verdicts, _ = machine.run()
+    check("a Workflow-tool run whose completion notification came is not running",
+          verdicts["alpha"]["running"]["workflows"] == [] and verdicts["alpha"]["rule"] == 4,
+          verdicts["alpha"])
     machine.seat("alpha", [user("go"),
                            user("", tool_result={"status": "async_launched", "agentId": "agent-1"}),
                            user("<task-notification><task-id>agent-1</task-id><status>completed"
@@ -608,7 +641,8 @@ try:
     _, verdicts, _ = machine.run()
     check("a subagent the parent stopped with TaskStop after its interim report is not running, "
           "nor is its own background command",
-          verdicts["alpha"]["running"] == {"subagents": [], "background_commands": []}
+          verdicts["alpha"]["running"] == {"subagents": [], "background_commands": [],
+                                            "workflows": []}
           and verdicts["alpha"]["rule"] == 4, verdicts["alpha"])
 
     # Claude Code delivers a notification queued while the session was busy as a queued_command

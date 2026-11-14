@@ -226,7 +226,7 @@ the JSON below. An approval-walk item waiting on the user holds back only that w
 agent-seat's other work.
 
 Judge whether the agent-seat could act now. If it could, write it one short message saying what you \
-saw. Name each background command and subagent that has not finished or reported, \
+saw. Name each background command, workflow and subagent that has not finished or reported, \
 with how long it has run, and ask whether it is taking longer than expected, such as "Your \
 test-suite run started 25 minutes ago and has not finished. Is it taking longer than expected?". \
 A subagent with stopped_at has stopped and reported: it is not running, and only the background \
@@ -877,7 +877,8 @@ class Sweep:
                 "approval_walk_items_waiting_on_the_user":
                     verdict.get(fields.APPROVAL_WALK_ITEMS_WAITING_ON_THE_USER),
                 "running_subagents": with_minutes(running.get("subagents", [])),
-                "running_background_commands": with_minutes(running.get("background_commands", []))}
+                "running_background_commands": with_minutes(running.get("background_commands", [])),
+                "running_workflows": with_minutes(running.get("workflows", []))}
 
     def judge_idle_seat(self, seat, verdict, stretch):
         answer = self.log.last_judge_answer(seat)

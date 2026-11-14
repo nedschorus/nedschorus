@@ -28,7 +28,9 @@ TURN_ENDED = "turn_ended"
 APPROVAL_WALK_ITEMS_WAITING_ON_THE_USER = "approval_walk_items_waiting_on_the_user"
 IDLE = "idle"
 NOT_IDLE_BECAUSE = "not_idle_because"      # [reason]
-RUNNING = "running"  # {"subagents": [{"id", "started"}], "background_commands": [{"id", "started"}]}
+# {"subagents": [{"id", "started"}], "background_commands": [{"id", "started"}],
+#  "workflows": [{"id", "started"}]}, a workflow being a Workflow-tool run
+RUNNING = "running"
 # Keys a running subagent entry also carries when the subagent has stopped and reported, and is
 # counted only because background commands it launched still run: when it stopped (ISO time), and
 # those commands, [{"id", "started"}].

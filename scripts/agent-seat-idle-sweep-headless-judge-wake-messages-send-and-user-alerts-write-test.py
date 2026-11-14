@@ -451,6 +451,21 @@ check("rule 5: a subagent stopped with a background command of its own still run
           "own_running_background_commands": [
               {"id": "b3c4", "started": at(-50), "minutes_running": 50}]}], calls)
 
+machine = Machine()
+machine.seat("alpha", [
+    user("go"),
+    dict(user("", when=at(-30)), toolUseResult={
+        "status": "async_launched", "taskId": "wn6fctb8y", "taskType": "local_workflow"}),
+    assistant("Waiting on the workflow."), turn_end()])
+machine.script(judged(False, reason="the workflow is still running"))
+machine.run(0)
+calls = machine.claude_calls()
+prompt = calls[0]["prompt"] if calls else "\n{}"
+judge_facts = json.loads(prompt[prompt.rindex("\n{") + 1:])
+check("rule 5: a running Workflow-tool run is handed to the judge with its minutes",
+      judge_facts.get("running_workflows") == [
+          {"id": "wn6fctb8y", "started": at(-30), "minutes_running": 30}], calls)
+
 # --- rule 2: promises and announced actions -------------------------------------------------------
 PROMISE = "I'll report when PR 927 merges."
 machine = Machine()
