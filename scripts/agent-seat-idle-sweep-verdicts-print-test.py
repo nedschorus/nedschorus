@@ -914,6 +914,21 @@ try:
           code == 0 and verdicts["alpha"]["rule"] == 2 and verdicts["alpha"]["decision"] == "judge"
           and "if_every_sentence_backed" not in verdicts["alpha"], (code, verdicts["alpha"]))
     machine = Machine()
+    machine.seat("alpha", [user("a", at="2026-11-02T11:20:00Z"),
+                           assistant(tool=("Edit", {"file_path": "old.py"}), at="2026-11-02T11:21:00Z"),
+                           assistant(PROMISE, at="2026-11-02T11:21:30Z"),
+                           turn_end(at="2026-11-02T11:22:00Z"), user("go", at="2026-11-02T11:40:00Z"),
+                           assistant(ANNOUNCED, at="2026-11-02T11:41:00Z"),
+                           assistant(tool=("Bash", {"command": "ls"}), at="2026-11-02T11:42:00Z"),
+                           turn_end(at="2026-11-02T11:43:00Z")])
+    _, verdicts, _ = machine.run("--turn-ending-messages-since", "2026-11-02T11:00:00Z")
+    calls = verdicts["alpha"].get("tool_calls_since_start_of_earliest_turn_with_sentence_to_judge")
+    check("an unbacked promise in an earlier turn than the sentence for the judge: the judge is "
+          "handed the tool calls from the judged sentence's turn on only",
+          [item["code_reading"] for item in verdicts["alpha"].get("sentences", [])]
+          == ["unbacked", "judge"]
+          and calls is not None and [call["name"] for call in calls] == ["Bash"], verdicts["alpha"])
+    machine = Machine()
     machine.seat("alpha", IDLE_TURN)
     machine.task("alpha", "1")
     (machine.tasks / "nedschorus-alpha-tasks" / "2.json").write_text("{not json")

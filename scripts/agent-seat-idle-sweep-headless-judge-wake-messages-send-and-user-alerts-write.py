@@ -895,12 +895,15 @@ class Sweep:
         """Rule 2: judge what code could not settle, and word one message naming every unbacked
         sentence. Returns ("unbacked", the message), ("failed", None) or ("all backed", None)."""
         checked = self.log.checked_sentences(seat)
-        new = [item for item in verdict.get(fields.SENTENCES, [])
-               if item["code_reading"] != fields.NOT_RAISED
-               and (item["record_uuid"], item["sentence"]) not in checked]
+        new_by_code_reading = {}
+        for item in verdict.get(fields.SENTENCES, []):
+            if (item["record_uuid"], item["sentence"]) not in checked:
+                new_by_code_reading.setdefault(item["code_reading"], []).append(item)
+        judged = new_by_code_reading.get(fields.JUDGE, [])
+        unbacked = new_by_code_reading.get(fields.UNBACKED, [])
+        new = judged + unbacked
         if not new:
             return "all backed", None
-        judged = [item for item in new if item["code_reading"] == fields.JUDGE]
         backed = {}
         if judged:
             facts = dict(self.facts(seat, verdict),
@@ -930,7 +933,6 @@ class Sweep:
             for item in new:
                 self.record({"event": "sentence_checked", "agent_seat": seat,
                              "record_uuid": item["record_uuid"], "sentence": item["sentence"]})
-        unbacked = [item for item in new if item["code_reading"] == fields.UNBACKED]
         unbacked += [item for index, item in enumerate(judged) if not backed[index]]
         if not unbacked:
             return "all backed", None
