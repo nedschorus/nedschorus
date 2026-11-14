@@ -1153,7 +1153,8 @@ machine.run(14)
 asked_at_14 = machine.claude_calls()
 machine.script(judged(False))
 machine.run(15)
-check("a judge answer logged without invoked_at: the next ask is counted from its at",
+check("a judge answer logged without agent_seat_idle_sweep_invocation_started_at: "
+      "the next ask is counted from its at",
       not asked_at_14 and len(machine.claude_calls()) == 1, (asked_at_14, machine.events()))
 
 # --- a read failure that persists keeps the run failing ---------------------------------------------

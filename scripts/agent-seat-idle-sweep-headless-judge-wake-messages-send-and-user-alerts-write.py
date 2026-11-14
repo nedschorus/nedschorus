@@ -304,8 +304,9 @@ class SweepLog:
             self.add_newline = (self.truncate_to is None and bool(data)
                                 and not data.endswith(b"\n"))
 
-    def append(self, event, now, invoked_at):
-        event = {"at": iso(now), "invoked_at": iso(invoked_at), **event}
+    def append(self, event, now, agent_seat_idle_sweep_invocation_started_at):
+        event = {"at": iso(now), "agent_seat_idle_sweep_invocation_started_at":
+                 iso(agent_seat_idle_sweep_invocation_started_at), **event}
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.truncate_to is not None:
             os.truncate(self.path, self.truncate_to)
@@ -400,14 +401,14 @@ def parse_time(stamp):
     return verdicts_print.parse_time(stamp)
 
 
-def invoked_at(event):
+def agent_seat_idle_sweep_invocation_started_at(event):
     """The time of the invocation that logged the event. The judge's ask-again and a read
     failure's user-alert count their minutes from that invocation, and compare this time with a
     later invocation's: the event's "at" adds the seconds the invocation had taken, a judge's
     included, so a step due a whole number of minutes later would come a minute late. A wait's
     steps and a limit wake count from "at", the time their message went out. An event logged
-    before "invoked_at" was logged has only its "at"."""
-    return event.get("invoked_at", event["at"])
+    before "agent_seat_idle_sweep_invocation_started_at" was logged has only its "at"."""
+    return event.get("agent_seat_idle_sweep_invocation_started_at", event["at"])
 
 
 def seconds_between(earlier, later):
@@ -743,7 +744,8 @@ class Sweep:
         if first_seen is None:
             self.record({"event": "read_failure", "agent_seat": seat, "error": text})
             return
-        if seconds_between(invoked_at(first_seen), self.now) >= READ_FAILURE_ALERT_AFTER_SECONDS:
+        if (seconds_between(agent_seat_idle_sweep_invocation_started_at(first_seen), self.now)
+                >= READ_FAILURE_ALERT_AFTER_SECONDS):
             # Keyed by the text alone: two readers of one broken file, such as ~/.claude.json,
             # report it in the same words.
             self.alert(f"read-failure:{text}",
@@ -881,7 +883,8 @@ class Sweep:
         answer = self.log.last_judge_answer(seat)
         if (answer and answer["session_id"] == verdict[fields.SESSION_ID]
                 and answer["last_activity"] == stretch
-                and seconds_between(invoked_at(answer), self.now) < JUDGE_ASK_AGAIN_SECONDS):
+                and seconds_between(agent_seat_idle_sweep_invocation_started_at(answer), self.now)
+                < JUDGE_ASK_AGAIN_SECONDS):
             return
         facts = dict(self.facts(seat, verdict), step=NUDGE)
         idle_minutes = int(seconds_between(stretch, self.now) // 60) if stretch else None
