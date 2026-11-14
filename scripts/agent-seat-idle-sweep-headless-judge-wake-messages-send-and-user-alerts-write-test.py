@@ -842,7 +842,10 @@ for case, answer, words in FAILURES + EXACT_FAILURES:
     machine.seat("alpha", DONE_TURN)
     machine.handoff_put_off()
     machine.script(answer)
-    code, output = machine.run(0, "--headless-timeout-seconds", "1")
+    # Only the case that runs past its time gets the 1-second limit: under load, starting the fake
+    # claude alone can take a second, which would turn any other case into a stop.
+    code, output = machine.run(0, *(("--headless-timeout-seconds", "1")
+                                    if case == "runs past its time" else ()))
     failed = machine.events("headless_failed")
     exact = (case, answer, words) in EXACT_FAILURES
     check(f"a sender that {case}: logged, a user-alert, exit 1, no delivery check pending",
