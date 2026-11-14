@@ -1084,7 +1084,8 @@ check("the task names the worktree, the git command, git's output, its Record li
       and f"The second program's log file: {waiter_logs_of(refused_worktree)[0]}\n" in description
       and description.endswith(waiter.GIT_WORKTREE_REMOVE_DEFERRED_FAILED_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO
                                + "\nFind the cause and fix it. Go to the user only when the fix needs a change to a "
-                               "guarded file, or when you cannot find the cause and fix it."), task)
+                               "guarded-file, when you cannot find the cause, or when you find the cause but cannot "
+                               "fix it."), task)
 check("git refusing leaves the worktree in place, with its record shipped",
       refused_worktree.is_dir() and (STORE / "cold-read-records" / refused_record.name / "fast-read.md").is_file())
 
