@@ -426,7 +426,7 @@ def run_unreadable_cases():
           and not s.log.exists() and result.returncode == 1, result.stderr)
 
 
-WORKSPACE = scratch_common.scratch_directory_after_removing_ones_killed_runs_left(
+WORKSPACE = scratch_common.make_test_scratch_directory_after_removing_killed_runs_leftovers(
     "tmp-and-reviewer-scratch-delete-test-workspace-")
 try:
     run_tmp_place_cases()

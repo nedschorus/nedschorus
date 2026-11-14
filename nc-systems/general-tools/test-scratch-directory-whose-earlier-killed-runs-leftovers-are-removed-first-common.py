@@ -9,8 +9,9 @@ leaves a directory that can hold thousands of files in a /tmp of limited inodes.
 So each run, before making its own directory, removes the ones earlier
 runs of the same test left: a directory of this account whose name is the
 test's prefix followed by mkdtemp's eight-character suffix, and under which
-nothing has changed for LEFT_BY_A_KILLED_RUN_AFTER_UNCHANGED_SECONDS, longer
-than any run of a test lasts, so a directory another run still writes in is kept.
+nothing has changed for
+SCRATCH_DIRECTORY_UNCHANGED_SECONDS_BEFORE_COUNTED_AS_LEFT_BY_A_KILLED_RUN,
+longer than any run of a test lasts, so a directory another run still writes in is kept.
 Given no temp directory, it sweeps /tmp as well as the system temp directory,
 because Python falls back to /var/tmp when /tmp has no free inodes, which is
 when the leftovers in /tmp most need removing.
@@ -36,9 +37,9 @@ import tempfile
 import time
 from pathlib import Path
 
-LEFT_BY_A_KILLED_RUN_AFTER_UNCHANGED_SECONDS = 3 * 60 * 60
+SCRATCH_DIRECTORY_UNCHANGED_SECONDS_BEFORE_COUNTED_AS_LEFT_BY_A_KILLED_RUN = 3 * 60 * 60
 MKDTEMP_SUFFIX_SHAPE = r"[a-z0-9_]{8}"
-TMP = Path("/tmp")
+SLASH_TMP_PATH_SWEPT_FOR_KILLED_RUNS_LEFTOVERS_BESIDES_SYSTEM_TEMP_DIRECTORY = Path("/tmp")
 
 
 def newest_modification_time_in_tree(directory):
@@ -53,14 +54,18 @@ def newest_modification_time_in_tree(directory):
     return newest
 
 
-def remove_scratch_directories_killed_runs_left(prefix, temp_dir=None, now=None,
-                                                unchanged_seconds=LEFT_BY_A_KILLED_RUN_AFTER_UNCHANGED_SECONDS):
+def remove_scratch_directories_killed_runs_left(
+        prefix, temp_dir=None, now=None,
+        unchanged_seconds=SCRATCH_DIRECTORY_UNCHANGED_SECONDS_BEFORE_COUNTED_AS_LEFT_BY_A_KILLED_RUN):
     """Remove each directory named prefix + mkdtemp's suffix, of this account, unchanged for
     unchanged_seconds, in temp_dir, or else in the system temp directory and /tmp;
     return (removed, kept), kept being (path, reason) for each one that could not be
     read or removed."""
     if temp_dir is None:
-        temp_dirs = list(dict.fromkeys(path for path in (Path(tempfile.gettempdir()), TMP) if path.is_dir()))
+        temp_dirs = list(dict.fromkeys(
+            path for path in (Path(tempfile.gettempdir()),
+                              SLASH_TMP_PATH_SWEPT_FOR_KILLED_RUNS_LEFTOVERS_BESIDES_SYSTEM_TEMP_DIRECTORY)
+            if path.is_dir()))
     else:
         temp_dirs = [Path(temp_dir)]
     now = time.time() if now is None else now
@@ -89,7 +94,7 @@ def glob_escape(text):
     return re.sub(r"([*?\[])", r"[\1]", text)
 
 
-def scratch_directory_after_removing_ones_killed_runs_left(prefix, temp_dir=None):
+def make_test_scratch_directory_after_removing_killed_runs_leftovers(prefix, temp_dir=None):
     """Remove what killed runs of this test left, then make and return a new scratch directory."""
     _removed, kept = remove_scratch_directories_killed_runs_left(prefix, temp_dir=temp_dir)
     for directory, reason in kept:
