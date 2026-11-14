@@ -17,13 +17,13 @@ Wherever practical, an agent puts a rule that code, a schema, a state machine or
 The statement says "three categories" and lists four; this page uses four, defined in the user's later words (S35). Every finding, from a review, a test or an approval-walk, goes in one:
 
 1. Must fix now: the finding prevents the next step from being completed or validated correctly. Only this category holds the work back.
-2. Fix next: in the next pull request, or as the next item in the approval-walk.
+2. Fix next: in a follow-up pull request on the finding's topic, opened after the current one merges, with a task holding the finding until that pull request opens, or as the next item in the approval-walk.
 3. Fix during maintenance: a nit, or another maintenance kind of thing.
 4. File an improvement, a feature or a change: as a task if it is short term and of smaller scope, or as a GHI if it is longer term or of larger scope.
 
 A finding filed in category 4 stays visible, with the reason for filing it rather than fixing it, a defined follow-up, its prerequisites, and what it unblocks; prerequisites are done first. An improvement or an addition a review finds, rather than a defect, is a finding like any other, and falls in category 4: the user's words in S35 answer the question he asked in S34.
 
-An agent fixes what must be fixed and leaves the rest to its category, because an agent that works on a few things does them well. In a pull request review, a finding that the review-scope bullet of `CLAUDE.md` says blocks the merge is must fix now. The agent that runs a review or a test files what it defers. Where maintenance findings are held, and how a finding is placed among categories 2 to 4, are still open, listed in the section Deferred-decisions of [GHI 2522](https://github.com/nedschorus/nedschorus/issues/2522). Sources: S6 to S9, S34, S35.
+An agent fixes what must be fixed and leaves the rest to its category, because an agent that works on a few things does them well. In a pull request review, a finding that the "Review scope" section of `docs/agents/pr-reviewer-instructions.md` says blocks the merge is must fix now. The agent that runs a review or a test files what it defers. Where maintenance findings are held, and how a finding is placed among categories 2 to 4, are still open, listed in the section Deferred-decisions of [GHI 2522](https://github.com/nedschorus/nedschorus/issues/2522). Sources: S6 to S9, S34, S35.
 
 ### 3. Keep a checked claim, and reopen it only for a reason
 
@@ -49,7 +49,7 @@ More code, more steps, or simple changes such as renames count as a win when the
 
 ### 8. State the case against as it is, even when it is weak
 
-An agent states the strongest case against its recommendation that it has, and calls it weak when it is. The user accepts that about 5% of the items settled without him would have had a different answer from him. An approval-walk item that proposes a change needs no answer from him when its change is of a kind that the paragraph of `.claude/skills/walk-me-through/SKILL.md` beginning "An item needs no answer from the user" lists, and its case against is rated none, or rated weak and names only cost. Widening that rule is the subject of GHI [Approve obvious approval-walk items automatically, by criteria drawn from the user's tracked obvious approvals, after the advisor checks each one](https://github.com/nedschorus/nedschorus/issues/1809). Sources: S17, S18.
+An agent states the strongest case against its recommendation that it has, and calls it weak when it is. The user accepts that about 5% of the items settled without him would have had a different answer from him. An approval-walk item that proposes a change needs no answer from him when its change is of a kind that the paragraph of `.claude/skills/walk-me-through/SKILL.md` beginning "An item needs no answer from the user" lists, and its case against is rated none, or rated weak and names only cost, or only that the change alters text the user approved word for word on an earlier date. Widening that rule is the subject of GHI [Approve obvious approval-walk items automatically, by criteria drawn from the user's tracked obvious approvals, after the advisor checks each one](https://github.com/nedschorus/nedschorus/issues/1809). Sources: S17, S18.
 
 ### 9. A case against that says only "this takes work" is not a real case
 

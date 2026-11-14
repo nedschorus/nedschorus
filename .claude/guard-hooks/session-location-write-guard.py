@@ -13,7 +13,7 @@ from pathlib import Path
 
 _marker_spec = importlib.util.spec_from_file_location(
     "guard_approval_marker_common",
-    Path(__file__).resolve().parents[1] / "hooks" / "guard-approval-marker-common.py")
+    Path(__file__).resolve().parent / "guard-approval-marker-common.py")
 _guard_approval_marker_common = importlib.util.module_from_spec(_marker_spec)
 _marker_spec.loader.exec_module(_guard_approval_marker_common)
 consume_approval_marker = _guard_approval_marker_common.consume_approval_marker
@@ -35,6 +35,10 @@ DETACHED_DENY_MESSAGE = (
     "Refusing to write {path}: this checkout is on a detached HEAD. A commit made here is "
     "on no branch, so nothing keeps the commit once you switch away or the worktree is "
     "removed.\n"
+    "If this checkout is your agent-seat's agent-home, do the work in a worktree of your own "
+    "on an nc-topic-branch, made with git -C ~/Projects/nedschorus worktree add -b <branch "
+    "name> ~/Projects/nedschorus/.claude/worktrees/<directory name> origin/main: an "
+    "agent-home holds no work, and git refuses commits in it.\n"
     "If this checkout was made for the work you are doing, make a branch here (git switch "
     "-c <a-branch-name>), then try the write again.\n"
     "If this checkout belongs to another session, do the work in your own checkout "

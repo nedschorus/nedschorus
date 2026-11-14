@@ -16,9 +16,15 @@ turned into spaces, so it drops a line whose only change is a tab. A broken para
 the agent did not touch is left alone, because in a file the instruction-file guard
 protects, rejoining it would need the user's approval for whitespace. An Edit that only deleted lines adds none and gets no reminder. An Edit
 of a file holding a broken paragraph, whose added lines cannot be found that way,
-gets one line on stderr and exit 1, a non-blocking hook error, so the agent is told the
+gets a message on stderr and exit 1, a non-blocking hook error, so the agent is told the
 check was not made. An Edit of a file holding no broken paragraph needs no diff to be
-judged, so a payload lacking that text there is not reported.
+judged, so a payload lacking that text there is not reported. A replace_all Edit with an
+empty newString, where both texts Claude Code may have removed (oldString alone, or with
+the newline after it) give the file's line count and different added lines, is such a
+check not made too. The line diff is bounded across the whole Edit by
+LINE_DIFF_MAXIMUM_LINE_PAIRS (twice over, when both of those texts are diffed), to stay
+inside the hook's timeout; every line of a span past that bound counts as added, so a
+broken paragraph there that the Edit only repeated from oldString can get a reminder.
 The reminder carries no line numbers: the agent is to rejoin each broken
 paragraph it wrote, and to write later Markdown files the same way.
 
@@ -37,7 +43,7 @@ breaks needs rules this hook does not carry, so it stays silent rather than tell
 an agent to join lines that must stay apart.
 
 A fault, such as stdin that is not a JSON object, a written file that cannot be read
-or any exception: one line on stderr naming the hook and the fault, nothing on stdout,
+a git command that fails, or any exception: a message on stderr naming the hook and the fault, nothing on stdout,
 exit 1. Claude Code records a PostToolUse exit 1 as a non-blocking error and keeps the
 write; exit 0 would read as "no broken paragraph found". A file that is not UTF-8 is
 not a fault: the hook judges only UTF-8 text, and stays silent on other bytes."""
@@ -195,8 +201,16 @@ def markdown_broken_paragraph_line_ranges(text: str) -> list:
 
 
 # SequenceMatcher without autojunk can take cubic time on spans of repeated lines: 800 lines
-# against 800 took about 5 s on ned-box, past which a span's every new line counts as added.
+# against 800 took about 5 s on ned-box. The bound is on the line pairs of all of an Edit's
+# spans together, since a replace_all Edit can make many spans (twice over when both texts an
+# empty newString may have removed are diffed); once a span would pass it, that span's every
+# new line counts as added.
 LINE_DIFF_MAXIMUM_LINE_PAIRS = 250_000
+
+
+CHECK_NOT_MADE_ADVICE_FORMAT = (
+    "the {tool_name} itself succeeded and need not be redone.\n"
+    "If the {tool_name} wrote a paragraph across several lines, join that paragraph into one line yourself.")
 
 
 class EditedLinesUnknown(Exception):
@@ -214,7 +228,8 @@ def edit_added_line_numbers(tool_response, text_after: str) -> set:
     not by rebuilding the file: Claude Code hands over originalFile with CRLF line ends
     turned into LF, and newString as typed when the Edit matched straight quotes to curly
     ones but wrote curly ones. Raise EditedLinesUnknown when the payload lacks the text
-    this needs, or when text_after's line count is not the one the replacements give."""
+    this needs, when text_after's line count is not the one the replacements give, or when
+    both texts an empty newString may have removed give it and different added lines."""
     if not isinstance(tool_response, dict):
         raise EditedLinesUnknown("the Edit's payload carries no tool_response object")
     original = tool_response.get("originalFile")
@@ -229,12 +244,21 @@ def edit_added_line_numbers(tool_response, text_after: str) -> set:
         return set(range(len(after_lines)))
     before_lines = original.split("\n")
     # Claude Code removes an empty Edit's following newline too when old ends without one,
-    # so the line count says which of the two texts it removed.
+    # so the line count says which of the two texts it removed, unless a replace_all Edit
+    # gives both texts the same line count.
+    added_by_form = []
     for removed in ([old, old + "\n"] if not new and not old.endswith("\n") else [old]):
         replacements = original.count(removed) if replace_all else min(original.count(removed), 1)
         line_shift = new.count("\n") - removed.count("\n")
         if replacements and len(after_lines) == len(before_lines) + replacements * line_shift:
-            return _lines_replacements_added(original, before_lines, after_lines, removed, new, replace_all)
+            added_by_form.append(
+                _lines_replacements_added(original, before_lines, after_lines, removed, new, replace_all))
+    if len(added_by_form) == 2 and added_by_form[0] != added_by_form[1]:
+        raise EditedLinesUnknown("the file as read could come from either of two readings of the Edit, "
+                                 "tool_response.oldString removed alone or removed together with the "
+                                 "newline that followed it, and the two readings change different lines")
+    if added_by_form:
+        return added_by_form[0]
     if not original.count(old):
         raise EditedLinesUnknown("tool_response.oldString does not occur in tool_response.originalFile")
     raise EditedLinesUnknown("the file as read does not have the line count the Edit's "
@@ -263,11 +287,14 @@ def _lines_replacements_added(original, before_lines, after_lines, old, new, rep
             break
         offset = original.find(old, offset + len(old))
     added = set()
+    line_pairs_left = LINE_DIFF_MAXIMUM_LINE_PAIRS
     for before_start, before_end, after_start, after_end in spans:
         before_span, after_span = before_lines[before_start:before_end], after_lines[after_start:after_end]
-        if len(before_span) * len(after_span) > LINE_DIFF_MAXIMUM_LINE_PAIRS:
+        line_pairs = len(before_span) * len(after_span)
+        if line_pairs > line_pairs_left:
             added.update(range(after_start, after_end))
             continue
+        line_pairs_left -= line_pairs
         matcher = difflib.SequenceMatcher(None, before_span, after_span, autojunk=False)
         for tag, _, _, start, end in matcher.get_opcodes():
             if tag in ("replace", "insert"):
@@ -311,7 +338,7 @@ def main() -> int:
         trackable = checks.git_would_track(root, relative_path)
     except checks.GitCommandFailed as error:
         print(f"markdown-edit-hard-wrapped-paragraph-reminder: {error}, so no reminder check was made; "
-              f"the {tool_name} itself succeeded.", file=sys.stderr)
+              + CHECK_NOT_MADE_ADVICE_FORMAT.format(tool_name=tool_name), file=sys.stderr)
         return 1
     if not trackable:
         return 0
@@ -329,7 +356,7 @@ def main() -> int:
             added = edit_added_line_numbers(payload.get("tool_response"), text)
         except EditedLinesUnknown as error:
             print(f"markdown-edit-hard-wrapped-paragraph-reminder: {error}, so no reminder check was made; "
-                  f"the Edit itself succeeded.", file=sys.stderr)
+                  + CHECK_NOT_MADE_ADVICE_FORMAT.format(tool_name="Edit"), file=sys.stderr)
             return 1
         broken_ranges = markdown_broken_paragraph_line_ranges_filter_to_ranges_holding_edit_added_lines(broken_ranges, added)
     if not broken_ranges:

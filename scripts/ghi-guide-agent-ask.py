@@ -753,7 +753,7 @@ def fast_forward_seat_checkout(seat_dir: Path) -> str:
     if count == 0:
         return ""
 
-    merged = git(["merge", "--ff-only", "origin/main"], timeout=120)
+    merged = git(["merge", "--ff-only", "--no-overwrite-ignore", "origin/main"], timeout=120)  # pragma: no mutate, a limit a second longer or shorter on a fast-forward changes nothing a test can see without a git merge that runs for two minutes
     if merged.returncode != 0:
         return (f"ghi-guide-agent-ask: the seat checkout is {count} behind origin/main and would "
                 f"not fast-forward ({merged.stderr.strip() or 'no detail'}); answering from "
@@ -990,14 +990,13 @@ def main(argv=None) -> int:
         print(f"ghi-guide-agent-ask: the ask failed: ghi-guide-agent's agent-home "
               f"{seat_dir} does not exist on {NED_BOX_HOSTNAME}, and the ask runs inside it. "
               f"Create it, from either machine, with `ssh nedlern@{NED_BOX_HOSTNAME} "
-              f"'git -C ~/Projects/nedschorus worktree add {seat_dir} ghi-guide-agent'`, "
-              f"or, when git says that branch does not exist, with `ssh "
-              f"nedlern@{NED_BOX_HOSTNAME} 'git -C ~/Projects/nedschorus worktree add -b "
-              f"ghi-guide-agent {seat_dir} origin/main'`; then run the command that "
+              f"'git -C ~/Projects/nedschorus worktree add --detach {seat_dir} origin/main && "
+              f"touch \"$(git -C {seat_dir} rev-parse --absolute-git-dir)/agent-home-marker\"'`, "
+              f"which makes it an agent-home resting at origin/main; then run the command that "
               f"printed this message again, unchanged, once. If the agent-home cannot be "
               f"created, or the second ask fails too: when you are filing or editing a GHI, "
               f"go on down the ask's fallback ladder in .claude/skills/ghi-write/SKILL.md; "
-              f"otherwise go on without ghi-guide-agent's answer, and tell the user that "
+              f"for any other ask, go on without ghi-guide-agent's answer, and tell the user that "
               f"ghi-guide-agent cannot answer until its agent-home exists on ned-box.",
               file=sys.stderr)
         return 1

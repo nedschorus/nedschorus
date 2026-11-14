@@ -29,7 +29,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+# Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 RULE_FILE = (Path(__file__).resolve().parents[1] / "config"
              / "ned-box-tmpfiles-tmp-cleanup-rule-ignoring-directory-access-time.conf")
 INSTALLED_RULE_PATH = Path("/etc/tmpfiles.d/tmp.conf")
@@ -50,8 +50,14 @@ DAILY_CLEANER = "systemd-tmpfiles-clean.timer"
 INSTALL_COMMAND_LINE = f"{DRY_RUN_COMMAND_LINE} --install-and-clean-once"
 # sudo cannot ask for the password without a terminal, as in an agent's shell.
 # The durable checkout, not this file's path: an agent may run this from a worktree removed later.
+# git pull rejects --no-overwrite-ignore, and without it the merge replaces an ignored file at a path main tracks.
+# git merge fast-forwards whatever branch is checked out, so the command stops unless it is main.
 USER_INSTALL_COMMAND_LINE = (
-    "ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && git pull --ff-only && python3 "
+    "ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && "
+    "{ [ \"$(git branch --show-current)\" = main ] || "
+    "{ echo \"~/Projects/nedschorus is not on main, so nothing was fast-forwarded or installed; "
+    "tell an agent on ned-box.\" >&2; false; }; } && git fetch origin && "
+    "git merge --ff-only --no-overwrite-ignore origin/main && python3 "
     "scripts/ned-box-tmpfiles-tmp-cleanup-rule-dry-run-or-install-and-clean-once.py "
     "--install-and-clean-once'")
 SUDO_NEEDS_THE_USER_LINE = (

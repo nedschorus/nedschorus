@@ -53,12 +53,14 @@ NOT_PROTECTED_MESSAGE = (
 OWNER_FILE_NOT_WRITTEN_MESSAGE = (
     "The owner file of your worktree {worktree}, the file that tells the worktree cleaner "
     "who owns the worktree, could not be written, so "
-    "scripts/clean-worktrees.py will never remove that worktree, and it stays on disk once your "
+    "scripts/clean-worktrees.py removes that worktree only once nothing in it has changed for "
+    "2 days and it holds no uncommitted or untracked file, so it stays on disk after your "
     "work is done: {reason}\n"
     "Carry on with your task; nothing you do here fixes this.\n"
     "In your final report, give the agent that dispatched you this sentence: \"Worktree "
     "{worktree} has no owner file, the file that tells the worktree cleaner who owns it, so "
-    "the worktree cleaner leaves it alone; when its work is pushed or merged, remove it with "
+    "the worktree cleaner removes it only once nothing in it has changed for 2 days; when its "
+    "work is pushed or merged, remove it with "
     "git worktree remove {worktree}.\"")
 
 
@@ -125,7 +127,8 @@ def subagent_worktree_owner_file_write_message(worktree, owner_process, owner_ke
     try:
         owner_file = load_worktree_owner_file_read_and_write_module()
         lock_reason = owner_file.worktree_lock_reason_read(worktree)
-        if owner_file.claude_code_subagent_worktree_lock_reason_dispatching_process_id_parse(lock_reason) != owner_process:
+        lock = owner_file.claude_code_subagent_worktree_lock_reason_parse(lock_reason)
+        if lock is None or lock.process_id != owner_process:
             return None
         if owner_file.worktree_owner_file_read(worktree) is not None:
             return None

@@ -16,6 +16,7 @@ import importlib.util
 import json
 import os
 import shutil
+import site
 import subprocess
 import sys
 import tempfile
@@ -48,19 +49,22 @@ STOP_PAYLOAD = json.dumps({
     "cwd": "/", "hook_event_name": "Stop", "stop_hook_active": False,
 })
 DEFER_LINE = ("If a task above cannot be acted on yet, record what it now waits on with "
-              "TaskUpdate instead: a pull request or a GHI in a new metadata.prerequisites, "
-              "or a task with addBlockedBy.")
-WAITS_ON_CHANGE = ("metadata.waits_on is the old name of metadata.prerequisites: set "
-                   "metadata.prerequisites to the same list, unless metadata.prerequisites "
-                   "already holds what the task waits on, then set metadata.waits_on to null")
-DUE_UTC_CHANGE = ("metadata.due_utc held a due time, which no hook reads any more: set "
-                  "metadata.due_utc to null, and if the task waits on a pull request or a GHI, "
-                  "record it in metadata.prerequisites, or on a task, with addBlockedBy")
+              "TaskUpdate instead: a pull request, a GHI or an approval-walk item in a new "
+              "metadata.prerequisites, or a task with addBlockedBy.")
+CORRECT_PREREQUISITES_LINE = (
+    'Correct the task with TaskUpdate, giving its metadata a "prerequisites" list whose entries '
+    'are each one of {"pr_merged": <number>}, {"issue_closed": <number>} or '
+    '{"approval_walk_item_decided": {"approval_walk_minutes_file_path": "<absolute path of the '
+    'walk-minutes file>", "approval_walk_item_heading": "<the item\'s heading in the '
+    'walk-document>"}}; if the task waits on no pull request, GHI or approval-walk item, set '
+    '"prerequisites" to null, and record any task on your own task list it waits on with '
+    "addBlockedBy.")
 
 
-def old_keys_text(task_id, subject, *changes):
-    return (f'Task {task_id} "{subject}" still carries an old metadata key; change it with '
-            f"TaskUpdate: {'; and '.join(changes)}.")
+def problem_text(task_id, problem, subject=None):
+    subject = subject if subject is not None else f"Subject of task {task_id}"
+    return (f'Task {task_id} "{subject}" is never raised as its metadata.prerequisites stand, '
+            f"because {problem}.\n{CORRECT_PREREQUISITES_LINE}")
 
 GH_STAND_IN = """#!{python}
 import json, os, sys, time
@@ -99,6 +103,8 @@ def seat_session_environment():
     """This process's environment as an agent-seat's own attended session
     gives it to a Stop hook: attended, and no caller owning the session."""
     environment = dict(os.environ)
+    # The cases move HOME, from which Python finds the user's site-packages; on the Mac markdown-it-py is there.
+    environment["PYTHONUSERBASE"] = site.getuserbase()
     environment["CLAUDE_CODE_SESSION_ATTENDED"] = "1"
     environment.pop("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER", None)
     return environment
@@ -246,10 +252,9 @@ check("in_progress task met: raised", "Act on task 20 " in text, text)
 check("completed task met: never raised", "task 21 " not in text, text)
 
 seat = Seat()
-seat.task("22", status="completed", metadata={"prerequisites": [{"pr_merged": 5}],
-                                               "due_utc": "2020-01-01T00:00:00Z"})
+seat.task("22", status="completed", metadata={"prerequisites": [{"pr_merged": 5}]})
 seat.respond({"pr:5": {"state": "MERGED", "title": "T", "url": "https://x/5"}})
-check("completed task with met prerequisites and an old key: silent", silent(seat.run()))
+check("completed task with met prerequisites: silent", silent(seat.run()))
 check("completed task: gh never asked", seat.gh_calls() == [], seat.gh_calls())
 
 # --- blockedBy ----------------------------------------------------------------
@@ -446,8 +451,25 @@ seat.task("45", metadata={"prerequisites": []})
 seat.task("46", metadata={"prerequisites": [{"pr_merged": 107}, {"merged_by": "x"}]})
 seat.task("47", metadata={"prerequisites": [{"pr_merged": "107"}]})
 seat.respond({"pr:107": {"state": "MERGED", "title": "T", "url": "https://x/107"}})
-check("empty prerequisites, an unknown condition, a non-number condition: never raise",
-      silent(seat.run()), seat.gh_calls())
+result = seat.run()
+check("empty prerequisites, an unknown condition, a non-number condition: each named to the "
+      "agent, none raised, and gh never asked",
+      context_of(result) == "\n".join((
+          problem_text("45", "it is an empty list, which names nothing to wait on"),
+          problem_text("46", 'its entry {"merged_by": "x"} names the kind "merged_by", which this '
+                             "hook does not know"),
+          problem_text("47", 'its entry {"pr_merged": "107"} does not give a positive whole '
+                             "number")))
+      and seat.gh_calls() == [], (context_of(result), seat.gh_calls()))
+check("unreadable prerequisites: named once, then silent", silent(seat.run()))
+seat.task("46", metadata={"prerequisites": [{"waits_on": 107}]})
+check("unreadable prerequisites changed to another unreadable value: named again",
+      context_of(seat.run()) == problem_text(
+          "46", 'its entry {"waits_on": 107} names the kind "waits_on", which this hook does not '
+                "know"))
+seat.task("46", metadata={"prerequisites": [{"pr_merged": 107}]})
+check("unreadable prerequisites corrected and met: raised",
+      (context_of(seat.run()) or "").startswith("Act on task 46 "))
 
 seat = Seat()
 seat.task("48", metadata={"prerequisites": [{"pr_merged": 108}]})
@@ -567,96 +589,9 @@ check("prerequisites not yet met, blockers completed: silent", silent(seat.run()
 seat = Seat()
 seat.task("116", metadata={"prerequisites": []}, blocked_by=["117"])
 seat.task("117", status="completed")
-check("unreadable prerequisites, blockers completed: never raised", silent(seat.run()))
-
-# --- the old keys: waits_on still read, both named until changed -----------------
-seat = Seat()
-seat.task("100", metadata={"waits_on": [{"pr_merged": MERGED_PR}]}, subject="Old list")
-result = seat.run()
-check("waits_on alone and met: raised, then the line naming the old key, exact text",
-      result.returncode == 0 and context_of(result) == (
-          f'Act on task 100 "Old list" now: its prerequisites are met: PR "Merged" '
-          f"(https://x/{MERGED_PR}) is merged.\n{DEFER_LINE}\n"
-          + old_keys_text("100", "Old list", WAITS_ON_CHANGE)),
-      repr(context_of(result)))
-check("waits_on alone: raised and named once, then silent", silent(seat.run()))
-check("waits_on alone: recorded under the new key",
-      "prerequisites" in json.loads(seat.state_path.read_text())["raised"]["100"]
-      and "waits_on" not in json.loads(seat.state_path.read_text())["raised"]["100"],
-      seat.state_path.read_text())
-seat.task("100", metadata={"prerequisites": [{"pr_merged": MERGED_PR}]}, subject="Old list")
-check("the list moved to prerequisites unchanged: silent", silent(seat.run()))
-check("the list moved: the old-key record is cleared",
-      "old_keys" not in json.loads(seat.state_path.read_text())["raised"]["100"],
-      seat.state_path.read_text())
-
-seat = Seat()
-seat.state_path.parent.mkdir(parents=True)
-seat.state_path.write_text(json.dumps({"raised": {"101": {
-    "waits_on": hook.canonical_prerequisites([{"pr_merged": MERGED_PR}])}}, "checks": {}}))
-seat.task("101", metadata={"prerequisites": [{"pr_merged": MERGED_PR}]})
-check("a raise recorded under waits_on counts for the same list under prerequisites: silent",
-      silent(seat.run()) and seat.gh_calls() == [], seat.gh_calls())
-
-seat = Seat()
-seat.task("102", metadata={"prerequisites": [{"pr_merged": 301}],
-                           "waits_on": [{"pr_merged": MERGED_PR}]}, subject="Both lists")
-seat.respond({"pr:301": {"state": "OPEN", "title": "T", "url": "https://x/301"}})
-result = seat.run()
-check("prerequisites and waits_on both: prerequisites decides, waits_on is only named",
-      result.returncode == 0
-      and context_of(result) == old_keys_text("102", "Both lists", WAITS_ON_CHANGE)
-      and [call["argv"][2] for call in seat.gh_calls()] == ["301"],
-      (repr(context_of(result)), seat.gh_calls()))
-
-seat = Seat()
-seat.task("103", metadata={"due_utc": "2020-01-01T00:00:00Z"}, subject="Old due time")
-result = seat.run()
-check("due_utc alone: named with the exact text, exit 0, no raise and no defer line",
-      result.returncode == 0 and result.stderr == ""
-      and context_of(result) == old_keys_text("103", "Old due time", DUE_UTC_CHANGE),
-      (repr(context_of(result)), result.stderr))
-check("due_utc alone: named once, then silent", silent(seat.run()))
-seat.task("103", metadata={"due_utc": "2021-01-01T00:00:00Z"}, subject="Old due time")
-check("due_utc changed: named again",
-      context_of(seat.run()) == old_keys_text("103", "Old due time", DUE_UTC_CHANGE))
-seat.task("103", metadata={}, subject="Old due time")
-check("due_utc removed: silent", silent(seat.run()))
-check("due_utc removed: no record left for the task",
-      "103" not in json.loads(seat.state_path.read_text())["raised"],
-      seat.state_path.read_text())
-
-seat = Seat()
-seat.task("104", metadata={"due_utc": "2020-01-01T00:00:00Z", "waits_on": [{"pr_merged": 302}]},
-          subject="Both old keys", blocked_by=["105"])
-seat.task("105", status="in_progress")
-result = seat.run()
-check("both old keys, held by blockedBy: named in one line, gh not asked",
-      context_of(result) == old_keys_text("104", "Both old keys", WAITS_ON_CHANGE, DUE_UTC_CHANGE)
-      and seat.gh_calls() == [], (repr(context_of(result)), seat.gh_calls()))
-
-seat = Seat()
-seat.task("106", metadata={"due_utc": "2020-01-01T00:00:00Z"}, subject="Old due time")
-seat.task("42", metadata={"prerequisites": [{"pr_merged": 103}]})
-seat.respond({"pr:103": "fail"})
-result = seat.run()
-check("an old key named and gh failing, nothing raised: exit 0, the name, then the gh failure",
-      result.returncode == 0 and context_of(result) == (
-          old_keys_text("106", "Old due time", DUE_UTC_CHANGE) + "\n" + GH_FAILURE_103
-          + " If gh's error says PR 103 does not exist, correct the metadata.prerequisites "
-          "that names it with TaskUpdate. If it says gh is not logged in or its credentials "
-          "are bad, ask the user to run `gh auth login` on this machine."),
-      (repr(context_of(result)), result.stderr))
-
-seat = Seat()
-seat.task("107", metadata={"due_utc": "2020-01-01T00:00:00Z"})
-seat.state_path.parent.parent.mkdir(parents=True)
-seat.state_path.parent.write_text("a file where the state directory should be")
-result = seat.run()
-check("state cannot be written with an old key to name: reported, saying it went unnamed",
-      reported(result, "no task was due at this stop, so none went unraised, and 1 task(s) "
-                       "still carrying an old key were not named; that stop names them"),
-      result)
+check("unreadable prerequisites, blockers completed: named, never raised",
+      context_of(seat.run()) == problem_text(
+          "116", "it is an empty list, which names nothing to wait on"))
 
 # --- malformed input ----------------------------------------------------------------
 seat = Seat()
@@ -743,8 +678,7 @@ check("state cannot be written with nothing due: reported, saying no task went u
 
 # --- task files are never written ------------------------------------------------
 seat = Seat()
-seat.task("80", metadata={"prerequisites": [{"pr_merged": 120}],
-                          "due_utc": "2020-01-01T00:00:00Z"}, blocked_by=["81"])
+seat.task("80", metadata={"prerequisites": [{"pr_merged": 120}]}, blocked_by=["81"])
 seat.task("81", status="completed")
 seat.respond({"pr:120": {"state": "MERGED", "title": "T", "url": "https://x/120"}})
 before = {path.name: path.read_bytes() for path in seat.task_directory.iterdir()}
@@ -802,10 +736,14 @@ class IdleSeat(Seat):
     def minutes(self, name, text):
         (self.walk_directory / f"{name}-minutes.md").write_text(text)
 
-    def stop(self, session_id="idle-session"):
-        return self.run(stdin_text=json.dumps({
+    def stop(self, session_id="idle-session", background_tasks=()):
+        """background_tasks=None sends no list, as a claude that predates the list would."""
+        payload = {
             "session_id": session_id, "transcript_path": str(self.transcript),
-            "cwd": str(self.checkout), "hook_event_name": "Stop", "stop_hook_active": False}))
+            "cwd": str(self.checkout), "hook_event_name": "Stop", "stop_hook_active": False}
+        if background_tasks is not None:
+            payload["background_tasks"] = list(background_tasks)
+        return self.run(stdin_text=json.dumps(payload))
 
 
 seat = IdleSeat()
@@ -907,6 +845,15 @@ check("next-action: context used below the reincarnation threshold still gets th
       (context_of(seat.stop()) or "").startswith(NEXT_ACTION_FIRST_LINE))
 
 seat = IdleSeat()
+seat.append({"type": "system", "subtype": "compact_boundary",
+             "compactMetadata": {"cumulativeDroppedTokens": 10_000}})
+seat.append(usage_record(60_000))
+result = seat.stop()
+check("next-action: silent once the context used plus the tokens compactions dropped reaches the "
+      "reincarnation threshold, as the handoff hook counts it",
+      silent(result) and not seat.state_path.exists(), result)
+
+seat = IdleSeat()
 shutil.rmtree(seat.task_directory)
 result = seat.stop()
 check("next-action: a task list whose directory does not exist yet still gets the prompt, "
@@ -929,17 +876,26 @@ seat.state_path.write_text(json.dumps({"raised": {"3": {"prerequisites": hook.ca
 gh_calls_made = []
 
 
+# The budget is read off a fake clock that only the fake gh moves, 0.2 seconds a call, so the
+# cases do not depend on how fast the machine runs the rest of the hook. The fake gh also
+# sleeps for real longer than the whole budget, as a loaded machine would.
+fake_clock_seconds = [0.0]
+
+
 def slow_timing_out_gh(command, *arguments, **keywords):
     if command[0] != "gh":
         return real_subprocess_run(command, *arguments, **keywords)
     gh_calls_made.append(command[3])
-    time.sleep(0.2)
+    time.sleep(0.35)
+    fake_clock_seconds[0] += 0.2
     raise subprocess.TimeoutExpired(command, keywords.get("timeout"))
 
 
 real_budget = hook.GH_CALLS_TOTAL_BUDGET_SECONDS
+real_clock = hook.GitHubConditionChecker.clock
 real_home = os.environ.get("HOME")
 hook.subprocess.run = slow_timing_out_gh
+hook.GitHubConditionChecker.clock = staticmethod(lambda: fake_clock_seconds[0])
 hook.GH_CALLS_TOTAL_BUDGET_SECONDS = 0.3
 os.environ["HOME"] = str(seat.home)  # the handoff module finds its markers under Path.home()
 try:
@@ -950,6 +906,7 @@ try:
         seat.home, hook.datetime.now(hook.timezone.utc))
 finally:
     hook.subprocess.run = real_subprocess_run
+    hook.GitHubConditionChecker.clock = real_clock
     hook.GH_CALLS_TOTAL_BUDGET_SECONDS = real_budget
     if real_home is None:
         os.environ.pop("HOME", None)
@@ -970,14 +927,28 @@ check("one GitHub budget for the whole run: each condition gh could not answer i
 
 
 seat = IdleSeat()
+check("next-action: silent while the background_tasks list holds a running subagent",
+      silent(seat.stop(background_tasks=[{"id": "a1", "type": "subagent",
+                                          "status": "running"}])))
+
+# The transcript shows a subagent launched and never finished; only the list counts.
+seat = IdleSeat()
 seat.append({"type": "user", "timestamp": "2026-11-02T00:00:01Z",
              "toolUseResult": {"status": "async_launched", "agentId": "a1"}})
-check("next-action: silent while a subagent runs", silent(seat.stop()))
+text = context_of(seat.stop()) or ""
+check("next-action: an empty background_tasks list gets the prompt, whatever the transcript "
+      "shows", text.startswith(NEXT_ACTION_FIRST_LINE), text)
+seat = IdleSeat()
+seat.append({"type": "user", "timestamp": "2026-11-02T00:00:01Z",
+             "toolUseResult": {"status": "async_launched", "agentId": "a1"}})
+text = context_of(seat.stop(background_tasks=None)) or ""
+check("next-action: a payload without the background_tasks list counts no work running and "
+      "gets the prompt", text.startswith(NEXT_ACTION_FIRST_LINE), text)
 
 seat = IdleSeat()
 with seat.transcript.open("a") as handle:
-    handle.write('{"toolUseResult": {"status": "async_launched", broken\n')
-result = seat.stop()
+    handle.write('{"toolUseResult": {"backgroundTaskId": "b1", broken\n')
+result = seat.stop(background_tasks=[{"id": "b1", "type": "shell", "status": "running"}])
 check("next-action: silent, with no fault, when the work in flight cannot be counted",
       silent(result) and not seat.state_path.exists(), result)
 
@@ -998,6 +969,160 @@ check("next-action: a walk-minutes file that cannot be read is reported, saying 
           "approval-walk is open" in result.stderr
       and "Tell the user this whole message" in result.stderr
       and not seat.state_path.exists(), result)
+
+# --- approval-walk items ------------------------------------------------------------
+WALK_DOCUMENT = """# Walk
+
+## Item 1 of 3: The memory-file refusal shows each agent only its lines
+
+Recommendation: approve.
+
+## Item 2 of 3: The `restore` task finds its commit
+
+## Item 2.1 of 3: Why a rebase closes it early
+
+## Item 2.2 of 3: The design's new sentences
+
+## Item 3 of 3: What this walk decided
+"""
+ITEM_1 = "The memory-file refusal shows each agent only its lines"
+
+
+class WalkSeat(Seat):
+    """A Seat with an approval-walk's walk-document and walk-minutes beside its task list."""
+
+    def __init__(self, document=WALK_DOCUMENT):
+        super().__init__()
+        walk_directory = self.home / "checkout" / "docs" / "walk"
+        walk_directory.mkdir(parents=True)
+        self.document = walk_directory / "w-2026-11-12.md"
+        self.document.write_text(document)
+        self.minutes = walk_directory / "w-2026-11-12-minutes.md"
+
+    def minutes_say(self, *lines):
+        self.minutes.write_text("# Minutes: w-2026-11-12\n\n" + "".join(f"{line}\n" for line in lines))
+
+    def waiting_task(self, task_id, heading, subject=None):
+        self.task(task_id, subject=subject, metadata={"prerequisites": [{"approval_walk_item_decided": {
+            "approval_walk_minutes_file_path": str(self.minutes),
+            "approval_walk_item_heading": heading}}]})
+
+
+seat = WalkSeat()
+seat.waiting_task("70", ITEM_1, subject="Build item 1")
+check("approval-walk item, walk-minutes not written yet: not raised, nothing named",
+      silent(seat.run()))
+seat.minutes_say("#next_to_present item 1 of 3",
+                 'item 1 of 3: the user answered approved (2026-11-12 10:00) in his words "A", which '
+                 "makes its change. Fast reads:")
+check("approval-walk item answered by check but not yet closed: not raised", silent(seat.run()))
+seat.minutes_say("#next_to_present item 2 of 3",
+                 'item 1 of 3: the user answered approved (2026-11-12 10:00) in his words "A", which '
+                 "makes its change. Fast reads:",
+                 "item 1 of 3: approved; every text the change adds has had a fast read. <accepted>")
+result = seat.run()
+check("approval-walk item closed <accepted>: raised, with the exact text",
+      context_of(result) == (f'Act on task 70 "Build item 1" now: its prerequisites are met: the '
+                             f'approval-walk item "{ITEM_1}" is decided in {seat.minutes}.'
+                             f"\n{DEFER_LINE}"), repr(context_of(result)))
+check("approval-walk item: raised once, then silent", silent(seat.run()))
+check("approval-walk item: gh never asked", seat.gh_calls() == [], seat.gh_calls())
+
+seat = WalkSeat()
+seat.waiting_task("71", f"Item 1 of 3: {ITEM_1}")
+seat.minutes_say("item 1 of 3: disapproved; every text the change adds has had a fast read. <rejected>")
+check("approval-walk item closed <rejected>, named with its running count: raised",
+      (context_of(seat.run()) or "").startswith("Act on task 71 "))
+
+seat = WalkSeat()
+seat.waiting_task("72", ITEM_1)
+seat.minutes_say("item 1 of 3: deferred; it moves to just before the summary item. <open>")
+check("approval-walk item deferred, <open>: not raised", silent(seat.run()))
+seat.minutes_say("item 1 of 3: deferred; it moves to just before the summary item. <open>",
+                 "item 1 of 3: deferred a second time, so it leaves the walk and stays open. <open>")
+check("approval-walk item deferred a second time, <open>: not raised", silent(seat.run()))
+
+seat = WalkSeat()
+seat.waiting_task("73", "Item 2 of 3: The `restore` task finds its commit")
+seat.minutes_say("item 2.1 of 3: moved on; the item asked for no decision. <moved on, no decision>")
+check("approval-walk item with sub-steps, one sub-step decided: not raised", silent(seat.run()))
+seat.minutes_say("item 2.1 of 3: moved on; the item asked for no decision. <moved on, no decision>",
+                 "item 2.2 of 3: approved; every text the change adds has had a fast read. <accepted>")
+check("approval-walk item whose sub-steps are all decided: raised",
+      (context_of(seat.run()) or "").startswith("Act on task 73 "))
+
+# Items added before it while the walk runs: the walk-document's count and the item's number change.
+seat = WalkSeat(document="# Walk\n\n## Item 1 of 2: First\n\n## The fix\n")
+seat.waiting_task("74", "The fix")
+seat.minutes_say("item 1 of 2: approved; every text the change adds has had a fast read. <accepted>")
+check("approval-walk item not yet numbered: not raised, nothing named", silent(seat.run()))
+seat.document.write_text("# Walk\n\n## Item 1 of 19: First\n\n## Item 2 of 19: Added\n\n"
+                         "## Item 3 of 19 (deferred: moved to just before the summary item): Also added\n\n"
+                         "## Item 4 of 19: The fix\n")
+seat.minutes_say("item 1 of 2: approved; every text the change adds has had a fast read. <accepted>",
+                 "item 2 of 19: approved; every text the change adds has had a fast read. <accepted>")
+check("approval-walk item renumbered, another item decided: not raised", silent(seat.run()))
+seat.minutes_say("item 1 of 2: approved; every text the change adds has had a fast read. <accepted>",
+                 "item 2 of 19: approved; every text the change adds has had a fast read. <accepted>",
+                 "item 4 of 19: already decided by the user-ruling of 2026-11-01; the walk does not "
+                 "come back to it. <accepted>")
+check("approval-walk item renumbered and decided: raised",
+      (context_of(seat.run()) or "").startswith("Act on task 74 "))
+
+seat = WalkSeat()
+seat.waiting_task("75", "A heading the walk-document lacks")
+seat.minutes_say("item 1 of 3: approved; every text the change adds has had a fast read. <accepted>")
+result = seat.run()
+check("approval-walk item whose heading is not in the walk-document: named, not raised",
+      context_of(result) == problem_text(
+          "75", f"the walk-document {seat.document} holds no item heading that reads \"A heading "
+                "the walk-document lacks\" once its running count is left out"),
+      repr(context_of(result)))
+check("approval-walk item whose heading is not found: named once, then silent", silent(seat.run()))
+
+seat = WalkSeat(WALK_DOCUMENT + "\n## Item 4 of 4: " + ITEM_1 + "\n")
+seat.waiting_task("79", ITEM_1)
+seat.minutes_say("item 1 of 3: approved; every text the change adds has had a fast read. <accepted>")
+result = seat.run()
+check("approval-walk item whose heading two items share, the first decided: named, not raised",
+      context_of(result) == problem_text(
+          "79", f"the walk-document {seat.document} holds 2 item headings that read \"{ITEM_1}\" "
+                "once its running count is left out"),
+      repr(context_of(result)))
+
+seat = WalkSeat()
+seat.waiting_task("76", ITEM_1)
+seat.minutes_say("item 1 of 3: approved; every text the change adds has had a fast read. <accepted>")
+seat.document.unlink()
+check("approval-walk item whose walk-document does not exist: named, since the path is wrong",
+      context_of(seat.run()) == problem_text(
+          "76", f"the walk-document {seat.document}, which the walk-minutes path {seat.minutes} "
+                "names, does not exist"))
+
+seat = WalkSeat()
+mistyped = seat.minutes.with_name("w-2026-11-21-minutes.md")
+seat.task("80", metadata={"prerequisites": [{"approval_walk_item_decided": {
+    "approval_walk_minutes_file_path": str(mistyped), "approval_walk_item_heading": ITEM_1}}]})
+check("approval-walk item named by a mistyped walk-minutes path, neither file there: named",
+      context_of(seat.run()) == problem_text(
+          "80", f"the walk-document {mistyped.with_name('w-2026-11-21.md')}, which the walk-minutes "
+                f"path {mistyped} names, does not exist"))
+
+seat = Seat()
+seat.task("77", metadata={"prerequisites": [{"approval_walk_item_decided": {
+    "approval_walk_minutes_file_path": "docs/walk/w-minutes.md", "approval_walk_item_heading": "x"}}]})
+check("approval-walk item with a relative walk-minutes path: named as unreadable",
+      "is never raised as its metadata.prerequisites stand, because its entry" in (
+          context_of(seat.run()) or ""))
+
+seat = WalkSeat()
+seat.waiting_task("78", ITEM_1)
+seat.minutes_say("item 1 of 3: deferred; it moves to just before the summary item. <open>")
+seat.task("79")
+unheld, held = hook.unheld_and_held_tasks(hook.read_tasks(seat.task_directory),
+                                          seat.task_directory, hook.GitHubConditionChecker({}, 0))
+check("approval-walk item not decided: the next-action list counts the task held",
+      unheld == ["79"] and held == 1, (unheld, held))
 
 shutil.rmtree(SUITE_ROOT, ignore_errors=True)
 print()

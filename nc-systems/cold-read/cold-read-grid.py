@@ -238,7 +238,7 @@ _fast_read_spec.loader.exec_module(fast_read)
 # never counts it among an agent-binary's cells.
 COLD_READ_FULL_RUN_WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_FILE_NAME = "question-4-what-should-be-code-answer.md"
 WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_FILE_NAME = "cold-read-grid-what-should-be-code-prompt.md"
-# The log also contains runtime and model text; only program-prefixed lines are cell status.
+# The log also contains agent-binary and model text; only program-prefixed lines are cell status.
 CELL_PROGRAM_NAMES = tuple(path.stem for path in CELL_LAUNCHERS.values())
 # Pin terminology effort explicitly so launcher tier-map changes cannot change the pass.
 GRID_CELL_ROSTER = (
@@ -421,8 +421,10 @@ def frozen_paths_and_landing_time(target: pathlib.Path) -> tuple:
     return paths, float(landed) if landed else None
 
 
-def record_file_listing(host, store) -> list:
-    """Every '<record directory>/<path>\t<mtime>' under one cold-read-records tree."""
+def record_file_listing(host, store, names: set) -> list:
+    """Every '<record directory>/<path>\t<mtime>' under one cold-read-records
+    tree, inside only the record directories whose name contains one of
+    names, so the cost grows with one document's records, not with the store."""
     if not host:
         # Listed in Python: the Mac's find has no -printf.
         store = pathlib.Path(store)
@@ -432,23 +434,43 @@ def record_file_listing(host, store) -> list:
             raise FullRunCountUnavailable(f"listing {store} failed: {error}") from error
         try:
             listing = []
-            for directory, _, files in os.walk(store, onerror=unreadable):
-                if pathlib.Path(directory) == store:
+            for entry in os.scandir(store):
+                if not entry.is_dir(follow_symlinks=False) or not any(name in entry.name for name in names):
                     continue
-                for name in files:
-                    path = pathlib.Path(directory, name)
-                    listing.append(f"{path.relative_to(store)}\t{path.stat().st_mtime}")
+                for directory, _, files in os.walk(entry.path, onerror=unreadable):
+                    for name in files:
+                        path = pathlib.Path(directory, name)
+                        listing.append(f"{path.relative_to(store)}\t{path.stat().st_mtime}")
             return sorted(listing)
         except OSError as error:
             raise FullRunCountUnavailable(f"listing {store} failed: {error}") from error
     # The store a remote host holds is on ned-box, whose find is GNU find.
+    # A record directory whose name contains none of names is pruned, not entered.
+    store = os.path.normpath(store)
+    top = glob_pattern_matching_only_itself(store)
+    name_tests = [test for name in sorted(names)
+                  for test in ("-o", "-name", f"*{glob_pattern_matching_only_itself(name)}*")][1:]
     command = record_shipper.SSH_COMMAND + [host, shlex.join(
-        ["find", str(store), "-mindepth", "2", "-type", "f", "-printf", "%P\t%T@\n"])]
+        ["find", store,
+         "(", "!", "-path", top, "!", "-path", f"{top}/*/*", "!", "(", *name_tests, ")", "-prune", ")",
+         "-o", "(", "-path", f"{top}/*/*", "-type", "f", "-printf", "%P\t%T@\n", ")"])]
     listing = subprocess.run(command, capture_output=True, text=True, check=False)
     if listing.returncode != 0:
         raise FullRunCountUnavailable(
             f"listing {host}:{store} exited {listing.returncode}: {listing.stderr.strip()}")
     return listing.stdout.splitlines()
+
+
+def glob_pattern_matching_only_itself(text: str) -> str:
+    return re.sub(r"([\\*?\[\]])", r"\\\1", text)
+
+
+def record_directory_name_parts(frozen_paths: set) -> set:
+    """What the name of every record directory that froze one of
+    frozen_paths contains: that path's file stem. The grid names a record
+    <stem>-<date>, and older records <date>-<stem>, SKILL-<parent>-<date>
+    or <stem>-<date>-N-N; all contain it."""
+    return {pathlib.PurePath(path).stem for path in frozen_paths}
 
 
 def full_run_history_since_count_start(frozen_paths: set, landed_at, listing: list) -> tuple:
@@ -496,11 +518,14 @@ def full_run_history_since_count_start(frozen_paths: set, landed_at, listing: li
 
 def earlier_full_runs_of(target: pathlib.Path) -> tuple:
     """Counted from the log-store and from this checkout's own records, which
-    hold a run whose shipping failed; returned as full_run_history_since_count_start returns."""
+    hold a run whose shipping failed, reading only the records whose
+    directory name contains the document's file stem under one of its names;
+    returned as full_run_history_since_count_start returns."""
     frozen_paths, landed_at = frozen_paths_and_landing_time(target)
-    listing = record_file_listing(*record_shipper.destination_for_this_machine())
+    names = record_directory_name_parts(frozen_paths)
+    listing = record_file_listing(*record_shipper.destination_for_this_machine(), names)
     if RECORDS_DIR.is_dir():
-        listing += record_file_listing(None, RECORDS_DIR)
+        listing += record_file_listing(None, RECORDS_DIR, names)
     return full_run_history_since_count_start(frozen_paths, landed_at, listing)
 
 
@@ -508,12 +533,13 @@ def make_record_dir(target: pathlib.Path, now: datetime.datetime) -> pathlib.Pat
     """Create and return the first record directory for this document and day
     unused both here and in the log-store, holding its being-written lock
     until ship_record."""
-    record_dir, store_unlisted = record_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_log_store_and_log_store_listing_failure_reason(
-        RECORDS_DIR / record_directory_name_for_target(target, now))
+    record_dir, store_unclaimed = record_shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_claimed_in_log_store_and_log_store_claim_failure_reason_or_none(
+        RECORDS_DIR / record_directory_name_for_target(target, now),
+        *record_shipper.destination_for_this_machine())
     record_shipper.record_directory_being_written_lock_take(record_dir)
-    if store_unlisted is not None:
-        print(record_shipper.log_store_listing_failed_record_name_may_collide_warning_line(
-            "cold-read-grid", record_dir, store_unlisted), file=sys.stderr)
+    if store_unclaimed is not None:
+        print(record_shipper.log_store_claim_failed_so_record_name_may_collide_warning_line(
+            "cold-read-grid", record_dir, store_unclaimed), file=sys.stderr)
     return record_dir
 
 
@@ -922,9 +948,8 @@ def cause_of_failed_attempt(attempt: CellAttempt, exit_code, log_lines: list) ->
                    if cell_status_line(line, cell_common.CAUSE_PHRASE)]
     if cause_lines:
         text = cause_lines[-1].split(f": {cell_common.CAUSE_PHRASE} ", 1)[1]
-        # strip() removes the trailing space from an empty-detail cause line.
-        cause_class, _, detail = text.partition(cell_common.CAUSE_SEPARATOR.rstrip())
-        return cause_class, detail.strip()
+        cause_class, _, detail = text.partition(cell_common.CAUSE_SEPARATOR)
+        return cause_class, detail
     if exit_code == 0:
         return "no-report", "no report written"
     non_empty = [line.strip() for line in log_lines if line.strip()]

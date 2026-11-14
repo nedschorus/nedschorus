@@ -6,6 +6,8 @@
 # --print-merge-gate-notice-of-last-failed-or-stopped-run, when the no-sandbox test suites last failed or
 # stopped on main. Refusing instead would stop every merge
 # for one suite's failure on main, which a change being merged did not cause.
+# On a pass it also prints, after the merge command, each #follow_up link to an
+# open issue in this repository, which merge-lane-2 sends the author.
 #
 #   scripts/merge-gate.sh <pr-number> <expected-head-sha> <reviewed-since-iso8601>
 #
@@ -358,6 +360,7 @@ FOLLOW_UP_IF_NO_ISSUE="If no such issue exists, open one with the /ghi-write ski
 FOLLOW_UP_EDIT_ONLY="Editing the description is enough; no new commit is needed."
 FOLLOW_UP_RERUN="Once the description has the link, run the gate again."
 FOLLOW_UP_REPLACE="Replace that link with an open issue or pull request that fixes the cause, or, if the cause is not known, an open issue that looks for it."
+open_follow_up_issues=""
 not_fixed_count=$(jq length <<<"$not_fixed")                    || cannot "$DESCRIPTION_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
 for ((line_index = 0; line_index < not_fixed_count; line_index++)); do
   line=$(jq -r ".[$line_index].line" <<<"$not_fixed")           || cannot "$DESCRIPTION_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
@@ -383,9 +386,12 @@ for ((line_index = 0; line_index < not_fixed_count; line_index++)); do
     "Otherwise run the gate again once; if it fails the same way, tell the user this message and gh's error."
   linked_kind=$(jq -r --arg path_kind "$link_path_kind" 'if $path_kind == "pull" and (.pull_request | not) then "issue-at-a-pull-request-link"
                        elif .pull_request then (if .state == "closed" and .pull_request.merged_at == null then "pull-request-closed-unmerged" else "live" end)
-                       elif .state == "closed" and .state_reason == "not_planned" then "issue-closed-not-planned" else "live" end' <<<"$linked")
+                       elif .state == "closed" and .state_reason == "not_planned" then "issue-closed-not-planned"
+                       elif .state == "open" then "open-issue" else "live" end' <<<"$linked")
   [ $? -eq 0 ] || cannot "could not parse what GitHub returned for $link" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
   case "$linked_kind" in
+    # An open pull request is work already under way; another project's issue is not ours.
+    open-issue) [ "$(tr '[:upper:]' '[:lower:]' <<<"$link_repo")" != "$REPO" ] || open_follow_up_issues+="  $link from the line \`$line\`"$'\n' ;;
     issue-closed-not-planned) fail "the description's line \`$line\` names after \`#follow_up\` $link, an issue closed as not planned, so no work is planned on the cause the line leaves in place." \
       "$FOLLOW_UP_REPLACE" "$FOLLOW_UP_IF_NO_ISSUE" "$FOLLOW_UP_EDIT_ONLY" "$FOLLOW_UP_RERUN" ;;
     pull-request-closed-unmerged) fail "the description's line \`$line\` names after \`#follow_up\` $link, a pull request closed without merging, so it will not fix the cause the line leaves in place." \
@@ -403,3 +409,6 @@ echo "gate passed (#$PR): approved commit $approved_sha by $approver at $approva
 echo "MERGE WITH THIS EXACT COMMAND:"
 echo "  gh pr merge $PR --repo $REPO --merge --delete-branch --match-head-commit $approved_sha"
 echo "Run that command with GH_TOKEN set to the merge account's token, $TOKEN_FILE, so the merge runs as $MERGE_ACCOUNT."
+[ -z "$open_follow_up_issues" ] || printf '%s\n%s' \
+  "OPEN FOLLOW-UP ISSUES: after the merge, add each issue below to the message you send the pull request's author, asking the author to answer with the pull request that fixes the cause, the agent-seat that will fix it, \"blocked on <link>\", or \"needs the user: <why>\"." \
+  "$open_follow_up_issues"

@@ -149,7 +149,8 @@ def _handoff_deferred_record_read(path: Path):
             raise ValueError("deferral_began_at has no time zone")
         subagent_ids = record["awaited_subagent_ids"]
         background_task_ids = record["awaited_background_task_ids"]
-        workflow_ids = record["awaited_workflow_ids"]
+        # A record written before workflows were saved awaited none, and must keep its wait set.
+        workflow_ids = record.get("awaited_workflow_ids", [])
         if not all(isinstance(ids, list) for ids in (subagent_ids, background_task_ids, workflow_ids)):
             raise ValueError("an awaited list is not a list")
         return HandoffDeferredMarker(
@@ -183,7 +184,7 @@ def cold_read_full_run_commands_refused_during_handoff_deferral_path(handoff_dir
 
 def cold_read_full_run_command_refused_during_handoff_deferral_append(handoff_directory: Path, session_id: str,
                                           command: str, working_directory: str,
-                                          now: datetime | None = None) -> Path:
+                                          now: datetime | None = None) -> Path:  # pragma: no mutate, deferred annotations are never evaluated, so a changed operator in one says the same
     path = cold_read_full_run_commands_refused_during_handoff_deferral_path(handoff_directory, session_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps({"command": command, "working_directory": working_directory,

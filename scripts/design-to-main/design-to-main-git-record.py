@@ -200,7 +200,7 @@ class TopicBranchGitRecord:
             self.repository_dir, ["ls-tree", "-z", "HEAD", "--", str(path)])))
 
     def run_state_text_at_last_commit(self):
-        """Return the run-state.json text at HEAD, or None when absent; raise GitCommandFailed when git fails."""
+        """Return the design-to-main-run-state.json text at HEAD, or None when absent; raise GitCommandFailed when git fails."""
         if not self.path_is_at_head(self.run_state_path):
             return None
         return git_output.run_git(

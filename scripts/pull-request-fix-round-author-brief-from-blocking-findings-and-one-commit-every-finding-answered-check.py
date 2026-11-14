@@ -3,7 +3,7 @@
 
 Usage:
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number>
-  scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --check [--answers FILE] [--commit REV] [--after-conflict-merge]
+  scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --check [--answers FILE] [--commit REV] [--confirm-dispatching-agent-checked-new-shared-names]
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --move-change-to-own-pull-request-cut-new-topic-branch NEW_TOPIC_BRANCH [PATH ...]
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --move-change-to-own-pull-request-finish --title TITLE --body-file FILE
 
@@ -20,7 +20,9 @@ and the round's reviews, because nothing else on GitHub tells that round's revie
 of a later round on the same head. The round's number counts merge-lane-2's changes-requested
 reviews, taking as one those of the same commit that no round record tells apart. The blocking
 findings are the round's reviews' inline comments whose body starts with a match of
-BLOCKING_MARKER_PATTERN; the bodies' free text is never parsed for findings. A review states a
+BLOCKING_MARKER_PATTERN, and, in a review merge-lane-2's account posted, each such comment the
+posting program moved into the body under OUTSIDE_THE_DIFF_HEADING, briefed with the review's
+link; the bodies' other free text is never parsed for findings. A review states a
 **Blocking: N** count only when merge-lane-2's account posted it and its body starts with the
 lines merge-lane-pull-request-reviewer-review-post-and-read-back.py writes, matched by
 BLOCKING_COUNT_PATTERN: the verdict REQUEST_CHANGES, a blank line, and the count alone on its
@@ -40,43 +42,74 @@ A pull request whose description has a #replaces line, read by REPLACES_READER_F
 the pull requests it replaces, through replacements of replacements. The round's number adds each
 replaced pull request's round count, counted as above. The blocking findings and nits of a replaced
 pull request's latest round are carried, after this pull request's own and marked with that round's
-review, only when the round was never answered: the replaced pull request's head is still that
-round's frozen-head and no round record names it. A round that was answered has its fix commit
-carried onto the replacing branch, and merge-lane-2's review of the replacement, which the brief
-still needs, grades it. A #replaces line the reader cannot follow is refused. Not handled: a round
-record posted on the replacing pull request names only its own reviews, so a carried finding declined
-without a commit is carried again into the replacement's next round.
+review, only into this pull request's first round, and only when the replaced round was never answered:
+the replaced pull request's head is still that round's frozen-head and no round record names it. A
+round that was answered has its fix commit carried onto the replacing branch, and merge-lane-2's review
+of the replacement, which the brief still needs, grades it. Once this pull request's first round is
+answered, by a fix commit or a round record, that answer covers the carried findings, so its later
+rounds carry none. For the same reason, when C replaces B and B replaces A, A's findings are not carried
+into C when B's first round was answered, by a fix commit, a round record or merge-lane-2's later approval of B,
+even of the round's unchanged frozen-head, since they were carried into that round. A carried finding or nit with the same path, line and body as one of this pull
+request's own counts once. A #replaces line the reader cannot follow is refused.
 
 Without --check, run in the author's checkout: refuse when the pull request's head has moved past
-the frozen-head, else print the brief: the frozen-head, ADVISOR_FIX_ROUND_INSTRUCTION when the
-round's number is ADVISOR_FIX_ROUND_NUMBER and on no other, each blocking finding word for word, then
-each nit word for word, numbered on from the blocking findings, to fix in the same round, how to
-dispatch the fix-round subagent in a git worktree of its own and push from it, the round's rules,
-and the --check command to finish with, which the subagent runs in its own worktree.
+the frozen-head; else run that checkout's scripts/branch-conflict-check.py --pull-request <number>,
+and when it reports a conflict answered replace, print its report and REPLACE_INSTEAD_OF_ROUND_INSTRUCTION
+in place of the brief, since a fix-round would check and push the pull request being replaced; when it
+cannot answer, fail. Else find the pull request's topic-worktree, the worktree of this clone that has the
+pull request's branch checked out, or, when there is none, make one with that checkout's
+scripts/agent-seat-worktree-create-with-owner-file.py, so it has an owner file from the start; a failure
+of that program is a failure here, its message passed on. Refuse when the topic-worktree has uncommitted
+changes or untracked files, ignored files apart, or its HEAD is not the frozen-head. Then print the brief:
+the frozen-head, ADVISOR_FIX_ROUND_INSTRUCTION when the round's number is ADVISOR_FIX_ROUND_NUMBER and on
+no other, each blocking finding word for word, then each nit word for word, numbered on from the blocking
+findings, to fix in the same round, how to dispatch the fix-round subagent, a fork without Claude Code's
+worktree isolation, to work in the topic-worktree, what the author does when the subagent hands back new
+shared names, that nothing is removed by hand afterwards, the round's rules, and the --check command to
+finish with. Every command the brief has the subagent run, and the answers file's path, name the
+topic-worktree's path.
 
-With --check, run in the worktree or checkout that holds the round's commit: the commits from the frozen-head to --commit (default
-HEAD) must be none, or one non-merge commit, or with --after-conflict-merge a merge of origin/main
-followed by at most one non-merge commit. The answers file holds one entry per blocking finding
+With --check, run in the topic-worktree, and refuse anywhere else, naming the topic-worktree when this
+clone has one: the commits from the frozen-head to --commit (default
+HEAD) must be none, or one non-merge commit. The answers file holds one entry per blocking finding
 and per nit, each starting "<n>. " on its own line; an entry that starts with MOVED_TO_PULL_REQUEST_PREFIX_PATTERN,
 in any case, must go on with MOVED_TO_PULL_REQUEST_PATTERN naming a pull request gh pr view finds, or --check refuses it;
 --check also refuses when, for any file of that pull request's gh pr diff, the file's whole patch reversed
 applies cleanly to the checked commit's tree, since the moved change is then still on this branch. A file
 whose moved part was undone but whose patch context the kept part changed is not caught. By default it is ANSWERS_FILE_NAME_FORMAT at the root of
-the worktree or checkout --check runs in, and --check refuses when the checked commit's tree holds
+the worktree --check runs in. Since that file outlives the round, --check refuses one last written before
+merge-lane-2's latest changes-requested review was submitted, as an earlier round's answers; a review
+GitHub gives no submitted_at is not compared. --check refuses when the checked commit's tree holds
 an answers file the frozen-head's tree does not, since a branch cut before .gitignore named the file does not leave it out of
 commits. It prints the files the fix commit changes that no blocking
-finding or nit names, and, once GitHub's head is the checked commit or the frozen-head, the message for
-merge-lane-2, which the agent sends with SendMessage, since a program cannot. When the round has no
-commit, it first posts the round record, unless one already names the round's latest
-changes-requested review.
+finding or nit names. It reads the pushed head from origin's branch with git ls-remote, not from GitHub's
+headRefOid, which can lag a push by seconds; it fails when origin has no such branch. While that head is
+still the frozen-head and the round has a commit, it first
+lists the shared names the round adds, read by the new-shared-names lister from the worktree's files that
+the frozen-head to the checked commit changes, leaving out names the frozen-head's tree holds; unless
+--confirm-dispatching-agent-checked-new-shared-names is given, it refuses while that list is not empty, printing the
+names and SUBAGENT_REPORT_HEADING_ABOVE_NEW_SHARED_NAMES_FOR_DISPATCHING_AGENT_TO_CHECK, since a forked subagent cannot start the
+naming fresh-agent and must hand the names to the agent that dispatched it before the push, so that
+the renames go into the round's one commit; it fails when git cannot list them. Then it runs
+the nc-test-suites, as the pull request ready command runs them, in a scratch worktree of the checked
+commit; each suite that fails there is run again in a scratch worktree of the frozen-head, with that
+checkout's own runner, recording nothing. It refuses when a suite fails at the checked commit and not
+at the frozen-head, which includes a suite the frozen-head does not have; a suite that fails at both is
+not the round's doing, so it passes, names the suite, and records it in
+PULL_REQUEST_FIX_ROUND_CHECK_TEST_SUITES_ALSO_FAILING_AT_FROZEN_HEAD_RECORD_FILE_NAME in the git directory under the checked commit. Once
+the pushed head is the checked commit or the frozen-head, it prints the message for merge-lane-2, which
+the agent sends with SendMessage, since a program cannot, naming the suites that record holds for the
+checked commit; it runs no suite then. When the round has no commit, it first posts the round record,
+unless one already names the round's latest changes-requested review.
 
 --move-change-to-own-pull-request-cut-new-topic-branch and --move-change-to-own-pull-request-finish carry a
 change the round moves out of the pull request to a new topic branch, in the same worktree. The first runs on
-the round's local branch after the round's commit, with a clean worktree apart from the answers file: it
+the pull request's branch after the round's commit, with a clean worktree apart from the answers file: it
 switches to NEW_TOPIC_BRANCH cut from origin/main and copies each PATH from the frozen-head, and only then
 records the move in MOVE_STATE_FILE_NAME in the git directory and moves the answers file there, so a failed
 switch or copy leaves nothing recorded and the answers file in place. The second refuses while an answers
-file or the description file is in the worktree, stages every change, runs PRE_PUSH_TEST_COMMAND, commits,
+file or the description file is in the worktree, stages every change, runs the nc-test-suites as the pull
+request ready command runs them, commits,
 pushes with the pre-push hook's time limit, opens the pull request with gh pr create, switches back,
 restores the answers file, deletes the local NEW_TOPIC_BRANCH and checks that it is gone. A failure after
 the commit undoes nothing and prints the commit, the steps done and the steps still to do, which are
@@ -87,11 +120,14 @@ the pre-push hook's output: after the success line, or inside the failure report
 The finish step does not judge those lines, so it exits 0 when every step succeeded even if the hook
 skipped a check; the agent reads the printed lines and does what they say.
 
-Exit codes: 0 brief printed, round passes or move step done; 1 the review or the round breaks a rule, said on
-stderr; 2 gh, git or the answers file could not be read, said on stderr.
+Exit codes: 0 brief or replace steps printed, round passes or move step done; 1 the review or the round breaks
+a rule, said on stderr; 2 gh, git or the answers file could not be read, the conflict check could not answer,
+the new shared names could not be listed, the worktree creator failed, or the suite runner stopped before
+judging every suite, said on stderr.
 """
 
 import argparse
+import datetime
 import importlib.util
 import json
 import os
@@ -109,6 +145,21 @@ _git_output_spec = importlib.util.spec_from_file_location(
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
+_ready_command_spec = importlib.util.spec_from_file_location(
+    "pull_request_ready_for_review_mark_after_description_defect_line_and_test_suites_check",
+    Path(__file__).resolve().parent
+    / "pull-request-ready-for-review-mark-after-description-defect-line-and-test-suites-check.py")
+ready_command = importlib.util.module_from_spec(_ready_command_spec)
+_ready_command_spec.loader.exec_module(ready_command)
+_test_suite_runner_spec = importlib.util.spec_from_file_location(
+    "run_all_test_suites", Path(__file__).resolve().parent / "run-all-test-suites.py")
+test_suite_runner = importlib.util.module_from_spec(_test_suite_runner_spec)
+_test_suite_runner_spec.loader.exec_module(test_suite_runner)
+
+_lister_spec = importlib.util.spec_from_file_location(
+    "new_shared_names_in_changed_files_list", Path(__file__).resolve().parent / "new-shared-names-in-changed-files-list.py")
+new_shared_names_lister = importlib.util.module_from_spec(_lister_spec)
+_lister_spec.loader.exec_module(new_shared_names_lister)
 
 REPLACES_READER_FILE_NAME = "pull-request-description-replaces-line-replaced-pull-request-chain-reader-common.py"
 _replaces_reader_spec = importlib.util.spec_from_file_location(
@@ -127,6 +178,11 @@ BLOCKING_COUNT_PATTERN = re.compile(r"\AREQUEST_CHANGES\n\n\*\*Blocking: (\d+)\*
 # merge-lane-pull-request-reviewer-review-post-and-read-back.py opens a nit's comment with this mark;
 # BLOCKING_MARKER_PATTERN must never match it, or a nit would block.
 NIT_MARK = "**fix-in-maintenance, nit** "
+# merge-lane-pull-request-reviewer-review-post-and-read-back.py moves each comment GitHub would refuse,
+# on a line outside the diff, into its review's body under this heading, one comment each.
+OUTSIDE_THE_DIFF_HEADING = "Comments on lines outside this pull request's diff:"
+OUTSIDE_THE_DIFF_LINE_PATTERN = re.compile(r"^- `(?P<path>[^`]+):(?P<line>\d+)`: (?P<body>.*)$")
+OUTSIDE_THE_DIFF_CONTINUATION_INDENT = "  "
 ROUND_RECORD_FORMAT = ("Fix-round answered without a commit: frozen-head {frozen_head}, reviews {review_ids}.\n"
                        "Posted by {program} --check. A changes-requested review of the same head posted "
                        "after this comment starts a new fix-round.")
@@ -143,29 +199,34 @@ MOVE_CHANGE_TO_OWN_PULL_REQUEST_INSTRUCTION = (
     "   If a blocking finding shows that one change in this pull request should not land with the rest, "
     "you may move that change to a pull request of its own instead of fixing it here, so that the rest "
     "can merge. Undo the change on this branch as part of step 4's one commit; never amend or rewrite a "
-    "pushed commit. Once that commit is made, run: python3 {program} {number} "
+    "pushed commit. Once that commit is made, run: cd {worktree} && python3 {program} {number} "
     "--move-change-to-own-pull-request-cut-new-topic-branch <new topic branch> [<path> ...]\n"
     "   naming as <path> each file whose every change belongs to the moved change, its tests included. "
     "It puts you on <new topic branch>, cut from origin/main, with those files as the frozen-head has "
-    "them. Then make by hand the moved part of each file that is only partly moved, write the new pull "
-    "request's description as CLAUDE.md says in a file outside this worktree, and run: python3 {program} "
+    "them. Then make by hand the moved part of each file that is only partly moved; you need "
+    "not stage or commit it, because the finish step does both. Write the new pull request's description "
+    "as CLAUDE.md says in a file outside this worktree, and run: cd {worktree} && python3 {program} "
     "{number} --move-change-to-own-pull-request-finish --title <title> --body-file <description file>\n"
-    "   --move-change-to-own-pull-request-finish runs step 6's test command, commits, pushes and opens the new pull request, then puts "
-    "you back on {local_branch}. If either command refuses or fails, it says why and what to do next; do "
+    "   --move-change-to-own-pull-request-finish runs the nc-test-suites, commits, pushes and opens the new pull request, then puts "
+    "you back on {pull_request_branch}. If either command refuses or fails, it says why and what to do next; do "
     "that. Answer the finding in step 5 with an entry that starts "
     f"\"{MOVED_TO_PULL_REQUEST_PREFIX}\" followed by the URL --move-change-to-own-pull-request-finish prints; the check in "
-    "step 7 refuses the entry when no such pull request exists, or when its change is still on this "
+    "step 6 refuses the entry when no such pull request exists, or when its change is still on this "
     "branch.")
 GUARDED_FILE_CHANGE_CARRYING_OUT_USER_RULING_INSTRUCTION = (
     "   When a finding asks you to change a file the instruction-file guard protects, and the fix only "
     "makes the file do what a ruling of the user's already says, the change is a user-approved-change: "
     "before each edit, write the ruling's words, quoted from the walk-minutes item or the agent-session "
-    "where he gave it, with its time, into the `.walk-approved` marker file at the root of your worktree, "
+    "where he gave it, with its time, into the `.walk-approved` marker file at the root of the checkout your "
+    "agent-session started in, which the instruction-file guard reads it from, not the topic-worktree's: the "
+    "root git rev-parse --show-toplevel prints when run without the cd this brief puts before other commands; "
     "and cite the ruling in the commit message. A change the guard's refusal lets through without a "
     "ruling, such as an obvious-error-fix, goes as that refusal says. Leave out any other change to such "
     "a file, go on with the other findings, and name that change in your report to the agent that "
     "dispatched you.")
 MOVE_STATE_FILE_NAME = "fix-round-move-to-own-pull-request.json"
+# Written by the run before the push and read by the run after it, which runs no suite.
+PULL_REQUEST_FIX_ROUND_CHECK_TEST_SUITES_ALSO_FAILING_AT_FROZEN_HEAD_RECORD_FILE_NAME = "pull-request-fix-round-check-test-suites-also-failing-at-frozen-head-record.json"
 # The answers file waits in the git directory while the new topic branch is checked out, so no commit
 # or check made there can pick it up.
 ANSWERS_SET_ASIDE_DIRECTORY_NAME = "fix-round-answers-set-aside"
@@ -175,48 +236,51 @@ GH_TIMEOUT_SECONDS = 60
 PROGRAM = "scripts/" + Path(__file__).name
 ANSWERS_FILE_NAME_FORMAT = "fix-round-answers-pull-request-{number}.md"
 ANSWERS_FILE_NAME_PATTERN = re.compile(r"fix-round-answers-pull-request-\d+\.md")
-PRE_PUSH_TEST_COMMAND = ("python3 scripts/run-all-test-suites.py "
-                         "--only-suites-whose-recorded-inputs-changed-since origin/main")
-WORKTREE_DISPATCH_INSTRUCTION = (
+# Claude Code's isolation worktree is locked to the author's agent-session and deleted, with the
+# git-ignored answers file, when its subagent stops; the topic-worktree is neither.
+TOPIC_WORKTREE_DISPATCH_INSTRUCTION = (
     "For the author: dispatch the fix-round subagent with the Agent tool, as a fork (subagent_type: "
-    "\"fork\") with isolation: \"worktree\" and run_in_background: true, so that it works in a git "
-    "worktree of its own and its commit cannot pick up edits you make in your checkout while it "
-    "works. Give it this whole brief, and tell it that the two paragraphs starting \"For the "
-    "author\", indented lines included, are yours, not its.")
-# The review's id keeps two rounds on the same frozen-head apart: git will not switch a second
-# worktree to a branch an earlier round's worktree still has checked out, and the agent harness
-# may keep that worktree locked.
-LOCAL_BRANCH_NAME_FORMAT = "fix-round-pull-request-{number}-review-{review_id}"
-# The subagent works on a local branch, not a detached HEAD: .claude/guard-hooks/session-location-write-guard.py
-# refuses every Edit or Write to a tracked file while HEAD is detached.
-WORKTREE_REMOVAL_INSTRUCTION = (
-    "For the author, when the subagent has finished: remove its worktree, and then the local branch "
-    "{local_branch}, which the subagent makes in step 0 of the rules below. <path> is the worktree's "
-    "path, which the Agent tool reports when the subagent finishes.\n"
-    "   1. Run: git worktree remove <path>\n"
-    "      If git refuses because the worktree is locked and the lock reason starts with \"claude agent\", "
-    "the agent harness holds the lock: run step 1 again once git worktree list no longer shows the "
-    "worktree as locked. If git worktree list still shows it locked when you end your turn, tell the user the "
-    "worktree's path and the lock reason, and go no further.\n"
-    "      If git refuses because the worktree holds changed or untracked files, list them with "
-    "git -C <path> status --short and read them. Copy out of the worktree any file that is work to "
-    "keep, such as a fix the subagent did not push, and tell merge-lane-2 about it with SendMessage. "
-    "Then run: git worktree remove --force <path>\n"
-    "      If git refuses because the worktree is locked for any other reason, the lock reason names "
-    "who locked it. If whoever it names may still be using the worktree, tell the user the worktree's "
-    "path and the lock reason, and go no further. Otherwise list its changed or untracked files with "
-    "git -C <path> status --short, read them, copy out any that is work to keep and tell merge-lane-2 "
-    "about it with SendMessage. Then run: git worktree remove --force --force <path> (the second --force removes a "
-    "locked worktree).\n"
-    "   2. Once the worktree is removed, run: git branch -D {local_branch}")
+    "\"fork\") with run_in_background: true and without isolation, so that it works in pull request "
+    "{number}'s own topic-worktree, {worktree}. Edit nothing in that worktree until the subagent has "
+    "finished, so that its commit holds only the round's changes. Give it this whole brief, and tell it "
+    "that the paragraphs starting \"For the author\" are yours, not its.")
+AUTHOR_INSTRUCTION_WHEN_FIX_ROUND_SUBAGENT_HANDS_BACK_NEW_SHARED_NAMES_TO_CHECK = (
+    "For the author, when the subagent's final report ends with a line for the agent that dispatched it, "
+    "as it does when it lists new shared names under the heading "
+    f"`{new_shared_names_lister.SUBAGENT_REPORT_HEADING_ABOVE_NEW_SHARED_NAMES_FOR_DISPATCHING_AGENT_TO_CHECK}`: do what that line says "
+    "before anything the next paragraph calls for.")
+TOPIC_WORKTREE_CLEANUP_INSTRUCTION = (
+    "For the author, when the subagent has finished: remove nothing by hand. scripts/clean-worktrees.py "
+    "removes {worktree} and its branch after the pull request has merged, when the worktree has an owner "
+    "file, as every worktree scripts/agent-seat-worktree-create-with-owner-file.py makes has. If the "
+    "subagent stopped before its last step, read what it left in {worktree}: git -C {quoted} status and its "
+    "answers file. If it made its commit and wrote every answer, run step 6's check command yourself and go on "
+    "from step 6; otherwise run python3 {program} {number} again, which says how to clear the worktree for "
+    "a new subagent.")
+WORKTREE_CREATOR_FILE_NAME = "agent-seat-worktree-create-with-owner-file.py"
+# git fetch, then git worktree add, which checks out the whole tree.
+WORKTREE_CREATOR_TIMEOUT_SECONDS = 300
 PULL_REQUEST_FIELDS = ("url", "headRefOid", "headRefName")
+# scripts/branch-conflict-check.py's exit code for a conflict, and the answer line that replaces the pull request.
+CONFLICT_CHECK_EXIT_CONFLICT = 1
+CONFLICT_CHECK_EXIT_NO_CONFLICT = 0
+CONFLICT_CHECK_REPLACE_ANSWER_PREFIX = "ANSWER: replace"
+# The check reads GitHub up to 6 times, 10 seconds apart, after a fetch.
+CONFLICT_CHECK_TIMEOUT_SECONDS = 300
+REPLACE_INSTEAD_OF_ROUND_INSTRUCTION = (
+    "No fix-round runs: pull request {number} conflicts with main, and the conflict check above answers "
+    "replace, so a round would check and push the pull request being replaced.\n"
+    "Do what the report above says yourself. When it has you open the new pull request, its #replaces line "
+    "carries this round's findings into the new pull request's first round.\n"
+    "Then tell merge-lane-2 with SendMessage that this round stopped on a conflict with main, naming the new "
+    "pull request's link and head, or the comment that closed this one.")
 ADVISOR_FIX_ROUND_NUMBER = 3
 ADVISOR_FIX_ROUND_INSTRUCTION = (
     "This is the pull request's third fix-round, its last before merge-lane-2 brings it to the user: "
     "before you change anything, call the advisor with the blocking findings and the fix you plan.")
 
 
-# Messages to agents follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+# Messages to agents follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 class Refused(Exception):
     """The review or the round breaks a rule; the text says which and what to do."""
 
@@ -359,7 +423,8 @@ def changes_requested_round_count(number, reviewer_login):
 
 
 def replaced_pull_requests(number, url, description):
-    """(number, head) of each pull request this one replaces, oldest first, by the #replaces lines."""
+    """(number, head, numbers it replaces directly) of each pull request this one replaces, oldest first, by the
+    #replaces lines."""
     repository = "/".join(url.split("/")[3:5])
     facts = {number: (url, None, None, description)}
 
@@ -371,20 +436,41 @@ def replaced_pull_requests(number, url, description):
         chain = replaces_reader.replaced_pull_request_chain_numbers_oldest_first(number, repository, read_description)
     except replaces_reader.ReplacedPullRequestChainUnreadable as error:
         raise Refused(str(error)) from None
-    return [(replaced, facts[replaced][1]) for replaced in chain]
+    return [(replaced, facts[replaced][1],
+             replaces_reader.replaced_pull_request_numbers_on_replaces_lines(facts[replaced][3], repository, replaced))
+            for replaced in chain]
 
 
 def unanswered_round_findings_of_replaced_pull_requests(replaced, reviewer_login):
     """The blocking findings and nits of each replaced pull request's latest round that was never answered,
-    each marked with that round's review under "carried_from"."""
-    blocking, nits = [], []
-    for replaced_number, replaced_head in replaced:
+    each marked with that round's review under "carried_from", leaving out the pull requests that a replaced
+    pull request whose first round was answered replaces, directly or through others: that answer covered them."""
+    open_rounds, answered_first_round = {}, []
+    for replaced_number, replaced_head, _replaces in replaced:
         try:
-            anchor, reviews, recorded, _round_number = round_reviews(replaced_number, reviewer_login)
+            anchor, reviews, recorded, round_number = round_reviews(replaced_number, reviewer_login)
         except Refused:
+            # No open round: any changes-requested round it had was answered.
+            if changes_requested_round_count(replaced_number, reviewer_login):
+                answered_first_round.append(replaced_number)
             continue
-        if recorded or anchor.get("commit_id") != replaced_head:
+        if not recorded and anchor.get("commit_id") == replaced_head:
+            open_rounds[replaced_number] = (anchor, reviews)
+        if round_number > 1 or replaced_number not in open_rounds:
+            answered_first_round.append(replaced_number)
+    replaces = {replaced_number: direct for replaced_number, _head, direct in replaced}
+    covered = set()
+    pending = [older for number in answered_first_round for older in replaces[number]]
+    while pending:
+        older = pending.pop()
+        if older not in covered:
+            covered.add(older)
+            pending += replaces.get(older, [])
+    blocking, nits = [], []
+    for replaced_number, _head, _replaces in replaced:
+        if replaced_number not in open_rounds or replaced_number in covered:
             continue
+        anchor, reviews = open_rounds[replaced_number]
         carried = {"carried_from": anchor.get("html_url")}
         blocking += [{**finding, **carried}
                      for finding in blocking_findings(replaced_number, anchor, reviews, reviewer_login)]
@@ -428,11 +514,41 @@ def stated_blocking_count(review, reviewer_login):
     return int(stated.group(1)) if stated else None
 
 
+def outside_the_diff_comments_read_back_from_review_body(body):
+    """The comments merge-lane-pull-request-reviewer-review-post-and-read-back.py moved into a posted
+    review body, each a dict of path, line and body. A comment starts at a line matching
+    OUTSIDE_THE_DIFF_LINE_PATTERN after OUTSIDE_THE_DIFF_HEADING; each indented line after it continues
+    it, with OUTSIDE_THE_DIFF_CONTINUATION_INDENT removed."""
+    lines = iter(body.split("\n"))
+    # `in` consumes the iterator through the heading, so the loop below reads only the lines after it.
+    if OUTSIDE_THE_DIFF_HEADING not in lines:
+        return []
+    comments = []
+    for line in lines:
+        match = OUTSIDE_THE_DIFF_LINE_PATTERN.match(line)
+        if match:
+            comments.append({"path": match.group("path"), "line": int(match.group("line")),
+                             "body": match.group("body")})
+        elif comments and line.startswith(OUTSIDE_THE_DIFF_CONTINUATION_INDENT):
+            comments[-1]["body"] += "\n" + line[len(OUTSIDE_THE_DIFF_CONTINUATION_INDENT):]
+    return comments
+
+
+def blocks_moved_into_review_body(review, reviewer_login):
+    """The blocking findings a merge-lane-2 review's body lists under OUTSIDE_THE_DIFF_HEADING, each
+    shaped like an inline comment and linked to the review, since GitHub gives it no link of its own."""
+    if (review.get("user") or {}).get("login") != reviewer_login:
+        return []
+    moved = outside_the_diff_comments_read_back_from_review_body(review.get("body") or "")
+    return [{**comment, "html_url": review.get("html_url")} for comment in marked(moved)]
+
+
 def blocking_findings(number, anchor, reviews, reviewer_login=MERGE_LANE_2_REVIEWER_LOGIN):
     comments_by_review = [gh_json_lines(["api", "--paginate",
                                          f"repos/{{owner}}/{{repo}}/pulls/{number}/reviews/{review['id']}/comments",
                                          "--jq", ".[]"]) for review in reviews]
-    marked_by_review = [marked(comments) for comments in comments_by_review]
+    marked_by_review = [marked(comments) + blocks_moved_into_review_body(review, reviewer_login)
+                        for review, comments in zip(reviews, comments_by_review)]
     # A merge-lane-2 review with its own marks and a stated count was posted from categorized
     # findings, so it grades every finding of the round, and another reviewer's Blocks it graded
     # below must-fix-now does not block. merge-lane-2's own marks in its other reviews of the
@@ -495,7 +611,7 @@ def finding_place(comment):
 
 def round_facts(number, reviewer_login):
     url, head, branch, description = pull_request(number)
-    anchor, reviews, recorded, fix_round_number = round_reviews(number, reviewer_login)
+    anchor, reviews, recorded, own_round_number = round_reviews(number, reviewer_login)
     frozen_head = anchor.get("commit_id")
     if not frozen_head:
         raise StepFailed(f"merge-lane-2's review {anchor.get('html_url')} carries no commit_id")
@@ -503,24 +619,125 @@ def round_facts(number, reviewer_login):
     findings = blocking_findings(number, anchor, reviews, reviewer_login)
     nits = nit_findings_of_merge_lane_2_reviews_in_round(number, reviews, reviewer_login)
     replaced = replaced_pull_requests(number, url, description)
-    fix_round_number += sum(changes_requested_round_count(replaced_number, reviewer_login)
-                            for replaced_number, _head in replaced)
-    carried_blocking, carried_nits = unanswered_round_findings_of_replaced_pull_requests(replaced, reviewer_login)
-    findings += carried_blocking
-    nits += carried_nits
-    return (url, head, branch, review_links(latest_first(anchor, reviews)), anchor.get("id"), frozen_head,
+    fix_round_number = own_round_number + sum(changes_requested_round_count(replaced_number, reviewer_login)
+                                              for replaced_number, _head, _replaces in replaced)
+    # The answer to this pull request's first round, a fix commit or a round record, answers the carried
+    # findings too, so a later round carries none.
+    if own_round_number == 1:
+        carried_blocking, carried_nits = unanswered_round_findings_of_replaced_pull_requests(replaced, reviewer_login)
+        findings = without_reposts(findings + carried_blocking)
+        nits = without_reposts(nits + carried_nits)
+    return (url, head, branch, review_links(latest_first(anchor, reviews)), frozen_head,
             findings, nits, fix_round_number,
-            None if recorded else [review.get("id") for review in reviews])
+            None if recorded else [review.get("id") for review in reviews], anchor.get("submitted_at"))
+
+
+def conflict_check_report(number):
+    """The report lines of this checkout's scripts/branch-conflict-check.py when it answers that the pull request
+    conflicts with main and is replaced, else None."""
+    try:
+        top_level = git(["rev-parse", "--show-toplevel"]).strip()
+    except StepFailed as failure:
+        raise StepFailed(f"git found no checkout here to run the conflict check from: {failure}") from failure
+    command = [sys.executable, str(Path(top_level) / "scripts" / "branch-conflict-check.py"),
+               "--pull-request", str(number)]
+    try:
+        completed = subprocess.run(command, cwd=top_level, capture_output=True, text=True,
+                                   stdin=subprocess.DEVNULL, timeout=CONFLICT_CHECK_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        raise StepFailed(f"{shlex.join(command)} did not finish in {CONFLICT_CHECK_TIMEOUT_SECONDS} seconds, so "
+                         "whether this pull request conflicts with main is not known") from None
+    report = completed.stdout.splitlines()
+    if completed.returncode == CONFLICT_CHECK_EXIT_NO_CONFLICT:
+        return None
+    if completed.returncode != CONFLICT_CHECK_EXIT_CONFLICT:
+        raise StepFailed(f"{shlex.join(command)} exited {completed.returncode}, so whether this pull request "
+                         "conflicts with main is not known. It printed:\n"
+                         + (completed.stdout + completed.stderr).strip())
+    if any(line.startswith(CONFLICT_CHECK_REPLACE_ANSWER_PREFIX) for line in report):
+        return report
+    return None
+
+
+def topic_worktree_of_branch(branch):
+    """The path of the worktree of this clone that has branch checked out, or None."""
+    for record in git_output.worktree_records(git(["worktree", "list", "--porcelain", "-z"])):
+        if record.branch == f"refs/heads/{branch}" and not record.prunable_reason:
+            return Path(record.path)
+    return None
+
+
+def topic_worktree_made_by_creator(branch):
+    """Make a worktree on branch with this checkout's worktree creator and return its path."""
+    top_level = git(["rev-parse", "--show-toplevel"]).strip()
+    command = [sys.executable, str(Path(top_level) / "scripts" / WORKTREE_CREATOR_FILE_NAME), branch]
+    try:
+        completed = subprocess.run(command, cwd=top_level, capture_output=True, text=True,
+                                   stdin=subprocess.DEVNULL, timeout=WORKTREE_CREATOR_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        raise StepFailed(f"{shlex.join(command)} did not finish in {WORKTREE_CREATOR_TIMEOUT_SECONDS} seconds, "
+                         f"so no topic-worktree for {branch} was made") from None
+    if completed.returncode != 0:
+        raise StepFailed(f"no worktree of this clone has {branch} checked out, and {shlex.join(command)}, run to "
+                         f"make one, exited {completed.returncode}. Do what its message says, then run this "
+                         "again. It printed:\n" + (completed.stdout + completed.stderr).strip())
+    return Path(completed.stdout.strip())
+
+
+def topic_worktree_at_frozen_head(number, branch, frozen_head):
+    """The pull request's topic-worktree, made when this clone has none; refuse unless it is clean at frozen_head."""
+    worktree = topic_worktree_of_branch(branch) or topic_worktree_made_by_creator(branch)
+    in_worktree = ["-C", str(worktree)]
+    # Ignored files, the answers file among them, are left out: they never reach a commit.
+    changed = git_output.nul_separated_fields(git([*in_worktree, "status", "--porcelain", "-z",
+                                                   "--untracked-files=all"]))
+    quoted = shlex.quote(str(worktree))
+    if changed:
+        raise Refused(f"Pull request {number}'s topic-worktree {worktree} has uncommitted changes or untracked "
+                      "files, so the fix-round's commit would carry them: "
+                      + ", ".join(entry[3:] for entry in changed) + ".\n"
+                      "If a fix-round subagent is still working there, wait for it to finish.\n"
+                      "If they are your own work, finish it elsewhere or set it aside first; the fix-round waits.\n"
+                      "If an earlier fix-round subagent left them, read them, keep what the next subagent "
+                      f"should know, then remove them with git -C {quoted} restore --staged --worktree . and "
+                      f"git -C {quoted} clean -d --force, which leaves the ignored answers file in place.\n"
+                      "Then run this again.")
+    head = git([*in_worktree, "rev-parse", "HEAD"]).strip()
+    if head == frozen_head:
+        return worktree
+    if subprocess.run(["git", *in_worktree, "cat-file", "-e", f"{frozen_head}^{{commit}}"], capture_output=True,
+                      stdin=subprocess.DEVNULL, timeout=git_output.GIT_TIMEOUT_SECONDS).returncode != 0:
+        git([*in_worktree, "fetch", "--quiet", "origin"])
+    if is_ancestor(head, frozen_head):
+        raise Refused(f"Pull request {number}'s topic-worktree {worktree} is at {head[:12]}, behind the "
+                      f"frozen-head {frozen_head[:12]} that merge-lane-2 reviewed.\n"
+                      f"Bring it up to the frozen-head with git -C {quoted} merge --ff-only {frozen_head}, "
+                      "then run this again.")
+    raise Refused(f"Pull request {number}'s topic-worktree {worktree} is at {head[:12]}, which holds commits "
+                  f"that the frozen-head {frozen_head[:12]}, which merge-lane-2 reviewed, does not, such as a "
+                  "fix-round commit that was never pushed. A fix-round starts from the frozen-head.\n"
+                  "If a fix-round subagent made that commit for this round and stopped before its push, finish "
+                  f"the round instead: run cd {quoted} && python3 {PROGRAM} {number} --check, and do what it says.\n"
+                  f"Otherwise keep those commits on a branch of their own and move {branch} back with git -C {quoted} "
+                  f"branch <a new branch name> HEAD && git -C {quoted} reset --keep {frozen_head}, then run this "
+                  "again, and tell the next subagent about the kept branch if it holds a fix to reuse.")
 
 
 def print_brief(number, reviewer_login):
-    (url, head, branch, review_link, review_id, frozen_head, findings, nits,
-     fix_round_number, _unrecorded_review_ids) = round_facts(number, reviewer_login)
+    (url, head, branch, review_link, frozen_head, findings, nits,
+     fix_round_number, _unrecorded_review_ids, _review_submitted_at) = round_facts(number, reviewer_login)
     if head != frozen_head:
         raise Refused(f"Pull request {url} has head {head}, but merge-lane-2 reviewed {frozen_head}; "
                       "a commit was pushed after the review, so this fix-round has already pushed.\n"
                       "Wait for merge-lane-2's review of the new head, and run this again if it "
                       "requests changes.")
+    conflict_report = conflict_check_report(number)
+    if conflict_report is not None:
+        print("\n".join([f"Pull request {url} is not given a fix-round.", f"Frozen-head: {frozen_head}",
+                         f"The round's reviews: {review_link}", "", *conflict_report, "",
+                         REPLACE_INSTEAD_OF_ROUND_INSTRUCTION.format(number=number)]))
+        return
+    worktree = topic_worktree_at_frozen_head(number, branch, frozen_head)
     lines = [
         f"Fix-round brief for pull request {url}",
         f"Frozen-head: {frozen_head}",
@@ -541,17 +758,22 @@ def print_brief(number, reviewer_login):
     for index, nit in enumerate(nits, len(findings) + 1):
         lines += ["", f"{index}. {finding_place(nit)} ({nit.get('html_url')})", (nit.get("body") or "").strip()]
     answers_name = ANSWERS_FILE_NAME_FORMAT.format(number=number)
-    local_branch = LOCAL_BRANCH_NAME_FORMAT.format(number=number, review_id=review_id)
-    check_command = f"python3 {PROGRAM} {number} --check"
+    in_worktree = f"cd {shlex.quote(str(worktree))} && "
+    check_command = f"{in_worktree}python3 {PROGRAM} {number} --check"
     lines += [
         "",
-        WORKTREE_DISPATCH_INSTRUCTION,
-        WORKTREE_REMOVAL_INSTRUCTION.format(local_branch=local_branch),
+        TOPIC_WORKTREE_DISPATCH_INSTRUCTION.format(number=number, worktree=worktree),
+        AUTHOR_INSTRUCTION_WHEN_FIX_ROUND_SUBAGENT_HANDS_BACK_NEW_SHARED_NAMES_TO_CHECK,
+        TOPIC_WORKTREE_CLEANUP_INSTRUCTION.format(worktree=worktree, quoted=shlex.quote(str(worktree)),
+                                                  program=PROGRAM, number=number),
         "",
-        "For the subagent, the rules of the round, in order, run in your own worktree:",
-        f"0. Make a local branch at the frozen-head and switch to it: git fetch origin && git switch -C {local_branch} {frozen_head}",
-        f"1. Before changing anything, run: python3 scripts/branch-conflict-check.py --pull-request {number}",
-        "   If it reports VERDICT: CONFLICT, do what its report says.",
+        f"For the subagent, the rules of the round, in order, run in the pull request's topic-worktree {worktree}, "
+        f"on its branch {branch} at the frozen-head: edit only files under it, and start every command you run "
+        f"with {in_worktree.strip()}, as each command below does.",
+        f"1. Before changing anything, run: {in_worktree}python3 scripts/branch-conflict-check.py --pull-request {number}",
+        "   If it reports VERDICT: CONFLICT with ANSWER: replace, stop and tell the agent that dispatched you "
+        f"what it printed: that agent runs python3 {PROGRAM} {number} again, which prints what to do instead.",
+        "   If it reports VERDICT: CONFLICT with any other answer, do what its report says.",
         "2. Check each finding against the code. Fix each one that holds, root cause included, "
         "with a test that fails without the fix; a nit needs no test.",
         GUARDED_FILE_CHANGE_CARRYING_OUT_USER_RULING_INSTRUCTION,
@@ -559,28 +781,29 @@ def print_brief(number, reviewer_login):
         "keep the pull request atomic. Findings that do not block, in this review or any other, "
         "are not part of this round, apart from the nits listed above: merge-lane-2 sends them after the merge.",
         MOVE_CHANGE_TO_OWN_PULL_REQUEST_INSTRUCTION.format(program=PROGRAM, number=number,
-                                                           local_branch=local_branch),
+                                                           worktree=shlex.quote(str(worktree)),
+                                                           pull_request_branch=branch),
         "4. Put every change in one commit on top of the branch as step 1 left it. "
         "If no finding holds, make no commit.",
-        f"5. Write the answers file {answers_name} at the root of your worktree, one entry per "
-        "finding above, each starting \"<n>. \" on its own line, with any further lines of the "
+        f"5. Write the answers file {worktree / answers_name}, replacing any earlier round's file there, with "
+        "one entry per finding above, each starting \"<n>. \" on its own line, with any further lines of the "
         "entry after it: what you fixed, why the finding does not hold, or, for a change moved as "
         "step 3 says, the new pull request. Never commit it: "
-        "the branch's .gitignore may not leave it out, and the check in step 7 refuses a commit "
+        "the branch's .gitignore may not leave it out, and the check in step 6 refuses a commit "
         "that holds it.",
-        f"6. Run the affected nc-test-suites: {PRE_PUSH_TEST_COMMAND}",
-        "   If a suite fails because of this round's change, fix it in the same commit; if it "
-        "fails for another cause, tell merge-lane-2 with SendMessage before pushing.",
-        f"7. Run the check: {check_command}",
+        f"6. Run the check: {check_command}",
         "   If it refuses, change the "
         "answers file or the unpushed commit as it says (git commit --amend is allowed before the "
-        "push) and run the check again.",
-        f"8. When it passes with a commit not yet pushed, push once, with: git push origin HEAD:{shlex.quote(branch)}",
+        "push; first stage each changed file with git add <path>, never the answers file) and run the "
+        "check again. Before the push, the check runs the nc-test-suites, which can "
+        "take many minutes, and refuses when one fails because of the round's change. Before the suites, "
+        "it refuses when the round's commit adds shared names no agent has checked; do what it prints.",
+        f"7. When it passes with a commit not yet pushed, push once, with: {in_worktree}git push origin HEAD:{shlex.quote(branch)}",
         "   Then run the same check command "
         "again. When it passes and prints a message for merge-lane-2, which it does at once if you "
         "made no commit, after recording on the pull request, in a comment, which reviews this round "
         "answered, send that message to merge-lane-2 with SendMessage.",
-        "9. If anything fails after the push, do not push again or rewrite the branch: tell "
+        "8. If anything fails after the push, do not push again or rewrite the branch: tell "
         "merge-lane-2 with SendMessage what failed, and the next fix-round takes it.",
         "   If the push itself fails, do not retry it by force or rewrite the branch: tell "
         "merge-lane-2 with SendMessage what git printed.",
@@ -712,7 +935,7 @@ def files_whose_moved_change_is_still_here(named, commit):
             if completed.returncode not in (0, 1):
                 raise StepFailed(f"git {' '.join(check)} exited {completed.returncode} on pull request "
                                  f"{named}'s patch: {completed.stderr.strip()}")
-            if completed.returncode == 0:
+            if completed.returncode == 0:  # pragma: no mutate, returncode is 0 or 1 here, so `<=` matches only 0 as `==` does
                 still_here.append(piece.splitlines()[0].removeprefix("diff --git "))
     return still_here
 
@@ -738,39 +961,24 @@ def commits_since(frozen_head, commit):
                       "its history, so the round rewrote or replaced the reviewed commits.\n"
                       "Put the fix in one commit on top of the frozen-head; never amend or rebase "
                       "a pushed head.")
-    # --first-parent leaves out the commits a merge of origin/main brings in.
+    # --first-parent lists a merge as one commit with two parents, which the round's rule refuses,
+    # instead of listing every commit the merge brings in.
     listing = git(["rev-list", "--reverse", "--first-parent", "--parents", f"{frozen_head}..{commit}"])
     return [(fields[0], fields[1:]) for fields in (line.split() for line in listing.splitlines())]
 
 
-def fix_commit_range(frozen_head, commits, after_conflict_merge):
+def fix_commit_range(frozen_head, commits):
     """Check the shape of the round; return (base, fix commit) for its file list, or None."""
-    described = ", ".join(f"{sha[:12]} ({len(parents)} parent{'' if len(parents) == 1 else 's'})"
-                          for sha, parents in commits)
     if not commits:
         return None
-    if after_conflict_merge:
-        merge_sha, merge_parents = commits[0]
-        shape_holds = (len(merge_parents) == 2 and merge_parents[0] == frozen_head
-                       and len(commits) <= 2
-                       and all(len(parents) == 1 for _, parents in commits[1:]))
-        if shape_holds:
-            if not is_ancestor(merge_parents[1], "origin/main"):
-                raise Refused(f"The merge {merge_sha[:12]} brings in {merge_parents[1][:12]}, "
-                              "which is not on origin/main.\n"
-                              "If origin/main is out of date, run git fetch origin and check again; "
-                              "otherwise merge origin/main itself.")
-            return (merge_sha, commits[1][0]) if len(commits) == 2 else None
-        rule = ("a merge of origin/main whose first parent is the frozen-head, followed by at most "
-                "one non-merge commit")
-    else:
-        if len(commits) == 1 and commits[0][1] == [frozen_head]:
-            return frozen_head, commits[0][0]
-        rule = "one non-merge commit whose parent is the frozen-head"
+    if len(commits) == 1 and commits[0][1] == [frozen_head]:
+        return frozen_head, commits[0][0]
+    described = ", ".join(f"{sha[:12]} ({len(parents)} parent{'' if len(parents) == 1 else 's'})"
+                          for sha, parents in commits)
     raise Refused(f"The round has {len(commits)} commits after the frozen-head {frozen_head[:12]}: "
-                  f"{described}. A fix-round is {rule}.\n"
+                  f"{described}. A fix-round is one non-merge commit whose parent is the frozen-head.\n"
                   "If the commits are not pushed, squash them into one commit on top of the "
-                  "frozen-head.\n"
+                  "frozen-head; drop any merge of main.\n"
                   "If they are pushed, tell merge-lane-2 with SendMessage; do not force-push.")
 
 
@@ -803,17 +1011,157 @@ def unnamed_files(base, fix_commit, findings):
     return [path for path in changed if Path(path).name not in named_text]
 
 
-def check_round(number, reviewer_login, answers_path, commit_name, after_conflict_merge):
-    (url, head, _branch, review_link, _review_id, frozen_head, blocking, nits,
-     _fix_round_number, unrecorded_review_ids) = round_facts(number, reviewer_login)
+def file_exists_at(commit, path):
+    return subprocess.run(["git", "cat-file", "-e", f"{commit}:{path}"], capture_output=True,
+                          stdin=subprocess.DEVNULL, timeout=git_output.GIT_TIMEOUT_SECONDS).returncode == 0
+
+
+def failing_suites_in_scratch_worktree(commit, command_for_checkout):
+    """Run the suite runner command_for_checkout(checkout) names in a scratch worktree of commit, passing
+    its output through as it arrives; return each suite it reports failing, once, in its order."""
+    failing = []
+    unfinished = []
+    with tempfile.TemporaryDirectory(prefix="fix-round-check-suites-") as scratch:
+        checkout = Path(scratch) / "checkout"
+        git(["worktree", "add", "--quiet", "--detach", str(checkout), commit])
+        try:
+            command = command_for_checkout(checkout)
+            print(f"Running the nc-test-suites in a scratch worktree of {commit[:12]}: {shlex.join(command)}",
+                  flush=True)
+            with subprocess.Popen(command, cwd=checkout, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                  text=True) as runner:
+                for line in runner.stdout:
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+                    if line.startswith(test_suite_runner.FAILED_SUITE_LINE_PREFIX):
+                        suite = line[len(test_suite_runner.FAILED_SUITE_LINE_PREFIX):].split(" ", 1)[0].strip()
+                        if suite not in failing:
+                            failing.append(suite)
+                    elif line.startswith((test_suite_runner.NOT_RUN_SUITE_LINE_PREFIX,
+                                          *test_suite_runner.TEST_RUNNER_WHOLE_RUN_NOT_RUN_TO_THE_END_LINE_PREFIXES_FILE_PATH_AND_BARE_NAME_FORMS)):
+                        unfinished.append(line.strip())
+            status = runner.returncode
+        finally:
+            git(["worktree", "remove", "--force", str(checkout)])
+    # The runner exits 1 when a suite failed even if others never ran, so a failure the
+    # frozen-head shares must not let an unfinished run through.
+    if unfinished:
+        raise StepFailed(f"the suite runner, {shlex.join(command)}, run on {commit[:12]}, did not judge every "
+                         "suite: it printed\n" + "".join(f"  {line}\n" for line in unfinished)
+                         + "Its output is above. Nothing was pushed.\n"
+                         "Run this --check again once, not the suite runner by itself.\n"
+                         "If the runner again prints a line opening 'NOT RUN' or "
+                         + " or ".join(f"'{prefix}'" for prefix in test_suite_runner.TEST_RUNNER_WHOLE_RUN_NOT_RUN_TO_THE_END_LINE_PREFIXES_FILE_PATH_AND_BARE_NAME_FORMS)
+                         + ", tell merge-lane-2 with SendMessage, quoting each such line, and do "
+                         "not push.")
+    if status == test_suite_runner.EXIT_ALL_PASSED or (status == test_suite_runner.EXIT_SOME_FAILED and failing):
+        return failing
+    raise StepFailed(f"the suite runner, {shlex.join(command)}, run on {commit[:12]}, ended with "
+                     f"{test_suite_runner.describe_exit(status)} and named no failing suite, so it stopped "
+                     "before judging every suite; its output is above. Nothing was pushed.\n"
+                     "Run the check again once. If the runner stops the same way, tell merge-lane-2 with "
+                     "SendMessage what it printed, and do not push.")
+
+
+def suites_the_round_broke_and_suites_failing_at_frozen_head_too(frozen_head, commit):
+    """Run the suites at commit, and those that fail there at frozen_head too; return
+    (failing at commit only, failing at both)."""
+    at_commit = failing_suites_in_scratch_worktree(commit, ready_command.selective_test_run_command)
+    at_frozen_head = [suite for suite in at_commit if file_exists_at(frozen_head, suite)]
+    if at_frozen_head:
+        failing_there = failing_suites_in_scratch_worktree(frozen_head, lambda checkout: [
+            "python3", str(checkout / "scripts" / "run-all-test-suites.py"),
+            "--leave-recorded-inputs-and-failure-history-unchanged", "--only-suites-named", *at_frozen_head])
+        at_frozen_head = [suite for suite in at_frozen_head if suite in failing_there]
+    return [suite for suite in at_commit if suite not in at_frozen_head], at_frozen_head
+
+
+def suites_failing_at_frozen_head_too_record_path():
+    return Path(git(["rev-parse", "--absolute-git-dir"]).strip()) / PULL_REQUEST_FIX_ROUND_CHECK_TEST_SUITES_ALSO_FAILING_AT_FROZEN_HEAD_RECORD_FILE_NAME
+
+
+def suites_failing_at_frozen_head_too_recorded_for(commit):
+    path = suites_failing_at_frozen_head_too_record_path()
+    if not path.exists():
+        return []
+    record = json.loads(path.read_text())
+    return record["suites"] if record["commit"] == commit else []
+
+
+def refuse_new_shared_names_the_dispatching_agent_has_not_checked(number, frozen_head, commit):
+    try:
+        names = new_shared_names_lister.new_shared_names_in_files_changed_since(Path.cwd(), frozen_head, commit)
+    except new_shared_names_lister.GitFailure as failure:
+        raise StepFailed(f"the new shared names the round's commit adds could not be listed: {failure}") from None
+    if names:
+        raise Refused(new_shared_names_lister.unchecked_new_shared_names_refusal_text(
+            names, "The check stopped before the nc-test-suites, and nothing may be pushed yet",
+            "Make every rename in the round's one commit: stage each changed file with git add <path>, never the "
+            "answers file, and run git commit --amend.",
+            "the same check command again, with "
+            f"{new_shared_names_lister.CONFIRM_DISPATCHING_AGENT_CHECKED_NEW_SHARED_NAMES_COMMAND_LINE_FLAG} added"))
+
+
+def refuse_outside_topic_worktree(number, branch):
+    """The round's commit and answers file are in the topic-worktree, so --check runs nowhere else."""
+    here = git(["branch", "--show-current"]).strip()
+    if here == branch:
+        return
+    worktree = topic_worktree_of_branch(branch)
+    where = (f"Run it there: cd {shlex.quote(str(worktree))} && python3 {PROGRAM} {number} --check"
+             if worktree else
+             f"No worktree of this clone has {branch} checked out: run python3 {PROGRAM} {number}, which makes "
+             "one and prints the fix-round brief.")
+    raise Refused(f"--check runs only in pull request {number}'s topic-worktree, the worktree that has its branch "
+                  f"{branch} checked out, but this worktree, {worktree_root()}, is on "
+                  f"{here or 'a detached HEAD'}.\n" + where)
+
+
+def refuse_answers_written_before_review(answers_path, review_submitted_at, review_link):
+    """An answers file older than the round's latest changes-requested review answers an earlier round; read_answers
+    has read the file already."""
+    if not review_submitted_at:
+        return
+    written = os.stat(answers_path).st_mtime
+    # Python before 3.11 reads no "Z" suffix, and GitHub writes one.
+    submitted = datetime.datetime.fromisoformat(review_submitted_at.replace("Z", "+00:00")).timestamp()
+    if written < submitted:
+        raise Refused(f"The answers file {answers_path} was last written before merge-lane-2 submitted the "
+                      f"review that opened this round ({review_link}), so it answers an earlier round.\n"
+                      "Write this round's answers into it, one entry per finding of this round's brief, and "
+                      "run the check again.")
+
+
+def origin_branch_head(url, branch):
+    """The commit origin's branch points at now; GitHub's headRefOid can lag a push by seconds."""
+    ref = f"refs/heads/{branch}"
+    for line in git(["ls-remote", "origin", ref]).splitlines():
+        commit, _, name = line.partition("\t")
+        if name == ref:
+            return commit
+    raise StepFailed(f"git ls-remote origin {ref} found no branch {branch} on origin, though pull request {url} "
+                     "names it as its head branch, so the round's commit is not on origin, and whether the pull "
+                     "request still takes pushes to that branch is in doubt.\n"
+                     "Do not push.\n"
+                     "Send merge-lane-2 this message with Claude Code's SendMessage tool: \"The fix-round check of "
+                     f"{url} found no branch {branch} on origin, so the round's commit is not pushed.\" The round "
+                     "stops there, and merge-lane-2's answer says how it goes on.")
+
+
+def check_round(number, reviewer_login, answers_path, commit_name,
+                confirm_dispatching_agent_checked_new_shared_names=False):
+    (url, _github_head, branch, review_link, frozen_head, blocking, nits,
+     _fix_round_number, unrecorded_review_ids, review_submitted_at) = round_facts(number, reviewer_login)
     findings = blocking + nits
     answers_path = answers_path or default_answers_path(number)
+    refuse_outside_topic_worktree(number, branch)
     answers = read_answers(answers_path, len(blocking), len(nits))
+    refuse_answers_written_before_review(answers_path, review_submitted_at, review_link)
     refuse_moved_to_missing_pull_request(answers, answers_path)
     commit = git(["rev-parse", "--verify", f"{commit_name}^{{commit}}"]).strip()
     refuse_moved_change_still_here(answers, commit, answers_path)
     git(["cat-file", "-e", f"{frozen_head}^{{commit}}"])
-    fix_range = fix_commit_range(frozen_head, commits_since(frozen_head, commit), after_conflict_merge)
+    fix_range = fix_commit_range(frozen_head, commits_since(frozen_head, commit))
     refuse_committed_answers_file(frozen_head, commit)
     leftovers = unnamed_files(*(fix_range or (None, None)), findings)
     lines = [f"PASS: the fix-round on {url} keeps to its rules; {len(findings)} findings answered."]
@@ -821,12 +1169,34 @@ def check_round(number, reviewer_login, answers_path, commit_name, after_conflic
         lines += ["Files the fix commit changes that no blocking finding or nit names; say in the message "
                   "why each belongs in this round, or take it out:"]
         lines += [f"  {path}" for path in leftovers]
+    head = origin_branch_head(url, branch)
     if head not in (commit, frozen_head):
-        raise Refused(f"GitHub's head of {url} is {head}, which is neither the checked commit "
+        raise Refused(f"origin's branch {branch} of {url} is at {head}, which is neither the checked commit "
                       f"{commit} nor the frozen-head {frozen_head}.\n"
                       "Check --commit names what you pushed; if someone else pushed, tell "
                       "merge-lane-2 with SendMessage.")
     if head == frozen_head and commit != frozen_head:
+        if not confirm_dispatching_agent_checked_new_shared_names:
+            refuse_new_shared_names_the_dispatching_agent_has_not_checked(number, frozen_head, commit)
+        broken, failing_at_frozen_head_too = suites_the_round_broke_and_suites_failing_at_frozen_head_too(
+            frozen_head, commit)
+        if broken:
+            too = (f" These fail at the frozen-head too, so they are not the round's doing: "
+                   f"{', '.join(failing_at_frozen_head_too)}." if failing_at_frozen_head_too else "")
+            raise Refused(f"The round does not pass: these nc-test-suites fail at the round's commit {commit[:12]} "
+                          f"and not at the frozen-head {frozen_head[:12]}, so the round's change broke them: "
+                          f"{', '.join(broken)}. Each one's log is named in the runner's output above.{too}\n"
+                          "Fix the cause of each failure in the round's commit, which is not pushed yet, amend "
+                          "it with git commit --amend, and run the check again.\n"
+                          "If a suite named here fails for a cause outside the round's change, such as a test "
+                          "case that fails only now and then, run the check again once; if that suite fails "
+                          "again, tell merge-lane-2 with SendMessage the suite and its log, and do not push.")
+        suites_failing_at_frozen_head_too_record_path().write_text(
+            json.dumps({"commit": commit, "suites": failing_at_frozen_head_too}))
+        if failing_at_frozen_head_too:
+            lines += ["These nc-test-suites fail at the round's commit and at the frozen-head too, so not "
+                      "because of this round; the message for merge-lane-2 will name them: "
+                      + ", ".join(failing_at_frozen_head_too)]
         lines += ["Not pushed yet. Push once, then run this same command again to get the message "
                   "for merge-lane-2."]
         print("\n".join(lines))
@@ -841,6 +1211,10 @@ def check_round(number, reviewer_login, answers_path, commit_name, after_conflic
     if leftovers:
         message += ["Files the fix commit changes that no blocking finding or nit names: "
                     + ", ".join(leftovers) + ". Why each belongs: <fill in>"]
+    recorded_suites = suites_failing_at_frozen_head_too_recorded_for(commit) if commit != frozen_head else []
+    if recorded_suites:
+        message += ["nc-test-suites that fail at the frozen-head too, so not because of this round: "
+                    + ", ".join(recorded_suites) + "."]
     if commit == frozen_head and unrecorded_review_ids:
         gh(["api", f"repos/{{owner}}/{{repo}}/issues/{number}/comments", "-f", "body=" + ROUND_RECORD_FORMAT.format(
             frozen_head=frozen_head, review_ids=" ".join(map(str, unrecorded_review_ids)), program=PROGRAM)])
@@ -860,7 +1234,7 @@ def current_branch():
     branch = git(["branch", "--show-current"]).strip()
     if not branch:
         raise Refused("HEAD is detached, so there is no branch to move a change from or back to.\n"
-                      "Switch to the round's local branch, as step 0 of the brief makes it, and run this again.")
+                      "Switch to the pull request's branch, and run this again.")
     return branch
 
 
@@ -878,19 +1252,18 @@ def local_branch_exists(branch):
 
 
 def move_start(number, reviewer_login, new_branch, whole_file_paths):
-    (_url, _head, _branch, _review_link, review_id, frozen_head, _findings, _nits,
-     _fix_round_number, _unrecorded_review_ids) = round_facts(number, reviewer_login)
-    local_branch = LOCAL_BRANCH_NAME_FORMAT.format(number=number, review_id=review_id)
+    (_url, _head, pull_request_branch, _review_link, frozen_head, _findings, _nits,
+     _fix_round_number, _unrecorded_review_ids, _review_submitted_at) = round_facts(number, reviewer_login)
     state_path = move_state_path()
     if state_path.exists():
         state = json.loads(state_path.read_text())
         raise Refused(f"A move to {state['new_branch']} is already under way in this worktree.\n"
                       f"Finish it with python3 {PROGRAM} {number} --move-change-to-own-pull-request-finish "
                       "before you start another.")
-    if current_branch() != local_branch:
-        raise Refused(f"--move-change-to-own-pull-request-cut-new-topic-branch runs on the round's local branch {local_branch}, but this worktree is on "
+    if current_branch() != pull_request_branch:
+        raise Refused(f"--move-change-to-own-pull-request-cut-new-topic-branch runs on the pull request's branch {pull_request_branch}, but this worktree is on "
                       f"{current_branch()}.\n"
-                      f"Switch to {local_branch} and run this again.")
+                      f"Switch to {pull_request_branch} and run this again.")
     if git(["rev-parse", "HEAD"]).strip() == frozen_head:
         raise Refused("The round has no commit on top of the frozen-head yet, so nothing has undone the change "
                       "this branch is to lose.\n"
@@ -898,9 +1271,7 @@ def move_start(number, reviewer_login, new_branch, whole_file_paths):
     if local_branch_exists(new_branch):
         raise Refused(f"A local branch {new_branch} already exists.\n"
                       "Name a new topic branch that does not exist yet, and run this again.")
-    missing = [path for path in whole_file_paths
-               if subprocess.run(["git", "cat-file", "-e", f"{frozen_head}:{path}"], capture_output=True,
-                                 stdin=subprocess.DEVNULL, timeout=git_output.GIT_TIMEOUT_SECONDS).returncode]
+    missing = [path for path in whole_file_paths if not file_exists_at(frozen_head, path)]
     if missing:
         raise Refused(f"The frozen-head {frozen_head[:12]} has no file {', '.join(missing)}.\n"
                       "Name each path as the frozen-head holds it, relative to the worktree's root, and run this again.")
@@ -915,10 +1286,10 @@ def move_start(number, reviewer_login, new_branch, whole_file_paths):
                       "branch must start with nothing but the moved change.")
     answers = root / answers_name
     set_aside = state_path.parent / ANSWERS_SET_ASIDE_DIRECTORY_NAME / answers_name
-    git(["switch", "-q", "-c", new_branch, "origin/main"])
+    git(["switch", "-q", "--no-overwrite-ignore", "-c", new_branch, "origin/main"])
     if whole_file_paths:
         git(["checkout", frozen_head, "--", *whole_file_paths])
-    state_path.write_text(json.dumps({"new_branch": new_branch, "return_branch": local_branch,
+    state_path.write_text(json.dumps({"new_branch": new_branch, "return_branch": pull_request_branch,
                                       "answers": str(answers), "set_aside": str(set_aside)}))
     if answers.exists():
         set_aside.parent.mkdir(exist_ok=True)
@@ -954,7 +1325,7 @@ def move_finish(number, title, body_file):
         raise Refused(f"An answers file {answers} is in this worktree, so the commit would carry it to "
                       f"{new_branch}.\n"
                       f"Move it to {set_aside} and run this again; it comes back when the move ends.")
-    if git(["rev-list", "--count", "origin/main..HEAD"]).strip() != "0":
+    if git(["rev-list", "--count", "origin/main..HEAD"]).strip() != "0":  # pragma: no mutate, a count has no leading zero, so `>` matches every count but "0" as `!=` does, and so does `is not`, as CPython keeps one "0" string
         head = git(["rev-parse", "HEAD"]).strip()
         base = git(["merge-base", "HEAD", "origin/main"]).strip()
         raise Refused(f"{new_branch} already holds commit {head[:12]} beside origin/main, and this step must make "
@@ -968,9 +1339,10 @@ def move_finish(number, title, body_file):
         raise Refused(f"{new_branch} holds no change beside origin/main, so there is nothing to move.\n"
                       "Bring the moved change onto it, by hand or by naming whole files to "
                       "--move-change-to-own-pull-request-cut-new-topic-branch, and run this again.")
-    tests = subprocess.run(shlex.split(PRE_PUSH_TEST_COMMAND), cwd=root, stdin=subprocess.DEVNULL)
+    test_command = ready_command.selective_test_run_command(root)
+    tests = subprocess.run(test_command, cwd=root, stdin=subprocess.DEVNULL)
     if tests.returncode:
-        raise Refused(f"The test command exited {tests.returncode} on {new_branch}: {PRE_PUSH_TEST_COMMAND}\n"
+        raise Refused(f"The test command exited {tests.returncode} on {new_branch}: {shlex.join(test_command)}\n"
                       f"Fix the moved change on {new_branch} and run this again; nothing is committed yet.")
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as message:
         message.write(title + "\n\n" + Path(body_file).read_text())
@@ -1055,9 +1427,9 @@ def main(argv=None):
                              + " at the root of this worktree)")
     parser.add_argument("--commit", default="HEAD",
                         help="with --check: the round's last commit (default: HEAD)")
-    parser.add_argument("--after-conflict-merge", action="store_true",
-                        help="with --check: the round starts with a merge of origin/main, made "
-                             "because branch-conflict-check.py reported a conflict")
+    parser.add_argument(new_shared_names_lister.CONFIRM_DISPATCHING_AGENT_CHECKED_NEW_SHARED_NAMES_COMMAND_LINE_FLAG, action="store_true",
+                        help="with --check: the agent that dispatched the round has checked the shared names "
+                             "the round's commit adds, and its renames are in that commit")
     parser.add_argument("--reviewer-login", default=MERGE_LANE_2_REVIEWER_LOGIN,
                         help=f"merge-lane-2's GitHub account (default: {MERGE_LANE_2_REVIEWER_LOGIN})")
     parser.add_argument("--move-change-to-own-pull-request-cut-new-topic-branch", dest="move_start", nargs="+",
@@ -1080,7 +1452,8 @@ def main(argv=None):
             move_finish(arguments.number, arguments.title, arguments.body_file)
         elif arguments.check:
             check_round(arguments.number, arguments.reviewer_login, arguments.answers,
-                        arguments.commit, arguments.after_conflict_merge)
+                        arguments.commit,
+                        arguments.confirm_dispatching_agent_checked_new_shared_names)
         else:
             print_brief(arguments.number, arguments.reviewer_login)
     except Refused as refusal:

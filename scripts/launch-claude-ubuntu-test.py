@@ -114,7 +114,25 @@ class LaunchHarness:
         write_stub(self.stubs, "claude",
                    '[ "${1:-}" = "update" ] || exit 0\n'
                    'echo update >> "$LCU_TEST_DIR/claude-updates.txt"\n')
-        write_stub(self.stubs, "git", "exit 0\n")
+        # A case that sets agent_home_is_a_checkout to False has the agent-home
+        # fail git's checkout test, so the launcher makes it a worktree; the
+        # stub records the GIT_AUTHOR_NAME and the arguments of each `git
+        # worktree add`, and names LCU_AGENT_HOME_GIT_DIRECTORY as the new
+        # agent-home's git directory, or fails to when
+        # LCU_AGENT_HOME_GIT_DIRECTORY_UNREADABLE is set.
+        write_stub(self.stubs, "git",
+                   'case "$*" in\n'
+                   '  *"rev-parse --show-toplevel"*) [ -z "${LCU_AGENT_HOME_NOT_A_CHECKOUT:-}" ] || exit 1 ;;\n'
+                   '  *"rev-parse --absolute-git-dir"*) '
+                   '[ -z "${LCU_AGENT_HOME_GIT_DIRECTORY_UNREADABLE:-}" ] || exit 128; '
+                   'echo "$LCU_AGENT_HOME_GIT_DIRECTORY" ;;\n'
+                   '  *"worktree add"*) echo "${GIT_AUTHOR_NAME-<unset>}" '
+                   '>> "$LCU_TEST_DIR/git-worktree-add-author-names.txt"; '
+                   'printf \'%s\\n\' "$*" >> "$LCU_TEST_DIR/git-worktree-add-arguments.txt" ;;\n'
+                   'esac\n'
+                   'exit 0\n')
+        self.agent_home_git_directory = root / "agent-home-git-directory"
+        self.agent_home_git_directory.mkdir()
         # The remote side asks whether the box's own seat restart is still
         # running; "inactive" is the answer on a box that has been up a while,
         # so no case waits unless it says so. sleep records instead of
@@ -191,12 +209,20 @@ class LaunchHarness:
         }
         # Box-side, as on the real box: the update limit is read from the
         # box shell's environment, not carried from this Mac.
+        environment["LCU_AGENT_HOME_GIT_DIRECTORY"] = str(self.agent_home_git_directory)
+        if not self.agent_home_is_a_checkout:
+            environment["LCU_AGENT_HOME_NOT_A_CHECKOUT"] = "1"
+            environment["GIT_AUTHOR_NAME"] = "seat-running-the-launcher"
+        if self.agent_home_git_directory_unreadable:
+            environment["LCU_AGENT_HOME_GIT_DIRECTORY_UNREADABLE"] = "1"
         if self.update_timeout_seconds is not None:
             environment["LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS"] = str(
                 self.update_timeout_seconds)
         return environment
 
     unit_state = "inactive"
+    agent_home_is_a_checkout = True
+    agent_home_git_directory_unreadable = False
     update_timeout_seconds = None
 
     def update_lock_path(self):
@@ -725,6 +751,41 @@ def main() -> int:
               == seat_git_identity("seat-i"),
               git_identity(result["supervisor_environment"]))
 
+        # --- a new agent-home is made a worktree under the NEW seat's name,
+        # whichever seat's shell runs the launcher, so the post-checkout hook
+        # sees the seat's own agent-home and writes it no owner file. --------
+        harness = LaunchHarness(root / "new-agent-home-worktree-author")
+        harness.agent_home_is_a_checkout = False
+        harness.run(["seat-j", "--no-attach"])
+        authors_capture = harness.captures / "git-worktree-add-author-names.txt"
+        authors = (authors_capture.read_text(encoding="utf-8").split()
+                   if authors_capture.is_file() else [])
+        check("new agent-home: git worktree add runs with GIT_AUTHOR_NAME set to the new seat",
+              authors and set(authors) == {"seat-j"}, authors)
+        arguments_capture = harness.captures / "git-worktree-add-arguments.txt"
+        worktree_add_arguments = (arguments_capture.read_text(encoding="utf-8")
+                                  if arguments_capture.is_file() else "")
+        check("new agent-home: made on a detached HEAD at origin/main, on no seat-branch",
+              worktree_add_arguments.strip().endswith("worktree add --detach "
+                                                      f"{harness.home}/agents/seat-j origin/main")
+              and worktree_add_arguments.count("worktree add") == 1,
+              worktree_add_arguments)
+        check("new agent-home: marked with agent-home-marker in its git directory",
+              (harness.agent_home_git_directory / "agent-home-marker").is_file(),
+              list(harness.agent_home_git_directory.iterdir()))
+
+        harness = LaunchHarness(root / "new-agent-home-marker-not-written")
+        harness.agent_home_is_a_checkout = False
+        harness.agent_home_git_directory_unreadable = True
+        result = harness.run(["seat-k", "--no-attach"])
+        check("new agent-home whose git directory cannot be read: says the marker was not "
+              "written and the launch goes on",
+              "launch-claude-ubuntu: could not write agent-home-marker into the git directory of "
+              in result["replay"].stderr
+              and not (harness.agent_home_git_directory / "agent-home-marker").exists()
+              and result["replay"].returncode == 0,
+              (result["replay"].returncode, result["replay"].stderr[-600:]))
+
         # --- 9. the same binding on the ATTACHED path, including the
         # after-exit shell: that shell offers `claude --continue`, and a
         # continue run without the pin binds to a session-keyed store whose
@@ -943,20 +1004,25 @@ def main() -> int:
         harness = LaunchHarness(root / "update-lock-bound")
         harness.update_timeout_seconds = 30
         with AnotherUpdateHoldsTheLock(harness.update_lock_path()):
-            started = time.monotonic()
             result = harness.run(["seat-v", "--no-attach"])
-            elapsed = time.monotonic() - started
         check("update lock (box): a held lock skips this update immediately",
               harness.claude_updates() == [], harness.claude_updates())
         check("update lock (box): the skip is reported in exactly one line",
               "Another claude update is running; this launch uses the claude already installed.\n"
               == result["replay"].stderr,
               result["replay"].stderr[:400])
-        check("update lock (box): the seat is still prepared, without hanging",
-              result["replay"].returncode == 0 and harness.prepare_ran()
-              and elapsed < 15,
-              (result["replay"].returncode, f"{elapsed:.1f}s",
-               result["replay"].stderr[:300]))
+        # The skip line above is the marker that the lock was tried without
+        # waiting; handoff-supervisor-session-launch-and-seat-lock-test.py counts
+        # the helper's lock attempts.
+        check("update lock (box): the seat is still prepared",
+              result["replay"].returncode == 0 and harness.prepare_ran(),
+              (result["replay"].returncode, result["replay"].stderr[:300]))
+
+        # The timed-out outcome and the killed command are what show the
+        # helper's timeout fired; elapsed time is only a backstop, at
+        # least ten times the timeout so a busy machine cannot fail it.
+        helper_timeout_seconds = 2
+        helper_timeout_backstop_seconds = 15 * helper_timeout_seconds
 
         # --- the pseudo-terminal helper: a command that closes its terminal
         # and its stderr and then keeps running is stopped at the timeout
@@ -969,7 +1035,8 @@ def main() -> int:
                  "import os, sys, time; "
                  f"open({str(pid_file)!r}, 'w').write(str(os.getpid())); "
                  "os.close(1); os.close(2); time.sleep(600)"],
-                str(root), dict(os.environ), timeout_seconds=2)
+                str(root), dict(os.environ),
+                timeout_seconds=helper_timeout_seconds)
             closed_streams_timed_out = False
         except subprocess.TimeoutExpired:
             closed_streams_timed_out = True
@@ -986,7 +1053,7 @@ def main() -> int:
         check("pseudo-terminal helper: a command that closes both streams "
               "and keeps running is stopped at the timeout and does not "
               "survive",
-              closed_streams_timed_out and elapsed < 15
+              closed_streams_timed_out and elapsed < helper_timeout_backstop_seconds
               and pid_file.is_file() and not closed_streams_command_survived,
               (closed_streams_timed_out, f"{elapsed:.1f}s",
                pid_file.is_file(), closed_streams_command_survived))

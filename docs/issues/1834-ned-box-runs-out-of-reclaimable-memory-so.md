@@ -1,14 +1,14 @@
 ---
-issue: "[ned-box runs out of reclaimable memory, so systemd-oomd kills agent-seats and Bash-guard replay readings time out](https://github.com/nedschorus/nedschorus/issues/1834)"
+issue: "[ned-box runs out of reclaimable memory, so systemd-oomd kills agent-seats and readings by `nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py` time out](https://github.com/nedschorus/nedschorus/issues/1834)"
 ---
 
-# ned-box runs out of reclaimable memory, so systemd-oomd kills agent-seats and Bash-guard replay readings time out
+# ned-box runs out of reclaimable memory, so systemd-oomd kills agent-seats and readings by `nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py` time out
 
 ## What is wrong
 
 Five times from 2026-10-17 to 2026-10-22, systemd-oomd, Ubuntu's memory-pressure killer, has killed an agent-seat's whole tmux pane on ned-box, `claude` included. The seat loses whatever it had not yet saved, and the agent-crash-watcher relaunches it. On 2026-10-21 the agent-seat it killed was reboot-test, which was idle at the time.
 
-The first three kills came 30 to 63 seconds after merge-lane-2 started the Bash-guards replay check, `nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py`. The same load made five of the check's readings run past their 20 s timeout on [Search-file guard's time-limit and error note reuses its plain next-step line](https://github.com/nedschorus/nedschorus/pull/1825). Rerun with a 60 s timeout, each of those readings took 1 s. [Bash-guards replay check reads a timed-out reading once more](https://github.com/nedschorus/nedschorus/pull/1833) adds a retry for such timeouts. This issue is for the cause.
+The first three kills came 30 to 63 seconds after merge-lane-2 started `nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py`. The same load made five of the check's readings run past their 20 s timeout on [Search-file guard's time-limit and error note reuses its plain next-step line](https://github.com/nedschorus/nedschorus/pull/1825). Rerun with a 60 s timeout, each of those readings took 1 s. [Bash-guards replay check reads a timed-out reading once more](https://github.com/nedschorus/nedschorus/pull/1833) adds a retry for such timeouts. This issue is for the cause.
 
 The other two kills, on 2026-10-22 at 02:00:52Z and 10:01:02Z, followed no replay check. Each came within 61 seconds of the hourly snapshot that timeshift, ned-box's system backup, starts at the top of every hour: an rsync of `/`, `/home/nedlern` included, that walks 1.6 million files. In the hour before the first, no agent-seat started heavy work, and systemd-oomd also killed the login screen in another user's slice, so the pressure was machine-wide. Before the second, merge-lane-2 had started a full run of every test suite three minutes earlier. The first kill, on 2026-10-17, also came 44 seconds after a timeshift snapshot started.
 
@@ -17,7 +17,7 @@ The trace, with every measurement and its source, is at nedlern@ned-box:/home/ne
 - ned-box has 59.6G of RAM and no swap. `/tmp` is a tmpfs, which keeps its files in RAM. It holds 21G: 12G of agent-session scratchpads, 4.8G in 34 replay-check scratch directories the check left behind, and 3.1G in 562 `run-all-test-suites-*` log directories. Without swap, none of those 21G can be reclaimed, and killing a pane frees none of them.
 - Each replay-check run reads 17.5G of transcripts and starts 8 worker processes. It does not go through the free-memory admission that `scripts/run-all-test-suites.py` (class `MachineWideTestSuiteAdmission`) and mutation testing use.
 - That admission counts page cache as free memory, and does not count the tmpfs's pages as used.
-- systemd-oomd kills the scope with the most reclaimable memory. That is a long-lived agent-seat, not the process that applied the pressure.
+- systemd-oomd kills the scope with the most reclaim activity, as oomd.conf(5) on ned-box (`man oomd.conf`, under `DefaultMemoryPressureLimit=`) says. That is a long-lived agent-seat, not the process that applied the pressure.
 - timeshift runs as root from `/etc/cron.d/timeshift-hourly`, in rsync mode, and keeps 24 hourly snapshots; changing it needs root. No step under What to do covers timeshift yet.
 
 ## Why it matters

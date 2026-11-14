@@ -451,8 +451,10 @@ def main():
         claimed = runner.fresh_record_dir("stored-target")
         check("a name the log-store already holds is skipped",
               claimed.name == f"{today}-stored-target-2", f"claimed {claimed}")
+        check("the name given is claimed in the log-store as well",
+              (store_records / claimed.name).is_dir(), f"store holds {sorted(store_records.iterdir())}")
 
-        # Case 17c: the store cannot be listed; the name is checked against
+        # Case 17c: the name cannot be claimed in the store; it is checked against
         # this checkout alone, and stderr says so.
         store_records.chmod(0)
         try:
@@ -461,11 +463,11 @@ def main():
                 unchecked = runner.fresh_record_dir("unlisted-target")
         finally:
             store_records.chmod(0o755)
-        check("an unlistable store still yields a record directory",
+        check("a store that will not take the claim still yields a record directory",
               unchecked.name == f"{today}-unlisted-target" and unchecked.is_dir(),
               f"claimed {unchecked}")
-        check("an unlistable store is reported on stderr",
-              "could not be read" in caught.getvalue() and unchecked.name in caught.getvalue(),
+        check("a store that will not take the claim is reported on stderr",
+              "could not be claimed" in caught.getvalue() and unchecked.name in caught.getvalue(),
               f"stderr was {caught.getvalue()!r}")
     if saved_destination is None:
         os.environ.pop(destination_variable, None)
@@ -496,7 +498,7 @@ def main():
         check("new files anywhere under the watched record root are detected",
               found == [f"{records_name}/elsewhere.md"], f"stray list was {found}")
 
-    # The worktree check must run for either runtime.
+    # The worktree check must run for either agent-binary.
 
     runner_gate = load_runner()
     stray_name = "stray-file-a-claude-cell-should-not-write.md"
@@ -633,11 +635,11 @@ def main():
           runner_substitution.PROMPT_SCRATCH_DIRECTORY_PLACEHOLDER not in assembled,
           "the placeholder token reached the cell")
 
-    # Case 23: a text that is not a report is refused, on both runtimes. On
+    # Case 23: a text that is not a report is refused, on both agent-binaries. On
     # 2026-09-15 a Stop hook's note reached two claude cells, each answered
     # it, and the runner saved the answer — the text below opens one of them —
     # in place of a 3,684-word review, printed `saved:` and
-    # exited 0 (nedschorus#397). The runtime stand-ins return what a cell
+    # exited 0 (nedschorus#397). The agent-binary stand-ins return what a cell
     # captured; reports are checked on disk. The
     # stand-ins answer the same text at every launch, so the refused cell is
     # launched a second time and refused again (cases 38 to 43 are the
@@ -694,7 +696,7 @@ def main():
 
     # Case 24: the refused cell reaches the exit code. main() is driven with
     # every expensive dependency replaced — no model, no git walk, no corpus —
-    # and the record root in a temporary directory: one runtime answering with
+    # and the record root in a temporary directory: one agent-binary answering with
     # a non-report must make the run exit 1, with only the other's report on
     # disk; both answering with reports exits 0.
     runner_exit = load_runner()
@@ -740,10 +742,10 @@ def main():
               exit_code == expected_exit and saved == expected_saved,
               f"exit {exit_code}, saved {saved}, output {buffer.getvalue()!r}")
 
-    # Case 25: a cell that times out prints what its runtime wrote before it
+    # Case 25: a cell that times out prints what its agent-binary wrote before it
     # was cut off. subprocess.TimeoutExpired carries both piped streams, and
     # run_cell's handler printed only its FAILED line — the one ending that
-    # dropped a failed runtime's words. The streams arrive in three forms:
+    # dropped a failed agent-binary's words. The streams arrive in three forms:
     # text; bytes, which CPython hands back on a timeout even to a call that
     # asked for text, here ending partway through a character so the decoding
     # must replace rather than raise; and None, which is what a codex cell's
@@ -1005,8 +1007,8 @@ def main():
         return subprocess.CompletedProcess(list(command), 0, "", "")
 
     # The credential lists are pointed at a scratch home for the call, so the
-    # profile's denials name paths in it and the real home is neither scanned
-    # nor named in a failure line. The credential directories are re-rooted
+    # profile's denials name paths in it and the real home is not named in a
+    # failure line. The credential directories are re-rooted
     # from the real list rather than listed here, so a directory dropped from
     # CREDENTIAL_DIRECTORIES drops out of the profile.
     credential_scratch = tempfile.TemporaryDirectory()
@@ -1017,20 +1019,17 @@ def main():
     login_canary.parent.mkdir(parents=True)
     login_canary.write_text("CANARY-NOT-A-SECRET-sanity-check-adversarial-prompts-test\n", encoding="utf-8")
     shared = runner_memories.common
-    real_lists = (shared.CREDENTIAL_DIRECTORIES, shared.REVIEWER_PROGRAM_LOGIN_FILES,
-                  shared.credential_files_found_now)
+    real_lists = (shared.CREDENTIAL_DIRECTORIES, shared.REVIEWER_PROGRAM_LOGIN_FILES)
     try:
         runner_memories.run_agent_binary_unless_run_stopped = capture_command
         shared.CREDENTIAL_DIRECTORIES = tuple(
             scratch_home / directory.relative_to(pathlib.Path.home())
             for directory in real_lists[0])
         shared.REVIEWER_PROGRAM_LOGIN_FILES = {"codex": (login_canary,)}
-        shared.credential_files_found_now = lambda: []
         runner_memories.run_codex("a prompt no model ever sees")
     finally:
         runner_memories.run_agent_binary_unless_run_stopped = real_memories_launch
-        (shared.CREDENTIAL_DIRECTORIES, shared.REVIEWER_PROGRAM_LOGIN_FILES,
-         shared.credential_files_found_now) = real_lists
+        shared.CREDENTIAL_DIRECTORIES, shared.REVIEWER_PROGRAM_LOGIN_FILES = real_lists
     codex_command = captured.get("command", [])
     check("run_codex launches codex with memories disabled",
           ("--disable", "memories") in list(zip(codex_command, codex_command[1:])),
@@ -1093,7 +1092,7 @@ def main():
           ("--setting-sources", "user") in list(zip(claude_command, claude_command[1:])),
           f"composed command was {claude_command}")
 
-    # The claude runtime's model chain. Fable 5 is obsolete (user, 2026-09-04)
+    # The claude agent-binary's model chain. Fable 5 is obsolete (user, 2026-09-04)
     # and Fable is sometimes unavailable (user, 2026-09-11: "sometimes fable is
     # not available, so it should fall back to opus in that case"), so the cell
     # tries Fable 5.1 and falls back to Opus 5. The three ways an attempt can
@@ -1146,7 +1145,7 @@ def main():
         check("and the failed chain carries the cause of its last attempt",
               cause == ("exit-1", "no output"), cause)
 
-        # A failed attempt keeps the runtime's own words. A CLI that is logged
+        # A failed attempt keeps the agent-binary's own words. A CLI that is logged
         # out or out of credits explains itself on one of its streams and
         # nowhere else, and the chain CONTINUES past the failure -- so without
         # this the run saves a report and its whole account of the broken CLI
@@ -1313,7 +1312,7 @@ def main():
     check("and prints the shipper's line as `record:`",
           said.splitlines()[0] == "record: shipped: fine", said.splitlines()[:1])
     check("the closing line names the shipper for the dispositions round",
-          "scripts/sanity-check-record-ship.py" in said and "finding-dispositions.md" in said,
+          "scripts/sanity-check-record-ship.py" in said and "sanity-check-finding-dispositions.md" in said,
           said)
     check("and says the record is kept, not deleted",
           "not deleted" in said and "Delete the record directory" not in said, said)
@@ -1398,7 +1397,7 @@ def main():
                   and str(seen["failed-run"]) not in git(repo, "worktree", "list"),
                   git(repo, "worktree", "list"))
 
-    # Case 28: both runtimes launch in the copy handed to them. claude takes it
+    # Case 28: both agent-binaries launch in the copy handed to them. claude takes it
     # as its working directory; codex takes it as `-C`, which is also the root
     # its profile lets it write under. Commands are captured, never run.
     runner_launch = load_runner()
@@ -1410,20 +1409,15 @@ def main():
 
     review_checkout = pathlib.Path("/a/review/copy/of/the/commit")
     real_launch_run = agent_binary_launch_a_case_replaces(runner_launch)
-    # On Linux the codex cell's profile lists the credential files under the
-    # home by running `find` there: emptied, so the real home is not scanned.
-    real_launch_files_found = runner_launch.common.credential_files_found_now
     launch_error = None
     try:
         runner_launch.run_agent_binary_unless_run_stopped = capture_launch
-        runner_launch.common.credential_files_found_now = lambda: []
         runner_launch.run_claude("a prompt no model ever sees", review_checkout)
         runner_launch.run_codex("a prompt no model ever sees", review_checkout)
     except TypeError as error:
         launch_error = error
     finally:
         runner_launch.run_agent_binary_unless_run_stopped = real_launch_run
-        runner_launch.common.credential_files_found_now = real_launch_files_found
     claude_launches = [cwd for command, cwd in launches if command[0] == "claude"]
     codex_commands = [command for command, _ in launches if command[0] == "codex"]
     check("a claude cell runs in the review copy it is handed",
@@ -1434,7 +1428,7 @@ def main():
           and codex_commands[0][codex_commands[0].index("-C") + 1] == str(review_checkout),
           f"error {launch_error!r}, codex commands {codex_commands}")
 
-    # Cases 29-33 drive main() over a scratch repository with the runtimes
+    # Cases 29-33 drive main() over a scratch repository with the agent-binaries
     # replaced, so no model is called. A text carrying every adversarial prompt's required
     # phrases stands in for a report of any adversarial prompt.
     any_adversarial_prompt_report = (
@@ -1610,7 +1604,7 @@ def main():
     check("a quote differing from its source only in curly quotes raises no warning",
           buffer.getvalue() == "", f"output was {buffer.getvalue()!r}")
 
-    # Case 34: `--runtime` reruns one runtime; the other's cells do not launch.
+    # Case 34: `--runtime` reruns one agent-binary; the other's cells do not launch.
     # A rerun used to repeat both. The target is a skill, and every skill's
     # file is SKILL.md, so its record is named for the skill's directory too:
     # two skills checked on one day no longer share a stem.
@@ -1690,7 +1684,7 @@ def main():
               f"exit {code}, stdout {out!r}, stderr {err!r}")
 
     # Case 61: fresh-eyes without --problem-statement launches no cell and
-    # prints one SKIPPED line per runtime, naming the cell in full, while the
+    # prints one SKIPPED line per agent-binary, naming the cell in full, while the
     # other adversarial prompt still runs.
     with tempfile.TemporaryDirectory() as scratch:
         base = pathlib.Path(scratch)
@@ -1915,7 +1909,7 @@ def main():
         return (f"When a run of this sanity-check saved cut-adversarial-prompt-{other}'s report, "
                 f"triage the cut-adversarial-prompt from that report.\n"
                 f"When no run of this sanity-check saved a report of the "
-                f"cut-adversarial-prompt, write in finding-dispositions.md that the "
+                f"cut-adversarial-prompt, write in sanity-check-finding-dispositions.md that the "
                 f"cut-adversarial-prompt is unreviewed.\n")
 
     runner_relaunch = load_runner()
@@ -1969,7 +1963,7 @@ def main():
     # Case 39: the relaunch fails too. The cell is launched twice and no more,
     # its FAILED line carries the last launch's cause and says it was
     # relaunched, and the two lines under it send the agent to the other
-    # runtime's report or, without one, to record the adversarial prompt as unreviewed.
+    # agent-binary's report or, without one, to record the adversarial prompt as unreviewed.
     # Neither line depends on which cell finished first. A launcher that
     # returns the four values of the older contract, with no cause, is
     # reported by its exit code.
@@ -2037,7 +2031,7 @@ def main():
     # failed the first, so the cell is launched once, and the lines under its
     # FAILED line tell the agent to tell the user and give the command that
     # runs this one cell again: this run's target, each context document and
-    # the request, and the cell's adversarial prompt and runtime as the only --adversarial-prompt and
+    # the request, and the cell's adversarial prompt and agent-binary as the only --adversarial-prompt and
     # --runtime, quoted so a shell takes the line as it stands.
     request_path = pathlib.Path("a request.md")
     for cause_class in sorted(runner_relaunch.common.USER_CLEARABLE_CAUSE_CLASSES):
@@ -2088,12 +2082,6 @@ def main():
     # cold-read-codex-cell.py, recognised_failure_texts_for_model).
     runner_classes = load_runner()
     real_classes_run = agent_binary_launch_a_case_replaces(runner_classes)
-    # On Linux the codex cell's permission profile lists the credential files
-    # under the home, which it finds by running `find` there: emptied for
-    # these launches, as the launch-flag case above does, so the real home is
-    # not scanned and the only command the stand-ins see is the CLI's.
-    real_credential_files_found_now = runner_classes.common.credential_files_found_now
-    runner_classes.common.credential_files_found_now = lambda: []
     codex_logged_out = ("2026-09-18T19:37:41.140816Z ERROR codex_api::endpoint::"
                         "responses_websocket: failed to connect to websocket: HTTP "
                         "error: 401 Unauthorized, url: wss://api.openai.com/v1/responses")
@@ -2116,7 +2104,7 @@ def main():
         launched_commands.append(list(command))
         raise FileNotFoundError(2, "No such file or directory", command[0])
 
-    # Each row: the runtime, the class its text must be given, the stand-in,
+    # Each row: the agent-binary, the class its text must be given, the stand-in,
     # a piece of the detail, and how many times one launch calls the CLI (the
     # claude chain calls it once per model).
     real_cases = (
@@ -2166,7 +2154,6 @@ def main():
                       f"output was {output[:400]!r}")
     finally:
         runner_classes.run_agent_binary_unless_run_stopped = real_classes_run
-        runner_classes.common.credential_files_found_now = real_credential_files_found_now
 
     # Case 41: a timeout is not relaunched: the same launch would cost the
     # same hour. The triage instructions follow its FAILED line. A relaunch
@@ -2246,10 +2233,10 @@ def main():
 
     # Case 43: whole runs. A run limited to codex whose cell fails twice exits
     # 1 and prints the same two triage instructions, which name the other
-    # runtime's report without assuming this run launched it: the rerun the
-    # runner itself prints is a run of one runtime, and the other runtime's
+    # agent-binary's report without assuming this run launched it: the rerun the
+    # runner itself prints is a run of one agent-binary, and the other agent-binary's
     # report is then in the first run's record. Every line reaches the
-    # record's log. Then a run of both runtimes whose codex cell is logged
+    # record's log. Then a run of both agent-binaries whose codex cell is logged
     # out: the command under its FAILED line, run as printed, launches that
     # one cell and no other, into a record directory of its own.
     with tempfile.TemporaryDirectory() as scratch:
@@ -2422,7 +2409,7 @@ time.sleep(300)
         does in-process: what a real run does, with the roots in scratch.
 
         The codex profile's credential list comes back empty, so on Linux the
-        real home is not walked for credential files. Three environment
+        real home is not walked for credential files. Environment
         variables, each naming a file, hold the run at one moment so a case
         can send its signal there: DRIVER_HOLD_CODEX_RELAUNCH holds a codex
         cell's second launch while its profile is built, after run_cell has
@@ -2439,8 +2426,14 @@ time.sleep(300)
         may hand a signal sent to the process to any of its threads.
         DRIVER_HOLD_MAIN_THREAD_ONCE_EVERY_CELL_ENDED holds the main thread
         in its wait for the cells once no cell is left to wait for, before the
-        run counts the saved reports, until that file exists (`<file>.held`
-        again).
+        run counts the saved reports, until that file exists or the run is
+        stopped (`<file>.held` again). Once the file
+        DRIVER_SIGTERM_AT_MAIN_THREAD_LOCK_REACQUIRE names exists, the main
+        thread's next wait for the cells sends SIGTERM to the runner at the
+        start of a condition's lock re-acquire, after the timed wait has
+        returned and before the lock is held again. DRIVER_HOLD_STOP_HANDLER holds the stop signal's handler
+        before it sets RUN_STOPPED, as a busy machine may delay the main
+        thread, until that file exists (`<file>.held` again).
         DRIVER_PROBE_VERSIONS, set to any
         value, leaves the CLI version cache empty, so a cell probes the
         stand-in's `--version` as a real run does."""
@@ -2455,16 +2448,22 @@ module.RECORDS_ROOT = module.REPO_ROOT / "sanity-check-records"
 module.REVIEW_COPIES_ROOT = pathlib.Path({str(base / "review-copies")!r})
 if not os.environ.get("DRIVER_PROBE_VERSIONS"):
     module.CLI_VERSION_CACHE.update({{"claude": "1.1.1-test", "codex": "2.2.2-test"}})
-module.common.credential_files_found_now = lambda: []
 if hasattr(module, "STOPPED_PROCESS_GRACE_SECONDS"):
     module.STOPPED_PROCESS_GRACE_SECONDS = 3.0
 
-def held_until(path):
+def held_until(path, or_until=lambda: False):
     pathlib.Path(path + ".held").write_text("", encoding="utf-8")
     deadline = time.monotonic() + 60
-    while not pathlib.Path(path).exists() and time.monotonic() < deadline:
+    while not pathlib.Path(path).exists() and not or_until() and time.monotonic() < deadline:
         time.sleep(0.02)
 
+stop_handler_hold = os.environ.get("DRIVER_HOLD_STOP_HANDLER")
+if stop_handler_hold:
+    stop_run = module.stop_run_on_signal
+    def stop_handler_held(*arguments):
+        held_until(stop_handler_hold)
+        return stop_run(*arguments)
+    module.stop_run_on_signal = stop_handler_held
 relaunch_hold = os.environ.get("DRIVER_HOLD_CODEX_RELAUNCH")
 if relaunch_hold:
     profile = module.common.codex_credential_denying_permission_profile_arguments
@@ -2508,9 +2507,49 @@ if cells_ended_hold:
     def main_thread_held_once_every_cell_ended(*arguments, **keywords):
         finished, waiting = wait_for_cells(*arguments, **keywords)
         if not waiting:
-            held_until(cells_ended_hold)
+            held_until(cells_ended_hold, module.RUN_STOPPED.is_set)
         return finished, waiting
     module.concurrent.futures.wait = main_thread_held_once_every_cell_ended
+reacquire_go = os.environ.get("DRIVER_SIGTERM_AT_MAIN_THREAD_LOCK_REACQUIRE")
+if reacquire_go:
+    import signal, threading
+    wait_for_cells = module.concurrent.futures.wait
+    reacquire = threading.Condition._acquire_restore
+    armed = []
+    def sigterm_then_reacquire(condition, state):
+        if armed and threading.current_thread() is threading.main_thread():
+            armed.clear()
+            signal.raise_signal(signal.SIGTERM)
+        return reacquire(condition, state)
+    threading.Condition._acquire_restore = sigterm_then_reacquire
+    def wait_armed_once_told(*arguments, **keywords):
+        if pathlib.Path(reacquire_go).exists() and not armed and not module.RUN_STOPPED.is_set():
+            armed.append(1)
+        return wait_for_cells(*arguments, **keywords)
+    module.concurrent.futures.wait = wait_armed_once_told
+if os.environ.get("DRIVER_SIGTERM_AT_MAIN_THREAD_LOCK_REACQUIRE_IN_SECOND_SUBMIT"):
+    import signal, threading
+    reacquire_in_submit = threading.Condition._acquire_restore
+    submits = []
+    def sigterm_then_reacquire_in_submit(condition, state):
+        if len(submits) == 2 and threading.current_thread() is threading.main_thread():
+            submits.append(1)
+            signal.raise_signal(signal.SIGTERM)
+        return reacquire_in_submit(condition, state)
+    threading.Condition._acquire_restore = sigterm_then_reacquire_in_submit
+    submit = module.concurrent.futures.ThreadPoolExecutor.submit
+    def submit_counted(pool, *arguments, **keywords):
+        submits.append(1)
+        return submit(pool, *arguments, **keywords)
+    module.concurrent.futures.ThreadPoolExecutor.submit = submit_counted
+if os.environ.get("DRIVER_SIGTERM_IN_CELLS_POOL_SHUTDOWN"):
+    import signal, threading
+    shutdown = module.concurrent.futures.ThreadPoolExecutor.shutdown
+    def sigterm_then_shutdown(pool, *arguments, **keywords):
+        if threading.current_thread() is threading.main_thread():
+            signal.raise_signal(signal.SIGTERM)
+        return shutdown(pool, *arguments, **keywords)
+    module.concurrent.futures.ThreadPoolExecutor.shutdown = sigterm_then_shutdown
 ship_hold = os.environ.get("DRIVER_HOLD_FIRST_SHIP")
 if ship_hold:
     ship = module.ship_record
@@ -2666,26 +2705,174 @@ sys.exit(module.main())
                     process.communicate()
                 end_stand_ins(recorded)
 
+    # Case 63: SIGTERM that the main thread takes inside its wait for the
+    # cells, between the timed wait's return and the re-acquire of the
+    # condition's lock. A handler that raised there left the lock released,
+    # `with` then released it again, and RuntimeError replaced the stop: exit
+    # 1, a traceback, no STOPPED line and no record shipped.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        target = "docs/stopped-at-a-lock-reacquire.md"
+        repo = scratch_repository_with_design(base, target)
+        programs, recorded = stand_in_agent_binaries(base)
+        reacquire_go = base / "sigterm-at-lock-reacquire"
+        environment = runner_process_environment(programs, recorded, codex="report")
+        environment["DRIVER_SIGTERM_AT_MAIN_THREAD_LOCK_REACQUIRE"] = str(reacquire_go)
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(runner_driver(base, repo)),
+             "--target", target, "--adversarial-prompt", "cut"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            records_root = repo / "sanity-check-records"
+            started = wait_until(
+                lambda: len(recorded_process_ids(recorded, "claude")) == 1
+                and any(records_root.glob("*/cut-adversarial-prompt-codex.md")))
+            reacquire_go.write_text("", encoding="utf-8")
+            try:
+                out, err = process.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                out, err = process.communicate()
+            check("a SIGTERM the main thread takes as it re-acquires a lock in its wait "
+                  "for the cells ends the run with its STOPPED line, its record shipped",
+                  started and process.returncode == -signal.SIGTERM
+                  and "Traceback" not in err
+                  and "STOPPED: SIGTERM ended this run" in out
+                  and out.splitlines()[-1:] != []
+                  and out.splitlines()[-1].startswith("record: shipped: ")
+                  and left_in_copies_root(base) == [],
+                  f"started {started}, exit {process.returncode}, "
+                  f"copies root {left_in_copies_root(base)}, stdout {out!r}, stderr {err!r}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            end_stand_ins(recorded)
+
+    # Case 64: as case 63, but the SIGTERM lands while the main thread submits
+    # the second cell, where submit's idle-thread semaphore re-acquires its
+    # condition's lock.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        target = "docs/stopped-at-a-lock-reacquire-in-submit.md"
+        repo = scratch_repository_with_design(base, target)
+        programs, recorded = stand_in_agent_binaries(base)
+        environment = runner_process_environment(programs, recorded)
+        environment["DRIVER_SIGTERM_AT_MAIN_THREAD_LOCK_REACQUIRE_IN_SECOND_SUBMIT"] = "1"
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(runner_driver(base, repo)),
+             "--target", target, "--adversarial-prompt", "cut"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            try:
+                out, err = process.communicate(timeout=60)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                out, err = process.communicate()
+            check("a SIGTERM the main thread takes as it re-acquires a lock while it "
+                  "submits a cell ends the run with its STOPPED line, its record shipped",
+                  process.returncode == -signal.SIGTERM
+                  and "Traceback" not in err
+                  and "STOPPED: SIGTERM ended this run" in out
+                  and out.splitlines()[-1:] != []
+                  and out.splitlines()[-1].startswith("record: shipped: ")
+                  and left_in_copies_root(base) == [],
+                  f"exit {process.returncode}, copies root {left_in_copies_root(base)}, "
+                  f"stdout {out!r}, stderr {err!r}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            end_stand_ins(recorded)
+
+    # Case 65: a SIGTERM the main thread takes inside the cells' pool's
+    # shutdown, as `with` exits once every cell has ended. The handler only
+    # records it there, so the raise after the pool is what makes the run end
+    # by the signal: without it the run ended with exit 0.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        target = "docs/stopped-in-the-cells-pool-shutdown.md"
+        repo = scratch_repository_with_design(base, target)
+        programs, recorded = stand_in_agent_binaries(base)
+        environment = runner_process_environment(
+            programs, recorded, codex="report", claude="report")
+        environment["DRIVER_SIGTERM_IN_CELLS_POOL_SHUTDOWN"] = "1"
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(runner_driver(base, repo)),
+             "--target", target, "--adversarial-prompt", "cut"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            try:
+                out, err = process.communicate(timeout=60)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                out, err = process.communicate()
+            records = sorted((repo / "sanity-check-records").glob("*"))
+            record = records[0] if len(records) == 1 else None
+            check("a SIGTERM the main thread takes in the cells' pool's shutdown, once every "
+                  "cell has ended, prints what a finished run prints and ends the run by the "
+                  "signal, its copy removed",
+                  record is not None
+                  and process.returncode == -signal.SIGTERM
+                  and "Traceback" not in err
+                  and "STOPPED:" not in out
+                  and f"sanity-check complete: reports in {record}." in out
+                  and left_in_copies_root(base) == [],
+                  f"record {record}, exit {process.returncode}, "
+                  f"copies root {left_in_copies_root(base)}, stdout {out!r}, stderr {err!r}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            end_stand_ins(recorded)
+
     # Case 45: SIGINT sent to the runner's whole process group, as Ctrl-C at a
-    # terminal sends it. Each agent-binary dies of the signal itself. The
-    # runner used to take that for a failed launch: it printed RETRYING, ran
-    # the codex cell again and went on to the claude chain's second model,
-    # then waited for those launches. A stopped run launches nothing more.
+    # terminal sends it. The agent-binaries are in sessions of their own, so
+    # the signal reaches the runner alone. The handler is held before it sets
+    # RUN_STOPPED, as a busy machine may delay the main thread: an
+    # agent-binary in the runner's group died of the signal in that gap, and
+    # its cell printed RETRYING, ran the codex cell again and went on to the
+    # claude chain's second model. A stopped run launches nothing more.
     with tempfile.TemporaryDirectory() as scratch:
         base = pathlib.Path(scratch).resolve()
         repo = scratch_repository_with_design(base)
         programs, recorded = stand_in_agent_binaries(base)
+        stop_handler_hold = base / "stop-handler-hold"
+        environment = runner_process_environment(programs, recorded)
+        environment["DRIVER_HOLD_STOP_HANDLER"] = str(stop_handler_hold)
         process = subprocess.Popen(
             [sys.executable, "-B", str(runner_driver(base, repo)),
              "--target", "docs/design.md", "--adversarial-prompt", "cut"],
-            env=runner_process_environment(programs, recorded),
+            env=environment,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             start_new_session=True)
         try:
             started = wait_until(
                 lambda: len(recorded_process_ids(recorded, "claude")) == 1
                 and len(recorded_process_ids(recorded, "codex")) == 1)
+            first_launches = [launch for name in ("claude", "codex")
+                              for launch, _child in recorded_process_ids(recorded, name)]
+            in_runner_group = [launch for launch in first_launches
+                               if os.getpgid(launch) == process.pid]
             os.killpg(process.pid, signal.SIGINT)
+            handler_held = wait_until(
+                lambda: stop_handler_hold.with_name(stop_handler_hold.name + ".held").exists())
+            # Bounded, so a fixed runner costs these seconds; a loaded machine
+            # can only make a broken runner pass here, never a fixed one fail.
+            acted_while_held = wait_until(
+                lambda: len(recorded_process_ids(recorded, "claude")) > 1
+                or len(recorded_process_ids(recorded, "codex")) > 1
+                or not all(process_is_running(launch) for launch in first_launches),
+                3.0)
+            stop_handler_hold.write_text("", encoding="utf-8")
+            check("SIGINT to the whole process group does not reach the "
+                  "agent-binaries: each is in a session of its own, and none ended "
+                  "or was launched again while the handler had not yet run",
+                  started and handler_held and in_runner_group == []
+                  and not acted_while_held,
+                  f"started {started}, handler held {handler_held}, launches in the "
+                  f"runner's group {in_runner_group}, an agent-binary ended or was "
+                  f"launched again {acted_while_held}")
             try:
                 out, err = process.communicate(timeout=20)
                 ended_by_itself = True
@@ -2770,12 +2957,8 @@ sys.exit(module.main())
         saved_environment = dict(os.environ)
         results = {}
         buffer = io.StringIO()
-        # On Linux the codex profile walks the home for credential files:
-        # emptied, so the real home is not walked.
-        real_bytes_files_found = runner_bytes.common.credential_files_found_now
         try:
             os.environ.update(environment)
-            runner_bytes.common.credential_files_found_now = lambda: []
             with contextlib.redirect_stdout(buffer):
                 for name, launcher in (("codex", runner_bytes.run_codex),
                                        ("claude", runner_bytes.run_claude)):
@@ -2784,7 +2967,6 @@ sys.exit(module.main())
                     except UnicodeDecodeError as error:
                         results[name] = error
         finally:
-            runner_bytes.common.credential_files_found_now = real_bytes_files_found
             os.environ.clear()
             os.environ.update(saved_environment)
         for name in ("codex", "claude"):
@@ -3550,7 +3732,7 @@ sys.exit(module.main())
                   f"exit {code!r}, review {review!r}")
 
     # A version probe that returns while the run is stopped, such as one the
-    # stop ended with exit 0 and no output, is not cached as the runtime's
+    # stop ended with exit 0 and no output, is not cached as the agent-binary's
     # version.
     runner_probe = load_runner()
     real_probe_run = runner_probe.subprocess.run
@@ -3565,6 +3747,25 @@ sys.exit(module.main())
     check("a version probe that returns while the run is stopped is not cached",
           probed == "unknown" and "codex" not in runner_probe.CLI_VERSION_CACHE,
           f"probed {probed!r}, cache {runner_probe.CLI_VERSION_CACHE!r}")
+
+    # The version probe starts in a session of its own, as an agent-binary's
+    # launch does, so a stop signal sent to the runner's process group cannot
+    # end the probe and leave "unknown" cached as the version.
+    runner_session = load_runner()
+    real_session_run = runner_session.subprocess.run
+    probe_keywords = []
+    try:
+        def recording_run(*a, **k):
+            probe_keywords.append(k)
+            return subprocess.CompletedProcess(a[0], 0, stdout="codex 1.2.3\n", stderr=None)
+        runner_session.subprocess.run = recording_run
+        session_probed = runner_session.runtime_cli_version("codex")
+    finally:
+        runner_session.subprocess.run = real_session_run
+    check("the version probe starts in a session of its own",
+          len(probe_keywords) == 1 and probe_keywords[0].get("start_new_session") is True
+          and session_probed == "codex-1.2.3",
+          f"probe keywords {probe_keywords!r}, probed {session_probed!r}")
 
     # Git failures the runner reads. A directory whose .git file names no git
     # directory makes every git command in it exit 128, as a broken review

@@ -13,8 +13,10 @@ Prints one line per case and exits non-zero if any case fails.
 """
 
 import ast
+import contextlib
 import fcntl
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -50,6 +52,49 @@ SEEN_RUNNING = datetime(2026, 10, 12, 3, 0, tzinfo=timezone.utc)
 # The supervisor's last_poll_at carries microseconds (stamp_heartbeat writes
 # datetime.now(timezone.utc).isoformat()), so the fixture's must too.
 DIED_AT = datetime(2026, 10, 12, 3, 14, 18, 437512, tzinfo=timezone.utc)
+
+
+def leftover_shell_condition_against_real_recovery_output(owner_text, root):
+    """Run recover_seat on a seat behind a leftover shell, with no terminal, and return
+    (condition, detail) for the owner task's REFUSED-then-dry-run instruction."""
+    phrase = watcher_module.RECOVER_CRASHED_SEATS_DRY_RUN_WOULD_ASK_THE_OPERATOR_REPORT_MARKER
+    seat = "merge-lane-2"
+    agents_root, handoffs, projects = root / "real-recovery-agents", root / "real-recovery-handoffs", root / "real-recovery-projects"
+    (agents_root / seat).mkdir(parents=True)
+    handoffs.mkdir()
+    projects.mkdir()
+    replaced = {}
+
+    def stub(name, value):
+        replaced[name] = getattr(recovery_module, name)
+        setattr(recovery_module, name, value)
+
+    def run(prediction, dry_run):
+        stub("predicted_assessment_once_the_leftover_idle_shell_is_closed", lambda *_: prediction)
+        return recovery_module.recover_seat(seat, agents_root, handoffs, projects, dry_run=dry_run,
+                                            fresh_session_from_conversation_tail=False)
+
+    try:
+        stub("tmux_session_alive_anywhere",
+             lambda name: (True, f"tmux session '{name}' is alive on socket '{name}'"))
+        stub("seat_supervisor_confirmed_by_ps",
+             lambda name, lock: (recovery_module.SUPERVISOR_NOT_CONFIRMED, f"no supervisor lock at {lock}"))
+        stub("tmux_session_is_a_leftover_idle_shell",
+             lambda name, directory: (True, [4242], "its one pane runs bash"))
+        stub("recovery_has_an_operator_terminal", lambda: False)
+        stub("durable_checkout_file_a_launch_here_runs", lambda: Path(recovery_module.__file__))
+        launches = ("resume", None)
+        unattended = run(launches, dry_run=False)
+        dry_run_that_asks = run(launches, dry_run=True)
+        dry_run_that_reports = run(("seat-already-running", "a live supervisor holds the lock"),
+                                   dry_run=True)
+    finally:
+        for name, value in replaced.items():
+            setattr(recovery_module, name, value)
+    condition = (phrase in owner_text
+                 and unattended.startswith(f"{seat}: REFUSED — ") and phrase not in unattended
+                 and phrase in dry_run_that_asks and phrase not in dry_run_that_reports)
+    return condition, repr((unattended, dry_run_that_asks, dry_run_that_reports))
 
 
 def check(case_name, condition, detail=""):
@@ -88,6 +133,32 @@ class Harness:
         self.recorded_stop_on_purpose = False
         # (title, notice text, action) -> alert id; None: the Watcher writes no alert.
         self.user_alert_write_to_pending = None
+        # The task lists the Watcher writes into, through the program's own writer.
+        self.task_lists_directory = log_directory / "task-lists"
+        # An OSError the task writes to these agent-seats' lists raise, as when a task list cannot
+        # be written; None: none.
+        self.task_write_error = None
+        self.task_write_error_agent_seats = ("merge-lane-2",)
+
+    def agent_seat_task_write(self, agent_seat, subject, description):
+        if self.task_write_error is not None and agent_seat in self.task_write_error_agent_seats:
+            raise self.task_write_error
+        (self.task_lists_directory / f"nedschorus-{agent_seat}-tasks").mkdir(parents=True,
+                                                                             exist_ok=True)
+        return watcher_module.agent_seat_task_list_new_pending_task_writer_function_factory_for_task_lists_directory(self.task_lists_directory)(
+            agent_seat, subject, description)
+
+    def tasks(self, kind=None, owner=None):
+        """The tasks written, each with its agent-seat as "owner"; of one kind when kind is given,
+        on one agent-seat's list when owner is given."""
+        found = []
+        for task_file in sorted(self.task_lists_directory.glob("nedschorus-*-tasks/*.json")):
+            task = json.loads(task_file.read_text(encoding="utf-8"))
+            task["owner"] = task_file.parent.name[len("nedschorus-"):-len("-tasks")]
+            if ((kind is None or task["subject"].startswith(f"agent-crash-watcher, {kind}:"))
+                    and (owner is None or task["owner"] == owner)):
+                found.append(task)
+        return found
 
     def assess(self, seat):
         if seat in self.assessment_errors:
@@ -127,6 +198,7 @@ class Harness:
             recover=self.recover, open_window=self.open_window,
             show_notice_words=lambda path: ["/usr/bin/python3", str(SCRIPT_PATH),
                                             "--show-notice", path],
+            agent_seat_task_write=self.agent_seat_task_write,
             open_page=self.open_page, user_alert_write_to_pending=self.user_alert_write_to_pending,
             stopped_on_purpose=lambda seat, detail: self.on_purpose,
             recorded_exit_question=recovery_module.restart_question_for_a_seat_with_a_recorded_exit,
@@ -140,7 +212,7 @@ class Harness:
         watcher.run(list(seats))
 
     def decisions(self):
-        path = self.log_directory / "decisions.jsonl"
+        path = self.log_directory / watcher_module.AGENT_CRASH_WATCHER_DECISIONS_FILE_NAME
         if not path.is_file():
             return []
         return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
@@ -148,6 +220,15 @@ class Harness:
     def notices(self):
         directory = self.log_directory / "notices"
         return sorted(directory.iterdir()) if directory.is_dir() else []
+
+    def reports(self):
+        """Every notice and every task, leaving out the owner's copy of a down seat's task: each
+        is one report of a failure or a seat left down."""
+        return [*self.notices(), *(task["subject"] for task in self.tasks()
+                                   if task["owner"] != watcher_module.AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME
+                                   or not task["subject"].startswith(tuple(
+                                       f"agent-crash-watcher, {kind}:"
+                                       for kind in watcher_module.DOWN_AGENT_SEAT_FAILURE_KINDS)))]
 
 
 def crash_after_running(harness, seat="merge-lane-2", start=SEEN_RUNNING):
@@ -236,24 +317,53 @@ def run_decision_cases(root: Path):
     harness = Harness(root / "second-crash")
     first_restart = crash_after_running(harness)
     crash_after_running(harness, start=first_restart + timedelta(minutes=5))
-    second_crash_notices = [path for path in harness.notices() if "second-crash" in path.name]
-    text = second_crash_notices[0].read_text(encoding="utf-8") if second_crash_notices else ""
+    second_crash_tasks = harness.tasks("second-crash", "merge-lane-2")
+    task = second_crash_tasks[0] if second_crash_tasks else {"subject": "", "description": ""}
+    text = task["description"]
     check("a second crash within the hour is not restarted",
           harness.recoveries == ["merge-lane-2"], repr(harness.recoveries))
-    check("the second-crash notice gives both crashes, the earlier restart and the command",
-          "merge-lane-2 is down" in text and "had restarted it at 2026-10-12 03:16 UTC" in text
-          and "python3 scripts/recover-crashed-seats.py merge-lane-2" in text
-          and f"  {watcher_module.MAC_LAUNCHER} merge-lane-2\n" in text, text)
-    check("the second-crash notice's restart command gives recovery a terminal with ssh -t",
-          "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
-          "scripts/recover-crashed-seats.py merge-lane-2'\n" in text, text)
-    check("the second-crash notice names the transcripts by their path on the Mac",
-          "/Volumes/nedhome/.claude/projects/-merge-lane-2" in text, text)
-    check("the second-crash notice opens as its HTML page in the Mac's browser",
-          harness.windows[-1][0] == "page" and harness.windows[-1][1].endswith(".html")
-          and "/notice-pages/" in harness.windows[-1][1], repr(harness.windows[-1]))
-    check("a notice gives the record's path on the Mac and on ned-box",
-          f"(on ned-box: {root / 'second-crash' / 'decisions.jsonl'})" in text, text)
+    check("a second crash becomes one pending task on the crashed agent-seat's own task list, "
+          "whose subject names the failure's kind and what to fix",
+          len(second_crash_tasks) == 1 and task["owner"] == "merge-lane-2"
+          and task["status"] == "pending"
+          and task["subject"] == watcher_module.FAILURE_KIND_TO_AGENT_SEAT_TASK_SUBJECT_TEMPLATE[
+              "second-crash"].format(seat="merge-lane-2")
+          and "find why and fix the cause" in task["subject"], repr(harness.tasks()))
+    owner_copies = harness.tasks("second-crash", "fleet-restart-at-login")
+    owner_text = owner_copies[0]["description"] if owner_copies else ""
+    check("a second crash also becomes one task on the crash watcher's owner's list, with the same "
+          "subject, which says the seat is down and gives the restart command",
+          len(owner_copies) == 1 and owner_copies[0]["subject"] == task["subject"]
+          and "merge-lane-2 is down, and no other program restarts it" in owner_text
+          and "  python3 scripts/recover-crashed-seats.py merge-lane-2\n" in owner_text
+          and "If recovery prints REFUSED, run the same command with --dry-run added" in owner_text
+          and "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
+              "scripts/recover-crashed-seats.py merge-lane-2'\n" in owner_text
+          and "had restarted it at 2026-10-12 03:16 UTC" in owner_text, owner_text)
+    check("the owner task's leftover-shell condition is met by what recovery really prints: its "
+          "unattended run refuses without the words, and its dry run says them only when a yes "
+          "at a terminal would restart the seat",
+          *leftover_shell_condition_against_real_recovery_output(owner_text, root))
+    check("the seat's own copy of the task carries no restart command",
+          "recover-crashed-seats.py merge-lane-2\n" not in text, text)
+    check("a second crash shows the user no notice, no page and no window",
+          harness.notices() == [] and harness.windows == [], repr((harness.notices(), harness.windows)))
+    check("the second-crash task gives the stop, the earlier restart and the transcripts on ned-box",
+          "merge-lane-2 stopped at about" in text
+          and "had restarted it at 2026-10-12 03:16 UTC" in text
+          and "/home/nedlern/.claude/projects/-merge-lane-2" in text, text)
+    check("a task tells the agent-seat to find and fix the cause, and when to tell the user",
+          "Find the cause and fix it going forward. A fix to code, settings or instructions goes "
+          "in a pull request.\n" in text
+          and "If the fix needs a change to a guarded-file, tell the user" in text
+          and "If you cannot find the cause, or cannot fix it, tell the user" in text, text)
+    check("a task cites the record as a path on ned-box, which works from either machine",
+          f"Record: nedlern@ned-box:{root / 'second-crash' / watcher_module.AGENT_CRASH_WATCHER_DECISIONS_FILE_NAME}\n" in text, text)
+    check("the task written is logged with its id and task list",
+          any(entry["decision"] == "task written for the agent-seat to find the cause and fix it"
+              and entry["kind"] == "second-crash" and entry["task"] == 1
+              and entry["task_list"].endswith("nedschorus-merge-lane-2-tasks")
+              for entry in harness.decisions()), repr(harness.decisions()))
 
     harness = Harness(root / "after-the-hour")
     first_restart = crash_after_running(harness)
@@ -264,39 +374,29 @@ def run_decision_cases(root: Path):
     harness = Harness(root / "recovery-failed",
                       recovery_result=(1, "merge-lane-2: REFUSED — the durable checkout is missing"))
     crash_after_running(harness)
-    failed = [path for path in harness.notices() if "recovery-failed" in path.name]
-    text = failed[0].read_text(encoding="utf-8") if failed else ""
-    check("a failed recovery reaches the user with its exit code and its words",
-          "exited 1" in text and "REFUSED — the durable checkout is missing" in text
-          and "launch-claude-ubuntu merge-lane-2" in text, text)
-    check("the failed-recovery notice asks the user to paste it into a named ned-box agent-seat, "
-          "not to judge whether recovery's line says what to do",
-          "1. Paste this whole notice into the window of an agent-seat on ned-box, such as "
-          "fleet-restart-at-login" in text and "says what to do" not in text, text)
-    check("the failed-recovery notice gives the agent-seat its own part, which leaves the "
-          "restart from the Mac to the user",
-          text.index("2. Then restart merge-lane-2 by running in a Terminal on your Mac:")
-          < text.index("For the agent-seat on ned-box this notice is pasted into:")
-          and "Do not restart merge-lane-2 yourself" in text, text)
-    check("the failed-recovery notice's restart command gives recovery a terminal with ssh -t",
-          "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
-          "scripts/recover-crashed-seats.py merge-lane-2'\n" in text, text)
+    failed = harness.tasks("recovery-failed", "merge-lane-2")
+    text = failed[0]["description"] if failed else ""
+    check("a failed recovery becomes one task on the crashed agent-seat's list, with recovery's "
+          "exit code and its words, and no notice",
+          len(failed) == 1 and failed[0]["owner"] == "merge-lane-2"
+          and "exited 1" in text and "REFUSED — the durable checkout is missing" in text
+          and harness.notices() == [], repr((harness.tasks(), harness.notices())))
 
     harness = Harness(root / "recovery-failed-last-line",
                       recovery_result=(1, "merge-lane-2: checking the seat\n"
                                           "merge-lane-2: REFUSED — the seat directory is in use\n\n"))
     crash_after_running(harness)
-    failed = [path for path in harness.notices() if "recovery-failed" in path.name]
-    text = failed[0].read_text(encoding="utf-8") if failed else ""
-    check("the failed-recovery notice quotes recovery's last line, not its earlier ones",
-          "Its last line was:\n  merge-lane-2: REFUSED — the seat directory is in use\n" in text
+    failed = harness.tasks("recovery-failed", "merge-lane-2")
+    text = failed[0]["description"] if failed else ""
+    check("the failed-recovery task quotes recovery's last line, not its earlier ones",
+          "Recovery's last line was:\n  merge-lane-2: REFUSED — the seat directory is in use\n" in text
           and "checking the seat" not in text, text)
     harness = Harness(root / "recovery-failed-silent", recovery_result=(1, ""))
     crash_after_running(harness)
-    failed = [path for path in harness.notices() if "recovery-failed" in path.name]
-    text = failed[0].read_text(encoding="utf-8") if failed else ""
+    failed = harness.tasks("recovery-failed", "merge-lane-2")
+    text = failed[0]["description"] if failed else ""
     check("a recovery that printed nothing is said to have printed nothing",
-          "Its last line was:\n  (it printed nothing)\n" in text, text)
+          "Recovery's last line was:\n  (it printed nothing)\n" in text, text)
     check("a failed recovery is logged",
           any(entry["decision"].startswith("recovery failed") for entry in harness.decisions()),
           repr(harness.decisions()))
@@ -312,6 +412,9 @@ def run_decision_cases(root: Path):
           and not harness.state["seats"]["merge-lane-2"].get("recovery_attempts"),
           repr(harness.state))
 
+    check("the watcher's already-running marker is recovery's",
+          watcher_module.SEAT_ALREADY_RUNNING_REPORT_MARKER
+          == recovery_module.SEAT_ALREADY_RUNNING_REPORT_MARKER)
     check("the watcher's started-outside-the-user-systemd-manager marker is recovery's",
           watcher_module.AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER
           == recovery_module.AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER)
@@ -444,7 +547,7 @@ def run_decision_cases(root: Path):
         state=harness.state, now=SEEN_RUNNING + timedelta(minutes=17), boot_at=BOOT,
         log_directory=harness.log_directory, assess=None, died_at_about=None,
         transcripts_directory=None, recover=None, open_window=harness.open_window,
-        show_notice_words=None)
+        show_notice_words=None, agent_seat_task_write=None)
     shown = watcher.show({"attach_seat": "merge-lane-2"})
     check("a run with no seat-window opener, such as a failed run's report, leaves the "
           "restarted seat's window pending",
@@ -454,6 +557,7 @@ def run_decision_cases(root: Path):
     harness = Harness(root / "mac-unreachable-for-a-notice",
                       recovery_result=(1, "merge-lane-2: REFUSED — the durable checkout is missing"),
                       window_exit_codes=[1])
+    harness.task_write_error = OSError("the task list cannot be written")
     crash_after_running(harness)
     pending = harness.state["pending_notices"]
     check("a notice the Mac cannot be reached for stays pending",
@@ -467,10 +571,12 @@ def run_decision_cases(root: Path):
     harness.assessment_errors["merge-lane-2"] = OSError("Permission denied: '/home/nedlern/agents'")
     harness.run(SEEN_RUNNING)
     harness.run(SEEN_RUNNING + timedelta(minutes=1))
-    failed = [path for path in harness.notices() if "assessment-failed" in path.name]
-    text = failed[0].read_text(encoding="utf-8") if failed else ""
-    check("an assessment that raises reaches the user once, with the error",
-          len(failed) == 1 and "Permission denied" in text, repr(harness.notices()))
+    failed = harness.tasks("assessment-failed")
+    text = failed[0]["description"] if failed else ""
+    check("an assessment that raises becomes one task, on the crash watcher's owner's list only, "
+          "with the error, and no notice",
+          len(failed) == 1 and failed[0]["owner"] == "fleet-restart-at-login" and "Permission denied" in text
+          and harness.notices() == [], repr((harness.tasks(), harness.notices())))
     check("an assessment that raises is logged on every run",
           len([entry for entry in harness.decisions()
                if entry["decision"] == "could not assess"]) == 2, repr(harness.decisions()))
@@ -486,11 +592,11 @@ def run_handled_crash_cases(root: Path):
     restarted_at = crash_after_running(harness)
     for minutes in range(2, 10):
         harness.run(restarted_at + timedelta(minutes=minutes))
-    second = [path for path in harness.notices() if "second-crash" in path.name]
+    second = harness.tasks("second-crash", "merge-lane-2")
     check("a seat that dies again after a restart, before a run sees it running, "
-          "reaches the user as a second crash",
+          "is handed to it as a second crash",
           harness.recoveries == ["merge-lane-2"] and len(second) == 1,
-          repr((harness.recoveries, harness.notices())))
+          repr((harness.recoveries, harness.reports())))
     check("a restart that succeeded counts as a sighting of the seat running",
           harness.state["seats"]["merge-lane-2"]["last_seen_running_at"]
           == watcher_module.timestamp(restarted_at), repr(harness.state["seats"]))
@@ -510,14 +616,14 @@ def run_handled_crash_cases(root: Path):
     harness.died_at = failed_at + timedelta(minutes=3, microseconds=250001)
     for minutes in (4, 5, 6):
         harness.run(failed_at + timedelta(minutes=minutes))
-    second = [path for path in harness.notices() if "second-crash" in path.name]
-    text = second[0].read_text(encoding="utf-8") if second else ""
+    second = harness.tasks("second-crash", "merge-lane-2")
+    text = second[0]["description"] if second else ""
     check("a seat restarted by hand after a failed attempt, which dies within the hour, "
-          "is watched as a new crash and reaches the user, not restarted",
+          "is watched as a new crash and handed to it as a task, not restarted",
           harness.recoveries == ["merge-lane-2"] and len(second) == 1
           and any(entry["decision"].startswith("ran again since")
                   for entry in harness.decisions()), repr(harness.decisions()))
-    check("that second-crash notice says the earlier attempt failed",
+    check("that second-crash task says the earlier attempt failed",
           "had tried to restart it at 2026-10-12 03:16 UTC" in text
           and "recovery reported that attempt as failed; merge-lane-2 then ran again, "
               "either because that attempt came up late or because it was started by hand or "
@@ -535,8 +641,8 @@ def run_handled_crash_cases(root: Path):
     for minutes in range(1, 6):
         harness.run(failed_at + timedelta(minutes=minutes))
     check("a handled crash with no later supervisor poll is not acted on again",
-          harness.recoveries == ["merge-lane-2"] and len(harness.notices()) == 1,
-          repr((harness.recoveries, harness.notices())))
+          harness.recoveries == ["merge-lane-2"] and len(harness.reports()) == 1,
+          repr((harness.recoveries, harness.reports())))
 
 
 def run_handled_death_key_cases(root: Path):
@@ -548,8 +654,8 @@ def run_handled_death_key_cases(root: Path):
         harness.run(failed_at + timedelta(minutes=minutes))
     check("a failed recovery under a poll with microseconds is attempted once and told once "
           "in twenty runs",
-          harness.recoveries == ["merge-lane-2"] and len(harness.notices()) == 1,
-          repr((harness.recoveries, harness.notices())))
+          harness.recoveries == ["merge-lane-2"] and len(harness.reports()) == 1,
+          repr((harness.recoveries, harness.reports())))
     record = harness.state["seats"]["merge-lane-2"]
     check("the handled poll is stored at the supervisor's own precision",
           record.get("handled_at_supervisor_last_poll") == DIED_AT.isoformat(), repr(record))
@@ -564,7 +670,7 @@ def run_handled_death_key_cases(root: Path):
             harness.run(SEEN_RUNNING + timedelta(minutes=minutes))
         check(f"a seat down with verdict {verdict} under a poll with microseconds is told once "
               "in twenty runs",
-              len(harness.notices()) == 1 and harness.recoveries == [], repr(harness.notices()))
+              len(harness.reports()) == 1 and harness.recoveries == [], repr(harness.reports()))
 
     harness = Harness(root / "startup-crash-loop",
                       recovery_result=(1, "merge-lane-2: LAUNCHED BUT DID NOT COME UP — the "
@@ -576,8 +682,8 @@ def run_handled_death_key_cases(root: Path):
     attempts = harness.state["seats"]["merge-lane-2"].get("recovery_attempts", [])
     check("a launch that did not come up, whose supervisor polled before it died, is not "
           "relaunched every two minutes",
-          harness.recoveries == ["merge-lane-2"] and len(harness.notices()) == 1,
-          repr((harness.recoveries, harness.notices())))
+          harness.recoveries == ["merge-lane-2"] and len(harness.reports()) == 1,
+          repr((harness.recoveries, harness.reports())))
     check("the failed attempt is recorded and counts against the hourly limit",
           [attempt["outcome"] for attempt in attempts] == ["failed"]
           and harness.state["seats"]["merge-lane-2"].get("handled_at_supervisor_last_poll")
@@ -588,11 +694,11 @@ def run_handled_death_key_cases(root: Path):
     harness.died_at = first_restart + timedelta(minutes=2, microseconds=660000)
     for minutes in range(3, 90):
         harness.run(first_restart + timedelta(minutes=minutes))
-    second = [path for path in harness.notices() if "second-crash" in path.name]
+    second = harness.tasks("second-crash", "merge-lane-2")
     check("a second crash left down is told once, and the seat that never ran again is not "
           "restarted once the hour has passed",
           harness.recoveries == ["merge-lane-2"] and len(second) == 1,
-          repr((harness.recoveries, harness.notices())))
+          repr((harness.recoveries, harness.reports())))
 
 
 def run_down_for_the_user_cases(root: Path):
@@ -662,42 +768,29 @@ def run_refused_cases(root: Path):
     refusal = ("the supervisor lock at /x names a live process, but ps could not confirm it "
                "is a supervisor of this seat")
     refused_after_running(harness, "refuse", refusal)
-    notices = [path for path in harness.notices() if "recovery-refuses" in path.name]
-    text = notices[0].read_text(encoding="utf-8") if notices else ""
-    check("a seat recovery refuses, seen running this boot, is not restarted, and the user is "
-          "told once", harness.recoveries == [] and len(harness.notices()) == 1
-          and len(notices) == 1, repr(harness.notices()))
-    check("the recovery-refuses notice quotes the refusal and gives the restart and window "
-          "commands, run on the Mac",
-          "merge-lane-2 is down or cannot be shown to be running" in text
-          and f"  {refusal}\n" in text
-          and "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
-              "scripts/recover-crashed-seats.py merge-lane-2'\n" in text
-          and f"  {watcher_module.MAC_LAUNCHER} merge-lane-2\n" in text, text)
-    check("the recovery-refuses notice asks the user to paste it into a named ned-box "
-          "agent-seat, and gives that agent-seat its own part after the user's steps",
-          "1. Paste this whole notice into the window of an agent-seat on ned-box, such as "
-          "fleet-restart-at-login" in text and "says what to do" not in text
-          and text.index("2. Then restart merge-lane-2 by running in a Terminal on your Mac:")
-          < text.index("For the agent-seat on ned-box this notice is pasted into:")
-          and "Do not restart merge-lane-2 yourself" in text, text)
+    tasks = harness.tasks("recovery-refuses", "merge-lane-2")
+    text = tasks[0]["description"] if tasks else ""
+    check("a seat recovery refuses, seen running this boot, is not restarted, and gets one task "
+          "on its own list, with no notice",
+          harness.recoveries == [] and len(harness.tasks(owner="merge-lane-2")) == 1 and len(tasks) == 1
+          and tasks[0]["owner"] == "merge-lane-2" and harness.notices() == [],
+          repr((harness.tasks(), harness.notices())))
+    check("the recovery-refuses task quotes the refusal",
+          "merge-lane-2 was down, or could not be shown to be running" in text
+          and f"  {refusal}\n" in text, text)
 
     harness = Harness(root / "leftover-shell")
     refused_after_running(harness, "ask-to-close-the-leftover-idle-shell", LEFTOVER_SHELL_DETAIL)
-    notices = [path for path in harness.notices() if "leftover-shell" in path.name]
-    text = notices[0].read_text(encoding="utf-8") if notices else ""
+    tasks = harness.tasks("leftover-shell", "merge-lane-2")
+    text = tasks[0]["description"] if tasks else ""
     check("a seat whose tmux session is a leftover shell, seen running this boot, is not "
-          "restarted, and the user is told once",
-          harness.recoveries == [] and len(harness.notices()) == 1 and len(notices) == 1,
-          repr(harness.notices()))
-    check("the leftover-shell notice says the watcher cannot close the shell, and gives the "
-          "command that asks, what y and n do, and the window command",
+          "restarted, and gets one task on its own list, with no notice",
+          harness.recoveries == [] and len(harness.tasks(owner="merge-lane-2")) == 1 and len(tasks) == 1
+          and tasks[0]["owner"] == "merge-lane-2" and harness.notices() == [],
+          repr((harness.tasks(), harness.notices())))
+    check("the leftover-shell task says the watcher could not close the shell",
           "only the shell its launch left open" in text
-          and "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
-              "scripts/recover-crashed-seats.py merge-lane-2'\n" in text
-          and "Answer y, and it closes the shell and restarts merge-lane-2. Answer n, and it "
-              "leaves merge-lane-2 down.\n" in text
-          and f"  {watcher_module.MAC_LAUNCHER} merge-lane-2\n" in text, text)
+          and "the agent-crash-watcher, which runs unattended, left merge-lane-2 down" in text, text)
 
     for verdict, detail in (("refuse", "a live process is rooted in /home/nedlern/agents/x"),
                             ("ask-to-close-the-leftover-idle-shell", LEFTOVER_SHELL_DETAIL)):
@@ -705,8 +798,8 @@ def run_refused_cases(root: Path):
         harness.recorded_stop_on_purpose = True
         refused_after_running(harness, verdict, detail)
         check(f"a seat whose records say it stopped on purpose stays silent when recovery "
-              f"answers {verdict}", harness.notices() == [] and harness.recoveries == [],
-              repr(harness.notices()))
+              f"answers {verdict}", harness.reports() == [] and harness.recoveries == [],
+              repr(harness.reports()))
 
     # A stopped seat whose directory a passing process occupies: recovery alternates.
     harness = Harness(root / "stop-on-purpose-alternating-with-occupancy")
@@ -720,7 +813,7 @@ def run_refused_cases(root: Path):
             ("offer-after-recorded-exit", (0, "2026-10-12T03:05:00+00:00", "s")))
         harness.run(SEEN_RUNNING + timedelta(minutes=minute))
     check("a clean exit whose seat directory a passing process keeps occupying stays silent",
-          harness.notices() == [], repr(harness.notices()))
+          harness.reports() == [], repr(harness.reports()))
 
     harness = Harness(root / "refused-stop-on-purpose-unreadable")
 
@@ -731,9 +824,9 @@ def run_refused_cases(root: Path):
     logged = [entry for entry in harness.decisions()
               if entry["decision"].startswith("could not read whether it stopped on purpose")]
     check("when the seat's records cannot be read, the refusal is reported and the failure "
-          "logged", len(harness.notices()) == 1 and logged
+          "logged", len(harness.reports()) == 1 and logged
           and "the supervisor state cannot be read" in logged[0]["error"],
-          repr((harness.notices(), harness.decisions())))
+          repr((harness.reports(), harness.decisions())))
 
     harness = Harness(root / "leftover-shell-over-a-crash")
     asked = []
@@ -741,11 +834,11 @@ def run_refused_cases(root: Path):
         lambda seat, pane_process_ids: asked.append((seat, pane_process_ids))
         or ("resume", ("session-id", "found")))
     refused_after_running(harness, "ask-to-close-the-leftover-idle-shell", LEFTOVER_SHELL_DETAIL)
-    check("a leftover shell over a crash is reported with the question recovery asks, judged "
+    check("a leftover shell over a crash is reported as a leftover shell, judged "
           "with the shell's own pane process ids",
           harness.recoveries == [] and asked and asked[0] == ("merge-lane-2", [4242])
-          and [path.name for path in harness.notices() if "leftover-shell" in path.name],
-          repr((harness.notices(), asked)))
+          and harness.tasks("leftover-shell", "merge-lane-2"),
+          repr((harness.reports(), asked)))
     for minute in range(9, 30):
         harness.run(SEEN_RUNNING + timedelta(minutes=minute))
     check("after its notice, a lasting leftover shell is not assessed again on later runs",
@@ -761,12 +854,12 @@ def run_refused_cases(root: Path):
             lambda seat, pane_process_ids, answer=predicted: answer)
         refused_after_running(harness, "ask-to-close-the-leftover-idle-shell",
                               LEFTOVER_SHELL_DETAIL)
-        names = [path.name for path in harness.notices()]
-        text = harness.notices()[0].read_text(encoding="utf-8") if names else ""
+        tasks = harness.tasks(owner="merge-lane-2")
+        text = tasks[0]["description"] if tasks else ""
         check(f"a leftover shell where, with the shell closed, {what}, gets the "
-              "recovery-refuses notice quoting what recovery would say, not a promise of a "
-              "y/n question", len(names) == 1 and "recovery-refuses" in names[0]
-              and predicted[1] in text and "Answer y" not in text, repr((names, text)))
+              "recovery-refuses task quoting what recovery would say",
+              len(tasks) == 1 and harness.tasks("recovery-refuses", "merge-lane-2") == tasks
+              and predicted[1] in text, repr(tasks))
 
     harness = Harness(root / "leftover-shell-prediction-fails")
 
@@ -776,14 +869,14 @@ def run_refused_cases(root: Path):
     refused_after_running(harness, "ask-to-close-the-leftover-idle-shell", LEFTOVER_SHELL_DETAIL)
     logged = [entry for entry in harness.decisions()
               if entry["decision"].startswith("could not assess as though")]
-    names = [path.name for path in harness.notices()]
-    text = harness.notices()[0].read_text(encoding="utf-8") if names else ""
+    tasks = harness.tasks(owner="merge-lane-2")
+    text = tasks[0]["description"] if tasks else ""
     check("when the assessment as though the shell were closed fails, the recovery-refuses "
-          "notice quotes the error instead of promising a question, and the failure is logged",
-          len(names) == 1 and "recovery-refuses" in names[0]
-          and "the handoff directory cannot be read" in text and "Answer y" not in text
+          "task quotes the error, and the failure is logged",
+          len(tasks) == 1 and harness.tasks("recovery-refuses", "merge-lane-2") == tasks
+          and "the handoff directory cannot be read" in text
           and logged and "the handoff directory cannot be read" in logged[0]["error"],
-          repr((names, text, harness.decisions())))
+          repr((tasks, harness.decisions())))
 
     # The user closes the leftover shell by hand: the crash beneath it is the watcher's job.
     harness = Harness(root / "leftover-shell-closed-by-hand")
@@ -808,11 +901,11 @@ def run_refused_cases(root: Path):
     harness.verdicts["merge-lane-2"] = ("refuse", "the second refusal")
     for minute in (15, 16, 17):
         harness.run(SEEN_RUNNING + timedelta(minutes=minute))
-    refuses = [path for path in harness.notices() if "recovery-refuses" in path.name]
+    refuses = harness.tasks("recovery-refuses", "merge-lane-2")
     check("a refusal after the watcher restarted the seat is told again, though no run saw "
           "the seat running in between", harness.recoveries == ["merge-lane-2"]
           and len(refuses) == 2
-          and "the second refusal" in refuses[-1].read_text(encoding="utf-8"),
+          and "the second refusal" in refuses[-1]["description"],
           repr((harness.recoveries, refuses)))
 
     # A refusal whose supervisor still polls: every poll would make a new death.
@@ -823,7 +916,7 @@ def run_refused_cases(root: Path):
     for minute in range(5, 40):
         harness.died_at = SEEN_RUNNING + timedelta(minutes=minute, seconds=-10)
         harness.run(SEEN_RUNNING + timedelta(minutes=minute))
-    first_episode = list(harness.notices())
+    first_episode = list(harness.reports())
     check("a refusal that lasts, its supervisor still polling, is told once, not every few "
           "minutes", len(first_episode) == 1, repr(first_episode))
     harness.verdicts["merge-lane-2"] = ("seat-already-running", "")
@@ -833,14 +926,14 @@ def run_refused_cases(root: Path):
     for minute in (45, 46, 47):
         harness.run(SEEN_RUNNING + timedelta(minutes=minute))
     check("a refusal after the seat is seen running again is told again",
-          len(harness.notices()) == 2, repr(harness.notices()))
+          len(harness.reports()) == 2, repr(harness.reports()))
 
     harness = Harness(root / "refused-not-seen-since-boot")
     harness.verdicts["merge-lane-2"] = ("refuse", "detail")
     for minute in (5, 6, 7):
         harness.run(BOOT + timedelta(minutes=minute))
     check("a refused seat not seen running since the machine booted stays silent",
-          harness.notices() == [], repr(harness.notices()))
+          harness.reports() == [], repr(harness.reports()))
 
 
 def run_stopped_on_purpose_cases(root: Path):
@@ -917,7 +1010,7 @@ def run_path_on_the_mac_cases():
         state=harness.state, now=SEEN_RUNNING, boot_at=BOOT,
         log_directory=Path("/home/nedlern/nedschorus-logs") / watcher_module.PROGRAM,
         assess=None, died_at_about=None, transcripts_directory=None, recover=None,
-        open_window=None, show_notice_words=None)
+        open_window=None, show_notice_words=None, agent_seat_task_write=None)
     check("the record a notice names is the Mac's form of the log-store path",
           watcher_module.path_on_the_mac(watcher.decisions_path).startswith(
               "/Volumes/nedhome/nedschorus-logs/"), str(watcher.decisions_path))
@@ -1009,12 +1102,48 @@ def run_command_line_cases(root: Path):
 
 def run_run_failure_cases(root: Path):
     """A run that fails before it can assess any seat: the login restart's module is missing."""
+    task_lists = root / "failed-task-lists"
+    (task_lists / f"nedschorus-{watcher_module.AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME}-tasks").mkdir(parents=True)
     environment = {watcher_module.STATE_DIRECTORY_ENVIRONMENT_VARIABLE: str(root / "failed-state"),
-                   watcher_module.LOG_DIRECTORY_ENVIRONMENT_VARIABLE: str(root / "failed-log")}
+                   watcher_module.LOG_DIRECTORY_ENVIRONMENT_VARIABLE: str(root / "failed-log"),
+                   watcher_module.TASK_LISTS_DIRECTORY_ENVIRONMENT_VARIABLE: str(task_lists)}
     windows = []
-    window_exit_codes = [1]
     real_program, real_opener = watcher_module.LOGIN_RESTART_PROGRAM, watcher_module.open_mac_window
     real_page_opener = watcher_module.open_mac_browser_page
+    watcher_module.LOGIN_RESTART_PROGRAM = root / "no-such-login-restart.py"
+    watcher_module.open_mac_window = lambda words: windows.append(words) or (0, "")
+    watcher_module.open_mac_browser_page = lambda path: watcher_module.open_mac_window(["page", path])
+    raised = []
+    try:
+        for _ in range(3):
+            try:
+                watcher_module.run_once(environment)
+            except Exception as error:  # noqa: BLE001 - the case checks that it propagates
+                raised.append(error)
+    finally:
+        watcher_module.LOGIN_RESTART_PROGRAM, watcher_module.open_mac_window = real_program, real_opener
+        watcher_module.open_mac_browser_page = real_page_opener
+    task_files = sorted(task_lists.glob("*/*.json"))
+    task = json.loads(task_files[0].read_text(encoding="utf-8")) if task_files else {}
+    check("a failed run still fails, so cron's log keeps the traceback",
+          len(raised) == 3, repr(raised))
+    check("a failed run becomes one task on the crash watcher's owner's list, in three failing "
+          "runs with the same error",
+          [path.parent.name for path in task_files]
+          == [f"nedschorus-{watcher_module.AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME}-tasks"]
+          and task.get("subject", "").startswith("agent-crash-watcher, run-failed:"), repr(task_files))
+    check("the run-failed task says the watcher is watching no agent-seat, with the error",
+          "watching no agent-seat" in task.get("description", "")
+          and "no-such-login-restart.py" in task.get("description", ""), repr(task))
+    check("a failed run whose task is written shows the user no notice and no window",
+          not (root / "failed-log" / "notices").exists() and windows == [], repr(windows))
+
+    # The owner's task list is missing, so the task cannot be written: the user is shown it.
+    environment = {watcher_module.STATE_DIRECTORY_ENVIRONMENT_VARIABLE: str(root / "unlisted-state"),
+                   watcher_module.LOG_DIRECTORY_ENVIRONMENT_VARIABLE: str(root / "unlisted-log"),
+                   watcher_module.TASK_LISTS_DIRECTORY_ENVIRONMENT_VARIABLE: str(root / "no-task-lists")}
+    window_exit_codes = [1]
+    windows.clear()
     watcher_module.LOGIN_RESTART_PROGRAM = root / "no-such-login-restart.py"
     watcher_module.open_mac_window = lambda words: (
         windows.append(words) or ((window_exit_codes.pop(0), "unreachable") if window_exit_codes
@@ -1030,20 +1159,20 @@ def run_run_failure_cases(root: Path):
     finally:
         watcher_module.LOGIN_RESTART_PROGRAM, watcher_module.open_mac_window = real_program, real_opener
         watcher_module.open_mac_browser_page = real_page_opener
-    notices = sorted((root / "failed-log" / "notices").glob("*run-failed.txt"))
+    notices = sorted((root / "unlisted-log" / "notices").glob("*run-failed.txt"))
     text = notices[-1].read_text(encoding="utf-8") if notices else ""
-    check("a failed run still fails, so cron's log keeps the traceback",
-          len(raised) == 3, repr(raised))
-    check("a failed run tells the user the watcher is watching no agent-seat, with the error",
-          "watching no agent-seat" in text and "no-such-login-restart.py" in text, text)
-    check("a failed run's notice is retried while the Mac cannot be reached, then shown once",
-          len(windows) == 2, repr(windows))
-    check("a failed run's notice opens as its HTML page",
-          all(window[0] == "page" and window[1].endswith("run-failed.html") for window in windows),
-          repr(windows))
+    check("a failed run whose task cannot be written shows the user one notice quoting the task "
+          "and why it was not written",
+          len(notices) == 1 and "could not hand a failure to fleet-restart-at-login as a task" in text
+          and "FileNotFoundError" in text and "watching no agent-seat" in text
+          and "no-such-login-restart.py" in text, text)
+    check("that notice is retried while the Mac cannot be reached, then shown once, as its page",
+          len(windows) == 2 and all(window[0] == "page" and window[1].endswith("run-failed.html")
+                                    for window in windows), repr(windows))
 
     environment = {watcher_module.STATE_DIRECTORY_ENVIRONMENT_VARIABLE: str(root / "healed-state"),
-                   watcher_module.LOG_DIRECTORY_ENVIRONMENT_VARIABLE: str(root / "healed-log")}
+                   watcher_module.LOG_DIRECTORY_ENVIRONMENT_VARIABLE: str(root / "healed-log"),
+                   watcher_module.TASK_LISTS_DIRECTORY_ENVIRONMENT_VARIABLE: str(root / "no-task-lists")}
     window_exit_codes = [1]
     windows.clear()
     watcher_module.LOGIN_RESTART_PROGRAM = root / "no-such-login-restart.py"
@@ -1071,7 +1200,7 @@ def run_run_failure_cases(root: Path):
         state=saved, now=SEEN_RUNNING, boot_at=BOOT, log_directory=root / "healed-log",
         assess=None, died_at_about=lambda seat: None, transcripts_directory=None,
         recover=None, open_window=lambda words: healthy_windows.append(words) or (0, ""),
-        show_notice_words=lambda path: ["--show-notice", path])
+        show_notice_words=lambda path: ["--show-notice", path], agent_seat_task_write=None)
     watcher.run([])
     check("a healthy run shows the failed run's notice and clears it",
           len(healthy_windows) == 1 and saved["pending_notices"] == []
@@ -1084,6 +1213,7 @@ def run_report_run_failure_state_cases(root: Path):
     windows = []
     watcher_module.open_mac_window = lambda words: windows.append(words) or (1, "unreachable")
     watcher_module.open_mac_browser_page = lambda path: windows.append(["page", path]) or (1, "unreachable")
+    no_task_lists = root / "report-no-task-lists"
     try:
         corrupt = root / "corrupt-state"
         corrupt.mkdir()
@@ -1092,30 +1222,49 @@ def run_report_run_failure_state_cases(root: Path):
         pending_alerts = Path.home() / ".local/state/nedschorus/user-alerts/pending"
         alerts_before = set(pending_alerts.glob("*.json"))
         try:
-            watcher_module.report_run_failure("ValueError: bad state", corrupt, root / "corrupt-log")
+            watcher_module.report_run_failure("ValueError: bad state", corrupt, root / "corrupt-log",
+                                              no_task_lists)
         except Exception as error:  # noqa: BLE001 - the case checks that nothing escapes
             raised = error
-        reported = corrupt / f"{watcher_module.PROGRAM}-reported-run-failures.txt"
-        check("an unreadable state still lets a failed run write its notice and try the Mac",
+        new_alerts = sorted(set(pending_alerts.glob("*.json")) - alerts_before)
+        alert = json.loads(new_alerts[0].read_text(encoding="utf-8")) if new_alerts else {}
+        check("an unreadable state still lets a failed run whose task cannot be written write "
+              "its notice and try the Mac",
               raised is None and len(windows) == 1
               and list((root / "corrupt-log" / "notices").glob("*run-failed.txt")),
               repr((raised, windows)))
-        check("a failed run's notice is also written as an alert in the user-alerts pending directory",
-              len(set(pending_alerts.glob("*.json")) - alerts_before) == 1, repr(alerts_before))
-        check("with an unreadable state, a notice the Mac missed is left for the next failing run",
-              not reported.exists(), reported.read_text(encoding="utf-8") if reported.exists() else "")
+        check("that notice is also written as one alert in the user-alerts pending directory, "
+              "whose action is to fix the task write and do the task",
+              len(new_alerts) == 1
+              and watcher_module.AGENT_SEAT_TASK_NOT_WRITTEN_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO
+              in json.dumps(alert), repr(alert))
         windows_before_retry = len(windows)
-        watcher_module.report_run_failure("ValueError: bad state", corrupt, root / "corrupt-log")
-        check("a failed run retried with an unreadable state tries the Mac again but writes no second alert",
-              len(windows) > windows_before_retry
+        watcher_module.report_run_failure("ValueError: bad state", corrupt, root / "corrupt-log",
+                                          no_task_lists)
+        check("the same error in the next failing run writes no second notice and no second alert",
+              len(windows) == windows_before_retry
+              and len(list((root / "corrupt-log" / "notices").glob("*run-failed.txt"))) == 1
               and len(set(pending_alerts.glob("*.json")) - alerts_before) == 1,
               repr(sorted(set(pending_alerts.glob("*.json")) - alerts_before)))
+
+        listed = root / "listed-task-lists"
+        owner_list = listed / f"nedschorus-{watcher_module.AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME}-tasks"
+        owner_list.mkdir(parents=True)
+        unread = root / "corrupt-state-listed"
+        unread.mkdir()
+        (unread / f"{watcher_module.PROGRAM}-state.json").write_text("{not json", encoding="utf-8")
+        windows.clear()
+        watcher_module.report_run_failure("OSError: one", unread, root / "listed-log", listed)
+        watcher_module.report_run_failure("OSError: one", unread, root / "listed-log", listed)
+        watcher_module.report_run_failure("OSError: two", unread, root / "listed-log", listed)
+        check("with an unreadable state, a failed run's task is written once per distinct error",
+              sorted(path.name for path in owner_list.glob("*.json")) == ["1.json", "2.json"]
+              and windows == [], repr(sorted(owner_list.iterdir())))
 
         locked = root / "unsavable-state"
         locked.mkdir()
         (locked / f"{watcher_module.PROGRAM}-state.json").write_text("{}", encoding="utf-8")
         raised = None
-        alerts_before = set(pending_alerts.glob("*.json"))
         state_file = locked / f"{watcher_module.PROGRAM}-state.json"
         real_write_state = watcher_module.write_state
 
@@ -1125,58 +1274,64 @@ def run_report_run_failure_state_cases(root: Path):
             return real_write_state(path, state)
         watcher_module.write_state = write_state_refused
         try:
-            watcher_module.report_run_failure("OSError: disk", locked, root / "unsavable-log")
-            watcher_module.report_run_failure("OSError: disk", locked, root / "unsavable-log")
+            watcher_module.report_run_failure("OSError: disk", locked, root / "unsavable-log",
+                                              no_task_lists)
         except Exception as error:  # noqa: BLE001 - the case checks that nothing escapes
             raised = error
         finally:
             watcher_module.write_state = real_write_state
-        check("a failed run retried with a state that cannot be saved writes no second alert",
-              len(set(pending_alerts.glob("*.json")) - alerts_before) == 1,
-              repr(sorted(set(pending_alerts.glob("*.json")) - alerts_before)))
-        decisions = (root / "unsavable-log" / "decisions.jsonl").read_text(encoding="utf-8")
-        check("a state that cannot be saved is logged, and the error is not marked as reported",
+        decisions = (root / "unsavable-log" / watcher_module.AGENT_CRASH_WATCHER_DECISIONS_FILE_NAME).read_text(encoding="utf-8")
+        reported = locked / f"{watcher_module.PROGRAM}-reported-run-failures.txt"
+        check("a state that cannot be saved is logged, not raised, and the error is still marked "
+              "as reported",
               raised is None and "could not save the watcher's state" in decisions
-              and not (locked / f"{watcher_module.PROGRAM}-reported-run-failures.txt").exists(),
-              repr(raised))
+              and reported.read_text(encoding="utf-8") == "OSError: disk\n", repr(raised))
 
-        unwritable = root / "unwritable-state"
-        unwritable.mkdir()
-        (unwritable / f"{watcher_module.PROGRAM}-state.json").write_text("{}", encoding="utf-8")
-        unwritable.chmod(0o555)
-        raised = None
+        nowhere = root / "corrupt-state-nowhere"
+        nowhere.mkdir()
+        (nowhere / f"{watcher_module.PROGRAM}-state.json").write_text("{not json", encoding="utf-8")
+        real_alert_write = watcher_module.user_alerts.user_alert_write_to_pending
+
+        def alert_write_refused(*_):
+            raise PermissionError("user-alerts not writable")
+        watcher_module.user_alerts.user_alert_write_to_pending = alert_write_refused
+        stderr = io.StringIO()
+        saved = root / "saved-state-nowhere-else"
+        saved.mkdir()
+        (saved / f"{watcher_module.PROGRAM}-state.json").write_text("{}", encoding="utf-8")
+        saved_stderr = io.StringIO()
         try:
-            watcher_module.report_run_failure("OSError: read-only", unwritable, root / "unwritable-log")
-        except Exception as error:  # noqa: BLE001 - the case checks that nothing escapes
-            raised = error
+            with contextlib.redirect_stderr(saved_stderr):
+                watcher_module.report_run_failure("OSError: kept", saved, root / "saved-log",
+                                                  no_task_lists)
+            with contextlib.redirect_stderr(stderr):
+                watcher_module.report_run_failure("OSError: nowhere", nowhere, root / "nowhere-log",
+                                                  no_task_lists)
+                notices_after_first = len(list((root / "nowhere-log" / "notices").glob("*run-failed*.txt")))
+                watcher_module.report_run_failure("OSError: nowhere", nowhere, root / "nowhere-log",
+                                                  no_task_lists)
         finally:
-            unwritable.chmod(0o755)
-        decisions = (root / "unwritable-log" / "decisions.jsonl").read_text(encoding="utf-8")
-        check("a state directory where the alerted record cannot be written is logged, not raised",
-              raised is None and "could not record that the run failure's user alert was written"
-              in decisions, repr(raised))
-
-        flaky = root / "flaky-alert-state"
-        flaky.mkdir()
-        (flaky / f"{watcher_module.PROGRAM}-state.json").write_text("{not json", encoding="utf-8")
-        alerts_before = set(pending_alerts.glob("*.json"))
-        real_alert_writer = watcher_module.user_alerts.user_alert_write_to_pending
-        attempts = []
-
-        def alert_writer_failing_once(*arguments):
-            attempts.append(arguments)
-            if len(attempts) == 1:
-                raise OSError("user-alerts directory full")
-            return real_alert_writer(*arguments)
-        watcher_module.user_alerts.user_alert_write_to_pending = alert_writer_failing_once
-        try:
-            watcher_module.report_run_failure("OSError: x", flaky, root / "flaky-alert-log")
-            watcher_module.report_run_failure("OSError: x", flaky, root / "flaky-alert-log")
-        finally:
-            watcher_module.user_alerts.user_alert_write_to_pending = real_alert_writer
-        check("an alert write that fails is not recorded as alerted, so the next failing run writes it",
-              len(attempts) == 2 and len(set(pending_alerts.glob("*.json")) - alerts_before) == 1,
-              repr((len(attempts), sorted(set(pending_alerts.glob("*.json")) - alerts_before))))
+            watcher_module.user_alerts.user_alert_write_to_pending = real_alert_write
+        saved_state = json.loads((saved / f"{watcher_module.PROGRAM}-state.json").read_text(encoding="utf-8"))
+        check("a run failure whose task, user-alert and window fail, but whose notice is kept in a "
+              "saved state for a later run, is marked as reported, with nothing on stderr",
+              (saved / f"{watcher_module.PROGRAM}-reported-run-failures.txt").is_file()
+              and (saved / f"{watcher_module.PROGRAM}-reported-run-failures.txt").read_text(
+                  encoding="utf-8") == "OSError: kept\n"
+              and len(saved_state.get("pending_notices", [])) == 1 and saved_stderr.getvalue() == "",
+              repr((saved_state, saved_stderr.getvalue())))
+        nowhere_reported = nowhere / f"{watcher_module.PROGRAM}-reported-run-failures.txt"
+        nowhere_decisions = (root / "nowhere-log" / watcher_module.AGENT_CRASH_WATCHER_DECISIONS_FILE_NAME).read_text(encoding="utf-8")
+        check("a run failure whose task, user-alert, window and saved state all fail is not marked "
+              "as reported, says so on stderr and in the record, and the next failing run reports "
+              "it again",
+              not nowhere_reported.exists()
+              and "no agent-seat or user was told" in stderr.getvalue()
+              and "OSError: nowhere" in stderr.getvalue()
+              and "run failure reached no agent-seat and not the user" in nowhere_decisions
+              and notices_after_first == 1
+              and len(list((root / "nowhere-log" / "notices").glob("*run-failed*.txt"))) == 2,
+              repr((stderr.getvalue(), notices_after_first)))
     finally:
         watcher_module.open_mac_window = real_opener
         watcher_module.open_mac_browser_page = real_page_opener
@@ -1186,6 +1341,7 @@ def run_notice_page_cases(root: Path):
     """A notice's HTML page: what it shows, and what happens when it cannot be written."""
     harness = Harness(root / "page-contents",
                       recovery_result=(1, "merge-lane-2: REFUSED <the durable checkout> & more"))
+    harness.task_write_error = OSError("the task list cannot be written")
     crash_after_running(harness)
     pages = sorted((root / "page-contents" / "notice-pages").glob("*recovery-failed.html"))
     page = pages[0].read_text(encoding="utf-8") if pages else ""
@@ -1195,10 +1351,6 @@ def run_notice_page_cases(root: Path):
     check("the page escapes every inserted text, so recovery's output cannot break the page",
           "REFUSED &lt;the durable checkout&gt; &amp; more" in page and "<the durable" not in page,
           page)
-    check("the page shows each command in a block that says it runs on the Mac, with a Copy button",
-          page.count("Run in a Terminal on your Mac") == 2 and page.count('data-copy="') == 2
-          and "ssh -t nedlern@ned-box &#x27;cd ~/Projects/nedschorus &amp;&amp; python3 "
-              "scripts/recover-crashed-seats.py merge-lane-2&#x27;" in page, page)
     check("the page shows recovery's quoted line as output, with no Copy button",
           "Output, quoted" in page, page)
     check("the page carries both light and dark colours",
@@ -1209,11 +1361,22 @@ def run_notice_page_cases(root: Path):
     check("the page, not a terminal window, is what opens on the Mac",
           harness.windows == [["page", str(pages[0])]] if pages else False, repr(harness.windows))
 
+    harness = Harness(root / "page-commands")
+    refused_after_running(harness, "offer-after-recorded-exit",
+                          (1, "2026-10-12T03:04:00+00:00", "session"))
+    pages = sorted((root / "page-commands" / "notice-pages").glob("*recorded-exit.html"))
+    page = pages[0].read_text(encoding="utf-8") if pages else ""
+    check("the page shows each command in a block that says it runs on the Mac, with a Copy button",
+          page.count("Run in a Terminal on your Mac") == 2 and page.count('data-copy="') == 2
+          and "ssh -t nedlern@ned-box &#x27;cd ~/Projects/nedschorus &amp;&amp; python3 "
+              "scripts/recover-crashed-seats.py merge-lane-2&#x27;" in page, page)
+
     log_directory = root / "page-unwritable"
     (log_directory).mkdir()
     # A file where the pages' directory belongs, so the page cannot be written.
     (log_directory / "notice-pages").write_text("not a directory\n", encoding="utf-8")
     harness = Harness(log_directory, recovery_result=(1, "merge-lane-2: REFUSED"))
+    harness.task_write_error = OSError("the task list cannot be written")
     crash_after_running(harness)
     check("a page that cannot be written leaves the notice to open in a terminal window",
           len(harness.windows) == 1 and harness.windows[0][-2] == "--show-notice"
@@ -1224,6 +1387,7 @@ def run_notice_page_cases(root: Path):
 
     harness = Harness(root / "page-mac-unreachable",
                       recovery_result=(1, "merge-lane-2: REFUSED"), window_exit_codes=[1])
+    harness.task_write_error = OSError("the task list cannot be written")
     crash_after_running(harness)
     pending = harness.state["pending_notices"]
     check("a page the Mac cannot be reached for stays pending, with its page",
@@ -1236,6 +1400,7 @@ def run_notice_page_cases(root: Path):
 
     harness = Harness(root / "page-refused-by-the-mac",
                       recovery_result=(1, "merge-lane-2: REFUSED"), window_exit_codes=[2, 0])
+    harness.task_write_error = OSError("the task list cannot be written")
     crash_after_running(harness)
     check("a page the Mac refuses opens the notice in a terminal window instead, at once",
           len(harness.windows) == 2 and harness.windows[0][0] == "page"
@@ -1248,6 +1413,7 @@ def run_notice_page_cases(root: Path):
 
     harness = Harness(root / "page-refused-window-unreachable",
                       recovery_result=(1, "merge-lane-2: REFUSED"), window_exit_codes=[2, 1])
+    harness.task_write_error = OSError("the task list cannot be written")
     crash_after_running(harness)
     check("a refused page whose terminal window the Mac also misses stays pending",
           len(harness.state["pending_notices"]) == 1, repr(harness.state["pending_notices"]))
@@ -1265,7 +1431,7 @@ def run_notice_page_cases(root: Path):
                              if name.endswith("_NOTICE_TEMPLATE")}
     check("no notice tells the user to ask an agent on ned-box without naming an agent-seat "
           "and where to reach it",
-          len(every_notice_template) == 9 and not any(
+          len(every_notice_template) == 5 and not any(
               "an agent on ned-box" in value.lower() for value in every_notice_template.values()),
           sorted(every_notice_template))
 
@@ -1281,7 +1447,7 @@ def run_notice_page_cases(root: Path):
         state=state, now=SEEN_RUNNING, boot_at=BOOT, log_directory=root / "old-pending",
         assess=None, died_at_about=lambda seat: None, transcripts_directory=None, recover=None,
         open_window=lambda words: windows.append(words) or (0, ""),
-        show_notice_words=lambda path: ["--show-notice", path],
+        show_notice_words=lambda path: ["--show-notice", path], agent_seat_task_write=None,
         open_page=lambda path: windows.append(["page", path]) or (0, ""))
     watcher.run([])
     check("a notice left pending before pages existed still opens, in a terminal window",
@@ -1362,7 +1528,8 @@ def run_watch_wiring_cases(root: Path):
     watcher_module.Watcher = RecordingWatcher
     try:
         (root / "watch-wiring-state").mkdir()
-        watcher_module.watch({}, root / "watch-wiring-state", root / "watch-wiring-log")
+        watcher_module.watch({}, root / "watch-wiring-state", root / "watch-wiring-log",
+                             root / "watch-wiring-task-lists")
     finally:
         watcher_module.load_module, watcher_module.Watcher = real_load_module, real_watcher
     check("watch() passes recovery's seat-window opener to the Watcher as open_seat_window",
@@ -1388,6 +1555,14 @@ def run_watch_wiring_cases(root: Path):
           len(built) == 1
           and built[0].get("user_alert_write_to_pending") is watcher_module.user_alerts.user_alert_write_to_pending,
           repr(built))
+    task_write = built[0].get("agent_seat_task_write") if len(built) == 1 else None
+    (root / "watch-wiring-task-lists" / "nedschorus-seat-a-tasks").mkdir(parents=True)
+    written = task_write("seat-a", "the subject", "the description") if task_write else None
+    task_file = root / "watch-wiring-task-lists" / "nedschorus-seat-a-tasks" / "1.json"
+    check("watch() passes the Watcher a task writer into the task lists directory it was given",
+          written == (1, root / "watch-wiring-task-lists" / "nedschorus-seat-a-tasks")
+          and json.loads(task_file.read_text(encoding="utf-8"))["subject"] == "the subject",
+          repr(written))
     records = built[0].get("down_agent_seat_records_stopped_on_purpose") if len(built) == 1 else None
     check("watch() passes the Watcher a test of a refused seat's records that reads recovery's "
           "waiting handoff from the handoff directory",
@@ -1407,35 +1582,111 @@ def verdicts_assess_seat_returns_in_its_source():
 
 
 def run_user_alert_cases(root: Path):
-    """Each notice is also written as an alert for the user's approval-walk, beside its unchanged page."""
+    """A notice for the user is also written as an alert for his approval-walk, beside its unchanged page."""
     written = []
-    harness = Harness(root / "alert-written", recovery_result=(1, "merge-lane-2: REFUSED it"))
+    harness = Harness(root / "alert-written")
     harness.user_alert_write_to_pending = lambda title, text, action: written.append((title, text, action)) or "alert-1"
-    crash_after_running(harness)
+    refused_after_running(harness, "defer-to-boot-ignition", "an unconsumed handoff waits")
     notices = harness.notices()
     check("a notice is also written as one alert, titled by the notice's kind, holding the notice's text and "
           "what an agent on ned-box can do",
           len(written) == 1 and len(notices) == 1
-          and written[0] == ("merge-lane-2 is down: the crash watcher could not restart it",
-                             notices[0].read_text(encoding="utf-8"), watcher_module.FAILED_RESTART_NOTICE_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO),
+          and written[0] == ("merge-lane-2 is down with a handoff no supervisor acted on",
+                             notices[0].read_text(encoding="utf-8"),
+                             watcher_module.FAILED_RESTART_NOTICE_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO),
           repr(written))
     check("the alert is logged with its id, and the notice's page still opens",
           any(entry["decision"] == "user alert written" and entry["alert"] == "alert-1"
               for entry in harness.decisions())
           and [window[0] for window in harness.windows] == ["page"], repr(harness.windows))
 
+    for kind, setup in (
+            ("recovery-failed", lambda harness: crash_after_running(harness)),
+            ("recovery-refuses", lambda harness: refused_after_running(
+                harness, "refuse", "a live process is rooted in /home/nedlern/agents/merge-lane-2"))):
+        written = []
+        harness = Harness(root / f"no-alert-for-a-task-{kind}", recovery_result=(1, "merge-lane-2: REFUSED it"))
+        harness.user_alert_write_to_pending = lambda title, text, action: written.append(title) or "alert-2"
+        setup(harness)
+        check(f"a failure handed to its agent-seat as a task, {kind}, writes no alert",
+              written == [] and len(harness.tasks(kind, "merge-lane-2")) == 1, repr((written, harness.tasks())))
+
     written = []
-    harness = Harness(root / "alert-once-per-refusal")
-    harness.user_alert_write_to_pending = lambda title, text, action: written.append(title) or "alert-2"
-    refused_after_running(harness, "refuse", "a live process is rooted in /home/nedlern/agents/merge-lane-2")
-    check("a seat recovery keeps refusing gets one alert, as it gets one notice",
-          written == ["merge-lane-2 is down, and recovery refuses it"], repr(written))
+    harness = Harness(root / "alert-for-a-task-not-written", recovery_result=(1, "merge-lane-2: REFUSED it"))
+    harness.user_alert_write_to_pending = lambda title, text, action: written.append((title, text, action)) or "alert-3"
+    harness.task_write_error = PermissionError(13, "Permission denied", "/home/nedlern/.claude/tasks")
+    crash_after_running(harness)
+    notices = harness.notices()
+    text = notices[0].read_text(encoding="utf-8") if notices else ""
+    check("a task that cannot be written becomes a notice for the user, which names the agent-seat, "
+          "the write's error and the task's subject and description",
+          len(notices) == 1 and "recovery-failed" in notices[0].name
+          and harness.tasks(owner="merge-lane-2") == []
+          and "could not hand a failure to merge-lane-2 as a task" in text
+          and "PermissionError" in text
+          and "Task subject: agent-crash-watcher, recovery-failed: scripts/recover-crashed-seats.py could not "
+              "restart merge-lane-2; find why and fix the cause\n" in text
+          and "  merge-lane-2: REFUSED it\n" in text
+          and "Find the cause and fix it going forward." in text, text)
+    check("that notice gets one alert, titled by the failure's kind, whose action is to fix the task "
+          "write and do the task",
+          len(written) == 1
+          and written[0] == ("merge-lane-2 is down: the crash watcher could not restart it", text,
+                             watcher_module.AGENT_SEAT_TASK_NOT_WRITTEN_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO),
+          repr(written))
+    check("a task that cannot be written is logged with the error",
+          any(entry["decision"] == "task not written; the user is shown it as a notice instead"
+              and entry["kind"] == "recovery-failed" and entry["owner"] == "merge-lane-2"
+              and "PermissionError" in entry["error"] for entry in harness.decisions()),
+          repr(harness.decisions()))
+
+    harness = Harness(root / "task-list-missing", recovery_result=(1, "merge-lane-2: REFUSED it"))
+    harness.agent_seat_task_write = watcher_module.agent_seat_task_list_new_pending_task_writer_function_factory_for_task_lists_directory(
+        root / "task-list-missing" / "no-task-lists")
+    crash_after_running(harness)
+    notices = harness.notices()
+    text = "".join(notice.read_text(encoding="utf-8") for notice in notices)
+    check("an agent-seat with no task list gets no list made for it: each of the failure's two "
+          "tasks becomes a notice of its own, naming its missing list",
+          len(notices) == 2 and text.count("FileNotFoundError") == 2
+          and str(root / "task-list-missing" / "no-task-lists" / "nedschorus-merge-lane-2-tasks") in text
+          and str(root / "task-list-missing" / "no-task-lists" / "nedschorus-fleet-restart-at-login-tasks") in text
+          and not (root / "task-list-missing" / "no-task-lists").exists(), [n.name for n in notices])
+
+    owner = watcher_module.AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME
+    written = []
+    harness = Harness(root / "owner-left-down", recovery_result=(1, f"{owner}: LAUNCH FAILED (exit 1)"))
+    harness.user_alert_write_to_pending = lambda title, text, action: written.append((title, text, action)) or "alert-5"
+    harness.verdicts[owner] = ("seat-already-running", "supervisor alive")
+    harness.run(SEEN_RUNNING, seats=(owner,))
+    harness.verdicts[owner] = ("resume", ("session-id", "found"))
+    harness.run(SEEN_RUNNING + timedelta(minutes=15), seats=(owner,))
+    harness.run(SEEN_RUNNING + timedelta(minutes=16), seats=(owner,))
+    notices = harness.notices()
+    text = notices[0].read_text(encoding="utf-8") if notices else ""
+    check("when the seat left down is the crash watcher's owner, its failure is one task on its own "
+          "list, and no second task, since no other agent-seat would read it",
+          len(harness.tasks()) == 1 and harness.tasks("recovery-failed", owner), repr(harness.tasks()))
+    check("when the seat left down is the crash watcher's owner, the user is shown a notice with "
+          "the restart command run from his Mac, and the task the owner finds once restarted",
+          len(notices) == 1 and "recovery-failed" in notices[0].name
+          and f"{owner} is the agent-seat that restarts the agent-seats the crash watcher leaves down" in text
+          and f"  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
+              f"scripts/recover-crashed-seats.py {owner}'\n" in text
+          and f"  {watcher_module.MAC_LAUNCHER} {owner}\n" in text
+          and "Task subject: agent-crash-watcher, recovery-failed:" in text, text)
+    check("that notice gets one user-alert, titled by the failure's kind, with the action of a "
+          "notice that gives a restart command",
+          len(written) == 1 and written[0] == (
+              f"{owner} is down: the crash watcher could not restart it", text,
+              watcher_module.FAILED_RESTART_NOTICE_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO),
+          repr(written))
 
     def unwritable(title, text, action):
         raise PermissionError(13, "Permission denied", "/home/nedlern/.local/state/nedschorus/user-alerts")
-    harness = Harness(root / "alert-not-written", recovery_result=(1, "merge-lane-2: REFUSED it"))
+    harness = Harness(root / "alert-not-written")
     harness.user_alert_write_to_pending = unwritable
-    crash_after_running(harness)
+    refused_after_running(harness, "defer-to-boot-ignition", "an unconsumed handoff waits")
     check("an alert that cannot be written is logged, and the notice and its page still go to the Mac",
           any(entry["decision"] == "user alert not written; the notice's page or window still opens"
               and "PermissionError" in entry["error"] for entry in harness.decisions())
@@ -1447,21 +1698,28 @@ def run_user_alert_cases(root: Path):
                     ": its tmux server could not be put in a scope, because systemd-run exited 1")
     harness = Harness(root / "alert-not-for-a-restart", recovery_result=(0, f"{outside_line}\n"
                                                                             "merge-lane-2: relaunched resuming x"))
-    harness.user_alert_write_to_pending = lambda title, text, action: written.append(title) or "alert-3"
+    harness.user_alert_write_to_pending = lambda title, text, action: written.append(title) or "alert-4"
     try:
         crash_after_running(harness)
         raised = ""
-    except Exception as error:  # noqa: BLE001 - in production run_once turns this into a false run-failed alert
+    except Exception as error:  # noqa: BLE001 - in production run_once turns this into a false run-failed task
         raised = f"{type(error).__name__}: {error}"
     check("a restart recovery started outside the user's systemd manager gets its notice and no alert, "
           "since only a failed restart needs the user",
           not raised and written == [] and len(harness.notices()) == 1, repr((raised, written)))
 
     written_kinds = notice_kinds_write_notice_is_called_with_in_the_watchers_source()
-    check("every kind of notice the watcher writes after a failed restart has an alert title, and every "
-          "title is for a kind the watcher writes",
+    check("every kind of notice the watcher writes for the user, and every kind of task, which becomes a "
+          "notice when it cannot be written, has an alert title, and every title is for one of those kinds",
           set(watcher_module.FAILED_RESTART_NOTICE_KIND_TO_USER_ALERT_TITLE_TEMPLATE)
-          == written_kinds - {"started-outside-user-systemd-manager"}, repr(written_kinds))
+          == (written_kinds - {"started-outside-user-systemd-manager"})
+          | set(watcher_module.FAILURE_KIND_TO_AGENT_SEAT_TASK_SUBJECT_TEMPLATE),
+          repr(written_kinds))
+    check("every kind of task has both a subject and a description",
+          set(watcher_module.FAILURE_KIND_TO_AGENT_SEAT_TASK_SUBJECT_TEMPLATE)
+          == set(watcher_module.FAILURE_KIND_TO_AGENT_SEAT_TASK_DESCRIPTION_TEMPLATE)
+          == {"second-crash", "recovery-failed", "assessment-failed", "run-failed", "leftover-shell",
+              "recovery-refuses"})
 
 
 def notice_kinds_write_notice_is_called_with_in_the_watchers_source():

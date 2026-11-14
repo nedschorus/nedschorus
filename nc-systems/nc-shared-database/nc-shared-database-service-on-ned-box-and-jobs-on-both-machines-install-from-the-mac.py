@@ -27,8 +27,8 @@ first that fails:
   8.   ned-box installs the nightly backup job;
   9.   the Mac installs the job that copies the newest backup to the Mac;
   10-13. on each machine, curl asks the service for the agent-seats with that
-       machine's token, which must be answered 412, the token accepted and no
-       generation ID sent, and without a token, which must be answered 401.
+       machine's token, which must be answered 200, and without a token, which
+       must be answered 401.
 
 Every step can be run again: a token file that holds a token is kept, and the
 unit, the firewall rule and the jobs are left as they are when already there.
@@ -52,9 +52,9 @@ import sys
 from pathlib import Path
 
 _rerun_once_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
     Path(__file__).resolve().parents[1] / "general-tools"
-    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+    / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 _rerun_once_lines = importlib.util.module_from_spec(_rerun_once_lines_spec)
 _rerun_once_lines_spec.loader.exec_module(_rerun_once_lines)
 
@@ -105,7 +105,14 @@ def install_step_failure_generic_advice(machine, command):
 
 
 def reference_checkout_missing_commit_failure_advice(machine, command):
-    pull = f"git -C {REFERENCE_CHECKOUT} pull --ff-only"
+    # git pull rejects --no-overwrite-ignore, and without it the merge replaces an ignored file
+    # at a path main tracks. git merge fast-forwards whatever branch is checked out, so the
+    # command stops unless it is main.
+    pull = (f"{{ [ \"$(git -C {REFERENCE_CHECKOUT} branch --show-current)\" = main ] || "
+            f"{{ echo \"{REFERENCE_CHECKOUT} is not on main, so nothing was fast-forwarded.\" >&2; "
+            "false; }; } && "
+            f"git -C {REFERENCE_CHECKOUT} fetch origin && "
+            f"git -C {REFERENCE_CHECKOUT} merge --ff-only --no-overwrite-ignore origin/main")
     return (f"The reference-checkout {REFERENCE_CHECKOUT} on {machine} does not yet hold main's "
             f"commit {MAIN_COMMIT_EACH_REFERENCE_CHECKOUT_MUST_HOLD[:9]}, which this install's files came "
             f"from. Fast-forward it to main by running on the Mac `{command_text_to_run_on_the_mac_ssh_wrapped_when_for_ned_box(machine, pull)}`, "
@@ -188,7 +195,7 @@ def install_steps():
     ]
     for machine in ("mac", "ned-box"):
         steps.append((f"from the {machine}, the service accepts the token", machine,
-                      service_status_code_command(True), False, "412", service_wrong_http_answer_failure_advice))
+                      service_status_code_command(True), False, "200", service_wrong_http_answer_failure_advice))
         steps.append((f"from the {machine}, the service refuses a request without a token",
                       machine, service_status_code_command(False), False, "401",
                       service_wrong_http_answer_failure_advice))
@@ -246,7 +253,7 @@ def main(arguments=None, run=run_on):
     mac_token = None
     for number, (name, machine, command, reads_mac_token, expected, advice) in enumerate(
             install_steps(), 1):
-        if name == FIREWALL_STEP_NAME and options.skip_firewall_step_rule_added_by_hand:
+        if name == FIREWALL_STEP_NAME and options.skip_firewall_step_rule_added_by_hand:  # pragma: no mutate, install_steps names this step with FIREWALL_STEP_NAME itself and every other step with other text, so `is` acts as ==
             print(f"step {number} skipped: {name}, on {machine}; the user added the rule by hand")
             continue
         result = run(machine, command, mac_token if reads_mac_token else None)

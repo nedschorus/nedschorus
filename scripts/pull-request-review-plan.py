@@ -5,8 +5,7 @@ Rule 1: tiers follow content. Tests, fenced Markdown code, and Python changes
 limited to docstrings, comments and string constants get codex-review-and-head-tests-tier.
 Python behaviour changes and other code get claude-and-codex-review-and-head-tests-tier. Prose gets
 no-reviewer-tier. Settings, Bash guards and registered hooks always get
-claude-and-codex-review-and-head-tests-tier; all of .claude/hooks/ and
-.claude/guard-hooks/ does too,
+claude-and-codex-review-and-head-tests-tier; all of .claude/guard-hooks/ does too,
 including test files there. A pull request gets the strictest tier that any of
 its changed files gets; from least to most strict, the tiers are
 no-reviewer-tier, codex-review-and-head-tests-tier and
@@ -17,11 +16,13 @@ commits need, and the merge-lane, not this program, runs again on the new head
 each check whose result made the earlier round request changes. The round
 number is one more than the number of distinct heads reviewed before the
 current head, so a review already posted on the current head does not start
-another round, plus, for each pull request this one replaces, by its
+another round. To it is added, for each pull request this one replaces, by its
 description's #replaces lines followed through replacements of replacements as
 scripts/pull-request-description-replaces-line-replaced-pull-request-chain-reader-common.py
 reads them, the number of distinct heads reviewed on that pull request. A
-#replaces line that reader cannot follow is refused. The earlier reviewed head is the head of the most recently
+#replaces line that reader cannot follow is refused. Only this pull request's own
+earlier reviewed heads make a fix round, so a replacement with no reviews of its
+own is reviewed whole even though its round number is above 1. The earlier reviewed head is the head of the most recently
 submitted review on a head other than the current one.
 A fix round is reviewed whole, at the pull request's tier, in three cases, and
 the plan lists every case that holds, not only the first:
@@ -37,30 +38,58 @@ changed from the base branch to the current head, and those changed from the
 base branch to the earlier reviewed head, each measured from its merge base;
 main's unrelated files should not decide it.
 
-Rule 3: list changed agent-facing strings, with their context and old text.
-nc-systems/general-tools/python-source-agent-facing-string-collector-common.py
-decides which strings are agent-facing and which files are tests. Agent-facing
+Rule 3: list changed tool-message-to-agent strings, with their context and old text.
+nc-systems/general-tools/python-source-tool-message-to-agent-string-collector-common.py
+decides which strings are tool-messages-to-agent and which files are tests. Tool-message-to-agent
 strings are printed, written or raised strings; strings assigned to names
 ending in _ADVICE, _INSTRUCTION, _LINE, _MESSAGE, _NOTICE, _REASON, _REFUSAL
 or _TEMPLATE, or in one of those followed by S, such as _MESSAGES; string
-values of a hook's agent-facing JSON output keys in a dict literal; a module
+values of a hook's tool-message-to-agent JSON output keys in a dict literal; a module
 docstring printed through __doc__; and the strings a function returns when a
 call of that function stands where one of these strings would, as
 print(stopped_line(...)) does. Test files are those ending in
 -test.py or under a tests directory, and are excluded: a test's copy of an
 expected message is not handed to an agent. F-string
 placeholders survive in the listing. Beside each listed string is its
-cold-read-fast-read command, whose target file holds the string's new text. The
+cold-read-fast-read command, whose target file holds the string's new text as
+the agent reads it, with each placeholder shown as <its source>, or as its value
+when it names a module-level string constant, as the collector's
+text_as_agent_reads_it_with_placeholder_stand_ins says; --json gives that text
+as new_text_as_agent_reads_it_with_placeholder_stand_ins. The
 target file is written as
-nc-systems/general-tools/python-edit-changed-agent-facing-message-check-reminder-hook.py
-writes it: in the directory agent-facing-message-fast-read-targets under the
+nc-systems/general-tools/python-edit-changed-tool-message-to-agent-strings-check-reminder-hook.py
+writes it: in the directory tool-message-to-agent-fast-read-targets under the
 system temporary directory, named after the source file and a digest of the
-text. A target that cannot be
+text. A listed string whose cold-read-record the pull request's description names, and whose text matches that record's target file, gets the record's path instead of a cold-read-fast-read command; every other string keeps its command.
+The description names a record by an absolute path that ends
+/cold-read-records/<record name>, as in
+nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/<record name>;
+the program drops any text before the path's first slash and reads the path on
+the machine it runs on, so a record kept on ned-box is used only when the
+program runs on ned-box. A string's new text as the agent reads it, the text its
+cold-read-fast-read target file would hold, matches when it equals the contents
+of a file under the record's target/ directory once each run of whitespace in both is made one space and the ends
+are stripped; a text that is only part of such a file does not match. A
+record is used only when it holds its cold-read-fast-read report, because a
+read that failed leaves target/ and no report. A named record that is not a
+directory, holds no report or no target file, or cannot be read is listed in
+the plan with the reason, and its strings keep their commands; such a record
+does not change the exit code. A target that cannot be
 written is marked in the plan, which leaves its message with no
 cold-read-fast-read command, so the program exits 3 after printing the plan.
 A string the collector's kind calls a prompt, text a program hands an agent as
-its instructions, is also marked "needs the user's approval", and has
-needs_user_approval set in --json; a printed message is not.
+its instructions, gets one of two labels; a printed message gets neither. The
+cosmetic-change label, with cosmetic_change_needs_no_approval set in --json,
+goes to a changed prompt whose old and new text, as the agent receives it, are
+identical once whitespace at line ends is removed, each run of blank lines
+becomes one, and blank lines at the start or end are dropped; for an f-string,
+each field's source must also match exactly. A prompt that is an f-string on one
+side only gets the needs-approval label, and so does one whose placeholders, the
+f-string fields and non-literal operands of a + chain, differ in source or order:
+a literal {path} that becomes a field is a change the agent receives. Every other prompt gets the
+needs-approval label, with needs_user_approval set in --json, including an added
+prompt and one the plan lists with no old text, such as a prompt moved into
+another string.
 
 Rule 4: a pull request that adds or changes an nc-architecture-overview, a
 file at the path scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py
@@ -94,8 +123,9 @@ no-reviewer-tier because prose outside code is outside the review scope.
 
 Reads the pull request, reviews, inline comments and live base tip through
 four read-only gh calls, and each replaced pull request and its reviews through
-two more, commits, refs and diffs from the local repository,
-and, under rule 4, the claim-check reports.
+two more. Reads commits, refs and diffs from the local repository,
+the cold-read-records the description names, and, under rule 4, the
+claim-check reports.
 Never fetches, pushes or writes refs. git merge-tree --write-tree may write
 tree objects. Writes no file except the cold-read-fast-read target files and
 the optional --brief-skeleton file. The program refuses, with exit 1 and no
@@ -103,8 +133,9 @@ plan, to write --brief-skeleton over an existing file, because a rerun must not
 erase the checks the merge-lane wrote into it by hand.
 Exit 0: success. Exit 1: refusal, including malformed arguments or unavailable
 inputs. Exit 2: program defect, with exception and traceback on stderr.
-Exit 3: the plan is printed, but a listed message has no cold-read-fast-read
-command, so that a caller notices the missing reads.
+Exit 3: the plan is printed, but a listed message has neither a
+cold-read-fast-read command nor a cold-read-record, so that a caller notices
+the missing reads.
 
 Usage:
   scripts/pull-request-review-plan.py --pull-request N [--repository DIR]
@@ -140,18 +171,19 @@ _git_redirecting_removal_spec = importlib.util.spec_from_file_location(
 git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
 _git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
 
-_agent_facing_string_collector_spec = importlib.util.spec_from_file_location(
-    "python_source_agent_facing_string_collector_common",
+_tool_message_to_agent_string_collector_spec = importlib.util.spec_from_file_location(
+    "python_source_tool_message_to_agent_string_collector_common",
     Path(__file__).resolve().parent.parent / "nc-systems" / "general-tools"
-    / "python-source-agent-facing-string-collector-common.py")
-_agent_facing_string_collector = importlib.util.module_from_spec(_agent_facing_string_collector_spec)
-_agent_facing_string_collector_spec.loader.exec_module(_agent_facing_string_collector)
-path_is_test_file = _agent_facing_string_collector.path_is_test_file
-agent_facing_string_nodes_in_source = _agent_facing_string_collector.agent_facing_string_nodes_in_source
+    / "python-source-tool-message-to-agent-string-collector-common.py")
+_tool_message_to_agent_string_collector = importlib.util.module_from_spec(_tool_message_to_agent_string_collector_spec)
+_tool_message_to_agent_string_collector_spec.loader.exec_module(_tool_message_to_agent_string_collector)
+path_is_test_file = _tool_message_to_agent_string_collector.path_is_test_file
+f_string_field_text = _tool_message_to_agent_string_collector.f_string_field_text
+tool_message_to_agent_string_nodes_in_source = _tool_message_to_agent_string_collector.tool_message_to_agent_string_nodes_in_source
 _message_reminder_hook_spec = importlib.util.spec_from_file_location(
-    "python_edit_changed_agent_facing_message_check_reminder_hook",
+    "python_edit_changed_tool_message_to_agent_strings_check_reminder_hook",
     Path(__file__).resolve().parent.parent / "nc-systems" / "general-tools"
-    / "python-edit-changed-agent-facing-message-check-reminder-hook.py")
+    / "python-edit-changed-tool-message-to-agent-strings-check-reminder-hook.py")
 _message_reminder_hook = importlib.util.module_from_spec(_message_reminder_hook_spec)
 _message_reminder_hook_spec.loader.exec_module(_message_reminder_hook)
 _replaces_reader_spec = importlib.util.spec_from_file_location(
@@ -164,6 +196,11 @@ fast_read_target_file_name = _message_reminder_hook.fast_read_target_file_name
 cold_read_fast_read_review_command_line_for_target_file = _message_reminder_hook.cold_read_fast_read_review_command_line_for_target_file
 FAST_READ_COMMAND = _message_reminder_hook.FAST_READ_COMMAND
 PLAN_PRINTED_WITH_MESSAGES_MISSING_FAST_READ_COMMAND_EXIT_STATUS = 3
+_cold_read_record_names_spec = importlib.util.spec_from_file_location(
+    "cold_read_record_names_common",
+    Path(__file__).resolve().parent.parent / "nc-systems" / "cold-read" / "cold-read-record-names-common.py")
+cold_read_record_names = importlib.util.module_from_spec(_cold_read_record_names_spec)
+_cold_read_record_names_spec.loader.exec_module(cold_read_record_names)
 _overview_claim_check_spec = importlib.util.spec_from_file_location(
     "overview_write_architecture_overview_claim_check_by_fresh_agent",
     Path(__file__).resolve().parent.parent / "nc-systems" / "skills" / "overview-write"
@@ -182,6 +219,8 @@ GIT_FULL_HASH_PATTERN = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 DIFF_HUNK_HEADER_PATTERN = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
 REGISTERED_HOOK_PATH_PATTERN = re.compile(r'\$CLAUDE_PROJECT_DIR"?/([^"\s]+)')
 MARKDOWN_SECTION_HEADING_PATTERN = re.compile(r"^##\s")
+COLD_READ_RECORD_PATH_IN_DESCRIPTION_PATTERN = re.compile(
+    r"(/[^\s`'\"<>()\[\],;:]*/" + cold_read_record_names.RECORDS_DIRECTORY_NAME + r"/[^\s/`'\"<>()\[\],;:]+)")
 COMPONENTS_SECTION_HEADING_PATTERN = re.compile(r"^##\s+Components\s*$")
 BACKTICKED_TEXT_PATTERN = re.compile(r"`([^`]+)`")
 # A component path is relative to the repository; this leaves out
@@ -451,9 +490,8 @@ def registered_hook_paths_at_revision(repository, revision):
 
 
 def hook_path_rule_reason(path, registered_paths):
-    for directory in (".claude/hooks/", ".claude/guard-hooks/"):
-        if path.startswith(directory):
-            return f"{path} is under {directory}; every file there always gets claude-and-codex-review-and-head-tests-tier"
+    if path.startswith(".claude/guard-hooks/"):
+        return f"{path} is under .claude/guard-hooks/; every file there always gets claude-and-codex-review-and-head-tests-tier"
     if path in registered_paths:
         return f"{path} is registered as a hook in .claude/settings.json; a change to it always gets claude-and-codex-review-and-head-tests-tier"
     return None
@@ -540,21 +578,87 @@ def review_tier_and_deciding_reason(changed_files):
     return deciding_file["tier"], deciding_file["reason"]
 
 
-def changed_agent_facing_text_entries(repository, old_revision, new_revision, changed_files):
+F_STRING_FIELD_STAND_IN = "\x00{index}\x00"
+
+
+def prompt_text_handed_to_agent(text):
+    """(is_f_string, text, fields): the collector gives an f-string as its source, quoted and with \\n as two
+    characters; its text then holds a stand-in for each field, and fields each field's source, compared exactly."""
+    try:
+        expression = ast.parse(text, mode="eval").body
+    except SyntaxError:
+        return False, text, ()
+    if not isinstance(expression, ast.JoinedStr):
+        return False, text, ()
+    fields = tuple(f_string_field_text(part) for part in expression.values if not isinstance(part, ast.Constant))
+    pieces, index = [], 0
+    for part in expression.values:
+        if isinstance(part, ast.Constant):
+            pieces.append(part.value)
+        else:
+            pieces.append(F_STRING_FIELD_STAND_IN.format(index=index))
+            index += 1
+    return True, "".join(pieces), fields
+
+
+def prompt_text_lines_without_trailing_whitespace_or_extra_blank_lines(text):
+    lines = []
+    for line in text.split("\n"):
+        line = line.rstrip()
+        if line or (lines and lines[-1]):
+            lines.append(line)
+    while lines and not lines[-1]:
+        lines.pop()
+    return lines
+
+
+def prompt_texts_differ_only_in_trailing_whitespace_or_blank_lines(old_text, new_text, old_placeholders=(),
+                                                                   new_placeholders=()):
+    """A + chain's text shows a placeholder as {source}, as a plain literal shows its own braces, so the
+    placeholders the collector found are compared too: a literal {path} that becomes a field is not cosmetic."""
+    if old_placeholders != new_placeholders:
+        return False
+    old_is_f_string, old_prose, old_fields = prompt_text_handed_to_agent(old_text)
+    new_is_f_string, new_prose, new_fields = prompt_text_handed_to_agent(new_text)
+    if old_is_f_string != new_is_f_string or old_fields != new_fields:
+        return False
+    return (prompt_text_lines_without_trailing_whitespace_or_extra_blank_lines(old_prose)
+            == prompt_text_lines_without_trailing_whitespace_or_extra_blank_lines(new_prose))
+
+
+def approval_fields_for_agent_text(kind, old_node, new_node):
+    old_text = old_node["text"] if old_node else None
+    cosmetic = (kind == "prompt" and old_text is not None
+                and prompt_texts_differ_only_in_trailing_whitespace_or_blank_lines(
+                    old_text, new_node["text"],
+                    old_node["placeholder_value_source_code_texts"],
+                    new_node["placeholder_value_source_code_texts"]))
+    return {"needs_user_approval": kind == "prompt" and not cosmetic, "cosmetic_change_needs_no_approval": cosmetic}
+
+
+def same_text_and_placeholders(old_node, new_node):
+    return (old_node["text"] == new_node["text"]
+            and old_node["placeholder_value_source_code_texts"]
+            == new_node["placeholder_value_source_code_texts"])
+
+
+def changed_tool_message_to_agent_text_entries(repository, old_revision, new_revision, changed_files):
     entries = []
     for changed_file in changed_files:
         path = changed_file["path"]
         if (not path.endswith(".py") or path_is_test_file(path)
-                or not path.startswith(("scripts/", ".claude/hooks/", ".claude/guard-hooks/", "nc-systems/"))
+                or not path.startswith(("scripts/", ".claude/guard-hooks/", "nc-systems/"))
                 or changed_file["status"] == "D"):
             continue
-        new_nodes = agent_facing_string_nodes_in_source(read_revision_blob_or_none(repository, new_revision, path))
+        new_nodes = tool_message_to_agent_string_nodes_in_source(read_revision_blob_or_none(repository, new_revision, path))
         if changed_file["status"] == "A":
             entries.extend({"path": path, "line": node["line"], "label": node["label"],
                             "old_text": None, "new_text": node["text"],
-                            "needs_user_approval": node["kind"] == "prompt"} for node in new_nodes)
+                            "new_text_as_agent_reads_it_with_placeholder_stand_ins":
+                                node["text_as_agent_reads_it_with_placeholder_stand_ins"],
+                            **approval_fields_for_agent_text(node["kind"], None, node)} for node in new_nodes)
             continue
-        old_nodes = agent_facing_string_nodes_in_source(read_revision_blob_or_none(repository, old_revision, path))
+        old_nodes = tool_message_to_agent_string_nodes_in_source(read_revision_blob_or_none(repository, old_revision, path))
         diff_text = required_git_output(repository, "diff", "-U0", "--no-ext-diff", "--no-textconv", "--no-color",
                                         old_revision, new_revision, "--", path)
         listed_new_nodes = set()
@@ -566,28 +670,74 @@ def changed_agent_facing_text_entries(repository, old_revision, new_revision, ch
                 if new_index in listed_new_nodes or not line_span_intersects_hunk_side(
                         new_node["line"], new_node["end_line"], new_start, new_count):
                     continue
-                if any(node["text"] == new_node["text"] for _, node in old_candidates):
+                if any(same_text_and_placeholders(node, new_node) for _, node in old_candidates):
                     continue
                 old_match = next(((index, node) for index, node in old_candidates
                                   if index not in used_old_nodes and node["label"] == new_node["label"]
-                                  and node["text"] != new_node["text"]), None)
+                                  and not same_text_and_placeholders(node, new_node)), None)
                 if old_match:
                     used_old_nodes.add(old_match[0])
                 listed_new_nodes.add(new_index)
+                old_text = old_match[1]["text"] if old_match else None
                 entries.append({"path": path, "line": new_node["line"], "label": new_node["label"],
-                                "old_text": old_match[1]["text"] if old_match else None, "new_text": new_node["text"],
-                                "needs_user_approval": new_node["kind"] == "prompt"})
+                                "old_text": old_text, "new_text": new_node["text"],
+                                "new_text_as_agent_reads_it_with_placeholder_stand_ins":
+                                    new_node["text_as_agent_reads_it_with_placeholder_stand_ins"],
+                                **approval_fields_for_agent_text(new_node["kind"], old_match[1] if old_match else None,
+                                                                 new_node)})
     return sorted(entries, key=lambda entry: (entry["path"], entry["line"], entry["label"]))
 
 
-def entries_with_fast_read_commands(entries):
-    """Give each entry its target file's name and the cold-read-fast-read command
-    for its new text, written to that file the way the message reminder hook
-    writes it, or the reason the file could not be written."""
-    for entry in entries:
-        entry["fast_read_target_file_name"] = fast_read_target_file_name(entry["path"], entry["new_text"])
+def text_with_whitespace_runs_as_one_space(text):
+    return " ".join(text.split())
+
+
+def named_cold_read_records_with_target_texts(description):
+    """Each cold-read-record path the description names, once, with the
+    whitespace-normalised text of each file under its target/ directory, or,
+    as problem, why the record cannot be used."""
+    records = []
+    for path in dict.fromkeys(match.rstrip(".")
+                              for match in COLD_READ_RECORD_PATH_IN_DESCRIPTION_PATTERN.findall(description or "")):
+        record = Path(path)
+        target_texts, problem = set(), None
         try:
-            target = fast_read_target_written(entry["path"], entry["new_text"])
+            report = cold_read_record_names.cold_read_record_file_path_prefixed_name_else_name_before_prefix(
+                record, cold_read_record_names.COLD_READ_FAST_READ_REPORT_FILE_NAME)
+            if not record.is_dir():
+                problem = "it is not a directory on this machine"
+            elif not report.is_file():
+                problem = f"it holds no {report.name}, so its cold-read-fast-read did not finish"
+            else:
+                targets = sorted(file for file in (record / cold_read_record_names.FROZEN_TARGET_DIRECTORY_NAME).rglob("*")
+                                 if file.is_file())
+                if not targets:
+                    problem = f"its {cold_read_record_names.FROZEN_TARGET_DIRECTORY_NAME}/ directory holds no file"
+                target_texts = {text_with_whitespace_runs_as_one_space(target.read_text(encoding="utf-8"))
+                                for target in targets}
+        except (OSError, UnicodeDecodeError) as failure:
+            target_texts, problem = set(), f"it could not be read: {type(failure).__name__}: {failure}"
+        records.append({"path": path, "target_texts": target_texts, "problem": problem})
+    return records
+
+
+def entries_with_fast_read_commands(entries, named_records=()):
+    """Give each entry its target file's name and either the path of a named
+    record whose target file holds its new text as the agent reads it, or the
+    cold-read-fast-read command for that text, written to that file the way the
+    message reminder hook writes it, or the reason the file could not be written."""
+    for entry in entries:
+        text = entry["new_text_as_agent_reads_it_with_placeholder_stand_ins"]
+        entry["fast_read_target_file_name"] = fast_read_target_file_name(entry["path"], text)
+        normalised = text_with_whitespace_runs_as_one_space(text)
+        entry["cold_read_record"] = next(
+            (record["path"] for record in named_records if normalised in record["target_texts"]), None)
+        if entry["cold_read_record"] is not None:
+            entry["fast_read_command"] = None
+            entry["fast_read_target_error"] = None
+            continue
+        try:
+            target = fast_read_target_written(entry["path"], text)
         except OSError as failure:
             entry["fast_read_command"] = None
             entry["fast_read_target_error"] = f"{type(failure).__name__}: {failure}"
@@ -598,6 +748,8 @@ def entries_with_fast_read_commands(entries):
 
 
 def fast_read_line_for_agent_text_entry(entry):
+    if entry["cold_read_record"] is not None:
+        return "cold-read-record named in the description: " + entry["cold_read_record"]
     if entry["fast_read_command"] is not None:
         return "cold-read-fast-read: " + entry["fast_read_command"]
     return ("cold-read-fast-read: none, because this message's text could not be written to a file: "
@@ -608,9 +760,9 @@ def plan_entries_missing_fast_read_command(plan):
     """Each listed message without a command, once, though the whole pull
     request's list and the delta's may both list it."""
     missing, seen = [], set()
-    for entry in plan["agent_facing_text_whole_pull_request"] + plan["agent_facing_text_delta"]:
+    for entry in plan["tool_message_to_agent_text_whole_pull_request"] + plan["tool_message_to_agent_text_delta"]:
         key = (entry["path"], entry["line"], entry["new_text"])
-        if entry["fast_read_command"] is None and key not in seen:
+        if entry["fast_read_target_error"] is not None and key not in seen:
             seen.add(key)
             missing.append(entry)
     return missing
@@ -634,9 +786,9 @@ def missing_fast_read_commands_message(missing, json_rerun_command=None):
                         f"{entry['fast_read_target_file_name']}"
                         for entry in missing)
     if len(missing) == 1:
-        count = "1 listed agent-facing message has no cold-read-fast-read command, because its text"
+        count = "1 listed tool-message-to-agent has no cold-read-fast-read command, because its text"
     else:
-        count = f"{len(missing)} listed agent-facing messages have no cold-read-fast-read command, because their text"
+        count = f"{len(missing)} listed tool-messages-to-agent have no cold-read-fast-read command, because their text"
     if json_rerun_command is None:
         get_json = "1. Use the plan this run printed as JSON on stdout.\n"
     else:
@@ -650,9 +802,11 @@ def missing_fast_read_commands_message(missing, json_rerun_command=None):
             "hand, in these steps.\n"
             + get_json
             + "2. For each file name listed below, find an entry whose fast_read_target_file_name is that file name, "
-            "in either the agent_facing_text_whole_pull_request list or the agent_facing_text_delta list. Entries "
-            "with the same file name hold the same new_text, so the first one you find will do.\n"
-            "3. Write that entry's new_text to a file of that name, in a directory outside your checkout, such as one "
+            "in either the tool_message_to_agent_text_whole_pull_request list or the tool_message_to_agent_text_delta list. Entries "
+            "with the same file name hold the same new_text_as_agent_reads_it_with_placeholder_stand_ins, so the first "
+            "one you find will do.\n"
+            "3. Write that entry's new_text_as_agent_reads_it_with_placeholder_stand_ins to a file of that name, in a "
+            "directory outside your checkout, such as one "
             "made with mktemp -d. Write the decoded text, not the JSON string: read the plan with a JSON parser, such as "
             "Python's json.load, so that each escape, such as \\n or \\\", becomes the character it stands for.\n"
             "4. For each file you wrote, run " + FAST_READ_COMMAND.format(target="<that file's full path>")
@@ -925,6 +1079,7 @@ def compute_pull_request_review_plan(arguments):
     replaced_pull_requests = replaced_pull_requests_with_reviewed_head_counts(
         number, github_repository, pull_request.get("body"))
     posting_rule, posting_reason = posting_rule_and_reason_for_author(pull_request["author"]["login"])
+    named_records = named_cold_read_records_with_target_texts(pull_request.get("body"))
     plan = {
         "pull_request": number, "title": pull_request["title"], "url": pull_request["url"], "state": pull_request["state"],
         "head": head, "base_branch": base_branch, "diff_base": diff_base, "diff_base_reason": diff_base_reason,
@@ -941,9 +1096,10 @@ def compute_pull_request_review_plan(arguments):
              "inline_comments": inline_counts.get(review["id"], 0)} for review in posted_reviews],
         "changed_files": changed_files, "delta_files": [],
         "test_files_to_run": test_files_to_run_for_changed_files(repository, head, changed_files),
-        "agent_facing_text_whole_pull_request": entries_with_fast_read_commands(
-            changed_agent_facing_text_entries(repository, merge_base, head, changed_files)),
-        "agent_facing_text_delta": [],
+        "tool_message_to_agent_text_whole_pull_request": entries_with_fast_read_commands(
+            changed_tool_message_to_agent_text_entries(repository, merge_base, head, changed_files), named_records),
+        "named_cold_read_records": [{"path": record["path"], "problem": record["problem"]} for record in named_records],
+        "tool_message_to_agent_text_delta": [],
     }
     if earlier:
         plan["delta_only_review_applies"] = False
@@ -961,8 +1117,8 @@ def compute_pull_request_review_plan(arguments):
                 delta_files = [entry for entry in delta_files if entry["path"] in own_paths]
                 plan["delta_files_restricted_to_pull_request_files"] = True
             plan["delta_files"] = delta_files
-            plan["agent_facing_text_delta"] = entries_with_fast_read_commands(
-                changed_agent_facing_text_entries(repository, earlier, head, delta_files))
+            plan["tool_message_to_agent_text_delta"] = entries_with_fast_read_commands(
+                changed_tool_message_to_agent_text_entries(repository, earlier, head, delta_files), named_records)
             plan["delta_tier"], plan["delta_tier_decided_by"] = review_tier_and_deciding_reason(delta_files)
             reasons = plan["delta_only_review_reasons"]
             if merge_commits:
@@ -996,6 +1152,9 @@ def plan_fact_lines(plan):
              f"round: {plan['round']}" + (" (a fix round)" if plan['fix_round'] else "")]
     lines.extend(f"  carried over by #replaces: {replaced['reviewed_heads']} reviewed heads of {replaced['url']}"
                  for replaced in plan["replaced_pull_requests"])
+    lines.extend(f"named cold-read-record not used: {record['path']}, because {record['problem']}; "
+                 "the strings it would cover keep their cold-read-fast-read commands"
+                 for record in plan["named_cold_read_records"] if record["problem"])
     if plan["fix_round"]:
         lines.extend([f"  earlier reviewed head: {plan['earlier_reviewed_head']}", f"  delta range: {plan['delta_range']}"
                       + (" (files restricted to the pull request's own files)" if plan['delta_files_restricted_to_pull_request_files'] else ""),
@@ -1020,7 +1179,16 @@ def changed_lines_for_agent_text_entry(entry):
     return list(difflib.unified_diff(old_lines, new_lines, lineterm="", n=2))[2:]
 
 
-PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE = "needs the user's approval: this is a prompt, text the program hands an agent as its instructions"
+PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE = "needs the user's approval unless it is a cosmetic-change, as `docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md` defines one: this is a prompt, text the program hands an agent as its instructions"
+PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_WITH_COSMETIC_CHANGE_NEEDING_NO_APPROVAL_LINE = "cosmetic-change, needs no approval: this prompt changed only in whitespace at line ends or in the number of blank lines between its paragraphs"
+
+
+def approval_label_for_agent_text_entry(entry):
+    if entry["cosmetic_change_needs_no_approval"]:
+        return PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_WITH_COSMETIC_CHANGE_NEEDING_NO_APPROVAL_LINE
+    if entry["needs_user_approval"]:
+        return PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE
+    return None
 
 
 def render_text_agent_entries(entries):
@@ -1028,8 +1196,8 @@ def render_text_agent_entries(entries):
     for entry in entries:
         lines.append(f"  {entry['path']}:{entry['line']} {entry['label']}")
         lines.append("    " + fast_read_line_for_agent_text_entry(entry))
-        if entry["needs_user_approval"]:
-            lines.append("    " + PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE)
+        if approval_label_for_agent_text_entry(entry):
+            lines.append("    " + approval_label_for_agent_text_entry(entry))
         changed_lines = changed_lines_for_agent_text_entry(entry)
         if changed_lines is not None:
             lines.append("    changed lines:")
@@ -1050,11 +1218,11 @@ def render_pull_request_review_plan_text(plan):
         lines.extend([f"  {entry['class']:<8} {entry['tier']:<15} {entry['path']} ({entry['status']}): {entry['reason']}" for entry in files] or ["  none"])
     lines.append("test files to run:")
     lines.extend(["  " + path for path in plan["test_files_to_run"]] or ["  none"])
-    lines.append(f"agent-facing text, whole pull request ({plan['merge_base'][:12]}..{plan['head'][:12]}):")
-    lines.extend(render_text_agent_entries(plan["agent_facing_text_whole_pull_request"]))
+    lines.append(f"tool-message-to-agent text, whole pull request ({plan['merge_base'][:12]}..{plan['head'][:12]}):")
+    lines.extend(render_text_agent_entries(plan["tool_message_to_agent_text_whole_pull_request"]))
     if plan["fix_round"]:
-        lines.append(f"agent-facing text, this round's delta ({plan['earlier_reviewed_head'][:12]}..{plan['head'][:12]}):")
-        lines.extend(render_text_agent_entries(plan["agent_facing_text_delta"]))
+        lines.append(f"tool-message-to-agent text, this round's delta ({plan['earlier_reviewed_head'][:12]}..{plan['head'][:12]}):")
+        lines.extend(render_text_agent_entries(plan["tool_message_to_agent_text_delta"]))
     return "\n".join(lines) + "\n"
 
 
@@ -1075,10 +1243,10 @@ def render_pull_request_brief_skeleton(plan):
         lines.extend([f"- {entry['path']} ({entry['status']}): {entry['class']}, {entry['tier']}; {entry['reason']}" for entry in entries] or ["none"])
     lines.extend(["", "### Test files to run", ""])
     lines.extend(["- " + path for path in plan["test_files_to_run"]] or ["none"])
-    lines.extend(["", "### Agent-facing text", ""])
-    groups = [("Whole pull request", plan["merge_base"], plan["agent_facing_text_whole_pull_request"])]
+    lines.extend(["", "### Tool-message-to-agent text", ""])
+    groups = [("Whole pull request", plan["merge_base"], plan["tool_message_to_agent_text_whole_pull_request"])]
     if plan["fix_round"]:
-        groups.append(("This round's delta", plan["earlier_reviewed_head"], plan["agent_facing_text_delta"]))
+        groups.append(("This round's delta", plan["earlier_reviewed_head"], plan["tool_message_to_agent_text_delta"]))
     for heading, old_revision, entries in groups:
         lines.extend([f"#### {heading} ({old_revision[:12]}..{plan['head'][:12]})", ""])
         if not entries:
@@ -1086,8 +1254,8 @@ def render_pull_request_brief_skeleton(plan):
         for entry in entries:
             lines.extend([f"{entry['path']}:{entry['line']} {entry['label']}", "",
                           *markdown_fenced_text_lines(fast_read_line_for_agent_text_entry(entry)), ""])
-            if entry["needs_user_approval"]:
-                lines.extend([PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE, ""])
+            if approval_label_for_agent_text_entry(entry):
+                lines.extend([approval_label_for_agent_text_entry(entry), ""])
             changed_lines = changed_lines_for_agent_text_entry(entry)
             if changed_lines is not None:
                 lines.extend(["changed lines:", *markdown_fenced_text_lines("\n".join(changed_lines), "diff"), ""])

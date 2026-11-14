@@ -98,8 +98,8 @@ BASELINE_FILE_CONTENTS = {
     "operative-note.md": "Old prose outside docs.\n",
     "scripts/example-program.py": '"""Old module documentation."""\n# Old comment\nVALUE = "old"\n\ndef show_value():\n    """Old function documentation."""\n    print(VALUE)\n    return 1\n',
     "scripts/example-program-test.py": 'EXPECTED = "old"\nassert EXPECTED\n',
-    ".claude/hooks/example-hook.py": 'print("old")\n',
-    ".claude/hooks/example-hook-test.py": 'print("old")\n',
+    ".claude/guard-hooks/example-hook.py": 'print("old")\n',
+    ".claude/guard-hooks/example-hook-test.py": 'print("old")\n',
     ".claude/guard-hooks/synthetic-keystroke-guard-hook.py": 'print("old")\n',
     "scripts/registered-example-hook.py": 'print("old")\n',
     ".claude/settings.json": json.dumps({"hooks": {"PreToolUse": [{"hooks": [
@@ -251,6 +251,70 @@ def run_unit_cases():
     check("normalized AST preserves behaviour and f-string expressions",
           review_plan_module.normalized_syntax_tree_dump_without_strings(old_source)
           != review_plan_module.normalized_syntax_tree_dump_without_strings(old_source.replace("{x}", "{x + 1}")))
+    prompt_before = "# Task\n\nRead the whole file, then\nreport each name.\n\n- first step\n- second step\n"
+    compare = review_plan_module.prompt_texts_differ_only_in_trailing_whitespace_or_blank_lines
+    cosmetic_cases = [
+        ("trailing spaces and tabs added", prompt_before.replace("then\n", "then  \t\n").replace("step\n", "step \n"), True),
+        ("extra blank lines between paragraphs", prompt_before.replace("# Task\n\n", "# Task\n\n\n\n"), True),
+        ("a blank line holding only spaces", prompt_before.replace("# Task\n\n", "# Task\n   \n"), True),
+        ("blank lines added at the start and the end", "\n\n" + prompt_before + "\n\n", True),
+        ("an f-string with trailing spaces added, read from its source", None, True),
+        ("a moved line break", prompt_before.replace("then\nreport", "then report"), False),
+        ("dropped emphasis marks", prompt_before.replace("whole", "**whole**"), False),
+        ("a paragraph split by a blank line", prompt_before.replace("then\nreport", "then\n\nreport"), False),
+        ("a changed word", prompt_before.replace("second step", "next step"), False),
+    ]
+    reviewed_pairs_that_are_not_cosmetic = [
+        ("Edit _private_helper only.", "Edit private_helper only."),
+        ("Edit __init__.py now.", "Edit init.py now."),
+        ("Write to /tmp/_scratch now.", "Write to /tmp/scratch now."),
+        ("Delete files matching *.pyc here.", "Delete files matching .pyc here."),
+        ("Pass **kwargs on.", "Pass kwargs on."),
+        ("Wait 2 * 3 seconds.", "Wait 2 3 seconds."),
+        ("Name it x _ y.", "Name it x y."),
+        ("Use \\*args here.", "Use \\args here."),
+        ("1. first\n2. second", "1. first\n3. second"),
+        ("1. first\n2. second", "- first\n- second"),
+        ("- a\n  - b", "- a\n- b"),
+        ("Run `` _x `` now.", "Run `` x `` now."),
+        ("Run `a  b` now.", "Run `a b` now."),
+        ("Run `x now.", "Run x now."),
+        ("Hello {name}", "f'Hello {name}'"),
+        ("Hello", "f'Hello'"),
+        ("Use {x} here.", "Use  {x}  here."),
+        ("f\"Report {len('a b')}\"", "f\"Report {len('a  b')}\""),
+        ("Delete every __pycache__ directory first.", "Delete every pycache directory first."),
+        ("Call __init__ first.", "Call init first."),
+        ("Edit __main__.", "Edit main."),
+        ("f'Delete __pycache__ in {d}.'", "f'Delete pycache in {d}.'"),
+        ("Remove *tmp* files.", "Remove tmp files."),
+        ("Delete `build`/old now.", "Delete `build` /old now."),
+        ("Run `make`test now.", "Run `make` test now."),
+        ("Run x`a`.", "Run x `a`."),
+        ("Text\n---", "Text ---"),
+        ("Text\n===\nmore", "Text === more"),
+        ("a\n> quote", "a > quote"),
+        ("| a | b |\n|---|---|", "| a | b | |---|---|"),
+        ("a\n\n    code  x", "a\n\n    code x"),
+    ]
+    check("a prompt text that is not Python source is read as plain text with no fields",
+          review_plan_module.prompt_text_handed_to_agent("Read the file now.") == (False, "Read the file now.", ()))
+    check("a prompt text that parses as Python but is not an f-string is read as plain text with no fields",
+          review_plan_module.prompt_text_handed_to_agent("report") == (False, "report", ()))
+    check("an f-string prompt is read as the text it builds, with each field's source",
+          review_plan_module.prompt_text_handed_to_agent("f'Read {path}\\nnow.'")
+          == (True, "Read " + review_plan_module.F_STRING_FIELD_STAND_IN.format(index=0) + "\nnow.", ("{path}",)))
+    for before, after in reviewed_pairs_that_are_not_cosmetic:
+        check(f"prompt comparison: {before!r} to {after!r} is not a cosmetic-change", compare(before, after) is False)
+    for name, before, after in [("a trailing newline added where the old text had none", "Read the file.", "Read the file.\n"),
+                                ("trailing newlines added where the old text had none", "Read the file.", "Read the file.\n\n")]:
+        check(f"prompt comparison: {name} is a cosmetic-change", compare(before, after) is True, (before, after))
+    for name, prompt_after, expected in cosmetic_cases:
+        before, after = prompt_before, prompt_after
+        if prompt_after is None:
+            before, after = "f'Read {path!r}\\nthen report.'", "f'Read {path!r}  \\nthen report.'"
+        check(f"prompt comparison: {name} is {'a cosmetic-change' if expected else 'not a cosmetic-change'}",
+              compare(before, after) is expected, (before, after))
     check("hunk parser handles omitted counts and zero-line sides",
           review_plan_module.parse_diff_hunk_line_ranges("@@ -1 +2 @@\n-x\n+y\n@@ -3,0 +4,2 @@ context\n@@ -9,3 +8,0 @@\n")
           == [(1, 1, 2, 1), (3, 0, 4, 2), (9, 3, 8, 0)])
@@ -271,12 +335,12 @@ def run_classification_cases(fixture):
     check("fenced Markdown code changes get codex-review-and-head-tests-tier", plan["tier"] == "codex-review-and-head-tests-tier" and "fenced code blocks" in plan["tier_decided_by"], plan)
     full_reviewer_cases = [
         ("Python logic changes get claude-and-codex-review-and-head-tests-tier", "scripts/example-program.py", BASELINE_FILE_CONTENTS["scripts/example-program.py"].replace("return 1", "return 2")),
-        ("every hook directory file gets claude-and-codex-review-and-head-tests-tier", ".claude/hooks/example-hook.py", 'print("new")\n'),
+        ("every hook directory file gets claude-and-codex-review-and-head-tests-tier", ".claude/guard-hooks/example-hook.py", 'print("new")\n'),
         ("settings gets claude-and-codex-review-and-head-tests-tier", ".claude/settings.json", '{"hooks": {}}\n'),
         ("a Bash guard string-only change gets claude-and-codex-review-and-head-tests-tier", ".claude/guard-hooks/synthetic-keystroke-guard-hook.py", 'print("new")\n'),
         ("a registered hook string-only change gets claude-and-codex-review-and-head-tests-tier", "scripts/registered-example-hook.py", 'print("new")\n'),
         ("a new Python program gets claude-and-codex-review-and-head-tests-tier", "scripts/new-example-program.py", 'print("new")\n'),
-        ("a test under the hook directory gets claude-and-codex-review-and-head-tests-tier", ".claude/hooks/example-hook-test.py", 'print("new")\n'),
+        ("a test under the hook directory gets claude-and-codex-review-and-head-tests-tier", ".claude/guard-hooks/example-hook-test.py", 'print("new")\n'),
     ]
     for case_name, path, content in full_reviewer_cases:
         plan = fixture.plan_for_changed_file(path, content)
@@ -289,14 +353,14 @@ def run_classification_cases(fixture):
     plan = fixture.read_review_plan()
     check("always-full hook wins the deciding line before path order", "scripts/registered-example-hook.py" in plan["tier_decided_by"], plan)
     fixture.reset_fixture_to_base()
-    fixture.write_fixture_file(".claude/hooks/example-hook.py", 'print("new")\n')
-    fixture.write_fixture_file(".claude/hooks/example-hook-test.py", 'print("new")\n')
+    fixture.write_fixture_file(".claude/guard-hooks/example-hook.py", 'print("new")\n')
+    fixture.write_fixture_file(".claude/guard-hooks/example-hook-test.py", 'print("new")\n')
     head = fixture.commit_fixture_changes("hook program priority over hook test")
     fixture.configure_github_answers(head)
     plan = fixture.read_review_plan()
     check("the deciding line prefers the hook program over its earlier-sorting test",
           plan["tier"] == "claude-and-codex-review-and-head-tests-tier"
-          and ".claude/hooks/example-hook.py" in plan["tier_decided_by"]
+          and ".claude/guard-hooks/example-hook.py" in plan["tier_decided_by"]
           and "example-hook-test.py" not in plan["tier_decided_by"], plan)
     plan = fixture.plan_for_changed_file("scripts/example-program.py", "def broken(:\n")
     check("unparseable Python gets claude-and-codex-review-and-head-tests-tier with side named", plan["tier"] == "claude-and-codex-review-and-head-tests-tier" and "does not parse at new side" in plan["tier_decided_by"], plan)
@@ -393,11 +457,11 @@ def run_fix_round_cases(fixture):
     plan = fixture.read_review_plan()
     check("a main merge voids delta-only review and names its short hash", not plan["delta_only_review_applies"] and any(merge_head[:12] in reason for reason in plan["delta_only_review_reasons"]), plan)
     check("a main merge restricts delta files to the pull request's own files", plan["delta_files_restricted_to_pull_request_files"] and [entry["path"] for entry in plan["delta_files"]] == ["scripts/example-program.py"] and plan["delta_tier"] == "codex-review-and-head-tests-tier", plan)
-    check("a main merge excludes main-only files and messages from delta agent-facing text",
+    check("a main merge excludes main-only files and messages from delta tool-message-to-agent text",
           not any(entry["path"] == "scripts/unrelated-main-program.py"
                   or "main-only message" in (entry["old_text"] or "")
                   or "main-only message" in (entry["new_text"] or "")
-                  for entry in plan["agent_facing_text_delta"]), plan["agent_facing_text_delta"])
+                  for entry in plan["tool_message_to_agent_text_delta"]), plan["tool_message_to_agent_text_delta"])
     skeleton_result = fixture.run_review_plan("--brief-skeleton", str(fixture.control_directory / "fix-round-brief.md"))
     skeleton_text = (fixture.control_directory / "fix-round-brief.md").read_text()
     check("a fix round brief includes delta tier, restrictions and every verdict reason", skeleton_result.returncode == 0 and "delta tier: codex-review-and-head-tests-tier" in skeleton_text and "files restricted" in skeleton_text and merge_head[:12] in skeleton_text, skeleton_text)
@@ -561,7 +625,7 @@ def run_agent_text_cases(fixture):
     fixture.configure_github_answers(long_help_changed_head, live_base=long_help_merge_base_head)
     long_help_text_result = fixture.run_review_plan(json_output=False)
     unchanged_help_docstring_lines = [f"Help line {line_number}." for line_number in range(1, 13) if line_number != 6]
-    check("long agent-facing text shows changed lines without repeating unchanged docstring lines",
+    check("long tool-message-to-agent text shows changed lines without repeating unchanged docstring lines",
           long_help_text_result.returncode == 0 and "changed lines:" in long_help_text_result.stdout
           and any(line.endswith("-Help line 6.") for line in long_help_text_result.stdout.splitlines())
           and any(line.endswith("+Help line six.") for line in long_help_text_result.stdout.splitlines())
@@ -570,13 +634,13 @@ def run_agent_text_cases(fixture):
     long_help_skeleton_path = fixture.control_directory / "long-help-review-brief.md"
     long_help_skeleton_result = fixture.run_review_plan("--brief-skeleton", str(long_help_skeleton_path))
     long_help_skeleton_text = long_help_skeleton_path.read_text()
-    check("long agent-facing text skeleton uses a diff fence for changed lines",
+    check("long tool-message-to-agent text skeleton uses a diff fence for changed lines",
           long_help_skeleton_result.returncode == 0
           and bool(re.search(r"^`{3,}diff$", long_help_skeleton_text, re.MULTILINE)), long_help_skeleton_text)
     long_help_json_plan = fixture.read_review_plan()
-    long_help_docstring_entry = next(entry for entry in long_help_json_plan["agent_facing_text_whole_pull_request"]
+    long_help_docstring_entry = next(entry for entry in long_help_json_plan["tool_message_to_agent_text_whole_pull_request"]
                                     if entry["path"] == "scripts/long-help-program.py")
-    check("long agent-facing text JSON retains full old and new docstrings",
+    check("long tool-message-to-agent text JSON retains full old and new docstrings",
           "Help line 6." in long_help_docstring_entry["old_text"]
           and "Help line 12." in long_help_docstring_entry["old_text"]
           and "Help line six." in long_help_docstring_entry["new_text"]
@@ -585,18 +649,26 @@ def run_agent_text_cases(fixture):
     fixture.reset_fixture_to_base()
     fixture.write_fixture_file("scripts/agent-messages.py", BASELINE_FILE_CONTENTS["scripts/agent-messages.py"].replace("Old", "New"))
     fixture.write_fixture_file("scripts/agent-messages-test.py", 'print("New test message")\n')
-    head = fixture.commit_fixture_changes("agent-facing message changes")
+    head = fixture.commit_fixture_changes("tool-message-to-agent changes")
     fixture.configure_github_answers(head, reviews=[[fixture_review(101, fixture.base_head)]])
     plan = fixture.read_review_plan()
-    entries = plan["agent_facing_text_whole_pull_request"]
+    entries = plan["tool_message_to_agent_text_whole_pull_request"]
     f_string_entry = next((entry for entry in entries if entry["label"] == "print in show_message()"), {})
     check("changed print f-strings retain placeholders and old/new text", "{name}" in f_string_entry.get("old_text", "") and "{name}" in f_string_entry.get("new_text", "") and "Old message" in f_string_entry["old_text"] and "New message" in f_string_entry["new_text"], entries)
+    f_string_command = f_string_entry.get("fast_read_command")
+    f_string_target = Path(shlex.split(f_string_command)[-1]) if f_string_command else Path()
+    check("an f-string message's target holds the text the agent reads, each field a <source> stand-in, "
+          "not the f-string's Python source",
+          f_string_entry.get("new_text") == "f'New message for {name}'"
+          and f_string_entry.get("new_text_as_agent_reads_it_with_placeholder_stand_ins") == "New message for <name>"
+          and f_string_target.is_file() and f_string_target.read_text(encoding="utf-8") == "New message for <name>\n"
+          and f_string_target.name == f_string_entry["fast_read_target_file_name"], f_string_entry)
     check("changed raise text is listed with context", any(entry["label"] == "raise in show_message()" and entry["old_text"] == "Old failure" and entry["new_text"] == "New failure" for entry in entries), entries)
     check("changed advice constants are listed", any(entry["label"] == "CHECK_ADVICE =" and entry["old_text"] == "Old advice ``` marker" and entry["new_text"] == "New advice ``` marker" for entry in entries), entries)
     check("module docstrings printed through __doc__ are listed", any(entry["label"] == "module docstring (printed by --help)" and "Old help" in entry["old_text"] and "New help" in entry["new_text"] for entry in entries), entries)
     check("unchanged strings inside a changed hunk are omitted", not any(entry["new_text"] == "unchanged" for entry in entries), entries)
-    check("test strings are not agent-facing text", not any(entry["path"].endswith("-test.py") for entry in entries), entries)
-    check("fix round delta also lists agent-facing strings", plan["agent_facing_text_delta"] == entries, plan)
+    check("test strings are not tool-message-to-agent text", not any(entry["path"].endswith("-test.py") for entry in entries), entries)
+    check("fix round delta also lists tool-message-to-agent strings", plan["tool_message_to_agent_text_delta"] == entries, plan)
     skeleton_path = fixture.control_directory / "agent-text-brief.md"
     result = fixture.run_review_plan("--brief-skeleton", str(skeleton_path))
     skeleton = skeleton_path.read_text()
@@ -608,7 +680,7 @@ def run_agent_text_cases(fixture):
     fixture.write_fixture_file("scripts/scoped-messages.py", source_before.replace("old", "new"))
     head = fixture.commit_fixture_changes("scoped message changes")
     fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
-    delta = fixture.read_review_plan()["agent_facing_text_delta"]
+    delta = fixture.read_review_plan()["tool_message_to_agent_text_delta"]
     check("stream writes and annotated/augmented assignments retain qualified contexts", {entry["label"] for entry in delta} == {"sys.stderr.write in outer.Inner.show()", "sys.stdout.write in outer.Inner.show()", "EXTRA_MESSAGE = in outer.Inner.show()"} and len(delta) == 4, delta)
     old_source = 'print(\n    "same moved message")\n'
     new_source = 'print("same moved message")\n'
@@ -619,7 +691,7 @@ def run_agent_text_cases(fixture):
     head = fixture.commit_fixture_changes("reflow message")
     fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
     plan = fixture.read_review_plan()
-    check("reflowed identical messages are omitted", plan["agent_facing_text_delta"] == [], plan)
+    check("reflowed identical messages are omitted", plan["tool_message_to_agent_text_delta"] == [], plan)
     # Modelled on pull request 2119, which changed only the recovery note that
     # IgnitionPlanWithoutConversationTail.compose() builds in a local name and returns in its prompt.
     compose_before = ('class IgnitionPlan:\n    def compose(self):\n        if self.transcript_path is None:\n'
@@ -633,19 +705,66 @@ def run_agent_text_cases(fixture):
                                compose_before.replace("old note, transcript", "new note, transcript"))
     head = fixture.commit_fixture_changes("recovery note changed")
     fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
-    delta = fixture.read_review_plan()["agent_facing_text_delta"]
+    delta = fixture.read_review_plan()["tool_message_to_agent_text_delta"]
     check("a changed recovery note built in a local name and returned in a prompt is listed, needing approval",
           [(entry["label"], entry["old_text"], entry["new_text"], entry["needs_user_approval"]) for entry in delta]
           == [("recovery_note = in IgnitionPlan.compose()", "f'old note, transcript at {self.transcript_path}.'",
                "f'new note, transcript at {self.transcript_path}.'", True)], delta)
     text_plan = fixture.run_review_plan(json_output=False).stdout
     check("the text plan marks the changed prompt as needing the user's approval",
-          review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE in text_plan, text_plan)
+          review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE in text_plan, text_plan)
     skeleton_path = fixture.control_directory / "prompt-brief.md"
-    fixture.run_review_plan("--brief-skeleton", str(skeleton_path))
+    skeleton_result = fixture.run_review_plan("--brief-skeleton", str(skeleton_path))
     skeleton = skeleton_path.read_text() if skeleton_path.exists() else ""
     check("the brief skeleton marks the changed prompt as needing the user's approval",
-          review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE in skeleton, skeleton)
+          skeleton_result.returncode == 0
+          and review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE in skeleton,
+          (skeleton_result, skeleton))
+    prompt_program_before = ('def compose(path):\n    prompt = f"# Task\\n\\nRead the **whole** file {path},\\nthen report.'
+                             '\\n\\n```sh\\nls  -l\\n```\\n"\n    return prompt\n')
+    literal_brace_prompt = 'def compose(path):\n    prompt = "Read {path}.\\n"\n    return prompt\n'
+    field_in_chain_prompt = 'def compose(path):\n    prompt = "Read " + f"{path}.  \\n"\n    return prompt\n'
+    literal_chain_prompt = 'def compose(path):\n    prompt = "Read " + "the file.\\n"\n    return prompt\n'
+    name_in_chain_prompt = 'def compose(path):\n    prompt = "Read " + path + ".\\n"\n    return prompt\n'
+    for case_index, (name, program_before, prompt_program_after, expected_cosmetic) in enumerate([
+            ("a prompt whose only change is trailing spaces", prompt_program_before, prompt_program_before.replace(",\\nthen", ",  \\nthen"), True),
+            ("a prompt whose only change is an extra blank line", prompt_program_before, prompt_program_before.replace("# Task\\n\\n", "# Task\\n\\n\\n"), True),
+            ("a prompt whose only change is dropped bold marks", prompt_program_before, prompt_program_before.replace("**whole**", "whole"), False),
+            ("a prompt with a changed word", prompt_program_before, prompt_program_before.replace("then report", "then summarize"), False),
+            ("a prompt with a changed code block", prompt_program_before, prompt_program_before.replace("ls  -l", "ls -la"), False),
+            ("a literal {path} that becomes an f-string field in a + chain", literal_brace_prompt, field_in_chain_prompt, False),
+            ("an f-string field in a + chain that becomes a literal {path}", field_in_chain_prompt, literal_brace_prompt, False),
+            ("a literal {path} that becomes a field, the flattened texts equal",
+             literal_brace_prompt, field_in_chain_prompt.replace(".  \\n", ".\\n"), False),
+            ("a + chain of plain literals whose only change is trailing spaces",
+             literal_chain_prompt, literal_chain_prompt.replace("file.\\n", "file.  \\n"), True),
+            ("a literal {path} that becomes a name operand in a + chain", literal_brace_prompt, name_in_chain_prompt, False),
+            ("a name operand in a + chain that becomes a literal {path}", name_in_chain_prompt, literal_brace_prompt, False)]):
+        fixture.reset_fixture_to_base()
+        fixture.write_fixture_file("nc-systems/handoff/cosmetic-prompt-program.py", program_before)
+        earlier = fixture.commit_fixture_changes("prompt before")
+        # On the merge base too, so that the whole pull request's list pairs the prompt with its old text.
+        fixture.git_command("update-ref", "refs/remotes/origin/main", earlier)
+        fixture.write_fixture_file("nc-systems/handoff/cosmetic-prompt-program.py", prompt_program_after)
+        head = fixture.commit_fixture_changes("prompt after")
+        fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
+        delta = fixture.read_review_plan()["tool_message_to_agent_text_delta"]
+        text_plan = fixture.run_review_plan(json_output=False).stdout
+        skeleton_path = fixture.control_directory / f"cosmetic-prompt-brief-{case_index}.md"
+        skeleton_result = fixture.run_review_plan("--brief-skeleton", str(skeleton_path))
+        skeleton = skeleton_path.read_text() if skeleton_path.exists() else ""
+        expected_label, other_label = (
+            (review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_WITH_COSMETIC_CHANGE_NEEDING_NO_APPROVAL_LINE,
+             review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE)
+            if expected_cosmetic else
+            (review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE,
+             review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_WITH_COSMETIC_CHANGE_NEEDING_NO_APPROVAL_LINE))
+        check(f"{name} gets the {'cosmetic-change' if expected_cosmetic else 'needs-approval'} label in --json, the text plan and the brief skeleton",
+              [(entry["label"], entry["needs_user_approval"], entry["cosmetic_change_needs_no_approval"]) for entry in delta]
+              == [("prompt = in compose()", not expected_cosmetic, expected_cosmetic)]
+              and expected_label in text_plan and other_label not in text_plan
+              and skeleton_result.returncode == 0
+              and expected_label in skeleton and other_label not in skeleton, (delta, text_plan, skeleton_result, skeleton))
     fixture.reset_fixture_to_base()
     printed_before = compose_before.replace("return prompt", "print(prompt)").replace("prompt", "line")
     fixture.write_fixture_file("nc-systems/handoff/recovery-note-program.py", printed_before)
@@ -654,19 +773,19 @@ def run_agent_text_cases(fixture):
                                printed_before.replace("old note, transcript", "new note, transcript"))
     head = fixture.commit_fixture_changes("printed note changed")
     fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
-    delta = fixture.read_review_plan()["agent_facing_text_delta"]
+    delta = fixture.read_review_plan()["tool_message_to_agent_text_delta"]
     text_plan = fixture.run_review_plan(json_output=False).stdout
     check("a changed message built in a local name and printed is listed with no approval needed",
           [(entry["label"], entry["needs_user_approval"]) for entry in delta]
           == [("recovery_note = in IgnitionPlan.compose()", False)]
-          and review_plan_module.PULL_REQUEST_REVIEW_PLAN_CHANGED_AGENT_PROMPT_NEEDS_USER_APPROVAL_BEFORE_MERGE_LINE not in text_plan, (delta, text_plan))
+          and review_plan_module.PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE not in text_plan, (delta, text_plan))
     fixture.reset_fixture_to_base()
     fixture.write_fixture_file("nc-systems/handoff/added-prompt-program.py",
                                'def compose(next_step):\n    prompt = f"added prompt: {next_step}"\n    return prompt\n\n\n'
                                'def report(name):\n    line = f"added message: {name}"\n    print(line)\n')
     head = fixture.commit_fixture_changes("added prompt program")
     fixture.configure_github_answers(head, reviews=[[fixture_review(101, fixture.base_head)]])
-    entries = [entry for entry in fixture.read_review_plan()["agent_facing_text_whole_pull_request"]
+    entries = [entry for entry in fixture.read_review_plan()["tool_message_to_agent_text_whole_pull_request"]
                if entry["path"] == "nc-systems/handoff/added-prompt-program.py"]
     check("an added file's prompt built in a local name needs approval, and its printed message does not",
           sorted((entry["label"], entry["needs_user_approval"]) for entry in entries)
@@ -681,8 +800,8 @@ def run_fast_read_command_cases(fixture):
     head = fixture.commit_fixture_changes("reworded message")
     fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
     plan = fixture.read_review_plan()
-    whole_entry = next(entry for entry in plan["agent_facing_text_whole_pull_request"] if entry["label"] == "raise in show_message()")
-    delta_entry = next(entry for entry in plan["agent_facing_text_delta"] if entry["label"] == "raise in show_message()")
+    whole_entry = next(entry for entry in plan["tool_message_to_agent_text_whole_pull_request"] if entry["label"] == "raise in show_message()")
+    delta_entry = next(entry for entry in plan["tool_message_to_agent_text_delta"] if entry["label"] == "raise in show_message()")
     command_prefix = "python3 nc-systems/cold-read/cold-read-fast-read.py --target "
     try:
         command_words = shlex.split(whole_entry["fast_read_command"])
@@ -718,14 +837,16 @@ def run_fast_read_command_cases(fixture):
     finally:
         fixture.environment = saved_environment
     blocked_plan = json.loads(json_result.stdout) if json_result.stdout else {}
-    blocked_entries = blocked_plan.get("agent_facing_text_whole_pull_request", [])
+    blocked_entries = blocked_plan.get("tool_message_to_agent_text_whole_pull_request", [])
     check("a target that cannot be written leaves the plan printed, the entry marked and exit 3, not a refusal's 1",
           json_result.returncode == 3 and bool(blocked_entries)
           and all(entry["fast_read_command"] is None and entry["fast_read_target_error"] for entry in blocked_entries)
-          and "1 listed agent-facing message has no cold-read-fast-read command, because its text" in json_result.stderr
+          and "1 listed tool-message-to-agent has no cold-read-fast-read command, because its text" in json_result.stderr
           and "--target <that file's full path>" in json_result.stderr, json_result)
-    blocked_entry = blocked_entries[0] if blocked_entries else {"path": "", "line": 0, "new_text": ""}
-    file_name = review_plan_module._message_reminder_hook.fast_read_target_path(blocked_entry["path"], blocked_entry["new_text"]).name
+    blocked_entry = blocked_entries[0] if blocked_entries else {
+        "path": "", "line": 0, "new_text_as_agent_reads_it_with_placeholder_stand_ins": ""}
+    file_name = review_plan_module._message_reminder_hook.fast_read_target_path(
+        blocked_entry["path"], blocked_entry["new_text_as_agent_reads_it_with_placeholder_stand_ins"]).name
     listing_lines = [line for line in json_result.stderr.splitlines() if line.startswith("  ")]
     check("the message lists each message without a command once, by path, line and label, with the file name to write",
           listing_lines == [f"  {blocked_entry['path']}:{blocked_entry['line']}  label: {blocked_entry.get('label')}  file name: {file_name}"]
@@ -733,10 +854,11 @@ def run_fast_read_command_cases(fixture):
     two_entries = [{"path": "a.py", "line": 3, "label": "raise in f()", "new_text": "one", "fast_read_target_file_name": "one.md"},
                    {"path": "a.py", "line": 3, "label": "print in f()", "new_text": "two", "fast_read_target_file_name": "two.md"}]
     check("the count reads right for more than one message",
-          "2 listed agent-facing messages have no cold-read-fast-read command, because their text"
+          "2 listed tool-messages-to-agent have no cold-read-fast-read command, because their text"
           in review_plan_module.missing_fast_read_commands_message(two_entries))
     check("each entry carries the file name the message lists, so the message's file name finds its entry",
-          all(entry["fast_read_target_file_name"] == review_plan_module._message_reminder_hook.fast_read_target_path(entry["path"], entry["new_text"]).name
+          all(entry["fast_read_target_file_name"] == review_plan_module._message_reminder_hook.fast_read_target_path(
+                  entry["path"], entry["new_text_as_agent_reads_it_with_placeholder_stand_ins"]).name
               for entry in blocked_entries)
           and "whose fast_read_target_file_name is that file name" in json_result.stderr, json_result)
     check("the text plan says why a message has no command",
@@ -786,7 +908,8 @@ def run_fast_read_command_cases(fixture):
     try:
         try:
             unplaced = review_plan_module.entries_with_fast_read_commands(
-                [{"path": "scripts/a.py", "line": 1, "label": "raise in f()", "new_text": "text"}])
+                [{"path": "scripts/a.py", "line": 1, "label": "raise in f()", "new_text": "text",
+                  "new_text_as_agent_reads_it_with_placeholder_stand_ins": "text"}])
         except OSError as escaped:
             unplaced = [{"escaped": f"{type(escaped).__name__}: {escaped}"}]
     finally:
@@ -796,6 +919,118 @@ def run_fast_read_command_cases(fixture):
           and "FileNotFoundError" in (unplaced[0].get("fast_read_target_error") or "")
           and unplaced[0].get("fast_read_target_file_name")
           == review_plan_module._message_reminder_hook.fast_read_target_file_name("scripts/a.py", "text"), unplaced)
+
+
+def write_named_cold_read_record(records_directory, name, target_text, *, report=True):
+    """A cold-read-record as cold-read-fast-read.py leaves one: the frozen target under target/
+    at its outside path, and the report when the read finished. target_text None leaves target/ empty."""
+    record = records_directory / "cold-read-records" / name
+    (record / "target").mkdir(parents=True)
+    if target_text is not None:
+        frozen = record / "target" / "tmp" / "tool-message-to-agent-fast-read-targets" / (name + ".md")
+        frozen.parent.mkdir(parents=True)
+        if isinstance(target_text, bytes):
+            frozen.write_bytes(target_text)
+        else:
+            frozen.write_text(target_text, encoding="utf-8")
+    if report:
+        (record / "cold-read-fast-read.md").write_text("report\n", encoding="utf-8")
+    return str(record)
+
+
+def run_named_cold_read_record_cases(fixture):
+    records_directory = fixture.repository.parent / "named-records-log-store"
+    shutil.rmtree(records_directory, ignore_errors=True)
+    matching = write_named_cold_read_record(records_directory, "sibling-message-2026-11-11", "  Sibling message\n   to reuse\n")
+    superset = write_named_cold_read_record(records_directory, "nested-message-superset-2026-11-11",
+                                            "Nested message kept, and more text the message does not hold\n")
+    unfinished = write_named_cold_read_record(records_directory, "nested-message-unfinished-2026-11-11",
+                                              "Nested message kept\n", report=False)
+    empty_target = write_named_cold_read_record(records_directory, "empty-target-2026-11-11", None)
+    undecodable = write_named_cold_read_record(records_directory, "undecodable-target-2026-11-11", b"\xff\xfe not text\n")
+    absent = str(records_directory / "cold-read-records" / "never-written-2026-11-11")
+    description = (f"Records: `nedlern@ned-box:{matching}`.\nAgain {matching}/ and {superset}: "
+                   f"{unfinished}, ({empty_target}) {undecodable}; {absent}.\nAn abbreviation: .../nested-message-2026-11-11")
+    fixture.reset_fixture_to_base()
+    fixture.write_fixture_file("scripts/sibling-program.py", 'print("Sibling message to reuse")\n')
+    fixture.write_fixture_file("scripts/nested-program.py", 'print("Nested message kept")\n')
+    fixture.write_fixture_file("scripts/unnamed-program.py", 'print("Message no record holds")\n')
+    head = fixture.commit_fixture_changes("messages with named records")
+    fixture.configure_github_answers(head, description=description)
+    plan = fixture.read_review_plan()
+    entries = {entry["path"]: entry for entry in plan["tool_message_to_agent_text_whole_pull_request"]}
+    sibling, nested = entries.get("scripts/sibling-program.py", {}), entries.get("scripts/nested-program.py", {})
+    sibling_target = (fixture.message_target_temporary_directory / "tool-message-to-agent-fast-read-targets"
+                      / sibling.get("fast_read_target_file_name", "absent"))
+    check("a string whose named record's target file matches it once whitespace runs are one space gets the record's path, "
+          "no command and no target file",
+          sibling.get("cold_read_record") == matching and sibling.get("fast_read_command") is None
+          and sibling.get("fast_read_target_error") is None and not sibling_target.exists(), sibling)
+    check("a string that is only part of a named record's target file, or matches only a record with no report, keeps its command",
+          nested.get("cold_read_record") is None and bool(nested.get("fast_read_command")), nested)
+    unnamed = entries.get("scripts/unnamed-program.py", {})
+    check("a string listed after one its named record covers still gets its own command",
+          [path for path in entries if path in ("scripts/sibling-program.py", "scripts/unnamed-program.py")]
+          == ["scripts/sibling-program.py", "scripts/unnamed-program.py"]
+          and unnamed.get("cold_read_record") is None and bool(unnamed.get("fast_read_command")), unnamed)
+    problems = {record["path"]: record["problem"] for record in plan["named_cold_read_records"]}
+    check("each named record is read once, its path cut at the backtick, slash, colon, comma, semicolon, bracket or full stop "
+          "that follows it, and an abbreviated path is not read",
+          list(problems) == [matching, superset, unfinished, empty_target, undecodable, absent], list(problems))
+    check("a named record that is used, or matches nothing, has no problem",
+          problems.get(matching) is None and problems.get(superset) is None, problems)
+    check("a named record with no report, an empty target/, an undecodable target or no directory is listed with its reason",
+          problems.get(unfinished) == "it holds no cold-read-fast-read.md, so its cold-read-fast-read did not finish"
+          and problems.get(empty_target) == "its target/ directory holds no file"
+          and (problems.get(undecodable) or "").startswith("it could not be read: UnicodeDecodeError: ")
+          and problems.get(absent) == "it is not a directory on this machine", problems)
+    text_result = fixture.run_review_plan(json_output=False)
+    check("the text plan gives the record's path in place of the command and names each record it could not use, "
+          "and exits 0",
+          text_result.returncode == 0
+          and f"    cold-read-record named in the description: {matching}\n" in text_result.stdout
+          and f"named cold-read-record not used: {absent}, because it is not a directory on this machine; "
+              "the strings it would cover keep their cold-read-fast-read commands\n" in text_result.stdout
+          and f"named cold-read-record not used: {matching}" not in text_result.stdout, text_result)
+
+    fixture.reset_fixture_to_base()
+    fixture.write_fixture_file("scripts/example-program.py", BASELINE_FILE_CONTENTS["scripts/example-program.py"].replace("return 1", "return 2"))
+    earlier = fixture.commit_fixture_changes("first reviewed head")
+    fixture.write_fixture_file("scripts/sibling-program.py", 'print("Sibling message to reuse")\n')
+    head = fixture.commit_fixture_changes("message added in the fix round")
+    fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]], description=f"Record: {matching}")
+    plan = fixture.read_review_plan()
+    delta = plan["tool_message_to_agent_text_delta"]
+    check("a fix round's delta string gets its named record's path too",
+          len(delta) == 1 and delta[0]["cold_read_record"] == matching and delta[0]["fast_read_command"] is None, delta)
+
+    second = write_named_cold_read_record(records_directory, "second-message-2026-11-11", "Second message\n")
+    adjacent = review_plan_module.named_cold_read_records_with_target_texts(f"Records: {matching},{second}.")
+    check("two record paths joined by a comma and no space are read as two records",
+          [record["path"] for record in adjacent] == [matching, second]
+          and all(record["problem"] is None for record in adjacent), adjacent)
+    for delimiter in (";", ":"):
+        joined = review_plan_module.named_cold_read_records_with_target_texts(f"Records: {matching}{delimiter}{second}.")
+        check(f"two record paths joined by {delimiter!r} and no space are read as two records",
+              [record["path"] for record in joined] == [matching, second]
+              and all(record["problem"] is None for record in joined), joined)
+
+    names = review_plan_module.cold_read_record_names
+    saved_lookup = names.cold_read_record_file_path_prefixed_name_else_name_before_prefix
+
+    def lookup_denied(record_dir, name):
+        raise PermissionError(13, "Permission denied", str(record_dir))
+    names.cold_read_record_file_path_prefixed_name_else_name_before_prefix = lookup_denied
+    try:
+        try:
+            denied = review_plan_module.named_cold_read_records_with_target_texts(f"Record: {matching}")
+        except OSError as escaped:
+            denied = [{"escaped": f"{type(escaped).__name__}: {escaped}"}]
+    finally:
+        names.cold_read_record_file_path_prefixed_name_else_name_before_prefix = saved_lookup
+    check("a named record whose report lookup raises an OSError is listed with the reason instead of ending the run",
+          len(denied) == 1 and denied[0].get("target_texts") == set()
+          and (denied[0].get("problem") or "").startswith("it could not be read: PermissionError: "), denied)
 
 
 def run_repository_and_output_cases(fixture):
@@ -899,7 +1134,7 @@ def run_repository_and_output_cases(fixture):
                                         "tests/sibling-program-parent-directory-test.py"], plan)
 
     # Git reads a pathspec relative to the -C directory, so each path-limited
-    # git call needs a change here: a fenced Markdown block, agent-facing text
+    # git call needs a change here: a fenced Markdown block, tool-message-to-agent text
     # and a split suite.
     fixture.write_fixture_file("scripts/agent-messages.py", BASELINE_FILE_CONTENTS["scripts/agent-messages.py"].replace("Old", "New"))
     fixture.write_fixture_file("docs/review-note.md", BASELINE_FILE_CONTENTS["docs/review-note.md"].replace("print('old')", "print('new')"))
@@ -907,10 +1142,10 @@ def run_repository_and_output_cases(fixture):
     fixture.configure_github_answers(head, live_base=main_with_a_split_suite)
     top_level_plan = fixture.read_review_plan()
     subdirectory_result = fixture.run_review_plan("--repository", str(fixture.repository / "scripts"))
-    check("a run from a subdirectory of the checkout gives the top-level run's plan, agent-facing text, tiers and split suites included",
+    check("a run from a subdirectory of the checkout gives the top-level run's plan, tool-message-to-agent text, tiers and split suites included",
           subdirectory_result.returncode == 0 and json.loads(subdirectory_result.stdout) == top_level_plan
           and "scripts/sibling-program-launch-test.py" in top_level_plan["test_files_to_run"]
-          and top_level_plan["agent_facing_text_whole_pull_request"]
+          and top_level_plan["tool_message_to_agent_text_whole_pull_request"]
           and any(entry["path"] == "docs/review-note.md" and entry["tier"] == "codex-review-and-head-tests-tier" for entry in top_level_plan["changed_files"]),
           subdirectory_result.stdout or subdirectory_result.stderr)
 
@@ -1250,6 +1485,7 @@ def main():
         run_hook_registration_and_delta_boundary_cases(fixture)
         run_agent_text_cases(fixture)
         run_fast_read_command_cases(fixture)
+        run_named_cold_read_record_cases(fixture)
         run_repository_and_output_cases(fixture)
         run_refusal_and_call_shape_cases(fixture)
         run_git_failure_cases(fixture)

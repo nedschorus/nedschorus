@@ -5,23 +5,35 @@ record what the new task waits on.
 Each case runs the hook as a subprocess, as Claude Code does. The expected
 text is written out whole here, so a change to the user's wording fails this
 suite. The prerequisites example in that text is checked against the due-task
-hook's own reader, so the two hooks cannot drift apart.
+hook's own reader, and the branches example against the first prompt's list
+program, so neither pair can drift apart.
 """
 import importlib.util
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 HOOK_SCRIPT = Path(__file__).with_name("agent-seat-due-task-prerequisites-recording-reminder-after-task-create-hook.py")
 DUE_TASK_RAISE_HOOK_SCRIPT = Path(__file__).with_name("agent-seat-due-task-raise-hook.py")
+FIRST_PROMPT_LIST_SCRIPT = (Path(__file__).resolve().parents[1] / "nc-systems" / "handoff"
+                            / "agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py")
 
 EXPECTED_TEXT_WITH_ID_7 = (
     'If this task (id 7) waits on a pull request merging or a GHI closing, record each one now with '
     'TaskUpdate in the task\'s metadata, as "prerequisites": [{"pr_merged": <number>}, {"issue_closed": <number>}].\n'
+    'If it waits on the user\'s decision on an approval-walk item, add the item to the same prerequisites list, as '
+    '{"approval_walk_item_decided": {"approval_walk_minutes_file_path": "<absolute path of the walk-minutes file>", '
+    '"approval_walk_item_heading": "<the item\'s heading in the walk-document>"}}; any decision the walk-minutes '
+    "record meets it, approval, disapproval or moving on, but a deferral does not.\n"
     "If it waits on another task on your own task list, record that task with TaskUpdate's addBlockedBy.\n"
     "The due-task hook then raises this task when all of them are done.\n"
-    "Record no other kind of dependency: one that is not a pull request, GHI or task is noise."
+    "Record no other kind of dependency: one that is not a pull request, GHI, approval-walk item or task "
+    "is noise.\n"
+    'If this task holds a branch or a worktree, now or once you make one, record each with TaskUpdate '
+    'in the task\'s metadata, as "branches": ["<branch name>", "<worktree path>"]; the first prompt\'s '
+    "list of this agent-seat's worktrees and branches then leaves them out while the task is open."
 )
 EXPECTED_TEXT_WITHOUT_ID = EXPECTED_TEXT_WITH_ID_7.replace(" (id 7)", "")
 
@@ -69,6 +81,7 @@ def check_fault(case_name, result):
                                    "the task was added, but this hook could not read it from the payload "
                                    "Claude Code sent, which is not a JSON object")
           and "you did nothing wrong" in result.stderr
+          and '"branches": ["<branch name>", "<worktree path>"]' in result.stderr
           and result.stderr.count("\n") == 1, repr(result.stderr))
 
 
@@ -93,6 +106,40 @@ example = json.loads(EXPECTED_TEXT_WITHOUT_ID.split('"prerequisites": ', 1)[1].s
 readable = due_task_raise_hook.parse_prerequisites(example)
 check("the prerequisites example, numbers filled in, is one the due-task hook reads",
       readable == [("pr_merged", 1874), ("issue_closed", 1874)], repr(readable))
+walk_item_example = json.loads(
+    EXPECTED_TEXT_WITHOUT_ID.split("same prerequisites list, as ", 1)[1].split("; any decision", 1)[0]
+    .replace("<absolute path of the walk-minutes file>", "/work/docs/walk/w-minutes.md")
+    .replace("<the item's heading in the walk-document>", "Item 3 of 5: The fix"))
+readable = due_task_raise_hook.parse_prerequisites([walk_item_example])
+check("the approval-walk item example, values filled in, is one the due-task hook reads",
+      readable == [("approval_walk_item_decided",
+                    {"approval_walk_minutes_file_path": "/work/docs/walk/w-minutes.md",
+                     "approval_walk_item_heading": "Item 3 of 5: The fix"})], repr(readable))
+
+fault_line = run_hook("not json").stderr
+fault_walk_item_example = json.loads(
+    fault_line.split("same prerequisites list, as ", 1)[1].split("; if it waits on another task", 1)[0]
+    .replace("<absolute path of the walk-minutes file>", "/work/docs/walk/w-minutes.md")
+    .replace("<the item's heading in the walk-document>", "Item 3 of 5: The fix"))
+readable = due_task_raise_hook.parse_prerequisites([fault_walk_item_example])
+check("the fault line's approval-walk item example, values filled in, is one the due-task hook reads",
+      readable == [("approval_walk_item_decided",
+                    {"approval_walk_minutes_file_path": "/work/docs/walk/w-minutes.md",
+                     "approval_walk_item_heading": "Item 3 of 5: The fix"})], repr(readable))
+
+_list_spec = importlib.util.spec_from_file_location("first_prompt_list", FIRST_PROMPT_LIST_SCRIPT)
+first_prompt_list = importlib.util.module_from_spec(_list_spec)
+_list_spec.loader.exec_module(first_prompt_list)
+branches_example = json.loads(EXPECTED_TEXT_WITHOUT_ID.split('"branches": ', 1)[1].split("];", 1)[0]
+                              .replace("<branch name>", "work-topic-branch")
+                              .replace("<worktree path>", "/work/tree") + "]")
+with tempfile.TemporaryDirectory() as task_list:
+    (Path(task_list) / "7.json").write_text(json.dumps(
+        {"id": "7", "status": "pending", "metadata": {"branches": branches_example}}))
+    holding = first_prompt_list.tasks_holding("seat", task_list)
+check("the branches example, names filled in, is one the first prompt's list reads",
+      not holding.unreadable and holding.holders("work-topic-branch") == {"7"}
+      and holding.holders("/work/tree") == {"7"}, repr((holding.held, holding.unreadable)))
 
 if failures:
     print(f"\n{len(failures)} case(s) failed")

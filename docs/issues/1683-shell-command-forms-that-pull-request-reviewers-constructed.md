@@ -12,7 +12,7 @@ The user approved this rule on 2026-10-19, answering "A" to item 17 of agent-sea
 
 "Today merge-lane-2 sends each such finding to the pull request's author, who opens a follow-up pull request. Instead, merge-lane-2 files one GitHub issue for the shell reader with the ghi-write skill, and from then on adds each such finding to that issue's GHI-MD with the edit-GHI operation, and does not send the finding to the author. A command form moves from that issue to a pull request only when a real command an agent ran, recorded in a transcript, uses that form."
 
-Write only constructed forms here. This repository is public, and recorded commands and transcripts can hold secrets, so no text from a recorded command, a transcript, or the Bash guards' replay corpus (the store of recorded commands that `nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py` replays through every Bash guard) goes into this file. To show that a recorded command uses a form, cite the transcript's path in the log-store, never its text.
+Write only constructed forms here. This repository is public, and recorded commands and transcripts can hold secrets, so no text from a recorded command, a transcript, or the corpus of `nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py` (the store of recorded commands that program replays through every Bash guard) goes into this file. To show that a recorded command uses a form, cite the transcript's path in the log-store, never its text.
 
 ## How this differs from GHI 1196
 
@@ -46,19 +46,21 @@ Checked on origin/main at commit 21af2b5c on 2026-10-19, and again, with the sam
 | `zzp <<\<LF>-EOF<LF>x<LF>EOF<LF>git push --force origin b` (a continuation splits `<<-`; bash joins `<<-EOF`, a here-document with delimiter `EOF`, and the same holds when the body and delimiter lines start with `<TAB>`) | only `zzp`: a here-document with delimiter `-EOF`, which never ends, so the push is lost | [mac-claude's review of PR 1567](https://github.com/nedschorus/nedschorus/pull/1567#pullrequestreview-5554172978), section (a); [PR 1574](https://github.com/nedschorus/nedschorus/pull/1574)'s first round fixed it, and the round-2 simplification removed that fix; found again, with a `<TAB>`-indented body, by [mac-claude's review of PR 1676](https://github.com/nedschorus/nedschorus/pull/1676#pullrequestreview-5578861061), section "Defects main already has" |
 | `zzp <<\<LF><EOF<LF>git push --force origin b<LF>EOF` (a continuation splits `<<<`; bash joins `<<<EOF`, a here-string, so the next lines are commands) | only `zzp`: a here-document with delimiter `<EOF`, which never ends, so the push is lost | [mac-claude's review of PR 1676](https://github.com/nedschorus/nedschorus/pull/1676#pullrequestreview-5578861061), section "Defects main already has", as `zzp <<\<LF><EOF<LF>zzx<LF>EOF<LF>zzr`, where bash runs `zzx`, `EOF` and `zzr` and the reader reads none of them |
 | `zzp <<$'E F'<LF>x<LF>E F<LF>git push --force origin b` | only `zzp` | [merge-lane-2's round-1 review of PR 1574](https://github.com/nedschorus/nedschorus/pull/1574#pullrequestreview-5555072618), follow-up 3 |
-| `cat << \<LF>  EOF<LF>x<LF>EOF<LF>git push --force origin b` (the delimiter on an indented continued line) | `cat EOF`; the push is lost | [merge-lane-2's approving review of PR 1574](https://github.com/nedschorus/nedschorus/pull/1574#pullrequestreview-5556505000), the Codex finding |
 
-## Forms that time a guard out
+## Forms with many here-documents
 
-A Bash guard runs under a 30-second timeout, and a guard that times out lets the command run with no report.
+A Bash guard runs under a 30-second timeout, and a guard that times out lets the command run with no report. The reader takes out at most 256 here-documents, its constant `MAX_HEREDOCS_TAKEN_OUT`; after the 256th, it no longer joins a continued line, so one word written across a `\<LF>` is read as two words in two commands.
+
+Checked on origin/main at 5e508ba8 on 2026-11-11, on ned-box under a load average near 20, by calling `simple_commands` of the shared reader and by giving the force-push guard hook the command as its stdin hook input, from an empty scratch directory.
 
 | Form | What happens | Found in |
 |---|---|---|
-| 2,000 repetitions of `zzp <<EOF<LF>x<LF>EOF<LF>zzq a\<LF>b<LF>` (a here-document, then a continued line) | reading takes 44 s on ned-box on 2026-10-19, past the timeout, and reads 5,744 commands where 4,000 are written | [merge-lane-2's approving review of PR 1574](https://github.com/nedschorus/nedschorus/pull/1574#pullrequestreview-5556505000), follow-up 2 |
+| 2,000 repetitions of `zzp <<EOF<LF>x<LF>EOF<LF>zzq a\<LF>b<LF>` (a here-document, then a continued line) | reading took 44 s on ned-box on 2026-10-19, past the timeout; at 5e508ba8 the reader alone takes 7.8 to 8.9 s and the force-push guard hook 6.9 to 7.7 s end to end, both under the timeout. It still reads 5,744 commands where 4,000 are written: 2,000 `zzp`, 256 `zzq ab`, then 1,744 `zzq a` and 1,744 `b` | [merge-lane-2's approving review of PR 1574](https://github.com/nedschorus/nedschorus/pull/1574#pullrequestreview-5556505000), follow-up 2 |
+| 257 repetitions of `zzp <<EOF<LF>x<LF>EOF<LF>`, then `git push --fo\<LF>rce origin b` | bash runs `git push --force origin b`; the reader's last two commands are `['git', 'push', '--fo']` and `['rce', 'origin', 'b']`, so the Bash force-push guard would not see `--force` (the guard itself was not run). The git pre-push hook still refuses the push. With 256 repetitions instead of 257, the reader reads `git push --force origin b` | agent-seat reboot-test, while checking the row above at merge-lane-2's request on 2026-11-11 |
 
 ## Forms whose words differ from bash but whose verdict does not change
 
-In each row, every Bash guard decides as it would on bash's reading, so the right verdict and the guard's verdict agree; only the words the reader passes on differ.
+In each row, for the form as written, every Bash guard decides as it would on bash's reading, so the right verdict and the guard's verdict agree; only the words the reader passes on differ.
 
 | Form | Reader | bash | Found in |
 |---|---|---|---|
@@ -68,6 +70,7 @@ In each row, every Bash guard decides as it would on bash's reading, so the righ
 | `0<(true) zzp a` | a command named `0` with word `<(true)` | a command named `0/dev/fd/63` | [mac-claude's review of PR 1561](https://github.com/nedschorus/nedschorus/pull/1561#pullrequestreview-5553003699), section (e) |
 | ``zzp `zzq 'a\<LF>b'` `` (a continuation inside single quotes inside backticks) | `zzq` with word `a\<LF>b` | `zzq` with word `ab` | [mac-claude's review of PR 1567](https://github.com/nedschorus/nedschorus/pull/1567#pullrequestreview-5554172978), section (a) |
 | `zzs <<EOF<LF>$(zzq 'a\<LF>b')<LF>EOF` (the same inside a here-document body's `$( )`) | `zzq` with word `a\<LF>b` | `zzq` with word `ab` | [mac-claude's review of PR 1567](https://github.com/nedschorus/nedschorus/pull/1567#pullrequestreview-5554172978), section (a) |
+| `zzq \ <<E<LF>zzx body<LF>E` (an escaped blank before a here-document) | four commands: `zzq`, `E`, `zzx body` and `E`, read on origin/main at 5e508ba8 on 2026-11-11; the here-document's body and delimiter are read as commands, and the word ` ` is dropped | runs `zzq` with the word ` ` (a space) and the here-document `zzx body` as its input, checked with bash 5.3.9 and a stub `zzq` that prints its words and input | agent-seat reboot-test's task list, task 229, checked again at merge-lane-2's request on 2026-11-11 |
 
 ## Forms misread at an open pull request's head and read right on main
 
@@ -102,7 +105,7 @@ Forms a guard refuses, where its right verdict is to let the command run:
 
 ## Forms found and since fixed
 
-These constructed forms, from the reviews of the pull requests linked above and of PRs [1523](https://github.com/nedschorus/nedschorus/pull/1523), [1525](https://github.com/nedschorus/nedschorus/pull/1525), [1530](https://github.com/nedschorus/nedschorus/pull/1530) and [1536](https://github.com/nedschorus/nedschorus/pull/1536), read as bash reads them on origin/main at 21af2b5c, so they are not listed above: escaped blanks next to redirections (`zzp \  >f x`, `zzp a>f \  b`, `zzq \ ;`), escaped tabs (`zzq >f\<TAB>;`, `zzq a\<TAB>;`), `zzq <&- ''\ ;`, `zzq a\<LF>#c`, `zzq a\<LF>2>f`, `git push 2>&- --force origin b`, `env -u 2>&1 0x1</dev/null git push --force origin b`, `env 3>&- 0\<LF></dev/null git push --force origin b`, `zzp ''\  -3>&-`, `env -u \ 0<LF></dev/null git push --force origin b`, `bash 1>&2<LF></dev/null`, `git push -f\<LF>4>/dev/null origin b`, `git push --repo <\<LF>(true) --force origin b`, `0</dev/null git push --force origin b`, a case terminator split by a continuation, a delimiter joined by a continuation inside `$( )`, `: \<<\<LF><'EOF'`, and `case a i\<LF>n`.
+These constructed forms, from the reviews of the pull requests linked above and of PRs [1523](https://github.com/nedschorus/nedschorus/pull/1523), [1525](https://github.com/nedschorus/nedschorus/pull/1525), [1530](https://github.com/nedschorus/nedschorus/pull/1530) and [1536](https://github.com/nedschorus/nedschorus/pull/1536), read as bash reads them on origin/main at 21af2b5c, so they are not listed above: escaped blanks next to redirections (`zzp \  >f x`, `zzp a>f \  b`, `zzq \ ;`), escaped tabs (`zzq >f\<TAB>;`, `zzq a\<TAB>;`), `zzq <&- ''\ ;`, `zzq a\<LF>#c`, `zzq a\<LF>2>f`, `git push 2>&- --force origin b`, `env -u 2>&1 0x1</dev/null git push --force origin b`, `env 3>&- 0\<LF></dev/null git push --force origin b`, `zzp ''\  -3>&-`, `env -u \ 0<LF></dev/null git push --force origin b`, `bash 1>&2<LF></dev/null`, `git push -f\<LF>4>/dev/null origin b`, `git push --repo <\<LF>(true) --force origin b`, `0</dev/null git push --force origin b`, a case terminator split by a continuation, a delimiter joined by a continuation inside `$( )`, `: \<<\<LF><'EOF'`, and `case a i\<LF>n`. On origin/main at 5e508ba8 on 2026-11-11, `cat << \<LF>  EOF<LF>x<LF>EOF<LF>zzr a` (the delimiter on an indented continued line), from the Codex finding of [merge-lane-2's approving review of PR 1574](https://github.com/nedschorus/nedschorus/pull/1574#pullrequestreview-5556505000), reads as bash reads it: `cat` with a here-document whose body is `x`, then `zzr` with word `a`; it had read as `cat EOF`, losing the next command.
 
 ## Next action
 
@@ -111,4 +114,4 @@ None until a trigger: merge-lane-2 adds each new constructed form a review finds
 ## Deferred-decisions
 
 1. Who notices that a recorded command uses a form listed here, and which agent-seat then opens the pull request, is not decided; the approved rule names the trigger, not who watches for it.
-2. When the timing row is resolved, since its form is read as bash reads it but too slowly: to be set when the reader is next rewritten.
+2. When the rows of "Forms with many here-documents" are resolved, since their forms are now read within the timeout but differently from bash after the 256th here-document: to be set when the reader is next rewritten.

@@ -263,8 +263,7 @@ OTHER_EXTRACTOR_RECORDED_NOTE = (
     "brings the dialogs up to date within 10 minutes.\n"
     "If those files in this checkout differ from main's, as on a branch that changes them or in a worktree behind "
     "main, the recorded digest never matches them, since the refresher records the digest of main's: for a search "
-    "of up-to-date dialogs, run " + NED_BOX_PROGRAM_PATH + " with the same pattern and options instead, or, in a "
-    "worktree behind main, merge origin/main into it.")
+    "of up-to-date dialogs, run " + NED_BOX_PROGRAM_PATH + " with the same pattern and options instead.")
 
 
 _claude_code_session_transcript_lookup_and_text_search_common_spec = importlib.util.spec_from_file_location(

@@ -2826,7 +2826,7 @@ for abbreviated in (["--rep", "/x"], ["--rep=/x"]):
           refused.returncode == 2 and "unrecognized arguments: %s" % abbreviated[0] in refused.stderr,
           "exit %s\n%s" % (refused.returncode, refused.stderr))
 
-message = finder.build_agent_facing_message_printed_when_git_cannot_find_the_repository_top_level_from_surfaces_skip_left_in_exit_codes_and_repo_rerun_command("/r", "/r/a.md", "planted failure", {"reflog"}, "python3 p")
+message = finder.build_tool_message_to_agent_printed_when_git_cannot_find_the_repository_top_level_from_surfaces_skip_left_in_exit_codes_and_repo_rerun_command("/r", "/r/a.md", "planted failure", {"reflog"}, "python3 p")
 check("with only git reflog skipped, the git-failure message names the git surface alone and keeps exit 3 for no find",
       "The git surface cannot search, and its result line will say UNAVAILABLE for this failure; --skip left out "
       "the other git surface." in message
@@ -4072,7 +4072,7 @@ with tempfile.TemporaryDirectory() as tmp:
                  "--skip", "timemachine"]
     rerun_lines = finder.next_step_lines.git_failure_next_step_lines(
         shlex.join(["python3", program] + arguments), "scripts/find-deleted-path-across-backups.py",
-        text_the_failure_line_contains="git's failure:", include_the_misspelt_branch_commit_or_path_line=True)
+        text_the_failure_line_contains="git's failure:")
     checkout = str(Path(program).parents[1])
     for how, typed, directory in (("by absolute path from another directory", program, str(elsewhere)),
                                   ("by a path relative to its checkout", os.path.relpath(program, checkout),
