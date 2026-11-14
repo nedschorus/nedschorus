@@ -541,8 +541,8 @@ def classify_changed_file_into_class_tier_and_reason(repository, old_revision, n
     return "code", "claude-and-codex-review-and-head-tests-tier", f"{path} is not Python or Markdown, so no check shows its change leaves behaviour alone"
 
 
-def changed_files_with_classes_and_tiers(repository, old_revision, new_revision,
-                                        hook_registration_old_revision=None):
+def changed_file_statuses_and_paths(repository, old_revision, new_revision):
+    """(status, path) for each file git diff --no-renames lists between the revisions, in git's order."""
     # Keep NUL separators: paths can contain spaces, tabs and newlines.
     output = run_git_in_repository(repository, "diff", "--no-renames", "--name-status", "-z", old_revision, new_revision)
     if output.returncode:
@@ -554,6 +554,12 @@ def changed_files_with_classes_and_tiers(repository, old_revision, new_revision,
         fields.pop()
     if len(fields) % 2:
         raise ValueError("git's NUL-separated name-status output has an incomplete entry")
+    return list(zip(fields[::2], fields[1::2]))
+
+
+def changed_files_with_classes_and_tiers(repository, old_revision, new_revision,
+                                        hook_registration_old_revision=None):
+    statuses_and_paths = changed_file_statuses_and_paths(repository, old_revision, new_revision)
     # Include hooks present when the branch was cut, as well as registrations
     # added on main or the branch since then.
     registered_paths = (registered_hook_paths_at_revision(repository, old_revision)
@@ -561,7 +567,7 @@ def changed_files_with_classes_and_tiers(repository, old_revision, new_revision,
     if hook_registration_old_revision is not None:
         registered_paths |= registered_hook_paths_at_revision(repository, hook_registration_old_revision)
     changed_files = []
-    for status, path in zip(fields[::2], fields[1::2]):
+    for status, path in statuses_and_paths:
         file_class, tier, reason = classify_changed_file_into_class_tier_and_reason(
             repository, old_revision, new_revision, path, status, registered_paths)
         changed_files.append({"path": path, "status": status, "class": file_class,
@@ -934,11 +940,9 @@ def architecture_overview_checked_against_commit_problems(repository, head, chan
     return problems
 
 
-def architecture_overview_checked_against_commit_refusal_message(number, head, problems):
-    lines = [f"pull request {number} adds or changes {len(problems)} nc-architecture-overview(s) whose "
-             "**Checked against:** commit does not hold the code the overview describes at "
-             f"head {head[:12]}, so no plan was computed. The claim check read the code at that commit, so its "
-             "report does not cover the code this pull request would merge."]
+def architecture_overview_checked_against_commit_refusal_message_lines_one_per_overview(head, problems):
+    """One indented line per problem architecture_overview_checked_against_commit_problems found."""
+    lines = []
     for problem in problems:
         if problem["named_is_on_main"]:
             lines.append(f"  {problem['path']} names commit {problem['named']} of main, and this pull request "
@@ -948,6 +952,15 @@ def architecture_overview_checked_against_commit_refusal_message(number, head, p
         else:
             lines.append(f"  {problem['path']} names commit {problem['named']}, and later commits of the pull request "
                          f"change code the overview describes: {', '.join(problem['later_changed_paths'])}.")
+    return lines
+
+
+def architecture_overview_checked_against_commit_refusal_message(number, head, problems):
+    lines = [f"pull request {number} adds or changes {len(problems)} nc-architecture-overview(s) whose "
+             "**Checked against:** commit does not hold the code the overview describes at "
+             f"head {head[:12]}, so no plan was computed. The claim check read the code at that commit, so its "
+             "report does not cover the code this pull request would merge."]
+    lines.extend(architecture_overview_checked_against_commit_refusal_message_lines_one_per_overview(head, problems))
     lines.append("Send this whole message to the pull request's author. The author clears it on ned-box, in a checkout "
                  "of the pull request's branch, for each overview listed:")
     lines.append("  1. Commit every change to the code the overview describes, then make the overview's "
@@ -978,16 +991,23 @@ def architecture_overview_claim_check_shortfalls(repository, head, changed_files
     return shortfalls
 
 
-def architecture_overview_claim_check_refusal_message(number, head, shortfalls, report_directory):
-    lines = [f"pull request {number} adds or changes {len(shortfalls)} nc-architecture-overview(s), and for each one "
-             f"listed below no claim-check report on the overview's text at head {head[:12]} shows that no "
-             "must-fix claim remains, so no plan was computed."]
+def architecture_overview_claim_check_refusal_message_lines_one_per_overview(shortfalls, report_directory):
+    """One indented line per shortfall architecture_overview_claim_check_shortfalls found, naming where it looked."""
+    lines = []
     for shortfall in shortfalls:
         looked_for = overview_claim_check.overview_write_architecture_overview_claim_check_report_directory_for_overview(report_directory, shortfall["path"]) / f"{shortfall['blob']}-*.md"
         newest = shortfall["newest_report"]
         lines.append(f"  {shortfall['path']} (git blob {shortfall['blob'][:12]} at head): looked on {socket.gethostname()} for "
                      f"{looked_for}; newest report found: "
                      + (f"{newest[0]}, whose result is: {newest[1]}" if newest else "none, so the check has not run on this text"))
+    return lines
+
+
+def architecture_overview_claim_check_refusal_message(number, head, shortfalls, report_directory):
+    lines = [f"pull request {number} adds or changes {len(shortfalls)} nc-architecture-overview(s), and for each one "
+             f"listed below no claim-check report on the overview's text at head {head[:12]} shows that no "
+             "must-fix claim remains, so no plan was computed."]
+    lines.extend(architecture_overview_claim_check_refusal_message_lines_one_per_overview(shortfalls, report_directory))
     lines.append("Send this whole message to the pull request's author. The author clears it on ned-box, in a checkout "
                  "of the pull request's branch at its head, by running for each overview listed:")
     lines.extend(f"     python3 nc-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py "
