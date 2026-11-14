@@ -14,11 +14,10 @@ Load it by path, under the snake_case form of its file name:
 MAC_REFERENCE_CHECKOUT_LAUNCHER_SCRIPTS_DIRECTORY_PATH = "/Users/el/Projects/nedschorus/scripts"
 
 
-def mac_reference_checkout_launcher_path_agent_seat_start_command_text_for_user_to_type(launcher_name: str, agent_seat: str) -> str:
-    """Return the command the user types in a Mac Terminal to start agent_seat with launcher_name.
-
-    launcher_name is launch-claude-ubuntu, for an agent-seat on ned-box, or launch-claude-mac.
-    """
+def mac_reference_checkout_launcher_path_agent_seat_start_command_text_for_user_to_type(
+        agent_seat: str, agent_seat_is_on_ned_box: bool) -> str:
+    """Return the command the user types in a Mac Terminal to start agent_seat with its machine's launcher."""
+    launcher_name = "launch-claude-ubuntu" if agent_seat_is_on_ned_box else "launch-claude-mac"
     return f"{MAC_REFERENCE_CHECKOUT_LAUNCHER_SCRIPTS_DIRECTORY_PATH}/{launcher_name} {agent_seat}"
 
 
@@ -28,6 +27,5 @@ def mac_reference_checkout_launcher_agent_seat_start_command_agent_instruction_t
 
     The user runs it because an agent on ned-box cannot run a command on the Mac.
     """
-    launcher_name = "launch-claude-ubuntu" if agent_seat_is_on_ned_box else "launch-claude-mac"
-    return (f"ask the user to run `{mac_reference_checkout_launcher_path_agent_seat_start_command_text_for_user_to_type(launcher_name, agent_seat)}` "
+    return (f"ask the user to run `{mac_reference_checkout_launcher_path_agent_seat_start_command_text_for_user_to_type(agent_seat, agent_seat_is_on_ned_box)}` "
             "in a Terminal on his Mac")
