@@ -792,6 +792,15 @@ print(x.render_companion(*x.complete_dialog_turns_and_report(pathlib.Path({str(e
           finding.returncode == 0 and "[user] plover in this screenshot" in finding.stdout,
           finding.stdout + finding.stderr)
 
+    nulled = root / "agent-session-files-by-machine" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s15.jsonl"
+    write(nulled, '{"type": "user", "message": null}\n'
+          + transcript_records(typed("dunlin after a record with no message", "2026-10-03T00:00:00Z")))
+    finding = run(root, "dunlin", "--kind", "user-messages")
+    nulled.unlink()
+    check("user-messages skips a user record whose message is null and still finds the next message",
+          finding.returncode == 0 and "[user] dunlin after a record with no message" in finding.stdout,
+          finding.stdout + finding.stderr)
+
     escaped = root / "agent-session-files-by-machine" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s11.jsonl"
     write(escaped, transcript_records(typed("merge it\nplease now", "2026-10-03T00:02:00Z"),
                                       typed('say "hi" to the\tgatekeeper', "2026-10-03T00:03:00Z"),

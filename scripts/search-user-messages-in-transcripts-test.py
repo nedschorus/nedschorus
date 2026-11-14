@@ -105,6 +105,19 @@ with tempfile.TemporaryDirectory() as directory:
 
 with tempfile.TemporaryDirectory() as directory:
     path = write_transcript(directory, [
+        {"type": "user", "message": None},
+        {"type": "assistant", "message": None},
+        typed("still read after records whose message is null"),
+    ])
+    try:
+        texts = user_texts(path)
+    except AttributeError as error:
+        texts = f"raised AttributeError: {error}"
+    check("user and assistant records whose message is null are skipped, and the next message is read",
+          texts == ["still read after records whose message is null"], texts)
+
+with tempfile.TemporaryDirectory() as directory:
+    path = write_transcript(directory, [
         typed("start"),
         queued("<cross-session-message from=\"peer\">hello</cross-session-message>", "peer"),
         queued("<task-notification>done</task-notification>", "task-notification"),
