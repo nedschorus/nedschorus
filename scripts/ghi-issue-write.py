@@ -669,11 +669,16 @@ def push_branch(worktree, branch, runner, environment=None):
             f"git push of branch {branch} was stopped after {seconds:.0f} "
             "seconds, longer than the pre-push hook's own limit, so the push "
             "did not finish.\n"
-            "Rerun the same command; a rerun is safe: it reads origin first, "
-            "and if the branch got there, it opens the pull request for it "
-            "instead of pushing again.\n"
-            "If it stops the same way again, tell the user the push hangs, "
-            "with this message.", 1) from None
+            "Rerun the same command; a rerun is safe because it reads origin "
+            "first.\n"
+            "If the branch reached origin, the rerun opens the pull request "
+            "for it instead of pushing again.\n"
+            "If the branch did not reach origin, the rerun pushes it again, "
+            "which runs the pre-push hook again.\n"
+            "If the rerun's push is again stopped by this time limit, tell "
+            "the user the push hangs, with this message.\n"
+            "If the rerun fails in any other way, do what its own message "
+            "says.", 1) from None
 
 
 def ghi_md_text_sha256_prefix(file_text: str) -> str:
