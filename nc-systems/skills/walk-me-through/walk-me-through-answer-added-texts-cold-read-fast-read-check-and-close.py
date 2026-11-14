@@ -328,9 +328,10 @@ the new item approved, disapproved or already decided, it also writes the
 already-decided line, with the same outcome, for each item a held-answer line
 holds for it that no close line decides yet; after a deferral, a move on or
 answers to parts, the held item stays waiting, so the walk comes back to it.
-Either way it prints the lines the agent's next message must include, the
-status lines among them, and, when an item waits, the command that gives that
-item its cold-read-fast-read before it is presented.
+When it holds or defers the answer, it prints the lines the agent's next
+message must include, the status lines among them. When an item waits, it
+prints the command that gives that item its cold-read-fast-read before it is
+presented.
 
 READ AHEAD. When CLOSE names a next item, it also starts the cold-read-fast-read
 of the item the walk would present after that one, found as CLOSE finds the
