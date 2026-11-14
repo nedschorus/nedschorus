@@ -925,13 +925,17 @@ def _missing_on_this_machine(path):
 def search_time_machine_after(blob_id, path, seen, runner=run_command, prompt_for_root=False):
     """Open the first Time Machine snapshot taken after the hook saw the version, and print the command that
     copies path from it."""
-    destination, _ = _time_machine_destination(runner)
+    destination, why_none, lookup_failure = _time_machine_destination(runner)
+    if lookup_failure is not None:
+        return SurfaceReport("time machine", UNAVAILABLE, [lookup_failure])
     if destination is None:
-        return SurfaceReport("time machine", UNAVAILABLE, ["no Time Machine destination is configured on this "
-                                                           "machine; the version was seen on the Mac, so run this "
-                                                           "program there"])
-    device, mount_point, attached = _time_machine_volume_state(destination["name"], runner)
-    if not attached or not mount_point:
+        return SurfaceReport("time machine", UNAVAILABLE, ["%s; the version was seen on the Mac, so run this "
+                                                           "program there" % why_none])
+    device, mount_point, lookup_failure = _time_machine_volume_state(destination["name"], runner)
+    if lookup_failure is not None:
+        return SurfaceReport("time machine", UNAVAILABLE, ["the backup disk %r could not be looked up — %s"
+                                                           % (destination["name"], lookup_failure)])
+    if not mount_point:
         return SurfaceReport("time machine", UNAVAILABLE, ["the backup disk %r is not mounted"
                                                            % destination["name"]],
                              ["diskutil mount %s" % shlex.quote(destination["name"])])
@@ -1045,7 +1049,7 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
         outcome, where, release_failure, read_in_place = _local_snapshot_probe(
             snapshot, probe_path, mount_point, runner, already_mounted.get(snapshot))
         made_mount_point = made_mount_point or not read_in_place
-        if outcome == "unmounted":
+        if outcome not in ("hit", "miss"):
             unsearched.append((snapshot, where))
         else:
             searched.append(snapshot)
@@ -1345,23 +1349,33 @@ def _local_snapshot_probe(snapshot, probe_path, mount_point, runner, already_mou
     if already_mounted:
         resolves, _, _ = runner(["test", "-d", already_mounted])
         if resolves == 0:
-            exists, _, _ = runner(["test", "-e", already_mounted + probe_path])
-            return ("hit" if exists == 0 else "miss"), already_mounted, None, True
+            outcome, why = _path_exists_outcome(already_mounted + probe_path, runner)
+            return outcome, why or already_mounted, None, True
     runner(["mkdir", "-p", mount_point])
     code, _, stderr = runner(["mount_apfs", "-o", "ro", "-s", snapshot, MAC_DATA_VOLUME, mount_point])
     if code != 0:
         first = stderr.strip().splitlines()[0] if stderr.strip() else "no error text"
         return "unmounted", "mount_apfs exited %s: %s" % (code, first), None, False
     try:
-        exists, _, _ = runner(["test", "-e", mount_point + probe_path])
-        outcome = "hit" if exists == 0 else "miss"
+        outcome, why = _path_exists_outcome(mount_point + probe_path, runner)
     finally:
         released, _, release_error = runner(["diskutil", "unmount", mount_point])
     release_failure = None
     if released != 0:
         first = release_error.strip().splitlines()[0] if release_error.strip() else "no error text"
         release_failure = "diskutil unmount exited %s: %s" % (released, first)
-    return outcome, mount_point, release_failure, False
+    return outcome, why or mount_point, release_failure, False
+
+
+def _path_exists_outcome(path, runner):
+    """Return ("hit", None), ("miss", None), or ("unreadable", why test -e could not answer)."""
+    # test exits 1 for a path that is not there; any other nonzero exit, such as a timeout's 124, is no answer.
+    code, _, stderr = runner(["test", "-e", path])
+    if code == 0:
+        return "hit", None
+    if code == 1:
+        return "miss", None
+    return "unreadable", "test -e %s exited %s — %s" % (shlex.quote(path), code, stderr.strip() or "no error text")
 
 
 
@@ -1983,24 +1997,32 @@ def _timeshift_probe_script(wanted, snapshot_root, search_roots):
 
 def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TIME_MACHINE_SNAPSHOT_LIMIT,
                         runner=run_command, prompt_for_root=False):
-    destination, why_none = _time_machine_destination(runner)
+    destination, why_none, lookup_failure = _time_machine_destination(runner)
+    if lookup_failure is not None:
+        return SurfaceReport("time machine", UNAVAILABLE, [lookup_failure])
     if destination is None:
         return SurfaceReport("time machine", UNAVAILABLE, [why_none])
 
     name = destination["name"]
-    device, mount_point, attached = _time_machine_volume_state(name, runner)
+    device, mount_point, lookup_failure = _time_machine_volume_state(name, runner)
 
-    if not attached:
+    if lookup_failure is not None:
         return SurfaceReport(
             "time machine",
             UNAVAILABLE,
-            ["the backup disk %r is not connected to this Mac" % name,
-             "reconnect it and re-run; nothing else here can be answered without it"],
+            ["the backup disk %r could not be looked up — %s" % (name, lookup_failure),
+             "if the disk is not connected to this Mac, reconnect it and re-run"],
         )
 
     if not mount_point:
         code, _, stderr = runner(["diskutil", "mount", name])
-        device, mount_point, attached = _time_machine_volume_state(name, runner)
+        device, mount_point, lookup_failure = _time_machine_volume_state(name, runner)
+        if lookup_failure is not None:
+            return SurfaceReport(
+                "time machine",
+                UNAVAILABLE,
+                ["the backup disk %r could not be looked up after diskutil mount — %s" % (name, lookup_failure)],
+            )
         if not mount_point:
             return SurfaceReport(
                 "time machine",
@@ -2127,15 +2149,15 @@ def _time_machine_manual_recovery(snapshot, device, path_inside=None, clear_firs
 
 
 def _time_machine_destination(runner):
-    """Return (destination, None), or (None, the line saying why there is none)."""
+    """Return (destination, None, None), (None, why there is none, None) or (None, None, why the lookup failed)."""
     code, out, stderr = runner(["tmutil", "destinationinfo"])
     if code == 127:
         # run_command's answer for a missing program; ned-box has no tmutil.
         return None, ("%s, and Time Machine exists only on macOS, so this machine has no Time Machine "
-                      "backup to search" % stderr.strip())
-    none_configured = "no Time Machine destination is configured on this machine"
+                      "backup to search" % stderr.strip()), None
     if code != 0:
-        return None, none_configured
+        return None, None, "tmutil destinationinfo exited %s — %s" % (code, stderr.strip() or "no error text")
+    none_configured = "no Time Machine destination is configured on this machine"
     destination = {}
     for line in out.splitlines():
         if ":" not in line:
@@ -2147,15 +2169,18 @@ def _time_machine_destination(runner):
             destination["name"] = value
         elif key == "mount point" and value:
             destination["mount_point"] = value
-    return (destination, None) if destination.get("name") else (None, none_configured)
+    return (destination, None, None) if destination.get("name") else (None, none_configured, None)
 
 
 def _time_machine_volume_state(name, runner):
-    """Return (device node, mount point, attached) resolved from the volume name."""
+    """Return (device node, mount point, None) resolved from the volume name, or (None, None, why the lookup
+    failed)."""
     # Device numbers change when disks are replugged.
-    code, out, _ = runner(["diskutil", "info", name])
+    code, out, stderr = runner(["diskutil", "info", name])
     if code != 0:
-        return None, None, False
+        # Either stream may carry diskutil's words.
+        why = stderr.strip() or out.strip() or "no error text"
+        return None, None, "diskutil info %s exited %s — %s" % (shlex.quote(name), code, why)
     device = None
     mount_point = None
     for line in out.splitlines():
@@ -2166,7 +2191,7 @@ def _time_machine_volume_state(name, runner):
             device = value
         elif key == "mount point" and value:
             mount_point = value
-    return device, mount_point, True
+    return device, mount_point, None
 
 
 def _time_machine_snapshots(device, runner):
@@ -2264,8 +2289,8 @@ def _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root=False)
             outcome = ("unreadable", "mounted, but %s is not there — a snapshot of this backup "
                                      "volume keeps its files under <stamp>.backup/Data" % data_root)
         elif wanted.startswith("/"):
-            exists, _, _ = runner(["test", "-e", data_root + wanted])
-            outcome = ("hit", wanted) if exists == 0 else ("miss", None)
+            found, why = _path_exists_outcome(data_root + wanted, runner)
+            outcome = (found, why or wanted)
         else:
             code, out, stderr = runner(
                 ["find", data_root + "/Users", "-path", "*/" + wanted, "-maxdepth", "12"],

@@ -272,11 +272,17 @@ def state_file_path(home: Path, list_id: str) -> Path:
 
 
 def read_tasks(directory: Path, unreadable: "list | None" = None) -> dict:
-    """Every readable task in the list, by id; a missing directory holds none.
+    """Every readable task in the list, by id; a missing directory holds none, and one that
+    exists but cannot be listed raises OSError.
 
     A malformed file is skipped, and its path is appended to `unreadable` when one is given."""
+    # Not Path.glob: it answers a directory it cannot list, even on EIO, as an empty one.
+    try:
+        names = os.listdir(directory)
+    except FileNotFoundError:
+        return {}
     tasks = {}
-    for path in sorted(directory.glob("*.json")):
+    for path in sorted(directory / name for name in names if name.endswith(".json")):
         try:
             task = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -397,8 +403,8 @@ def approval_walk_item_decided_or_problem(condition: dict) -> dict:
     matching = [unit for unit in units
                 if answer_program.heading_title(walk_finder, lines[unit[3]]) == title]
     if len(matching) != 1:
-        found = "no item heading" if not matching else f"{len(matching)} item headings"
-        return {"met": False, "problem": f'the walk-document {document} holds {found} that reads '
+        found = "no item heading that reads" if not matching else f"{len(matching)} item headings that read"
+        return {"met": False, "problem": f'the walk-document {document} holds {found} '
                                          f'"{single_line(heading)}" once its running count is left out'}
     numbers = matching[0][0]
     if not numbers or not minutes.exists():

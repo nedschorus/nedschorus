@@ -16,6 +16,7 @@ import importlib.util
 import json
 import os
 import shutil
+import site
 import subprocess
 import sys
 import tempfile
@@ -102,6 +103,8 @@ def seat_session_environment():
     """This process's environment as an agent-seat's own attended session
     gives it to a Stop hook: attended, and no caller owning the session."""
     environment = dict(os.environ)
+    # The cases move HOME, from which Python finds the user's site-packages; on the Mac markdown-it-py is there.
+    environment["PYTHONUSERBASE"] = site.getuserbase()
     environment["CLAUDE_CODE_SESSION_ATTENDED"] = "1"
     environment.pop("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER", None)
     return environment
@@ -1076,6 +1079,16 @@ check("approval-walk item whose heading is not in the walk-document: named, not 
                 "the walk-document lacks\" once its running count is left out"),
       repr(context_of(result)))
 check("approval-walk item whose heading is not found: named once, then silent", silent(seat.run()))
+
+seat = WalkSeat(WALK_DOCUMENT + "\n## Item 4 of 4: " + ITEM_1 + "\n")
+seat.waiting_task("79", ITEM_1)
+seat.minutes_say("item 1 of 3: approved; every text the change adds has had a fast read. <accepted>")
+result = seat.run()
+check("approval-walk item whose heading two items share, the first decided: named, not raised",
+      context_of(result) == problem_text(
+          "79", f"the walk-document {seat.document} holds 2 item headings that read \"{ITEM_1}\" "
+                "once its running count is left out"),
+      repr(context_of(result)))
 
 seat = WalkSeat()
 seat.waiting_task("76", ITEM_1)

@@ -113,6 +113,11 @@ if tool == "cr-filter-git":
 if tool in ("cr-filter-pragma", "cr-filter-lines"):
     sys.exit(plan.get(tool + "_exit", 0))
 command = arguments[0]
+if command == "baseline" and plan.get("baseline_cannot_import_cosmic_ray"):
+    # As a venv whose attrs sources /tmp's cleaner deleted: cosmic-ray dies on import.
+    print("ImportError: cannot import name 'asdict' from 'attrs' (unknown location)",
+          file=sys.stderr)
+    sys.exit(1)
 if command == "baseline":
     config_text = pathlib.Path(arguments[-1]).read_text()
     (control / "config.toml").write_text(config_text)
@@ -1217,6 +1222,40 @@ def run_quick_mutation_pass_cases():
           "not an if on another name",
           survivors.failure_handling_line_ranges(source) == [(4, 5), (6, 7), (8, 8), (11, 14)],
           survivors.failure_handling_line_ranges(source))
+    source = ("import os, subprocess\n"
+              "def f(process, completed, response, waited):\n"
+              "    status = process.wait()\n"
+              "    if status != 0:\n"
+              "        g()\n"
+              "    code = os.system('true')\n"
+              "    word = 'failed' if code else 'passed'\n"
+              "    rc = subprocess.call(['true'])\n"
+              "    while rc:\n"
+              "        g()\n"
+              "    held = completed.returncode\n"
+              "    if held < 0:\n"
+              "        g()\n"
+              "    if subprocess.call(['true']) != 0 or os.waitstatus_to_exitcode(waited):\n"
+              "        g()\n"
+              "    reply = response.status\n"
+              "    if reply:\n"
+              "        g()\n"
+              "    wrapped = str(process.wait())\n"
+              "    if wrapped:\n"
+              "        g()\n"
+              "    if process.poll() is None:\n"
+              "        g()\n"
+              "def h(status, rc):\n"
+              "    if status or rc:\n"
+              "        g()\n"
+              "    late = lambda: 'failed' if process.wait() else 'passed'\n")
+    check("failure-handling code: an if, while or conditional expression whose test reads a name "
+          "the same function assigned from wait(), os.system, subprocess.call or a returncode, "
+          "or calls one of those or os.waitstatus_to_exitcode itself; not a name assigned from "
+          "another value or in another function, nor a test of poll()",
+          survivors.failure_handling_line_ranges(source)
+          == [(4, 5), (7, 7), (9, 10), (12, 13), (14, 15), (27, 27)],
+          survivors.failure_handling_line_ranges(source))
     # cosmic-ray 8.7.0's cr-filter-pragma skips a mutation when its LAST line carries the
     # pragma, or the line before when the mutation ends at a line's start; the survivor
     # task names "line", so "line" must be that line.
@@ -2124,9 +2163,51 @@ def run_recorded_mutant_lines_on_main_search_cases():
                   on_main is None, on_main)
 
 
+def run_recorded_mutant_lines_on_main_context_lines_cases():
+    survivors = load_script_module()
+    # Each recorded hunk replaces a bare "continue"; each file has "continue" more than once,
+    # so no hunk is found once and the context lines beside each copy decide.
+    hunk = (100, ["b1", "b2", "continue", "a1", "a2"], ["b1", "b2", "break", "a1", "a2"])
+    blank_after = (100, ["b1", "continue", ""], ["b1", "break", ""])
+    blank_only = (100, ["", "continue", ""], ["", "break", ""])
+    # Adds a line between context lines that no file has, so it replaces no line.
+    insert_only = (100, ["q1", "q2"], ["q1", "added", "q2"])
+    cases = {
+        "context-gone-copies-in-the-middle.py": ("x\ncontinue\ny\nz\ncontinue\nw", [hunk], "gone"),
+        # A copy at the file's start has the file's last lines at negative offsets, and one
+        # at its end has no lines after it; neither is a context line beside the copy.
+        "context-lines-before-the-file-start.py": ("continue\nx\ncontinue\nb1\nb2", [hunk],
+                                                   "gone"),
+        "context-lines-past-the-file-end.py": ("a1\na2\ncontinue\nx\ncontinue", [hunk], "gone"),
+        "context-line-at-another-offset.py": ("a1\ncontinue\nb2\nx\ncontinue\nb1", [hunk],
+                                              "gone"),
+        "line-before-kept-beside-one-copy.py": ("b1\nchanged\ncontinue\nx\ncontinue", [hunk],
+                                                None),
+        "line-after-kept-beside-one-copy.py": ("continue\nx\ncontinue\nchanged\na2", [hunk],
+                                               None),
+        "line-after-kept-at-the-file-end.py": ("continue\nx\ncontinue\na1", [hunk], None),
+        "line-before-kept-at-the-file-start.py": ("b2\ncontinue\nx\ncontinue", [hunk], None),
+        "blank-context-line-beside-a-copy.py": ("x\ncontinue\n\ny\ncontinue", [blank_after],
+                                                "gone"),
+        "only-blank-context-lines.py": ("x\ncontinue\ny\ncontinue", [blank_only], None),
+        "insert-only-hunk-before-a-gone-hunk.py": ("x\ncontinue\ny\ncontinue",
+                                                   [insert_only, hunk], "gone"),
+    }
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, _, head = scratch_repository(
+            scratch_name, {path: text for path, (text, _, _) in cases.items()})
+        git(repository, "update-ref", "refs/remotes/origin/main", head)
+        for path, (_, hunks, wanted) in cases.items():
+            on_main = survivors.recorded_mutant_lines_on_main(repository, path, hunks, None)
+            check(f"a recorded mutant whose short replaced line origin/main has more than once "
+                  f"is gone only when no non-blank context line stands beside any copy: {path}",
+                  on_main == wanted, f"want {wanted!r} got {on_main!r}")
+
+
 def run_cases():
     run_hunk_shared_context_line_counts_and_replaced_lines_cases()
     run_recorded_mutant_lines_on_main_search_cases()
+    run_recorded_mutant_lines_on_main_context_lines_cases()
     # ------------------------------------------------------------------
     # The config written, the worktree used, and survivors parsed.
     # ------------------------------------------------------------------
@@ -2865,6 +2946,37 @@ def run_cases():
               json.dumps(recorded))
         check("the worktree is removed after a failing baseline",
               len(worktrees_of(repository)) == 1, worktrees_of(repository))
+
+    # A cosmic-ray that cannot start writes no baseline session: it is reported as such, with
+    # how to rebuild its venv, not as failing suites.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+        venv, control = fake_venv(scratch_name, {"baseline_cannot_import_cosmic_ray": True})
+        completed = run_script(repository, control, "--head", head, "--base", base,
+                               "--cosmic-ray-venv", str(venv))
+        check("a cosmic-ray that cannot import its packages: exit 2, naming it, its error and "
+              "how to rebuild its venv, not failing suites, and nothing dumped",
+              completed.returncode == 2
+              and f"{venv.resolve() / 'bin' / 'cosmic-ray'} exited 1 without making its "
+              f"baseline session, so no suite ran" in completed.stderr
+              and "cannot import name 'asdict' from 'attrs'" in completed.stderr
+              and f"  rm -rf {venv.resolve()}\n" in completed.stderr
+              and f"  {venv.resolve()}/bin/pip install cosmic-ray==" in completed.stderr
+              and "fail on the unmutated head" not in completed.stderr
+              and [c["arguments"][0] for c in calls(control)] == ["baseline"]
+              and len(worktrees_of(repository)) == 1,
+              f"rc={completed.returncode} err={completed.stderr} calls={calls(control)}")
+        rebuild_steps = completed.stderr.partition(
+            "ModuleNotFoundError, the venv holding cosmic-ray is broken")[2]
+        check("a cosmic-ray that cannot import its packages: running again is a step of the "
+              "venv rebuild, and any other error is to be fixed before running again",
+              "rebuild it and run again:\n  rm -rf " in rebuild_steps
+              and f"\n  python3 {SCRIPT}" in rebuild_steps.partition(
+                  "\nIf cosmic-ray's last line names any other")[0]
+              and "If cosmic-ray's last line names any other error, running again unchanged fails "
+              "the same way: fix that error, then run only the last of the four commands above."
+              in rebuild_steps,
+              f"err={completed.stderr}")
 
     # ------------------------------------------------------------------
     # A baseline that ran out of time is reported as a timeout, not as

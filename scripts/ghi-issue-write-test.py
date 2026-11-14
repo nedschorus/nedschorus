@@ -1346,6 +1346,36 @@ def run_cases(scratch: Path):
           and not moved.ran("git worktree add")
           and not moved.ran("gh pr create"), str(moved.commands()))
 
+    def dry_run_on_landed(answers):
+        recorder = Recorder(answers)
+        printed, complaint = io.StringIO(), io.StringIO()
+        saved_run = tool.run
+        tool.run = recorder
+        try:
+            with contextlib.redirect_stdout(printed), \
+                    contextlib.redirect_stderr(complaint):
+                code = tool.main(["create", str(landed), "--dry-run",
+                                  "--repo", REPO])
+        finally:
+            tool.run = saved_run
+        return code, printed.getvalue(), complaint.getvalue(), recorder
+
+    code, printed, complaint, dry = dry_run_on_landed(
+        {"gh issue view": Completed('{"body": "in progress ' + KEY + '"}')})
+    check("create --dry-run on a landed file whose body still carries a "
+          "pairing key reports the resume the real run takes",
+          code == 0 and "would resume issue 570 at step 5" in printed
+          and not complaint and dry.commands() == ["gh issue view"],
+          f"code {code}, {printed!r}, {complaint!r}, {dry.commands()}")
+    code, printed, complaint, dry = dry_run_on_landed({
+        "gh issue view": Completed(
+            '{"body": "- [570-a.md](https://github.com/x/y/blob/main/x.md)"}'),
+    })
+    check("create --dry-run on a landed file whose filing finished is "
+          "refused as the real run refuses it",
+          code == 64 and "already named for an issue" in complaint,
+          f"code {code}, {printed!r}, {complaint!r}")
+
     filed_already = Recorder({
         "gh issue view": Completed(
             '{"body": "- [570-a.md](https://github.com/x/y/blob/main/x.md)"}'),
@@ -4482,7 +4512,10 @@ def run_close_cases(scratch: Path):
               refusal.code == 1 and "HTTP 502" in str(refusal), str(refusal))
 
     # A reason the close would reject is refused before anything runs.
+    # "wontfix" and "not planned yet" sort after "not planned", so an
+    # ordering comparison there would accept them.
     for bad in (["fixed"], ["duplicate"], ["duplicate", "570"],
+                ["wontfix"], ["not", "planned", "yet"],
                 ["duplicate", "0"], ["completed", "now"], ["not"],
                 ["duplicate", "twelve"], ["duplicate", "#570"],
                 ["duplicate", "##12"]):

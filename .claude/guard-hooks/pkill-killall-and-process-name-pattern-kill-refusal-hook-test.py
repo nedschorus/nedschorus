@@ -187,10 +187,14 @@ check("the loop condition refusal names the wait program, which exists, with an 
 # counts its turns and stops at 3, where the unbounded loop would go on for ever.
 token = f"pgrep-self-match-reproduction-{os.getpid()}"
 self_matching_loop = f'n=0; while pgrep -f "{token}" >/dev/null && [ "$n" -lt 3 ]; do n=$((n+1)); done; echo "$n"'
+# macOS's BSD pgrep leaves out its own ancestors unless given -a, so there the loop's shell matches only
+# with -a; procps pgrep, on ned-box, matches it without, and reads -a as another option.
+reproduced_loop = (self_matching_loop.replace("pgrep -f", "pgrep -a -f") if sys.platform == "darwin"
+                   else self_matching_loop)
 if shutil.which("pgrep") is None:
     print("SKIP  [this machine cannot run it] the self-match reproduction: pgrep is not on PATH")
 else:
-    looped = subprocess.run(["bash", "-c", self_matching_loop], capture_output=True, text=True, timeout=60)
+    looped = subprocess.run(["bash", "-c", reproduced_loop], capture_output=True, text=True, timeout=60)
     check("reproduced: pgrep -f in a loop condition matches the loop's own shell, so the loop runs to its "
           "bound, and the hook refuses that loop",
           looped.stdout.strip() == "3" and LOOP_CONDITION in (refusal(self_matching_loop) or ""),

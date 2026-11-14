@@ -286,8 +286,8 @@ APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGEST
     + ((APPROVAL_WALK_COLD_READ_FAST_READ_REPORT_FILE_SUFFIX_IN_WALKS_STARTED_BEFORE_ITS_RENAME, "cold-read-fast-read report"),)
     + WALK_FILE_ROLES[2:])
 MINUTES_ROLE_SUFFIX = "-minutes"
-WALK_TEXT_ROLE_SUFFIX = ""
-REQUIRED_ROLE_SUFFIXES = (WALK_TEXT_ROLE_SUFFIX, MINUTES_ROLE_SUFFIX)
+APPROVAL_WALK_DOCUMENT_FILE_ROLE_SUFFIX = ""
+REQUIRED_ROLE_SUFFIXES = (APPROVAL_WALK_DOCUMENT_FILE_ROLE_SUFFIX, MINUTES_ROLE_SUFFIX)
 # Each group is noted on stderr, by its first suffix, when none of its files is present.
 NOTED_WHEN_ABSENT_ROLE_SUFFIX_GROUPS = (
     ("-draft",),
@@ -298,7 +298,7 @@ REPLACED_ROLE_SUFFIXES = (MINUTES_ROLE_SUFFIX, "-dispositions")
 # A walk text the store holds that is not a byte prefix of the local one is
 # shipped beside it as <name>-revised-<n>.md, n counting up from 1, and never
 # refused (see REVISED COPIES in the docstring).
-REVISED_WALK_TEXT_NAME_INFIX = "-revised-"
+APPROVAL_WALK_DOCUMENT_REVISED_COPY_FILE_NAME_INFIX = "-revised-"
 # What the store's listing prefixes a file's size in bytes with, so one
 # round trip carries both facts the rules need and the sha256sum lines keep
 # the format sha256sum itself prints.
@@ -366,22 +366,24 @@ def walk_file_name(name: str, suffix: str) -> str:
     return f"{name}{suffix}.md"
 
 
-def revised_walk_text_file_name(name: str, number: int) -> str:
-    return f"{name}{REVISED_WALK_TEXT_NAME_INFIX}{number}.md"
+def approval_walk_document_revised_copy_file_name(name: str, number: int) -> str:
+    return f"{name}{APPROVAL_WALK_DOCUMENT_REVISED_COPY_FILE_NAME_INFIX}{number}.md"
 
 
-def revised_walk_text_number(name: str, file_name: str) -> typing.Optional[int]:
+def approval_walk_document_revised_copy_number_from_file_name(
+        name: str, file_name: str) -> typing.Optional[int]:
     """n when file_name is <name>-revised-<n>.md with n a positive whole
     number written without leading zeros, else None. The walk text of
     another walk named <name>-revised-<n> answers n too: nothing in the name
     tells the two apart."""
-    matched = re.fullmatch(re.escape(name + REVISED_WALK_TEXT_NAME_INFIX)
-                           + r"([1-9][0-9]*)\.md", file_name)
+    matched = re.fullmatch(
+        re.escape(name + APPROVAL_WALK_DOCUMENT_REVISED_COPY_FILE_NAME_INFIX)
+        + r"([1-9][0-9]*)\.md", file_name)
     return int(matched.group(1)) if matched else None
 
 
-def stored_revised_walk_text_numbers(copy_host, walk_path: pathlib.PurePosixPath,
-                                     name: str):
+def approval_walk_document_revised_copy_numbers_from_log_store_directory_listing(
+        copy_host, walk_path: pathlib.PurePosixPath, name: str):
     """(process, sorted numbers of the walk's revised copies the store holds),
     with None for the numbers when the store cannot be listed. A store
     directory that does not exist yet holds none."""
@@ -406,7 +408,7 @@ def stored_revised_walk_text_numbers(copy_host, walk_path: pathlib.PurePosixPath
         # be entered or read exits 1: the glob would otherwise match nothing
         # and read as "no revised copies".
         quoted_directory = shlex.quote(str(walk_path))
-        pattern = shlex.quote(name + REVISED_WALK_TEXT_NAME_INFIX) + "*.md"
+        pattern = shlex.quote(name + APPROVAL_WALK_DOCUMENT_REVISED_COPY_FILE_NAME_INFIX) + "*.md"
         script = (f"[ -d {quoted_directory} ] || exit 0; "
                   f"cd -- {quoted_directory} || exit 1; [ -r . ] || exit 1; "
                   f"for f in {pattern}; do if [ -f \"$f\" ]; then printf '%s\\n' \"$f\"; fi; done; exit 0")
@@ -415,8 +417,9 @@ def stored_revised_walk_text_numbers(copy_host, walk_path: pathlib.PurePosixPath
         names = listed.stdout.splitlines() if listed.returncode == 0 else None
     if names is None:
         return listed, None
-    numbers = sorted(number for number in (revised_walk_text_number(name, file_name)
-                                           for file_name in names)
+    numbers = sorted(number for number in (
+                         approval_walk_document_revised_copy_number_from_file_name(name, file_name)
+                         for file_name in names)
                      if number is not None)
     return listed, numbers
 
@@ -428,7 +431,7 @@ def store_file_role_rank(name: str, file_name: str) -> int:
     for rank, (suffix, _) in enumerate(APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX):
         if file_name == walk_file_name(name, suffix):
             return rank
-    return [suffix for suffix, _ in APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX].index(WALK_TEXT_ROLE_SUFFIX)
+    return [suffix for suffix, _ in APPROVAL_WALK_FILE_SUFFIX_AND_ROLE_PAIRS_SHIPPED_INCLUDING_EARLIER_WALKS_SUGGESTIONS_SUFFIX].index(APPROVAL_WALK_DOCUMENT_FILE_ROLE_SUFFIX)
 
 
 def sha256_of(path: pathlib.Path) -> str:
@@ -605,7 +608,7 @@ def walk_files_ship_rerun_command(name: str, directory: pathlib.Path) -> str:
     # longest candidate first, so from topic-minutes.md it would pick a walk
     # named topic-minutes whenever topic-minutes-minutes.md also exists.
     walk_argument = (name if directory == WALK_DIRECTORY and not name.startswith("-")
-                     else str(directory / walk_file_name(name, WALK_TEXT_ROLE_SUFFIX)))
+                     else str(directory / walk_file_name(name, APPROVAL_WALK_DOCUMENT_FILE_ROLE_SUFFIX)))
     return (f"{shlex.quote(str(REPO_ROOT / 'nc-systems' / 'skills' / 'walk-me-through' / 'walk-files-ship.py'))} "
             f"{shlex.quote(walk_argument)}")
 
@@ -700,8 +703,8 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
     targets = {suffix: destination.walk_path / walk_file_name(name, suffix)
                for suffix in present}
     revised_numbers = []
-    if WALK_TEXT_ROLE_SUFFIX in present:
-        listed, revised_numbers = stored_revised_walk_text_numbers(
+    if APPROVAL_WALK_DOCUMENT_FILE_ROLE_SUFFIX in present:
+        listed, revised_numbers = approval_walk_document_revised_copy_numbers_from_log_store_directory_listing(
             destination.copy_host, destination.walk_path, name)
         if revised_numbers is None:
             reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
@@ -709,8 +712,9 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
             print(f"FAILED: {name} — {reason}; the walk's files stay on disk, unshipped.")
             sys.stderr.write(listed.stderr)
             return EXIT_FAILED
-    revised_targets = {number: destination.walk_path / revised_walk_text_file_name(name, number)
-                       for number in revised_numbers}
+    revised_targets = {
+        number: destination.walk_path / approval_walk_document_revised_copy_file_name(name, number)
+        for number in revised_numbers}
     listed, stored = store_digests_and_sizes(destination.copy_host,
                                              list(targets.values())
                                              + list(revised_targets.values()))
@@ -730,13 +734,13 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
         local_digest = sha256_of(source)
         local_digests[source.name] = local_digest
         in_store = stored.get(str(targets[suffix]))
-        if suffix == WALK_TEXT_ROLE_SUFFIX:
+        if suffix == APPROVAL_WALK_DOCUMENT_FILE_ROLE_SUFFIX:
             # See REVISED COPIES in the docstring: once a revised copy
             # exists, the highest-numbered one is the walk text as last
             # shipped, and the rules apply to it, not to the original.
             latest_name, latest = source.name, in_store
             if revised_numbers:
-                latest_name = revised_walk_text_file_name(name, revised_numbers[-1])
+                latest_name = approval_walk_document_revised_copy_file_name(name, revised_numbers[-1])
                 latest = stored.get(str(revised_targets[revised_numbers[-1]]))
             local_digests[latest_name] = local_digest
             if latest is not None and latest.sha256 == local_digest:
@@ -749,10 +753,10 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
                     APPENDED_TO_RULING.format(stored_bytes=latest.size_in_bytes,
                                               local_bytes=source.stat().st_size),
                     latest_name,
-                    revised_walk_text_file_name(
+                    approval_walk_document_revised_copy_file_name(
                         name, (revised_numbers[-1] if revised_numbers else 0) + 1)))
             else:
-                revised_name = revised_walk_text_file_name(
+                revised_name = approval_walk_document_revised_copy_file_name(
                     name, (revised_numbers[-1] if revised_numbers else 0) + 1)
                 revised_copy = revised_copies / revised_name
                 revised_copy.write_bytes(source.read_bytes())

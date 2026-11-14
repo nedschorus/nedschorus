@@ -795,15 +795,15 @@ def contract_path_beside_design(design_path):
 RECORD_DIRECTORY_NAME = "design-to-main-record"
 # Forced writes do not spend the writer's counter.
 WRITE_TRAILER_FORCED = "forced"
-RUN_STATE_FILE_NAME = "run-state.json"
-USER_RULINGS_FILE_NAME = "user-rulings.md"
+RUN_STATE_FILE_NAME = "design-to-main-run-state.json"
+USER_RULINGS_FILE_NAME = "design-to-main-component-user-rulings-log.md"
 # Evidence instance numbers start at one and span the run.
 EVIDENCE_DIRECTORY_NAME = "evidence"
-NOTES_FILE_NAME = "notes.md"
-STATE_EXIT_FILE_NAME = "state-exit.json"
+NOTES_FILE_NAME = "design-to-main-writer-notes-or-reviewer-findings.md"
+STATE_EXIT_FILE_NAME = "design-to-main-state-exit-verdict-and-destination.json"
 # Report numbers use the investigation instance count.
 INVESTIGATION_REPORTS_DIRECTORY_NAME = "reports"
-INVESTIGATION_REPORT_FILE_NAME_FORMAT = "investigation-%d.md"
+INVESTIGATION_REPORT_FILE_NAME_FORMAT = "design-to-main-investigation-report-%d.md"
 
 STATE_EXIT_JSON_FIELDS = {
     "state": "state",

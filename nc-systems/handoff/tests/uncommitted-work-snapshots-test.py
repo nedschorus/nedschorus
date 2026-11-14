@@ -1169,7 +1169,9 @@ def git_client_side_hooks_installed_for_agent_seat(main, agent_seat):
     record.write_text("# session-handoff\n")
     identity = {"GIT_AUTHOR_NAME": agent_seat, "GIT_COMMITTER_NAME": agent_seat,
                 "GIT_AUTHOR_EMAIL": f"{agent_seat}@nedschorus.invalid",
-                "GIT_COMMITTER_EMAIL": f"{agent_seat}@nedschorus.invalid"}
+                "GIT_COMMITTER_EMAIL": f"{agent_seat}@nedschorus.invalid",
+                # The Mac's own NEDSCHORUS_AGENTS_ROOT would point the hook past HOME's agents.
+                "NEDSCHORUS_AGENTS_ROOT": str(home / "agents")}
     real = {name: os.environ.get(name) for name in identity}
     os.environ.update(identity)
 
@@ -1561,7 +1563,22 @@ def test_the_cleaner_reports_each_task_it_cannot_judge():
     check(failures_seen == 1 and any("could not be rewritten as completed" in line for line in lines)
           and json.loads(task_file.read_text())["status"] == "pending",
           "a task file that cannot be rewritten is left as it was and reported", lines)
-    later_list = restore_task_list().with_name("nedschorus-seat-six-tasks")
+    # The partial file is written, then the replace fails: only removing the partial cleans up.
+    real_replace = cleaner.os.replace
+
+    def failing_replace(source, target):
+        raise OSError(28, "No space left on device")
+    cleaner.os.replace = failing_replace
+    try:
+        failures_seen, lines = close_tasks(main, remove=True)
+    finally:
+        cleaner.os.replace = real_replace
+    check(failures_seen == 1 and any("could not be rewritten as completed" in line for line in lines)
+          and json.loads(task_file.read_text())["status"] == "pending"
+          and not list(restore_task_list().glob("*.partial")),
+          "a task file whose rewrite fails after its partial file is written leaves no partial file",
+          lines + [str(path) for path in restore_task_list().iterdir()])
+    later_list =restore_task_list().with_name("nedschorus-seat-six-tasks")
     later_list.mkdir()
     unreferenced = git(main, "commit-tree", "HEAD^{tree}", "-m", "held by no ref")
     (later_list / "1.json").write_text(json.dumps({

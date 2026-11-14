@@ -116,6 +116,17 @@ check("the approval-walk item example, values filled in, is one the due-task hoo
                     {"approval_walk_minutes_file_path": "/work/docs/walk/w-minutes.md",
                      "approval_walk_item_heading": "Item 3 of 5: The fix"})], repr(readable))
 
+fault_line = run_hook("not json").stderr
+fault_walk_item_example = json.loads(
+    fault_line.split("same prerequisites list, as ", 1)[1].split("; if it waits on another task", 1)[0]
+    .replace("<absolute path of the walk-minutes file>", "/work/docs/walk/w-minutes.md")
+    .replace("<the item's heading in the walk-document>", "Item 3 of 5: The fix"))
+readable = due_task_raise_hook.parse_prerequisites([fault_walk_item_example])
+check("the fault line's approval-walk item example, values filled in, is one the due-task hook reads",
+      readable == [("approval_walk_item_decided",
+                    {"approval_walk_minutes_file_path": "/work/docs/walk/w-minutes.md",
+                     "approval_walk_item_heading": "Item 3 of 5: The fix"})], repr(readable))
+
 _list_spec = importlib.util.spec_from_file_location("first_prompt_list", FIRST_PROMPT_LIST_SCRIPT)
 first_prompt_list = importlib.util.module_from_spec(_list_spec)
 _list_spec.loader.exec_module(first_prompt_list)

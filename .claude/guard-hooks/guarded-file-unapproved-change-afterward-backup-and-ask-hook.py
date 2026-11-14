@@ -213,11 +213,13 @@ RESTORE_INCOMPLETE = ("{program_name} --restore: not every file was put back; th
                       "still hold the declined version, and the command would commit it.")
 MARKER_SURVIVED = (
     "{program_name} --approve: the approval above is recorded, but its marker {marker} could not "
-    "be deleted: {reason}. While the marker exists, a later --approve would spend the user's "
-    "words a second time.\n"
+    "be deleted: {reason}. While the marker exists, the next --approve, for any later change, "
+    "would read the same approval from it again and record that later change as approved "
+    "although no one approved it.\n"
     "Run: rm -f {quoted_marker}\n"
     "Do not ask the user again and do not run --approve again: the approval is already recorded.\n"
-    "If rm fails too, tell the user, with this message.")
+    "If rm fails too, tell the user, with this message, that he must delete {marker} himself, "
+    "on the machine that holds this checkout, before --approve runs in this checkout again.")
 
 
 class ApprovalRecordedButApprovalMarkerNotDeleted(Exception):
@@ -879,7 +881,9 @@ def entries_after(entries, position):
     the window. Neither the reflog's length nor a stored index tells two equal lines apart,
     because expiry can drop older entries and move a later equal line to the stored index; and
     when the line is gone, a guess from times can leave out a commit made in its second. A
-    position an earlier version of this hook stored is [commit, time] alone."""
+    position an earlier version of this hook stored is [commit, time] alone; when no entry, or
+    more than one, holds that pair, the window is unknown too, so nothing is approved as git's
+    own work and every changed version is asked about."""
     if not position:
         return []
     if len(position) < 4:

@@ -100,11 +100,44 @@ spec_three = chain_text('X_MESSAGE = "Elapsed: " + f"{seconds:.3f}"\n')
 check("an f-string field in a chain keeps its format spec, so .1f and .3f differ",
       spec_one == "Elapsed: {seconds:.1f}" and spec_three == "Elapsed: {seconds:.3f}", (spec_one, spec_three))
 check("an f-string field in a chain keeps its conversion", chain_text('X_MESSAGE = "v " + f"{x!r}"\n') == "v {x!r}")
+in_chain = chain_text('X_MESSAGE = "x" + f"{seconds:.1f}"\n')
+standalone = chain_text('X_MESSAGE = f"x{seconds:.1f}"\n')
 check("a chain's field text matches the field in the same standalone f-string",
-      "{seconds:.1f}" in chain_text('X_MESSAGE = f"{seconds:.1f}"\n'))
+      in_chain == "x{seconds:.1f}" and standalone == "f'x{seconds:.1f}'", (in_chain, standalone))
 found = entries('print(report.render() + "\\n")\nprint("Failed: " + name + f" {n!r}")\n')
-check("literal_text leaves out every {...} placeholder",
+check("literal_text leaves out a placeholder that carries no string",
       [entry["literal_text"] for entry in found] == ["\n", "Failed:  "], found)
+
+NESTED_STRINGS = (
+    ("a conditional expression in an f-string field",
+     'print(f"    {\'came up\' if came_up else \'DID NOT COME BACK\'}: {report}")\n',
+     "    came up DID NOT COME BACK: "),
+    ("a conditional expression as a + operand",
+     'print(f"{PROGRAM}: " + (missing if missing else f"the suite used {cpu_seconds:.1f} CPU seconds"))\n',
+     ": the suite used  CPU seconds"),
+    ("a conditional expression in a field of an f-string + operand",
+     'print("- " + f"{\'up\' if ok else \'down\'}")\n', "- up down"),
+    ("a join's fallback in an f-string field", 'print(f"| {\', \'.join(flagged) or \'none\'} |")\n', "| none |"),
+)
+for case_name, source, expected in NESTED_STRINGS:
+    found = [entry["literal_text"] for entry in entries(source)]
+    check(f"literal_text holds the words of a string nested in a placeholder: {case_name}",
+          found == [expected], found)
+
+NO_NESTED_WORDS = (
+    ("a placeholder that names a value", 'print(f"{msg}")\n'),
+    ("a subscript's key", 'print(f"| {s[\'findings\']} | {s[\'hit_findings\']} |")\n'),
+    ("a format spec", 'print(f"{now:%Y-%m-%d} {x:>{width}}")\n'),
+    ("a join's separator", 'print(f"{\' + \'.join(names)}: {count}")\n'),
+)
+for case_name, source in NO_NESTED_WORDS:
+    found = [entry["literal_text"] for entry in entries(source)]
+    check(f"literal_text holds no letter from {case_name}",
+          len(found) == 1 and not any(character.isalpha() for character in found[0]), found)
+
+found = entries('X_TEMPLATE_MESSAGE = "{path}: {error}"\n')
+check("literal_text of a plain string keeps its braces as written, since they reach the agent as written",
+      [entry["literal_text"] for entry in found] == ["{path}: {error}"], found)
 
 NOT_RECOGNIZED_FORMS = (
     ("a systemMessage, which the user sees and the agent does not",
@@ -543,12 +576,27 @@ SCOPE_FORMS_EACH_RULE_ONCE_MISSED = (
      'emit("never shown")\n', []),
     ("a comprehension target hides the function's local at a printed form inside the comprehension",
      'def main(items):\n    text = "local hidden"\n    [print(text) for text in items]\n', []),
+    ("a comprehension target hides the function's local inside a lambda the comprehension calls",
+     'def main(items):\n    text = "lambda hidden"\n    [(lambda: print(text))() for text in items]\n', []),
     ("a helper's parameter printed in a comprehension's first iterable, which the target does not hide",
      'def emit(text):\n    [text for text in print(text)]\nemit("first iterable shown")\n',
      ["first iterable shown"]),
     ("a name read inside a comprehension's target is not bound by it",
      'def main(items, messages):\n    text = "subscript shown"\n    print([text for messages[text] in items])\n',
      ["subscript shown"]),
+    ("a local bound outside a comprehension still carries the function's local into it under another name",
+     'def main(items):\n    text = "carried in shown"\n    message = f"{text}"\n'
+     '    [print(message) for text in items]\n', ["carried in shown", "f'{text}'"]),
+    ("a name a comprehension nested in a target's subscript binds is not bound by the target",
+     'def main(slots):\n    text = "nested comprehension shown"\n'
+     '    [print(text) for slots[sum(text for text in [1])] in [0]]\n', ["nested comprehension shown"]),
+    ("a tuple and starred comprehension target binds each of its names",
+     'def main(items):\n    text = "tuple hidden"\n    note = "starred hidden"\n'
+     '    [print(text, note) for (text, *note) in items]\n', []),
+    ("a comprehension target hides the function's local at a hook output key inside the comprehension",
+     'def main(items):\n    text = "hook key hidden"\n    return [{"reason": text} for text in items]\n', []),
+    ("a comprehension target hides the module's constant at a hook output key inside the comprehension",
+     'text = "module constant hidden"\ndef main(items):\n    return [{"reason": text} for text in items]\n', []),
     ("a type parameter's name hides the function's local in its own bound",
      'def main():\n    text = "type parameter hidden"\n    class Holder[text: print(text)]:\n        pass\n', []),
     ("a type parameter's name hides the helper's parameter in its own bound",

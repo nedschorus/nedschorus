@@ -359,6 +359,33 @@ def monitor_start_record(task_id="b45e25tz2"):
     }
 
 
+def workflow_tool_launch_record(task_id):
+    """The Workflow tool's tool_result, read off a real transcript and trimmed to the fields the
+    hook reads: a taskId and a taskType, and no agentId or backgroundTaskId."""
+    return {
+        "type": "user", "timestamp": "2026-11-08T18:11:26.279Z",
+        "message": {"role": "user", "content": [{
+            "tool_use_id": "toolu_01GFDoTE3AsqHgrGKoP7JoUB", "type": "tool_result",
+            "content": f"Workflow launched in background. Task ID: {task_id}\nSummary: Grade "
+                       "each cold-read finding"}]},
+        "toolUseResult": {"status": "async_launched", "taskId": task_id,
+                          "taskType": "local_workflow", "workflowName": "grade-cold-read-findings",
+                          "runId": "wf_429969ca-778",
+                          "summary": "Grade each cold-read finding"},
+    }
+
+
+# The completion notification of the run that result launched, trimmed.
+WORKFLOW_TOOL_RUN_COMPLETED_NOTIFICATION = (
+    "<task-notification>\n"
+    "<task-id>wn6fctb8y</task-id>\n"
+    "<tool-use-id>toolu_01GFDoTE3AsqHgrGKoP7JoUB</tool-use-id>\n"
+    "<status>completed</status>\n"
+    '<summary>Dynamic workflow "Grade each cold-read finding" completed</summary>\n'
+    "<result>clear 6, uncertain 33, drop 7 (46 rows)</result>\n"
+    "</task-notification>")
+
+
 def task_stop_record(task_id, task_type):
     """A TaskStop tool_result that stopped the task, read off a real transcript and trimmed to
     the fields the hook reads."""
@@ -633,6 +660,13 @@ with tempfile.TemporaryDirectory() as workspace:
               str(two_compactions)) - 45.0) < 0.01,
           str(hook.context_used_plus_compaction_dropped_percentage_from_transcript(
               str(two_compactions))))
+    fractional_count = transcript_of(workspace, "fractional-count.jsonl", [
+        compaction_record(255_000), usage_record(200_000)])
+    check("that count keeps its fraction",
+          abs(hook.context_used_plus_compaction_dropped_percentage_from_transcript(
+              str(fractional_count)) - 45.5) < 0.01,
+          str(hook.context_used_plus_compaction_dropped_percentage_from_transcript(
+              str(fractional_count))))
     check("that count is None for a transcript with no usage",
           hook.context_used_plus_compaction_dropped_percentage_from_transcript(
               str(Path(workspace) / "not-there.jsonl")) is None)
@@ -757,6 +791,18 @@ with tempfile.TemporaryDirectory() as workspace:
     check("a final notification after an interim one takes the subagent out of flight",
           hook.spawned_subagent_ids_in_flight(str(final_after_interim)) == [],
           str(hook.spawned_subagent_ids_in_flight(str(final_after_interim))))
+    in_text_block_list = transcript_of(workspace, "final-notification-in-text-block-list.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record(INCIDENT_SUBAGENT_ID),
+        {"type": "user", "timestamp": "2026-10-27T21:45:00.000Z",
+         "message": {"role": "user", "content": [
+             {"type": "text", "text": "Earlier text."},
+             {"type": "text", "text": FINAL_NOTIFICATION_AFTER_INTERIM}]}},
+    ])
+    check("a final notification held only inside a list of text blocks takes the subagent out of "
+          "flight",
+          hook.spawned_subagent_ids_in_flight(str(in_text_block_list)) == [],
+          str(hook.spawned_subagent_ids_in_flight(str(in_text_block_list))))
 
     # A SendMessage to a finished subagent resumes it, under the same task-id.
     resumed_after_final = transcript_of(workspace, "resumed-after-final-notification.jsonl", [
@@ -859,6 +905,9 @@ with tempfile.TemporaryDirectory() as workspace:
     for command, expected_minutes in (
             ("python3 scripts/run-all-test-suites.py", 90),
             ("python3 scripts/handoff-context-threshold-hook-test.py", 90),
+            # A work kind's name is found past a line break and in any case.
+            ("cd /home/nedlern/x\npython3 scripts/run-all-test-suites.py", 90),
+            ("PYTHON3 SCRIPTS/RUN-ALL-TEST-SUITES.PY", 90),
             ("python3 scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py --quick", 105),
             ("gh pr checks 3101 --watch --interval 30", 0),
             ("gh run watch 12345", 0),
@@ -993,6 +1042,45 @@ with tempfile.TemporaryDirectory() as workspace:
     check("a Bash call line that does not parse leaves its task the no-match wait-limit",
           flight.background_task_ids == ["b27dndn4c"], str(flight.background_task_ids))
 
+    # Only a tool_use block whose run_in_background is the boolean true is a background Bash call,
+    # wherever it stands among the line's blocks. The other block types sort before and after
+    # "tool_use", so an ordering comparison in place of != would let one of them through.
+    background_call = {"type": "tool_use", "id": "toolu_late",
+                       "input": {"command": "sleep 1", "run_in_background": True}}
+    for content, expected in (
+            ([{"type": "text", "text": "Launching."}, background_call], {"toolu_late": "sleep 1"}),
+            ([{"type": "server_tool_use", "id": "toolu_server",
+               "input": {"command": "sleep 1", "run_in_background": True}}], {}),
+            ([{"type": "web_search_tool_result", "id": "toolu_result",
+               "input": {"command": "sleep 1", "run_in_background": True}}], {}),
+            ([{"type": "tool_use", "id": "toolu_one",
+               "input": {"command": "sleep 1", "run_in_background": 1}}], {})):
+        line = json.dumps({"type": "assistant", "message": {"role": "assistant", "content": content}})
+        commands = hook.background_bash_commands_by_tool_use_id_from_line(line)
+        check(f"the background Bash calls in content {content!r} are {expected!r}",
+              commands == expected, str(commands))
+
+    # The tool_use id is the first tool_result block's, past blocks of types that sort before
+    # and after "tool_result".
+    for content, expected in (
+            ([{"type": "text", "text": "x"}, {"type": "tool_result", "tool_use_id": "toolu_answered"}],
+             "toolu_answered"),
+            ([{"type": "tool_use", "id": "toolu_call"}, {"type": "tool_result", "tool_use_id": "toolu_answered"}],
+             "toolu_answered"),
+            ([{"type": "text", "text": "x"}], None)):
+        answered = hook.tool_result_tool_use_id({"type": "user", "message": {"role": "user", "content": content}})
+        check(f"the tool_result in content {content!r} answers {expected!r}",
+              answered == expected, str(answered))
+
+    # A limit of 0 or below means the task is never waited for; any positive limit, however
+    # short, waits for a task whose age cannot be read and for one younger than the limit.
+    for age_seconds, wait_limit_seconds, expected in (
+            (None, -60, False), (None, 0, False), (None, 1, True), (0, 1, True), (0.5, 0.75, True),
+            (1, 1, False)):
+        within = hook.background_task_still_within_wait(age_seconds, wait_limit_seconds)
+        check(f"a task aged {age_seconds!r} s under a {wait_limit_seconds!r} s wait-limit is "
+              f"{'within' if expected else 'past'} its wait", within is expected, str(within))
+
     # A launch whose age cannot be read fails closed, like everything else the
     # scan cannot tell: it counts, and the ceiling bounds it.
     undated_launch = transcript_of(workspace, "grid-undated-launch.jsonl", [
@@ -1035,6 +1123,35 @@ with tempfile.TemporaryDirectory() as workspace:
     check("the subagent-only view still excludes background tasks",
           hook.spawned_subagent_ids_in_flight(str(both_kinds)) == ["a2573a7737ae643dc"],
           str(hook.spawned_subagent_ids_in_flight(str(both_kinds))))
+
+    workflow_launched = transcript_of(workspace, "workflow-tool-run-launched.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        workflow_tool_launch_record("wn6fctb8y"),
+    ])
+    flight = hook.work_in_flight(str(workflow_launched), thirty_minutes, now=grid_at_13_minutes)
+    check("a Workflow-tool run with no notification since its launch is in flight, dated by its "
+          "launch record, and is neither a subagent nor a background task",
+          flight.workflow_ids == ["wn6fctb8y"] and flight.subagent_ids == []
+          and flight.background_task_ids == []
+          and flight.launched_at_by_id["wn6fctb8y"] == datetime.fromisoformat("2026-11-08T18:11:26.279+00:00"),
+          f"workflows={flight.workflow_ids} subagents={flight.subagent_ids} "
+          f"background={flight.background_task_ids} launched={flight.launched_at_by_id}")
+    workflow_completed = transcript_of(workspace, "workflow-tool-run-completed.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        workflow_tool_launch_record("wn6fctb8y"),
+        *notification_records(WORKFLOW_TOOL_RUN_COMPLETED_NOTIFICATION),
+    ])
+    flight = hook.work_in_flight(str(workflow_completed), thirty_minutes, now=grid_at_13_minutes)
+    check("a Workflow-tool run whose completion notification came is not in flight",
+          flight.workflow_ids == [], str(flight.workflow_ids))
+    workflow_stopped = transcript_of(workspace, "workflow-tool-run-stopped.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        workflow_tool_launch_record("wn6fctb8y"),
+        task_stop_record("wn6fctb8y", "local_workflow"),
+    ])
+    flight = hook.work_in_flight(str(workflow_stopped), thirty_minutes, now=grid_at_13_minutes)
+    check("a Workflow-tool run a TaskStop stopped is not in flight",
+          flight.workflow_ids == [], str(flight.workflow_ids))
 
     truncated_launch = Path(workspace) / "truncated-background-launch.jsonl"
     launch_text = json.dumps(background_task_launch_record("b27dndn4c"))
@@ -1299,11 +1416,11 @@ with tempfile.TemporaryDirectory() as workspace:
               result.returncode == 2 and len(message_lines) == 2
               and HANDOFF_INSTRUCTION_PATTERN.fullmatch(message_lines[0]) is not None
               and message_lines[1] == (
-                  "The model id claude-something-unreleased is not in "
-                  "CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX, the threshold-hook's context-window "
-                  "table in scripts/handoff-context-threshold-hook.py, so the 35% of its context "
-                  "window this session has used assumes a 200K window; tell the user, so the "
-                  "table can be updated."),
+                  "No prefix in CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX, the threshold-hook's "
+                  "context-window table in scripts/handoff-context-threshold-hook.py, matches the "
+                  "model id claude-something-unreleased, so the 35% of its context window this "
+                  "session has used assumes a 200K-token window. Tell the user, so the table can "
+                  "be updated, then run /handoff without waiting for his answer."),
               f"code {result.returncode}, stderr {result.stderr!r}")
 
         # At the 200,000 default, // 999 also gives 200, so only a larger default tells a
@@ -1321,7 +1438,7 @@ with tempfile.TemporaryDirectory() as workspace:
         check("for a model id not in the table, the default window it names is the default in "
               "thousands, whatever the default is",
               code == 2 and "so the 35% of its context window this session has used assumes a "
-                            "1000K window;" in stderr,
+                            "1000K-token window." in stderr,
               f"code {code}, stderr {stderr!r}")
 
         marker_file.unlink(missing_ok=True)
@@ -1364,6 +1481,24 @@ with tempfile.TemporaryDirectory() as workspace:
         check("the compacted handoff gives both shares",
               ("used 20% (33% counting the tokens its compactions dropped, the figure compared "
                "with the threshold and the ceiling)") in result.stderr,
+              result.stderr[:200])
+        compacted_fractional = transcript_of(workspace, "compacted-fractional.jsonl", [
+            compaction_record(137_000), usage_record(200_000)])  # 20% + 13.7% = 33.7%
+        marker_file.unlink(missing_ok=True)
+        result = run_hook({"session_id": PROBE_SESSION_ID,
+                           "transcript_path": str(compacted_fractional)})
+        check("the compacted handoff rounds the count with the dropped tokens, not truncates it",
+              "used 20% (34% counting the tokens its compactions dropped" in result.stderr,
+              result.stderr[:200])
+        # 90.6% is the context used alone: it truncates to 90, a 1% larger factor gives 91.5 and
+        # a 1% smaller one 89.7, so the share must be computed exactly to read 91%.
+        compacted_used_fractional = transcript_of(workspace, "compacted-used-fractional.jsonl", [
+            compaction_record(10_000), usage_record(906_000)])  # 90.6% + 1% = 91.6%
+        marker_file.unlink(missing_ok=True)
+        result = run_hook({"session_id": PROBE_SESSION_ID,
+                           "transcript_path": str(compacted_used_fractional)})
+        check("the compacted handoff rounds the context used alone, not truncates it",
+              "used 91% (92% counting the tokens its compactions dropped" in result.stderr,
               result.stderr[:200])
 
         # --- A session its caller reincarnates is left alone ---------------
@@ -2581,6 +2716,86 @@ with tempfile.TemporaryDirectory() as wait_set_workspace:
           hook.record_time({"timestamp": "2026-10-28T21:12:00+01:00"}) == began,
           hook.record_time({"timestamp": "2026-10-28T21:12:00+01:00"}))
 
+# The shared reader of a transcript line's task events, which work_in_flight and the writer's
+# roster both call.
+read_line = hook.task_events_from_claude_code_transcript_line
+spawn_line = json.dumps(subagent_spawn_record("a2573a7737ae643dc", description="the builder"))
+check("the reader returns a spawn with its subagent's id and description",
+      [(event.kind, event.task_id, event.description)
+       for event in read_line(spawn_line, "here", should_raise_on_unparseable_spawn_or_resume_line=True)]
+      == [(hook.SUBAGENT_SPAWNED_BY_AGENT_TOOL_TASK_EVENT, "a2573a7737ae643dc", "the builder")],
+      read_line(spawn_line, "here", should_raise_on_unparseable_spawn_or_resume_line=True))
+two_ids_notification = (
+    "<task-notification>\n<task-id>a3fe2b9aecae01f3b</task-id>\n<task-id>a677554663305e800</task-id>\n"
+    "<status>stopped</status>\n<summary>No completion record was found</summary>\n"
+    "</task-notification>")
+notification_events = read_line(
+    json.dumps(notification_records(two_ids_notification)[1]), "here",
+    should_raise_on_unparseable_spawn_or_resume_line=True)
+check("the reader returns one notification event for each task-id, with the status",
+      [(event.kind, event.task_id, event.status, event.is_interim) for event in notification_events]
+      == [(hook.TASK_NOTIFICATION_TASK_EVENT, "a3fe2b9aecae01f3b", "stopped", False),
+          (hook.TASK_NOTIFICATION_TASK_EVENT, "a677554663305e800", "stopped", False)],
+      notification_events)
+interim_events = read_line(json.dumps(notification_records(INCIDENT_INTERIM_NOTIFICATION)[1]),
+                           "here", should_raise_on_unparseable_spawn_or_resume_line=True)
+check("the reader marks an interim notification",
+      [(event.task_id, event.is_interim) for event in interim_events]
+      == [(INCIDENT_SUBAGENT_ID, True)], interim_events)
+# The line holds the notification JSON-escaped; whitespace opening the <result> must still read
+# as whitespace.
+result_opening_with_whitespace_events = read_line(
+    json.dumps(notification_records(NOT_YET_REPORTED_INTERIM_NOTIFICATION.replace(
+        "<result>", "<result>\n\t"))[1]),
+    "here", should_raise_on_unparseable_spawn_or_resume_line=True)
+check("the reader marks interim a notification whose <result> opens with whitespace, then says the "
+      "report has not come",
+      [(event.task_id, event.is_interim) for event in result_opening_with_whitespace_events]
+      == [(INCIDENT_SUBAGENT_ID, True)], result_opening_with_whitespace_events)
+monitor_event_notification = (
+    "<task-notification>\n<task-id>bzshcbek2</task-id>\n"
+    '<summary>Monitor event: "report files appearing"</summary>\n<event>update</event>\n'
+    "</task-notification>")
+monitor_events = read_line(json.dumps(notification_records(monitor_event_notification)[1]), "here",
+                           should_raise_on_unparseable_spawn_or_resume_line=True)
+check("the reader gives a notification with no <status>, a Monitor event's, no status",
+      [(event.task_id, event.status) for event in monitor_events] == [("bzshcbek2", None)],
+      monitor_events)
+check("the reader returns a resume and a TaskStop",
+      [(event.kind, event.task_id) for line in (
+          json.dumps(subagent_resume_record()), json.dumps(task_stop_record("b5x7", "local_bash")))
+       for event in read_line(line, "here", should_raise_on_unparseable_spawn_or_resume_line=True)]
+      == [(hook.SUBAGENT_RESUMED_BY_SEND_MESSAGE_TASK_EVENT, RESUMED_SUBAGENT_ID),
+          (hook.STOPPED_BY_TASK_STOP_EVENT, "b5x7")])
+cut_resume_line = json.dumps(subagent_resume_record())[:-30]
+for cut_line, marker in ((half_written_spawn_line(), "spawn"), (cut_resume_line, "resume")):
+    try:
+        read_line(cut_line, "transcript.jsonl, line 7",
+                  should_raise_on_unparseable_spawn_or_resume_line=True)
+        refusal = None
+    except hook.TranscriptCouldNotBeFullyRead as problem:
+        refusal = str(problem)
+    check(f"asked to raise, the reader refuses a {marker} line that does not parse, naming the line",
+          refusal is not None and refusal.startswith("transcript.jsonl, line 7: "), refusal)
+    check(f"asked to skip, the reader returns no events for a {marker} line that does not parse",
+          read_line(cut_line, "here", should_raise_on_unparseable_spawn_or_resume_line=False) == [])
+cut_stop_line = json.dumps(task_stop_record("b5x7", "local_bash"))[:-20]
+cut_notification_line = json.dumps(notification_records(FINAL_NOTIFICATION_AFTER_INTERIM)[1])[:-20]
+check("asked to raise, the reader still skips a TaskStop or notification line that does not parse",
+      read_line(cut_stop_line, "here", should_raise_on_unparseable_spawn_or_resume_line=True) == []
+      and read_line(cut_notification_line, "here",
+                    should_raise_on_unparseable_spawn_or_resume_line=True) == [])
+check("the reader returns no events for a marker line that parses to something other than an object",
+      read_line('["async_launched", "resumedAgentId"]', "here",
+                should_raise_on_unparseable_spawn_or_resume_line=True) == [])
+try:
+    read_line(spawn_line, "here")
+    caller_must_choose = False
+except TypeError:
+    caller_must_choose = True
+check("a caller of the reader must choose whether a line that does not parse raises",
+      caller_must_choose)
+
 # --help prints each flag's default, so an agent reads it there and not from the source.
 help_result = subprocess.run([sys.executable, str(HOOK_SCRIPT), "--help"],
                              capture_output=True, text=True, check=False)
@@ -2597,6 +2812,27 @@ for flag, default in (("--threshold-used-percentage", 33.0),
     check(f"--help shows {flag}'s default, {default}",
           flag_entry is not None and flag_entry.group(1).endswith(f"(default: {default})"),
           flag_entry.group(1) if flag_entry else help_text)
+
+
+def runtime_union_annotations(path):
+    """Each `X | Y` annotation Python evaluates at import, which Python 3.9 cannot."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    if any(isinstance(node, ast.ImportFrom) and node.module == "__future__"
+           and any(alias.name == "annotations" for alias in node.names) for node in tree.body):
+        return []
+    annotations = [node.annotation for node in ast.walk(tree) if isinstance(node, (ast.AnnAssign, ast.arg))]
+    annotations += [node.returns for node in ast.walk(tree)
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    return [f"{path.name}:{annotation.lineno}" for annotation in annotations if annotation is not None
+            and any(isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr) for node in ast.walk(annotation))]
+
+
+# The Mac's python3 is Apple's 3.9, which runs this hook and the handoff writer that imports it.
+for importing_script in (HOOK_SCRIPT,
+                         HOOK_SCRIPT.parent.parent / "nc-systems" / "handoff" / "handoff-write-and-check-supervisor.py"):
+    union_annotations = runtime_union_annotations(importing_script)
+    check(f"{importing_script.name} imports under Python 3.9: no `X | None` annotation evaluated at import",
+          not union_annotations, union_annotations)
 
 print()
 if failures:

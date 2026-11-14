@@ -121,7 +121,7 @@ class FakeRunner:
             code, out, err = self.answers[number]
             return subprocess.CompletedProcess([], code, out, err)
         # Built at run time, as curl's output is, so an identity comparison would not match.
-        out = "".join(["4", "12" if "Bearer" in command else "01"]) if "curl" in command else ""
+        out = "".join(["2" if "Bearer" in command else "4", "00" if "Bearer" in command else "01"]) if "curl" in command else ""
         return subprocess.CompletedProcess([], 0, out, "")
 
 
@@ -215,13 +215,14 @@ with tempfile.TemporaryDirectory() as directory:
     code, out, err = run_main(runner)
     check("a service answer other than the one the check needs fails the step",
           code == 1 and "stopped at step 10 on mac" in err and "answered 401" in err
-          and "needs 412" in err and "journalctl --user -u nc-shared-database-service" in err,
+          and "needs 200" in err and "journalctl --user -u nc-shared-database-service" in err,
           err)
 
-    runner = FakeRunner({10: (0, "500", "")})
+    runner = FakeRunner({10: (0, "000", "")})
     code, out, err = run_main(runner)
-    check("a service answer that sorts after the needed one fails the step too",
-          code == 1 and "stopped at step 10 on mac" in err and "answered 500" in err, err)
+    check("a service answer that sorts before the needed one, such as curl's 000 for no "
+          "answer, fails the step too",
+          code == 1 and "stopped at step 10 on mac" in err and "answered 000" in err, err)
 
     runner = FakeRunner({6: (-9, "", "")})
     code, out, err = run_main(runner)

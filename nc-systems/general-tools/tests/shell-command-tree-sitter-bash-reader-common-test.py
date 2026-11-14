@@ -342,6 +342,26 @@ for command, expected in [("zzq >f\\\t;", [(["zzq"], [(">", "f\t")])]),
     check(f"escaped blanks that touch a word's end stay in that word, as bash reads it: {command!r}",
           [(list(words), words.redirects) for words in found] == expected,
           [(list(words), words.redirects) for words in found])
+# tree-sitter-bash starts the redirect after an escaped tab at its backslash and puts the text between
+# the tab and the operator inside the redirect; bash reads that text as the end of the word the tab
+# continues, whether that word is the command's, one after a redirection, or a redirection's target.
+for command, expected in [("zzq a\\\t2>f b", [(["zzq", "a\t2", "b"], [(">", "f")])]),
+                          ("zzq a\\\t-3>f", [(["zzq", "a\t-3"], [(">", "f")])]),
+                          ("zzq a\\\t12>&1 b", [(["zzq", "a\t12", "b"], [(">&", "1")])]),
+                          ("2>g zzq a\\\t2>f", [(["zzq", "a\t2"], [("2>", "g"), (">", "f")])]),
+                          ("zzq >g a\\\t2>f b", [(["zzq", "a\t2", "b"], [(">", "g"), (">", "f")])]),
+                          ("zzq >h x >g\\\t2>f", [(["zzq", "x"], [(">", "h"), (">", "g\t2"), (">", "f")])]),
+                          ("zzq >&-\\\t2>f b", [(["zzq", "\t2", "b"], [(">&-", ""), (">", "f")])])]:
+    found = [(list(words), words.redirects) for words in reader.simple_commands(command)]
+    check(f"text between an escaped tab and a redirection's operator ends the word the tab continues, "
+          f"as bash reads it: {command!r}", found == expected, found)
+# tree-sitter-bash reads the here-document after these escaped blanks as an error, so only the
+# words of the command the escaped blanks end are checked.
+for command, expected in [("zzq \\ <<E\nbody\nE\n", ["zzq", " "]),
+                          ("zzq a \\\t<<-E\n\tb\nE\n", ["zzq", "a", "\t"])]:
+    found = words_of(command)
+    check(f"escaped blanks before a here-document's operator are a word, as bash passes them: {command!r}",
+          found[:1] == [expected], found)
 found = reader.simple_commands("ls ~\\\t ~/x\\\t")
 check("an escaped blank added to a word before its first / quotes its ~, so bash does not expand it",
       list(found[0]) == ["ls", "~\t", "~/x\t"]
@@ -519,10 +539,10 @@ for command, expected in [
     found = [(list(words), words.redirects) for words in reader.simple_commands(command)]
     check(f"a closing redirection has no target, so the words after it are arguments, as bash "
           f"passes them: {command!r}", found == expected, found)
-# tree-sitter-bash puts the 2 here before the closing operator; bash's target is f<tab>2, which this
-# reader does not yet read, so only the words are checked.
-check("what tree-sitter-bash puts before a closing operator is not a word after it",
-      words_of("zzp >f\\\t2>&- a") == [["zzp", "a"]], words_of("zzp >f\\\t2>&- a"))
+# tree-sitter-bash puts the 2 here before the closing operator; bash's target is f<tab>2.
+found = [(list(words), words.redirects) for words in reader.simple_commands("zzp >f\\\t2>&- a")]
+check("what tree-sitter-bash puts before a closing operator is not a word after it, but ends the target "
+      "before it", found == [(["zzp", "a"], [(">", "f\t2"), (">&-", "")])], found)
 # After a word that escaped blanks continue, tree-sitter-bash starts the redirect at the backslash
 # and puts the text touching the operator inside it, before the operator. After a blank, bash reads
 # that text as the descriptor when it is decimal digits, and as a word otherwise.

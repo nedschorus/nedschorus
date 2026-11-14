@@ -153,9 +153,6 @@ def tasks_holding(agent_seat, task_list_directory=None):
         if directory is None:
             directory = Path.home() / hook.TASKS_ROOT_UNDER_HOME / f"nedschorus-{agent_seat}-tasks"
         directory = Path(directory)
-        # read_tasks globs, and a glob of a directory it may not read finds nothing, silently.
-        if directory.exists() and not os.access(directory, os.R_OK | os.X_OK):
-            raise PermissionError(f"no permission to read {directory}")
         tasks = hook.read_tasks(directory, unreadable)
     except Exception as error:
         return TasksHolding(unreadable=[f"{type(error).__name__}: {error}"])
@@ -357,7 +354,7 @@ def branch_entries(repo, branches, by_head_branch, by_head_commit, deleted,
         subject = git_lines(repo, "log", "-1", "--format=%s", tip)[0]  # pragma: no mutate, %s prints the subject on one line, so [-1] picks the same line as [0]
         command = delete_command_text(
             repo, clean_worktrees_module().FORCE_DELETE_BRANCH_FLAG, branch)
-        entries.append(f"branch {branch}; {count} commit(s) not on origin/main, the newest "
+        entries.append(f"branch {branch}; main lacks the changes of its {count} commit(s), the newest "
                        f"{tip[:12]} of {date}, \"{subject}\"; "
                        f"{pushed_text(branch, tip, origin_tips)}{deletion_failure}; "
                        f"delete with: {command}")

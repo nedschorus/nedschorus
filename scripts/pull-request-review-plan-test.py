@@ -954,6 +954,7 @@ def run_named_cold_read_record_cases(fixture):
     fixture.reset_fixture_to_base()
     fixture.write_fixture_file("scripts/sibling-program.py", 'print("Sibling message to reuse")\n')
     fixture.write_fixture_file("scripts/nested-program.py", 'print("Nested message kept")\n')
+    fixture.write_fixture_file("scripts/unnamed-program.py", 'print("Message no record holds")\n')
     head = fixture.commit_fixture_changes("messages with named records")
     fixture.configure_github_answers(head, description=description)
     plan = fixture.read_review_plan()
@@ -967,6 +968,11 @@ def run_named_cold_read_record_cases(fixture):
           and sibling.get("fast_read_target_error") is None and not sibling_target.exists(), sibling)
     check("a string that is only part of a named record's target file, or matches only a record with no report, keeps its command",
           nested.get("cold_read_record") is None and bool(nested.get("fast_read_command")), nested)
+    unnamed = entries.get("scripts/unnamed-program.py", {})
+    check("a string listed after one its named record covers still gets its own command",
+          [path for path in entries if path in ("scripts/sibling-program.py", "scripts/unnamed-program.py")]
+          == ["scripts/sibling-program.py", "scripts/unnamed-program.py"]
+          and unnamed.get("cold_read_record") is None and bool(unnamed.get("fast_read_command")), unnamed)
     problems = {record["path"]: record["problem"] for record in plan["named_cold_read_records"]}
     check("each named record is read once, its path cut at the backtick, slash, colon, comma, semicolon, bracket or full stop "
           "that follows it, and an abbreviated path is not read",

@@ -204,8 +204,8 @@ check("the refusal sends a conflict with main to scripts/branch-conflict-check.p
       "--head origin/the-pr-branch --branch the-pr-branch and do what it reports." in lines, reason)
 check("the refusal no longer sends a fix for a conflict to a new commit on top",
       reason and "including any fix for a conflict with main" not in reason, reason)
-check("the refusal names the escape hatch",
-      reason and guard.ESCAPE_HATCH_ASSIGNMENT in reason, reason)
+check("the refusal offers no way past it",
+      reason and "CLAUDE_MERGE_LANE_ASKED_FOR_THIS_REWRITE" not in reason, reason)
 # The incident's own shape: the agent had ALREADY rebased locally, so a plain
 # push is rejected as non-fast-forward. The refusal must say how to get back
 # to the pushed head, with the real branch name so the commands paste.
@@ -333,8 +333,8 @@ check("D2 an unexpanded directory is refused as unresolvable",
 check("D2 that refusal asks for the path written out and probes nothing",
       reason and "written out" in reason and "$WORKTREE" in reason
       and "<checkout path>" in reason and not runner.calls, reason)
-check("D2 the unresolvable refusal names the escape hatch",
-      reason and guard.ESCAPE_HATCH_ASSIGNMENT in reason, reason)
+check("D2 the unresolvable refusal offers no way past it",
+      reason and "CLAUDE_MERGE_LANE_ASKED_FOR_THIS_REWRITE" not in reason, reason)
 
 runner = ProbeRunner(branch="the-pr-branch",
                      open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
@@ -575,10 +575,10 @@ for command in [
 
 runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
 decision, reason = decide(
-    f"env {guard.ESCAPE_HATCH_ASSIGNMENT} git push --force origin the-pr-branch",
+    "env CLAUDE_MERGE_LANE_ASKED_FOR_THIS_REWRITE=1 git push --force origin the-pr-branch",
     runner)
-check("the escape hatch after env sanctions the push like a leading one",
-      decision is None and not runner.calls,
+check("the retired exemption after env does not let the push through",
+      decision == "deny" and runner.calls,
       f"{decision}: {reason} {runner.calls}")
 
 runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
@@ -676,9 +676,6 @@ with tempfile.TemporaryDirectory() as place:
         check(f"the guard finds the directory the real env runs in: {wrappers}",
               os.path.normpath(os.path.join(place, found)) == real.stdout.strip(),
               (found, real.stdout.strip()))
-runner = ProbeRunner(branch="the-pr-branch", open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
-decision, _ = decide(f"env {guard.ESCAPE_HATCH_ASSIGNMENT} git push --force origin", runner)
-check("the escape hatch after env still sanctions the push", decision is None, decision)
 
 # ---------------------------------------------------------------------------
 # Prose is data. The guard's own commit message and pull request body say
@@ -904,37 +901,15 @@ check("a cd inside a heredoc body's substitution moves the push inside the same 
       in runner.calls, f"{decision}: {reason} {runner.calls}")
 
 # ---------------------------------------------------------------------------
-# The escape hatch: the one sanctioned rewrite, and the one form of it.
+# Environment assignments in front of the push: none lets a rewrite through.
 # ---------------------------------------------------------------------------
 
 runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
 decision, reason = decide(
-    f"{guard.ESCAPE_HATCH_ASSIGNMENT} git push --force origin the-pr-branch",
+    "CLAUDE_MERGE_LANE_ASKED_FOR_THIS_REWRITE=1 git push --force origin the-pr-branch",
     runner)
-check("the escape hatch allows the sanctioned rewrite",
-      decision is None, f"{decision}: {reason}")
-check("the escape hatch skips the probes entirely",
-      not runner.calls, str(runner.calls))
-
-runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
-decision, _ = decide(
-    f'echo "{guard.ESCAPE_HATCH_ASSIGNMENT}" && git push --force origin the-pr-branch',
-    runner)
-check("the escape hatch inside a quoted string is data and does not authorize",
-      decision == "deny", str(decision))
-
-refusal = decide("git push --force origin the-pr-branch", ProbeRunner(
-    open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST}))[1]
-check("the refusal says the escape hatch goes directly on the git push",
-      refusal and "directly in front of the git push command" in refusal, refusal)
-
-# The prefix sanctions only the command it sits on. An agent that puts it on
-# the `cd` of `cd $WORKTREE && git push --force` has not sanctioned the push.
-runner = ProbeRunner()
-decision, _ = decide(
-    f"{guard.ESCAPE_HATCH_ASSIGNMENT} cd $WORKTREE && git push --force", runner)
-check("the escape hatch on a preceding cd does not sanction the push after it",
-      decision == "deny", str(decision))
+check("the retired exemption in front of the push does not let the rewrite through",
+      decision == "deny" and runner.calls, f"{decision}: {reason} {runner.calls}")
 
 runner = ProbeRunner(branch="the-pr-branch",
                      open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
@@ -942,12 +917,6 @@ decide("SOME_SETTING=1 cd /elsewhere/wt-fast-read && git push --force", runner)
 check("a cd carrying an environment assignment still moves the checkout",
       ["git", "-C", "/elsewhere/wt-fast-read", "rev-parse", "--abbrev-ref", "HEAD"]
       in runner.calls, str(runner.calls))
-
-runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
-decision, _ = decide(
-    f"{guard.ESCAPE_HATCH_VARIABLE}=0 git push --force origin the-pr-branch", runner)
-check("only the documented =1 form authorizes a rewrite",
-      decision == "deny", str(decision))
 
 # ---------------------------------------------------------------------------
 # Several pushes, several branches, and one question per branch.

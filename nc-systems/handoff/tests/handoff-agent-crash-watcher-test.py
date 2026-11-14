@@ -212,7 +212,7 @@ class Harness:
         watcher.run(list(seats))
 
     def decisions(self):
-        path = self.log_directory / "decisions.jsonl"
+        path = self.log_directory / watcher_module.AGENT_CRASH_WATCHER_DECISIONS_FILE_NAME
         if not path.is_file():
             return []
         return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
@@ -358,7 +358,7 @@ def run_decision_cases(root: Path):
           and "If the fix needs a change to a guarded-file, tell the user" in text
           and "If you cannot find the cause, or cannot fix it, tell the user" in text, text)
     check("a task cites the record as a path on ned-box, which works from either machine",
-          f"Record: nedlern@ned-box:{root / 'second-crash' / 'decisions.jsonl'}\n" in text, text)
+          f"Record: nedlern@ned-box:{root / 'second-crash' / watcher_module.AGENT_CRASH_WATCHER_DECISIONS_FILE_NAME}\n" in text, text)
     check("the task written is logged with its id and task list",
           any(entry["decision"] == "task written for the agent-seat to find the cause and fix it"
               and entry["kind"] == "second-crash" and entry["task"] == 1
@@ -1280,7 +1280,7 @@ def run_report_run_failure_state_cases(root: Path):
             raised = error
         finally:
             watcher_module.write_state = real_write_state
-        decisions = (root / "unsavable-log" / "decisions.jsonl").read_text(encoding="utf-8")
+        decisions = (root / "unsavable-log" / watcher_module.AGENT_CRASH_WATCHER_DECISIONS_FILE_NAME).read_text(encoding="utf-8")
         reported = locked / f"{watcher_module.PROGRAM}-reported-run-failures.txt"
         check("a state that cannot be saved is logged, not raised, and the error is still marked "
               "as reported",
@@ -1321,7 +1321,7 @@ def run_report_run_failure_state_cases(root: Path):
               and len(saved_state.get("pending_notices", [])) == 1 and saved_stderr.getvalue() == "",
               repr((saved_state, saved_stderr.getvalue())))
         nowhere_reported = nowhere / f"{watcher_module.PROGRAM}-reported-run-failures.txt"
-        nowhere_decisions = (root / "nowhere-log" / "decisions.jsonl").read_text(encoding="utf-8")
+        nowhere_decisions = (root / "nowhere-log" / watcher_module.AGENT_CRASH_WATCHER_DECISIONS_FILE_NAME).read_text(encoding="utf-8")
         check("a run failure whose task, user-alert, window and saved state all fail is not marked "
               "as reported, says so on stderr and in the record, and the next failing run reports "
               "it again",
