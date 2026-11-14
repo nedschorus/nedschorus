@@ -641,7 +641,8 @@ try:
     _, verdicts, _ = machine.run()
     check("a subagent the parent stopped with TaskStop after its interim report is not running, "
           "nor is its own background command",
-          verdicts["alpha"]["running"] == {"subagents": [], "background_commands": []}
+          verdicts["alpha"]["running"] == {"subagents": [], "background_commands": [],
+                                            "workflows": []}
           and verdicts["alpha"]["rule"] == 4, verdicts["alpha"])
 
     # Claude Code delivers a notification queued while the session was busy as a queued_command

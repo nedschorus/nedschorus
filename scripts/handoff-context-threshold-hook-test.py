@@ -360,8 +360,8 @@ def monitor_start_record(task_id="b45e25tz2"):
 
 
 def workflow_tool_launch_record(task_id):
-    """The Workflow tool's tool_result, read off session 1dc3a28c of 2026-11-08 and trimmed to the
-    fields the hook reads: a taskId and a taskType, and no agentId or backgroundTaskId."""
+    """The Workflow tool's tool_result, read off a real transcript and trimmed to the fields the
+    hook reads: a taskId and a taskType, and no agentId or backgroundTaskId."""
     return {
         "type": "user", "timestamp": "2026-11-08T18:11:26.279Z",
         "message": {"role": "user", "content": [{
@@ -375,7 +375,7 @@ def workflow_tool_launch_record(task_id):
     }
 
 
-# The same session's completion notification for that run, trimmed.
+# The completion notification of the run that result launched, trimmed.
 WORKFLOW_TOOL_RUN_COMPLETED_NOTIFICATION = (
     "<task-notification>\n"
     "<task-id>wn6fctb8y</task-id>\n"
