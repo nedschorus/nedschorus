@@ -51,7 +51,7 @@ DEFAULT_AGENTS_DIRECTORY = Path("/home/nedlern/agents")
 DESIGN_KIND_LINE = re.compile(r"^kind: design", re.MULTILINE)
 # Old walk-minutes quote him as `The user, <date>: "..."` or `Item 4 answer in full: "..."`; newer ones carry
 # the line walk-me-through's check program writes, `item 3 of 16: the user answered approved ... in his words
-# "..."`; cold-read-triage.md cites `user-ruled <date>` or `the user ruled "..."`.
+# "..."`; a cold-read-triage.md line cites his decision with its date and the approval-walk that recorded it.
 USER_TURN_LINE = re.compile(
     r"\bthe user\b|\buser-ruled\b|\bin his words\b|\banswer in full\b|\bhe (?:said|asked|answered|ruled)\b",
     re.IGNORECASE)

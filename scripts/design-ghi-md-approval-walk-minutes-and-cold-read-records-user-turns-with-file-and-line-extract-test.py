@@ -6,11 +6,19 @@ Run: scripts/design-ghi-md-approval-walk-minutes-and-cold-read-records-user-turn
 Exit codes: 0 all passed, 1 any failed.
 """
 
+import importlib.util
 import json
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    Path(__file__).resolve().parent / "git-redirecting-environment-removal-test-fixture.py")
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 PROGRAM = (Path(__file__).resolve().parent
            / "design-ghi-md-approval-walk-minutes-and-cold-read-records-user-turns-with-file-and-line-extract.py")
