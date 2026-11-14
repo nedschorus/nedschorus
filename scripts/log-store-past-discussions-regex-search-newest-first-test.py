@@ -782,6 +782,16 @@ print(x.render_companion(*x.complete_dialog_turns_and_report(pathlib.Path({str(e
           finding.returncode == 0 and "[user] egret typed by the user" in finding.stdout
           and finding.stdout.count("egret") == 1, finding.stdout + finding.stderr)
 
+    pasted = root / "agent-session-files-by-machine" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s14.jsonl"
+    write(pasted, transcript_records(dict(typed("", "2026-10-03T00:00:00Z"), message={"role": "user", "content": [
+        {"type": "text", "text": "plover in this screenshot"},
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"}}]})))
+    finding = run(root, "plover", "--kind", "user-messages")
+    pasted.unlink()
+    check("user-messages finds a message the user typed with an image pasted",
+          finding.returncode == 0 and "[user] plover in this screenshot" in finding.stdout,
+          finding.stdout + finding.stderr)
+
     escaped = root / "agent-session-files-by-machine" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s11.jsonl"
     write(escaped, transcript_records(typed("merge it\nplease now", "2026-10-03T00:02:00Z"),
                                       typed('say "hi" to the\tgatekeeper', "2026-10-03T00:03:00Z"),

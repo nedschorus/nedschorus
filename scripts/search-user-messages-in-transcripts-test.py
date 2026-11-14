@@ -88,6 +88,23 @@ with tempfile.TemporaryDirectory() as directory:
 
 with tempfile.TemporaryDirectory() as directory:
     path = write_transcript(directory, [
+        {"type": "user", "message": {"role": "user", "content": [
+            {"type": "text", "text": "see this screenshot"},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"}},
+            {"type": "text", "text": "and fix it"}]}},
+        dict(typed("ignored"), message={"role": "user", "content": [
+            {"type": "text", "text": "a hook's words beside an image"},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"}}]},
+             origin={"kind": "hook"}),
+        tool_result("diff output"),
+        agent("Looking."),
+    ])
+    texts = user_texts(path)
+    check("a message typed with an image pasted is read from its text blocks, and a hook's is still left out",
+          texts == ["see this screenshot\nand fix it"], texts)
+
+with tempfile.TemporaryDirectory() as directory:
+    path = write_transcript(directory, [
         typed("start"),
         queued("<cross-session-message from=\"peer\">hello</cross-session-message>", "peer"),
         queued("<task-notification>done</task-notification>", "task-notification"),
