@@ -883,7 +883,8 @@ def entries_after(entries, position):
     when the line is gone, a guess from times can leave out a commit made in its second. A
     position an earlier version of this hook stored is [commit, time] alone; when no entry, or
     more than one, holds that pair, the window is unknown too, so nothing is approved as git's
-    own work and every changed version is asked about."""
+    own work. A version origin/main holds, or one the agent's own successful Edit wrote, is
+    still approved without asking."""
     if not position:
         return []
     if len(position) < 4:
@@ -1273,7 +1274,7 @@ def run_hook(payload):
             window = [] if stocking else entries_after(entries, state.get("reflog"))
             # Loading the in-progress check costs more than a whole quiet run, so it is asked
             # only when there is something it could change. An unknown window (None) approves
-            # nothing as git's own work, so every changed version is asked about.
+            # nothing as git's own work.
             if changed or unsettled or window or state.get("stopped"):
                 quiet = git_operation_in_progress(checkout)
             if quiet:
