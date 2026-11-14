@@ -1583,10 +1583,16 @@ with tempfile.TemporaryDirectory() as scratch_name:
                         "-m", "start"], cwd=two_suites_repository, check=True)
         suite_fails = suite_ends_with(1)
 
+        # B raises only once A has been admitted: were B to raise first, the run would cancel
+        # A's admission and A would never fail.
+        a_admitted = threading.Event()
+
         def a_fails_after_b_waited_past_ceiling(top, interpreter, suite, *arguments, **options):
             if suite == "b-test.py":
+                a_admitted.wait(30)
                 raise runner.MachineWideTestSuiteAdmissionWaitedPastCeiling(
                     "b-test.py waited past the ceiling in this test")
+            a_admitted.set()
             time.sleep(1.5)
             return suite_fails(top, interpreter, suite, *arguments, **options)
 
@@ -1600,6 +1606,35 @@ with tempfile.TemporaryDirectory() as scratch_name:
                       for line in printed.splitlines())
               and "a-test.py" in printed and "Traceback" not in printed,
               (code, printed[-800:]))
+
+        a_running = threading.Event()
+        a_stopped_by_the_run = []
+
+        def a_runs_until_stopped_after_b_waited_past_ceiling(top, interpreter, suite, *arguments,
+                                                             **options):
+            if suite == "b-test.py":
+                a_running.wait(30)
+                raise runner.MachineWideTestSuiteAdmissionWaitedPastCeiling(
+                    "b-test.py waited past the ceiling in this test")
+            a_running.set()
+            given_up_at = time.monotonic() + 20
+            while not options["run_stops"] and time.monotonic() < given_up_at:
+                time.sleep(0.1)
+            a_stopped_by_the_run.append(bool(options["run_stops"]))
+            return suite_passes(top, interpreter, suite, *arguments, **options)
+
+        code, printed, seconds = main_given(
+            "wait-ceiling-then-suite-past-run-time-limit", two_suites_repository, "-j", "2",
+            "--run-time-limit-seconds-not-counting-admission-waits", "2",
+            run_one_suite=a_runs_until_stopped_after_b_waited_past_ceiling, **as_if_bwrap)
+        check("a suite still running after another suite waited past the admission ceiling is "
+              "stopped at the run time limit, and the run exits 2",
+              code == runner.EXIT_COULD_NOT_RUN and a_stopped_by_the_run == [True]
+              and seconds < 15
+              and any(line.startswith(runner.TEST_SUITE_ADMISSION_WAIT_CEILING_PASSED_LINE_PREFIX)
+                      for line in printed.splitlines())
+              and "Traceback" not in printed,
+              (code, seconds, a_stopped_by_the_run, printed[-800:]))
 
     slow_repository = scratch / "slow-repository"
     slow_repository.mkdir()

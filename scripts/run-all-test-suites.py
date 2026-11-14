@@ -4475,7 +4475,7 @@ def main(argv=None, platform=None):
                     pending, timeout=RUN_STOP_SIGNAL_CHECK_SECONDS,
                     return_when=concurrent.futures.FIRST_COMPLETED)
                 if arguments.run_time_limit_seconds is not None and pending and not run_stops \
-                        and run_ended_by is None and time.monotonic() - run_started - (
+                        and time.monotonic() - run_started - (
                             admission.seconds_while_any_suite_of_this_run_waited_for_admission()
                             if admission is not None else 0.0) \
                         > arguments.run_time_limit_seconds:
