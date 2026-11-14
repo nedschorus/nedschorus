@@ -3738,13 +3738,15 @@ with tempfile.TemporaryDirectory() as scratch:
 
     head_branch_module = load_clean_worktrees_module()
     check("a task lists' directory that does not exist holds no task list",
-          head_branch_module.agent_seat_task_list_directories_in_claude_tasks_directory_list(scratch / "no-such-task-lists") == [])
+          head_branch_module.agent_seat_task_list_directory_paths_in_claude_code_tasks_directory_collect(
+              scratch / "no-such-task-lists") == [])
     unenterable_tasks = scratch / "unenterable-task-lists"
     (unenterable_tasks / "nedschorus-some-seat-tasks").mkdir(parents=True)
     unenterable_tasks.chmod(0o444)
     try:
         unenterable_error = raised_by(
-            lambda: head_branch_module.agent_seat_task_list_directories_in_claude_tasks_directory_list(unenterable_tasks))
+            lambda: head_branch_module.agent_seat_task_list_directory_paths_in_claude_code_tasks_directory_collect(
+                unenterable_tasks))
     finally:
         unenterable_tasks.chmod(0o755)
     check("a task lists' directory that can be listed but not entered raises rather than hiding "

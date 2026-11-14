@@ -697,7 +697,8 @@ def open_task_held_branches_or_unreadable_text(task_lists_directory):
     """Return (the names the open tasks of every agent-seat task list name in their `branches`
     field, None), or (None, why a task list could not be read in full)."""
     try:
-        list_directories = agent_seat_task_list_directories_in_claude_tasks_directory_list(task_lists_directory)
+        list_directories = agent_seat_task_list_directory_paths_in_claude_code_tasks_directory_collect(
+            task_lists_directory)
     except OSError as error:
         return None, (f"the task lists' directory {task_lists_directory} cannot be listed "
                       f"({type(error).__name__}: {error})")
@@ -1923,7 +1924,7 @@ def task_lists_directory_from_override_or_home_claude_tasks():
 NEDSCHORUS_TASK_LISTS_GLOB = "nedschorus-*-tasks"
 
 
-def agent_seat_task_list_directories_in_claude_tasks_directory_list(task_lists_directory):
+def agent_seat_task_list_directory_paths_in_claude_code_tasks_directory_collect(task_lists_directory):
     """Return the agent-seat task lists' directories in task_lists_directory, sorted, and none when
     it does not exist; raise OSError when it, or one of them, exists but cannot be listed or
     looked at."""
@@ -1943,7 +1944,8 @@ def open_restored_branch_tasks(task_lists_directory, out):
     number of task files that could not be read, each named in a FAILED line."""
     tasks, failures = [], 0
     try:
-        list_directories = agent_seat_task_list_directories_in_claude_tasks_directory_list(task_lists_directory)
+        list_directories = agent_seat_task_list_directory_paths_in_claude_code_tasks_directory_collect(
+            task_lists_directory)
     except OSError as error:
         out(f"FAILED: the task lists' directory {task_lists_directory} could not be listed "
             f"({type(error).__name__}: {error}), so no restored branch's task in it was judged")
