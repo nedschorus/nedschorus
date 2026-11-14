@@ -128,7 +128,12 @@ def failed(message):
     return 1
 
 
-def require_in_force(folder):
+def rerun_command(arguments):
+    """The command line that runs this program again with the same arguments, to paste into a task."""
+    return f"python3 {PROGRAM_PATH} {shlex.join(arguments)}"
+
+
+def require_in_force(folder, rerun):
     state = common.read_state(folder)
     if isinstance(state, common.InForce):
         return state, None
@@ -137,7 +142,7 @@ def require_in_force(folder):
     if isinstance(state, common.FolderUnreachable):
         return None, (f"the emergency-stop folder {state.folder} cannot be reached: {state.error}; nothing was "
                       "written, so an emergency stop that was in force before is still in force."
-                      "\nAdd a task to run the same command again once this machine can reach that folder."
+                      f"\nAdd a task to run this command again once this machine can reach that folder: {rerun}"
                       "\nTell the user now that this machine cannot reach that folder.")
     return None, f"no emergency stop is in force in {folder}"
 
@@ -155,13 +160,14 @@ class ReadBackNotInForce(Exception):
         self.state = state
 
 
-def start(folder, agent_seat, kind, words, jobs_file, moment):
+def start(folder, agent_seat, kind, words, jobs_file, moment, rerun=None):
+    rerun = rerun or rerun_command(["start", f"--{kind}", words])
     try:
-        return start_once(folder, agent_seat, kind, words, jobs_file, moment)
+        return start_once(folder, agent_seat, kind, words, jobs_file, moment, rerun)
     except ReadBackNotInForce:
         pass
     try:
-        return start_once(folder, agent_seat, kind, words, jobs_file, moment)
+        return start_once(folder, agent_seat, kind, words, jobs_file, moment, rerun)
     except ReadBackNotInForce as second:
         raise StartRefused(f"start wrote its emergency stop and read the emergency-stop folder back, twice, and "
                            f"neither time found its stop in force. The second time it wrote {second.path}, and "
@@ -169,7 +175,7 @@ def start(folder, agent_seat, kind, words, jobs_file, moment):
                            f"{refused_or_not(second.state)}\nTell the user this whole message.")
 
 
-def start_once(folder, agent_seat, kind, words, jobs_file, moment):
+def start_once(folder, agent_seat, kind, words, jobs_file, moment, rerun):
     state = common.read_state(folder)
     if isinstance(state, common.InForce):
         append(state.path, f"{moment.isoformat()} {kind} added by {agent_seat}: {one_line(words)}")
@@ -182,9 +188,11 @@ def start_once(folder, agent_seat, kind, words, jobs_file, moment):
                            "leave the file as it is: only the user repairs or moves it.")
     if isinstance(state, common.FolderUnreachable):
         raise StartRefused(f"start wrote nothing: the emergency-stop folder {state.folder} cannot be reached: "
-                           f"{state.error}. No emergency stop was started, so pushes and merges are not "
-                           "refused.\nTell the user at once that the emergency stop was not started, and why; "
-                           "run start again once this machine can reach that folder.")
+                           f"{state.error}. No emergency stop was started. This machine cannot tell whether "
+                           "another emergency stop is in force, so its hook refuses no pushes or merges here."
+                           "\nTell the user at once that the emergency stop was not started, and why."
+                           "\nAdd a task to run this command again once this machine can reach that folder: "
+                           f"{rerun}")
     folder.mkdir(exist_ok=True)
     named = name_moment_after(moment, state.path) if isinstance(state, common.Lifted) else moment
     path = folder / stop_file_name(named)
@@ -270,14 +278,14 @@ def run(arguments, environment):
     if not agent_seat:
         return failed(f"{options.command} wrote nothing: no agent-seat is known, because GIT_AUTHOR_NAME is "
                       f"unset.\nRun this command, with your agent-seat's name in place of "
-                      f"<your agent-seat name>:\npython3 {PROGRAM_PATH} --as-agent-seat <your agent-seat name> "
-                      f"{shlex.join(arguments)}")
+                      f"<your agent-seat name>:\n"
+                      f"python3 {PROGRAM_PATH} --as-agent-seat <your agent-seat name> {shlex.join(arguments)}")
     try:
         if options.command == "start":
             kind, words = ("words", options.words) if options.words is not None else ("evidence", options.evidence)
-            print(start(folder, agent_seat, kind, words, SCHEDULED_JOBS_FILE, moment))
+            print(start(folder, agent_seat, kind, words, SCHEDULED_JOBS_FILE, moment, rerun_command(arguments)))
             return 0
-        state, problem = require_in_force(folder)
+        state, problem = require_in_force(folder, rerun_command(arguments))
         if problem:
             return failed(problem)
         if options.command == "coordinate":
@@ -301,8 +309,8 @@ def run(arguments, environment):
         return failed(f"{options.command} could not finish writing to the emergency-stop folder {folder}: "
                       f"{error}. Read now, the folder holds: {folder_state_description(state)}. "
                       f"{refused_or_not(state)}\nTell the user this error, and whether pushes and merges are "
-                      f"refused.\nAdd a task to run the same command again once a write to that folder can "
-                      f"succeed.")
+                      f"refused.\nAdd a task to run this command again once a write to that folder can "
+                      f"succeed: {rerun_command(arguments)}")
 
 
 def main():

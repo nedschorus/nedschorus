@@ -196,7 +196,8 @@ def main():
         status, out = run(unreachable_for_lift, "lift", "--words", "all clear")
         check("lift with unreachable folder: FAILED, the stop stays in force, add a task to run it again",
               status == 1 and "nothing was written, so an emergency stop that was in force before is still in force"
-              in out and "Add a task to run the same command again" in out, out)
+              in out and (f"once this machine can reach that folder: python3 {program.PROGRAM_PATH} lift --words "
+                         "'all clear'\n") in out, out)
 
         failing_lift = root / "lift-write-fails" / "emergency-stop"
         failing_lift.parent.mkdir()
@@ -209,17 +210,20 @@ def main():
 
         program.append = append_that_fails
         try:
-            status, out = run(failing_lift, "lift", "--words", "all clear")
+            status, out = run(failing_lift, "--as-agent-seat", "md-skills", "lift", "--words", "all clear")
         finally:
             program.append = real_append
         check("lift whose write fails: FAILED, says the stop is still in force and pushes are refused",
               status == 1 and "No space left" in out and "the emergency-stop file in force is" in out
-              and "so pushes and merges are refused" in out and "Add a task" in out, out)
+              and "so pushes and merges are refused" in out and out.rstrip().endswith(
+                  f"python3 {program.PROGRAM_PATH} --as-agent-seat md-skills lift --words 'all clear'"), out)
 
         unreachable = root / "gone" / "emergency-stop"
         status, out = run(unreachable, "start", "--words", "stop")
         check("start with unreachable folder: FAILED, no retry, and says no stop was started", status == 1
-              and out.startswith("FAILED: start wrote nothing") and "No emergency stop was started" in out, out)
+              and out.startswith("FAILED: start wrote nothing") and "No emergency stop was started" in out
+              and "cannot tell whether another emergency stop is in force" in out
+              and out.rstrip().endswith(f"python3 {program.PROGRAM_PATH} start --words stop"), out)
 
         if os.geteuid() != 0:
             blocked = root / "blocked"
@@ -230,7 +234,8 @@ def main():
                 status, out = run(blocked / "emergency-stop", "start", "--words", "stop")
                 check("stop file cannot be written: FAILED, saying no stop is in force and to add a task", status == 1
                       and out.startswith("FAILED") and "pushes and merges are not refused" in out
-                      and "Tell the user this error" in out and "Add a task" in out, out)
+                      and "Tell the user this error" in out and out.rstrip().endswith(
+                          f"python3 {program.PROGRAM_PATH} start --words stop"), out)
             finally:
                 (blocked / "emergency-stop").chmod(0o755)
 
