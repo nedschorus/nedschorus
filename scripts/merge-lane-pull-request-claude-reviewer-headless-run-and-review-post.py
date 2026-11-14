@@ -256,11 +256,17 @@ def claude_code_project_settings_read_from_review_tools_worktree_at_main_with_cl
     except ValueError as error:
         raise Refused(f"main's project settings file {settings_file} is not JSON ({error}), so "
                       f"the reviewer was not started, since the reviewer must run with the Claude Code "
-                      f"hooks in main's settings file")
+                      f"hooks in main's settings file.\n"
+                      f"Fix {PROJECT_SETTINGS_FILE} through a pull request to main, then review this "
+                      f"pull request again; until that fix merges, every Claude review is refused "
+                      f"this way")
     if not isinstance(settings, dict):
         raise Refused(f"main's project settings file {settings_file} is JSON but not a JSON "
                       f"object, so the reviewer was not started, since the reviewer must run with the "
-                      f"Claude Code hooks in main's settings file")
+                      f"Claude Code hooks in main's settings file.\n"
+                      f"Fix {PROJECT_SETTINGS_FILE} through a pull request to main, then review this "
+                      f"pull request again; until that fix merges, every Claude review is refused "
+                      f"this way")
 
     def rewritten(value):
         if isinstance(value, dict):
@@ -293,9 +299,10 @@ def claude_code_project_settings_read_from_review_tools_worktree_at_main_with_cl
                       f"so a command would run the head worktree's script; the reviewer was not started.\n"
                       f"Each string that still names it, by its JSON path:\n"
                       + "\n".join(still_naming) + "\n"
-                      f"Write each such command with one of those three forms, in "
-                      f"{PROJECT_SETTINGS_FILE} on main, or add its form to "
-                      f"PROJECT_DIRECTORY_REFERENCE in {Path(__file__).resolve()}")
+                      f"Through a pull request to main, either change each one listed so it names "
+                      f"CLAUDE_PROJECT_DIR only in one of those three forms, in {PROJECT_SETTINGS_FILE}, "
+                      f"or add its form to the regular expression PROJECT_DIRECTORY_REFERENCE in "
+                      f"{Path(__file__).resolve()}; then review this pull request again")
     return settings
 
 
