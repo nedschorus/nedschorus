@@ -912,13 +912,18 @@ class TopicBranchRefusedAtRow1(unittest.TestCase):
             with self.assertRaises(M.TopicBranchCutRefused) as refused:
                 machine.start(fixture.COMPONENT)
             self.assertIn("agent-home", str(refused.exception))
-            self.assertIn("--detach %s origin/main\nThen, in the Python program that called start(%r) "
-                          "and received this error" % (fixture.COMPONENT, fixture.COMPONENT), str(refused.exception))
+            self.assertIn("--detach %s origin/main\nThen, in Python code of your own, whether the program that "
+                          "called start(%r) and received this error or a new one" % (
+                              fixture.COMPONENT, fixture.COMPONENT), str(refused.exception))
             self.assertIn("a new TopicBranchGitRecord (scripts/design-to-main/design-to-main-git-record.py) "
-                          "with the path the command prints as its repository_dir", str(refused.exception))
+                          "with the path the command prints as its repository_dir, and the component, "
+                          "component_directory, design_path and topic_branch_start_point of the refused record",
+                          str(refused.exception))
             self.assertIn("a new DesignToMainStateMachineFlow (scripts/design-to-main/design-to-main-state-machine.py) "
                           "over the new record, with the launcher the refused flow was given. "
-                          "Then call start(%r) on the new flow" % fixture.COMPONENT,
+                          "Then call start(%r) on the new flow, which checks the worktree and returns the run's "
+                          "state record, and pass that record to the new flow's run_until_ended(), whose first step "
+                          "cuts the topic branch in that worktree." % fixture.COMPONENT,
                           str(refused.exception))
             self.assertEqual(machine.launcher.launched, [])
             self.assertEqual(fixture.git(agent_home, "rev-parse", "--abbrev-ref", "HEAD").strip(), "HEAD")
