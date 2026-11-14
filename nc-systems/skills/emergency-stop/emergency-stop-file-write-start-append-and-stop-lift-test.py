@@ -143,13 +143,78 @@ def main():
         finally:
             program.common.read_state = _real_read_state
             program.now_utc = _real_now_utc
-        check("start whose stop is not the one in force when read back: FAILED, and says pushes are not refused",
-              status == 1 and out.startswith("FAILED") and "did not find it in force" in out
-              and "is lifted" in out and "pushes and merges are not refused" in out, out)
+        check("start whose stop is twice not the one in force when read back: FAILED, and says pushes are not refused",
+              status == 1 and out.startswith("FAILED") and "neither time found its stop in force" in out
+              and "is lifted" in out and "pushes and merges are not refused" in out
+              and "Tell the user this whole message" in out, out)
+
+        def reads_in_order(*answers):
+            calls = []
+
+            def read(f):
+                calls.append(f)
+                answer = answers[len(calls) - 1] if len(calls) <= len(answers) else None
+                return answer(f) if answer else _real_read_state(f)
+            return read
+
+        first_read_back_fails = root / "read-back-once" / "emergency-stop"
+        first_read_back_fails.parent.mkdir()
+        program.common.read_state = reads_in_order(common.NoStop, common.NoStop)
+        program.now_utc = lambda: datetime(2026, 11, 14, 12, 0, 0, tzinfo=timezone.utc)
+        try:
+            status, out = run(first_read_back_fails, "start", "--words", "stop")
+        finally:
+            program.common.read_state = _real_read_state
+            program.now_utc = _real_now_utc
+        check("start whose first read-back fails writes again, and the stop is in force",
+              status == 0 and out.startswith("added to the emergency stop in force")
+              and isinstance(common.read_state(first_read_back_fails), common.InForce), out)
+
+        read_back_unreadable = root / "read-back-unreadable" / "emergency-stop"
+        read_back_unreadable.parent.mkdir()
+        old_lifted = read_back_unreadable / "2099-01-01T00-00-00Z.md"
+        program.common.read_state = reads_in_order(
+            common.NoStop, lambda f: common.Lifted(old_lifted, "#emergency_stop_lifted x"), common.NoStop,
+            lambda f: common.Unreadable(old_lifted, "bad bytes"))
+        program.now_utc = lambda: datetime(2026, 11, 14, 12, 0, 0, tzinfo=timezone.utc)
+        try:
+            status, out = run(read_back_unreadable, "start", "--words", "stop")
+        finally:
+            program.common.read_state = _real_read_state
+            program.now_utc = _real_now_utc
+        check("start whose second read-back finds an unreadable file: FAILED, and says pushes are refused",
+              status == 1 and "cannot be read: bad bytes" in out
+              and "so pushes and merges are refused" in out, out)
 
         status, out = run(folder, "start", "--words", "again", agent_seat=None)
-        check("no agent-seat known: FAILED, saying where --as-agent-seat goes", status == 1
-              and "GIT_AUTHOR_NAME" in out and "--as-agent-seat prime-intellect start" in out, out)
+        check("no agent-seat known: FAILED, printing the command to run with a name placeholder", status == 1
+              and "GIT_AUTHOR_NAME" in out
+              and (f"python3 {program.PROGRAM_PATH} --as-agent-seat <your agent-seat name> start --words again"
+                   in out), out)
+
+        unreachable_for_lift = root / "gone-for-lift" / "emergency-stop"
+        status, out = run(unreachable_for_lift, "lift", "--words", "all clear")
+        check("lift with unreachable folder: FAILED, the stop stays in force, add a task to run it again",
+              status == 1 and "nothing was written, so an emergency stop that was in force before is still in force"
+              in out and "Add a task to run the same command again" in out, out)
+
+        failing_lift = root / "lift-write-fails" / "emergency-stop"
+        failing_lift.parent.mkdir()
+        program.start(failing_lift, "md-skills", "words", "stop", program.SCHEDULED_JOBS_FILE,
+                      datetime(2026, 11, 14, 12, 0, 0, tzinfo=timezone.utc))
+        real_append = program.append
+
+        def append_that_fails(_path, _line):
+            raise OSError(28, "No space left on device")
+
+        program.append = append_that_fails
+        try:
+            status, out = run(failing_lift, "lift", "--words", "all clear")
+        finally:
+            program.append = real_append
+        check("lift whose write fails: FAILED, says the stop is still in force and pushes are refused",
+              status == 1 and "No space left" in out and "the emergency-stop file in force is" in out
+              and "so pushes and merges are refused" in out and "Add a task" in out, out)
 
         unreachable = root / "gone" / "emergency-stop"
         status, out = run(unreachable, "start", "--words", "stop")
@@ -163,8 +228,9 @@ def main():
             (blocked / "emergency-stop").chmod(0o500)
             try:
                 status, out = run(blocked / "emergency-stop", "start", "--words", "stop")
-                check("stop file cannot be written: FAILED, pointing at status", status == 1
-                      and out.startswith("FAILED") and "status command" in out, out)
+                check("stop file cannot be written: FAILED, saying no stop is in force and to add a task", status == 1
+                      and out.startswith("FAILED") and "pushes and merges are not refused" in out
+                      and "Tell the user this error" in out and "Add a task" in out, out)
             finally:
                 (blocked / "emergency-stop").chmod(0o755)
 
