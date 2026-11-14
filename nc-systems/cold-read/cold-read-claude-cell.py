@@ -122,7 +122,7 @@ def structured_answer_invocation_builder(effort: str, schema_path: pathlib.Path,
     def build_invocation(model: str, prompt: str):
         command = [
             *command_line_prefix.claude_code_headless_run_command_line_prefix_build(
-                "dontAsk", own_settings=SETTINGS),
+                "dontAsk", caller_claude_code_session_settings=SETTINGS),
             "--model", model,
             "--effort", effort,
             "--output-format", "json",
