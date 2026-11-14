@@ -6,7 +6,7 @@ answers from a routes file the case writes, keyed by its arguments joined with s
 prefix of them when the key ends with "*"; it exits 1 on an unarranged call, and appends each
 call's arguments to the calls file. A fake `git` beside it answers `git ls-remote` with FAKE_GIT_LS_REMOTE_STDOUT,
 FAKE_GIT_LS_REMOTE_STDERR and FAKE_GIT_LS_REMOTE_EXIT, by default origin's branch at the head and branch the case's gh pr view route
-names, and hands every other git command to the real git.
+names; FAKE_GIT_MERGE_TREE_EXIT makes `git merge-tree` fail with that exit code; it hands every other git command to the real git.
 
 Run: python3 scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check-test.py
 """
@@ -70,6 +70,10 @@ sys.exit(route.get("exit", 0))
 
 FAKE_GIT = r'''#!/bin/sh
 for argument in "$@"; do
+    if [ "$argument" = merge-tree ] && [ -n "$FAKE_GIT_MERGE_TREE_EXIT" ]; then
+        printf 'fatal: the fake merge-tree failed\n' >&2
+        exit "$FAKE_GIT_MERGE_TREE_EXIT"
+    fi
     if [ "$argument" = ls-remote ]; then
         printf '%s\n' "$*" >> "$FAKE_GIT_LS_REMOTE_CALLS"
         printf '%s' "$FAKE_GIT_LS_REMOTE_STDOUT"
@@ -373,10 +377,23 @@ def brief_cases(root, repository, base, frozen_head):
           f"it printed: that agent runs python3 scripts/{PROGRAM.name} {NUMBER} again" in out
           and out.index("ANSWER: replace") < out.index("2. Check each finding")
           and "take none of steps 2 to 8" not in out, out)
-    check("brief: a conflict defers to the conflict check's report, and asks for no merge itself",
+    check("brief: a conflict defers to the conflict check's report",
           "If it reports VERDICT: CONFLICT with any other answer, do what its report says." in out
-          and "merge origin/main as its report says" not in out and "merge nothing" not in out
-          and "had you merge origin/main" not in out and "--after-conflict-merge" not in out, out)
+          and "merge origin/main as its report says" not in out and "--after-conflict-merge" not in out, out)
+    check("brief: step 1 says when to merge origin/main, with the command, and that a conflict stops the "
+          "round for the replace route, after the conflict check and before any change",
+          "Then, if a finding can be fixed or tested only with what origin/main has and the branch lacks" in out
+          and f"before changing anything: {in_worktree}git fetch origin && git merge --no-edit origin/main\n" in out
+          and "Resolve nothing by hand and change nothing in the merge's commit" in out
+          and f"If git stops on a conflict, run {in_worktree}git merge --abort, then stop" in out
+          and f"runs python3 scripts/{PROGRAM.name} {NUMBER} again, which prints the replace route." in out
+          and "Merge nothing but origin/main." in out
+          and out.index("If it reports VERDICT: CONFLICT with any other answer") < out.index("git merge --no-edit")
+          < out.index("2. Check each finding"), out)
+    check("brief: step 4 puts the one commit after the merge, and lets the merge alone be the fix",
+          "4. Put every change in one commit on top of the branch as step 1 left it, after the merge when step 1 "
+          "made one. If no finding holds, or the merge alone fixes every finding that holds, make no commit of "
+          "your own." in out, out)
     check("brief: says what to do when the push itself fails, and numbers the steps after the check on",
           "7. When it passes with a commit not yet pushed" in out and "8. If anything fails after the push" in out
           and "9. " not in out and "step 7" not in out
@@ -818,17 +835,6 @@ def check_cases(root, repository, base, frozen_head):
           and "(1 parent)" in err and "1 parents" not in err, err)
 
     git(repository, "reset", "-q", "--hard", frozen_head)
-    git(repository, "merge", "-q", "--no-edit", "origin/main")
-    merge = git(repository, "rev-parse", "HEAD")
-    code, out, err = run(root, repository, routes_for(frozen_head, reviews),
-                         "--check", "--answers", answers)
-    check("check: a merge of origin/main refuses, and says to drop it", code == 1
-          and "one non-merge commit" in err and "drop any merge of main" in err
-          and "(2 parents)" in err, err)
-    after_merge = commit_file(repository, "hook.py", "four\n", "fix after merge")
-    code, out, err = run(root, repository, routes_for(after_merge, reviews), "--check", "--answers", answers)
-    check("check: a merge of origin/main and one commit refuse", code == 1
-          and "has 2 commits" in err, err)
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                          "--check", "--answers", answers, "--after-conflict-merge")
     check("check: --after-conflict-merge is no longer accepted", code == 2
@@ -996,6 +1002,101 @@ def pull_request_2213_comment(comment_id, path, body):
 def comments_route(review_id, comments):
     return {f"api --paginate repos/{{owner}}/{{repo}}/pulls/{NUMBER}/reviews/{review_id}/comments --jq .[]":
             {"stdout": lines(comments)}}
+
+
+def merge_of_origin_main_cases(root, repository, base, frozen_head):
+    """A merge of origin/main that git makes without a conflict is a fix-round, alone or with one commit after it;
+    any other merge is refused. The scratch origin/main adds main.txt to base, and the frozen-head adds hook.py."""
+    reviews = [review(commit_id=frozen_head)]
+    answers = answers_file(root, GOOD_ANSWERS)
+
+    # As in pull request 3164, main changed a function's signature, and the branch's lines do not conflict with it.
+    git(repository, "checkout", "-q", "main-line")
+    main_tip = commit_file(repository, "marks.py", "def new_marks(text, tokens, ranges, shown):\n    return shown\n",
+                           "main adds an argument")
+    git(repository, "update-ref", "refs/remotes/origin/main", main_tip)
+    git(repository, "checkout", "-q", BRANCH)
+    git(repository, "merge", "-q", "--no-edit", "origin/main")
+    merge = git(repository, "rev-parse", "HEAD")
+    code, out, err = run(root, repository, routes_for(frozen_head, reviews), "--check", "--answers", answers)
+    check("merge check: a merge of origin/main with no text conflict, alone and not pushed, passes, and the "
+          "names main brought in are not listed", code == 0 and "Not pushed yet" in out
+          and HEADING not in err and "marks.py" not in out + err and "main.txt" not in out + err, out + err)
+    code, out, err = run(root, repository, routes_for(merge, reviews), "--check", "--answers", answers)
+    check("merge check: a pushed merge of origin/main alone passes, and the message names the merge and "
+          "main's commit", code == 0 and f"a merge {merge} of origin/main's {main_tip} that git makes without "
+          "a conflict, as --check confirmed, and no other commit." in out, out + err)
+
+    code, out, err = run(root, repository, routes_for(frozen_head, reviews), "--check", "--answers", answers,
+                         environment_extra={"FAKE_GIT_MERGE_TREE_EXIT": "128"})
+    check("merge check: git merge-tree failing fails with exit 2, saying what git printed",
+          code == 2 and "git merge-tree" in err and "the fake merge-tree failed" in err, out + err)
+
+    fix = commit_file(repository, "hook.py", "new_marks(text, tokens, ranges, shown)\n", "pass shown")
+    code, out, err = run(root, repository, routes_for(frozen_head, reviews), "--check", "--answers", answers)
+    check("merge check: a merge of origin/main and one fix commit, not pushed, passes",
+          code == 0 and "Not pushed yet" in out, out + err)
+    code, out, err = run(root, repository, routes_for(fix, reviews), "--check", "--answers", answers)
+    check("merge check: a pushed merge and fix commit pass, naming both, and main's files are not listed as "
+          "files no finding names", code == 0 and f"then one fix commit {fix}." in out
+          and "main.txt" not in out and "marks.py" not in out, out + err)
+
+    git(repository, "checkout", "-q", "main-line")
+    main_tip = commit_file(repository, "later.txt", "later\n", "main moves on")
+    git(repository, "update-ref", "refs/remotes/origin/main", main_tip)
+    git(repository, "checkout", "-q", BRANCH)
+    git(repository, "reset", "-q", "--hard", merge)
+    git(repository, "merge", "-q", "--no-edit", "origin/main")
+    code, out, err = run(root, repository, routes_for(frozen_head, reviews), "--check", "--answers", answers)
+    check("merge check: a second merge of origin/main after the first refuses", code == 1
+          and "has 2 commits" in err and err.count("(2 parents)") == 2, err)
+    git(repository, "reset", "-q", "--hard", fix)
+
+    commit_file(repository, "hook.py", "five\n", "a third commit")
+    code, out, err = run(root, repository, routes_for(frozen_head, reviews), "--check", "--answers", answers)
+    check("merge check: a merge and two commits refuse", code == 1 and "has 3 commits" in err
+          and "a merge of origin/main that git makes without a conflict, alone or followed by one non-merge "
+          "commit." in err, err)
+
+    git(repository, "reset", "-q", "--hard", frozen_head)
+    commit_file(repository, "hook.py", "early\n", "fix before the merge")
+    git(repository, "merge", "-q", "--no-edit", "origin/main")
+    code, out, err = run(root, repository, routes_for(frozen_head, reviews), "--check", "--answers", answers)
+    check("merge check: a commit before the merge refuses", code == 1 and "has 2 commits" in err
+          and "(1 parent)" in err and "(2 parents)" in err, err)
+
+    git(repository, "reset", "-q", "--hard", frozen_head)
+    git(repository, "merge", "-q", "--no-ff", "--no-commit", "origin/main")
+    (repository / "hook.py").write_text("changed inside the merge\n")
+    git(repository, "add", "hook.py")
+    git(repository, "commit", "-q", "--no-edit")
+    code, out, err = run(root, repository, routes_for(frozen_head, reviews), "--check", "--answers", answers)
+    check("merge check: a merge holding a change of its own refuses, saying how to move the change after it",
+          code == 1 and "differs from the merge git makes" in err
+          and f"git reset --hard {frozen_head} and git merge --no-edit {main_tip}" in err, err)
+
+    git(repository, "reset", "-q", "--hard", frozen_head)
+    git(repository, "checkout", "-q", "-b", "elsewhere", base)
+    stray = commit_file(repository, "stray.txt", "s\n", "not on main")
+    git(repository, "checkout", "-q", BRANCH)
+    git(repository, "merge", "-q", "--no-edit", stray)
+    code, out, err = run(root, repository, routes_for(frozen_head, reviews), "--check", "--answers", answers)
+    check("merge check: a merge of a commit not on origin/main refuses", code == 1
+          and f"brings in {stray[:12]}, which is not on origin/main" in err, err)
+
+    git(repository, "reset", "-q", "--hard", frozen_head)
+    git(repository, "checkout", "-q", "main-line")
+    main_tip = commit_file(repository, "hook.py", "main's own\n", "main adds hook.py too")
+    git(repository, "update-ref", "refs/remotes/origin/main", main_tip)
+    git(repository, "checkout", "-q", BRANCH)
+    subprocess.run(["git", "-C", str(repository), "merge", "-q", "--no-edit", "origin/main"], capture_output=True)
+    (repository / "hook.py").write_text("resolved by hand\n")
+    git(repository, "add", "hook.py")
+    git(repository, "commit", "-q", "--no-edit")
+    code, out, err = run(root, repository, routes_for(frozen_head, reviews), "--check", "--answers", answers)
+    check("merge check: a merge of origin/main whose conflict was resolved by hand refuses, sending the pull "
+          "request to the replace route", code == 1 and "has conflicts in hook.py, resolved by hand" in err
+          and f"runs python3 scripts/{PROGRAM.name} {NUMBER} again, which prints the replace route" in err, err)
 
 
 def commissioned_reviewer_cases(root, repository, base, frozen_head):
@@ -2403,6 +2504,7 @@ case("brief", brief_cases)
 case("topic-worktree", topic_worktree_cases)
 case("conflict check", conflict_check_cases)
 case("check", check_cases)
+case("merge of origin/main", merge_of_origin_main_cases)
 case("pushed head read from origin", pushed_head_read_from_origin_cases)
 case("history git cannot walk", history_git_cannot_walk_case)
 case("commissioned reviewer", commissioned_reviewer_cases)
