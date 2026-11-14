@@ -40,8 +40,9 @@ Usage:
                 COMMIT and the checkout's files; see RECORDED INPUTS below.
                 Without it every suite runs. Without --only-suites-named,
                 and where suites run in nc-test-sandboxes, it leaves out
-                every suite in SUITES_RUN_WITHOUT_ANY_SANDBOX; see SUITES
-                LEFT OUT OF A SELECTIVE RUN below
+                each suite in SUITES_RUN_WITHOUT_ANY_SANDBOX whose own file
+                and recorded reads are all unchanged; see SUITES LEFT OUT
+                OF A SELECTIVE RUN below
   --recorded-inputs-directory
                 where each suite's recorded inputs are kept; default
                 ~/.cache/nedschorus-test-suite-recorded-inputs
@@ -669,15 +670,19 @@ Mac 278 s, ned-box 305 s; a store of 79 recordings is about 500 KB.
 
 SUITES LEFT OUT OF A SELECTIVE RUN. A run given
 --only-suites-whose-recorded-inputs-changed-since without --only-suites-named,
-where suites run in nc-test-sandboxes (Linux with bwrap), leaves out every
-suite in SUITES_RUN_WITHOUT_ANY_SANDBOX, whatever changed, its own file
-included, because those suites share one machine-wide lock and a run for one
-change would otherwise wait for it. Such a suite the selection would have
-picked gets a line opening NO-SANDBOX SUITE LEFT OUT OF SELECTIVE TEST RUN, in place of its
-SELECTED line, with the command that runs it by hand; it counts as neither
-failed nor not run, and the SUMMARY line counts it.
-scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py runs those
-suites on main instead. A run with --only-suites-named, or with no
+where suites run in nc-test-sandboxes (Linux with bwrap), runs a suite in
+SUITES_RUN_WITHOUT_ANY_SANDBOX only when the change edits a file that suite
+reads: the suite's own file, a file its recording read, or a file only its
+last strace run saw. Such a suite waits for the one machine-wide lock those
+suites share, and its SELECTED line says which file made it run. Every
+other such suite the selection would have picked, such as one with no
+recording or one that runs git on the checkout, is left out, so most
+changes do not wait for that lock. A suite left out gets a line opening
+NO-SANDBOX SUITE LEFT OUT OF SELECTIVE TEST RUN, in place of its SELECTED
+line, with the command that runs it by hand; it counts as neither failed
+nor not run, and the SUMMARY line counts it.
+scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py runs every
+no-sandbox suite on main. A run with --only-suites-named, or with no
 selection, runs them as before.
 
 WHAT A RECORDING CANNOT SEE: a path a program other than Python checks for
@@ -4011,9 +4016,8 @@ def selection_reason(suite, recording, checkout, commit, files_only_strace_saw=N
     return False, reason
 
 
-def suites_selected_since(top, suites, recordings, commit, files_only_strace_saw_by_suite):
-    """[(suite, selected, why)] for every suite, in order."""
-    differ = files_that_differ_since(top, commit)
+def suites_selected_since(top, suites, recordings, commit, differ, files_only_strace_saw_by_suite):
+    """[(suite, selected, why)] for every suite, in order; differ is files_that_differ_since's."""
     everything = [path for path in sorted(differ)
                   if any(path == prefix or (prefix.endswith("/") and path.startswith(prefix))
                          for prefix in EVERY_SUITE_RUNS_WHEN_THESE_CHANGE)]
@@ -4027,17 +4031,45 @@ def suites_selected_since(top, suites, recordings, commit, files_only_strace_saw
             for suite in suites]
 
 
-def selective_test_run_selection_without_no_sandbox_suites(selection, applies):
-    """(the selection with every selected no-sandbox suite taken out, [(suite, why) left out]).
+def no_sandbox_suite_file_it_read_that_differs_or_none(suite, recording, files_only_strace_saw,
+                                                      differ):
+    """The suite's own file, or a file its recording read, that differs; None when none does.
 
-    The one place a run for one change leaves those suites out, so an exception,
-    such as running a suite whose own file changed, goes here."""
+    Only reads count: a suite selected for another reason, such as having no recording or
+    running git on the checkout, would make most changes wait for the no-sandbox lock."""
+    if suite in differ:
+        return suite
+    read = []
+    if isinstance(recording, dict) and recording.get("format") == RECORDED_INPUTS_FORMAT_VERSION:
+        read.extend(sorted(recording["reads"]))
+    if files_only_strace_saw is not None:
+        read.extend(files_only_strace_saw["files_only_strace_saw"])
+    return next((path for path in read if path in differ), None)
+
+
+def selective_test_run_selection_without_no_sandbox_suites(
+        selection, applies, differ, recordings, files_only_strace_saw_by_suite):
+    """(the selection with each no-sandbox suite the change does not read taken out,
+    [(suite, why) left out]).
+
+    A selected no-sandbox suite stays when its own file or a file its recording read
+    differs, and then waits for the lock all such suites share; every other selected one
+    is left out. The one place a run for one change leaves those suites out."""
     if not applies:
         return selection, []
-    left_out = [(suite, why) for suite, selected, why in selection
-                if selected and suite in SUITES_RUN_WITHOUT_ANY_SANDBOX]
-    kept = [(suite, selected, why) for suite, selected, why in selection
-            if not (selected and suite in SUITES_RUN_WITHOUT_ANY_SANDBOX)]
+    kept, left_out = [], []
+    for suite, selected, why in selection:
+        if not (selected and suite in SUITES_RUN_WITHOUT_ANY_SANDBOX):
+            kept.append((suite, selected, why))
+            continue
+        edited = no_sandbox_suite_file_it_read_that_differs_or_none(
+            suite, recordings.get(suite), files_only_strace_saw_by_suite.get(suite), differ)
+        if edited is None:
+            left_out.append((suite, why))
+        else:
+            kept.append((suite, True, f"{why}; it runs without a sandbox and reads {edited}, "
+                                      f"which differs, so it runs once it holds the lock all "
+                                      f"such suites share"))
     return kept, left_out
 
 
@@ -4333,8 +4365,10 @@ def main(argv=None, platform=None):
                 files_only_strace_saw_dir, suite)
         try:
             files = checkout_files(top)
+            differ = None
             if changed_since is not None:
-                selection = suites_selected_since(top, suites, recordings, changed_since,
+                differ = files_that_differ_since(top, changed_since)
+                selection = suites_selected_since(top, suites, recordings, changed_since, differ,
                                                   files_only_strace_saw_by_suite)
             else:
                 selection = [(suite, True, "every suite runs without "
@@ -4345,7 +4379,9 @@ def main(argv=None, platform=None):
             return EXIT_COULD_NOT_RUN
         selection, left_out = selective_test_run_selection_without_no_sandbox_suites(
             selection, applies=(changed_since is not None and arguments.only_suites_named is None
-                                and in_test_sandboxes))
+                                and in_test_sandboxes),
+            differ=differ, recordings=recordings,
+            files_only_strace_saw_by_suite=files_only_strace_saw_by_suite)
         chosen = suites_longest_recorded_first(
             [suite for suite, selected, _ in selection if selected], recordings)
         jobs = suites_run_at_once(arguments.jobs, len(chosen), os.cpu_count(),
@@ -4430,7 +4466,7 @@ def main(argv=None, platform=None):
                 report.line(f"{'SELECTED' if selected else 'NOT SELECTED'} {suite}: {why}")
             for suite, why in left_out:
                 report.line(f"{NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX}{suite}: {why}; it runs "
-                            f"without a sandbox, so a run for one change leaves it out and "
+                            f"without a sandbox and the change edits no file it reads, so a run for one change leaves it out and "
                             f"scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py runs "
                             f"it on main. To run it now: python3 scripts/run-all-test-suites.py "
                             f"--only-suites-named {suite}")
