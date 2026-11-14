@@ -49,8 +49,11 @@ escalated; one that answers a rule 2 message with a tool call and a fresh promis
 because a tool call that ended a promise wait would let an agent-seat that makes a fresh promise
 at each rule 2 message be nudged again forever and never escalated.
 
-How it fails, and what the user sees: a headless agent-session that fails, is stopped, answers
-JSON code cannot use, or sends to the wrong entry or the wrong text; a message missing from the
+How it fails, and what the user sees: a sender that sends a text other than the one code wrote
+still reached the agent-seat, so the text it sent is logged as a sent_text_differs_from_code_text event, the
+delivery check looks for that text, and OWNING_AGENT_SEAT gets a task to find why, one task at a
+time; only a failure to write that task is a user-alert. A headless agent-session that fails, is
+stopped, answers JSON code cannot use, or sends to the wrong entry; a message missing from the
 agent-seat's transcript; and a read failure slice 1 reports for the same agent-seat with the same
 text at every run for 2 minutes or more, each become a user-alert, written once, and the invocation
 exits 1; the 2 minutes are counted from the failure's first run and go on through an invocation the
@@ -92,6 +95,9 @@ fields = verdicts_print.fields
 user_alerts = _load("user_alerts_pending_and_claimed_files_write_claim_release_and_delete_common",
                     _SCRIPTS.parent / "nc-systems" / "general-tools"
                     / "user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py")
+agent_seat_task_list = _load(
+    "agent_seat_task_list_new_pending_task_write_common",
+    _SCRIPTS.parent / "nc-systems" / "general-tools" / "agent-seat-task-list-new-pending-task-write-common.py")
 headless_command_line = _load(
     "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
     _SCRIPTS.parent / "nc-systems" / "general-tools"
@@ -104,6 +110,10 @@ STATE_DIRECTORY = (Path.home() / ".local" / "state" / "nedschorus"
 # The folder's name is the name the receiving agent-seat sees the message come from.
 HEADLESS_WORKING_DIRECTORY_NAME = "agent-seat-idle-sweep"
 RUN_FAILURES_ALERTED_FILE_NAME = "run-failures-alerted.txt"
+# The agent-seat that owns this program: a defect of the program that needs nothing from the user
+# goes to its task list.
+OWNING_AGENT_SEAT = "ned-box-helper"
+SENT_TEXT_DIFFERS_TASK_SUBJECT = "Idle sweep: a headless sender sent a text other than the one code wrote"
 
 WAIT_STEP_SECONDS = 15 * 60
 JUDGE_ASK_AGAIN_SECONDS = 15 * 60
@@ -166,6 +176,12 @@ SENTENCES_ANSWER_SCHEMA = {
         "properties": {"index": {"type": "integer"}, "backed": {"type": "boolean"},
                        "reason": {"type": "string"}}}}}}
 
+# Without this sentence, a sender dropped the last sentence from a message that asks the agent-seat
+# a question, taking it for an instruction to the sender.
+KEEP_THE_LAST_SENTENCE = (
+    f'The text ends with the sentence "{DO_NOT_REPLY_SENTENCE}" That sentence is written to the '
+    "agent-seat, not to you, and is part of the message: keep it.")
+
 FIND_THE_ENTRY = """\
 Find the agent-seat's entry with ListAgents (load ListAgents and SendMessage with ToolSearch first \
 if they are not loaded). Write only to the one entry whose name is the agent-seat's name, that is \
@@ -181,8 +197,8 @@ judge nothing: the program has decided the message is sent.
 The agent-seat is {seat}. {find_the_entry}
 
 Send it one message with SendMessage, whose "message" is the text between the two lines of dashes \
-below, exactly as written, with nothing added or removed. Then answer: sent true if SendMessage \
-succeeded, otherwise false, and reason, one sentence.
+below, exactly as written, with nothing added or removed. {keep_the_last_sentence} Then answer: \
+sent true if SendMessage succeeded, otherwise false, and reason, one sentence.
 ----------
 {text}
 ----------"""
@@ -195,8 +211,8 @@ Send it, with one SendMessage call for each, to each of these agent-seats: {seat
 agent-seat, {find_the_entry}
 
 Each message is the text between the two lines of dashes below, exactly as written, with nothing \
-added or removed. Then answer: sent true if every send succeeded, otherwise false, and reason, one \
-sentence naming any agent-seat you could not send to.
+added or removed. {keep_the_last_sentence} Then answer: sent true if every send succeeded, \
+otherwise false, and reason, one sentence naming any agent-seat you could not send to.
 ----------
 {text}
 ----------"""
@@ -469,19 +485,32 @@ def entry_seat(to):
     return to.split(" [", 1)[0].strip()
 
 
-def send_problems(outcome, seats, text):
-    """What is wrong with a sender's sends: each must go to one of the agent-seats with the text."""
+def send_problems(outcome, seats):
+    """What is wrong with where a sender sent: each send must go to one of the agent-seats, and a
+    send to each must succeed."""
     problems = [f"sent to {send['to']!r}, which is not {', '.join(seats)}"
                 for send in outcome.sends if entry_seat(send["to"]) not in seats]
-    for send in outcome.sends:
-        # Compared as the delivery check compares: a sender may reflow the lines of the text.
-        if (entry_seat(send["to"]) in seats
-                and " ".join(send["message"].split()) != " ".join(text.split())):
-            problems.append(f"sent {entry_seat(send['to'])} a text other than the one code wrote")
     for seat in seats:
         if not any(send["succeeded"] and entry_seat(send["to"]) == seat for send in outcome.sends):
             problems.append(f"no SendMessage to {seat} succeeded")
     return problems
+
+
+def sent_texts_other_than_code_wrote(outcome, seats, text):
+    """Each send to one of the agent-seats whose message is not the text code wrote, as
+    (agent-seat, message)."""
+    # Compared as the delivery check compares: a sender may reflow the lines of the text.
+    return [(entry_seat(send["to"]), send["message"]) for send in outcome.sends
+            if entry_seat(send["to"]) in seats
+            and " ".join(send["message"].split()) != " ".join(text.split())]
+
+
+def text_sent_to(outcome, seat, text):
+    """The message of the last send to the agent-seat that succeeded, or code's text when none
+    did: the text the delivery check looks for."""
+    sent = [send["message"] for send in outcome.sends
+            if send["succeeded"] and entry_seat(send["to"]) == seat]
+    return sent[-1] if sent else text
 
 
 # --- One invocation ---
@@ -530,6 +559,58 @@ class Sweep:
                    f"{self.log.path}, and the cron output log, and check whether {seat} needs a "
                    "message; run `claude -p` by hand on ned-box to see whether claude is logged out.")
 
+    def sent_texts_differ(self, outcome, seats, text, step):
+        """Log each text a sender sent in place of code's, and give OWNING_AGENT_SEAT a task to
+        find why: the message still reached the agent-seat, so the difference is this program's
+        defect, with nothing for the user to do."""
+        differing = sent_texts_other_than_code_wrote(outcome, seats, text)
+        for seat, sent_text in differing:
+            self.record({"event": "sent_text_differs_from_code_text", "agent_seat": seat, "step": step,
+                         "text": text, "sent_text": sent_text})
+        if not differing:
+            return
+        try:
+            task_id = self.owning_agent_seat_task_opened_unless_open()
+        except OSError as error:
+            self.alert(f"owner-task-not-written:{type(error).__name__}: {error}:{self.now.date()}",
+                       f"The idle sweep could not give {OWNING_AGENT_SEAT} a task",
+                       f"A headless agent-session sent {', '.join(seat for seat, _ in differing)} "
+                       "a text other than the one the idle sweep wrote, and the idle sweep could "
+                       f"not write the task that tells {OWNING_AGENT_SEAT} to find why: "
+                       f"{type(error).__name__}: {error}",
+                       f"An agent on ned-box can fix what the error names, such as the task list "
+                       f"directory of {OWNING_AGENT_SEAT} not existing, and give "
+                       f"{OWNING_AGENT_SEAT} the sent_text_differs_from_code_text events of the idle sweep's "
+                       f"log, {self.log.path}.")
+            return
+        if task_id is not None:
+            self.record({"event": "owning_agent_seat_task_opened", "agent_seat": OWNING_AGENT_SEAT,
+                         "task_id": task_id, "subject": SENT_TEXT_DIFFERS_TASK_SUBJECT})
+
+    def owning_agent_seat_task_opened_unless_open(self):
+        """Open the sent-text task on OWNING_AGENT_SEAT's task list unless one not marked
+        completed is there; return the new task's id, or None. Raises OSError."""
+        list_directory = self.paths.tasks_root / f"nedschorus-{OWNING_AGENT_SEAT}-tasks"
+        if list_directory.is_dir():
+            for path in list_directory.glob("*.json"):
+                try:
+                    task = json.loads(path.read_text(encoding="utf-8"))
+                except ValueError:
+                    continue
+                if (task.get("status") != "completed"
+                        and task.get("subject") == SENT_TEXT_DIFFERS_TASK_SUBJECT):
+                    return None
+        return agent_seat_task_list.agent_seat_task_list_new_pending_task_write(
+            list_directory, SENT_TEXT_DIFFERS_TASK_SUBJECT,
+            "A headless agent-session the idle sweep, scripts/agent-seat-idle-sweep-headless-"
+            "judge-wake-messages-send-and-user-alerts-write.py, started to send a message sent a "
+            "text other than the one code wrote. Each time is a sent_text_differs_from_code_text event in the "
+            f"idle sweep's log, {self.log.path}, with the text code wrote and the text sent.\n"
+            "Compare the two, find why the sender changed the text, such as a sender prompt "
+            "that lets it, and fix the cause in a pull request.\n"
+            "Mark this task completed when the fix is merged; the idle sweep opens a new task "
+            "at the next difference.")
+
     def send_wake_message(self, seats, text):
         """The one way a message reaches an agent-seat: end the text with DO_NOT_REPLY_SENTENCE and
         have one headless agent-session send it to each of the seats. Returns the text as sent,
@@ -537,11 +618,13 @@ class Sweep:
         text = f"{text}\n\n{DO_NOT_REPLY_SENTENCE}"
         if len(seats) == 1:
             prompt = SENDER_PROMPT.format(seat=seats[0], text=text,
-                                          find_the_entry=FIND_THE_ENTRY.format(seat=seats[0]))
+                                          find_the_entry=FIND_THE_ENTRY.format(seat=seats[0]),
+                                          keep_the_last_sentence=KEEP_THE_LAST_SENTENCE)
         else:
             prompt = NOTICE_SENDER_PROMPT.format(
                 seats=", ".join(seats), text=text,
-                find_the_entry=FIND_THE_ENTRY.format(seat="<agent-seat>"))
+                find_the_entry=FIND_THE_ENTRY.format(seat="<agent-seat>"),
+                keep_the_last_sentence=KEEP_THE_LAST_SENTENCE)
         started_at = self.current()
         outcome = run_headless(prompt, SEND_ANSWER_SCHEMA, SENDING_TOOLS, self.working_directory,
                                self.timeout_seconds)
@@ -550,12 +633,15 @@ class Sweep:
     def send(self, seat, verdict, text, step):
         """Send code's text to one agent-seat; log the send for the delivery check."""
         text, outcome, started_at = self.send_wake_message([seat], text)
-        problems = [outcome.error] if outcome.error else send_problems(outcome, [seat], text)
+        if outcome.error:
+            self.headless_failed(seat, f"send its {step} message", outcome.error)
+            return
+        self.sent_texts_differ(outcome, [seat], text, step)
+        problems = send_problems(outcome, [seat])
         if problems:
             self.headless_failed(seat, f"send its {step} message", "; ".join(problems))
-            return False
-        self.message_sent(seat, verdict, text, step, started_at)
-        return True
+            return
+        self.message_sent(seat, verdict, text_sent_to(outcome, seat, text), step, started_at)
 
     def message_sent(self, seat, verdict, text, step, started_at):
         # The delivery check compares transcript times with the send's start: a sender may run on
@@ -591,13 +677,15 @@ class Sweep:
         if outcome.error:
             self.headless_failed(", ".join(seats), "send the account-change notice", outcome.error)
             return
-        wrong = [problem for problem in send_problems(outcome, seats, text)
+        self.sent_texts_differ(outcome, seats, text, ACCOUNT_NOTICE)
+        wrong = [problem for problem in send_problems(outcome, seats)
                  if not problem.startswith("no SendMessage")]
         if wrong:
             self.headless_failed(", ".join(seats), "send the account-change notice", "; ".join(wrong))
         # The delivery check looks in every listed agent-seat's transcript, sent to or not.
         for seat in seats:
-            self.message_sent(seat, verdicts[seat], text, ACCOUNT_NOTICE, started_at)
+            self.message_sent(seat, verdicts[seat], text_sent_to(outcome, seat, text),
+                              ACCOUNT_NOTICE, started_at)
             limit = verdicts[seat].get(fields.USAGE_LIMIT)
             if verdicts[seat].get(fields.RULE) == 1 and limit:
                 self.record({"event": "limit_wake", "agent_seat": seat,
