@@ -1564,6 +1564,86 @@ with tempfile.TemporaryDirectory() as scratch_name:
               and runner.RUN_STOPPED_AT_RUN_TIME_LIMIT_NOT_COUNTING_ADMISSION_WAITS_LINE_PREFIX
               not in printed, (code, seconds, printed[-800:]))
 
+        def suite_passes_after_two_seconds(*arguments, **options):
+            time.sleep(2)
+            return suite_passes(*arguments, **options)
+
+        # The loop checks the limit only every RUN_STOP_SIGNAL_CHECK_SECONDS; set that long,
+        # so the first check comes when the only suite has already ended, past the limit.
+        code, printed, _ = main_given(
+            "run-time-limit-after-last-suite", run_repository,
+            "--run-time-limit-seconds-not-counting-admission-waits", "1",
+            run_one_suite=suite_passes_after_two_seconds, RUN_STOP_SIGNAL_CHECK_SECONDS=30,
+            **as_if_bwrap)
+        check("a run whose last suite ends past the run time limit, with no suite left "
+              "pending, is not reported as stopped by the limit: every suite passed, so it exits 0",
+              code == runner.EXIT_ALL_PASSED
+              and runner.RUN_STOPPED_AT_RUN_TIME_LIMIT_NOT_COUNTING_ADMISSION_WAITS_LINE_PREFIX
+              not in printed, (code, printed[-800:]))
+
+        two_suites_repository = scratch / "two-suites-wait-ceiling-repository"
+        two_suites_repository.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=two_suites_repository, check=True)
+        for name in ("a-test.py", "b-test.py"):
+            (two_suites_repository / name).write_text("print('PASS  only case')\n")
+        subprocess.run(["git", "add", "."], cwd=two_suites_repository, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q",
+                        "-m", "start"], cwd=two_suites_repository, check=True)
+        suite_fails = suite_ends_with(1)
+
+        # B raises only once A has been admitted: were B to raise first, the run would cancel
+        # A's admission and A would never fail.
+        a_admitted = threading.Event()
+
+        def a_fails_after_b_waited_past_ceiling(top, interpreter, suite, *arguments, **options):
+            if suite == "b-test.py":
+                a_admitted.wait(30)
+                raise runner.MachineWideTestSuiteAdmissionWaitedPastCeiling(
+                    "b-test.py waited past the ceiling in this test")
+            a_admitted.set()
+            time.sleep(1.5)
+            return suite_fails(top, interpreter, suite, *arguments, **options)
+
+        code, printed, _ = main_given(
+            "wait-ceiling-then-failed-suite", two_suites_repository, "-j", "2",
+            run_one_suite=a_fails_after_b_waited_past_ceiling, **as_if_bwrap)
+        check("a suite that fails after another suite waited past the admission ceiling still "
+              "counts: the run collects it, prints its line and exits 1, not 2",
+              code == runner.EXIT_SOME_FAILED
+              and any(line.startswith(runner.TEST_SUITE_ADMISSION_WAIT_CEILING_PASSED_LINE_PREFIX)
+                      for line in printed.splitlines())
+              and "a-test.py" in printed and "Traceback" not in printed,
+              (code, printed[-800:]))
+
+        a_running = threading.Event()
+        a_stopped_by_the_run = []
+
+        def a_runs_until_stopped_after_b_waited_past_ceiling(top, interpreter, suite, *arguments,
+                                                             **options):
+            if suite == "b-test.py":
+                a_running.wait(30)
+                raise runner.MachineWideTestSuiteAdmissionWaitedPastCeiling(
+                    "b-test.py waited past the ceiling in this test")
+            a_running.set()
+            given_up_at = time.monotonic() + 20
+            while not options["run_stops"] and time.monotonic() < given_up_at:
+                time.sleep(0.1)
+            a_stopped_by_the_run.append(bool(options["run_stops"]))
+            return suite_passes(top, interpreter, suite, *arguments, **options)
+
+        code, printed, seconds = main_given(
+            "wait-ceiling-then-suite-past-run-time-limit", two_suites_repository, "-j", "2",
+            "--run-time-limit-seconds-not-counting-admission-waits", "2",
+            run_one_suite=a_runs_until_stopped_after_b_waited_past_ceiling, **as_if_bwrap)
+        check("a suite still running after another suite waited past the admission ceiling is "
+              "stopped at the run time limit, and the run exits 2",
+              code == runner.EXIT_COULD_NOT_RUN and a_stopped_by_the_run == [True]
+              and seconds < 15
+              and any(line.startswith(runner.TEST_SUITE_ADMISSION_WAIT_CEILING_PASSED_LINE_PREFIX)
+                      for line in printed.splitlines())
+              and "Traceback" not in printed,
+              (code, seconds, a_stopped_by_the_run, printed[-800:]))
+
     slow_repository = scratch / "slow-repository"
     slow_repository.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=slow_repository, check=True)
