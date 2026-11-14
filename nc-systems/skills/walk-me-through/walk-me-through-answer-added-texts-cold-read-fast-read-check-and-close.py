@@ -493,6 +493,12 @@ NOT_ASKED_WEAK_GROUND_LABELS = {"weak-cost-only": "case against weak, cost only"
                                 "weak-alters-earlier-approved-text-only":
                                     "case against weak, alters earlier approved text only"}
 NOT_ASKED_NO_KIND_VALUES = (NOT_ASKED_RATED_NONE, *NOT_ASKED_WEAK_GROUND_LABELS)
+NOT_ASKED_COST_GROUND = "cost"
+NOT_ASKED_EARLIER_APPROVAL_GROUND = "the user's earlier word-for-word approval of the text the change alters"
+# What a weak case against may name for the item to settle, as the refusal and the judgement lines say it.
+NOT_ASKED_GROUNDS = {"weak-cost-only": NOT_ASKED_COST_GROUND,
+                     "weak-alters-earlier-approved-text-only": NOT_ASKED_EARLIER_APPROVAL_GROUND}
+NOT_ASKED_EITHER_GROUND = f"one of these two alone: {NOT_ASKED_COST_GROUND}, or {NOT_ASKED_EARLIER_APPROVAL_GROUND}"
 INSTRUCTION_FILE_GUARD_FILE = REPOSITORY_TOP / ".claude" / "guard-hooks" / "instruction-file-guard.py"
 OPTION_NUMBERS = (2, 3)
 EVIDENCE_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*(#not_asked_(?:touches|test|source|unused|rename|glossary_term|hashtag_marker))"
@@ -859,14 +865,15 @@ UNREADABLE_COMMENT_CUT = ("- line {line}: the line of `{mark}` holds `<!--`, so 
 UNREADABLE_JOINED = " The mark's line with its text joined onto it: {mark} {text}"
 NOT_ASKED_REFUSED = (
     "nothing written: {item} cannot be settled without asking the user as {label}, because:\n{problems}\n"
-    "If the item does not fit {label}, or the case against names anything besides cost and the user's earlier word-for-word approval of the text, present {item} to the user as "
+    "If the item does not fit {label}, or the case against names anything besides {grounds}, present {item} to the "
+    "user as "
     "usual, then run check with the flag for his answer, as `--help` lists it.\n"
     "If the item fits and only its evidence lines are missing or wrong, fix them in {document} and run "
     "`python3 {program} check --not-asked {kind}` again.")
 NOT_ASKED_WEAK_GROUND_NOT_NAMED = (
     "nothing written: {item}'s `#case_against` line rates the case against weak, and `--not-asked none` is only for "
-    "an item of no kind rated none; for one rated weak, the value names what the case against names, so that the "
-    "minutes record why the item settled.\n"
+    "an item of no kind rated none; for one rated weak, the `--not-asked` value says which of the two weak cases "
+    "against that settle an item it is, so that the minutes record why the item settled.\n"
     "This is not a refusal of {item}; run check again with the value that fits:\n"
     "If the case against names only cost, such as code to write or time spent: "
     "`python3 {program} check --not-asked weak-cost-only`\n"
@@ -928,9 +935,8 @@ NOT_ASKED_WHY = {
 NOT_ASKED_JUDGEMENT_LINES = (
     "{item} is recorded as settled without asking the user, {label}; the program checked only what code can.",
     "Before you run close, ask the advisor whether a later ruling or another open item overtakes {item}, and judge "
-    "what the program could not, such as whether the case against names only cost, or "
-    "only that the change alters text the user approved word for word on an earlier date, and whether a fix matches its "
-    "design.",
+    "what the program could not, such as whether the case against names nothing besides {grounds}, and whether a fix "
+    "matches its design.",
     "If the advisor objects, the advisor call fails, or your judgement is against settling, do not run close: "
     "present {item} to the user and run check with the flag for his answer, as `--help` lists it; that writes a new "
     "answer line, and close records only the last one, so this line is then set aside.",
@@ -1927,6 +1933,8 @@ def check(arguments):
         if problems:
             raise Failure(NOT_ASKED_REFUSED.format(item=item, kind=arguments.not_asked,
                                                    label=not_asked_label(arguments.not_asked),
+                                                   grounds=NOT_ASKED_GROUNDS.get(arguments.not_asked,
+                                                                                 NOT_ASKED_EITHER_GROUND),
                                                    problems="\n".join(problems),
                                                    document=document, program=Path(__file__).resolve()))
     texts = proposed_texts(marks, marks_the_answer_adds(arguments))
@@ -1970,7 +1978,8 @@ def check(arguments):
     if had_to_be_run:
         output += [line.format(document=document, item=item) for line in CHECK_JUDGEMENT_LINES]
     if arguments.not_asked is not None:
-        output += [line.format(item=item, label=not_asked_label(arguments.not_asked))
+        output += [line.format(item=item, label=not_asked_label(arguments.not_asked),
+                               grounds=NOT_ASKED_GROUNDS.get(arguments.not_asked, NOT_ASKED_EITHER_GROUND))
                    for line in NOT_ASKED_JUDGEMENT_LINES]
         if arguments.not_asked in NOT_ASKED_WEAK_GROUND_LABELS:
             output.append(NOT_ASKED_WEAK_JUDGEMENT_LINE.format(item=item))

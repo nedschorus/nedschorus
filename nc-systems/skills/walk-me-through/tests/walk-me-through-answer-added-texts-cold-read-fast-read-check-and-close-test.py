@@ -3248,7 +3248,9 @@ def test_an_item_of_no_kind_rated_weak_settled_as_alters_earlier_approved_text_o
                         r"change\. Fast reads:\n", minutes) is not None
           and "item 1 of 3 is recorded as settled without asking the user, case against weak, alters earlier approved text "
               "only;" in result.stdout
-          and PERMISSIONS_JUDGEMENT in result.stdout and "cost only" not in result.stdout + minutes,
+          and "such as whether the case against names nothing besides the user's earlier word-for-word approval of "
+              "the text the change alters, and" in result.stdout
+          and PERMISSIONS_JUDGEMENT in result.stdout and "cost" not in result.stdout + minutes,
           described(result) + minutes)
     closed = case.run("close")
     check("close records the item settled as weak and alters earlier approved text only as accepted, and moves on past it",
@@ -3264,6 +3266,8 @@ def test_an_item_of_no_kind_rated_weak_settled_as_alters_earlier_approved_text_o
           result.returncode == 1
           and "cannot be settled without asking the user as case against weak, alters earlier approved text only, because:"
               in result.stderr
+          and "or the case against names anything besides the user's earlier word-for-word approval of the text the "
+              "change alters, present item 1 of 3" in result.stderr
           and "check --not-asked weak-alters-earlier-approved-text-only` again" in result.stderr
           and case.minutes.read_text() == before, described(result))
 
