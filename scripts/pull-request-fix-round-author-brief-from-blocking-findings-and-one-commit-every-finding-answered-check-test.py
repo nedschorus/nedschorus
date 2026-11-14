@@ -1985,6 +1985,8 @@ def suite_cases(root, repository, _base, _frozen_head):
     check("suites: a suite failing at the round's commit and passing at the frozen-head refuses, naming it, "
           "and a suite the frozen-head lacks counts as the round's",
           code == 1 and "so the round's change broke them: b-test.py, c-test.py." in err
+          and f"at the round's commit {broken[:12]} and not at the frozen-head {frozen_head[:12]}, so the round's "
+          "change broke them" in err
           and "These fail at the frozen-head too, so they are not the round's doing: a-test.py." in err
           and "Not pushed yet" not in out, out + err)
     check("suites: the round's commit runs the suites the ready command runs, and the frozen-head only its "
@@ -2009,7 +2011,7 @@ def suite_cases(root, repository, _base, _frozen_head):
     code, out, err = check_with_head(frozen_head, {"FAKE_RUNNER_NOT_RUN": "b-test.py c-test.py"})
     check("suites: suites NOT RUN beside a failure the frozen-head shares fail the check with exit 2, "
           "before any push, and the refusal quotes every NOT RUN line",
-          code == 2 and "did not judge every suite: it printed\n  NOT RUN b-test.py" in err
+          code == 2 and f"run on {fixed[:12]}, did not judge every suite: it printed\n  NOT RUN b-test.py" in err
           and "\n  NOT RUN c-test.py did not start" in err
           and "Not pushed yet" not in out and len(git(repository, "worktree", "list").splitlines()) == 1,
           out + err)
@@ -2036,6 +2038,12 @@ def suite_cases(root, repository, _base, _frozen_head):
           "new shared names are not listed again",
           code == 0 and "nc-test-suites that fail at the frozen-head too, so not because of this round: "
           "a-test.py." in out and runner_calls(root) == [], out + err)
+    code, out, err = run(root, repository, routes_for(fixed, [review(commit_id=fixed)]), "--check", "--answers",
+                         answers, environment_extra=environment)
+    check("suites: a later round on that pushed commit, now its frozen-head, with no commit of its own, names no "
+          "suite from the earlier round's record",
+          code == 0 and "Nothing pushed; the head stays the frozen-head" in out
+          and "fail at the frozen-head too" not in out and runner_calls(root) == [], out + err)
 
     (repository / "other.txt").write_text("other\n")
     git(repository, "add", "other.txt")
