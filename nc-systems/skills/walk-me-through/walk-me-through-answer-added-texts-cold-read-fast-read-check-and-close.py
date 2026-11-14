@@ -1028,16 +1028,18 @@ NOW_OVER_LATER_OPTIONS = "- a line opening `Option N`, another option he can pic
 NOW_OVER_LATER_NEW_IF_D = "- a `#new_if_d` text, what his disapproval would do instead, on line {lines}"
 SHORT_ANSWER_HOOK_FILE = HERE / ("walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-"
                                  "user-prompt-submit-hook.py")
+PRESENT_UNLESS_NOW_OVER_LATER_CLAUSE = (
+    ", unless its only choice is whether to build something now or later and it recommends now: then run "
+    "`python3 {program} check " + NOW_OVER_LATER_FLAG + " --cwd {top}`, then the close command it prints.")
 ITEM_READ_LINES = (
     "Read that report and apply each finding that holds to {item} in the walk-document {document}; a finding that "
     "would change what the item decides becomes a new item, numbered as the walk-me-through skill's Re-planning "
     "section says.",
     "If you change {item} after this, run `{command}` and do what it prints; it reads {item} again only when your "
     "changes touch a fact.",
-    "Then present {item}, unless its only choice is whether to build something now or later and it recommends now: "
-    "then run `python3 {program} check " + NOW_OVER_LATER_FLAG + " --cwd {top}`, then the close command it prints.",
+    "Then present {item}" + PRESENT_UNLESS_NOW_OVER_LATER_CLAUSE,
 )
-ITEM_READ_NOT_RUN_NEXT = "Present {item}."
+ITEM_READ_NOT_RUN_NEXT = "Present {item}" + PRESENT_UNLESS_NOW_OVER_LATER_CLAUSE
 ITEM_READ_SUB_STEP_NAMED = (
     "{item} is split into numbered sub-steps, which the user is shown one at a time, so the step added the line "
     "`#next_to_present {sub_step}` to {minutes}, naming the first sub-step of {item} the walk-minutes record no answer "
@@ -2391,7 +2393,8 @@ def waiting_item_read(arguments, sub_step_of=None):
             facts = approval_walk_item_before_and_after_fixes_compare_for_changed_fact_words_needing_another_cold_read_fast_read(last_text, text, top)
             if not facts:
                 print("\n".join([ITEM_READ_NOT_RUN.format(item=item, report=latest[1]["report"]),
-                                 ITEM_READ_NOT_RUN_NEXT.format(item=item)]))
+                                 ITEM_READ_NOT_RUN_NEXT.format(item=item, program=program,
+                                                               top=shlex.quote(str(top)))]))
                 return 0
             why = ITEM_READ_RUN_FACTS.format(report=latest[1]["report"], facts=", ".join(facts[:FACTS_LISTED]))
         walk_name = minutes.name[:-len(walk_finder.MINUTES_SUFFIX)]
