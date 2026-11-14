@@ -121,8 +121,8 @@ whose recommendation cannot be read, RECOMMENDATION_UNKNOWN_LINE says why and
 what to do. A payload that is not JSON is a fault: one line on stderr, exit 1,
 which Claude Code records as a non-blocking error.
 
-Agent-facing messages follow
-docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+Tool-messages-to-agent follow
+docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 """
 import importlib.util
 import json
@@ -160,7 +160,6 @@ LETTER_RIDER = re.compile(
     rf"^(?P<answer>{LETTER})(?:\s*(?:[,;:]|\.(?=\s)|\s-)\s*|\s+(?=(?:but|and|then|also|plus)\b))"
     rf"{NOT_AN_ITEM_NUMBER}(?P<rest>\S.*)$", re.I | re.S)
 WORD_RIDER = re.compile(rf"^(?P<answer>{WORD})\b[\s,;:.\-]+{NOT_AN_ITEM_NUMBER}(?P<rest>\S.*)$", re.I | re.S)
-RECOMMENDATION = re.compile(r"Recommendation:(.*)$", re.I | re.M)
 PART_START = re.compile(r"^Part (\d+)\.(?=\s|$)")
 MOST_PARTS = 5
 HEADING_POINT = re.compile(r"^[#\s*]*items?\s[^:]*:\s*(.*?)[\s*]*$", re.I)
@@ -217,8 +216,7 @@ MEANINGS = {
            "If a fast read prints a line opening FAILED, tell the user that line and make no change.",
            "If a finding would change what your recommendation decides, put the changed recommendation to "
            "the user instead of acting on it.",
-           "Otherwise act on it, and say in your next message which fast reads were already done and which "
-           "had to be run.")),
+           "Otherwise act on it.")),
     "AO": (("AO means approve as obvious: the user agrees with the recommendation of {item}{recommended}, "
             "and finds the item obvious. Act as for A, with one difference: the minutes must mark the "
             "answer as obvious.",
@@ -566,13 +564,6 @@ def closing_line(number, walk, link=None):
     return f"[{label}]({link}) · {ANSWER_LETTERS_TEXT}"
 
 
-def recommendation_text(part):
-    """The last recommendation in the lines, as written, without emphasis or one trailing period; or None."""
-    found = [match[1].strip(" *_") for match in RECOMMENDATION.finditer("\n".join(part))]
-    found = [text[:-1].rstrip(" *_") if text.endswith(".") else text for text in found]
-    return found[-1] if found and found[-1] else None
-
-
 def part_starts(tokens):
     """Return [(first line of the paragraph, part number)] for each line of a top-level paragraph that opens
     with `Part N.`, from the walk-document's parser tokens."""
@@ -619,7 +610,8 @@ def recommendations_in(lines, openings, spans, walk_finder, starts):
             # A range with no opening that runs over another item's opening holds that item's text, so its own
             # cannot be told apart: item 6's text below item 5's Withdrawn version would read item 5's.
             overrun = any(first < ranges[other][0] < ranges[number][1] for number in missing for other in numbers)
-            if missing and (overrun or len(RECOMMENDATION.findall("\n".join(lines[line] for line in held))) > 1):
+            held_text = "\n".join(lines[line] for line in held)
+            if missing and (overrun or len(walk_finder.RECOMMENDATION.findall(held_text)) > 1):
                 problem = PARTS_NOT_TOLD_APART_PROBLEM.format(
                     heading=lines[first].strip(), missing=", ".join(f"item {number}" for number in missing))
                 for number in numbers:
@@ -627,7 +619,7 @@ def recommendations_in(lines, openings, spans, walk_finder, starts):
                 continue
         for number in numbers:
             part = lines[ranges[number][0]:ranges[number][1]]
-            found[number] = recommendation_text(part)
+            found[number] = walk_finder.approval_walk_item_last_recommendation_text_from_item_lines(part)
             numbered = part_numbers(starts, *ranges[number])
             if numbered:
                 parts[number] = numbered

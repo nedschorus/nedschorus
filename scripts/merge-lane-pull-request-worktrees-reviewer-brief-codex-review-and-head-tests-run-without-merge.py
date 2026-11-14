@@ -24,8 +24,10 @@ filled in is written to
 briefs/reviewer-brief-specifications-pr<n>-with-head-and-main-commits-from-origin.json under the
 worktrees and outputs directory, and step 2 reads that copy. Last,
 --review-tools-worktree-at-main is checked out, detached, at the main commit
-read from origin, so every step runs main's scripts, and only then is each
-step script looked for there.
+read from origin, so every step runs main's scripts, and step 5's Claude
+reviewer, though it reviews in pr<n>-head, runs main's project settings and
+hooks from there; only then is each step script looked for there, and
+a step script missing from main is refused with a message saying so.
 
 Runs at the same time need separate --review-tools-worktree-at-main
 worktrees: each run checks its worktree out at main, and moving a worktree
@@ -182,6 +184,23 @@ def resolved_commit(checkout, commit):
     # With --quiet, git exits 1 and prints nothing when there is no such commit.
     return git(checkout, "rev-parse", "--verify", "--quiet", f"{commit}^{{commit}}",
                accepted_exit_codes=(0, 1)) or None
+
+
+def review_tools_worktree_at_main_step_script_missing_refusal_message(step, checkout,
+                                                                      main_commit):
+    """Return (what stopped the run, instruction) for a step script main's checkout lacks."""
+    what_stopped = (f"the step script {checkout / 'scripts' / step} is missing, and {checkout} "
+                    f"is now at origin's main, {main_commit}.")
+    mains_copy = checkout / "scripts" / Path(__file__).name
+    if Path(__file__).resolve() == mains_copy.resolve():
+        return ((f"{what_stopped} This program is main's copy, so main has renamed or "
+                 f"removed the script."),
+                "Tell the user this message.")
+    return ((f"{what_stopped} Main has renamed or removed the script, or this program's copy, "
+             f"{Path(__file__).resolve()}, is not main's."),
+            (f"Run this again as {mains_copy}, main's copy of this program, with the same "
+             f"arguments.\n"
+             f"If main's copy refuses the same way, tell the user this message."))
 
 
 def brief_specification_disagreement(checkout, specifications, number, head, main,
@@ -356,7 +375,7 @@ def main(argv=None):
                 f"could not write the brief specifications with head and main filled in to "
                 f"{filled_in_specifications_file}: {failure}") from failure
         try:
-            git(checkout, "checkout", "-q", "--detach", main_commit)
+            git(checkout, "checkout", "-q", "--no-overwrite-ignore", "--detach", main_commit)
         except RefusedBeforeAnyStep as failure:
             if CHECKOUT_WOULD_OVERWRITE_CHANGES not in str(failure):
                 raise
@@ -368,9 +387,11 @@ def main(argv=None):
                             f"overwrite them, because they may be someone's unsaved "
                             f"work.") from failure
         for step in STEPS:
-            missing = common.review_tool_missing_message(arguments, Path("scripts") / step)
-            if missing:
-                raise RefusedBeforeAnyStep(missing, instruction=None)
+            if not (checkout / "scripts" / step).is_file():
+                what_stopped, instruction = (
+                    review_tools_worktree_at_main_step_script_missing_refusal_message(
+                        step, checkout, main_commit))
+                raise RefusedBeforeAnyStep(what_stopped, instruction=instruction)
     except RefusedBeforeAnyStep as refusal:
         print(f"PR {number}: no step run: {refusal}", flush=True)
         if refusal.instruction:

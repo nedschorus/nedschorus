@@ -184,7 +184,7 @@ def cold_read_full_run_commands_refused_during_handoff_deferral_path(handoff_dir
 
 def cold_read_full_run_command_refused_during_handoff_deferral_append(handoff_directory: Path, session_id: str,
                                           command: str, working_directory: str,
-                                          now: datetime | None = None) -> Path:
+                                          now: datetime | None = None) -> Path:  # pragma: no mutate, deferred annotations are never evaluated, so a changed operator in one says the same
     path = cold_read_full_run_commands_refused_during_handoff_deferral_path(handoff_directory, session_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps({"command": command, "working_directory": working_directory,

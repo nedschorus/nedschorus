@@ -19,6 +19,7 @@ Exit codes: 0 all passed, 1 any failed.
 """
 
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -61,7 +62,10 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
                 full_refs=None, gh_base="main", gh_base_status=0,
                 missing_at_base=(), unlookable_at_base=(), current_branch=None,
                 open_pull_requests=(0, "[]"), main_side_logs=None, merges_log=(0, ""),
-                ls_remote=(0, "")):
+                ls_remote=(0, ""), own_commits=(0, ""), unpushed_commits=(0, ""),
+                holder_refs=(0, ""), open_pull_requests_by_branch=None,
+                checked_out_head=RESOLVED_HEAD, local_branches_at=(0, ""),
+                worktree_list=(0, "")):
     """A runner that answers git and gh without touching either.
 
     base_resolves and head_resolves override `resolves` for one side, so a case
@@ -90,6 +94,16 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
     to the answer of the --no-merges log of the base's commits that changed it
     (none, by default); merges_log answers the first-parent merge lookup;
     ls_remote answers `git ls-remote`, by default with the branch missing.
+
+    own_commits answers `git rev-list <base>..<head>`, unpushed_commits `git
+    rev-list <head> --not --remotes`, and holder_refs `git for-each-ref
+    --contains`; by default the branch has no commits of its own.
+    open_pull_requests_by_branch maps a branch to its `gh pr list` answer, in
+    place of open_pull_requests for that branch.
+
+    checked_out_head is the hash HEAD^{commit} resolves to, the checked head
+    by default; local_branches_at answers `git for-each-ref --points-at`, and
+    worktree_list `git worktree list --porcelain`.
     """
     refs = dict(full_refs or {})
     gh_queue = list(gh_results or [])
@@ -106,6 +120,9 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
             if rev in refs:
                 return (0, refs[rev]) if refs[rev] is not None else (128, "")
             return 0, ("refs/remotes/" + rev) if "/" in rev else ""
+        if command[:2] == ["git", "rev-parse"] and command[-1] == "HEAD^{commit}" \
+                and head_ok:
+            return 0, checked_out_head
         if command[:2] == ["git", "rev-parse"]:
             rev = command[-1]
             is_base = rev.startswith("origin/") or rev.startswith("upstream/") \
@@ -115,6 +132,14 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
             return 0, RESOLVED_BASE if is_base else RESOLVED_HEAD
         if command[:2] == ["git", "ls-remote"]:
             return ls_remote
+        if command[:2] == ["git", "rev-list"]:
+            return unpushed_commits if "--not" in command else own_commits
+        if command[:2] == ["git", "for-each-ref"] and "--points-at" in command:
+            return local_branches_at
+        if command[:2] == ["git", "for-each-ref"]:
+            return holder_refs
+        if command[:3] == ["git", "worktree", "list"]:
+            return worktree_list
         if command[:2] == ["git", "merge-tree"]:
             return merge_tree_status, merge_tree_output
         if command[:2] == ["git", "symbolic-ref"]:
@@ -135,7 +160,8 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
             subject = COMMIT_SUBJECTS.get(command[-1])
             return (0, subject) if subject else (128, "")
         if command[:3] == ["gh", "pr", "list"]:
-            return open_pull_requests
+            branch = command[command.index("--head") + 1]
+            return (open_pull_requests_by_branch or {}).get(branch, open_pull_requests)
         if command[:2] == ["gh", "pr"]:
             if "headRefOid" in command:
                 return gh_head_status, (gh_head or "")
@@ -729,6 +755,47 @@ def merge_lines(branch="topic", base="origin/main", remote="origin"):
     ] + give_up_lines("merge", base) + [
         "Push it with git push, without --force, then carry on with what you "
         "were doing.",
+    ]
+
+
+def from_elsewhere(lines, start_line, branch, remote="origin"):
+    """The merge or rebase lines for a checked commit that is not HEAD: the
+    start line after the ANSWER line, and a push naming HEAD:<branch>."""
+    last = lines[-1]
+    if last.startswith("Then carry on"):
+        last = ("Push it with git push -u %s HEAD:refs/heads/%s, then carry on with "
+                "what you were doing." % (remote, branch))
+    elif last.startswith("Push it with git push,"):
+        last = ("Push it with git push -u %s HEAD:%s, without --force, then carry "
+                "on with what you were doing." % (remote, branch))
+    return [lines[0], start_line] + lines[1:-1] + [last]
+
+
+def pushed_history_replace_lines(branch, holder, number, base="origin/main"):
+    return [
+        "ANSWER: replace -- branch %s has no open pull request, but its commits "
+        "are already on origin's branch %s, whose pull request #%s is open, so "
+        "pull request #%s is replaced by a new pull request; neither branch is "
+        "rebased, merged into or force-pushed." % (branch, holder, number, number),
+        "If branch %s was not cut to fix pull request #%s, do not close or "
+        "replace that pull request; ask its author with SendMessage how to clear "
+        "the conflict." % (branch, number),
+    ] + replace_lines(number, base)[1:]
+
+
+def pushed_history_merge_lines(branch, named, base="origin/main", remote="origin"):
+    return [
+        "ANSWER: merge -- branch %s has no open pull request and %s does not have "
+        "it, but its commits are already on %s, and no branch of %s holding them "
+        "has an open pull request, so %s is merged into it rather than rebased, "
+        "which would rewrite commits already pushed."
+        % (branch, remote, named, remote, base),
+    ] + understand_lines(base) + [
+        "Run git merge %s, resolving each conflict so that both changes work."
+        % base,
+    ] + give_up_lines("merge", base) + [
+        "Push it with git push -u %s HEAD:refs/heads/%s, without --force, then "
+        "carry on with what you were doing." % (remote, branch),
     ]
 
 
@@ -1463,12 +1530,18 @@ REAL_ENV.update(
 
 # The stub answers `gh pr view <n> --json <field> -q .<field>` from
 # STUB_GH_<FIELD>, exits 1 when STUB_GH_FAIL is set, and logs every call.
-STUB_GH_PROGRAM = '''import os, sys
+# STUB_GH_NUMBER_BY_HEAD, a JSON object, answers `gh pr list --head <branch>`
+# for the branches it names, ahead of STUB_GH_NUMBER.
+STUB_GH_PROGRAM = '''import json, os, sys
 with open(os.environ["STUB_GH_LOG"], "a") as log:
     log.write(" ".join(sys.argv[1:]) + "\\n")
 if os.environ.get("STUB_GH_FAIL"):
     sys.exit(1)
 field = sys.argv[sys.argv.index("--json") + 1]
+by_head = json.loads(os.environ.get("STUB_GH_NUMBER_BY_HEAD", "{}"))
+if "--head" in sys.argv and sys.argv[sys.argv.index("--head") + 1] in by_head:
+    print(by_head[sys.argv[sys.argv.index("--head") + 1]])
+    sys.exit(0)
 print(os.environ.get("STUB_GH_" + field.upper(), ""))
 '''
 
@@ -1966,8 +2039,17 @@ def real_repository_cases(root):
          and lines == CHECK.pull_request_frozen_head_gh_read_failure_report_lines(605))
 
     # --branch, and the current branch, through the CLI and a stub gh.
+    # The checked branch is not the one checked out in `work`, as for a branch
+    # the pre-push hook checks while another is checked out: the rebase steps
+    # first switch to it and push it by HEAD:<branch>.
+    conflict_topic_hash = git_in(work, "rev-parse", "conflict-topic").strip()
+    switch_first = (
+        "The checked commit %s is branch conflict-topic, not the one checked out "
+        "here: first run git switch conflict-topic, because every step below acts "
+        "on HEAD." % conflict_topic_hash[:12])
     for number_answer, want in (('[{"number": 812}]', replace_lines(812)),
-                                ("[]", rebase_lines("conflict-topic"))):
+                                ("[]", from_elsewhere(rebase_lines("conflict-topic"),
+                                                      switch_first, "conflict-topic"))):
         status, lines, calls = run_here("--head", "conflict-topic", "--branch",
                                         "conflict-topic", gh=dict(NUMBER=number_answer))
         case("real: --branch with gh answering %s gives that answer" % number_answer,
@@ -1981,6 +2063,50 @@ def real_repository_cases(root):
          status == CHECK.EXIT_CONFLICT
          and without_main_side(lines)[1:] == rebase_lines("conflict-topic")
          and any("--head conflict-topic" in call for call in calls))
+
+    # A fix-round branch cut under a new name at a pull request's pushed head,
+    # with a fix commit on top, run bare as the checkout-freshness hook's
+    # pushed-history advice says: it has no open pull request and origin lacks
+    # it, yet it must get the pull request's answer, never rebase.
+    git_in(work, "push", "-q", "origin", "conflict-topic:pr-branch")
+    git_in(work, "fetch", "-q", "origin")
+    fix_checkout = root / "pr-branch-fix"
+    git_in(work, "worktree", "add", "-q", "-b", "pr-branch-fix", str(fix_checkout),
+           "origin/pr-branch")
+    commit_in(fix_checkout, "fix.txt", "the fix\n", "fix on top")
+    for gh_answer, want, label in (
+            ('[{"number": 905}]',
+             pushed_history_replace_lines("pr-branch-fix", "pr-branch", 905),
+             "the pull request's replace answer"),
+            ("[]", pushed_history_merge_lines("pr-branch-fix", "origin/pr-branch"),
+             "the merge answer when that branch has no open pull request")):
+        status, lines, calls = run_here(cwd=fix_checkout, gh=dict(
+            NUMBER_BY_HEAD=json.dumps({"pr-branch-fix": "[]", "pr-branch": gh_answer})))
+        case("real: a branch cut at a pushed head, run bare, gets %s, not rebase" % label,
+             status == CHECK.EXIT_CONFLICT
+             and without_main_side(lines)[1:] == want
+             and any("--head pr-branch " in call + " " for call in calls))
+
+    # A detached HEAD gives git no namespace for a destination origin lacks, so
+    # the printed push must name refs/heads/ in full; it is run here for real.
+    detached = root / "detached-fix"
+    git_in(work, "worktree", "add", "-q", "--detach", str(detached), "conflict-topic")
+    commit_in(detached, "detached.txt", "on no branch\n", "commit on no branch")
+    detached_hash = git_in(detached, "rev-parse", "HEAD").strip()
+    status, lines, _ = run_here("--head", detached_hash, "--branch", "brand-new-fix",
+                                gh=dict(NUMBER="[]"))
+    push_lines = [line for line in lines if line.startswith("Push it with git push -u")]
+    pushed = None
+    if push_lines:
+        command = push_lines[0][len("Push it with "):].split(",")[0].split()
+        pushed = subprocess.run(command, cwd=detached, capture_output=True, text=True)
+    case("real: the printed push of a commit on no local branch creates the branch "
+         "origin lacks",
+         status == CHECK.EXIT_CONFLICT
+         and any(line.startswith("No local branch is at the checked commit")
+                 for line in lines)
+         and pushed is not None and pushed.returncode == 0
+         and git_in(origin, "rev-parse", "brand-new-fix").strip() == detached_hash)
 
     # main's side came in through a pull request's merge, by another agent-seat.
     git_in(origin, "checkout", "-q", "-b", "side-work", "main")
@@ -2004,6 +2130,29 @@ def real_repository_cases(root):
          and "MAIN'S SIDE: shared-by-pull-request.txt -- changed on origin/main by "
              "%s, written by agent-seat MD-skills, merged by pull request #77."
              % side_label in lines)
+
+    # main's side came in as a squashed pull request on main's first-parent
+    # line, and a later pull request's merge descends from it.
+    (origin / "shared-by-squash.txt").write_text("main's side\n")
+    git_in(origin, "add", "shared-by-squash.txt")
+    git_in(origin, "commit", "-q", "--author", "MD-skills <md@example.invalid>", "-m",
+           "Squashed side work (#88)")
+    squash_label = real_label(git_in(origin, "rev-parse", "HEAD"), "Squashed side work (#88)")
+    git_in(origin, "checkout", "-q", "-b", "later-work", "main")
+    commit_in(origin, "later.txt", "later\n", "later work")
+    git_in(origin, "checkout", "-q", "main")
+    git_in(origin, "merge", "-q", "--no-ff", "-m",
+           "Merge pull request #79 from nedschorus/later-work", "later-work")
+    git_in(work, "checkout", "-q", "-b", "squash-file-topic", deleting_head)
+    commit_in(work, "shared-by-squash.txt", "the branch's side\n", "squash-file topic")
+    git_in(work, "checkout", "-q", "main")
+    status, lines, _ = run_here("--head", "squash-file-topic")
+    case("real: a squashed commit on main's first-parent line is named by its own "
+         "pull request, not by the next merge after it",
+         status == CHECK.EXIT_CONFLICT
+         and "MAIN'S SIDE: shared-by-squash.txt -- changed on origin/main by "
+             "%s, written by agent-seat %s, merged by pull request #88."
+             % (squash_label, "MD-skills") in lines)
 
 
 with tempfile.TemporaryDirectory(prefix="branch-conflict-check-test-") as scratch:
@@ -2030,8 +2179,9 @@ log = []
 status, lines = run_branch(fake_runner(
     merge_tree_status=1, merge_tree_output=ONE_CONFLICT, log=log,
     main_side_logs={"x": (0, MAIN_COMMIT + "\x1fMD-skills")},
-    merges_log=(0, "Merge pull request #77 from nedschorus/side\n"
-                   "Merge pull request #78 from nedschorus/later")))
+    merges_log=(0, "%s %s\x1fMerge pull request #77 from nedschorus/side\n"
+                   "%s %s\x1fMerge pull request #78 from nedschorus/later"
+                % ("a" * 40, MAIN_COMMIT[:39] + "d", "e" * 40, "f" * 40))))
 case("a conflicting file's MAIN'S SIDE line names main's commit, its agent-seat "
      "and the pull request whose merge brought it in",
      "MAIN'S SIDE: x -- changed on origin/main by commit %s, written by agent-seat "
@@ -2039,9 +2189,9 @@ case("a conflicting file's MAIN'S SIDE line names main's commit, its agent-seat 
 case("main's commits on a file are listed only among those the branch lacks",
      ["git", "log", "--no-merges", "--format=%H%x1f%an",
       "%s..%s" % (RESOLVED_HEAD, RESOLVED_BASE), "--", "x"] in log)
-case("the merging pull request is the oldest first-parent merge after the commit",
-     ["git", "log", "--first-parent", "--merges", "--ancestry-path", "--reverse",
-      "--format=%s", "%s..%s" % (MAIN_COMMIT, RESOLVED_BASE)] in log)
+case("the merging pull request is the oldest first-parent commit after the commit",
+     ["git", "log", "--first-parent", "--ancestry-path", "--reverse",
+      "--format=%P%x1f%s", "%s..%s" % (MAIN_COMMIT, RESOLVED_BASE)] in log)
 
 status, lines = run_branch(fake_runner(
     merge_tree_status=1, merge_tree_output=ONE_CONFLICT,
@@ -2053,7 +2203,7 @@ case("a squashed commit with no merge after it is named by the number in its sub
 status, lines = run_branch(fake_runner(
     merge_tree_status=1, merge_tree_output=ONE_CONFLICT,
     main_side_logs={"x": (0, MAIN_COMMIT + "\x1fCase")},
-    merges_log=(0, "Merge branch 'side'")))
+    merges_log=(0, "%s %s\x1fMerge branch 'side'" % ("a" * 40, "b" * 40))))
 case("a commit no pull request merged says so",
      "MAIN'S SIDE: x -- changed on origin/main by commit %s, written by agent-seat "
      "Case, in no pull request this run could find." % MAIN_COMMIT[:12] in lines)
@@ -2167,6 +2317,180 @@ case("--branch: git ls-remote killed by a signal (negative exit status): no answ
      "not the rebase steps of a branch origin lacks",
      status == CHECK.EXIT_CONFLICT
      and "git ls-remote exited -9" in lines[1])
+
+# --- a branch origin lacks, whose commits a remote branch already holds -------
+FIX_COMMIT, PUSHED_COMMIT = "f" * 40, "e" * 40
+OWN_COMMITS = (0, FIX_COMMIT + "\n" + PUSHED_COMMIT)
+ONLY_FIX_UNPUSHED = (0, FIX_COMMIT)
+PR_BRANCH_HOLDS = (0, "refs/remotes/origin/HEAD\nrefs/remotes/origin/pr-branch")
+
+
+def run_pushed_history(log=None, **answers):
+    defaults = dict(merge_tree_status=1, log=log, own_commits=OWN_COMMITS,
+                    unpushed_commits=ONLY_FIX_UNPUSHED, holder_refs=PR_BRANCH_HOLDS)
+    defaults.update(answers)
+    return run_branch(fake_runner(**defaults), branch="topic")
+
+
+log = []
+status, lines = run_pushed_history(
+    log, open_pull_requests_by_branch={"pr-branch": (0, '[{"number": 905}]')})
+case("pushed history: a holder branch's open pull request gives its replace answer",
+     status == CHECK.EXIT_CONFLICT
+     and lines[1:] == pushed_history_replace_lines("topic", "pr-branch", 905))
+case("pushed history: the holder is the remote branch that has the newest pushed "
+     "commit, and origin/HEAD is not asked about",
+     ["git", "for-each-ref", "--format=%(refname)", "--contains", PUSHED_COMMIT,
+      "refs/remotes"] in log
+     and ["gh", "pr", "list", "--state", "open", "--head", "pr-branch", "--json",
+          "number"] in log
+     and not any(c[:3] == ["gh", "pr", "list"] and "HEAD" in c for c in log))
+
+status, lines = run_pushed_history()
+case("pushed history: a holder branch with no open pull request: main is merged in",
+     status == CHECK.EXIT_CONFLICT
+     and lines[1:] == pushed_history_merge_lines("topic", "origin/pr-branch"))
+
+log = []
+status, lines = run_pushed_history(
+    log, holder_refs=(0, "refs/remotes/upstream/pr-branch\nrefs/remotes/origin/a\n"
+                         "refs/remotes/origin/b"),
+    open_pull_requests_by_branch={"pr-branch": (0, '[{"number": 905}]')})
+case("pushed history: a holder on another remote is not asked about, and past two "
+     "holders the rest are counted",
+     lines[1:] == pushed_history_merge_lines(
+         "topic", "upstream/pr-branch, origin/a and 1 more")
+     and [c[c.index("--head") + 1] for c in log if c[:3] == ["gh", "pr", "list"]]
+     == ["topic", "a", "b"])
+
+status, lines = run_pushed_history(unpushed_commits=OWN_COMMITS)
+case("pushed history: none of the branch's commits on a remote: still rebased",
+     lines[1:] == rebase_lines())
+
+PUSHED_HISTORY_UNKNOWN = [
+    "ANSWER: none -- branch topic has no open pull request and origin does not "
+    "have it, but whether its commits are already on another remote branch could "
+    "not be looked up (git failed), so this run cannot say whether it is rebased "
+    "or origin/main is merged into it.",
+    "Run git rev-list %s..%s --not --remotes to see the git error, fix it, then "
+    "rerun." % (RESOLVED_BASE[:12], RESOLVED_HEAD[:12]),
+]
+for label, failing in (("listing the branch's commits", "own_commits"),
+                       ("listing its unpushed commits", "unpushed_commits"),
+                       ("listing the holder branches", "holder_refs")):
+    # -9 is git killed by a signal, a negative exit status.
+    for exit_status in (128, -9):
+        status, lines = run_pushed_history(**{failing: (exit_status, "")})
+        case("pushed history: git exiting %d at %s gives no answer, never rebase"
+             % (exit_status, label),
+             status == CHECK.EXIT_CONFLICT and lines[1:] == PUSHED_HISTORY_UNKNOWN)
+
+status, lines = run_pushed_history(
+    open_pull_requests_by_branch={"pr-branch": (1, "")})
+case("pushed history: gh failing on the holder branch gives no answer, saying why",
+     status == CHECK.EXIT_CONFLICT and lines[1:] == [
+         "ANSWER: none -- branch topic's commits are already on origin's branch "
+         "pr-branch, but whether that branch has an open pull request could not be "
+         "looked up (gh pr list exited 1), so this run cannot say how the conflict "
+         "is cleared.",
+         "If gh is logged out or cannot reach GitHub, fix that, then rerun.",
+     ])
+
+
+# --- a checked commit that is not the checked-out HEAD ------------------------
+# The pre-push hook checks each pushed branch with --head <its commit>, also
+# when another branch is checked out; every merge and rebase step acts on
+# HEAD, so the report first says where to stand.
+SHORT_HEAD = RESOLVED_HEAD[:12]
+ELSEWHERE = "c" * 40
+SWITCH_FIRST = (
+    "The checked commit %s is branch local-fix, not the one checked out here: "
+    "first run git switch local-fix, because every step below acts on HEAD."
+    % SHORT_HEAD)
+
+
+def run_elsewhere(log=None, **answers):
+    defaults = dict(merge_tree_status=1, log=log, checked_out_head=ELSEWHERE,
+                    local_branches_at=(0, "local-fix"))
+    defaults.update(answers)
+    return run_branch(fake_runner(**defaults), head="local-fix", branch="remote-fix")
+
+
+log = []
+status, lines = run_elsewhere(log)
+case("not HEAD: a branch origin lacks is switched to first, rebased, and pushed by "
+     "HEAD:<branch>",
+     status == CHECK.EXIT_CONFLICT
+     and lines[1:] == from_elsewhere(rebase_lines("remote-fix"), SWITCH_FIRST,
+                                     "remote-fix")
+     and ["git", "for-each-ref", "--format=%(refname:short)", "--points-at",
+          RESOLVED_HEAD, "refs/heads"] in log)
+
+status, lines = run_elsewhere(ls_remote=(0, "x\trefs/heads/remote-fix"))
+case("not HEAD: a branch origin has gets main merged in after the switch, and the "
+     "push names HEAD:<branch>",
+     lines[1:] == from_elsewhere(merge_lines("remote-fix"), SWITCH_FIRST,
+                                 "remote-fix"))
+
+status, lines = run_elsewhere(own_commits=OWN_COMMITS,
+                              unpushed_commits=ONLY_FIX_UNPUSHED,
+                              holder_refs=PR_BRANCH_HOLDS)
+case("not HEAD: a branch whose commits a holder branch has gets the switch line too",
+     lines[1:] == [pushed_history_merge_lines("remote-fix", "origin/pr-branch")[0],
+                   SWITCH_FIRST]
+     + pushed_history_merge_lines("remote-fix", "origin/pr-branch")[1:])
+
+status, lines = run_elsewhere(worktree_list=(0, "worktree /w/main\nHEAD %s\nbranch "
+                                                 "refs/heads/main\n\nworktree /w/fix\n"
+                                                 "HEAD %s\nbranch refs/heads/local-fix"
+                                                 % (ELSEWHERE, RESOLVED_HEAD)))
+case("not HEAD: a local branch checked out in another worktree sends the steps there",
+     lines[2] == "The checked commit %s is branch local-fix, checked out in /w/fix, "
+                 "not here: run every step below in /w/fix, because each acts on HEAD."
+                 % SHORT_HEAD)
+
+LISTING_WITH_FIX = ("worktree /w/fix\nHEAD %s\nbranch refs/heads/local-fix"
+                    % RESOLVED_HEAD)
+# A failed git worktree list may still print part of a listing; it is not
+# trusted, whatever the sign of the exit status (-9 is git killed by a signal).
+for exit_status in (128, -9):
+    status, lines = run_elsewhere(worktree_list=(exit_status, LISTING_WITH_FIX))
+    case("not HEAD: git worktree list exiting %d still says to switch to the local "
+         "branch" % exit_status, lines[2] == SWITCH_FIRST)
+
+status, lines = run_elsewhere(local_branches_at=(0, "aaa-original\nremote-fix"))
+case("not HEAD: of two local branches at the commit, the pushed one is named, "
+     "though it sorts second",
+     lines[2] == "The checked commit %s is branch remote-fix, not the one checked "
+                 "out here: first run git switch remote-fix, because every step "
+                 "below acts on HEAD." % SHORT_HEAD)
+
+status, lines = run_elsewhere(local_branches_at=(0, "aaa-original\nlocal-fix"))
+case("not HEAD: when the pushed branch is not among the local branches at the "
+     "commit, the first is named",
+     lines[2] == "The checked commit %s is branch aaa-original, not the one checked "
+                 "out here: first run git switch aaa-original, because every step "
+                 "below acts on HEAD." % SHORT_HEAD)
+
+status, lines = run_elsewhere(local_branches_at=(0, ""))
+case("not HEAD: no local branch at the commit: switch --detach to it, never HEAD",
+     lines[2] == "No local branch is at the checked commit %s, and it is not the one "
+                 "checked out here: first run git switch --detach %s, because every "
+                 "step below acts on HEAD." % (SHORT_HEAD, SHORT_HEAD))
+
+for exit_status in (128, -9):
+    status, lines = run_elsewhere(local_branches_at=(exit_status, ""))
+    case("not HEAD: git for-each-ref exiting %d says where HEAD must be" % exit_status,
+         lines[2] == "The checked commit %s is not the one checked out here, and git "
+                     "could not list the local branches at it; run every step below "
+                     "where HEAD is %s, such as after git switch --detach %s."
+                     % (SHORT_HEAD, SHORT_HEAD, SHORT_HEAD))
+
+log = []
+status, lines = run_branch(fake_runner(merge_tree_status=1, log=log), branch="topic")
+case("HEAD is the checked commit: no switch line, and no local-branch lookup",
+     lines[1:] == rebase_lines()
+     and not any("--points-at" in c for c in log))
 
 
 # --- the original defect, pinned so it cannot come back ----------------------

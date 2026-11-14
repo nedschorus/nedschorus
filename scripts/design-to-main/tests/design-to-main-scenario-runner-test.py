@@ -190,7 +190,7 @@ class AScenarioTheMachineCallsAMachineError(unittest.TestCase):
 class TwoCoverageTypesInEitherSpellingPlayAsTheMachineReadsThem(unittest.TestCase):
     """Review 2026-09-16 by mac-claude on PR #407, the blocking finding:
     `coverage-type: script, prompt`, section 2's comma form, is split as
-    the machine splits state-exit.json (coverage_types_from_json_field),
+    the machine splits design-to-main-state-exit-verdict-and-destination.json (coverage_types_from_json_field),
     so an implementation claiming two coverage-types is the machine error
     in this spelling as in the flow list `[script, prompt]`."""
 

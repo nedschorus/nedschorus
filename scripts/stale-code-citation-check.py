@@ -22,9 +22,9 @@ git_machine_readable_output = importlib.util.module_from_spec(_git_machine_reada
 _git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
     REPOSITORY_ROOT / "nc-systems" / "general-tools"
-    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+    / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 
@@ -152,8 +152,9 @@ def line_number_citations(document: pathlib.Path, repository_root: pathlib.Path,
         for column, found, word in marks:
             suffixed = lint.LINE_SUFFIXED_PATH.match(word)
             if suffixed:
-                cited = int(suffixed.group("line"))
-                yield number, found, cited, cited, word
+                first = int(suffixed.group("line"))
+                last = int(suffixed.group("last_line") or first)
+                yield number, found, first, last, word
         for match in LINE_NUMBER_PHRASE.finditer(line):
             earlier = [found for column, found, word in marks if column < match.start()]
             if not earlier:
@@ -313,8 +314,7 @@ def findings_for_document(document: pathlib.Path, repository_root: pathlib.Path,
             return [], 0
         return [(stamp_line,
                  f"{DESIGN_AS_OF_NAME} is {stamp!r}, which is not a date: "
-                 f"write a day the calendar has, as YYYY-MM-DD, so a cited "
-                 f"file's history can be compared against it")], 0
+                 f"write a day the calendar has, as YYYY-MM-DD")], 0
 
     pinned = pinned_line_ranges(text, repository_root, lint)
     findings = []
@@ -362,8 +362,7 @@ def git_failure_next_steps(argv) -> str:
              + shlex.join(["python3", str(pathlib.Path(__file__).resolve()),
                            *(sys.argv[1:] if argv is None else argv)]))
     return next_step_lines.git_failure_next_step_lines(
-        rerun, PROGRAM, text_the_failure_line_contains="could not check, because a git command failed",
-        include_the_misspelt_branch_commit_or_path_line=True)
+        rerun, PROGRAM, text_the_failure_line_contains="could not check, because a git command failed")
 
 
 def main(argv=None) -> int:

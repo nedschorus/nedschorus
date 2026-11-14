@@ -57,7 +57,7 @@ _shipper_spec = importlib.util.spec_from_file_location(
 record_shipper = importlib.util.module_from_spec(_shipper_spec)
 _shipper_spec.loader.exec_module(record_shipper)
 
-daily = program.daily_full_test_run_of_main
+scheduled_run = program.scheduled_full_test_run_of_main
 
 failures = []
 
@@ -137,13 +137,13 @@ calls.append({
 })
 calls_file.write_text(json.dumps(calls))
 if exit_code == 3:
-    print("run-all-test-suites: waiting up to 3600 s for /a/lock", file=sys.stderr)
-    print("run-all-test-suites: not run — waited 3600 s for /a/lock, the lock that keeps "
+    print("scripts/run-all-test-suites.py: waiting up to 3600 s for /a/lock", file=sys.stderr)
+    print("scripts/run-all-test-suites.py: not run — waited 3600 s for /a/lock, the lock that keeps "
           "test runs on one machine apart, and it was still held by pid 1, checkout "
           "/a/checkout, started 2026-10-01T03:29:00Z.", file=sys.stderr)
     sys.exit(3)
 if exit_code == 2:
-    print("run-all-test-suites: not run — git lists no *-test.py file in " + str(checkout)
+    print("scripts/run-all-test-suites.py: not run — git lists no *-test.py file in " + str(checkout)
           + ".\nPass --checkout a checkout that has its suites committed or added.",
           file=sys.stderr)
     sys.exit(2)
@@ -158,7 +158,7 @@ log_dir.mkdir(parents=True, exist_ok=True)
 (log_dir / ("log-of-call-%d.log" % len(calls))).write_text("a suite's output\n")
 for line in behaviour.get("lines_printed_before_the_first_line", []):
     print(line)
-print("run-all-test-suites: %s at %s (%s); 3 suites listed by "
+print("scripts/run-all-test-suites.py: %s at %s (%s); 3 suites listed by "
       "git; 2 selected by inputs changed since %s; Python 3.14.4 (%s); -j 4; logs in %s"
       % (checkout,
          commit[:behaviour.get("characters_of_the_commit_named_in_the_first_line", 40)],
@@ -420,9 +420,9 @@ class Fixture:
         fake_ssh = self.fake_ssh_directory(scratch, ssh_body)
         clock = [0.0]
 
-        saved_bound = daily.DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS
+        saved_bound = scheduled_run.SCHEDULED_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS
         if lock_wait_bound_seconds is not None:
-            daily.DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = lock_wait_bound_seconds
+            scheduled_run.SCHEDULED_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = lock_wait_bound_seconds
         saved_gethostname = socket.gethostname
         socket.gethostname = lambda: hostname
         saved_getpid = os.getpid
@@ -450,7 +450,7 @@ class Fixture:
             os.environ.pop(STAND_IN_RUNNER_BEHAVIOUR_FILE_VARIABLE, None)
             os.getpid = saved_getpid
             socket.gethostname = saved_gethostname
-            daily.DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = saved_bound
+            scheduled_run.SCHEDULED_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = saved_bound
         ssh_calls_file = scratch / "ssh-calls"
         ssh_calls = (ssh_calls_file.read_text(encoding="utf-8").splitlines()
                      if ssh_calls_file.exists() else [])
@@ -491,7 +491,7 @@ class Fixture:
         return records[-1] if records else None
 
     def runner_first_line(self, since=None) -> str:
-        return (f"run-all-test-suites: {self.checkout} at {self.head} (tracked files match "
+        return (f"scripts/run-all-test-suites.py: {self.checkout} at {self.head} (tracked files match "
                 f"that commit); 3 suites listed by git; 2 selected by inputs changed since "
                 f"{(since or self.merge_base)[:12]}; Python 3.14.4 ({sys.executable}); "
                 f"-j 4; logs in {self.logs()}")
@@ -640,6 +640,31 @@ def run_cases_on_ned_box(workspace: Path):
             raised = True
         check(f"pull_request_head_test_run_test_log_split_into_records refuses a test log that is not whole "
               f"records: {text[-40:]!r}", raised)
+    # CPython shares one int object for each value up to 256, so only a longer log tells
+    # the loop's `at < len(lines)` from an identity test.
+    passing_record_line_count = record_of_the_passing_run.count("\n")
+    copies_past_256_lines = 256 // passing_record_line_count + 1
+    check("pull_request_head_test_run_test_log_split_into_records reads a test log of more than "
+          "256 lines to its end",
+          len(program.pull_request_head_test_run_test_log_split_into_records(
+              record_of_the_passing_run * copies_past_256_lines)) == copies_past_256_lines)
+    long_last_line = "y" * 250
+    not_ending_with_exit_code_record = record_of_the_passing_run.rsplit("\n", 2)[0] + "\n" + long_last_line + "\n"
+    for second_record, expected_parts in (
+            (zero_line_record, [f"line {passing_record_line_count + 1} says it has 0 lines"]),
+            (not_ending_with_exit_code_record,
+             [f"line {passing_record_line_count + 1} does not end",
+              f"line {2 * passing_record_line_count} is {long_last_line[:200]!r}"])):
+        try:
+            program.pull_request_head_test_run_test_log_split_into_records(
+                record_of_the_passing_run + second_record)
+            message = ""
+        except program.PullRequestHeadTestRunTestLogNotWholeRecordsError as error:
+            message = str(error)
+        check(f"a refusal of a test log's second record names the record's first line and, for a "
+              f"record that does not end with its exit code line, its last line's number and first "
+              f"200 characters: {expected_parts}",
+              all(part in message for part in expected_parts), message)
 
     # --- The two ways a later run used to replace an earlier result ---------------
     # A run told to select from the head itself selects no suite and passes.
@@ -794,8 +819,8 @@ def run_cases_on_ned_box(workspace: Path):
     check("the record says the lock was not released within the bound, with the runner's "
           "refusal, and holds no runner output",
           any(line.startswith("not run — the machine's lock was not released within 6 s: "
-                              "run-all-test-suites waited 0 s for it and exited 3; its "
-                              "refusal: run-all-test-suites: not run — waited 3600 s for "
+                              "scripts/run-all-test-suites.py waited 0 s for it and exited 3; its "
+                              "refusal: scripts/run-all-test-suites.py: not run — waited 3600 s for "
                               "/a/lock")
               for line in record_lines)
           and "runner exit code: 3" in record_lines
@@ -809,10 +834,10 @@ def run_cases_on_ned_box(workspace: Path):
           and result.stderr.endswith(
               "\nRun this again after the run holding that lock has finished.\n")
           and result.stdout == citation_line, repr(result))
-    check("the bound is the daily run's: an hour",
-          daily.DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS == 3600)
+    check("the bound is the scheduled run's: an hour",
+          scheduled_run.SCHEDULED_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS == 3600)
 
-    # The daily run's function starts the runner without passing it any descriptor.
+    # The scheduled run's function starts the runner without passing it any descriptor.
     runs_of_the_runner = []
     subprocess_run = subprocess.run
 
@@ -837,7 +862,7 @@ def run_cases_on_ned_box(workspace: Path):
     finally:
         subprocess.run = subprocess_run
         subprocess.Popen = subprocess_popen
-    check("the daily run's function starts the runner with no descriptor to hold, since "
+    check("the scheduled run's function starts the runner with no descriptor to hold, since "
           "this program takes no lock",
           result.code == 0 and len(result.runner_calls) == 1 and len(runs_of_the_runner) == 1
           and tuple(runs_of_the_runner[0].get("pass_fds", ())) == (),
@@ -1012,7 +1037,7 @@ def run_cases_on_ned_box(workspace: Path):
           result.code == 2 and "runner exit code: 2" in record_lines
           and "the runner's output, 0 lines:" in record_lines
           and "the runner printed no SUMMARY: line; its stderr:" in record_lines
-          and any(line.startswith("  run-all-test-suites: not run — git lists no")
+          and any(line.startswith("  scripts/run-all-test-suites.py: not run — git lists no")
                   for line in record_lines)
           and result.stdout == citation_line, f"{result!r}\n{record_lines!r}")
     check("the record of a runner that exits 2 closes with this program's own exit code, "
@@ -1024,7 +1049,7 @@ def run_cases_on_ned_box(workspace: Path):
     check("a runner that exits 0 with no SUMMARY line gave no verdict: the record says so "
           "and the program exits 4",
           result.code == 4 and "runner exit code: 0" in record_lines
-          and "run-all-test-suites exited 0 and printed no SUMMARY: line, which is no "
+          and "scripts/run-all-test-suites.py exited 0 and printed no SUMMARY: line, which is no "
               "verdict" in record_lines, f"{result!r}\n{record_lines!r}")
     check("the record of a runner that exits 0 with no SUMMARY line, which holds the "
           "runner's exit code 0, closes with this program's own exit code, 4",
@@ -1036,7 +1061,7 @@ def run_cases_on_ned_box(workspace: Path):
     check("a runner killed by a signal gave no verdict either: the record names the "
           "signal and the program exits 4",
           result.code == 4 and "runner exit code: -9" in record_lines
-          and "run-all-test-suites was killed by SIGKILL" in record_lines
+          and "scripts/run-all-test-suites.py was killed by SIGKILL" in record_lines
           and record_lines[-1:] == ["pull-request-head-test-run exit code: 4"],
           f"{result!r}\n{record_lines!r}")
     result = fixture.run(stand_in_runner_behaviour={
@@ -1048,7 +1073,7 @@ def run_cases_on_ned_box(workspace: Path):
           result.code == 4 and len(result.runner_calls) == 1
           and PASSING_SUMMARY_LINE in record_lines
           and "runner exit code: -15" in record_lines
-          and "run-all-test-suites was killed by SIGTERM" in record_lines
+          and "scripts/run-all-test-suites.py was killed by SIGTERM" in record_lines
           and record_lines[-1:] == ["pull-request-head-test-run exit code: 4"],
           f"{result!r}\n{record_lines!r}")
 
@@ -1067,12 +1092,12 @@ def run_cases_on_ned_box(workspace: Path):
             command, 0, stdout=f"{fixture.runner_first_line()}\n{PASSING_SUMMARY_LINE}\n",
             stderr=""), 0, False)
 
-    saved_function = daily.run_test_suite_runner_waiting_for_the_machine_lock
-    daily.run_test_suite_runner_waiting_for_the_machine_lock = runner_that_is_not_started
+    saved_function = scheduled_run.run_test_suite_runner_waiting_for_the_machine_lock
+    scheduled_run.run_test_suite_runner_waiting_for_the_machine_lock = runner_that_is_not_started
     try:
         result = fixture.run(runner_program=None)
     finally:
-        daily.run_test_suite_runner_waiting_for_the_machine_lock = saved_function
+        scheduled_run.run_test_suite_runner_waiting_for_the_machine_lock = saved_function
     record_lines = (fixture.record("ned-box") or "").splitlines()
     runner_beside_the_program = SCRIPT_PATH.with_name("run-all-test-suites.py")
     check("with no --test-suite-runner-program the runner is the "
@@ -1087,18 +1112,18 @@ def run_cases_on_ned_box(workspace: Path):
                   for line in record_lines), f"{commands_run!r}\n{result!r}")
 
     def runner_whose_output_could_not_be_copied(command, run_from, monotonic, stream_to=None):
-        raise daily.RunnerOutputCopyFailed(
+        raise scheduled_run.RunnerOutputCopyFailed(
             "OSError: [Errno 32] Broken pipe",
             subprocess.CompletedProcess(
                 command, 0, stdout=f"{fixture.runner_first_line()}\n{PASSING_SUMMARY_LINE}\n",
                 stderr=""))
 
-    daily.run_test_suite_runner_waiting_for_the_machine_lock = (
+    scheduled_run.run_test_suite_runner_waiting_for_the_machine_lock = (
         runner_whose_output_could_not_be_copied)
     try:
         result = fixture.run(runner_program=None)
     finally:
-        daily.run_test_suite_runner_waiting_for_the_machine_lock = saved_function
+        scheduled_run.run_test_suite_runner_waiting_for_the_machine_lock = saved_function
     record_lines = (fixture.record("ned-box") or "").splitlines()
     check("when writing the runner's output to stderr fails, the run gives no verdict "
           "even though the runner passed: exit 4, and the record says the copy failed and "
@@ -1871,7 +1896,7 @@ def run_cases_as_a_program(workspace: Path):
     copies = scratch / "copies" / "scripts"
     copies.mkdir(parents=True)
     shutil.copy(SCRIPT_PATH, copies / SCRIPT_PATH.name)
-    (copies / "daily-full-test-run-of-main.py").write_text(
+    (copies / "scheduled-full-test-run-of-main.py").write_text(
         'raise RuntimeError("a module that does not load")\n', encoding="utf-8")
     not_loaded = subprocess.run(
         [sys.executable, str(copies / SCRIPT_PATH.name), *fixture.arguments()],

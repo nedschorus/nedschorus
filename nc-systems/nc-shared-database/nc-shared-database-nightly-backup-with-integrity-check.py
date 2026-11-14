@@ -18,14 +18,14 @@ The copy is made with SQLite's online backup, never a plain file copy, which
 can catch the file mid-write, into nc-shared-database-<UTC time>.sqlite3, as
 a single file the Mac's nightly job can copy. The copy is checked with
 PRAGMA integrity_check:
-  - when the check passes, the copy is kept, the 14 newest copies are kept and
-    older ones deleted, and the copy's own highest sequence number and generation
-    ID are written into the database's newest_backup table, which every answer
-    of the service gives, so the machines delete sent rows the copy holds;
-  - when the check fails, the older copies stay as they are, newest_backup is
-    not changed, the copy is renamed to end in .failed-integrity-check, which
-    the page the sending job writes names, and the program prints the check's
-    output and exits 1.
+  - when the check passes, the copy is kept, and the 14 newest copies are kept
+    and older ones deleted;
+  - when the check fails, the older copies stay as they are, the copy is
+    renamed to end in .failed-integrity-check, and the program prints the
+    check's output, writes the same text as a user-alert through
+    nc-systems/general-tools/user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py,
+    because cron appends this program's output to a log no one reads, and
+    exits 1.
 
 Exit codes: 0 a copy was made and passed its check; 1 the copy failed its check;
 any other failure, such as a database that cannot be opened, ends with Python's
@@ -46,11 +46,25 @@ FAILED_CHECK_SUFFIX = ".failed-integrity-check"
 EXIT_COPY_KEPT = 0
 EXIT_COPY_FAILED_ITS_CHECK = 1
 
-_service_spec = importlib.util.spec_from_file_location(
-    "nc_shared_database_service",
-    Path(__file__).resolve().with_name("nc-shared-database-service.py"))
-service = importlib.util.module_from_spec(_service_spec)
-_service_spec.loader.exec_module(service)
+
+def _load(name, path):
+    specification = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+service = _load("nc_shared_database_service",
+                Path(__file__).resolve().with_name("nc-shared-database-service.py"))
+user_alerts = _load(
+    "user_alerts_pending_and_claimed_files_write_claim_release_and_delete_common",
+    Path(__file__).resolve().parents[1] / "general-tools"
+    / "user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py")
+
+BACKUP_COPY_FAILED_INTEGRITY_CHECK_USER_ALERT_TITLE = "The nightly backup copy of the nc-shared-database failed its integrity check"
+BACKUP_COPY_FAILED_INTEGRITY_CHECK_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO = (
+    "An agent on ned-box can follow the 'What to do' steps in the alert text. If the database itself "
+    "fails its check, only the user can decide on a restore.")
 
 
 def integrity_check(connection):
@@ -79,50 +93,44 @@ def main(argv=None):
         passed = check == ["ok"]
         if passed:
             highest_sequence = copy.execute("SELECT max(sequence) FROM event").fetchone()[0]
-            generation = copy.execute(
-                "SELECT generation_id FROM database_generation").fetchone()[0]
     finally:
         copy.close()
+        source.close()
 
     if not passed:
         failed_path = copy_path.with_name(copy_path.name + FAILED_CHECK_SUFFIX)
         partial_path.rename(failed_path)
-        source.close()
         # Double quotes only, so the same command also works inside ssh's single quotes.
         check_command = (f'python3 -c "import sqlite3, sys; print(sqlite3.connect(sys.argv[1])'
                          f'.execute(sys.argv[2]).fetchall())" "{arguments.database}" '
                          f'"PRAGMA integrity_check"')
-        print(f"{PROGRAM}: FAILED — the copy of {arguments.database} failed PRAGMA "
-              f"integrity_check, so it is not kept as a backup and the older copies in "
-              f"{backup_directory} stay as they are. The failed copy is {failed_path}. "
-              f"The check printed:\n" + "\n".join(check) + "\n"
-              f"What to do: check the database itself. On ned-box run\n"
-              f"  {check_command}\n"
-              f"or from the Mac run\n"
-              f"  ssh nedlern@ned-box '{check_command}'\n"
-              f"If the command itself fails, such as with a Python traceback, it checked "
-              f"nothing: it says nothing about the database, so find why it failed and run "
-              f"it again.\n"
-              f"If it prints [('ok',)], only the copy was damaged: delete the failed copy, on "
-              f"ned-box with `rm {failed_path}` or from the Mac with "
-              f"`ssh nedlern@ned-box 'rm {failed_path}'`; the next night's run makes a new "
-              f"copy.\n"
-              f"If it prints anything else, the database itself is damaged: leave the "
-              f"database and the copies as they are, and tell the user that the agent-seat "
-              f"database {arguments.database} fails its integrity check, quoting both checks' "
-              f"output; a restore is his decision. If you are a subagent, tell the agent that "
-              f"dispatched you instead, with the same quotes.",
-              file=sys.stderr)
+        failure = (f"{PROGRAM}: FAILED — the copy of {arguments.database} failed PRAGMA "
+                   f"integrity_check, so it is not kept as a backup and the older copies in "
+                   f"{backup_directory} stay as they are. The failed copy is {failed_path}. "
+                   f"The check printed:\n" + "\n".join(check) + "\n"
+                   f"What to do: check the database itself. On ned-box run\n"
+                   f"  {check_command}\n"
+                   f"or from the Mac run\n"
+                   f"  ssh nedlern@ned-box '{check_command}'\n"
+                   f"If the command itself fails, such as with a Python traceback, it checked "
+                   f"nothing: it says nothing about the database, so find why it failed and run "
+                   f"it again.\n"
+                   f"If it prints [('ok',)], only the copy was damaged: delete the failed copy, on "
+                   f"ned-box with `rm {failed_path}` or from the Mac with "
+                   f"`ssh nedlern@ned-box 'rm {failed_path}'`; the next night's run makes a new "
+                   f"copy.\n"
+                   f"If it prints anything else, the database itself is damaged: leave the "
+                   f"database and the copies as they are, and tell the user that the agent-seat "
+                   f"database {arguments.database} fails its integrity check, quoting both checks' "
+                   f"output; a restore is his decision. If you are a subagent, tell the agent that "
+                   f"dispatched you instead, with the same quotes.")
+        print(failure, file=sys.stderr)
+        user_alerts.user_alert_write_to_pending(
+            BACKUP_COPY_FAILED_INTEGRITY_CHECK_USER_ALERT_TITLE, failure,
+            BACKUP_COPY_FAILED_INTEGRITY_CHECK_USER_ALERT_ACTION_TEXT_SAYING_WHAT_AN_AGENT_CAN_DO)
         return EXIT_COPY_FAILED_ITS_CHECK
 
     partial_path.rename(copy_path)
-    try:
-        source.execute("BEGIN IMMEDIATE")
-        source.execute("DELETE FROM newest_backup")
-        source.execute("INSERT INTO newest_backup VALUES (?, ?)", (generation, highest_sequence))
-        source.execute("COMMIT")
-    finally:
-        source.close()
     for old_copy in sorted(backup_directory.glob("nc-shared-database-*.sqlite3"))[:-COPIES_KEPT]:
         old_copy.unlink()
     print(f"{PROGRAM}: kept {copy_path}, highest sequence number {highest_sequence}")

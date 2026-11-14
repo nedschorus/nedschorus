@@ -341,6 +341,8 @@ obvious_line = walk_check.CHECK_MINUTES.format(
     item="item 2 of 8", answered="approved", hashtag=walk_check.OBVIOUS_HASHTAG,
     rating=walk_check.CASE_AGAINST_HASHTAG.format(rating="very_strong"), date_and_time="2026-01-15 23:30",
     words=walk_check.USER_WORDS.format(words="ao, and (yes) do it"))
+utc_line = walk_check.CHECK_MINUTES.format(item="item 7 of 8", answered="approved", hashtag="", rating="",
+                                           date_and_time="2026-10-29 07:24Z", words="")
 deferred_line = walk_check.CHECK_DEFERRED_MINUTES.format(item="item 6 of 8", answered="deferred", rating="",
                                                         date_and_time="2026-10-28 18:04", words="")
 cited_line = 'Item 5.2 (GHI 2118, scripts/tool-one.py): "y" (user-ruled 2026-10-16). Approved as shown.'
@@ -348,7 +350,7 @@ timed_line = "Item 17.2, A, approved (user-ruled 2026-10-29T00:16:22Z)."
 with tempfile.TemporaryDirectory() as directory:
     case = Case(directory)
     live = case.minutes("alpha-seat-open-decisions-2026-10-28-minutes.md",
-                        ["# Minutes", answer_line, deferred_line, cited_line, timed_line, obvious_line])
+                        ["# Minutes", answer_line, deferred_line, cited_line, timed_line, obvious_line, utc_line])
     case.minutes("alpha-seat-open-decisions-2026-10-28-minutes.md", [answer_line, cited_line], shipped=True)
     case.minutes("other-walk-minutes.md", [cited_line + " Shipped elsewhere."], shipped=True)
     (case.log_store / "walk" / "superseded").mkdir()
@@ -363,13 +365,15 @@ with tempfile.TemporaryDirectory() as directory:
           and entries[0][1] == "2026-10-29T14:24Z", described(result) + f" {entries}")
     check("a winter answer line is converted at the winter offset, and its hashtag is read",
           ("2026-01-16T07:30Z") in [entry[1] for entry in entries if entry[0] == obvious_line], entries)
+    check("an answer line whose time ends in Z is stored as that UTC time, not converted from local time",
+          [entry[1] for entry in entries if entry[0] == utc_line] == ["2026-10-29T07:24Z"], entries)
     check("a deferred answer line decides nothing and is not stored",
           deferred_line not in [entry[0] for entry in entries], entries)
     check("a user-ruled citation keeps its date, or its UTC time, as written",
           [(entry[0], entry[1]) for entry in entries if entry[0] in (cited_line, timed_line)]
           == [(cited_line, "2026-10-16"), (timed_line, "2026-10-29T00:16:22Z")], entries)
     check("a live walk-minutes file and its shipped copy store each line once; superseded copies are not read",
-          sorted(entry[0] for entry in entries) == sorted([answer_line, cited_line, timed_line, obvious_line,
+          sorted(entry[0] for entry in entries) == sorted([answer_line, cited_line, timed_line, obvious_line, utc_line,
                                                            cited_line + " Shipped elsewhere."]), entries)
     check("a walk-minutes entry is tagged from its line and links to its walk-minutes line",
           case.tags(cited_line) == {"GHI 2118", "scripts/tool-one.py"} and entries[0][4] == "alpha-seat", (case.tags(cited_line), entries))
