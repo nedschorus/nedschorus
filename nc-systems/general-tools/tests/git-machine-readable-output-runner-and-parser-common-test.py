@@ -338,6 +338,9 @@ def failed_command_error_text_cases():
                      "error: unable to create file b: No space left on device\n"
                      "fatal: Could not reset index file to revision 'HEAD'.\n")
           == "error: unable to create file a: No space left on device")
+    check("of a message continued by many lines, as a fetch's per-ref lines, two are kept",
+          error_text("From https://example.invalid/r\nerror: one\n ! a\n ! b\n ! c\n")
+          == "error: one ! a ! b")
     check("a failed command with no `error:` or `fatal:` line, such as one whose hook "
           "failed, gives its last non-empty line",
           error_text("Preparing worktree (detached HEAD 0123456)\n"

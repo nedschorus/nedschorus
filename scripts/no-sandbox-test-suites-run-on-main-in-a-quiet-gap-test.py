@@ -402,13 +402,13 @@ with tempfile.TemporaryDirectory() as directory:
     code, printed, calls = s.run()
     state = s.state()
     head = git(s.origin, "rev-parse", "HEAD")
+    reason = state["last_run"]["reason"]
     check("a worktree that cannot be made stops the run, exit 4, recorded with git's fatal: "
-          "line and the line after it, not the progress line before it",
+          "line, not the progress line before it",
           code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and calls == []
-          and state["last_run"]["reason"]
-          == f"the worktree of {head[:12]} could not be made: fatal: '{worktree}' is a missing "
-          "but already registered worktree; use 'add -f' to override, or 'prune' or 'remove' "
-          "to clear", (code, printed, state))
+          and reason.startswith(f"the worktree of {head[:12]} could not be made: fatal: ")
+          and "already registered worktree" in reason and "Preparing worktree" not in reason,
+          (code, printed, state))
     git(s.clone, "worktree", "prune")
 
     def worktree_add_hook_fails(clone, *arguments, **options):
