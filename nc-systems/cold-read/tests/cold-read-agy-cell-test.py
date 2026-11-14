@@ -558,7 +558,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a fast-tier cell whose agy writes the report exits 0",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
     stamp = provenance_stamp_of(report)
-    check("the fast tier is pinned to gemini-3.8-flash-medium at medium, stamped as runtime agy",
+    check("the fast tier is pinned to gemini-3.8-flash-medium at medium, stamped runtime=agy",
           stamp.startswith("<!-- provenance: runtime=agy model=gemini-3.8-flash-medium "
                            "effort=medium cell=fast-clarify tier=fast "),
           repr(stamp))

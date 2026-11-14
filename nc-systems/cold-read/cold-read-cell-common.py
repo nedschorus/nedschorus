@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared cold-read-cell execution; launchers supply runtime-specific invocations."""
+"""Shared cold-read-cell execution; launchers supply agent-binary-specific invocations."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ TIER_CHOICES = ["deep", "second-strongest-model", "fast"]
 PROMPT_FILE_CELL_LABEL_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
-# EX_USAGE distinguishes launcher refusals from runtime command-line errors (Codex exits 2).
+# EX_USAGE distinguishes launcher refusals from agent-binary command-line errors (Codex exits 2).
 EXIT_BAD_INVOCATION = 64
 
 
@@ -118,7 +118,7 @@ def codex_credential_denying_permission_profile_arguments(
 
 
 class BadInvocationArgumentParser(argparse.ArgumentParser):
-    """Use the launcher refusal code to distinguish argparse errors from runtime errors."""
+    """Use the launcher refusal code to distinguish argparse errors from agent-binary errors."""
 
     def error(self, message):
         self.print_usage(sys.stderr)
@@ -311,7 +311,7 @@ LEADING_TRACING_LOGGER_TIMESTAMP = re.compile(
 
 
 class RecognisedFailureText(typing.NamedTuple):
-    """A runtime failure prefix, cause class, rule for extracting the detail, and an
+    """An agent-binary failure prefix, cause class, rule for extracting the detail, and an
     optional pattern the rest of the line after the prefix must start with."""
 
     cause_class: str
@@ -424,11 +424,11 @@ NEAR_MISS_RECOVERY_PHRASE = "recovered a near-miss report"
 STDOUT_RECOVERY_PHRASE = "recovered the report from the model's chat output"
 
 
-def recover_report_from_runtime_stdout(
-    program: str, report: pathlib.Path, runtime_stdout: str, decide_body,
+def recover_report_from_agent_binary_stdout(
+    program: str, report: pathlib.Path, agent_binary_stdout: str, decide_body,
 ) -> bool:
     """Write and announce a report recovered from stdout under the launcher's rule."""
-    body = decide_body(runtime_stdout or "")
+    body = decide_body(agent_binary_stdout or "")
     if not body:
         return False
     report.parent.mkdir(parents=True, exist_ok=True)
@@ -527,10 +527,10 @@ def verify_report(program: str, report: pathlib.Path) -> None:
 TOKENS_USED_PATTERN = re.compile(r"tokens used[:\s]+([\d,]+)", re.IGNORECASE)
 
 
-def parse_tokens_used(runtime_output: str) -> str:
+def parse_tokens_used(agent_binary_output: str) -> str:
     """Return the last reported token total, or an empty string if none was reported."""
     # The last count is the total; absence must not be recorded as a zero cost.
-    matches = TOKENS_USED_PATTERN.findall(runtime_output or "")
+    matches = TOKENS_USED_PATTERN.findall(agent_binary_output or "")
     return matches[-1].replace(",", "") if matches else ""
 
 
@@ -827,7 +827,7 @@ def run_model_chain(
         # The reviewer program holds the record's being-written lock too, so a cell killed while its
         # reviewer still writes the report leaves the record unshipped until the reviewer exits.
         pass_fds = record_names.record_directory_being_written_lock_pass_fds_for_child_writers(report.parent)
-        # Both streams carry failure diagnostics; stderr also carries the runtime's token total.
+        # Both streams carry failure diagnostics; stderr also carries the agent-binary's token total.
         try:
             if per_model_run_timeout_seconds is None:
                 completed = subprocess.run(
@@ -887,7 +887,7 @@ def run_model_chain(
             recover_near_miss_report(program, report, attempt_started_at)
         # Prefer the report file over stdout, including a file recovered from the wrong directory.
         if not report.is_file() and recover_report_from_stdout is not None:
-            recover_report_from_runtime_stdout(
+            recover_report_from_agent_binary_stdout(
                 program, report, completed.stdout, recover_report_from_stdout)
         try:
             verify_report(program, report)
@@ -1056,7 +1056,7 @@ def move_staged_report(program: str, staged: pathlib.Path, report: pathlib.Path)
 
 def report_stray_writes(program: str, baseline, own_report_path=None) -> None:
     """Report changes outside the requested report without raising."""
-    # Check every runtime and every exit path: a failed reviewer may still have edited the target.
+    # Check every agent-binary and every exit path: a failed reviewer may still have edited the target.
     if baseline is None:
         print(f"{program}: {STRAY_WRITE_CHECK_SKIPPED_PHRASE} — no pre-run "
               f"snapshot of the working tree was taken. This is "
