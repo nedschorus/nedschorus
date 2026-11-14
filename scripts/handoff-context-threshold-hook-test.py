@@ -2674,6 +2674,16 @@ interim_events = read_line(json.dumps(notification_records(INCIDENT_INTERIM_NOTI
 check("the reader marks an interim notification",
       [(event.task_id, event.is_interim) for event in interim_events]
       == [(INCIDENT_SUBAGENT_ID, True)], interim_events)
+# The line holds the notification JSON-escaped; whitespace opening the <result> must still read
+# as whitespace.
+result_opening_with_whitespace_events = read_line(
+    json.dumps(notification_records(NOT_YET_REPORTED_INTERIM_NOTIFICATION.replace(
+        "<result>", "<result>\n\t"))[1]),
+    "here", should_raise_on_unparseable_spawn_or_resume_line=True)
+check("the reader marks interim a notification whose <result> opens with whitespace, then says the "
+      "report has not come",
+      [(event.task_id, event.is_interim) for event in result_opening_with_whitespace_events]
+      == [(INCIDENT_SUBAGENT_ID, True)], result_opening_with_whitespace_events)
 monitor_event_notification = (
     "<task-notification>\n<task-id>bzshcbek2</task-id>\n"
     '<summary>Monitor event: "report files appearing"</summary>\n<event>update</event>\n'
