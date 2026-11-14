@@ -41,6 +41,14 @@ holds, the local main, a tag shadowing a branch name, remote-tracking refs,
 and a git branch -d refusal — the ordinary state of a checkout whose local
 main lags origin/main.
 
+A section covers the branches deleted with git branch -D: a merged and a
+closed pull request's head branch at its refs/pull/<number>/head on the
+scratch origin are deleted and logged; a branch moved after its pull request
+closed, one with an open pull request, one an open task holds and one a
+worktree has checked out are kept; and gh failing, origin unreachable, a task
+list not read in full, an unreadable task lists' directory and a refused
+git branch -D each delete nothing with -D.
+
 A section covers the owner rules under a scratch HOME: an owner that runs, an
 agent-session's `claude` process standing in as a helper process, an
 agent-seat's handoff-supervisor as a helper process running a file named
@@ -165,6 +173,9 @@ def give_stopped_owner(worktree):
 
 ORPHANED_BRANCH_REF_LINE_MARKER = (
     "branch ref(s) with no worktree, nothing beyond origin/main:")
+FORCE_DELETABLE_BRANCH_LINE_START = (
+    "branch ref(s) with no worktree, at the head of a merged or closed pull request, for "
+    "git branch -D: ")
 
 failures = []
 
@@ -711,8 +722,8 @@ with tempfile.TemporaryDirectory() as scratch:
         check("--remove removes a worktree whose stopped owner left commits on a branch with no "
               "pull request, and keeps the branch, which holds commits origin/main lacks",
               not unlanded_wt.exists()
-              and "unlanded-wt: removed, branch unlanded-wt-branch kept, since it holds commits "
-                  "origin/main lacks" in removal.stdout
+              and "unlanded-wt: removed, branch unlanded-wt-branch not deleted with git branch -d, "
+                  "since it holds commits origin/main lacks" in removal.stdout
               and git(checkout, "rev-list", "--count", "origin/main..unlanded-wt-branch").strip() == "1",
               removal.stdout)
         detached_branches = git(checkout, "branch", "--list",
@@ -1101,7 +1112,8 @@ with tempfile.TemporaryDirectory() as scratch:
         check("--remove deletes the merged worktree's branch and keeps the closed one's, which "
               "holds commits origin/main lacks",
               "merged-wt: removed, branch merged-wt-branch deleted" in removal.stdout
-              and "closed-wt: removed, branch closed-wt-branch kept" in removal.stdout
+              and "closed-wt: removed, branch closed-wt-branch not deleted with git branch -d"
+                  in removal.stdout
               and git(checkout, "branch", "--list", "closed-wt-branch").strip() != "",
               removal.stdout)
         check("--remove removes a worktree whose owner runs and whose pull request has merged, "
@@ -3560,6 +3572,168 @@ with tempfile.TemporaryDirectory() as scratch:
           reported.returncode == 0 and "FAILED" not in reported.stdout
           and "restored-1-abc" not in reported.stdout,
           reported.stdout + reported.stderr)
+
+# --- A merged or closed pull request's head branch, deleted with git branch -D ---
+with tempfile.TemporaryDirectory() as scratch:
+    scratch = Path(scratch).resolve()
+    origin = scratch / "origin.git"
+    checkout = scratch / "checkout"
+    git(scratch, "init", "-q", "--bare", "-b", "main", str(origin))
+    checkout.mkdir()
+    git(checkout, "init", "-q", "-b", "main")
+    git(checkout, "config", "user.email", "test@test.invalid")
+    git(checkout, "config", "user.name", "clean-worktrees test")
+    git(checkout, "commit", "-q", "--allow-empty", "-m", "seed")
+    git(checkout, "remote", "add", "origin", str(origin))
+    git(checkout, "push", "-q", "origin", "main")
+    git(checkout, "fetch", "-q", "origin")
+    git(checkout, "branch", "--no-track", "landed-head-branch", "origin/main")
+    pull_requests = []
+
+    def finished_head_branch(branch, number, state):
+        """A branch with a commit origin/main lacks, at the head of pull request number on origin."""
+        git(checkout, "branch", "--no-track", branch, "origin/main")
+        tip = git(checkout, "commit-tree", "-m", branch, "-p", "origin/main",
+                  "origin/main^{tree}").strip()
+        git(checkout, "update-ref", f"refs/heads/{branch}", tip)
+        git(checkout, "push", "-q", "origin", f"{tip}:refs/pull/{number}/head")
+        pull_requests.append({"number": number, "state": state, "headRefName": branch,
+                              "headRefOid": tip, "closedAt": "2026-11-01T00:00:00Z"})
+        return tip
+
+    closed_tip = finished_head_branch("closed-head-branch", 1, "CLOSED")
+    merged_tip = finished_head_branch("merged-head-branch", 2, "MERGED")
+    finished_head_branch("moved-after-close-branch", 3, "CLOSED")
+    moved = git(checkout, "commit-tree", "-m", "after close", "-p", "moved-after-close-branch",
+                "origin/main^{tree}").strip()
+    git(checkout, "update-ref", "refs/heads/moved-after-close-branch", moved)
+    finished_head_branch("open-head-branch", 4, "OPEN")
+    finished_head_branch("task-held-head-branch", 5, "CLOSED")
+    finished_head_branch("checked-out-head-branch", 6, "CLOSED")
+    git(checkout, "worktree", "add", "-q", str(scratch / "checked-out-wt"), "checked-out-head-branch")
+
+    task_lists = scratch / "task-lists"
+    seat_tasks = task_lists / "nedschorus-some-seat-tasks"
+    seat_tasks.mkdir(parents=True)
+    (seat_tasks / "1.json").write_text(json.dumps({
+        "id": "1", "subject": "carry on task-held-head-branch", "status": "pending",
+        "metadata": {"branches": ["task-held-head-branch"]}}), encoding="utf-8")
+    # A completed task holds nothing.
+    (seat_tasks / "2.json").write_text(json.dumps({
+        "id": "2", "subject": "done with closed-head-branch", "status": "completed",
+        "metadata": {"branches": ["closed-head-branch"]}}), encoding="utf-8")
+    removals_log = scratch / "removals-log.txt"
+
+    def run_head_branch_clean(*flags, gh_exit=None, tasks=task_lists):
+        environment = dict(os.environ, FAKE_GH_PULL_REQUESTS=json.dumps(pull_requests),
+                           **{TASK_LISTS_DIRECTORY_OVERRIDE_VARIABLE: str(tasks),
+                              REMOVALS_LOG_OVERRIDE_VARIABLE: str(removals_log)})
+        if gh_exit is not None:
+            environment["FAKE_GH_EXIT_CODE"] = str(gh_exit)
+        return subprocess.run([sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), *flags],
+                              capture_output=True, text=True, check=False, env=environment)
+
+    def local_branches():
+        return set(git(checkout, "for-each-ref", "--format=%(refname:lstrip=2)",
+                       "refs/heads/").split())
+
+    every_head_branch = {"closed-head-branch", "merged-head-branch", "moved-after-close-branch",
+                         "open-head-branch", "task-held-head-branch", "checked-out-head-branch"}
+
+    def force_deletable_named(output):
+        for line in output.splitlines():
+            if line.startswith(FORCE_DELETABLE_BRANCH_LINE_START):
+                named = line[len(FORCE_DELETABLE_BRANCH_LINE_START):].rsplit(" — ", 1)[0]
+                return {name.split(" (")[0] for name in named.split(", ")}
+        return set()
+
+    report = run_head_branch_clean()
+    check("the report names the merged and closed pull requests' head branches at their pull "
+          "request's head, and only those, and deletes nothing",
+          force_deletable_named(report.stdout) == {"closed-head-branch", "merged-head-branch"}
+          and every_head_branch <= local_branches(),
+          report.stdout + report.stderr)
+
+    gh_down = run_head_branch_clean("--remove", gh_exit=1)
+    check("when gh cannot list the pull requests, --remove deletes no branch with -D, says so, "
+          "and still deletes a landed branch with -d",
+          every_head_branch <= local_branches() and "landed-head-branch" not in local_branches()
+          and "branches: none deleted with git branch -D, since GitHub could not be reached: "
+              in gh_down.stdout,
+          gh_down.stdout + gh_down.stderr)
+
+    git(checkout, "remote", "set-url", "origin", str(scratch / "no-such-origin.git"))
+    origin_down = run_head_branch_clean("--remove")
+    git(checkout, "remote", "set-url", "origin", str(origin))
+    check("when git ls-remote cannot reach origin, --remove deletes no branch with -D and says so",
+          every_head_branch <= local_branches()
+          and "branches: none deleted with git branch -D, since GitHub could not be reached: "
+              "`git ls-remote origin 'refs/pull/*/head'` exited " in origin_down.stdout,
+          origin_down.stdout + origin_down.stderr)
+
+    malformed_tasks = scratch / "malformed-task-lists"
+    (malformed_tasks / "nedschorus-other-seat-tasks").mkdir(parents=True)
+    (malformed_tasks / "nedschorus-other-seat-tasks" / "1.json").write_text(json.dumps({
+        "id": "1", "subject": "holds a branch, badly", "status": "pending",
+        "metadata": {"branches": "closed-head-branch"}}), encoding="utf-8")
+    malformed = run_head_branch_clean("--remove", tasks=malformed_tasks)
+    check("when a task list cannot be read in full, --remove deletes no branch with -D and says "
+          "which list",
+          every_head_branch <= local_branches()
+          and "branches: none deleted with git branch -D, since the task list "
+              f"{malformed_tasks / 'nedschorus-other-seat-tasks'} could not be read in full"
+              in malformed.stdout,
+          malformed.stdout + malformed.stderr)
+
+    sealed_tasks = scratch / "sealed-task-lists"
+    sealed_tasks.mkdir()
+    sealed_tasks.chmod(0)
+    try:
+        sealed = run_head_branch_clean("--remove", tasks=sealed_tasks)
+    finally:
+        sealed_tasks.chmod(0o755)
+    check("when the task lists' directory cannot be read, --remove deletes no branch with -D",
+          every_head_branch <= local_branches()
+          and f"since the task lists' directory {sealed_tasks} cannot be read" in sealed.stdout,
+          sealed.stdout + sealed.stderr)
+
+    # A ref lock git branch -D cannot take, as a concurrent git command holds.
+    ref_lock = Path(git(checkout, "rev-parse", "--git-path",
+                        "refs/heads/closed-head-branch.lock").strip())
+    if not ref_lock.is_absolute():
+        ref_lock = checkout / ref_lock
+    ref_lock.write_text("", encoding="utf-8")
+    try:
+        locked = run_head_branch_clean("--remove")
+    finally:
+        ref_lock.unlink()
+    check("a git branch -D that fails is named FAILED, keeps its branch, and exits 1",
+          "closed-head-branch" in local_branches()
+          and "branch closed-head-branch: deletion FAILED — git branch -D exited " in locked.stdout
+          and locked.returncode == 1,
+          f"{locked.returncode}\n{locked.stdout}{locked.stderr}")
+
+    removal = run_head_branch_clean("--remove")
+    check("--remove deletes the closed and the merged pull request's head branch at its pull "
+          "request's head with -D",
+          not {"closed-head-branch", "merged-head-branch"} & local_branches()
+          and f"branch closed-head-branch: deleted with git branch -D, its last commit {closed_tip} "
+              f"being the head of pull request #1 (closed)" in removal.stdout,
+          removal.stdout + removal.stderr)
+    check("--remove keeps a branch with a commit added after its pull request closed",
+          "moved-after-close-branch" in local_branches(), removal.stdout)
+    check("--remove keeps a branch whose pull request is open", "open-head-branch" in local_branches(),
+          removal.stdout)
+    check("--remove keeps a branch an open task names in its `branches` field",
+          "task-held-head-branch" in local_branches(), removal.stdout)
+    check("--remove keeps a branch a worktree has checked out",
+          "checked-out-head-branch" in local_branches(), removal.stdout)
+    check("--remove exits 0 after its -D deletions", removal.returncode == 0,
+          f"{removal.returncode}\n{removal.stdout}{removal.stderr}")
+    logged = text_or_none(removals_log) or ""
+    check("the log of removals names each branch deleted with -D and its last commit",
+          f"branch=closed-head-branch\tcommit={closed_tip}" in logged
+          and f"branch=merged-head-branch\tcommit={merged_tip}" in logged, logged)
 
 check("no run of the suite shipped into the store every run defaults to",
       not any(Path(_ship_store_for_every_run).iterdir()),
