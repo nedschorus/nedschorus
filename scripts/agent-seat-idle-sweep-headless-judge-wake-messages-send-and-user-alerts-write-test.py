@@ -570,6 +570,19 @@ calls = machine.claude_calls()
 check("rule 2 judged unbacked: a second headless agent-session sends the announced-action line",
       len(calls) == 2 and 'You said "I\'m starting the PR 1633 work now." 12 minutes ago and have '
       "not done it. Do it now, or tell the user why not." in calls[1]["prompt"], calls)
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(f"{PROMISE} {ANNOUNCED}"), turn_end()])
+machine.script({"answer": {"sentences": [{"index": 0, "backed": True, "reason": "a test runs"}]}},
+               sent_ok())
+machine.run(0)
+calls = machine.claude_calls()
+prompt = calls[0]["prompt"] if calls else "\n{}"
+judge_facts = json.loads(prompt[prompt.rindex("\n{") + 1:])
+check("rule 2, a promise code finds unbacked and an announced action to judge: the judge gets only "
+      "the announced action, and the message names only the promise",
+      [item["sentence"] for item in judge_facts.get("sentences", [])] == [ANNOUNCED]
+      and len(calls) == 2 and "You promised \"I'll report when PR 927 merges.\"" in calls[1]["prompt"]
+      and ANNOUNCED not in calls[1]["prompt"], calls)
 for case, answer in (("an index missing", {"sentences": []}),
                      ("backed not true or false", {"sentences": [{"index": 0, "backed": "yes",
                                                                   "reason": "r"}]})):
