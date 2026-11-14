@@ -270,7 +270,7 @@ def claude_code_project_settings_read_from_review_tools_worktree_at_main_with_cl
 
     def rewritten(value):
         if isinstance(value, dict):
-            return {key: rewritten(item) for key, item in value.items()}
+            return {rewritten(key): rewritten(item) for key, item in value.items()}
         if isinstance(value, list):
             return [rewritten(item) for item in value]
         if isinstance(value, str):
