@@ -325,6 +325,27 @@ def stand_in_git_cases(parent):
                   raised is not None and raised.returncode == 128, result)
 
 
+def failed_command_error_text_cases():
+    error_text = git_output.git_stderr_error_text_without_progress_lines
+    check("a failed command's error text is its first `error:` or `fatal:` line and the lines "
+          "that continue it, on one line, without the progress lines before it",
+          error_text("Preparing worktree (detached HEAD 0123456)\nfatal: one\n  a remedy\n")
+          == "fatal: one a remedy")
+    check("of a failed command with many `error:` and `fatal:` lines, as a checkout on a full "
+          "disk writes, only the first message is kept",
+          error_text("Preparing worktree (detached HEAD 0123456)\n"
+                     "error: unable to create file a: No space left on device\n"
+                     "error: unable to create file b: No space left on device\n"
+                     "fatal: Could not reset index file to revision 'HEAD'.\n")
+          == "error: unable to create file a: No space left on device")
+    check("a failed command with no `error:` or `fatal:` line, such as one whose hook "
+          "failed, gives its last non-empty line",
+          error_text("Preparing worktree (detached HEAD 0123456)\n"
+                     "HEAD is now at 0123456 start\nthe hook failed\n\n") == "the hook failed")
+    check("a failed command that wrote nothing gives `no detail`",
+          error_text("\n") == "no detail" and error_text("") == "no detail")
+
+
 def second_loaded_copy_cases(parent):
     """A program can reach two copies of the helper through the modules it
     loads; an except naming one copy's GitCommandFailed must catch an error
@@ -380,6 +401,7 @@ def main():
         failure_cases(parent)
         stand_in_git_cases(parent)
         second_loaded_copy_cases(parent)
+    failed_command_error_text_cases()
     python_3_9_cases()
     if failures:
         print(f"{len(failures)} case(s) failed")
