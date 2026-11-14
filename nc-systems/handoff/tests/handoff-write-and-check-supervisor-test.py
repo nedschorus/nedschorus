@@ -1075,6 +1075,26 @@ def run_spawned_subagent_roster_cases(workspace: Path):
           [entry["agent_id"] for entry in writer.still_working_subagent_entries(interim_roster)]
           == [incident_agent],
           str(interim_roster))
+    # The transcript line holds the notification JSON-escaped; whitespace opening the <result>
+    # must still read as whitespace.
+    not_yet_reported_body = (
+        "<task-notification>\n"
+        f"<task-id>{incident_agent}</task-id>\n"
+        "<status>completed</status>\n"
+        "<result>\n\tThis agent has not reported yet: it is waiting on its own background work."
+        "</result>\n"
+        "</task-notification>")
+    not_yet_reported_path = workspace / "roster-not-yet-reported-result-opening-with-whitespace.jsonl"
+    not_yet_reported_path.write_text("\n".join(json.dumps(record) for record in [
+        incident_spawn, *delivered(not_yet_reported_body, "2026-10-27T21:31:58.572Z"),
+    ]) + "\n", encoding="utf-8")
+    not_yet_reported_roster = writer.spawned_subagent_roster(not_yet_reported_path)
+    check("a subagent whose last <result> opens with whitespace, then says it has not reported "
+          "yet, counts as still working",
+          [entry["agent_id"]
+           for entry in writer.still_working_subagent_entries(not_yet_reported_roster)]
+          == [incident_agent],
+          str(not_yet_reported_roster))
     final_last_path = workspace / "roster-final-notification-after-interim.jsonl"
     final_last_path.write_text("\n".join(json.dumps(record) for record in [
         incident_spawn, *delivered(interim_body, "2026-10-27T21:31:58.572Z"),
