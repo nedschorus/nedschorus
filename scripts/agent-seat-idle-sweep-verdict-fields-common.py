@@ -86,6 +86,14 @@ DECISIONS_BY_RULE = {1: (SESSION_LIMIT,), 2: (JUDGE, SEND_UNBACKED), 3: (WAKE_HA
                      4: (NO_WAKE,), 5: (JUDGE,)}
 
 
+def verdict_sentences_grouped_by_code_reading(sentences) -> dict:
+    """Return {code_reading: [sentence, ...]} for the sentences given, each list in their order."""
+    grouped = {}
+    for sentence in sentences:
+        grouped.setdefault(sentence["code_reading"], []).append(sentence)
+    return grouped
+
+
 def verdict_field_problems(verdict) -> list:
     """Return one line for each way the verdict departs from the fields above; [] when none does."""
     if not isinstance(verdict, dict):

@@ -895,10 +895,9 @@ class Sweep:
         """Rule 2: judge what code could not settle, and word one message naming every unbacked
         sentence. Returns ("unbacked", the message), ("failed", None) or ("all backed", None)."""
         checked = self.log.checked_sentences(seat)
-        new_by_code_reading = {}
-        for item in verdict.get(fields.SENTENCES, []):
-            if (item["record_uuid"], item["sentence"]) not in checked:
-                new_by_code_reading.setdefault(item["code_reading"], []).append(item)
+        new_by_code_reading = fields.verdict_sentences_grouped_by_code_reading(
+            item for item in verdict.get(fields.SENTENCES, [])
+            if (item["record_uuid"], item["sentence"]) not in checked)
         judged = new_by_code_reading.get(fields.JUDGE, [])
         unbacked = new_by_code_reading.get(fields.UNBACKED, [])
         new = judged + unbacked

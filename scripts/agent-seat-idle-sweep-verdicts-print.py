@@ -668,9 +668,8 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
         task_directory = paths.tasks_root / f"nedschorus-{seat}-tasks"
         open_waiting_tasks = open_tasks_with_prerequisites_or_blocked_by(task_directory)
         verdict["sentences"] = matched_sentences(facts, since, open_waiting_tasks)
-        sentences_by_code_reading = {}
-        for item in verdict["sentences"]:
-            sentences_by_code_reading.setdefault(item["code_reading"], []).append(item)
+        sentences_by_code_reading = fields.verdict_sentences_grouped_by_code_reading(
+            verdict["sentences"])
         judged = sentences_by_code_reading.get(fields.JUDGE)
         unbacked = sentences_by_code_reading.get(fields.UNBACKED)
         if judged:
