@@ -21,7 +21,7 @@ What it reads, for each agent-seat that has a handoff-supervisor state file
 
 It prints one JSON object per agent-seat, one per line. Each holds what the later slice needs
 without reading anything again: the session id, the transcript path, the last time a token was
-spent and the file that showed it, what is running and since when (a subagent that reported and
+spent and the file that showed it, what is running and since when, Workflow-tool runs included (a subagent that reported and
 stopped while background commands it launched still run gets the time of its report under
 `stopped_at` and a list of those commands under `own_running_background_commands`), the matched sentences with the code's reading of each, the agent-seat's last message, the tool calls a judge of the sentences
 looks through, the rule that applies and its decision.
@@ -559,7 +559,7 @@ def tool_calls_since_start_of_earliest_turn_with_sentence_to_judge(facts, judged
 
 
 def rules_three_to_five(verdict, put_off_at, checker, task_directory):
-    running = verdict["running"]["subagents"] or verdict["running"]["background_commands"]
+    running = any(verdict["running"].values())
     if verdict["handoff_deferred_marker"] and not running:
         return {fields.RULE: 3, fields.DECISION: fields.WAKE_HANDOFF_PUT_OFF,
                 fields.TEXT: HANDOFF_PUT_OFF_TEXT.format(time=iso(put_off_at))}
@@ -637,7 +637,9 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
         verdict["running"] = {
             "subagents": running_subagents,
             "background_commands": [{"id": task_id, "started": iso(facts.launch_times.get(task_id))}
-                                    for task_id in flight.background_task_ids]}
+                                    for task_id in flight.background_task_ids],
+            "workflows": [{"id": task_id, "started": iso(flight.launched_at_by_id.get(task_id))}
+                          for task_id in flight.workflow_ids]}
         marker = deferred_marker_files.handoff_deferred_marker_path(
             paths.handoff_directory, session_id)
         try:

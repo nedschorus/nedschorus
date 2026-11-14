@@ -359,6 +359,33 @@ def monitor_start_record(task_id="b45e25tz2"):
     }
 
 
+def workflow_tool_launch_record(task_id):
+    """The Workflow tool's tool_result, read off session 1dc3a28c of 2026-11-08 and trimmed to the
+    fields the hook reads: a taskId and a taskType, and no agentId or backgroundTaskId."""
+    return {
+        "type": "user", "timestamp": "2026-11-08T18:11:26.279Z",
+        "message": {"role": "user", "content": [{
+            "tool_use_id": "toolu_01GFDoTE3AsqHgrGKoP7JoUB", "type": "tool_result",
+            "content": f"Workflow launched in background. Task ID: {task_id}\nSummary: Grade "
+                       "each cold-read finding"}]},
+        "toolUseResult": {"status": "async_launched", "taskId": task_id,
+                          "taskType": "local_workflow", "workflowName": "grade-cold-read-findings",
+                          "runId": "wf_429969ca-778",
+                          "summary": "Grade each cold-read finding"},
+    }
+
+
+# The same session's completion notification for that run, trimmed.
+WORKFLOW_TOOL_RUN_COMPLETED_NOTIFICATION = (
+    "<task-notification>\n"
+    "<task-id>wn6fctb8y</task-id>\n"
+    "<tool-use-id>toolu_01GFDoTE3AsqHgrGKoP7JoUB</tool-use-id>\n"
+    "<status>completed</status>\n"
+    '<summary>Dynamic workflow "Grade each cold-read finding" completed</summary>\n'
+    "<result>clear 6, uncertain 33, drop 7 (46 rows)</result>\n"
+    "</task-notification>")
+
+
 def task_stop_record(task_id, task_type):
     """A TaskStop tool_result that stopped the task, read off a real transcript and trimmed to
     the fields the hook reads."""
@@ -1096,6 +1123,35 @@ with tempfile.TemporaryDirectory() as workspace:
     check("the subagent-only view still excludes background tasks",
           hook.spawned_subagent_ids_in_flight(str(both_kinds)) == ["a2573a7737ae643dc"],
           str(hook.spawned_subagent_ids_in_flight(str(both_kinds))))
+
+    workflow_launched = transcript_of(workspace, "workflow-tool-run-launched.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        workflow_tool_launch_record("wn6fctb8y"),
+    ])
+    flight = hook.work_in_flight(str(workflow_launched), thirty_minutes, now=grid_at_13_minutes)
+    check("a Workflow-tool run with no notification since its launch is in flight, dated by its "
+          "launch record, and is neither a subagent nor a background task",
+          flight.workflow_ids == ["wn6fctb8y"] and flight.subagent_ids == []
+          and flight.background_task_ids == []
+          and flight.launched_at_by_id["wn6fctb8y"] == datetime.fromisoformat("2026-11-08T18:11:26.279+00:00"),
+          f"workflows={flight.workflow_ids} subagents={flight.subagent_ids} "
+          f"background={flight.background_task_ids} launched={flight.launched_at_by_id}")
+    workflow_completed = transcript_of(workspace, "workflow-tool-run-completed.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        workflow_tool_launch_record("wn6fctb8y"),
+        *notification_records(WORKFLOW_TOOL_RUN_COMPLETED_NOTIFICATION),
+    ])
+    flight = hook.work_in_flight(str(workflow_completed), thirty_minutes, now=grid_at_13_minutes)
+    check("a Workflow-tool run whose completion notification came is not in flight",
+          flight.workflow_ids == [], str(flight.workflow_ids))
+    workflow_stopped = transcript_of(workspace, "workflow-tool-run-stopped.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        workflow_tool_launch_record("wn6fctb8y"),
+        task_stop_record("wn6fctb8y", "local_workflow"),
+    ])
+    flight = hook.work_in_flight(str(workflow_stopped), thirty_minutes, now=grid_at_13_minutes)
+    check("a Workflow-tool run a TaskStop stopped is not in flight",
+          flight.workflow_ids == [], str(flight.workflow_ids))
 
     truncated_launch = Path(workspace) / "truncated-background-launch.jsonl"
     launch_text = json.dumps(background_task_launch_record("b27dndn4c"))
