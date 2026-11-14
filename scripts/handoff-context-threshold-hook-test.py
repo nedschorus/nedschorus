@@ -764,6 +764,18 @@ with tempfile.TemporaryDirectory() as workspace:
     check("a final notification after an interim one takes the subagent out of flight",
           hook.spawned_subagent_ids_in_flight(str(final_after_interim)) == [],
           str(hook.spawned_subagent_ids_in_flight(str(final_after_interim))))
+    in_text_block_list = transcript_of(workspace, "final-notification-in-text-block-list.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record(INCIDENT_SUBAGENT_ID),
+        {"type": "user", "timestamp": "2026-10-27T21:45:00.000Z",
+         "message": {"role": "user", "content": [
+             {"type": "text", "text": "Earlier text."},
+             {"type": "text", "text": FINAL_NOTIFICATION_AFTER_INTERIM}]}},
+    ])
+    check("a final notification held only inside a list of text blocks takes the subagent out of "
+          "flight",
+          hook.spawned_subagent_ids_in_flight(str(in_text_block_list)) == [],
+          str(hook.spawned_subagent_ids_in_flight(str(in_text_block_list))))
 
     # A SendMessage to a finished subagent resumes it, under the same task-id.
     resumed_after_final = transcript_of(workspace, "resumed-after-final-notification.jsonl", [
