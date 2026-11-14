@@ -126,8 +126,15 @@ only that the change alters text the user approved word for word on an earlier
 date, from another weak one, or a fix that matches its design from one that does not;
 the agent judges those.
 
-`--not-asked none` settles an item of none of those kinds, only when its
-`#case_against` line rates the case against none or weak. It needs a touches line,
+`--not-asked none`, `--not-asked weak-cost-only` and
+`--not-asked weak-alters-earlier-approved-text-only` settle an item of none of
+those kinds. `none` is for an item whose `#case_against` line rates the case against none.
+`weak-cost-only` is for one rated weak whose case against names only cost, such
+as code to write or time spent, and `weak-alters-earlier-approved-text-only` for
+one rated weak whose case against names only that the change alters text the
+user approved word for word on an earlier date. Given `none` for an item rated
+weak, or a `weak-` value for one rated none, it writes nothing and names the
+values that fit the rating. It needs a touches line,
 which may be empty for a change that touches no file, such as doing nothing;
 an item without that line comes to the user. It refuses a touched file that is
 not in the checkout. Rated none, it refuses a touched file the instruction-file
@@ -136,11 +143,11 @@ that adds words the user has not approved to such a file is shown to him.
 Rated weak, it refuses only a touched Markdown file, a `.md` file, the guard
 protects, because the user reviews the English agents follow and lets other code,
 hooks included, settle; the agent judges what code cannot, that the case
-against names only cost, or only that the change alters text the user approved
-word for word on an earlier date, and that the change neither widens an agent's
-permissions nor turns off a guard. The guard's own functions decide which files
-it protects. The minutes write the answer as `not asked, case against none`,
-or, rated weak, `not asked, case against weak, cost only`.
+against names nothing besides what its value says, and that the change neither
+widens an agent's permissions nor turns off a guard. The guard's own functions
+decide which files it protects. The minutes write the answer as `not asked,
+case against none`, `not asked, case against weak, cost only` or `not asked,
+case against weak, alters earlier approved text only`.
 
 `--now-over-later-already-decided` is --already-decided with the citation
 supplied by the program, NOW_OVER_LATER_USER_RULING_CITATION, the user-ruling
@@ -479,7 +486,19 @@ NOT_ASKED_WEAK_CASE_AGAINST_THAT_SETTLES = ("weak with a case against that names
                                             "alters text the user approved word for word on an earlier date")
 NOT_ASKED_RATED_NONE = "none"
 NOT_ASKED_RATED_WEAK = "weak"
-NOT_ASKED_WEAK_COST_ONLY_LABEL = "case against weak, cost only"
+# The --not-asked values for an item of no kind rated weak, each naming the only ground its case against names,
+# and the label the minutes and messages give each. Walk-minutes already written hold the cost label, so its
+# text stays as it is.
+NOT_ASKED_WEAK_GROUND_LABELS = {"weak-cost-only": "case against weak, cost only",
+                                "weak-alters-earlier-approved-text-only":
+                                    "case against weak, alters earlier approved text only"}
+NOT_ASKED_NO_KIND_VALUES = (NOT_ASKED_RATED_NONE, *NOT_ASKED_WEAK_GROUND_LABELS)
+NOT_ASKED_COST_GROUND = "cost"
+NOT_ASKED_EARLIER_APPROVAL_GROUND = "the user's earlier word-for-word approval of the text the change alters"
+# What a weak case against may name for the item to settle, as the refusal and the judgement lines say it.
+NOT_ASKED_GROUNDS = {"weak-cost-only": NOT_ASKED_COST_GROUND,
+                     "weak-alters-earlier-approved-text-only": NOT_ASKED_EARLIER_APPROVAL_GROUND}
+NOT_ASKED_EITHER_GROUND = f"one of these two alone: {NOT_ASKED_COST_GROUND}, or {NOT_ASKED_EARLIER_APPROVAL_GROUND}"
 INSTRUCTION_FILE_GUARD_FILE = REPOSITORY_TOP / ".claude" / "guard-hooks" / "instruction-file-guard.py"
 OPTION_NUMBERS = (2, 3)
 EVIDENCE_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*(#not_asked_(?:touches|test|source|unused|rename|glossary_term|hashtag_marker))"
@@ -650,8 +669,8 @@ _PART_VALUE = r"part \d+ " + _one_of(f"{word} {outcome}" for word, outcome in OU
 PLACEHOLDER_VALUES = {
     "answered": _one_of([APPROVED, DISAPPROVED] + [f"{APPROVED} option {number}" for number in OPTION_NUMBERS]
                         + [f"not asked, kind {kind}" for kind in NOT_ASKED_KINDS]
-                        + [f"not asked, case against {NOT_ASKED_RATED_NONE}",
-                           f"not asked, {NOT_ASKED_WEAK_COST_ONLY_LABEL}"]),
+                        + [f"not asked, case against {NOT_ASKED_RATED_NONE}"]
+                        + [f"not asked, {label}" for label in NOT_ASKED_WEAK_GROUND_LABELS.values()]),
     "outcome": _one_of(OUTCOMES.values()),
     "parts": rf"{_PART_VALUE}(?:, {_PART_VALUE})*",
     "ruling": ".+",
@@ -845,10 +864,28 @@ UNREADABLE_COMMENT_CUT = ("- line {line}: the line of `{mark}` holds `<!--`, so 
 UNREADABLE_JOINED = " The mark's line with its text joined onto it: {mark} {text}"
 NOT_ASKED_REFUSED = (
     "nothing written: {item} cannot be settled without asking the user as {label}, because:\n{problems}\n"
-    "If the item does not fit {label}, or the case against names anything besides cost and the user's earlier word-for-word approval of the text, present {item} to the user as "
+    "If the item does not fit {label}, or the case against names anything besides {grounds}, present {item} to the "
+    "user as "
     "usual, then run check with the flag for his answer, as `--help` lists it.\n"
     "If the item fits and only its evidence lines are missing or wrong, fix them in {document} and run "
     "`python3 {program} check --not-asked {kind}` again.")
+NOT_ASKED_WEAK_GROUND_NOT_NAMED = (
+    "nothing written: {item}'s `#case_against` line rates the case against weak, and `--not-asked none` is only for "
+    "an item of no kind rated none; for one rated weak, the `--not-asked` value says which of the two weak cases "
+    "against that settle an item it is, so that the minutes record why the item settled.\n"
+    "This is not a refusal of {item}; run check again with the value that fits:\n"
+    "If the case against names only cost, such as code to write or time spent: "
+    "`python3 {program} check --not-asked weak-cost-only`\n"
+    "If the case against names only that the change alters text the user approved word for word on an earlier "
+    "date: `python3 {program} check --not-asked weak-alters-earlier-approved-text-only`\n"
+    "If the case against names anything else, present {item} to the user as usual, then run check with the flag "
+    "for his answer, as `--help` lists it.\n"
+    "From now on, give one of these two values, not `none`, for an item of no kind rated weak.")
+NOT_ASKED_WEAK_GROUND_FOR_RATED_NONE = (
+    "nothing written: {item}'s `#case_against` line rates the case against none, and `--not-asked {kind}` is only "
+    "for an item of no kind rated weak.\n"
+    "This is not a refusal of {item}; run `python3 {program} check --not-asked none`, the value for an item of no "
+    "kind rated none.")
 NOT_ASKED_RATING_PROBLEM = ("- its `#case_against` line rates the case against {rating}; only an item rated none, "
                             "or " + NOT_ASKED_WEAK_CASE_AGAINST_THAT_SETTLES + ", settles without the user.")
 NOT_ASKED_NO_LINE_PROBLEM = "- it has no `{marker}` line; {why}"
@@ -897,9 +934,8 @@ NOT_ASKED_WHY = {
 NOT_ASKED_JUDGEMENT_LINES = (
     "{item} is recorded as settled without asking the user, {label}; the program checked only what code can.",
     "Before you run close, ask the advisor whether a later ruling or another open item overtakes {item}, and judge "
-    "what the program could not, such as whether the case against names only cost, or "
-    "only that the change alters text the user approved word for word on an earlier date, and whether a fix matches its "
-    "design.",
+    "what the program could not, such as whether the case against names nothing besides {grounds}, and whether a fix "
+    "matches its design.",
     "If the advisor objects, the advisor call fails, or your judgement is against settling, do not run close: "
     "present {item} to the user and run check with the flag for his answer, as `--help` lists it; that writes a new "
     "answer line, and close records only the last one, so this line is then set aside.",
@@ -1514,23 +1550,23 @@ def part_answer(value):
 
 
 def not_asked_kind(value):
-    """Return the --not-asked value: a kind, 1 to 6, or `none` for an item of no kind whose case against is
-    rated none, or weak with a case against that names only cost, or only that the change alters text the user
-    approved word for word on an earlier date."""
-    if value.strip().lower() == NOT_ASKED_RATED_NONE:
-        return NOT_ASKED_RATED_NONE
+    """Return the --not-asked value: a kind, 1 to 6, or, for an item of no kind, `none` when its case against is
+    rated none, or `weak-cost-only` or `weak-alters-earlier-approved-text-only` when it is rated weak."""
+    if value.strip().lower() in NOT_ASKED_NO_KIND_VALUES:
+        return value.strip().lower()
     if value.strip() in {str(kind) for kind in NOT_ASKED_KINDS}:
         return int(value)
     kinds = ", ".join(str(kind) for kind in NOT_ASKED_KINDS)
-    raise argparse.ArgumentTypeError(f"`{value}` is not a kind: give {kinds} or none")
+    raise argparse.ArgumentTypeError(f"`{value}` is not a kind: give {kinds}, or, for an item of no kind, none, "
+                                     "weak-cost-only or weak-alters-earlier-approved-text-only")
 
 
-def not_asked_label(kind, rating=None):
-    """How the minutes and messages name a --not-asked value: `kind 3`, `case against none`, or, for `none` on an
-    item rated weak, `case against weak, cost only`."""
+def not_asked_label(kind):
+    """How the minutes and messages name a --not-asked value: `kind 3`, `case against none`, or the label of a
+    weak case against's ground, such as `case against weak, cost only`."""
     if kind in NOT_ASKED_KINDS:
         return f"kind {kind}"
-    return NOT_ASKED_WEAK_COST_ONLY_LABEL if rating == NOT_ASKED_RATED_WEAK else "case against none"  # pragma: no mutate, rating is a rating word and weak sorts after the others, so `>=` acts as `==`
+    return NOT_ASKED_WEAK_GROUND_LABELS.get(kind, "case against none")
 
 
 def guarded_paths(top, paths):
@@ -1540,7 +1576,7 @@ def guarded_paths(top, paths):
         guard.is_protected, guard.is_reusable_prompt, guard.is_reviewed_document))]
 
 
-def answered_word(arguments, walk_finder, rating=None):
+def answered_word(arguments, walk_finder):
     """The answer as the walk-minutes write it: approved, disapproved, approved option N, or each part's word,
     as in `part 1 approved #approved_obvious, part 2 disapproved`."""
     if arguments.part_answer:
@@ -1554,7 +1590,7 @@ def answered_word(arguments, walk_finder, rating=None):
     if arguments.option is not None:
         return f"{APPROVED} option {arguments.option}"
     if arguments.not_asked is not None:
-        return f"not asked, {not_asked_label(arguments.not_asked, rating)}"
+        return f"not asked, {not_asked_label(arguments.not_asked)}"
     if arguments.already_decided is not None:
         return ALREADY_DECIDED_PREFIX + walk_finder.text_wrapped_as_markdown_code_span(arguments.already_decided)
     if arguments.moved_on is not None:
@@ -1707,7 +1743,7 @@ def not_asked_problems(kind, rating, lines, marks, top, item):
     """Return the lines saying why the item cannot be settled as the kind given, from what code can check."""
     problems = []
     found = evidence(lines)
-    if kind == NOT_ASKED_RATED_NONE:
+    if kind in NOT_ASKED_NO_KIND_VALUES:
         if rating not in NOT_ASKED_RATINGS:
             problems.append(NOT_ASKED_NOT_RATED_NONE_PROBLEM.format(rating=rating))
         # An empty touches line is a change that touches no file; only a missing line is refused.
@@ -1887,10 +1923,17 @@ def check(arguments):
         raise Failure(UNREADABLE_NEW_MARKS.format(item=item, document=document, problems="\n".join(unreadable),
                                                   command=f"python3 {program} check{check_flags(arguments)}"))
     if arguments.not_asked is not None:
+        if arguments.not_asked == NOT_ASKED_RATED_NONE and rating == NOT_ASKED_RATED_WEAK:
+            raise Failure(NOT_ASKED_WEAK_GROUND_NOT_NAMED.format(item=item, program=program))
+        if arguments.not_asked in NOT_ASKED_WEAK_GROUND_LABELS and rating == NOT_ASKED_RATED_NONE:
+            raise Failure(NOT_ASKED_WEAK_GROUND_FOR_RATED_NONE.format(item=item, kind=arguments.not_asked,
+                                                                      program=program))
         problems = not_asked_problems(arguments.not_asked, rating, lines, marks, top, item)
         if problems:
             raise Failure(NOT_ASKED_REFUSED.format(item=item, kind=arguments.not_asked,
-                                                   label=not_asked_label(arguments.not_asked, rating),
+                                                   label=not_asked_label(arguments.not_asked),
+                                                   grounds=NOT_ASKED_GROUNDS.get(arguments.not_asked,
+                                                                                 NOT_ASKED_EITHER_GROUND),
                                                    problems="\n".join(problems),
                                                    document=document, program=Path(__file__).resolve()))
     texts = proposed_texts(marks, marks_the_answer_adds(arguments))
@@ -1926,7 +1969,7 @@ def check(arguments):
     now = datetime.datetime.now().astimezone()
     not_asked = arguments.not_asked is not None or arguments.already_decided is not None
     answer_minutes = CHECK_NOT_ASKED_MINUTES if not_asked else CHECK_MINUTES
-    append_to_minutes(minutes, [answer_minutes.format(item=item, answered=answered_word(arguments, walk_finder, rating),
+    append_to_minutes(minutes, [answer_minutes.format(item=item, answered=answered_word(arguments, walk_finder),
                                                       hashtag=answer_hashtag(arguments), rating=rated,
                                                       words=in_his_words, date_and_time=minutes_time(now))]
                       + [STATUS_LINE_PREFIX + status for status in statuses])
@@ -1934,9 +1977,10 @@ def check(arguments):
     if had_to_be_run:
         output += [line.format(document=document, item=item) for line in CHECK_JUDGEMENT_LINES]
     if arguments.not_asked is not None:
-        output += [line.format(item=item, label=not_asked_label(arguments.not_asked, rating))
+        output += [line.format(item=item, label=not_asked_label(arguments.not_asked),
+                               grounds=NOT_ASKED_GROUNDS.get(arguments.not_asked, NOT_ASKED_EITHER_GROUND))
                    for line in NOT_ASKED_JUDGEMENT_LINES]
-        if arguments.not_asked == NOT_ASKED_RATED_NONE and rating == NOT_ASKED_RATED_WEAK:  # pragma: no mutate, not_asked_kind returns the constant itself and weak sorts after the other rating words, so `is` and `>=` act as `==`
+        if arguments.not_asked in NOT_ASKED_WEAK_GROUND_LABELS:
             output.append(NOT_ASKED_WEAK_JUDGEMENT_LINE.format(item=item))
     output.append(CHECK_CLOSE_LINE.format(program=Path(__file__).resolve(), top=shlex.quote(str(top))))
     log = arguments.counts_log or (log_store_records.parent / COUNTS_LOG_FILE_NAME if log_store_records else None)
@@ -3058,9 +3102,11 @@ def main(argv=None):
     answer.add_argument("--not-asked", type=not_asked_kind, metavar="KIND",
                         help="check: the user is not asked; settle the item as kind KIND, 1 to 6, of the "
                              "walk-me-through skill's list of items that need no answer, if its evidence lines pass, "
-                             "or, as `none`, an item of no kind whose case against is rated none, or weak with "
-                             "a case against that names only cost, or only that the change alters text the user "
-                             "approved word for word on an earlier date")
+                             "or settle an item of no kind: as `none` when its case against is rated none; as "
+                             "`weak-cost-only` when it is rated weak and names only cost; as "
+                             "`weak-alters-earlier-approved-text-only` when it is rated "
+                             "weak and names only that the change alters text the user approved word for word on an "
+                             "earlier date")
     parser.add_argument("--user-reply-as-typed", metavar="REPLY",
                         help="check: the user's reply exactly as he typed it, written into the minutes beside the "
                              "answer; needed for every answer but --not-asked, --already-decided, "
