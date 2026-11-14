@@ -2890,6 +2890,17 @@ def run_cases():
               and [c["arguments"][0] for c in calls(control)] == ["baseline"]
               and len(worktrees_of(repository)) == 1,
               f"rc={completed.returncode} err={completed.stderr} calls={calls(control)}")
+        rebuild_steps = completed.stderr.partition(
+            "ModuleNotFoundError, the venv holding cosmic-ray is broken")[2]
+        check("a cosmic-ray that cannot import its packages: running again is a step of the "
+              "venv rebuild, and any other error is to be fixed before running again",
+              "rebuild it and run again:\n  rm -rf " in rebuild_steps
+              and f"\n  python3 {SCRIPT}" in rebuild_steps.partition(
+                  "\nIf cosmic-ray's last line names any other")[0]
+              and "If cosmic-ray's last line names any other error, running again unchanged fails "
+              "the same way: fix that error, then run only the last of the four commands above."
+              in rebuild_steps,
+              f"err={completed.stderr}")
 
     # ------------------------------------------------------------------
     # A baseline that ran out of time is reported as a timeout, not as
