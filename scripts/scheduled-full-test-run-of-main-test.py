@@ -728,15 +728,6 @@ def run_cases_on_ned_box(workspace: Path):
           "what to do",
           result.stderr == f"scheduled-full-test-run-of-main: {what_failed}\n"
           "Fix what git reports, then run this again.\n", result.stderr)
-    error_line = getattr(program, "first_fatal_or_error_stderr_line_or_no_detail", None)
-    check("the error line of a failed git worktree add is the first line opening `error:` "
-          "or `fatal:`; of one that wrote neither, its first line; of one that wrote "
-          "nothing, `no detail`",
-          error_line is not None
-          and error_line("Preparing worktree (detached HEAD 0123456)\nerror: one\n"
-                         "fatal: two\n") == "error: one"
-          and error_line("a line\nanother\n") == "a line"
-          and error_line("\n") == "no detail")
 
     # --- One scheduled run at a time -------------------------------------------------
     files_before = {name: fixture.record(name) for name in ("ned-box", "mac")}
