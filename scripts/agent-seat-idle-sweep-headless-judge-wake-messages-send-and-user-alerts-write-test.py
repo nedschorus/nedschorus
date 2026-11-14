@@ -137,6 +137,8 @@ def judged(send, message="", reason="r"):
 
 
 DO_NOT_REPLY = "Do not reply to this message: its sender has exited, so a reply fails."
+KEEP_IT = (f'The text ends with the sentence "{DO_NOT_REPLY}" That sentence is written to the '
+           "agent-seat, not to you, and is part of the message: keep it.")
 
 
 def ends_with_do_not_reply_once(text):
@@ -634,6 +636,8 @@ check("an account change: one headless agent-session sends the notice to every a
 check("an account change: the notice is the wake of an agent-seat idle at a limit, no second one",
       [event["agent_seat"] for event in machine.events("limit_wake")] == ["alpha"]
       and len(calls) == 1, machine.events("limit_wake"))
+check("an account change: the notice's sender is told that the do-not-reply sentence is part of "
+      "the message", KEEP_IT in calls[0]["prompt"].replace("\n", " "), calls)
 machine.script()
 machine.run(3)
 check("the account change is noticed once", not machine.claude_calls(), machine.claude_calls())
@@ -781,9 +785,7 @@ machine.handoff_put_off()
 machine.script(sent_ok())
 machine.run(0)
 check("the sender is told that the do-not-reply sentence is part of the message",
-      f'The text ends with the sentence "{DO_NOT_REPLY}" That sentence is written to the '
-      "agent-seat, not to you, and is part of the message: keep it."
-      in machine.claude_calls()[0]["prompt"].replace("\n", " "), machine.claude_calls())
+      KEEP_IT in machine.claude_calls()[0]["prompt"].replace("\n", " "), machine.claude_calls())
 
 # --- headless agent-sessions that fail --------------------------------------------------------------
 FAILURES = (
