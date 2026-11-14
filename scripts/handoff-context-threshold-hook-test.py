@@ -1416,11 +1416,11 @@ with tempfile.TemporaryDirectory() as workspace:
               result.returncode == 2 and len(message_lines) == 2
               and HANDOFF_INSTRUCTION_PATTERN.fullmatch(message_lines[0]) is not None
               and message_lines[1] == (
-                  "The model id claude-something-unreleased has no prefix in "
-                  "CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX, the threshold-hook's context-window "
-                  "table in scripts/handoff-context-threshold-hook.py, so the 35% of its context "
-                  "window this session has used assumes a 200K-token window. Before you run "
-                  "/handoff, tell the user, so the table can be updated."),
+                  "No prefix in CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX, the threshold-hook's "
+                  "context-window table in scripts/handoff-context-threshold-hook.py, matches the "
+                  "model id claude-something-unreleased, so the 35% of its context window this "
+                  "session has used assumes a 200K-token window. Tell the user, so the table can "
+                  "be updated, then run /handoff without waiting for his answer."),
               f"code {result.returncode}, stderr {result.stderr!r}")
 
         # At the 200,000 default, // 999 also gives 200, so only a larger default tells a
@@ -1438,7 +1438,7 @@ with tempfile.TemporaryDirectory() as workspace:
         check("for a model id not in the table, the default window it names is the default in "
               "thousands, whatever the default is",
               code == 2 and "so the 35% of its context window this session has used assumes a "
-                            "1000K window;" in stderr,
+                            "1000K-token window." in stderr,
               f"code {code}, stderr {stderr!r}")
 
         marker_file.unlink(missing_ok=True)
