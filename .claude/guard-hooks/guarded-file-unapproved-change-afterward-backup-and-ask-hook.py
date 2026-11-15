@@ -883,8 +883,8 @@ def entries_after(entries, position):
     when the line is gone, a guess from times can leave out a commit made in its second. A
     position an earlier version of this hook stored is [commit, time] alone; when no entry, or
     more than one, holds that pair, the window is unknown too, so nothing is approved as git's
-    own work. A version origin/main holds, or one the agent's own successful Edit wrote, is
-    still approved without asking."""
+    own work. A version origin/main holds, or one the agent's own successful Edit wrote on an
+    approved version, is still approved without asking."""
     if not position:
         return []
     if len(position) < 4:
