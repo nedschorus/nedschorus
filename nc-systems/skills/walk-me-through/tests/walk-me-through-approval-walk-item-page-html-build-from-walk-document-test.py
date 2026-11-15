@@ -324,6 +324,42 @@ Four.
         "### Item 3.2 of 10", "### Item 3.2 of 9"))
     check("past a numbered item, a sub-step whose M is not item 3's, as an older version's `3.2 of 9`, stays off "
           "item 3's page", result.returncode == 0 and "One." in page and "Two." not in page, page)
+    result, page = built(scratch, "3", document=numbered_item_between_sub_steps.replace(
+        "## Item 3 of 10: the opening sentence\n\n### Item 3.1 of 10", "## Items 3 to 3.1 of 10"))
+    check("when the item shares its heading with its first sub-step, as `Items 3 to 3.1 of 10`, a numbered item "
+          "between it and 3.2 stays off item 3's page, and 3.2 is still on it",
+          result.returncode == 0 and "One." in page and "Two." in page and "Alert." not in page, page)
+    result, page = built(scratch, "3", document=numbered_item_between_sub_steps.replace(
+        "## Item 4 of 10", "### Item 3.3 of 11: the third part\n\nThree.\n\n## Item 4 of 10"))
+    check("past a numbered item, a sub-step right after one taken is taken whatever its M, so `3.3 of 11` right "
+          "after 3.2 of 10 is on item 3's page",
+          result.returncode == 0 and "Two." in page and "Three." in page and "Four." not in page, page)
+    result, page = built(scratch, "3", document=numbered_item_between_sub_steps.replace(
+        "## Item 5 of 11: an alert the walk showed before 3.2", "## Items 6 to 5 of 10: a count that names no item"))
+    check("a count that names no item between sub-steps 3.1 and 3.2 stays off item 3's page, and 3.2 is still on it",
+          result.returncode == 0 and "One." in page and "Two." in page and "Alert." not in page, page)
+    sub_steps_below_later_items = """# A walk
+
+## Item 3 of 9: the opening sentence
+
+Own.
+
+## Item 4 of 9: the next item
+
+Four.
+
+## Item 5 of 9: the item after it
+
+Five.
+
+### Item 3.1 of 9: the first half, reopened below later items
+
+One.
+"""
+    result, page = built(scratch, "3", document=sub_steps_below_later_items)
+    check("with no sub-step right after item 3, its `3.1 of 9` below items 4 and 5 is on its page, and items 4 "
+          "and 5 are not", result.returncode == 0 and "Own." in page and "One." in page and "Four." not in page
+          and "Five." not in page, page)
     openings_out_of_number_order = """# A walk
 
 ## Items 12 to 12.2 of 13: a group
