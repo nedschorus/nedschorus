@@ -257,7 +257,7 @@ def test_a_reply_ending_with_the_closing_line_passes_and_one_without_it_is_sent_
              closing("3 to 1", link=None).replace("Item 3 to 1", "Items 3 to 1"))):
         case.reply(reply)
         check_reminded(case_name, case.run(), "`Item 2 of 9`", "no closing line for `Item 2 of 9` ends the reply",
-                       f"\n[Item 2 of 9, <the point>]({page(2)}) · {LETTERS}")
+                       f"\n[Item 2 of 9, where the poem page lives]({page(2)}) · {LETTERS}")
     case.reply("Nothing here.")
     reason = blocked_reason(case.run()) or ""
     check("the reminder names the walk, its walk-document and its minutes",
@@ -326,7 +326,7 @@ def test_items_waiting_together():
     check_reminded("a reply ending with neither of two waiting items' closing lines is sent back with both",
                    case.run(), "`Item 5 of 9` and `Item 6 of 9`", "no closing line for `Item 5 of 9` ends the reply; "
                    "no closing line for `Item 6 of 9` ends the reply",
-                   f"\n[Item 5 of 9, <the point>]({page(5)}) · {LETTERS}\n[Item 6 of 9, <the point>]({page(6)}) · {LETTERS}")
+                   f"\n[Item 5 of 9, the hook]({page(5)}) · {LETTERS}\n[Item 6 of 9, the reviewer]({page(6)}) · {LETTERS}")
     case.reply("Recorded.\n\n" + closing(5))
     result = case.run()
     check_reminded("a reply ending with one of two waiting items' closing lines is sent back with the other",
@@ -468,7 +468,7 @@ def test_a_closing_line_between_backticks_is_sent_back_and_the_bare_line_passes(
             ("a closing line between backticks below a bare one is sent back", f"{closing(2)}\n`{closing(2)}`")):
         case.reply("Recorded.\n\n" + line)
         check_reminded(case_name, case.run(), problem, "with no backticks around them",
-                       f"\n[Item 2 of 9, <the point>]({page(2)}) · {LETTERS}")
+                       f"\n[Item 2 of 9, where the poem page lives]({page(2)}) · {LETTERS}")
     case.reply(f"Recorded.\n\n`{closing(2)}`\n{closing(2)}")
     check_silent("a bare closing line below one between backticks passes", case.run())
     case.reply("Recorded.\n\n" + closing(2))
@@ -478,7 +478,7 @@ def test_a_closing_line_between_backticks_is_sent_back_and_the_bare_line_passes(
                       pages="#item_page item 2 of 9 publish failed: the Artifact tool timed out\n")
     failed.reply(f"Recorded.\n\n`{closing(2, link=None)}`")
     check_reminded("a closing line without its link between backticks is sent back", failed.run(), problem,
-                   f"\nItem 2 of 9, <the point> · {LETTERS}")
+                   f"\nItem 2 of 9, where the poem page lives · {LETTERS}")
     failed.reply("Recorded.\n\n" + closing(2, link=None))
     check_silent("the same closing line without its link or backticks passes", failed.run())
 
@@ -1099,7 +1099,7 @@ def test_an_item_with_no_page_in_the_walk_minutes_is_sent_back_to_be_published()
                       "titled `Item N of M: poem-page-2026-10-12`",
                       f"add the line `#item_page item N of M <page link>` at the end of {minutes}",
                       "`#item_page item N of M publish failed: <what the Artifact tool said>`",
-                      f"\n[Item 2 of 9, <the point>](<page link>) · {LETTERS}\n",
+                      f"\n[Item 2 of 9, where the poem page lives](<page link>) · {LETTERS}\n",
                       "For an item whose publish failed, write its closing line without the link")
     case = Case()
     case.walk_files(minutes="#next_to_present item 2 of 9.\n\n`#item_page item 2 of 9 " + page(2) + "`\n\n```\n"
@@ -1124,7 +1124,7 @@ def test_the_closing_line_link_must_be_the_item_page_the_walk_minutes_record():
     case.reply(ITEM_2_REPLY + "\n\n" + closing(2, link=old_page))
     check_reminded("a closing line linking to an older page of the item is sent back", case.run(),
                    f"the closing line for `Item 2 of 9` links to {old_page}, but the newest `#item_page` line for it "
-                   f"in the walk-minutes gives {page(2)}", f"\n[Item 2 of 9, <the point>]({page(2)}) · {LETTERS}")
+                   f"in the walk-minutes gives {page(2)}", f"\n[Item 2 of 9, where the poem page lives]({page(2)}) · {LETTERS}")
     case.reply(ITEM_2_REPLY + "\n\n" + closing(2, link="file:///Volumes/nedhome/docs/walk/poem-page.md"))
     check_reminded("a closing line linking to a file instead of the item's page is sent back", case.run(),
                    "links to file:///Volumes/nedhome/docs/walk/poem-page.md")
@@ -1143,7 +1143,7 @@ def test_an_item_whose_publish_failed_ends_with_the_closing_line_without_its_lin
     case.reply(ITEM_2_SHOWN)
     check_reminded("a closing line with a link, for an item whose newest publish failed, is sent back", case.run(),
                    "the closing line for `Item 2 of 9` has a link, but the newest `#item_page` line for it in the "
-                   "walk-minutes records that its publish failed", f"\nItem 2 of 9, <the point> · {LETTERS}")
+                   "walk-minutes records that its publish failed", f"\nItem 2 of 9, where the poem page lives · {LETTERS}")
     minutes.write_text(minutes.read_text() + f"\n#item_page item 2 of 9 {page(2)}\n")
     check_silent("a page recorded after a failed publish is the item's page again", case.run())
     case = Case()
@@ -1192,7 +1192,7 @@ def test_the_closing_line_is_read_token_by_token():
     check_silent("a page link that sorts after the words `publish failed` is still a link", case.run())
     case.reply("Recorded.\n\n" + closing(2, link=None))
     check_reminded("a closing line without its link for such a page is sent back, given the line with the link",
-                   case.run(), "has no link", f"\n[Item 2 of 9, <the point>](wiki/item-2-page) · {LETTERS}")
+                   case.run(), "has no link", f"\n[Item 2 of 9, where the poem page lives](wiki/item-2-page) · {LETTERS}")
     case = Case()
     case.walk_files(minutes="#next_to_present item 2 of 9.")
     other = "https://claude.ai/artifact/SomeOtherPage"

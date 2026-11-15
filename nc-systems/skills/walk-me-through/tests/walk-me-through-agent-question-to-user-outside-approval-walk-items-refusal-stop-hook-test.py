@@ -89,8 +89,8 @@ The page goes in the wiki, next to the glossary. Do you agree that agents look t
 M_AFTER_THE_ADDED_ITEM = "11"
 M_WITH_NO_ITEM_ADDED = "10"
 # Shown before every closing line the refusal gives, so that the agent copies none between backticks.
-NOT_IN_BACKTICKS = ("Write the line or lines below as plain text, with no backticks around them: the user sees "
-                    "text between backticks as code, in which a link cannot be clicked.")
+NOT_IN_BACKTICKS = ("Write the line or lines below as plain text, with no backticks around them, since the user sees "
+                    "text between backticks as code.")
 NO_QUESTION_SENTENCE = ("If the flagged text does not ask the user anything, end the turn with only the waiting item's "
                         f"closing line, printed below. {NOT_IN_BACKTICKS}")
 INTERRUPTION_ITEM = f"""## Item 2.1 of 11: merge-lane-2's question about the GHI
