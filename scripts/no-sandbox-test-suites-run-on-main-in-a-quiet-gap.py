@@ -279,7 +279,7 @@ def remove_worktree(clone, worktree):
         shutil.rmtree(worktree, ignore_errors=True)
     git(clone, "worktree", "prune")
     if worktree.exists():
-        return git_output.git_stderr_error_text_without_progress_lines(removed.stderr)
+        return git_output.git_stderr_first_error_message_else_last_line(removed.stderr)
     return None
 
 
@@ -405,12 +405,12 @@ def run_under_lock(arguments, state_file):
     if fetched.returncode != 0:
         return stopped(state_file, state, None, started,
                        "git fetch origin failed: "
-                       f"{git_output.git_stderr_error_text_without_progress_lines(fetched.stderr)}")
+                       f"{git_output.git_stderr_first_error_message_else_last_line(fetched.stderr)}")
     resolved = git(clone, "rev-parse", "--verify", "refs/remotes/origin/main^{commit}")
     if resolved.returncode != 0:
         return stopped(state_file, state, None, started,
                        "origin/main could not be resolved: "
-                       f"{git_output.git_stderr_error_text_without_progress_lines(resolved.stderr)}")
+                       f"{git_output.git_stderr_first_error_message_else_last_line(resolved.stderr)}")
     commit = resolved.stdout.strip()
     why_due = run_is_due(state, commit, started)
     if why_due is None:
@@ -441,7 +441,7 @@ def run_under_lock(arguments, state_file):
     if added.returncode != 0:
         return stopped(state_file, state, commit, started,
                        f"the worktree of {commit[:12]} could not be made: "
-                       f"{git_output.git_stderr_error_text_without_progress_lines(added.stderr)}",
+                       f"{git_output.git_stderr_first_error_message_else_last_line(added.stderr)}",
                        passing)
     try:
         try:
@@ -564,7 +564,7 @@ def pull_requests_merged_between(clone, older, newer):
                  f"{older}..{newer}")
     if listed.returncode != 0:
         return ["the merged pull requests could not be read: "
-                f"{git_output.git_stderr_error_text_without_progress_lines(listed.stderr)}"]
+                f"{git_output.git_stderr_first_error_message_else_last_line(listed.stderr)}"]
     found = []
     for entry in listed.stdout.split("\n"):
         subject = entry.split("\t", 1)[0]

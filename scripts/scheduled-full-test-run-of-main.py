@@ -280,7 +280,7 @@ def remove_worktree_of_main(clone: Path, worktree: Path):
         give_owner_read_write_and_search_on_every_directory_under(worktree)
         shutil.rmtree(worktree, ignore_errors=True)
     if worktree.exists():
-        return git_output.git_stderr_error_text_without_progress_lines(removed.stderr)
+        return git_output.git_stderr_first_error_message_else_last_line(removed.stderr)
     return None
 
 
@@ -488,7 +488,7 @@ def scheduled_full_test_run_under_lock(arguments, now, monotonic, on_ned_box, ma
     if fetched.returncode != 0:
         steps_failed.append((
             f"not run — git fetch origin failed in {clone}: "
-            f"{git_output.git_stderr_error_text_without_progress_lines(fetched.stderr)}",
+            f"{git_output.git_stderr_first_error_message_else_last_line(fetched.stderr)}",
             "Fix what git reports, then run this again."))
     else:
         resolved = git(clone, "rev-parse", "--verify", "--quiet",
@@ -505,7 +505,7 @@ def scheduled_full_test_run_under_lock(arguments, now, monotonic, on_ned_box, ma
         if added.returncode != 0:
             steps_failed.append((
                 f"not run — git worktree add --detach {worktree} {commit} failed in "
-                f"{clone}: {git_output.git_stderr_error_text_without_progress_lines(added.stderr)}",
+                f"{clone}: {git_output.git_stderr_first_error_message_else_last_line(added.stderr)}",
                 "Fix what git reports, then run this again."))
         else:
             try:

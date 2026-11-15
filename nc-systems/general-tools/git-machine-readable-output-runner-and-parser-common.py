@@ -15,7 +15,7 @@ runs git itself, because telling "not a repository" from other failures needs
 git's message read in one fixed locale; a program that runs git its own way
 reads that message with git_stderr_says_outside_a_repository and
 git_stderr_says_worktree_git_directory_unusable, the one place that knows
-git's words. git_stderr_error_text_without_progress_lines gives, for a
+git's words. git_stderr_first_error_message_else_last_line gives, for a
 program's report, why a git command it ran failed.
 
 Load it by path, under the snake_case form of its file name:
@@ -346,7 +346,7 @@ GIT_ERROR_LINE_PREFIXES = ("fatal:", "error:")
 GIT_ERROR_MESSAGE_CONTINUATION_LINES_KEPT = 2
 
 
-def git_stderr_error_text_without_progress_lines(stderr):
+def git_stderr_first_error_message_else_last_line(stderr):
     """One line saying why a git command failed: its first `fatal:` or `error:`
     message, with up to two lines that continue it, else its last non-empty
     line, else `no detail`.

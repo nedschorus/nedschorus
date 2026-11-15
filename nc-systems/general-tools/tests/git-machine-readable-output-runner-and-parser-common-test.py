@@ -326,7 +326,7 @@ def stand_in_git_cases(parent):
 
 
 def failed_command_error_text_cases():
-    error_text = git_output.git_stderr_error_text_without_progress_lines
+    error_text = git_output.git_stderr_first_error_message_else_last_line
     check("a failed command's error text is its first `error:` or `fatal:` line and the lines "
           "that continue it, on one line, without the progress lines before it",
           error_text("Preparing worktree (detached HEAD 0123456)\nfatal: one\n  a remedy\n")
