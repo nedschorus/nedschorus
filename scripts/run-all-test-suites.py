@@ -39,10 +39,11 @@ Usage:
                 run only the suites whose recorded inputs differ between
                 COMMIT and the checkout's files; see RECORDED INPUTS below.
                 Without it every suite runs. Without --only-suites-named,
-                and where suites run in nc-test-sandboxes, it leaves out
-                each suite in SUITES_RUN_WITHOUT_ANY_SANDBOX whose own file
-                and recorded reads are all unchanged; see SUITES LEFT OUT
-                OF A SELECTIVE RUN below
+                and where suites run in nc-test-sandboxes, it keeps a
+                suite in SUITES_RUN_WITHOUT_ANY_SANDBOX only when the
+                change edits a file that suite reads, and leaves out every
+                other such suite it selects; see SUITES LEFT OUT OF A
+                SELECTIVE RUN below
   --recorded-inputs-directory
                 where each suite's recorded inputs are kept; default
                 ~/.cache/nedschorus-test-suite-recorded-inputs
