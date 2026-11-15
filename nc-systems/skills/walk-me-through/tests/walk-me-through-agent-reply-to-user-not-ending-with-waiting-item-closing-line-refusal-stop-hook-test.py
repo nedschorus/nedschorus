@@ -425,7 +425,7 @@ def test_a_no_decision_line_without_its_link_names_a_sub_step_whose_publish_fail
     check_silent("a no-decision line without its link passes for a sub-step whose newest publish failed", case.run())
     case.reply("Recorded.\n\n" + no_decision_line("https://claude.ai/artifact/p41"))
     check_reminded("a no-decision line with a link, for a sub-step whose newest publish failed, is sent back",
-                   case.run(), "`Item 4.1 of 9`", f"end your reply instead with this line, without a link and without backticks around it:\n{bare}")
+                   case.run(), "`Item 4.1 of 9`", f"end your reply instead with this line, without a link, as plain text with no backticks around it:\n{bare}")
     published = Case()
     published.walk_files(minutes="#item_page item 4.1 of 9 https://claude.ai/artifact/p41\n"
                                  "#next_to_present item 4.1 of 9.")
@@ -467,7 +467,7 @@ def test_a_closing_line_between_backticks_is_sent_back_and_the_bare_line_passes(
             ("a closing line between double backticks is sent back", f"`` {closing(2)} ``"),
             ("a closing line between backticks below a bare one is sent back", f"{closing(2)}\n`{closing(2)}`")):
         case.reply("Recorded.\n\n" + line)
-        check_reminded(case_name, case.run(), problem, "without backticks around it",
+        check_reminded(case_name, case.run(), problem, "with no backticks around them",
                        f"\n[Item 2 of 9, <the point>]({page(2)}) · {LETTERS}")
     case.reply(f"Recorded.\n\n`{closing(2)}`\n{closing(2)}")
     check_silent("a bare closing line below one between backticks passes", case.run())
