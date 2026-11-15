@@ -144,9 +144,10 @@ by hand.
 
 THE EDIT. The template's placeholders {CHANGED_SENTENCE_IDS} and
 {REMOVED_TEXT} tell the reviewer what the edit changed, so it can label each
-finding #edit or #kept_text. The edit is the cold-read-target against its own
-path at `git merge-base HEAD origin/main` in the checkout that holds it,
-compared unit by unit: a unit is what one sentence id covers, with its
+finding #edit or #kept_text. The edit is the cold-read-target's file as it
+is on disk, against the file at the same path in the commit
+`git merge-base HEAD origin/main` of the checkout that holds it, compared
+unit by unit: a unit is what one sentence id covers, with its
 heading hashes, list marker or table pipe, the lines a wrapped sentence
 continues on, and any following line with no id of its own, such as a table's
 separator row. Prose units are compared with whitespace collapsed, code
@@ -156,7 +157,7 @@ placeholders become `none`, and the reviewer gives no labels, for a file git
 does not track, such as a walk draft; for a document absent at that commit,
 such as one new or renamed on its branch; and for one identical to that
 version. When a git command fails, the read stops before it creates a record
-or launches a cell, with FAILED on stdout: telling the reviewer that nothing
+or launches a cell, with FAILED on stdout and exit code 1: telling the reviewer that nothing
 changed would be false.
 
 AN EDIT DURING THE READ IS NAMED, NOT HIDDEN. The cold-read-target's sha256
@@ -974,6 +975,9 @@ def sentence_id_markup(text: str, units: dict = None):
     continues_previous = False
     unit_pieces = {}
     code_units = set()
+    # Text with no id before the first unit, such as a frontmatter list that
+    # opens the document, belongs to that first unit.
+    pieces_before_first_unit = []
 
     def take(sentence: str, unit_text: str = None, code: bool = False):
         """The id marker for this sentence, or None when there is nothing to
@@ -987,7 +991,9 @@ def sentence_id_markup(text: str, units: dict = None):
         counter += 1
         name = f"s{counter}"
         sentences[name] = sentence.strip()
-        unit_pieces[name] = [unit_text if unit_text is not None else sentence]
+        unit_pieces[name] = [*pieces_before_first_unit,
+                             unit_text if unit_text is not None else sentence]
+        pieces_before_first_unit.clear()
         if code:
             code_units.add(name)
         return f"[{name}]"
@@ -995,6 +1001,8 @@ def sentence_id_markup(text: str, units: dict = None):
     def join_last_unit(piece: str):
         if unit_pieces:
             unit_pieces[next(reversed(unit_pieces))].append(piece)
+        else:
+            pieces_before_first_unit.append(piece)
 
     def mark_prose(content: str, already_open: bool, prefix: str = "") -> str:
         """Insert an id before each sentence of one line's content."""
@@ -1031,6 +1039,10 @@ def sentence_id_markup(text: str, units: dict = None):
             else:
                 field = FRONTMATTER_FIELD_PATTERN.match(line)
                 marker = take(field.group(2), line) if field else None
+                if not field:
+                    # A folded value's continuation or a list entry: part
+                    # of the field above it.
+                    join_last_unit(line)
                 marked.append(f"{field.group(1)}{marker} {field.group(2)}"
                               if marker else line)
             index += 1
@@ -1258,9 +1270,13 @@ class MergeBaseWithOriginMainTextNotFound(Exception):
     """A git command failed while finding the cold-read-target's text at
     `git merge-base HEAD origin/main`."""
 
-    def __init__(self, message: str, checkout_root: pathlib.Path):
+    def __init__(self, message: str, checkout_root: pathlib.Path,
+                 origin_main_unresolved: bool):
         super().__init__(message)
         self.checkout_root = checkout_root
+        # A fetch can fix only this case; two commits with no merge base make
+        # merge-base exit 1 with no message, and a fetch does not fix that.
+        self.origin_main_unresolved = origin_main_unresolved
 
 
 def cold_read_target_text_at_merge_base_with_origin_main_or_none(target: pathlib.Path):
@@ -1284,7 +1300,8 @@ def cold_read_target_text_at_merge_base_with_origin_main_or_none(target: pathlib
             raise MergeBaseWithOriginMainTextNotFound(
                 f"git {' '.join(arguments)} failed in {root} "
                 f"(exit {completed.returncode}): {completed.stderr.strip() or 'no message'}",
-                root)
+                root,
+                arguments[0] == "merge-base" and "origin/main" in completed.stderr)
         return completed.stdout
 
     if not git_stdout("ls-files", "--", relative).strip():
@@ -1319,12 +1336,19 @@ def cold_read_target_compare_with_base_text_returning_added_or_changed_sentence_
 
 def fast_clarify_prompt_with_edit_placeholders_filled(changed: list, removed: list) -> str:
     """FAST_CLARIFY_PROMPT_TEMPLATE with the edit's two placeholders filled;
-    the launcher fills {TARGET_PATH} and {REPORT_PATH}."""
+    the launcher fills {TARGET_PATH} and {REPORT_PATH}. A removed unit that
+    holds either of those two placeholders has its brace JSON-escaped, so the
+    launcher leaves the quoted text as the base held it."""
+    def quoted(unit: str) -> str:
+        text = json.dumps(unit, ensure_ascii=False)
+        for placeholder in ("{TARGET_PATH}", "{REPORT_PATH}"):
+            text = text.replace(placeholder, "\\u007b" + placeholder[1:])
+        return text
     return (FAST_CLARIFY_PROMPT_TEMPLATE
             .replace(CHANGED_SENTENCE_IDS_PLACEHOLDER,
                      ", ".join(f"[{name}]" for name in changed) or NOTHING_IN_THE_EDIT)
             .replace(REMOVED_TEXT_PLACEHOLDER,
-                     "; ".join(json.dumps(unit, ensure_ascii=False) for unit in removed)
+                     "; ".join(quoted(unit) for unit in removed)
                      or NOTHING_IN_THE_EDIT))
 
 
@@ -1662,12 +1686,16 @@ def main() -> int:
     except MergeBaseWithOriginMainTextNotFound as error:
         print(f"{PROGRAM}: no fast read ran and no report was written: the read tells "
               f"the reviewer what the edit changed by comparing the cold-read-target "
-              f"with its text at `git merge-base HEAD origin/main`, and {error}\n"
-              f"If git's words above name origin/main or a merge base: run "
-              f"`git -C {error.checkout_root} fetch origin main`, then run this read again.\n"
-              f"Otherwise: give git's words above to the user, or, if you are a subagent, "
-              f"to the agent that dispatched you.", file=sys.stderr)
-        print(f"FAILED (no fast read ran: git could not find what the edit changed: {error})")
+              f"with its text at `git merge-base HEAD origin/main`, but {error}\n"
+              + (f"Git could not find origin/main in {error.checkout_root}: run "
+                 f"`git -C {error.checkout_root} fetch origin main`, then run the same "
+                 f"cold-read-fast-read command again.\n"
+                 f"If that fetch fails, or the read fails again: "
+                 if error.origin_main_unresolved else "")
+              + "Give this whole message to the user, or, if you are a subagent, "
+              "to the agent that dispatched you.", file=sys.stderr)
+        print(f"FAILED (no fast read ran: a git command failed while finding what the "
+              f"edit changed: {error})")
         return 1
     except NedBoxWorktreeUnreadableThroughMacMount as error:
         return cold_read_fast_read_run_on_ned_box_over_ssh(error.ned_box_target)
