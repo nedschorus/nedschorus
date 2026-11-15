@@ -1669,17 +1669,18 @@ def not_shown_lines(answer, reason):
 def shown_different_reason(minute):
     return (f"The words after the heading of item 4 of 9 in your last message that showed it, written at "
             f"2026-11-13T20:{minute:02}:00Z, do not hold the item's current walk-document text after its heading as "
-            "one unbroken run of words; that message may hold other words before or after the run. Either that message "
-            "misquoted "
-            "the item, or the walk-document changed after that message. Only these count as words: the text the "
-            "user reads rendered, code, an image's alt text, HTML and `<!-- -->` comments. Whitespace, line breaks, "
+            "one unbroken run of words. Other words before or after that run are allowed and are not the fault. Either "
+            "that message misquoted the item, or the walk-document changed after that message. Only these count as "
+            "words: the text the user reads rendered, punctuation included, code, an image's alt text, HTML, tags included, and `<!-- -->` "
+            "comments. Whitespace, line breaks, "
             "Markdown markup, a link's target (its text counts), `#approval_walk_item_` lines and the `of M` in a "
             "running count do not.")
 
 
 def never_shown_reason(item="item 4 of 9"):
-    return (f"No message of yours in this agent-session's transcript has a line that opens with the words of {item}'s "
-            "heading; `#` marks or other Markdown markup may come before those words. The hook does not read an "
+    return ("No message of yours in this agent-session's transcript has a line that, once all its Markdown markup, "
+            f"such as `#` marks, a list bullet, `>` or `**`, is taken out, opens with the words of {item}'s heading. "
+            "The hook does not read an "
             "earlier agent-session's transcript, so an item shown only before the last session-handoff must be shown "
             "again in this agent-session.")
 
@@ -1890,6 +1891,16 @@ def test_closing_lines_of_an_item_whose_heading_has_no_point_do_not_hide_the_mes
     lines = case.lines("a", case.transcript(POINTLESS_HEADING_DOCUMENT, f"Done.\n\n{closing}"))
     check("an answer to an item whose heading is only `## Item 4 of 9` counts after a closing-only message, whose "
           "words also open with `Item 4`", counted(lines), f"lines {lines!r}")
+
+
+def test_a_heading_line_after_a_list_bullet_a_quote_mark_and_bold_markup_counts_as_showing_the_item():
+    # NEVER_SHOWN_REASON names these as markup the hook skips before the heading's words.
+    case = Case(next_to_present="item 4 of 9")
+    shown = ("> - **Item 4 of 9: a filter**\n\nA filter would hide old rows. The strongest case against: old rows "
+             "confuse readers.\n\n**Recommendation: leave the filter out.**")
+    lines = case.lines("a", case.transcript(shown))
+    check("an answer counts when the message showed the heading after `>`, a list bullet and `**`", counted(lines),
+          f"lines {lines!r}")
 
 
 REFERENCE_LINK_HEADING_DOCUMENT = """# A walk
