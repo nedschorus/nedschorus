@@ -20,7 +20,7 @@ The box is the default machine for agent work: more memory, CPU and bandwidth, a
 All working copies on a machine are the same repository viewed at different branches, sharing one object store through git worktrees. **Git allows a branch to be checked out in only one worktree at a time**, which is the mechanism that keeps parallel agents from editing one branch's files: git refuses before they get the chance.
 
 1. **The main checkout** — the machine's primary working copy, parked on `main`. This is what `git pull` updates, and what a session reads for the live `.claude/` machinery (hooks, settings). A stale main checkout means stale hooks, which is how the instruction-file guard's worktree bug outlived its fix by a day.
-2. **Agent-homes** — one permanent directory per named long-lived agent, each made on a detached HEAD. Created by the launchers (as a plain directory) and made a checkout deliberately with `git worktree add` when the agent works on the repository.
+2. **Agent-homes** — one permanent directory per named long-lived agent, each made on a detached HEAD. The launchers make each one a checkout with `git worktree add --detach` at `origin/main` when the directory is not already a checkout.
 3. **Task worktrees** — disposable, one per background job that edits files, each on its own branch, created by the harness when a session isolates itself and removed when the job ends. Their value leaves as pushed commits; the directory afterwards is litter.
 
 ## Ubuntu — `ned-box`, user `nedlern`
@@ -61,7 +61,7 @@ Two naming notes that hold on both machines. A handoff file is `<agent>-handoff.
 |---|---|---|
 | Reach a named agent on the box | Mac | `/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu <name>` |
 | Run a named agent on the Mac | Mac | `/Users/el/Projects/nedschorus/scripts/launch-claude-mac <name>` |
-| List agents running on a machine | either | run the matching launcher with no name |
+| List agents running on a machine | Mac | run the matching launcher with no name |
 | See every checkout and its branch | either | `git -C ~/Projects/nedschorus worktree list` |
 | Update the box's main checkout | Mac | `ssh nedlern@ned-box 'git -C ~/Projects/nedschorus pull'` |
 | Clear stale worktree registrations | either | `git -C ~/Projects/nedschorus worktree prune` |
@@ -74,7 +74,7 @@ Both launchers are attach-or-create: running a name that is already up attaches 
 
 **Does not cross:** worktrees and their directories, agent-homes, handoff files, supervisor locks, tmux sessions, Claude credentials (each machine authenticates separately), and anything uncommitted. A pull on one machine tells the other nothing.
 
-**A consequence worth remembering:** pulling the main checkout does not update agent-homes or task worktrees, because each has its own HEAD: a task worktree sits on its own branch, and an agent-home on a detached HEAD. After a merge to `main`, the main checkout needs its own pull. `main` is merged into a long-lived agent branch only by a hand-merge, to clear a conflict; an agent sees the change because the handoff-supervisor fast-forwards a clean agent-home at launch and `scripts/checkout-freshness-catch-up.py` fast-forwards it at each turn boundary, `scripts/checkout-freshness-catch-up.py` rebases a never-pushed branch onto `main` at each turn boundary, and new work starts on an nc-topic-branch cut from current `main`.
+**A consequence worth remembering:** pulling the main checkout does not update agent-homes or task worktrees, because each has its own HEAD: a task worktree sits on its own branch, and an agent-home on a detached HEAD. After a merge to `main`, the main checkout needs its own pull. `main` is merged into a pull-request branch only by a hand-merge, to clear a conflict; an agent sees the change because the handoff-supervisor fast-forwards a clean agent-home at launch and `scripts/checkout-freshness-catch-up.py` fast-forwards it at each turn boundary, `scripts/checkout-freshness-catch-up.py` rebases a never-pushed branch onto `main` at each turn boundary, and new work starts on an nc-topic-branch cut from current `main`.
 
 ## What the system needs in order to run
 
