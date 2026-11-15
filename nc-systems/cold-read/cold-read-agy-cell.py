@@ -180,10 +180,10 @@ AGY_LOGGED_OUT_CAUSE_DETAIL = ("agy has no Google login on this machine; "
 STDOUT_REVIEW_MINIMUM_WORDS = 120
 
 
-def stdout_is_a_review(runtime_stdout: str) -> str:
+def stdout_is_a_review(agent_binary_stdout: str) -> str:
     """Return stdout as the report body when long enough, otherwise an empty string."""
-    if len(runtime_stdout.split()) >= STDOUT_REVIEW_MINIMUM_WORDS:
-        return runtime_stdout
+    if len(agent_binary_stdout.split()) >= STDOUT_REVIEW_MINIMUM_WORDS:
+        return agent_binary_stdout
     return ""
 
 
