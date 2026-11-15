@@ -24,10 +24,10 @@ SUPERVISOR_LAST_POLL_AT = "supervisor_last_poll_at"
 LAST_ACTIVITY = "last_activity"            # {"time": ISO time or null, "source": path or null}
 # ISO time of the newest tool call in the agent-session's own transcript, or null
 LAST_TOOL_CALL_AT = "last_tool_call_at"
-# ISO time of the newest TaskCreate or TaskUpdate call in the agent-session's own transcript that
-# sets metadata.prerequisites or addBlockedBy, or null
-LAST_TASK_CALL_SETTING_PREREQUISITES_OR_BLOCKED_BY_AT = (
-    "last_task_call_setting_prerequisites_or_blocked_by_at")
+# [{"time", "name", "task"}], oldest first: each TaskCreate or TaskUpdate call in the
+# agent-session's own transcript that sets metadata.prerequisites or addBlockedBy and whose result
+# succeeded; "task" is a TaskCreate's subject or a TaskUpdate's taskId
+TASK_CALLS_SETTING_PREREQUISITES_OR_BLOCKED_BY = "task_calls_setting_prerequisites_or_blocked_by"
 TURN_ENDED = "turn_ended"
 # [{"walk_minutes": path, "next_to_present": value}]
 APPROVAL_WALK_ITEMS_WAITING_ON_THE_USER = "approval_walk_items_waiting_on_the_user"
@@ -60,7 +60,7 @@ OPEN_TASKS_WITH_PREREQUISITES_OR_BLOCKED_BY = "open_tasks_with_prerequisites_or_
 
 ALWAYS_PRESENT = (AGENT_SEAT, SESSION_ID, TRANSCRIPT_PATH, CHECKED_AT, ERRORS, RULE)
 OPTIONAL = (DECISION, NOT_CHECKED, SUPERVISOR_LAST_POLL_AT, LAST_ACTIVITY, LAST_TOOL_CALL_AT,
-            LAST_TASK_CALL_SETTING_PREREQUISITES_OR_BLOCKED_BY_AT, TURN_ENDED,
+            TASK_CALLS_SETTING_PREREQUISITES_OR_BLOCKED_BY, TURN_ENDED,
             APPROVAL_WALK_ITEMS_WAITING_ON_THE_USER, IDLE, NOT_IDLE_BECAUSE, RUNNING,
             HANDOFF_DEFERRED_MARKER,
             USAGE_LIMIT, SENTENCES, OPEN_TASKS_NOTHING_HOLDS, TEXT, IF_EVERY_SENTENCE_BACKED,

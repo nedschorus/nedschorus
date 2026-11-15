@@ -51,12 +51,12 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def assistant(text=None, at=LONG_AGO, tokens=100, tool=None, uuid=None):
+def assistant(text=None, at=LONG_AGO, tokens=100, tool=None, uuid=None, tool_id="t"):
     content = []
     if text is not None:
         content.append({"type": "text", "text": text})
     if tool is not None:
-        content.append({"type": "tool_use", "id": "t", "name": tool[0], "input": tool[1]})
+        content.append({"type": "tool_use", "id": tool_id, "name": tool[0], "input": tool[1]})
     return {"type": "assistant", "timestamp": at, "uuid": uuid or f"u-{at}-{text}",
             "message": {"model": "claude-opus-5-5", "content": content,
                         "usage": {"input_tokens": tokens, "output_tokens": tokens}}}
@@ -848,26 +848,32 @@ try:
           verdicts["alpha"])
     machine = Machine()
     machine.seat("alpha", [user("go"),
-                           assistant(tool=("TaskCreate", {"metadata": {"prerequisites": [
-                               {"pr_merged": 927}]}}), at="2026-11-02T11:38:00Z"),
+                           assistant(tool=("TaskCreate", {"subject": "after PR 927", "metadata": {
+                               "prerequisites": [{"pr_merged": 927}]}}), at="2026-11-02T11:38:00Z",
+                                     tool_id="t1"),
                            assistant(tool=("TaskUpdate", {"taskId": "3", "addBlockedBy": ["2"]}),
-                                     at="2026-11-02T11:40:00Z"),
+                                     at="2026-11-02T11:40:00Z", tool_id="t2"),
+                           assistant(tool=("TaskUpdate", {"taskId": "99", "addBlockedBy": ["2"]}),
+                                     at="2026-11-02T11:42:00Z", tool_id="t3"),
+                           user([{"type": "tool_result", "tool_use_id": "t3", "is_error": True,
+                                  "content": "Task not found"}], at="2026-11-02T11:42:01Z"),
                            assistant(tool=("TaskCreate", {"subject": "plain"}),
-                                     at="2026-11-02T11:45:00Z"),
+                                     at="2026-11-02T11:45:00Z", tool_id="t4"),
                            assistant(tool=("Bash", {"command": "ls"}), at="2026-11-02T11:46:00Z"),
                            assistant("Done.", at="2026-11-02T11:48:00Z"), turn_end()])
     _, verdicts, _ = machine.run()
-    check("the newest task call that sets prerequisites or addBlockedBy is printed; a later task "
-          "call that sets neither, and a later tool call of another kind, do not move it",
-          verdicts["alpha"].get("last_task_call_setting_prerequisites_or_blocked_by_at")
-          == "2026-11-02T11:40:00Z", verdicts["alpha"])
+    check("each task call that sets prerequisites or addBlockedBy is listed, oldest first; one whose "
+          "result failed, one that sets neither, and a tool call of another kind are not",
+          verdicts["alpha"].get("task_calls_setting_prerequisites_or_blocked_by")
+          == [{"time": "2026-11-02T11:38:00Z", "name": "TaskCreate", "task": "after PR 927"},
+              {"time": "2026-11-02T11:40:00Z", "name": "TaskUpdate", "task": "3"}],
+          verdicts["alpha"])
     machine = Machine()
     machine.seat("alpha", [user("go"), assistant(tool=("TaskCreate", {"subject": "plain"})),
                            assistant("Done."), turn_end()])
     _, verdicts, _ = machine.run()
-    check("an agent-session whose task calls set neither prerequisites nor addBlockedBy: null",
-          "last_task_call_setting_prerequisites_or_blocked_by_at" in verdicts["alpha"]
-          and verdicts["alpha"]["last_task_call_setting_prerequisites_or_blocked_by_at"] is None,
+    check("an agent-session whose task calls set neither prerequisites nor addBlockedBy: an empty list",
+          verdicts["alpha"].get("task_calls_setting_prerequisites_or_blocked_by") == [],
           verdicts["alpha"])
 
     # --- the task list is read as the due-task hook reads it ------------------------------------

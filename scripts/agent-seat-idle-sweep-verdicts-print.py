@@ -325,7 +325,7 @@ class TranscriptFacts:
         self.last_model_turn_record = None
         self.turn_ended_after_last_model_turn_record = False
         self.turn_ending_messages = []   # (record, time, time of the prompt that began its turn)
-        self.task_tool_calls = []        # (time, name, input)
+        self.task_tool_calls = []        # (time, name, input), only calls whose result succeeded
         self.tool_calls = []             # (time, name, input), every tool call
         self.launch_times = {}           # subagent or background task id -> time
         self.last_task_notification = {} # task id -> (time, whether it is interim)
@@ -349,8 +349,11 @@ def read_main_transcript(path):
     newest_text_record = None
     turn_started_at = None
     awaiting_turn_start = True
+    task_tool_calls = []                 # (tool use id, (time, name, input))
+    failed_tool_use_ids = set()
     for record in transcript_records(path):
         moment = parse_time(record.get("timestamp"))
+        failed_tool_use_ids.update(failed_tool_result_ids(record))
         if awaiting_turn_start and record.get("type") == "user":
             turn_started_at = moment
             awaiting_turn_start = False
@@ -373,7 +376,8 @@ def read_main_transcript(path):
         for block in tool_uses(record):
             facts.tool_calls.append((moment, block.get("name"), block.get("input") or {}))
             if block.get("name") in TASK_TOOL_NAMES:
-                facts.task_tool_calls.append((moment, block.get("name"), block.get("input") or {}))
+                task_tool_calls.append(
+                    (block.get("id"), (moment, block.get("name"), block.get("input") or {})))
         if "<task-id>" in (text := task_notification_carrier_text(record)):
             for notification in threshold_hook.TASK_NOTIFICATION_PATTERN.findall(text):
                 interim = interim_recognizer.task_notification_is_interim(notification)
@@ -385,7 +389,18 @@ def read_main_transcript(path):
                 launched = result.get(key)
                 if isinstance(launched, str) and launched not in facts.launch_times:
                     facts.launch_times[launched] = moment
+    # A failed TaskUpdate, such as one on a task id that does not exist, records nothing.
+    facts.task_tool_calls = [call for tool_use_id, call in task_tool_calls
+                             if tool_use_id not in failed_tool_use_ids]
     return facts
+
+
+def failed_tool_result_ids(record):
+    content = (record.get("message") or {}).get("content")
+    if record.get("type") != "user" or not isinstance(content, list):
+        return []
+    return [block.get("tool_use_id") for block in content
+            if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error")]
 
 
 def newest_token_spend_in(path):
@@ -620,9 +635,11 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
                                     "source": str(source) if last_spend else None}
         verdict[fields.LAST_TOOL_CALL_AT] = iso(max(
             (moment for moment, _, _ in facts.tool_calls if moment), default=None))
-        verdict[fields.LAST_TASK_CALL_SETTING_PREREQUISITES_OR_BLOCKED_BY_AT] = iso(max(
-            (moment for moment, _, tool_input in facts.task_tool_calls
-             if moment and sets_prerequisites_or_blocked_by(tool_input)), default=None))
+        verdict[fields.TASK_CALLS_SETTING_PREREQUISITES_OR_BLOCKED_BY] = [
+            {"time": iso(moment), "name": name,
+             "task": tool_input.get("subject") if name == "TaskCreate" else tool_input.get("taskId")}
+            for moment, name, tool_input in facts.task_tool_calls
+            if moment and sets_prerequisites_or_blocked_by(tool_input)]
 
         last = facts.last_model_turn_record or {}
         limit = is_usage_limit(last)
