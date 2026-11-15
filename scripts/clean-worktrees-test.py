@@ -76,6 +76,7 @@ Run: python3 scripts/clean-worktrees-test.py
 """
 
 import atexit
+import contextlib
 import errno
 import importlib.util
 import io
@@ -3918,6 +3919,29 @@ with tempfile.TemporaryDirectory() as scratch:
         unenterable_tasks.chmod(0o755)
     check("a task lists' directory that can be listed but not entered raises rather than hiding "
           "its task lists", isinstance(unenterable_error, PermissionError), repr(unenterable_error))
+
+    # In process, so each count is seen alone: the program's exit status sums them into 1 or 0.
+    saved_environment = dict(os.environ)
+    os.environ.update({TASK_LISTS_DIRECTORY_OVERRIDE_VARIABLE: str(behind_untraversable),
+                       "FAKE_GH_PULL_REQUESTS": json.dumps(pull_requests)})
+    untraversable_parent.chmod(0)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            branch_refs_failures = head_branch_module.clean_worktrees_and_branch_refs(
+                checkout, head_branch_module.main_checkout_of(checkout), False, True)
+        restored_branch_tasks_lines = []
+        restored_branch_tasks_counted = head_branch_module.open_restored_branch_tasks(
+            behind_untraversable, restored_branch_tasks_lines.append)
+    finally:
+        untraversable_parent.chmod(0o755)
+        os.environ.clear()
+        os.environ.update(saved_environment)
+    check("task lists that cannot be listed count as exactly one failure of the worktree and "
+          "branch clean", branch_refs_failures == 1, repr(branch_refs_failures))
+    check("a task lists' directory that cannot be listed counts as exactly one failure of the "
+          "restored branches' tasks, and names no task",
+          restored_branch_tasks_counted == ([], 1) and len(restored_branch_tasks_lines) == 1,
+          f"{restored_branch_tasks_counted!r}\n{restored_branch_tasks_lines}")
 
     # EIO cannot be caused for real here, so the listing calls raise it for one task list.
     failing_disk_tasks = scratch / "failing-disk-task-lists"
