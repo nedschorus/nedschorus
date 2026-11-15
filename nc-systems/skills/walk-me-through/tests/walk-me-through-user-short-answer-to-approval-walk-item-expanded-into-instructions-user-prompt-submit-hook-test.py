@@ -1968,6 +1968,48 @@ def test_the_item_text_handed_over_is_the_walk_finders_shared_text_as_shown():
           finder.approval_walk_item_text_as_shown_to_user(withdrawn, parser, units, unit, "4") == SHOWN_ITEM_TEXT)
 
 
+SUB_STEP_50_1 = """### Item 50.1 of 96: the first part
+
+Recommendation: keep the first part."""
+TITLE_OPENING_WITH_AN_ITEM_NUMBER_DOCUMENT = f"""# A walk
+
+## Item 50 of 96: a two-part item
+
+The item in two parts.
+
+{SUB_STEP_50_1}
+
+## Item 36's three added texts
+
+Recommendation: approve the three texts.
+
+## Item 51 of 96: the next item
+
+Recommendation: do the next thing.
+"""
+
+
+def test_a_title_that_opens_with_an_item_number_but_no_label_ends_the_sub_step_above_it():
+    finder = load_walk_finder_for_test()
+    parser = finder.markdown_parser()
+    document = TITLE_OPENING_WITH_AN_ITEM_NUMBER_DOCUMENT
+    units = finder.item_unit_spans(document, parser)
+    unit = next(unit for unit in units if "50.1" in unit[0])
+    shown = finder.approval_walk_item_text_as_shown_to_user(document, parser, units, unit, "50.1")
+    check("a `## Item 36's ...` heading below sub-step 50.1 is an unnumbered item, not part of 50.1's text",
+          shown == SUB_STEP_50_1 and sum(map(finder.approval_walk_unit_is_unnumbered_item, units)) == 1, shown)
+    case = Case(next_to_present="item 50.1 of 96", document=document)
+    closing = f"[Item 50.1 of 96, the first part](https://claude.ai/artifact/x) · {LETTERS_AFTER_LINK}"
+    lines = case.lines("ao", case.transcript(SUB_STEP_50_1, closing))
+    check("an answer to sub-step 50.1 counts when only 50.1's own text was shown", counted(lines), f"lines {lines!r}")
+    document = document.replace("## Item 36's three added texts", "## Item 36: three added texts")
+    units = finder.item_unit_spans(document, parser)
+    unit = next(unit for unit in units if "50.1" in unit[0])
+    shown = finder.approval_walk_item_text_as_shown_to_user(document, parser, units, unit, "50.1")
+    check("a `## Item 36: ...` heading, which groups items and is no item, still ends sub-step 50.1 above it",
+          shown == SUB_STEP_50_1 and not any(map(finder.approval_walk_unit_is_unnumbered_item, units)), shown)
+
+
 def load_walk_finder_for_test():
     path = HOOK_SCRIPT.parent / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py"
     spec = importlib.util.spec_from_file_location("walk_finder_for_short_answer_hook_test", path)

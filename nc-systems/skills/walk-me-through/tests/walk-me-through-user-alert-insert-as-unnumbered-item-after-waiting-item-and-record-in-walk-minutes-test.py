@@ -159,7 +159,7 @@ def run_several_alert_cases(root):
     check("each alert gets its own `#user_alert` line",
           "#user_alert alert-a\n#user_alert alert-b\n" in minutes, minutes)
 
-    for name, title in (("numbered-title", "Item 3 of 9: reboot"), ("label-title", "Item 3 reboot"),
+    for name, title in (("numbered-title", "Item 3 of 9: reboot"), ("label-title", "Item 3: reboot"),
                         ("withdrawn-title", "Withdrawn backups on the Mac")):
         checkout, home = walk_checkout(root, name)
         claimed_alert(home, "alert-c", title)
@@ -171,8 +171,14 @@ def run_several_alert_cases(root):
               and sum(map(walk_finder.approval_walk_unit_is_unnumbered_item, units)) == 1
               and f"`## User alert: {title}`" in result.stdout and f"`User alert: {title}`." in minutes,
               result.stderr + document)
+    checkout, home = walk_checkout(root, "number-title")
+    claimed_alert(home, "alert-c", "Item 3's reboot")
+    result = run(checkout, home, "alert-c")
+    document, _ = files(checkout)
+    check("an alert titled \"Item 3's reboot\", which opens with an item's number but no label, keeps its title",
+          result.returncode == 0 and "\n## Item 3's reboot\n" in document, result.stderr + document)
 
-    sub_item = WALK_DOCUMENT.replace("## Items 5 and 6", "### Item 4.1 of 9: a part\n\n## Items 5 and 6")
+    sub_item =WALK_DOCUMENT.replace("## Items 5 and 6", "### Item 4.1 of 9: a part\n\n## Items 5 and 6")
     checkout, home = walk_checkout(root, "sub-item", waiting="item 4.1 of 9", document=sub_item)
     claimed_alert(home, "alert-d", "fourth")
     result = run(checkout, home, "alert-d")
