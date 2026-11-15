@@ -2504,6 +2504,29 @@ with tempfile.TemporaryDirectory() as scratch:
           and "git fetch origin exited 1" in fetch_refused.stdout
           and origin_tip("fetch-refused-branch") == "",
           fetch_refused.stdout + fetch_refused.stderr)
+    fetch_killed = run_one_named(FORCE_DELETE_BRANCH_FLAG, "fetch-refused-branch",
+                                 git_refuses=" --no-write-fetch-head ", git_refusal="kill -9 $$")
+    check(f"{FORCE_DELETE_BRANCH_FLAG} keeps the branch and fails when the fetch of an origin tip the "
+          "clone lacks is killed by a signal",
+          kept_and_failed(fetch_killed, "branch fetch-refused-branch")
+          and git(checkout, "rev-parse", "fetch-refused-branch").strip() == fetch_refused_tip
+          and f"git fetch origin exited {-signal.SIGKILL}" in fetch_killed.stdout,
+          fetch_killed.stdout + fetch_killed.stderr)
+    fetch_silent = run_one_named(FORCE_DELETE_BRANCH_FLAG, "fetch-refused-branch",
+                                 git_refuses=" --no-write-fetch-head ", git_refusal="exit 1")
+    check(f"{FORCE_DELETE_BRANCH_FLAG} says there is no error text when a failed fetch printed none",
+          kept_and_failed(fetch_silent, "branch fetch-refused-branch")
+          and "is unknown: no error text" in fetch_silent.stdout,
+          fetch_silent.stdout + fetch_silent.stderr)
+    fetch_error = "X" * 159 + "Y" + "Z" * 40
+    fetch_long_error = run_one_named(FORCE_DELETE_BRANCH_FLAG, "fetch-refused-branch",
+                                     git_refuses=" --no-write-fetch-head ",
+                                     git_refusal=f"echo {fetch_error} >&2; exit 1")
+    check(f"{FORCE_DELETE_BRANCH_FLAG} shows the first 160 characters of git fetch's error text",
+          kept_and_failed(fetch_long_error, "branch fetch-refused-branch")
+          and f"is unknown: {fetch_error[:160]}" in fetch_long_error.stdout
+          and "YZ" not in fetch_long_error.stdout,
+          fetch_long_error.stdout + fetch_long_error.stderr)
     git(other_machine, "commit", "--quiet", "--allow-empty", "-m", "commit only a tag names")
     git(other_machine, "tag", "-a", "-m", "annotated", "only-tagged")
     git(other_machine, "push", "--quiet", "origin", "refs/tags/only-tagged")
