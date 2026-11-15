@@ -4284,6 +4284,18 @@ def test_the_last_item_and_a_closed_walk_start_no_read_ahead():
           and times_read(case, "## Item") == 1, described(closed) + case.calls.read_text())
 
 
+def test_the_read_step_of_an_item_the_minutes_already_decide_reads_ahead_the_item_after_it():
+    recorded = approved_line("item 1 of 5") + approved_line("item 2 of 5")
+    case = summary_case(next_to_present="item 2 of 5", recorded=recorded)
+    result = case.run(WAITING_ITEM_READ)
+    check("the read step of a waiting item the minutes already decide reads it now and reads ahead the item after it",
+          result.returncode == 0
+          and result.stdout.startswith("item 2 of 5: its cold-read-fast-read, of its text as it stands, had to be run "
+                                       "now: ")
+          and times_read(case, "## Item 2 of 5: two") == 1 and times_read(case, "## Item 3 of 5: three") == 1,
+          described(result) + case.calls.read_text())
+
+
 def after_fixes_case(old, new):
     """A case whose item 3 was read, then changed from old to new in the walk-document."""
     case = item_read_case()
