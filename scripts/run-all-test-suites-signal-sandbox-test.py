@@ -562,7 +562,7 @@ if linux_only_cases_run_here("the report's sandbox lines"):
                           for line in report.splitlines())
                   and any(line.startswith(f"NOT RUN {unstartable} did not start: ")
                           and " — log " in line for line in report.splitlines())
-                  and "1 not run, because bwrap could not build the nc-test-sandbox" in report
+                  and "1 not run; each line says why, and each log what to do:" in report
                   and not any(line.startswith(f"FAIL {unstartable}")
                               for line in report.splitlines())
                   and summary in report

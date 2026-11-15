@@ -82,6 +82,15 @@ if mode == "fail":
     print(f"FAIL outside-a-test.py exit 1 — log {log}")
     print("SUMMARY: 1 passed, 1 failed, 2 total")
     sys.exit(1)
+if mode == "not-run-weekly-limit":
+    # The runner's real output for a suite claude's weekly limit stopped: a progress line
+    # without a log, then the closing list's line, and no FAIL line.
+    why = ("stopped by an outside cause: NOT RUN: the trial; claude stopped: account-limit — "
+           "weekly limit · resets Nov 16, 8pm (America/Los_Angeles)")
+    print(f"NOT RUN outside-a-test.py {why} (1.4s)")
+    print(f"NOT RUN outside-a-test.py {why} — log {log_dir}/outside-a-test.py.log")
+    print("SUMMARY: 1 passed, 0 failed, 1 not run, 2 total")
+    sys.exit(2)
 if mode == "refuse":
     print("scripts/run-all-test-suites.py: not run — a refusal for the test", file=sys.stderr)
     sys.exit(2)
@@ -289,6 +298,23 @@ with tempfile.TemporaryDirectory() as directory:
           len(calls) == 1 and code == 0 and s.state()["passing_commit"] == git(
               s.origin, "rev-parse", "HEAD"), (code, printed))
     check("after a passing run the merge gate's notice is empty", s.notice() == "")
+
+    passing_before = s.state()["passing_commit"]
+    s.merge_on_origin(142)
+    code, printed, calls = s.run("not-run-weekly-limit")
+    state = s.state()
+    record = Path(state["last_run"]["record"]).read_text()
+    check("a suite claude's weekly limit stopped makes a stopped run, not a failed one, whose "
+          "reason, record and notice carry claude's words, with no failing suite, and the "
+          "passing commit kept",
+          code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and state["last_run"]["result"] == "stopped"
+          and "weekly limit · resets Nov 16, 8pm" in state["last_run"]["reason"]
+          and "outside-a-test.py" in state["last_run"]["reason"]
+          and " — log " not in state["last_run"]["reason"]
+          and state["last_run"]["failing_suites"] == [] and "failing suite:" not in record
+          and "result: stopped" in record and "weekly limit · resets Nov 16, 8pm" in record
+          and "weekly limit · resets Nov 16, 8pm" in s.notice()
+          and state["passing_commit"] == passing_before, (code, printed, state, record))
 
     s.merge_on_origin(43)
     began = time.monotonic()

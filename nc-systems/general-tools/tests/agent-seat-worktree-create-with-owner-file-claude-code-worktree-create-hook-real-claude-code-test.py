@@ -11,10 +11,13 @@ unlocked, once claude has exited. A later Claude Code that locks or removes such
 fails it. It needs the real HOME, where claude is logged in, and an agent-seat of this machine
 for GIT_AUTHOR_NAME, so scripts/run-all-test-suites.py runs it outside any sandbox. It spends
 one short haiku agent-session, and removes the Claude Code project directory claude made for
-the scratch clone.
+the scratch clone. When claude names a cause outside this repository, such as its usage limit
+or being logged out, the trial's cases are not judged: the suite prints the cause as its last
+line and exits run-all-test-suites.py's NC_TEST_SUITE_EXIT_CODE_FOR_NOT_RUN_BECAUSE_A_CAUSE_OUTSIDE_THIS_REPOSITORY_STOPPED_ITS_CASES,
+unless another case failed.
 
 Run: python3 nc-systems/general-tools/tests/agent-seat-worktree-create-with-owner-file-claude-code-worktree-create-hook-real-claude-code-test.py
-Prints one line per case and exits non-zero if any case fails.
+Prints one line per case and exits 1 if any case fails.
 """
 
 import importlib.util
@@ -32,6 +35,7 @@ HOOK = REPO_ROOT / "nc-systems" / "general-tools" / "agent-seat-worktree-create-
 CLAUDE_RUN_TIMEOUT_SECONDS = 600
 LOCK_POLL_SECONDS = 0.2
 SUBAGENT_WORKTREE_DIRECTORY_NAME = re.compile(r"worktree-agent-a[0-9a-f]{16}")
+CLAUDE_MODEL = "haiku"
 # `git worktree add` itself holds this lock while it checks the files out, and drops it when the add ends.
 GIT_WORKTREE_ADD_OWN_LOCK_LINE = "locked initializing"
 
@@ -52,10 +56,13 @@ headless = load_module(
     "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
     REPO_ROOT / "nc-systems" / "general-tools"
     / "claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
+test_suite_runner = load_module("run_all_test_suites", REPO_ROOT / "scripts" / "run-all-test-suites.py")
+claude_cell = load_module("cold_read_claude_cell", REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-claude-cell.py")
 transcripts = load_module("claude_code_session_transcript_lookup_and_text_search_common",
                           REPO_ROOT / "scripts" / "claude-code-session-transcript-lookup-and-text-search-common.py")
 
 failures = []
+stopped_by_an_outside_cause = []
 
 
 def check(case_name, condition, detail=""):
@@ -91,6 +98,33 @@ def test_git_worktree_adds_own_lock_is_not_counted_as_a_lock():
           lock_lines_not_git_worktree_adds_own(["HEAD 0123", "locked claude agent agent-a1 (pid 7)"])
           == ["locked claude agent agent-a1 (pid 7)"]
           and lock_lines_not_git_worktree_adds_own(["locked"]) == ["locked"])
+
+
+def claude_outside_cause_or_none(returncode, stdout, stderr):
+    """"<cause class> — <claude's words>" when claude exited nonzero naming a cause outside this
+    repository, such as its usage limit or being logged out, else None."""
+    if returncode == 0:
+        return None
+    cause_class, detail = claude_cell.common.classify_failed_attempt(
+        stdout=stdout, stderr=stderr, exit_code=returncode,
+        recognised_texts=claude_cell.recognised_failure_texts_for_model(CLAUDE_MODEL))
+    return (f"{cause_class} — {detail}" if cause_class in claude_cell.common.USER_CLEARABLE_CAUSE_CLASSES
+            else None)
+
+
+def test_claude_outside_cause_is_told_from_a_failure():
+    weekly_limit = "You've hit your weekly limit · resets Nov 16, 8pm (America/Los_Angeles)\n"
+    check("claude's weekly limit, exit 1, is an outside cause naming the limit and its reset",
+          claude_outside_cause_or_none(1, weekly_limit, "")
+          == "account-limit — weekly limit · resets Nov 16, 8pm (America/Los_Angeles)",
+          repr(claude_outside_cause_or_none(1, weekly_limit, "")))
+    check("claude logged out, exit 1, is an outside cause",
+          claude_outside_cause_or_none(1, "", "Not logged in · Please run /login\n")
+          == "logged-out — Not logged in · Please run /login")
+    check("claude's exit 1 with any other output is not an outside cause",
+          claude_outside_cause_or_none(1, "Error: the hook failed\n", "") is None)
+    check("claude's exit 0 is not an outside cause, whatever it printed",
+          claude_outside_cause_or_none(0, weekly_limit, "") is None)
 
 
 def agent_seat_of_this_machine():
@@ -144,6 +178,7 @@ def test_trial_against_the_installed_claude_code():
 
         watcher = threading.Thread(target=watch_for_locks)
         watcher.start()
+        outside_cause = None
         try:
             completed = subprocess.run(command, cwd=clone, env=environment, stdin=subprocess.DEVNULL,
                                        capture_output=True, text=True, timeout=CLAUDE_RUN_TIMEOUT_SECONDS,
@@ -151,6 +186,7 @@ def test_trial_against_the_installed_claude_code():
             claude_stdout = completed.stdout
             outcome = f"exit {completed.returncode}, stdout {claude_stdout[-800:]!r}, stderr {completed.stderr[-800:]!r}"
             ran = completed.returncode == 0
+            outside_cause = claude_outside_cause_or_none(completed.returncode, completed.stdout, completed.stderr)
         except subprocess.TimeoutExpired:
             claude_stdout, outcome, ran = "", f"claude did not finish within {CLAUDE_RUN_TIMEOUT_SECONDS} s", False
         except OSError as error:
@@ -158,6 +194,9 @@ def test_trial_against_the_installed_claude_code():
         finally:
             stop.set()
             watcher.join()
+        if outside_cause is not None:
+            stopped_by_an_outside_cause.append(outside_cause)
+            return
         check("claude -p with the hook as its WorktreeCreate hook runs its subagent and exits 0", ran, outcome)
         made = [Path(path) for path in worktree_records(clone)
                 if Path(path).parent == clone / ".claude" / "worktrees"
@@ -184,6 +223,13 @@ def test_trial_against_the_installed_claude_code():
 
 
 test_git_worktree_adds_own_lock_is_not_counted_as_a_lock()
+test_claude_outside_cause_is_told_from_a_failure()
 test_trial_against_the_installed_claude_code()
-print(f"FAILED: {len(failures)} failed" if failures else "PASSED: 0 failed")
-sys.exit(1 if failures else 0)
+if failures:
+    print(f"FAILED: {len(failures)} failed")
+    sys.exit(1)
+if stopped_by_an_outside_cause:
+    print(f"NOT RUN: the trial against the installed Claude Code; claude stopped: {stopped_by_an_outside_cause[0]}")
+    sys.exit(test_suite_runner.NC_TEST_SUITE_EXIT_CODE_FOR_NOT_RUN_BECAUSE_A_CAUSE_OUTSIDE_THIS_REPOSITORY_STOPPED_ITS_CASES)
+print("PASSED: 0 failed")
+sys.exit(0)

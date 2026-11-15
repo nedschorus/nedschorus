@@ -111,7 +111,7 @@ for suite in failing:
     print(f"FAIL {suite} exit 1 \u2014 log /logs/{suite}.log")
 not_run = os.environ.get("FAKE_RUNNER_NOT_RUN", "").split()
 if not_run:
-    print(f"{len(not_run)} not run, because bwrap could not build the nc-test-sandbox; each log says why and what to do:")
+    print(f"{len(not_run)} not run; each line says why, and each log what to do:")
     for suite in not_run:
         print(f"NOT RUN {suite} did not start: bwrap failed — log /logs/{suite}.log")
 print(f"SUMMARY: {len(failing)} failed")

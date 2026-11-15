@@ -388,8 +388,8 @@ def runner_output_with_test_sandbox_not_started(suite):
     runner = load_test_suite_runner()
     not_run = {"suite": suite, "exit": 1, "seconds": 0.1, "skips": [],
                "test sandbox did not start": True}
-    return (f"{runner.suite_line(not_run)}\n\n1 not run, because bwrap could not build the "
-            f"nc-test-sandbox; each log says why and what to do:\n"
+    return (f"{runner.suite_line(not_run)}\n\n1 not run; each line says why, and each log "
+            f"what to do:\n"
             f"NOT RUN {suite} {runner.why_suite_failed(not_run)} — log /tmp/a.log\n")
 
 
