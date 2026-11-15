@@ -56,11 +56,12 @@ one task at a time. The difference is this program's defect, with nothing for th
 only a failure to write that task is a user-alert. A headless agent-session that fails, is
 stopped, answers JSON code cannot use, or sends to the wrong entry; a message missing from the
 agent-seat's transcript; and a read failure slice 1 reports for the same agent-seat with the same
-text at every run for 2 minutes or more, each become a user-alert, written once, and the invocation
-exits 1; a failed headless agent-session is alerted once a day for each agent-seat and cause, such
-as the headless agent-session itself stopping at a usage limit, however claude's text for that
-cause varies; the 2 minutes are counted from the failure's first run and go on through an invocation the
-lock made skip, since only a run that does not meet the failure ends them. A read failure seen once only, such as the last line of a transcript
+text at every run for 2 minutes or more, counted from the failure's first run and through any
+invocation the lock made skip, since only a run that does not meet the failure ends the count,
+each become a user-alert, and the invocation exits 1. Each cause is alerted once; a failed headless
+agent-session is alerted once a day for each agent-seat and cause, such as the headless
+agent-session itself stopping at a usage limit, however claude's text for that cause varies. A read
+failure seen once only, such as the last line of a transcript
 Claude Code is still writing, is logged and not alerted; a run that does not meet it again logs its end, so that it
 coming back later is dated from its return. Any other failure, such as an unwritable log, prints a
 traceback, writes one user-alert per distinct error, and exits 1. A message step is logged before
