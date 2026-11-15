@@ -350,9 +350,7 @@ class SweepLog:
     def open_wait(self, seat):
         wait = None
         # Whether a PROMISE step awaits its PROMISE_MESSAGE, and the invocation that logged the
-        # step. A step logged before invocations were stamped has no invocation, and no message
-        # can be matched to it, so its sentences are unknown, as are those of a step whose message
-        # never came.
+        # step.
         owed, owed_by = False, None
         for event in self.of_seat(seat, "wait_step", "wait_ended", PROMISE_MESSAGE):
             invocation = event.get("agent_seat_idle_sweep_invocation_started_at")
@@ -375,8 +373,6 @@ class SweepLog:
                     owed = False
                     if event.get("rule") != 2:
                         continue
-                if owed or invocation is None:
-                    wait[PROMISE_MESSAGES] = None
                 wait[PROMISE] = event["at"]
                 owed, owed_by = True, invocation
             elif wait is not None:
