@@ -854,6 +854,22 @@ check("an account notice sent to one agent-seat with another text: logged, a tas
 
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
+machine.seat("beta", DONE_TURN)
+(machine.tasks / OWNER_TASKS).mkdir()
+machine.run(0)
+machine.account("account-2")
+machine.script({"sends": [send_to("beta"), DROPPED], "answer": {"sent": True, "reason": "r"}})
+code, _ = machine.run(1)
+differs = machine.events("sent_text_differs_from_code_text")
+sent = {event["agent_seat"]: event["text"] for event in machine.events("message_sent")}
+check("an account notice whose last send went to another agent-seat: each agent-seat's send is "
+      "logged with the text sent to it, not the last send's text",
+      code == 0 and [event["agent_seat"] for event in differs] == ["alpha"]
+      and sent["alpha"] == differs[0]["sent_text"] and sent["beta"] == differs[0]["text"],
+      (code, differs, sent))
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
 machine.handoff_put_off()
 machine.script(sent_ok())
 machine.run(0)
