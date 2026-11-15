@@ -146,7 +146,8 @@ DEFAULT_AGENT_NAME_RULE_TEXT = (
 )
 
 SPAWNED_SUBAGENT_FIELD_PREFIX = field_names.SPAWNED_SUBAGENT_FIELD_PREFIX
-BACKGROUND_TASK_FIELD_PREFIX = field_names.BACKGROUND_TASK_FIELD_PREFIX
+SESSION_HANDOFF_BACKGROUND_TASK_STILL_RUNNING_FIELD_PREFIX = (
+    field_names.SESSION_HANDOFF_BACKGROUND_TASK_STILL_RUNNING_FIELD_PREFIX)
 
 COLD_READ_FULL_RUN_COMMAND_REFUSED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX = (
     supervisor.COLD_READ_FULL_RUN_COMMAND_REFUSED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX)
@@ -438,7 +439,7 @@ def background_task_field_lines(tasks) -> list:
         described = f' "{description}"' if description else ""
         started = (launched_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if launched_at is not None
                    else "an unrecorded time")
-        lines.append(f"{BACKGROUND_TASK_FIELD_PREFIX}{ordinal}: {task_id}{described} "
+        lines.append(f"{SESSION_HANDOFF_BACKGROUND_TASK_STILL_RUNNING_FIELD_PREFIX}{ordinal}: {task_id}{described} "
                      f"started at {started} command: {json.dumps(command)}")
     return lines
 

@@ -21,7 +21,7 @@ SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
 # Numbered for the same reason. A reader must take only digits after it: background-task-past-wait-limit-<n>
 # shares the prefix, and a session-handoff written before the field was retired can carry
 # background-task-started-during-handoff-deferral-<n>.
-BACKGROUND_TASK_FIELD_PREFIX = "background-task-"
+SESSION_HANDOFF_BACKGROUND_TASK_STILL_RUNNING_FIELD_PREFIX = "background-task-"
 NEXT_STEP_VERBATIM_FIELD = "next-step-verbatim"
 NEXT_STEP_BLOCK_OPENING_MARKER = "<<END-OF-NEXT-STEP"
 NEXT_STEP_BLOCK_TERMINATOR = "END-OF-NEXT-STEP"
