@@ -67,7 +67,10 @@ with tempfile.TemporaryDirectory() as scratch:
     # The partial file is written, then the replace fails: only removing the partial cleans up.
     real_replace = task_file_rewrite_module.os.replace
 
+    replace_sources = []
+
     def failing_replace(source, target):
+        replace_sources.append(Path(source))
         raise OSError(28, "No space left on device")
     task_file_rewrite_module.os.replace = failing_replace
     try:
@@ -83,6 +86,10 @@ with tempfile.TemporaryDirectory() as scratch:
           and json.loads(task_file.read_text(encoding="utf-8")) == ORIGINAL
           and sorted(path.name for path in list_directory.iterdir()) == ["3.json"],
           (raised, sorted(path.name for path in list_directory.iterdir())))
+    # A partial file elsewhere, such as under /tmp on another filesystem, makes os.replace fail
+    # with EXDEV on every rewrite.
+    check("the partial file is made in the task file's own directory",
+          [source.parent for source in replace_sources] == [list_directory], replace_sources)
 
     real_unlink = task_file_rewrite_module.os.unlink
 
