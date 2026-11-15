@@ -289,6 +289,30 @@ One.
     check("an item's page takes its sub-steps only from the units right after its own, so an older `3.2 of 9` "
           "under item 1 stays off item 3's page",
           result.returncode == 0 and "One." in page and "Old." not in page and "3.2 of 9" not in page, page)
+    unnumbered_item_between_sub_steps = """# A walk
+
+## Item 3 of 10: the opening sentence
+
+### Item 3.1 of 10: the first half
+
+One.
+
+## an alert the walk has not shown yet
+
+Alert.
+
+### Item 3.2 of 10: the second half
+
+Two.
+
+## Item 4 of 10: the next item
+
+Four.
+"""
+    result, page = built(scratch, "3", document=unnumbered_item_between_sub_steps)
+    check("an unnumbered item between sub-steps 3.1 and 3.2 stays off item 3's page, and 3.2 is still on it",
+          result.returncode == 0 and "One." in page and "Two." in page and "Alert." not in page
+          and "Four." not in page, page)
     openings_out_of_number_order = """# A walk
 
 ## Items 12 to 12.2 of 13: a group

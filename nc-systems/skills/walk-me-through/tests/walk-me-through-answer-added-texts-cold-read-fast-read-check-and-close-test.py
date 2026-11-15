@@ -991,6 +991,35 @@ def test_an_older_heading_reusing_a_sub_step_number_leaves_close_and_the_read_st
           and marker(case) == "#next_to_present item 3.2 of 10", described(closed) + described(read))
 
 
+def test_an_unshown_item_written_between_sub_steps_comes_after_them_in_close_and_the_read_step():
+    """An unshown item written right after the waiting sub-step, where the walk-me-through skill's Re-planning
+    section puts an item added by hand, stands between item 2's sub-steps."""
+    document = ("# A walk in which code picks the order\n\n" + numbered_item(1, "one")
+                + "## Item 2 of 9: two\n\nIts parts.\n\n"
+                + "### Item 2.1 of 9: the first part\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+                + unshown_item("urgent", f"{CATEGORY_TAG}must_fix_now")
+                + "### Item 2.2 of 9: the second part\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+                + "#### Withdrawn version 1 of item 2.2\n\nAn earlier second part.\n\n"
+                + numbered_item(3, "three") + "## Summary\n\nThe walk in short.\n")
+    case = Case(next_to_present="item 2.1 of 9", document=document)
+    case.run("check")
+    case.run("close")
+    after_close = marker(case).rsplit(" of ", 1)[0]
+    case.minutes.write_text(case.minutes.read_text() + "#next_to_present item 2 of 9\n")
+    read = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("with an unshown item between sub-steps 2.1 and 2.2, close and the read step both name 2.2 once 2.1 is "
+          "answered, not the unshown item and not the answered item 2",
+          after_close == "#next_to_present item 2.2" and read.returncode == 0
+          and marker(case) == "#next_to_present item 2.2 of 9", f"{after_close}\n{described(read)}")
+    case = Case(next_to_present="item 2.1 of 9", document=document)
+    shown = titles_shown_in_turn(case)
+    text = walk_document(case)
+    check("the unshown item comes after item 2's last sub-step, and is moved below it, so items stand in the order "
+          "they were shown", shown == ["the second part", "urgent", "three", "Summary"]
+          and text.index("### Item 2.2 of 9") < text.index(": urgent\n") < text.index("## Item 3 of 9: three"),
+          f"{shown}\n{text}")
+
+
 def test_the_waiting_item_read_step_leaves_out_an_older_sub_step_below_a_later_item():
     document = ("# A walk\n\n## Item 3 of 10: the opening sentence\n\nNew.\n\n### Item 3.1 of 10: the first half\n\n"
                 "Short.\n\n#case_against weak: the page grows.\n\nRecommendation: change it.\n\n"
@@ -4900,7 +4929,7 @@ def titles_shown_in_turn(case, answers=None):
         named = re.search(r"#next_to_present item ([\d.]+) of", marker(case))
         if not named:
             return shown
-        heading = re.search(rf"^## Item {re.escape(named[1])} of \d+(?: \(deferred[^)]*\))?: (.*)$",
+        heading = re.search(rf"^##+ Item {re.escape(named[1])} of \d+(?: \(deferred[^)]*\))?: (.*)$",
                             walk_document(case), re.M)
         shown.append(heading[1] if heading else f"no heading for item {named[1]}")
         if shown[-1] == "Summary":

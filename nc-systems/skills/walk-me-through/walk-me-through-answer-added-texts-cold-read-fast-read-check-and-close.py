@@ -2469,10 +2469,12 @@ def walk_document_items(walk_finder, minutes, value, numbers, total, parser, ste
 
 def walk_document_order(walk_finder, text, units, parser, document, today):
     """Return (the items of units in walk-document order, the summary item or None, the placing of the unshown
-    items), as walk_document_items' docstring says."""
+    items), as walk_document_items' docstring says. An unnumbered item written between the sub-steps of one item,
+    as in 2.1, then the unnumbered item, then 2.2, comes after the last of them, as
+    approval_walk_item_sub_step_units_right_after passes over it, so that it does not split them."""
     lines = text.split("\n")
     order, summary = [], None
-    for unit in units:
+    for unit in approval_walk_unnumbered_items_moved_past_the_sub_steps_they_split(walk_finder, units):
         unit_numbers, first = unit[0], unit[3]
         keys = [first] if walk_finder.approval_walk_unit_is_unnumbered_item(unit) else unit_numbers
         order += [key for key in keys if key not in order]
@@ -2480,6 +2482,24 @@ def walk_document_order(walk_finder, text, units, parser, document, today):
                 walk_finder.approval_walk_item_heading_with_deferred_note_removed(lines[first])):
             summary = keys[0]
     return order, summary, unshown_items_placing(walk_finder, text, units, parser, document, today)
+
+
+def approval_walk_unnumbered_items_moved_past_the_sub_steps_they_split(walk_finder, units):
+    """units, as item_unit_spans gives them, with each unnumbered item that stands between two sub-steps of one
+    whole item, such as 2.1 and 2.2, moved to just after the last unit of the sub-steps that follow it, as
+    approval_walk_item_sub_step_units_right_after reads them; the units keep their line numbers."""
+    moved, waiting = [], []
+    for unit in units:
+        if walk_finder.approval_walk_unit_is_unnumbered_item(unit):
+            waiting.append(unit)
+            continue
+        numbered_above = [other for other in moved if other[0]]
+        wholes = tuple({number.split(".")[0] + "." for number in numbered_above[-1][0]}) if numbered_above else ()
+        if waiting and not (unit[0] and wholes and all(part.startswith(wholes) for part in unit[0])):
+            moved += waiting
+            waiting = []
+        moved.append(unit)
+    return moved + waiting
 
 
 class WalkOrderUnusable(Exception):
