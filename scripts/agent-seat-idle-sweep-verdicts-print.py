@@ -95,7 +95,8 @@ SYNTHETIC_MODEL = "<synthetic>"
 TASK_TOOL_NAMES = ("TaskCreate", "TaskUpdate")
 # The texts Claude Code's task tools return on success: "Task #<n> created successfully: <subject>"
 # and "Updated task #<n> <fields>".
-TASK_TOOL_SUCCESS_RESULT_PATTERN = re.compile(r"Task #\d+ created successfully\b|Updated task #\d+\b")
+TASK_TOOL_SUCCESS_RESULT_PATTERN = re.compile(
+    r"Task #(?P<created>\d+) created successfully\b|Updated task #(?P<updated>\d+)\b")
 HANDOFF_PUT_OFF_TEXT = ("Your handoff was put off at {time} and nothing is running now. "
                         "Is now a good time to hand off?")
 
@@ -328,7 +329,7 @@ class TranscriptFacts:
         self.last_model_turn_record = None
         self.turn_ended_after_last_model_turn_record = False
         self.turn_ending_messages = []   # (record, time, time of the prompt that began its turn)
-        self.task_tool_calls = []        # (time, name, input), only calls whose result succeeded
+        self.task_tool_calls = []        # (time, name, input, task id), only calls whose result succeeded
         self.tool_calls = []             # (time, name, input), every tool call
         self.launch_times = {}           # subagent or background task id -> time
         self.last_task_notification = {} # task id -> (time, whether it is interim)
@@ -353,10 +354,10 @@ def read_main_transcript(path):
     turn_started_at = None
     awaiting_turn_start = True
     task_tool_calls = []                 # (tool use id, (time, name, input))
-    succeeded_task_tool_use_ids = set()
+    task_id_by_succeeded_tool_use_id = {}
     for record in transcript_records(path):
         moment = parse_time(record.get("timestamp"))
-        succeeded_task_tool_use_ids.update(succeeded_task_tool_result_ids(record))
+        task_id_by_succeeded_tool_use_id.update(succeeded_task_tool_result_task_ids(record))
         if awaiting_turn_start and record.get("type") == "user":
             turn_started_at = moment
             awaiting_turn_start = False
@@ -392,22 +393,28 @@ def read_main_transcript(path):
                 launched = result.get(key)
                 if isinstance(launched, str) and launched not in facts.launch_times:
                     facts.launch_times[launched] = moment
-    facts.task_tool_calls = [call for tool_use_id, call in task_tool_calls
-                             if tool_use_id in succeeded_task_tool_use_ids]
+    facts.task_tool_calls = [(*call, task_id_by_succeeded_tool_use_id[tool_use_id])
+                             for tool_use_id, call in task_tool_calls
+                             if tool_use_id in task_id_by_succeeded_tool_use_id]
     return facts
 
 
-def succeeded_task_tool_result_ids(record):
-    """The tool use ids whose result in this record shows a task call that recorded something.
-    A TaskUpdate on a task id that does not exist returns "Task not found" with no is_error, and a
-    call whose turn was interrupted has no result, so only the success text counts."""
+def succeeded_task_tool_result_task_ids(record):
+    """{tool use id: task id} for each result in this record that shows a task call recorded
+    something, the task id read from the success text. A TaskUpdate on a task id that does not
+    exist returns "Task not found" with no is_error, and a call whose turn was interrupted has no
+    result, so only the success text counts; a TaskCreate's input names no id, so its id comes from
+    its result."""
     content = (record.get("message") or {}).get("content")
     if record.get("type") != "user" or not isinstance(content, list):
-        return []
-    return [block.get("tool_use_id") for block in content
-            if isinstance(block, dict) and block.get("type") == "tool_result"
-            and not block.get("is_error")
-            and TASK_TOOL_SUCCESS_RESULT_PATTERN.match(tool_result_text(block))]
+        return {}
+    task_ids = {}
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "tool_result":
+            success = TASK_TOOL_SUCCESS_RESULT_PATTERN.match(tool_result_text(block))
+            if success:
+                task_ids[block.get("tool_use_id")] = success["created"] or success["updated"]
+    return task_ids
 
 
 def tool_result_text(block):
@@ -661,9 +668,8 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
         verdict[fields.LAST_TOOL_CALL_AT] = iso(max(
             (moment for moment, _, _ in facts.tool_calls if moment), default=None))
         verdict[fields.SUCCESSFUL_TASK_TOOL_CALLS_SETTING_PREREQUISITES_OR_BLOCKED_BY] = [
-            {"time": iso(moment), "name": name,
-             "task": tool_input.get("subject") if name == "TaskCreate" else tool_input.get("taskId")}
-            for moment, name, tool_input in facts.task_tool_calls
+            {"time": iso(moment), "name": name, "task": task_id}
+            for moment, name, tool_input, task_id in facts.task_tool_calls
             if moment and sets_prerequisites_or_blocked_by(tool_input)]
 
         last = facts.last_model_turn_record or {}
