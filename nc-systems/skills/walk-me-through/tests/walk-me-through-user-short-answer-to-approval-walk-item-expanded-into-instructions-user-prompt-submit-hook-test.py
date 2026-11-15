@@ -1657,8 +1657,8 @@ ITEM_4_CLOSING_LINE = f"[Item 4 of 9, a filter](https://claude.ai/artifact/x) ·
 
 def not_shown_lines(answer, reason):
     return [f"The user answered \"{answer}\" to item 4 of 9 of approval-walk {WALK_NAME}.",
-            f"{ANSWER_DISCARDED}, because {reason}: the user may not have seen item 4 of 9 as the walk-document now "
-            "has it, so the hook did not count the answer.",
+            f"{ANSWER_DISCARDED}, because the user may not have seen item 4 of 9 as the walk-document now has it.",
+            reason,
             "Record nothing in the walk-minutes and act on none of the answer.",
             "Show the user item 4 of 9 as the walk-document now has it, the text between the BEGIN and END lines "
             f"below, unchanged and not inside a code block, then end your message with {CLOSING_LINE_NAMED}, and "
@@ -1667,17 +1667,21 @@ def not_shown_lines(answer, reason):
 
 
 def shown_different_reason(minute):
-    return (f"the words after the heading of item 4 of 9 in your last message that showed it, written at "
-            f"2026-11-13T20:{minute:02}:00Z, do not contain the item's current walk-document text after its heading as "
-            "one unbroken run: either that message misquoted the item, or the walk-document changed after it. Words "
-            "count; whitespace, line breaks, Markdown markup such as `**` and link targets, `#approval_walk_item_` "
-            "lines and the `of M` in a running count do not")
+    return (f"The words after the heading of item 4 of 9 in your last message that showed it, written at "
+            f"2026-11-13T20:{minute:02}:00Z, do not hold the item's current walk-document text after its heading as "
+            "one unbroken run of words; that message may hold other words before or after the run. Either that message "
+            "misquoted "
+            "the item, or the walk-document changed after that message. Only these count as words: the text the "
+            "user reads rendered, code, an image's alt text, HTML and `<!-- -->` comments. Whitespace, line breaks, "
+            "Markdown markup, a link's target (its text counts), `#approval_walk_item_` lines and the `of M` in a "
+            "running count do not.")
 
 
 def never_shown_reason(item="item 4 of 9"):
-    return (f"no message of yours in this agent-session's transcript has a line opening with the words of {item}'s "
-            "heading, whatever its Markdown markup, `#` included; a message written before the last session-handoff "
-            "is in an earlier agent-session's transcript, which the hook does not read")
+    return (f"No message of yours in this agent-session's transcript has a line that opens with the words of {item}'s "
+            "heading; `#` marks or other Markdown markup may come before those words. The hook does not read an "
+            "earlier agent-session's transcript, so an item shown only before the last session-handoff must be shown "
+            "again in this agent-session.")
 
 
 NEVER_SHOWN_REASON = never_shown_reason()
@@ -1805,8 +1809,8 @@ def test_a_numbered_answer_is_checked_only_for_the_waiting_items_it_approves_or_
           f"lines {lines!r}")
     lines = case.lines("4 a 5 a", transcript)
     check("'4 a 5 a' is not counted when item 5 was never shown", lines is not None
-          and lines[1] == (f"{ANSWER_DISCARDED}, because {never_shown_reason('item 5 of 9')}: the user may not have "
-                           "seen item 5 of 9 as the walk-document now has it, so the hook did not count the answer."),
+          and lines[1:3] == [f"{ANSWER_DISCARDED}, because the user may not have seen item 5 of 9 as the "
+                             "walk-document now has it.", never_shown_reason("item 5 of 9")],
           f"lines {lines!r}")
     lines = case.lines("all a", transcript)
     check("'all a' is not counted when one waiting item was never shown", lines is not None

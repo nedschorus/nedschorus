@@ -436,8 +436,8 @@ ANSWER_DISCARDED = "The hook discarded this answer, and does not keep it for lat
 CLOSING_LINE_NAMED = ("the item's closing line, the walk-me-through skill's line that links the item's page and lists "
                       "the answers")
 ITEM_NOT_SHOWN_LINES = (
-    ANSWER_DISCARDED + ", because {reason}: the user may not have seen {item} as the walk-document now has it, so "
-    "the hook did not count the answer.",
+    ANSWER_DISCARDED + ", because the user may not have seen {item} as the walk-document now has it.",
+    "{reason}",
     "Record nothing in the walk-minutes and act on none of the answer.",
     "Show the user {item} as the walk-document now has it, the text between the BEGIN and END lines below, "
     "unchanged and not inside a code block, then end your message with " + CLOSING_LINE_NAMED + ", and wait for "
@@ -447,14 +447,17 @@ ITEM_NOT_SHOWN_LINES = (
     "END",
 )
 NEVER_SHOWN_REASON = (
-    "no message of yours in this agent-session's transcript has a line opening with the words of {item}'s heading, "
-    "whatever its Markdown markup, `#` included; a message written before the last session-handoff is in an earlier "
-    "agent-session's transcript, which the hook does not read")
+    "No message of yours in this agent-session's transcript has a line that opens with the words of {item}'s "
+    "heading; `#` marks or other Markdown markup may come before those words. The hook does not read an earlier "
+    "agent-session's transcript, so an item shown only before the last session-handoff must be shown again in this "
+    "agent-session.")
 SHOWN_DIFFERENT_REASON = (
-    "the words after the heading of {item} in your last message that showed it, written at {timestamp}, do not "
-    "contain the item's current walk-document text after its heading as one unbroken run: either that message "
-    "misquoted the item, or the walk-document changed after it. Words count; whitespace, line breaks, Markdown "
-    "markup such as `**` and link targets, `#approval_walk_item_` lines and the `of M` in a running count do not")
+    "The words after the heading of {item} in your last message that showed it, written at {timestamp}, do not "
+    "hold the item's current walk-document text after its heading as one unbroken run of words; that message may "
+    "hold other words before or after the run. Either that message misquoted the item, or the walk-document "
+    "changed after that message. Only these count as words: the text the user reads rendered, code, an image's "
+    "alt text, HTML and `<!-- -->` comments. Whitespace, line breaks, Markdown markup, a link's target (its text "
+    "counts), `#approval_walk_item_` lines and the `of M` in a running count do not.")
 TRANSCRIPT_UNREADABLE_LINES = (
     ANSWER_DISCARDED + ": it could not read this agent-session's transcript, {path}, which it reads to check that "
     "the user was last shown {item} as the walk-document now has it. The error: {error}.",
