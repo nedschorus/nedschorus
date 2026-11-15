@@ -188,19 +188,18 @@ UNPUBLISHED_OPENING_TEMPLATE = (
     "because the page is where the user sees the item in full on every screen he reads.")
 # Agents copy a line shown in backticks with its backticks, and the user then sees it as code whose link
 # cannot be clicked, so every line an agent is to copy is shown alone and bare.
-NOT_IN_BACKTICKS = ("Write the line or lines below as plain text, with no backticks around them: the user sees "
-                    "text between backticks as code, in which a link cannot be clicked.")
+NOT_IN_BACKTICKS = ("Write the line or lines below as plain text, with no backticks around them, since the user sees "
+                    "text between backticks as code.")
 UNPUBLISHED_INSTRUCTIONS = (
     "Publish each such item with the Artifact tool as a private page holding the item as the walk-document "
     "{document} has it, titled `Item N of M: {walk}`, and add the line `#item_page item N of M <page link>` at "
     "the end of {minutes}.",
     "If a publish fails, add the line `#item_page item N of M publish failed: <what the Artifact tool said>` "
     "for that item instead.",
-    "Then end your reply with each waiting item's closing line, on a line of its own, with nothing after it, as "
-    "the walk-me-through skill writes it, with the page's link in place of `<page link>` and, in place of "
-    "`<the point>`, the item's walk-document heading with its `Item N of M: ` prefix left out. " + NOT_IN_BACKTICKS + "\n{closing_lines}",
-    "For an item whose publish failed, write its closing line without the link: drop the `[` before `Item` and "
-    "the `](<page link>)` after `<the point>`, keeping the rest of the line.",
+    "Then end your reply with each waiting item's closing line below, on a line of its own, with nothing after it, "
+    "copied as it stands but for the page's link in place of `<page link>`. " + NOT_IN_BACKTICKS + "\n{closing_lines}",
+    "For an item whose publish failed, write its closing line without the link: drop the `[` that opens it and "
+    "the `](<page link>)` before its first ` · `, keeping the rest of the line.",
 )
 REPLY_LACKS_CLOSING_LINE_OPENING_TEMPLATE = (
     "approval-walk current-item check: your reply to the user does not end with the right closing line for "
@@ -222,10 +221,8 @@ NO_LINK_PROBLEM = (
 REPLY_LACKS_CLOSING_LINE_INSTRUCTIONS = (
     "If he has not yet seen the item, show it in full, word for word as the walk-document {document} has it, "
     "starting with its running count, as in `Item 4 of 9: <the point>`, before the closing line.",
-    "End your reply with each waiting item's closing line, on a line of its own, with nothing after it, as the "
-    "walk-me-through skill writes it, with, in place of `<the point>`, the item's walk-document heading with its "
-    "`Item N of M: ` prefix left out. "
-    + NOT_IN_BACKTICKS + "\n{closing_lines}",
+    "End your reply with each waiting item's closing line below, copied as it stands, on a line of its own, with "
+    "nothing after it. " + NOT_IN_BACKTICKS + "\n{closing_lines}",
     "If the link you wrote is the item's current page, published with the Artifact tool, and the walk-minutes "
     "are out of date, keep the link and add the line `#item_page item N of M <that link>` at the end of "
     "{minutes}, since the newest such line for an item is the one this hook reads.",
@@ -383,8 +380,11 @@ def closing_line_problems(numbers, total, closing_lines, pages, parser):
     return problems
 
 
-def closing_line_example(number, total, page, letters):
-    label = f"Item {number} of {total}, <the point>"
+def closing_line_example(number, total, page, letters, points):
+    """The item's closing line as the walk-me-through skill writes it, its point read from its walk-document
+    heading, so the agent copies the line and builds none of it."""
+    point = points.get(number)
+    label = f"Item {number} of {total}" + (f", {point}" if point else "")
     if page == walk_finder.ITEM_PAGE_PUBLISH_FAILED:
         return f"{label} · {letters}"
     return f"[{label}]({page}) · {letters}"
@@ -460,21 +460,23 @@ def output_for(payload, environment):
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
             f"its minutes' last `#next_to_present` line, `{value}`, {problem}."))
     try:
-        total, _ = walk_finder.waiting_item_units(document, value, numbers, total, parser)
+        total, units = walk_finder.waiting_item_units(document, value, numbers, total, parser)
     except walk_finder.UnusableRange as problem:
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=str(problem))
     pages = walk_finder.newest_item_page_link_per_item_from_walk_minutes(
         minutes.read_text(encoding="utf-8"), parser)
-    letters = walk_finder.load_module(
+    answer_hook = walk_finder.load_module(
         "walk_me_through_user_short_answer_to_approval_walk_item_expanded_into_instructions_user_prompt_submit_hook",
-        ANSWER_HOOK_FILE).ANSWER_LETTERS_TEXT
+        ANSWER_HOOK_FILE)
+    letters = answer_hook.ANSWER_LETTERS_TEXT
+    points = answer_hook.heading_points(document.read_text(encoding="utf-8").split("\n"), units, parser)
     unpublished = [number for number in numbers if number not in pages]
     if unpublished:
         return block(UNPUBLISHED_OPENING_TEMPLATE, UNPUBLISHED_INSTRUCTIONS + no_decision_instructions(unpublished),
                      named=" and ".join(f"`Item {number} of {total}`" for number in unpublished),
                      page_line=sub_step_page_line(unpublished, total),
                      closing_lines="\n".join(closing_line_example(number, total, pages.get(number, "<page link>"),
-                                                                  letters) for number in numbers))
+                                                                  letters, points) for number in numbers))
     no_decision_links = {walk_finder.approval_walk_sub_step_no_decision_closing_line_page_link_or_none(line)
                          for line in reply.split("\n")}
     numbers_needing_closing_line = [number for number in numbers
@@ -492,7 +494,7 @@ def output_for(payload, environment):
                  page_line=sub_step_page_line(numbers_needing_closing_line, total),
                  named=" and ".join(f"`Item {number} of {total}`" for number in numbers),
                  problems="; ".join(problems),
-                 closing_lines="\n".join(closing_line_example(number, total, pages[number], letters)
+                 closing_lines="\n".join(closing_line_example(number, total, pages[number], letters, points)
                                          for number in numbers))
 
 
