@@ -3096,6 +3096,10 @@ EDIT_COMPARISON_CASES = (
      "---\ndescription: >\n new words\n---\n",
      "---\ndescription: >\n old words\n---\n",
      (["s1"], ["description: > old words"])),
+    ("a change to a frontmatter-only block scalar line that ends in a colon is seen",
+     "---\ndescription: |\n  Danger:\n---\n",
+     "---\ndescription: |\n  Warning:\n---\n",
+     (["s1"], ["description: | Warning:"])),
 )
 for case_name, text, base_text, expected in EDIT_COMPARISON_CASES:
     found = edit_comparison(text, base_text)
@@ -3111,6 +3115,13 @@ for wordless_document in ("***\n", "---\n\n---\n", "---\ntitle: ***\n---\n", "--
     wordless_found = sentence_id_markup(wordless_document)
     check(f"a document of text with no words, {wordless_document!r}, makes no unit",
           wordless_found == (wordless_document, {}), repr(wordless_found))
+
+for worded_document, worded_sentence in (("---\ndescription: |\n  Warning:\n---\n", "description: | Warning:"),
+                                         ("---\ntitle:***\n---\n", "title:***")):
+    worded_found = sentence_id_markup(worded_document)
+    check(f"a frontmatter-only document whose only words look like a key, {worded_document!r}, "
+          "makes one unit",
+          worded_found[1] == {"s1": worded_sentence}, repr(worded_found))
 
 with tempfile.TemporaryDirectory() as placeholder_scratch:
     placeholder_template = Path(placeholder_scratch) / "prompt.md"
