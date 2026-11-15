@@ -330,7 +330,6 @@ the run where it failed; with --remove-worktree-and-force-delete-its-branch
 or --force-delete-branch that is exit 1 with a FAILED line.
 """
 
-import contextlib
 import fnmatch
 import hashlib
 import importlib.util
@@ -342,7 +341,6 @@ import shutil
 import stat
 import subprocess
 import sys
-import tempfile
 import time
 from collections import Counter
 from dataclasses import dataclass, field
@@ -382,6 +380,13 @@ _merge_lane_common_spec = importlib.util.spec_from_file_location(
     REPO_ROOT / "scripts" / "merge-lane-pull-request-helpers-common-options-paths-and-token.py")
 merge_lane_common = importlib.util.module_from_spec(_merge_lane_common_spec)
 _merge_lane_common_spec.loader.exec_module(merge_lane_common)
+
+_task_file_rewrite_spec = importlib.util.spec_from_file_location(
+    "agent_seat_task_list_task_file_rewrite_common",
+    REPO_ROOT / "nc-systems" / "general-tools" / "agent-seat-task-list-task-file-rewrite-common.py")
+_task_file_rewrite = importlib.util.module_from_spec(_task_file_rewrite_spec)
+_task_file_rewrite_spec.loader.exec_module(_task_file_rewrite)
+agent_seat_task_list_task_file_rewrite = _task_file_rewrite.agent_seat_task_list_task_file_rewrite
 
 # After a merge, merge-lane-2's merge program removes pr<n>-head and pr<n>-merged and runs main's tests
 # in pr<n>-merge-commit-on-main-worktree; between its steps no process has a working directory
@@ -2111,18 +2116,9 @@ def close_restored_branch_tasks(repo, remove, only_done, task_lists_directory=No
         task = dict(task, status="completed", description=(
             str(task.get("description", "")).rstrip("\n")
             + f"\nMarked completed by scripts/clean-worktrees.py at {now}: {reason}."))
-        partial = None
         try:
-            # A partial file of its own: cleaners run at the same time, one per session-handoff.
-            descriptor, partial = tempfile.mkstemp(prefix=f".{task_file.name}.", suffix=".partial",
-                                                   dir=task_file.parent)
-            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                stream.write(json.dumps(task, indent=2))
-            os.replace(partial, task_file)
+            agent_seat_task_list_task_file_rewrite(task_file, task)
         except OSError as error:
-            if partial is not None:
-                with contextlib.suppress(OSError):
-                    os.unlink(partial)
             out(f"FAILED: {name} could not be rewritten as completed ({type(error).__name__}: "
                 f"{error}); it is left as it was")
             failures += 1

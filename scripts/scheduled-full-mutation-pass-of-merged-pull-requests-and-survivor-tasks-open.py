@@ -451,6 +451,10 @@ agent_seat_task_list = module_loaded_by_path(
     / "agent-seat-task-list-new-pending-task-write-common.py")
 agent_seat_task_list_new_pending_task_write = (
     agent_seat_task_list.agent_seat_task_list_new_pending_task_write)
+task_file_rewrite = module_loaded_by_path(
+    "agent_seat_task_list_task_file_rewrite_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    / "agent-seat-task-list-task-file-rewrite-common.py").agent_seat_task_list_task_file_rewrite
 
 
 class StepFailed(Exception):
@@ -693,13 +697,6 @@ def survivor_task_is_current(description, diff_files):
     return (f"This task's command: {survivor_task_recorded_mutant_killed_check_command_line(sorted(diff_files, key=str))}\n"
             in description and description.endswith(
                 SURVIVOR_TASK_DESCRIPTION_LAST_LINE_LEAVE_TASK_OPEN_FOR_NIGHTLY_RECHECK))
-
-
-def task_file_rewrite(task_file, task):
-    """Replace the task file with `task`. Raises OSError."""
-    partial = task_file.with_name(f".{task_file.name}.partial")
-    partial.write_text(json.dumps(task, indent=2), encoding="utf-8")
-    os.replace(partial, task_file)
 
 
 def program_run_with_limit(command, timeout_seconds):

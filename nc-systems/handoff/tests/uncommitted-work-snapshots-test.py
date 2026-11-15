@@ -53,6 +53,8 @@ GIT_OUTPUT_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
 TASK_WRITE_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/agent-seat-task-list-new-pending-task-write-common.py")
+TASK_FILE_REWRITE_MODULE_RELATIVE = Path(
+    "nc-systems/general-tools/agent-seat-task-list-task-file-rewrite-common.py")
 NEXT_STEP_LINES_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 LOG_STORE_WRITER_MODULE_RELATIVE = Path(
@@ -157,7 +159,7 @@ def new_clone():
     main = base / "main"
     git(SCRATCH, "clone", "-q", str(origin), str(main))
     for relative in (MODULE_RELATIVE, HOOK_RELATIVE, CLEANER_RELATIVE, OWNER_FILE_MODULE_RELATIVE,
-                     GIT_OUTPUT_MODULE_RELATIVE, TASK_WRITE_MODULE_RELATIVE,
+                     GIT_OUTPUT_MODULE_RELATIVE, TASK_WRITE_MODULE_RELATIVE, TASK_FILE_REWRITE_MODULE_RELATIVE,
                      NEXT_STEP_LINES_MODULE_RELATIVE,
                      LOG_STORE_WRITER_MODULE_RELATIVE, NED_BOX_HOME_CONSTANTS_MODULE_RELATIVE,
                      MERGE_LANE_COMMON_MODULE_RELATIVE, TEST_RUNNER_RELATIVE,

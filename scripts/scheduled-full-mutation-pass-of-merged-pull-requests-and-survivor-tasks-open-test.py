@@ -2069,15 +2069,18 @@ def run_cases():
         before = (alpha_list / "1.json").read_text()
         later = fixture.commit("scripts/other.py", "VALUE = 2\n", author="alpha")
         added = survivor(2, "core/ReplaceComparisonOperator")
-        (alpha_list / ".1.json.partial").mkdir()
-        completed = fixture.run({later: {"json": verdict(survived=[added])}})
+        alpha_list.chmod(0o555)
+        try:
+            completed = fixture.run({later: {"json": verdict(survived=[added])}})
+        finally:
+            alpha_list.chmod(0o755)
         check("a survivor on a line whose open task cannot be rewritten stops the run at that "
               "merge, exit 4, naming the error, with the task unchanged, the merge not recorded "
               "as tested and the state not naming the task for the survivor",
               completed.returncode == job.EXIT_STEP_FAILED
               and f"merge {later[:12]}: no task could be opened on alpha's task list, or "
                   f"rewritten there" in completed.stderr
-              and "IsADirectoryError" in completed.stderr
+              and "PermissionError" in completed.stderr
               and (alpha_list / "1.json").read_text() == before
               and fixture.state_json()["last_tested_main_commit"] == merge
               and job.mutant_key(added) not in fixture.state_json()["tasks_opened"],
@@ -2256,17 +2259,20 @@ def run_cases():
         fixture.run({merge: {"json": verdict(survived=mutants)}})
         before = (alpha_list / "1.json").read_text()
         state_before = fixture.state_json()
-        (alpha_list / ".1.json.partial").mkdir()
         later = fixture.commit("scripts/other.py", "VALUE = 2\n", author="alpha")
         calls_before = len(fixture.calls())
-        completed = fixture.run({"recheck": {"verdicts": {
-            job.mutant_key(mutants[0]): "killed"}}, later: {"json": verdict()}})
+        alpha_list.chmod(0o555)
+        try:
+            completed = fixture.run({"recheck": {"verdicts": {
+                job.mutant_key(mutants[0]): "killed"}}, later: {"json": verdict()}})
+        finally:
+            alpha_list.chmod(0o755)
         check("a task the recheck cannot rewrite stops the run, exit 4, naming the task and the "
               "error, with the task and the state as they were and no merge tested",
               completed.returncode == job.EXIT_STEP_FAILED
               and "task #1 on alpha's task list" in completed.stderr
               and "was rechecked on main (1 killed, 0 no longer exists, 1 survived, 0 could not "
-                  "be judged), but a file could not be read or written (IsADirectoryError"
+                  "be judged), but a file could not be read or written (PermissionError"
                   in completed.stderr
               and (alpha_list / "1.json").read_text() == before
               and fixture.state_json() == state_before
