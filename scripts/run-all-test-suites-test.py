@@ -2121,6 +2121,11 @@ if linux_only_cases_run_here("the removal of what a killed run left, decided fro
                   and "\nRun this again with a --log-dir that this account can create and "
                   "write to.\n" in result.stderr and "Traceback" not in result.stderr,
                   (result.returncode, result.stderr))
+        nested = root / "missing-parent" / "missing-child" / "logs"
+        result = run(root, "--log-dir", str(nested), lock_file=root / "another.lock")
+        check("a run given a --log-dir whose parents do not exist yet creates them and passes",
+              result.returncode == 0 and nested.is_dir(),
+              (result.returncode, result.stderr, nested.is_dir()))
 
 # --- Git calls that read no file of the checkout -----------------------------
 # Full arguments distinguish location and config reads from calls whose
