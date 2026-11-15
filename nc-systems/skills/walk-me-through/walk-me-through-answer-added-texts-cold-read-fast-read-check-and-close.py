@@ -2821,19 +2821,46 @@ def held_answers_unresolved(walk_finder, minutes_text, parser):
             for number in held_numbers} - decided
 
 
-def approval_walk_map_each_item_number_to_direct_sub_steps_found_by_walk_document_item_finder(walk_finder, units):
+def approval_walk_map_each_item_number_to_direct_sub_steps_found_by_walk_document_item_finder(walk_finder, units,
+                                                                                               presented_totals):
     """Return {item number: its direct sub-steps, such as 3.1 and 3.2 for 3, but not 3.1.1} for each item of units,
     as item_unit_spans gives them, taken from the sub-steps approval_walk_item_sub_step_units_below_item_in_walk_document
-    gives the item, and from the item's own unit, as in `Items 3 and 3.1 of 9`."""
+    gives the item's unit, and from that unit itself, as in `Items 3 and 3.1 of 9`. A number that more than one unit
+    names takes the unit whose M is its total in presented_totals, as
+    approval_walk_minutes_total_each_item_number_was_last_presented_with reads them, and gets no entry when that does
+    not pick exactly one: so approving the 3.1.1 of `3.1 of 12` does not decide a `3.1 of 9` the minutes presented
+    last."""
     sub_steps_of = {}
-    for unit in units:
-        for number in unit[0]:
-            direct = sub_steps_of.setdefault(number, [])
-            below = walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(units, unit, [number])
-            for part in unit[0] + [part for each in below for part in each[0]]:
-                if part.rsplit(".", 1)[0] == number and part != number and part not in direct:
-                    direct.append(part)
+    for number in dict.fromkeys(number for unit in units for number in unit[0]):
+        naming = [unit for unit in units if number in unit[0]]
+        if len(naming) > 1:
+            naming = [unit for unit in naming if unit[1] == presented_totals.get(number)]
+        if len(naming) != 1:
+            continue
+        unit = naming[0]
+        below = walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(units, unit, [number])
+        sub_steps_of[number] = list(dict.fromkeys(
+            part for part in unit[0] + [part for each in below for part in each[0]]
+            if part.rsplit(".", 1)[0] == number and part != number))
     return sub_steps_of
+
+
+def approval_walk_minutes_total_each_item_number_was_last_presented_with(walk_finder, minutes_text, parser):
+    """Return {item number: the M of the last `#next_to_present` line of minutes_text, outside code, that names it
+    with one}, as for `#next_to_present item 3.1 of 9` {"3.1": "9"}."""
+    totals = {}
+    for line in walk_finder.prose_lines(minutes_text, parser):
+        spans = [span.span() for span in walk_finder.CODE_SPAN.finditer(line)]
+        for marker in walk_finder.NEXT_MARKER.finditer(line):
+            if any(start <= marker.start() < end for start, end in spans):
+                continue
+            try:
+                numbers, total = walk_finder.parse_items(marker[2].replace("`", "").strip())
+            except walk_finder.UnusableRange:
+                continue
+            if total is not None:
+                totals.update(dict.fromkeys(numbers, total))
+    return totals
 
 
 def items_decided_through_sub_steps(items, words, sub_steps_of, unresolved=frozenset()):
@@ -2869,7 +2896,8 @@ def approval_walk_minutes_read_returning_decided_item_numbers(walk_finder, minut
     decided = minutes_record(walk_finder, minutes_text, parser)[0] | set(decided_now)
     return decided | set(items_decided_through_sub_steps(
         items, dict.fromkeys(decided), approval_walk_map_each_item_number_to_direct_sub_steps_found_by_walk_document_item_finder(
-            walk_finder, units),
+            walk_finder, units,
+            approval_walk_minutes_total_each_item_number_was_last_presented_with(walk_finder, minutes_text, parser)),
         held_answers_unresolved(walk_finder, minutes_text, parser)))
 
 
@@ -3070,7 +3098,8 @@ def close(arguments):
         deferred_item_heading_noted(walk_finder, minutes, answered_numbers, total, parser, noted=False)
     before = minutes.read_text(encoding="utf-8")
     sub_steps_of = approval_walk_map_each_item_number_to_direct_sub_steps_found_by_walk_document_item_finder(
-        walk_finder, units or [])
+        walk_finder, units or [], approval_walk_minutes_total_each_item_number_was_last_presented_with(
+            walk_finder, before, parser))
     inferred_before = items_decided_through_sub_steps(order, minutes_ruling_words(walk_finder, before, parser)[0],
                                                       sub_steps_of, held_answers_unresolved(walk_finder, before, parser))
     append_to_minutes(minutes, [recorded])

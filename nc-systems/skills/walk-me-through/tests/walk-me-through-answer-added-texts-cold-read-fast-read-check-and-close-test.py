@@ -940,6 +940,27 @@ def decided_item_numbers_of(name, document, approved):
         walk_finder, minutes, walk_finder.markdown_parser())
 
 
+def test_the_decided_set_reads_a_reused_number_s_sub_steps_from_the_unit_the_minutes_last_presented():
+    program = load_program()
+    walk_finder = program.load_walk_finder()
+    document = ("# A walk\n\n## Item 3 of 9: three\n\nA.\n\n### Item 3.1 of 9: the first half\n\nB.\n\n"
+                "## Item 3 of 12: a later item reusing 3\n\nC.\n\n### Item 3.1 of 12: its first half\n\nD.\n\n"
+                "#### Item 3.1.1 of 12: its first part\n\nE.\n")
+    decided = {}
+    for presented in ("9", "12"):
+        directory = SUITE_ROOT / f"decided-set-reused-number-presented-of-{presented}"
+        directory.mkdir(parents=True)
+        (directory / "a-walk.md").write_text(document)
+        minutes = directory / ("a-walk" + walk_finder.MINUTES_SUFFIX)
+        minutes.write_text(f"# Minutes\n\n#next_to_present item 3 of {presented}\n\n"
+                           f"#next_to_present item 3.1 of {presented}\n\n" + approved_line("item 3.1.1 of 12"))
+        decided[presented] = program.approval_walk_minutes_read_returning_decided_item_numbers(
+            walk_finder, minutes, walk_finder.markdown_parser())
+    check("approving the 3.1.1 of `3.1 of 12` decides neither 3.1 nor 3 when the minutes last presented `3.1 of 9`, "
+          "which has no sub-steps, and decides both when they last presented `3.1 of 12` and `3 of 12`",
+          decided == {"9": {"3.1.1"}, "12": {"3.1.1", "3.1", "3"}}, repr(decided))
+
+
 def test_the_decided_set_finds_an_item_s_sub_steps_wherever_they_sit_in_the_walk_document():
     alert_between = ("# A walk\n\n## Item 1 of 10: one\n\nA.\n\n## Item 3 of 10: three\n\nB.\n\n"
                      "### Item 3.1 of 10: the first half\n\nC.\n\n#### Item 3.1.1 of 10: its first part\n\nD.\n\n"
@@ -1205,7 +1226,7 @@ def test_an_item_is_not_decided_through_a_sub_step_past_a_later_reuse_of_its_par
     units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
     items = [number for unit in units for number in unit[0]]
     inferred = program.items_decided_through_sub_steps(
-        items, {"3.1.1": "approved"}, program.approval_walk_map_each_item_number_to_direct_sub_steps_found_by_walk_document_item_finder(walk_finder, units))
+        items, {"3.1.1": "approved"}, program.approval_walk_map_each_item_number_to_direct_sub_steps_found_by_walk_document_item_finder(walk_finder, units, {}))
     check("approving a 3.1.1 that stands past a later `Item 3 of 12` decides neither 3.1 nor 3", inferred == {},
           repr(inferred))
 
