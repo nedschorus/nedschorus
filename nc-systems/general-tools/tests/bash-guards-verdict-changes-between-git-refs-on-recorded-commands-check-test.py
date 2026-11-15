@@ -10,6 +10,7 @@ Run: python3 nc-systems/general-tools/tests/bash-guards-verdict-changes-between-
 Prints one line per case and exits non-zero if any case fails.
 """
 
+import argparse
 import contextlib
 import importlib.util
 import io
@@ -1655,13 +1656,24 @@ try:
           status == 2 and f"{existing_scratch / 'checkout-base'} already exists, and git does not list it" in err
           and f"The path is inside the --scratch-directory, {existing_scratch}." in err
           and (existing_scratch / "checkout-base" / "kept").exists(), f"status {status}\n{out}\n{err}")
-    fresh_rerun = printed_rerun_command(err, "that does not exist yet: ")
+    fresh_rerun = printed_rerun_command(err, "this command already names one: ")
     fresh_ran = subprocess.run(fresh_rerun, shell=True, capture_output=True, text=True)
     check("the command the message gives runs the same replay in a scratch directory that did not exist, and "
           "leaves the reused one as it was",
-          f"--scratch-directory {existing_scratch}-2 " in fresh_rerun and fresh_ran.returncode == 0
+          f"--scratch-directory={existing_scratch}-2 " in fresh_rerun and fresh_ran.returncode == 0
           and (existing_scratch / "checkout-base" / "kept").exists(),
           f"{fresh_rerun}\n{fresh_ran.returncode}\n{fresh_ran.stdout[-2000:]}\n{fresh_ran.stderr[-2000:]}")
+    status, out, err = run_replay("HEAD", scratch, "--scratch-directory", str(existing_scratch))
+    next_free_rerun = printed_rerun_command(err, "this command already names one: ")
+    check("when <scratch>-2 exists too, after the run above made it, the command names <scratch>-3, the next path "
+          "that does not exist",
+          status == 2 and f"--scratch-directory={existing_scratch}-3 " in next_free_rerun,
+          f"status {status}\n{next_free_rerun}\n{err}")
+    dash_value = replay.rerun_command(argparse.Namespace(pairs_file="-pairs.json", scratch_directory=None))
+    dash_words = shlex.split(dash_value.split(" && ", 1)[1])
+    check("the rerun command runs the Python this replay runs under, and writes a value beginning with - as "
+          "--name=value, which argparse reads as the option's value",
+          dash_words[0] == sys.executable and "--pairs-file=-pairs.json" in dash_words, dash_value)
     left_scratch = Path(scratch).resolve() / "run-registered-checkout-base-exists"
     git("worktree", "add", "--detach", str(left_scratch / "checkout-base"), "HEAD")
     replay_arguments = ("--scratch-directory", str(left_scratch))
@@ -1670,12 +1682,12 @@ try:
     remove_command = (f"git -C {Path(TEST_REPOSITORY).resolve()} worktree remove --force --force "
                       f"{left_scratch / 'checkout-base'}")
     removed = subprocess.run(remove_command, shell=True, capture_output=True, text=True)
-    rerun = printed_rerun_command(err, "then run the replay again: ")
+    rerun = printed_rerun_command(err, "once that succeeds, run the replay again: ")
     ran_again = subprocess.run(rerun, shell=True, capture_output=True, text=True)
     check("a checkout an earlier replay left at a checkout path: exit 2, and the commands the message gives remove "
           "it and then run the same replay in the same scratch directory",
           status == 2 and "already exists, and git lists it as a worktree" in err and remove_command in err
-          and removed.returncode == 0 and f"--scratch-directory {left_scratch} " in rerun
+          and removed.returncode == 0 and f"--scratch-directory={left_scratch} " in rerun
           and ran_again.returncode == 0,
           f"status {status}\n{err}\n{removed.stderr}\n{rerun}\nagain {ran_again.returncode}\n"
           f"{ran_again.stdout[-2000:]}\n{ran_again.stderr[-2000:]}")
@@ -1734,7 +1746,7 @@ try:
     odd_run_scratch = odd_scratch / "run a;b"
     git("worktree", "add", "--detach", str(odd_run_scratch / "checkout-base"), "HEAD")
     status, out, err = run_replay("HEAD", scratch, "--scratch-directory", str(odd_run_scratch))
-    remove_command = err.partition("Remove it with ")[2].partition(", then run the replay again")[0]
+    remove_command = err.partition("Remove it with ")[2].partition("; once that succeeds, run the replay again")[0]
     removed = subprocess.run(remove_command, shell=True, capture_output=True, text=True)
     check("a worktree an earlier replay left in a --scratch-directory whose path holds a space and a ;: exit 2, and "
           "the command the refusal gives names exactly that worktree and removes it",

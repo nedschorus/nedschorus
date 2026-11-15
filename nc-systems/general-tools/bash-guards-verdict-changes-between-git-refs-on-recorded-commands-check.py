@@ -127,7 +127,7 @@ REGISTERED_CHECKOUT_PATH_EXISTS_MESSAGE = (
     "in this --scratch-directory could not remove; so "
     "bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check adds no worktree there, leaves the path "
     "as it is, and exits 2 before it replays any recorded command.\n"
-    "Remove it with {remove_command}, then run the replay again: {rerun_command}\n"
+    "Remove it with {remove_command}; once that succeeds, run the replay again: {rerun_command}\n"
     "A replay's worktree holds only the commit it read, so removing it loses no work.")
 UNREGISTERED_CHECKOUT_PATH_EXISTS_MESSAGE = (
     "{checkout} already exists, and git does not list it as a worktree of {repository}, so it is no worktree an "
@@ -135,7 +135,8 @@ UNREGISTERED_CHECKOUT_PATH_EXISTS_MESSAGE = (
     "bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check adds no worktree there, leaves the path "
     "as it is, and exits 2 before it replays any recorded command. The path is inside the --scratch-directory, "
     "{scratch}.\n"
-    "Run the replay again with a --scratch-directory that does not exist yet: {fresh_scratch_rerun_command}")
+    "Run the replay again with a --scratch-directory that does not exist yet; this command already names one: "
+    "{fresh_scratch_rerun_command}")
 CHECKOUTS_NOT_REMOVED_MESSAGE = (
     "REPLAY FAILED: these worktrees could not be removed, so "
     "bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check exits 2; any verdicts it printed above "
@@ -1150,11 +1151,12 @@ def registered_checkout_paths(worktree_list_porcelain):
 def rerun_command(arguments, scratch_directory=None):
     """The command that runs this replay again with the parsed arguments, from the directory it ran in; with
     scratch_directory, that --scratch-directory instead."""
-    words = ["python3", os.path.realpath(__file__)]
+    words = [sys.executable, os.path.realpath(__file__)]
     for name, value in vars(arguments).items():
         value = scratch_directory if name == "scratch_directory" and scratch_directory is not None else value
         for one in value if isinstance(value, list) else [] if value is None else [value]:
-            words += ["--" + name.replace("_", "-"), str(one)]
+            # --name=value, because argparse reads a separate value that begins with - as an option.
+            words.append(f"--{name.replace('_', '-')}={one}")
     # The parsed arguments may be relative paths, which name the same files only from the same directory.
     return f"cd {shlex.quote(os.getcwd())} && {shlex.join(words)}"
 
