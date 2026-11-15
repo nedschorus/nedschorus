@@ -36,8 +36,8 @@ passing review.
   user `nedlern`), each with its own clone. Path map:
   `docs/nedschorus-wiki/nedschorus-mac-and-ned-box-machine-setup.md` (flagged stale
   2026-08-17; verify before relying on specifics).
-- **Agent-seat** — a named, long-lived agent identity: home directory, own
-  branch, brief. **Session** — one running conversation occupying an
+- **Agent-seat** — a named, long-lived agent identity: home directory,
+  brief. **Session** — one running conversation occupying an
   agent-seat; sessions end and are replaced, the agent-seat persists.
   **Reincarnate-seat** — the handoff-supervisor replacing a session with a
   fresh one, carrying the handoff forward. Definitions of record:

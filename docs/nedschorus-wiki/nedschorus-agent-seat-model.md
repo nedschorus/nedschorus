@@ -15,7 +15,7 @@ An agent-seat's work is the body of related work it owns: a subject area with sh
 The user's reasoning, which this model serves:
 
 - An agent with focused context is smarter than one carrying unrelated history. Confusion is the expensive failure.
-- **An idle agent-seat costs almost nothing** — no tokens, no attention — so never merge two agent-seats' unrelated work to keep an agent-seat busy. It is not literally free: an unretired agent-seat holds a directory and a branch, and retiring it later takes the steps below. That cost is small and one-time.
+- **An idle agent-seat costs almost nothing** — no tokens, no attention — so never merge two agent-seats' unrelated work to keep an agent-seat busy. It is not literally free: an unretired agent-seat holds an agent-home, and retiring it later takes the steps below. That cost is small and one-time.
 - The natural unit of work is a series of related tasks; at the end of a series, the agent writes a handoff and the session is replaced, so the next series starts on a clean context.
 - Agent-seats are resumed weeks later, so a name must say what the agent-seat is for without opening anything.
 
@@ -29,7 +29,7 @@ An agent-seat name is one word. It is an address typed to reach an agent, not a 
 
 They are different, and confusing them loses work.
 
-**Paused** — the agent-seat's current series is done and nobody is using it. Exit the session; the handoff-supervisor stops with it. The handoff, worktree and branch all stay exactly as they are. This is the ordinary way to leave an agent-seat, and it needs no cleanup.
+**Paused** — the agent-seat's current series is done and nobody is using it. Exit the session; the handoff-supervisor stops with it. The handoff and the worktree both stay exactly as they are. This is the ordinary way to leave an agent-seat, and it needs no cleanup.
 
 **Retired** — the name is being freed or repurposed. Four steps, in order:
 
