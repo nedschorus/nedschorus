@@ -2819,24 +2819,11 @@ def approval_walk_minutes_read_returning_decided_item_numbers(walk_finder, minut
     items_decided_through_sub_steps finds decided through its sub-steps, unless held_answers_unresolved holds it."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     minutes_text = minutes.read_text(encoding="utf-8")
-    items = walk_document_item_numbers_with_sub_steps_under_their_item(
-        walk_finder, walk_finder.item_unit_spans(document.read_text(encoding="utf-8"), parser))
+    items = [number for unit in walk_finder.item_unit_spans(document.read_text(encoding="utf-8"), parser)
+             for number in unit[0]]
     decided = minutes_record(walk_finder, minutes_text, parser)[0] | set(decided_now)
     return decided | set(items_decided_through_sub_steps(
         items, dict.fromkeys(decided), held_answers_unresolved(walk_finder, minutes_text, parser)))
-
-
-def walk_document_item_numbers_with_sub_steps_under_their_item(walk_finder, units):
-    """Return the item numbers of units, as item_unit_spans gives them, keeping a sub-step, such as 3.1.1, only when
-    it is among the sub-step units right after its whole-numbered item, so that an older version's `3.1.3 of 9`
-    elsewhere in the walk-document is not taken for a sub-step 3.1 must have decided."""
-    numbers = []
-    for unit in units:
-        if unit[0] and all("." not in number for number in unit[0]):
-            numbers += unit[0]
-            numbers += [number for each in walk_finder.approval_walk_item_sub_step_units_right_after(units, unit)
-                        for number in each[0]]
-    return list(dict.fromkeys(numbers))
 
 
 def next_item(walk_finder, minutes, parser, order, summary, answered_numbers, waiting_numbers, placing=None,
@@ -3035,9 +3022,7 @@ def close(arguments):
     if answered != DEFERRED:
         deferred_item_heading_noted(walk_finder, minutes, answered_numbers, total, parser, noted=False)
     before = minutes.read_text(encoding="utf-8")
-    with_sub_steps = walk_document_item_numbers_with_sub_steps_under_their_item(walk_finder, units)
-    inferred_before = items_decided_through_sub_steps(with_sub_steps,
-                                                      minutes_ruling_words(walk_finder, before, parser)[0],
+    inferred_before = items_decided_through_sub_steps(order, minutes_ruling_words(walk_finder, before, parser)[0],
                                                       held_answers_unresolved(walk_finder, before, parser))
     append_to_minutes(minutes, [recorded])
     word = RULING_GIVEN_WORDS[held_outcome] if held_outcome else word
@@ -3057,7 +3042,7 @@ def close(arguments):
     unresolved = held_answers_unresolved(walk_finder, after, parser)
     # An item this close decides through its last sub-step gets its ruling too, so a pull request held on it moves.
     rulings += [(number, inferred_word) for number, inferred_word
-                in items_decided_through_sub_steps(with_sub_steps, words, unresolved).items() if number not in inferred_before]
+                in items_decided_through_sub_steps(order, words, unresolved).items() if number not in inferred_before]
     numbers = next_item(walk_finder, minutes, parser, order, summary, answered_numbers, waiting_numbers, placing)
     if numbers and isinstance(numbers[0], int):
         first = numbers[0]
