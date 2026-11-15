@@ -30,12 +30,12 @@ _finder_spec.loader.exec_module(finder)
 
 failures = 0
 for module in WORDING_MODULES:
-    copies = finder.common_module_wording_copies_in_other_test_files(REPOSITORY_ROOT / module, REPOSITORY_ROOT)
+    copies = finder.common_module_wording_copies_in_other_test_files_find(REPOSITORY_ROOT / module, REPOSITORY_ROOT)
     if copies:
         failures += 1
         print(f"FAIL  {module}: another test file keeps its own copy of its wording:")
         for copy in copies:
-            print(f"      {finder.copied_wording_report_line(copy)}")
+            print(f"      {finder.common_module_wording_copy_in_other_test_file_report_line_build(copy)}")
     else:
         print(f"PASS  {module}: no other test file keeps its own copy of its wording")
 
