@@ -642,6 +642,13 @@ TWO_PROMISES = [user("go"), assistant(f"{PROMISE} {HOLD_SENTENCE}"), turn_end()]
 machine = promise_wait_after(TWO_PROMISES, RECORDED_TASK)
 check("rule 2: one task call does not end a wait whose message named two promises",
       waited_on_to_escalation(machine), (machine.events("wait_step"), machine.events("wait_ended")))
+SAME_TASK_UPDATED = [
+    assistant(tool=("TaskUpdate", {"taskId": "2", "addBlockedBy": ["1"]}), when=at(0.8),
+              tool_id=f"t-same-{number}")
+    for number in range(2)]
+machine = promise_wait_after(TWO_PROMISES, *SAME_TASK_UPDATED)
+check("rule 2: two calls on one task do not end a wait whose message named two promises",
+      waited_on_to_escalation(machine), (machine.events("wait_step"), machine.events("wait_ended")))
 machine = promise_wait_after(
     TWO_PROMISES, RECORDED_TASK,
     assistant(tool=("TaskUpdate", {"taskId": "2", "addBlockedBy": ["1"]}), when=at(0.9),

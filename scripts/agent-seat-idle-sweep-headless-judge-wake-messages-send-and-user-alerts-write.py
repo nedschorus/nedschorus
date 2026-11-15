@@ -23,9 +23,9 @@ Each invocation, under a lock that keeps two from overlapping:
    rule 2 has unbacked promises and announced actions judged and named to it; rule 3 sends the
    handoff text; rule 4 ends a wait no rule 2 message was sent on; rule 5 has the judge
    decide whether to message it, and write the message. A wait whose rule 2 messages named only
-   promises to act after an event and holds ends when the agent-seat has made, after each message,
-   one task call per sentence it named: a TaskCreate or TaskUpdate call whose result succeeded and
-   that sets `metadata.prerequisites` or `addBlockedBy`. A message starts a wait, unless a wait is
+   promises to act after an event and hold sentences ends when the agent-seat has recorded, after each
+   message, one task per sentence it named, each with a TaskCreate or TaskUpdate call whose result
+   succeeded and that sets `metadata.prerequisites` or `addBlockedBy`. A message starts a wait, unless a wait is
    already open: 15 minutes later, if the agent-seat is idle, code sends the escalation, which
    quotes the message that opened the wait, and 15 minutes after that writes the user a
    user-alert, once.
@@ -455,17 +455,18 @@ def task_calls_settling_promise_messages(promise_messages, task_calls):
     """The task calls that settle a wait's rule 2 messages, or None while they do not.
 
     They settle the messages when every message named only promises to act after an event and
-    holds, and each sentence named can have a task call of its own made after its message: for
-    each message, the calls after it are at least as many as the sentences it and every later
-    message named. Code cannot tell which promise a call backs, so the wait_ended event lists the
-    sentences and the calls for a reader to check."""
+    holds, and each sentence named can have a task of its own recorded after its message: for each
+    message, the distinct tasks the calls after it record are at least as many as the sentences it
+    and every later message named. Two calls on one task count once. Code cannot tell which promise
+    a call backs, so the wait_ended event lists the sentences and the calls for a reader to check."""
     if any(not message["kinds"] <= TASK_CALL_SETTLED_KINDS for message in promise_messages):
         return None
     calls_after = [[call for call in task_calls
                     if call["time"] and parse_time(call["time"]) > parse_time(message["at"])]
                    for message in promise_messages]
     for index, calls in enumerate(calls_after):
-        if len(calls) < sum(len(message["sentences"]) for message in promise_messages[index:]):
+        tasks = {(call["name"], call["task"]) for call in calls}
+        if len(tasks) < sum(len(message["sentences"]) for message in promise_messages[index:]):
             return None
     return calls_after[0]
 
