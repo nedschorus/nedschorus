@@ -563,10 +563,11 @@ def parser_unavailable_hook_output(guard_name, error, next_step_lines, environme
                 f"{COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION}, then say whether it did what "
                 f"{guard_name} exists to stop.",
                 environment))
-        return json.dumps({"hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "additionalContext": message,
-        }})
+        user_notice = (
+            f"{guard_name} let a command through unchecked on {host}, because the shell command "
+            f"reader failed on it ({error.install_output}). The agent has been told to check "
+            f"what the command did.")
+        return _parser_unavailable_hook_output_json(message, user_notice)
     message = (
         f"{guard_name} let this command through without checking it, and the command has run: "
         f"the shell parser tree-sitter-bash is missing on {host}, and installing it failed.\n"
@@ -581,10 +582,19 @@ def parser_unavailable_hook_output(guard_name, error, next_step_lines, environme
             + f"\nThen {COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION}, and say whether it did what "
             f"{guard_name} exists to stop.",
             environment))
-    return json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "additionalContext": message,
-    }})
+    user_notice = (
+        f"{guard_name} let a command through unchecked on {host}: tree-sitter-bash is missing "
+        f"there and installing it failed ({error.install_output}). The agent has been told to "
+        f"check what the command did and how to install it by hand.")
+    return _parser_unavailable_hook_output_json(message, user_notice)
+
+
+def _parser_unavailable_hook_output_json(agent_notice, user_notice):
+    """Return the PreToolUse JSON giving agent_notice to the agent and user_notice to the user."""
+    return json.dumps({
+        "hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": agent_notice},
+        "systemMessage": user_notice,
+    })
 
 
 def report_to_user_or_dispatching_agent_instruction_build(words, environment=os.environ):
@@ -926,7 +936,7 @@ def _redirect_text_before_operator(node, operator, source, glob_markers):
     touching the operator before it. After a blank, bash reads that text as the
     operator's descriptor when it is decimal digits, and as a word otherwise.
     Text that touches the escaped blanks is the end of the word before, as the 2
-    of `>f\\<tab>2>&-`, which this reader does not read.
+    of `>f\\<tab>2>&-`: see _text_ending_word_before_redirect.
     """
     before = [child for child in node.named_children
               if child.type != "file_descriptor" and child.end_byte <= operator.start_byte]
@@ -943,6 +953,25 @@ def _redirect_text_before_operator(node, operator, source, glob_markers):
     if _digits_are_whole_token(source, first, operator.start_byte):
         return text.decode(), gap_words
     return "", gap_words + [prefix + _unescape_unquoted(text.decode("utf-8", SHELL_TEXT_ERRORS), glob_markers)]
+
+
+def _text_ending_word_before_redirect(node, source, word_end, glob_markers):
+    """Return the text inside a redirect before its operator that ends the word before it, or "".
+
+    tree-sitter-bash ends a word before an escaped tab and starts the redirect
+    after it at the backslash, so in `zzq a\\<tab>2>f` it puts the 2 inside the
+    redirect; bash passes the word "a<tab>2" and writes standard output to f.
+    word_end is where the word before ends, after the escaped blanks that continue it.
+    """
+    operator = next((child for child in node.children if not child.is_named), None)
+    if operator is None or node.start_byte >= word_end:
+        return ""
+    before = [child for child in node.named_children
+              if child.type != "file_descriptor" and child.end_byte <= operator.start_byte]
+    if not before or before[0].start_byte != word_end:
+        return ""
+    return _unescape_unquoted(source[word_end:operator.start_byte].decode("utf-8", SHELL_TEXT_ERRORS),
+                              glob_markers)
 
 
 def _digits_are_whole_token(source, start, end):
@@ -1002,6 +1031,12 @@ def _descriptor_written_before(node, source):
     return ""
 
 
+def _is_braced_expansion(node):
+    """Return whether node is a ${ } expansion, including one tree-sitter-bash reads as an ERROR."""
+    return node.type == "expansion" or (
+        node.type == "ERROR" and [child.type for child in node.children[:1]] == ["${"])
+
+
 class _Collector:
     def __init__(self, glob_markers, source, heredocs_taken_out, restored=None):
         self.glob_markers = glob_markers
@@ -1039,15 +1074,19 @@ class _Collector:
                     for command in self.commands[first:]:
                         command.in_while_or_until_loop_condition = True
             return
-        if kind == "expansion":
-            for child in node.children:
-                if child.type == "word" and any(mark in _text(child) for mark in ("`", "<(", ">(")):
-                    # tree-sitter-bash leaves a backtick or a process substitution in a
-                    # ${name:-...} default as one word; bash runs it.
-                    found = simple_commands("echo " + _text_restored(child, self.restored),
-                                            self.glob_markers)
-                    self.adopt([command for command in found if command.inside_substitution()],
-                               child_shell + (ChildShell(child.start_byte, SUBSTITUTION),))
+        if _is_braced_expansion(node) and any(mark in _text(node) for mark in ("`", "<(", ">(")):
+            # tree-sitter-bash splits a backticked command or a process substitution
+            # inside ${ } into text, ERROR and substitution pieces, so the text inside
+            # the braces is read again whole, in the quoting it is written in.
+            quote = '"' if node.parent is not None and node.parent.type in ("string", "heredoc_body") \
+                else ""
+            # Inside ${ } a # after a blank starts no comment, so the second read gets it escaped.
+            inner = re.sub(r"(^|\s)#", r"\1\\#", _text_restored(node, self.restored)[2:-1])
+            found = simple_commands("echo " + quote + inner + quote, self.glob_markers)
+            # The offsets of the second read count from its own text, so the ${ } holds them.
+            self.adopt([command for command in found if command.inside_substitution()],
+                       child_shell + (ChildShell(node.start_byte, SUBSTITUTION),))
+            return
         for child in node.children:
             self.visit(child, child_shell, heredocs)
 
@@ -1115,23 +1154,43 @@ class _Collector:
                 unit_shell = (child_shell + (ChildShell(first.start_byte, PIPELINE_STAGE,
                                                         pipeline_start),)
                               if len(pipeline) > 1 else child_shell)
-                redirects, trailing_words = [], []
+                redirects, trailing_words, command_word_end = [], [], ""
                 previous_end = (_escaped_blanks_continuing_word(
                     self.source, unit["children"][-1].end_byte)[1] if unit["children"] else None)
+                # Where the word written last before the next redirection is held: the
+                # command's words, trailing_words, or the last redirection's target.
+                last_word = ("command" if unit["children"]
+                             and unit["children"][-1].type not in REDIRECT_NODE_TYPES else None)
                 for redirect, limit in unit["redirects"]:
                     if previous_end is not None:
-                        trailing_words.extend(_escaped_blank_words_before_operator(
-                            self.source[previous_end:redirect.start_byte]))
+                        gap_words = _escaped_blank_words_before_operator(
+                            self.source[previous_end:redirect.start_byte])
+                        trailing_words.extend(gap_words)
+                        last_word = "trailing" if gap_words else last_word
+                        text = _text_ending_word_before_redirect(
+                            redirect, self.source, previous_end, self.glob_markers)
+                        if text and last_word == "trailing":
+                            trailing_words[-1] = _word_with_text(trailing_words[-1], trailing_words[-1] + text)
+                        elif text and last_word == "target":
+                            redirects[-1] = (redirects[-1][0], redirects[-1][1] + text)
+                        elif text and last_word == "command":
+                            command_word_end += text
                         previous_end = _redirect_end_with_escaped_blanks_continuing_target(
                             self.source, redirect, limit)
+                    words_before, redirects_before = len(trailing_words), len(redirects)
                     shared_heredocs.extend(
                         self.redirect(redirect, unit_shell, redirects, trailing_words, limit))
+                    if len(trailing_words) > words_before:
+                        last_word = "trailing"
+                    elif len(redirects) > redirects_before:
+                        last_word = "target" if redirects[-1][1] else None
                 if previous_end is not None:
                     trailing_words.extend(_escaped_blank_words_ending_command(
                         self.source, previous_end))
                 if unit["children"] is not None:
                     self.simple_command(unit["node"], unit["children"], unit_shell,
-                                        list(shared_heredocs), redirects, trailing_words)
+                                        list(shared_heredocs), redirects, trailing_words,
+                                        command_word_end)
                 else:
                     self.visit(unit["node"], unit_shell, list(shared_heredocs))
 
@@ -1218,7 +1277,9 @@ class _Collector:
             self.expanded_heredoc_body(taken, child_shell)
         return [Heredoc(body, taken.expanded, taken.delimiter_as_written)]
 
-    def simple_command(self, node, children, child_shell, heredocs, redirects, trailing_words):
+    def simple_command(self, node, children, child_shell, heredocs, redirects, trailing_words,
+                       last_word_end=""):
+        """Read one simple command; last_word_end is text a redirection after it adds to its last word."""
         words, own_redirects, own_heredocs = [], [], []
         joined = None
         previous_end = None
@@ -1264,6 +1325,8 @@ class _Collector:
                 continues = previous_end > child.end_byte
         if joined is not None:
             words.append(word_value(joined, self.glob_markers, self.restored))
+        if last_word_end and words:
+            words[-1] = _word_with_text(words[-1], words[-1] + last_word_end)
         words.extend(trailing_words)
         if words:
             self.commands.append(SimpleCommand(words, child_shell, own_redirects + list(redirects),
@@ -1357,9 +1420,7 @@ def _escaped_blank_words_ending_command(source, start):
     """Return the words of the escaped blanks from start to the text that ends a command.
 
     tree-sitter-bash ends a command at its last word and leaves escaped blanks
-    after it outside every node, so `zzq \\ ;` loses the " " bash passes. The
-    blanks count only when a separator, a comment, a closing parenthesis or
-    backtick, a line end or the end of the source follows them.
+    after it outside every node, so `zzq \\ ;` loses the " " bash passes.
     """
     end = start
     while True:
@@ -1370,10 +1431,6 @@ def _escaped_blank_words_ending_command(source, start):
             end += 1
         else:
             break
-    # A # here starts a comment: the source corrections make a # just after an escaped blank
-    # part of a word.
-    if source[end:end + 1] not in (b"", b"\n", b";", b"&", b"|", b")", b"`", b"#"):
-        return []
     return _escaped_blank_words_before_operator(source[start:end])
 
 
@@ -1594,11 +1651,8 @@ def _heredoc_body_substitution_commands(body, glob_markers):
     index = start
     while index < end:
         node = expansions.get(index)
-        if node is not None and not (node.type == "expansion" and b"`" in node.text):
+        if node is not None:
             index = node.end_byte
-        elif node is not None:
-            # tree-sitter-bash splits a backticked command inside ${ }; the walk reads it there.
-            index += 1
         elif source[index:index + 1] == b"\\":
             index += 2
         elif source[index:index + 1] == b"`":

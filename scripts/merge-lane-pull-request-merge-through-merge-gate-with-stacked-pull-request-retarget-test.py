@@ -8,7 +8,8 @@ fake `gh` first on PATH, and HOME pointing at a scratch home that holds the
 merge account's token file. The fake
 gate answers each run from a numbered output file and exit code the case
 writes. The fake `gh` logs every call with the GH_TOKEN it saw and answers
-from a routes file the case writes; it does not filter `gh pr list` by base
+from a routes file the case writes, keyed by its first two arguments, or, for
+`gh api`, by whether it reads or deletes the branch; it does not filter `gh pr list` by base
 branch, so the program's own filter is what each stacked case tests; a route
 may remove a directory, such as origin, when it is called. The
 waits between gate runs go to a list instead of sleeping. A case may make the
@@ -86,6 +87,8 @@ if argv[:2] == ["pr", "view"] and "headRefName,baseRefName" in argv:
     key = "view-branches"
 elif argv[:2] == ["pr", "view"]:
     key = "view-state"
+elif argv[:1] == ["api"]:
+    key = "api-delete-branch" if "DELETE" in argv else "api-read-branch"
 else:
     key = " ".join(argv[:2])
 route = routes.get(key)
@@ -501,11 +504,15 @@ def main():
               exit_code == 2 and index_of(calls, ["pr", "merge"]) is None
               and "HTTP 502" in output, f"exit {exit_code}\n{output}")
 
+        routes = default_routes(STACKED_AND_NOT, merge_exit=1)
+        routes["view-state"] = {"stdout": '{"state":"OPEN","mc":null}\n'}
         exit_code, output, gh_calls, _, _ = run_case(
-            scratch, "merge-fails", [(GATE_PASSED, 0)],
-            default_routes(STACKED_AND_NOT, merge_exit=1), review_worktrees_state="both")
-        check("a merge that fails exits 1", exit_code == 1 and "merge exit 1" in output,
-              f"exit {exit_code}\n{output}")
+            scratch, "merge-fails", [(GATE_PASSED, 0)], routes, review_worktrees_state="both")
+        check("a merge that fails, leaving the pull request open, exits 1",
+              exit_code == 1 and "merge exit 1" in output
+              and "STOP: not merged: pull request 10 is OPEN after the merge command ran; "
+                  "the merge command exited 1" in output
+              and runner_calls(scratch, "merge-fails") == [], f"exit {exit_code}\n{output}")
         review_worktrees = scratch / "merge-fails" / "review-worktrees"
         check("a merge that fails leaves the review worktrees in place",
               (review_worktrees / "pr10-head").is_dir()
@@ -513,6 +520,7 @@ def main():
 
         routes = default_routes(STACKED_AND_NOT)
         routes["pr merge"] = {"killed": True}
+        routes["view-state"] = {"stdout": '{"state":"OPEN","mc":null}\n'}
         exit_code, output, _, _, _ = run_case(
             scratch, "merge-killed", [(GATE_PASSED, 0)], routes, review_worktrees_state="both")
         review_worktrees = scratch / "merge-killed" / "review-worktrees"
@@ -713,6 +721,113 @@ def main():
               and "gave no verdict" in output
               and "--only-suites-whose-recorded-inputs-changed-since" in output
               and not merge_commit_worktree.exists(), f"exit {exit_code}\n{output}")
+
+        merge_502 = {"exit": 1, "stderr": "non-200 OK status code: 502 Bad Gateway\n"}
+        branch_path = f"repos/nedschorus/nedschorus/branches/{BRANCH}"
+        ref_path = f"repos/nedschorus/nedschorus/git/refs/heads/{BRANCH}"
+
+        routes = default_routes(STACKED_AND_NOT)
+        routes["pr merge"] = merge_502
+        routes["api-read-branch"] = {"stdout": json.dumps({"name": BRANCH})}
+        routes["api-delete-branch"] = {}
+        exit_code, output, gh_calls, _, _ = run_case(
+            scratch, "merge-exits-1-but-merged", [(GATE_PASSED, 0)], routes,
+            review_worktrees_state="both")
+        calls = argvs(gh_calls)
+        review_worktrees = scratch / "merge-exits-1-but-merged" / "review-worktrees"
+        check("a merge command that exits 1 over a merged pull request reports its error and "
+              "goes on: the branch it left is deleted, the review worktrees removed and main "
+              "tested, exit 0",
+              exit_code == 0 and "pull request 10 merged although the merge command exited 1: "
+                                 "non-200 OK status code: 502 Bad Gateway" in output
+              and ["api", branch_path] in calls and ["api", ref_path, "-X", "DELETE"] in calls
+              and f"deleted the branch {BRANCH}" in output
+              and not (review_worktrees / "pr10-head").exists()
+              and not (review_worktrees / "pr10-merged").exists()
+              and len(runner_calls(scratch, "merge-exits-1-but-merged")) == 1
+              and RUNNER_PASSED_SUMMARY in output, f"exit {exit_code}\n{output}\n{calls}")
+
+        routes = default_routes(STACKED_AND_NOT)
+        routes["pr merge"] = merge_502
+        routes["api-read-branch"] = {"exit": 1, "stderr": "gh: Branch not found (HTTP 404)\n"}
+        exit_code, output, gh_calls, _, _ = run_case(
+            scratch, "merge-exits-1-branch-gone", [(GATE_PASSED, 0)], routes)
+        check("a merge command that exits 1 over a merged pull request whose branch is gone "
+              "deletes nothing and exits 0",
+              exit_code == 0 and f"the branch {BRANCH} is gone from GitHub" in output
+              and index_of(argvs(gh_calls), ["api", ref_path]) is None,
+              f"exit {exit_code}\n{output}")
+
+        routes = default_routes(STACKED_AND_NOT)
+        routes["pr merge"] = merge_502
+        routes["api-read-branch"] = {"stdout": json.dumps({"name": BRANCH})}
+        routes["api-delete-branch"] = {"exit": 1, "stderr": "HTTP 422: Reference does not exist\n"}
+        exit_code, output, _, _, _ = run_case(
+            scratch, "merged-branch-not-deleted", [(GATE_PASSED, 0)], routes,
+            review_worktrees_state="both")
+        review_worktrees = scratch / "merged-branch-not-deleted" / "review-worktrees"
+        check("a branch left by the merge that cannot be deleted exits 3 with gh's error and "
+              "the command, and the review worktrees are still removed and main tested",
+              exit_code == 3 and f"STOP: merged, but the branch {BRANCH} is still on GitHub "
+                                 "and could not be deleted: HTTP 422" in output
+              and f"gh api -X DELETE {ref_path}" in output
+              and not (review_worktrees / "pr10-merged").exists()
+              and len(runner_calls(scratch, "merged-branch-not-deleted")) == 1,
+              f"exit {exit_code}\n{output}")
+
+        routes = default_routes(STACKED_AND_NOT)
+        routes["pr merge"] = merge_502
+        routes["api-read-branch"] = {"exit": 1, "stderr": "HTTP 502\n"}
+        exit_code, output, _, _, _ = run_case(
+            scratch, "merged-branch-unread", [(GATE_PASSED, 0)], routes)
+        check("a branch that cannot be read after a merge command that exited 1 over a merged "
+              "pull request exits 3, and main is still tested",
+              exit_code == 3 and f"whether the branch {BRANCH} is gone from GitHub could not "
+                                 "be read: HTTP 502" in output
+              and len(runner_calls(scratch, "merged-branch-unread")) == 1,
+              f"exit {exit_code}\n{output}")
+
+        routes = default_routes(STACKED_AND_NOT)
+        routes["pr merge"] = merge_502
+        routes["view-state"] = {"stdout": '{"state":"CLOSED","mc":null}\n'}
+        exit_code, output, gh_calls, _, _ = run_case(
+            scratch, "merge-exits-1-closed", [(GATE_PASSED, 0)], routes,
+            review_worktrees_state="both")
+        review_worktrees = scratch / "merge-exits-1-closed" / "review-worktrees"
+        check("a merge command that exits 1 over a closed pull request exits 1 with its error, "
+              "touching the branch and the review worktrees not at all",
+              exit_code == 1 and "pull request 10 is CLOSED after the merge command ran; the "
+                                 "merge command exited 1: non-200 OK status code: 502" in output
+              and index_of(argvs(gh_calls), ["api"]) is None
+              and (review_worktrees / "pr10-merged").is_dir()
+              and runner_calls(scratch, "merge-exits-1-closed") == [],
+              f"exit {exit_code}\n{output}")
+
+        routes = default_routes(STACKED_AND_NOT)
+        routes["pr merge"] = merge_502
+        routes["view-state"] = {"exit": 1, "stderr": "HTTP 503\n"}
+        exit_code, output, gh_calls, _, _ = run_case(
+            scratch, "merge-outcome-unknown", [(GATE_PASSED, 0)], routes,
+            review_worktrees_state="both")
+        review_worktrees = scratch / "merge-outcome-unknown" / "review-worktrees"
+        check("a merge command that exits 1 when the state cannot be read exits 4, naming both "
+              "errors and how to read the state, and does nothing after the merge",
+              exit_code == 4 and "STOP: whether pull request 10 merged is unknown: the merge "
+                                 "command exited 1: non-200 OK status code: 502" in output
+              and "HTTP 503" in output and "gh pr view 10 --repo nedschorus/nedschorus" in output
+              and index_of(argvs(gh_calls), ["api"]) is None
+              and (review_worktrees / "pr10-merged").is_dir()
+              and runner_calls(scratch, "merge-outcome-unknown") == [],
+              f"exit {exit_code}\n{output}")
+
+        routes = default_routes(STACKED_AND_NOT)
+        routes["view-state"] = {"stdout": '{"state":"OPEN","mc":null}\n'}
+        exit_code, output, _, _, _ = run_case(
+            scratch, "merge-exits-0-but-open", [(GATE_PASSED, 0)], routes)
+        check("a merge command that exits 0 while the pull request stays open exits 1",
+              exit_code == 1 and "STOP: not merged: pull request 10 is OPEN" in output
+              and runner_calls(scratch, "merge-exits-0-but-open") == [],
+              f"exit {exit_code}\n{output}")
 
         routes = default_routes(STACKED_AND_NOT)
         routes["view-state"] = {"exit": 1, "stderr": "HTTP 502\n"}

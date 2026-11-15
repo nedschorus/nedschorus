@@ -149,13 +149,18 @@ class FakeGitHubCommand:
 class WatcherProcess:
     """The watcher as a subprocess, both its streams drained by threads."""
 
-    def __init__(self, *flags, environment=None, token_file=None):
+    def __init__(self, *flags, environment=None, token_file=None,
+                 needs_a_look_directory=None):
         self.lines = []
         self.error_lines = []
+        # The default is merge-lane-2's real notices directory, whose files would be events here.
+        if needs_a_look_directory is None:
+            needs_a_look_directory = Path(tempfile.gettempdir()) / "no-such-needs-a-look-directory-for-watcher-tests"
         self.process = subprocess.Popen(
             [sys.executable, str(WATCH_SCRIPT),
              "--poll-seconds", "0.05",
-             "--token-file", str(token_file), *flags],
+             "--token-file", str(token_file),
+             "--needs-a-look-directory", str(needs_a_look_directory), *flags],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", env=environment)
         self._threads = [
@@ -396,6 +401,116 @@ def run_unit_cases():
         check("the token is read with its trailing newline stripped",
               watcher_module.read_token(good) == (FIXTURE_TOKEN, None),
               str(watcher_module.read_token(good)))
+
+
+def run_needs_a_look_unit_cases():
+    events = watcher_module.needs_a_look_events
+    with tempfile.TemporaryDirectory() as scratch:
+        scratch = Path(scratch)
+        directory = scratch / "needs-a-look"
+        state = {}
+        check("a notices directory that does not exist yet raises nothing",
+              events(directory, state) == [], str(state))
+
+        directory.mkdir()
+        (directory / "pr9-bbbbbbbbbbbb.txt").write_text(
+            "GHI-MD edit pull request 9 needs a look: https://x/pull/9\nTitle: t\n",
+            encoding="utf-8")
+        (directory / "handled").mkdir()
+        (directory / "handled" / "pr8-aaaaaaaaaaaa.txt").write_text("old\n", encoding="utf-8")
+        (directory / "dangling.txt").symlink_to(scratch / "no-such-file")
+        lines = events(directory, state)
+        handled = directory / "handled"
+        check("a notice present at the first listing is one NEEDS A LOOK line with its first "
+              "line and the move that marks it handled; handled/ and a dangling link raise nothing",
+              lines == [f"NEEDS A LOOK pr9-bbbbbbbbbbbb.txt: GHI-MD edit pull request 9 needs a "
+                        f"look: https://x/pull/9 -- read {directory / 'pr9-bbbbbbbbbbbb.txt'}, "
+                        f"then at once, before acting on it, move it, or each restart of this "
+                        f"watcher reports it again first: mkdir -p {handled} && mv "
+                        f"{directory / 'pr9-bbbbbbbbbbbb.txt'} {handled}/"], "\n".join(lines))
+        check("the same notice, unchanged, is not reported again",
+              events(directory, state) == [], str(state))
+
+        stopped = directory / "invocation-stopped.txt"
+        stopped.write_text("stopped once\n", encoding="utf-8")
+        os.utime(stopped, ns=(1, 1))
+        first = events(directory, state)
+        stopped.write_text("stopped again\n", encoding="utf-8")
+        os.utime(stopped, ns=(2, 2))
+        second = events(directory, state)
+        check("a notice replaced by a later write is reported again",
+              len(first) == 1 and "stopped once" in first[0]
+              and len(second) == 1 and "stopped again" in second[0], f"{first}\n{second}")
+
+        notice = directory / "pr9-bbbbbbbbbbbb.txt"
+        saved_status = notice.stat()
+        notice.rename(handled / notice.name)
+        events(directory, state)
+        (handled / notice.name).rename(notice)
+        os.utime(notice, ns=(saved_status.st_atime_ns, saved_status.st_mtime_ns + 1))
+        check("a notice that leaves the directory and comes back is reported again",
+              len(events(directory, state)) == 1, str(state))
+        saved_status = notice.stat()
+        notice.rename(handled / notice.name)
+        events(directory, state)
+        (handled / notice.name).rename(notice)
+        os.utime(notice, ns=(saved_status.st_atime_ns, saved_status.st_mtime_ns))
+        check("a notice that a poll found missing is reported again when it comes back with "
+              "the same modification time",
+              len(events(directory, state)) == 1, str(state))
+
+        looping = directory / "looping.txt"
+        looping.symlink_to(looping)
+        first = events(directory, state)
+        second = events(directory, state)
+        looping.unlink()
+        check("an entry whose status cannot be read, other than a dangling link, is one NEEDS A "
+              "LOOK line naming the error, not repeated while it stays so",
+              first == [f"NEEDS A LOOK looping.txt: (could not read its status: Too many levels "
+                        f"of symbolic links) -- look at {looping}"]
+              and second == [], f"{first}\n{second}")
+
+        empty = directory / "empty.txt"
+        empty.write_text("", encoding="utf-8")
+        check("an empty notice is reported as an empty file",
+              any("NEEDS A LOOK empty.txt: (empty file)" in line
+                  for line in events(directory, state)), str(state))
+
+        unreadable = directory / "unreadable.txt"
+        unreadable.write_text("secret\n", encoding="utf-8")
+        unreadable.chmod(0)
+        lines = events(directory, state)
+        unreadable.chmod(0o600)
+        check("a notice that cannot be read is reported with the error in place of its first line",
+              len(lines) == 1 and lines[0].startswith(
+                  "NEEDS A LOOK unreadable.txt: (could not read it: Permission denied)"),
+              "\n".join(lines))
+
+        not_a_directory = scratch / "a-file"
+        not_a_directory.write_text("", encoding="utf-8")
+        first = events(not_a_directory, state)
+        second = events(not_a_directory, state)
+        check("a notices directory that cannot be listed is one NEEDS A LOOK line naming it, "
+              "not repeated while it stays unlistable",
+              first == [f"NEEDS A LOOK: cannot list the GHI-MD edit job's notices in "
+                        f"{not_a_directory}: Not a directory; notices there go unreported "
+                        f"until it can be listed"]
+              and second == [], f"{first}\n{second}")
+        events(directory, state)
+        again = events(not_a_directory, state)
+        check("it is reported again after a listing succeeds in between",
+              len(again) == 1, str(again))
+        events(not_a_directory, state)
+        events(scratch / "missing", state)
+        check("a missing directory between two unlistable ones also lets the second be reported",
+              len(events(not_a_directory, state)) == 1, str(state))
+
+    job = watcher_module.ghi_md_edit_job
+    check("the watcher's default notices directory is the one the GHI-MD edit job writes",
+          watcher_module.parse_arguments([]).needs_a_look_directory
+          == job.needs_a_look_directory()
+          == job.common.DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY
+          / job.STATE_DIRECTORY_NAME / "needs-a-look", "")
 
 
 def run_bad_invocation_cases(token_file, missing_token_file):
@@ -885,9 +1000,57 @@ def run_subprocess_cases():
               any("each reported below as OPENED" in line for line in lines),
               "\n".join(lines))
 
+        # ------------------------------------------------------------------
+        # A notice of the GHI-MD edit job already there at the first poll is
+        # an event that ends --exit-after-first-poll-with-events, and so is
+        # one that appears while every query fails.
+        # ------------------------------------------------------------------
+        notices = scratch / "needs-a-look"
+        notices.mkdir()
+        (notices / "pr9-bbbbbbbbbbbb.txt").write_text("pull request 9 needs a look\n",
+                                                       encoding="utf-8")
+        fake_gh = FakeGitHubCommand(scratch / "notice-at-start")
+        watcher = WatcherProcess("--exit-after-first-poll-with-events",
+                                 environment=fake_gh.environment(), token_file=token_file,
+                                 needs_a_look_directory=notices)
+        try:
+            exit_code = watcher.process.wait(timeout=EVENT_WAIT_BACKSTOP_SECONDS)
+        except subprocess.TimeoutExpired:
+            exit_code = None
+        lines = watcher.stop()
+        check("a notice present at the first poll is reported and ends "
+              "--exit-after-first-poll-with-events with exit 0",
+              exit_code == 0 and watcher.count(
+                  "NEEDS A LOOK pr9-bbbbbbbbbbbb.txt: pull request 9 needs a look") == 1,
+              f"exit {exit_code}\n" + "\n".join(lines + watcher.error_lines))
+
+        fake_gh = FakeGitHubCommand(scratch / "notice-while-blind")
+        fake_gh.answer(exit_code=1, stderr="HTTP 502")
+        empty_notices = scratch / "needs-a-look-empty"
+        watcher = WatcherProcess("--exit-after-first-poll-with-events",
+                                 environment=fake_gh.environment(), token_file=token_file,
+                                 needs_a_look_directory=empty_notices)
+        blind = watcher.wait_for("WATCH: query failed")
+        wait_for_calls(fake_gh, fake_gh.call_count() + 2, watcher)
+        still_running = watcher.process.poll() is None
+        empty_notices.mkdir()
+        (empty_notices / "invocation-stopped.txt").write_text("the job stopped\n",
+                                                              encoding="utf-8")
+        try:
+            exit_code = watcher.process.wait(timeout=EVENT_WAIT_BACKSTOP_SECONDS)
+        except subprocess.TimeoutExpired:
+            exit_code = None
+        lines = watcher.stop()
+        check("a notice that appears while every query fails is reported and ends "
+              "--exit-after-first-poll-with-events with exit 0",
+              blind and still_running and exit_code == 0
+              and watcher.count("NEEDS A LOOK invocation-stopped.txt: the job stopped") == 1,
+              f"exit {exit_code}\n" + "\n".join(lines + watcher.error_lines))
+
 
 if __name__ == "__main__":
     run_unit_cases()
+    run_needs_a_look_unit_cases()
     run_subprocess_cases()
     print()
     if failures:

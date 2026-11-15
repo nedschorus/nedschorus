@@ -155,6 +155,8 @@ def run_multi_line_next_step_cases(workspace: Path):
           "END-OF-NEXT-STEP" in refused.stderr, refused.stderr)
     check("the terminator refusal writes nothing",
           not (workspace / "terminatorcase-handoff.md").exists())
+    check("the terminator refusal's last stdout line is the nothing-written verdict",
+          last_stdout_line(refused) == writer.HANDOFF_NOTHING_WRITTEN_VERDICT_LINE, refused.stdout)
 
     # The refusal is on an EXACT line match, matching the reader. An indented
     # lookalike is ordinary content and must be written, not refused.
@@ -343,11 +345,15 @@ def check_cannot_tell(result, workspace: Path, situation: str):
           last_stdout_line(result) == writer.HANDOFF_WRITTEN_CANNOT_TELL_WHETHER_HANDOFF_SUPERVISOR_WATCHING_VERDICT_LINE,
           result.stdout)
     check(f"{situation}, the agent is told to stop, not to wait or to keep working",
-          "Stop working now, so that" in result.stderr
+          "stop working now, so that" in result.stderr
+          and result.stderr.index("First tell the user") < result.stderr.index("stop working now")
           and "Stop working now and wait" not in result.stdout
           and "keep working" not in result.stdout, result.stdout + result.stderr)
     check(f"{situation}, the agent is told not to rerun", "Do not rerun" in result.stderr,
           result.stderr)
+    check(f"{situation}, resupervise-seat.py is to be run on the Mac, where it works for a seat of either machine",
+          "--machine ubuntu` in a Terminal on the Mac" in result.stderr
+          or "--machine mac` in a Terminal on the Mac" in result.stderr, result.stderr)
 
 
 def run_liveness_report_cases(workspace: Path):
@@ -364,6 +370,9 @@ def run_liveness_report_cases(workspace: Path):
           "resupervise-seat.py tester --machine " in result.stdout
           and str(workspace / "tester-handoff.md") in result.stdout,
           result.stdout)
+    check("with no supervisor, resupervise-seat.py is to be run on the Mac, where it works for a seat of either machine",
+          "run, in a Terminal on the Mac, `scripts/resupervise-seat.py tester --machine " in result.stdout
+          and "on the ubuntu machine" not in result.stdout, result.stdout)
     check("with no supervisor, the by-hand relaunch is named as the wrong path",
           "another unsupervised seat" in result.stdout, result.stdout)
     check("no supervisor is started for an unseated session",
@@ -532,6 +541,8 @@ def run_agent_name_and_claim_cases(workspace: Path):
     check("the refusal teaches the fix", "--claim" in foreign.stderr, foreign.stderr)
     check("and, with no supervised name here, says what else --claim waives",
           "also waives" in foreign.stderr, foreign.stderr)
+    check("the foreign-directory refusal's last stdout line is the nothing-written verdict",
+          last_stdout_line(foreign) == writer.HANDOFF_NOTHING_WRITTEN_VERDICT_LINE, foreign.stdout)
     check("nothing was written on the refusal",
           (handoffs / "seat-one-handoff.md").read_text(encoding="utf-8") == first_body)
 
@@ -608,6 +619,8 @@ def run_seat_name_the_supervisor_does_not_answer_to_cases(workspace: Path):
     check("the refusal says why it matters -- the handoff would never be read",
           "never reincarnated" in refused.stderr, refused.stderr)
     check("the refusal teaches both exits", "--claim" in refused.stderr, refused.stderr)
+    check("the unwatched-name refusal's last stdout line is the nothing-written verdict",
+          last_stdout_line(refused) == writer.HANDOFF_NOTHING_WRITTEN_VERDICT_LINE, refused.stdout)
     check("nothing was written on the refusal",
           stray.read_text(encoding="utf-8") == stray_body)
 
@@ -1062,6 +1075,26 @@ def run_spawned_subagent_roster_cases(workspace: Path):
           [entry["agent_id"] for entry in writer.still_working_subagent_entries(interim_roster)]
           == [incident_agent],
           str(interim_roster))
+    # The transcript line holds the notification JSON-escaped; whitespace opening the <result>
+    # must still read as whitespace.
+    not_yet_reported_body = (
+        "<task-notification>\n"
+        f"<task-id>{incident_agent}</task-id>\n"
+        "<status>completed</status>\n"
+        "<result>\n\tThis agent has not reported yet: it is waiting on its own background work."
+        "</result>\n"
+        "</task-notification>")
+    not_yet_reported_path = workspace / "roster-not-yet-reported-result-opening-with-whitespace.jsonl"
+    not_yet_reported_path.write_text("\n".join(json.dumps(record) for record in [
+        incident_spawn, *delivered(not_yet_reported_body, "2026-10-27T21:31:58.572Z"),
+    ]) + "\n", encoding="utf-8")
+    not_yet_reported_roster = writer.spawned_subagent_roster(not_yet_reported_path)
+    check("a subagent whose last <result> opens with whitespace, then says it has not reported "
+          "yet, counts as still working",
+          [entry["agent_id"]
+           for entry in writer.still_working_subagent_entries(not_yet_reported_roster)]
+          == [incident_agent],
+          str(not_yet_reported_roster))
     final_last_path = workspace / "roster-final-notification-after-interim.jsonl"
     final_last_path.write_text("\n".join(json.dumps(record) for record in [
         incident_spawn, *delivered(interim_body, "2026-10-27T21:31:58.572Z"),
@@ -1170,6 +1203,114 @@ def run_spawned_subagent_roster_cases(workspace: Path):
           writer.spawned_subagent_roster(empty_path) == [])
     check("an empty roster writes no fields",
           writer.spawned_subagent_field_lines([]) == [])
+
+
+def run_threshold_hook_and_roster_agree_on_each_subagent_cases(workspace: Path):
+    """The threshold hook and the roster read subagent events with one shared reader, so on the
+    same transcript the hook lists a subagent as in flight exactly when the roster's last event
+    for it is one of STILL_WORKING_SUBAGENT_LAST_EVENTS."""
+    threshold_hook = writer.threshold_hook
+    first, second = "a1c0ffee000000001", "a1c0ffee000000002"
+
+    def delivered(body, stamp):
+        return [{"type": "queue-operation", "operation": "enqueue", "timestamp": stamp,
+                 "sessionId": FIXTURE_SESSION_ID, "content": body},
+                {"type": "user", "timestamp": stamp, "message": {"role": "user", "content": body},
+                 "sessionId": FIXTURE_SESSION_ID}]
+
+    def final(agent_id, stamp):
+        return delivered(notification_body(agent_id, "completed", f'Agent "{agent_id}" finished'),
+                         stamp)
+
+    def interim(agent_id, stamp):
+        return delivered(
+            "<task-notification>\n"
+            f"<task-id>{agent_id}</task-id>\n"
+            "<status>completed</status>\n"
+            "<note>This agent stopped with background work of its own still running. It may "
+            "resume on its own when that work completes or reports, and the same task-id "
+            "notifies again if it does; the result below may be interim.</note>\n"
+            "<result>Waiting on the test run.</result>\n"
+            "</task-notification>", stamp)
+
+    def task_stop(agent_id, stamp):
+        result = {"message": f"Successfully stopped task: {agent_id}", "task_id": agent_id,
+                  "task_type": "local_agent", "command": "a builder subagent"}
+        return {"type": "user", "timestamp": stamp,
+                "message": {"role": "user", "content": [{
+                    "tool_use_id": "toolu_stop", "type": "tool_result",
+                    "content": json.dumps(result)}]},
+                "toolUseResult": result, "sessionId": FIXTURE_SESSION_ID}
+
+    def spawn(agent_id, stamp):
+        return spawn_record(agent_id, "a builder subagent", stamp)
+
+    final_line_cut_mid_write = json.dumps(final(first, "2026-11-13T10:05:00.000Z")[1])
+    final_line_cut_mid_write = final_line_cut_mid_write[:final_line_cut_mid_write.index(
+        "</task-notification>") + len("</task-notification>")]
+    cases = (
+        ("a spawn", [spawn(first, "2026-11-13T10:00:00.000Z")], [first]),
+        ("a final notification", [spawn(first, "2026-11-13T10:00:00.000Z"),
+                                  *final(first, "2026-11-13T10:05:00.000Z")], []),
+        ("an interim notification", [spawn(first, "2026-11-13T10:00:00.000Z"),
+                                     *interim(first, "2026-11-13T10:05:00.000Z")], [first]),
+        ("a resume after a final notification", [
+            spawn(first, "2026-11-13T10:00:00.000Z"), *final(first, "2026-11-13T10:05:00.000Z"),
+            resume_record(first, "2026-11-13T10:07:00.000Z")], [first]),
+        ("a TaskStop", [spawn(first, "2026-11-13T10:00:00.000Z"),
+                        task_stop(first, "2026-11-13T10:05:00.000Z")], []),
+        ("a resume after a TaskStop", [
+            spawn(first, "2026-11-13T10:00:00.000Z"), task_stop(first, "2026-11-13T10:05:00.000Z"),
+            resume_record(first, "2026-11-13T10:07:00.000Z")], [first]),
+        ("an interim notification that arrives after a TaskStop", [
+            spawn(first, "2026-11-13T10:00:00.000Z"), task_stop(first, "2026-11-13T10:05:00.000Z"),
+            *interim(first, "2026-11-13T10:06:00.000Z")], []),
+        ("two subagents, one finished", [
+            spawn(first, "2026-11-13T10:00:00.000Z"), spawn(second, "2026-11-13T10:01:00.000Z"),
+            *final(first, "2026-11-13T10:05:00.000Z")], [second]),
+        ("a final notification on a line cut mid-write",
+         [spawn(first, "2026-11-13T10:00:00.000Z"), final_line_cut_mid_write], [first]),
+    )
+    for case_number, (situation, records, expected_in_flight) in enumerate(cases, start=1):
+        path = workspace / f"hook-and-roster-agree-case-{case_number}.jsonl"
+        path.write_text("\n".join(record if isinstance(record, str) else json.dumps(record)
+                                  for record in records) + "\n", encoding="utf-8")
+        hook_in_flight = threshold_hook.spawned_subagent_ids_in_flight(str(path))
+        roster = writer.spawned_subagent_roster(path)
+        roster_still_working = [entry["agent_id"]
+                                for entry in writer.still_working_subagent_entries(roster)]
+        check(f"the threshold hook and the roster agree on {situation}",
+              hook_in_flight == roster_still_working == expected_in_flight,
+              f"hook {hook_in_flight}, roster {roster}, expected {expected_in_flight}")
+
+    # The roster counts a notification only as delivered; the hook reads one wherever its text is.
+    quoted_path = workspace / "roster-final-notification-quoted-in-tool-output.jsonl"
+    quoted_final = notification_body(first, "completed", f'Agent "{first}" finished')
+    quoted_path.write_text("\n".join(json.dumps(record) for record in [
+        spawn(first, "2026-11-13T10:00:00.000Z"),
+        {"type": "user", "timestamp": "2026-11-13T10:02:00.000Z",
+         "message": {"role": "user", "content": [{
+             "tool_use_id": "toolu_grep", "type": "tool_result", "content": quoted_final}]},
+         "toolUseResult": {"stdout": quoted_final, "stderr": ""}, "sessionId": FIXTURE_SESSION_ID},
+    ]) + "\n", encoding="utf-8")
+    quoted_roster = writer.spawned_subagent_roster(quoted_path)
+    check("the roster does not end a subagent on a notification quoted in a tool's output",
+          [entry["agent_id"] for entry in writer.still_working_subagent_entries(quoted_roster)]
+          == [first], str(quoted_roster))
+
+    # The one rule the two keep apart: a spawn line that does not parse stops the hook, which
+    # must not take a scan that missed a spawn to mean nothing runs, and the roster skips it.
+    cut_spawn_path = workspace / "hook-and-roster-cut-spawn.jsonl"
+    cut_spawn_path.write_text(
+        json.dumps(spawn(first, "2026-11-13T10:00:00.000Z"))[:-20] + "\n", encoding="utf-8")
+    try:
+        threshold_hook.spawned_subagent_ids_in_flight(str(cut_spawn_path))
+        hook_refused = False
+    except threshold_hook.TranscriptCouldNotBeFullyRead:
+        hook_refused = True
+    check("on a spawn line cut mid-write the hook refuses and the roster skips the line",
+          hook_refused and writer.spawned_subagent_roster(cut_spawn_path) == [],
+          f"hook refused: {hook_refused}")
 
 
 def run_roster_never_blocks_a_handoff_cases(workspace: Path):
@@ -1839,6 +1980,38 @@ def run_completed_task_prune_remote_store_cases(workspace: Path):
     check("over ssh, the remedy names only the copy sha256sum could not read, not a readable copy whose name it contains",
           f"`ls -l` on 11.json in {fixture.store_list_directory}" in line and "1.json," not in line, line)
 
+    # rsync reaches the store over ssh but cannot write there, so it exits 23 after connecting.
+    fixture = PruneFixture(workspace, "remote-store-unwritable")
+    fixture.task("1.json", task_bytes(1, "completed"), stored=False)
+    stubs = stub_ssh_directory(fixture.root / "remote-store-unwritable-stubs", RUN_REMOTE_COMMAND_HERE_SSH_STUB)
+    fixture.store_list_directory.chmod(0o555)
+    try:
+        line = prune_line(fixture.run(
+            "carry on\n", TRANSCRIPT_MIRROR_DESTINATION=f"stubhost:{fixture.store_root}",
+            PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
+    finally:
+        fixture.store_list_directory.chmod(0o755)
+    check("over ssh, an rsync that cannot write the store keeps every completed task",
+          fixture.present("1.json") and "kept every completed task" in line and "exited 23" in line, line)
+    check("over ssh, an rsync that cannot write the store gets the log-store remedy, not the ssh remedy",
+          "could not be updated" in line and f"`ls -ld {fixture.store_list_directory}`" in line
+          and "ssh stubhost true" not in line, line)
+
+    # rsync exits 3 and 11 after connecting too, and need the same remedy as 23.
+    for exit_code in (3, 11):
+        fixture = PruneFixture(workspace, f"remote-rsync-exit-{exit_code}")
+        fixture.task("1.json", task_bytes(1, "completed"), stored=False)
+        stubs = stub_ssh_directory(fixture.root / f"remote-rsync-exit-{exit_code}-stubs", RUN_REMOTE_COMMAND_HERE_SSH_STUB)
+        (stubs / "rsync").write_text(f"#!/bin/sh\nexit {exit_code}\n", encoding="utf-8")
+        (stubs / "rsync").chmod(0o755)
+        line = prune_line(fixture.run(
+            "carry on\n", TRANSCRIPT_MIRROR_DESTINATION=f"stubhost:{fixture.store_root}",
+            PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
+        check(f"over ssh, an rsync that exits {exit_code} keeps every completed task and gets the log-store remedy, "
+              "not the ssh remedy",
+              fixture.present("1.json") and f"exited {exit_code}" in line and "could not be updated" in line
+              and f"`ls -ld {fixture.store_list_directory}`" in line and "ssh stubhost true" not in line, line)
+
     stubs = stub_ssh_directory(workspace / "prune-silent-stubs", "sleep 5\n")
     original_path, original_timeout = os.environ.get("PATH", ""), writer.LOG_STORE_TASK_FILE_COPIES_HASH_SSH_TIMEOUT_SECONDS
     os.environ["PATH"] = f"{stubs}{os.pathsep}{original_path}"
@@ -1983,9 +2156,17 @@ def run_handoff_deferral_fields_cases(workspace: Path):
           == 'blate00001 "Fast read started during the deferral" command: '
              + json.dumps("python3 nc-systems/cold-read/cold-read-fast-read.py --target a.md"),
           body)
-    check("a background task started before the deferral, or one that finished, is not listed",
-          "bearly0001" not in body and "blate00002" not in body
+    late_field_values = " ".join(value for key, value in fields.items()
+                                 if key.startswith("background-task-started-during-handoff-deferral-"))
+    check("a background task started before the deferral, or one that finished, is not listed as "
+          "started during the deferral",
+          "bearly0001" not in late_field_values and "blate00002" not in body
           and "background-task-started-during-handoff-deferral-3" not in body, body)
+    check("a task the deferral did not wait for is not also listed as past its wait-limit, and the "
+          "task it waited for is",
+          "blate00001" not in fields.get("background-task-past-wait-limit-1", "")
+          and fields.get("background-task-past-wait-limit-1", "").startswith("bearly0001 ")
+          and "background-task-past-wait-limit-2" not in body, body)
     check("a background task launched at the moment the deferral began is listed, with what its "
           "Bash call ran and nothing from other blocks",
           fields.get("background-task-started-during-handoff-deferral-2")
@@ -2069,6 +2250,89 @@ def run_handoff_deferral_fields_cases(workspace: Path):
         missing_ok=True)
     clear()
     run_threshold_hook_defer_then_fire_then_writer_case(workspace)
+
+
+def run_background_task_past_wait_limit_cases(workspace: Path):
+    """A background task other than a waiting-task still running past its kind's wait-limit when
+    the session-handoff is written is listed with its command, kind, wait-limit, run time and the
+    wait-limit table's location, and the successor's first prompt carries all five."""
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 11, 1, 12, 0, tzinfo=timezone.utc)
+
+    def ago(minutes):
+        return (now - timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    suite_command = "python3 scripts/run-all-test-suites.py"
+    records = [
+        *background_bash_launch_records("bsuite0097", "Test suites", suite_command, ago(97)),
+        *background_bash_launch_records("bsuite0090", "At its limit", "pytest -q", ago(90)),
+        *background_bash_launch_records("bsuite0089", "Under its limit", "pytest -q", ago(89)),
+        *background_bash_launch_records("bwaits0200", "Waiting", "sleep 600", ago(200)),
+        *background_bash_launch_records("bnokind086", "Matches no kind", "python3 early.py", ago(86)),
+        *background_bash_launch_records("bdone00200", "Finished", "pytest -q", ago(200)),
+        background_bash_completion_record("bdone00200", ago(100)),
+        *background_bash_launch_records("bundated01", "Undated", "pytest -q", "not a time"),
+        *background_bash_launch_records("blater0080", "Launched in the deferral", "python3 late.py", ago(80)),
+    ]
+    transcript = workspace / "past-wait-limit.jsonl"
+    transcript.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+    past = writer.background_tasks_past_wait_limit_still_running(
+        transcript, deferral_began_at=now - timedelta(minutes=85), now=now)
+    check("only the tasks past their kind's wait-limit are listed, leaving out a waiting-task, one "
+          "under its limit, a finished one, an undated one and one launched during the deferral",
+          [task[0] for task in past] == ["bsuite0097", "bsuite0090", "bnokind086"], past)
+    check("a task past its wait-limit carries its description, command, kind, wait-limit and run time",
+          past[:1] == [("bsuite0097", "Test suites", suite_command, "test-suite", 90.0, 97.0)], past)
+    check("a command no kind matches is named so, with the no-match wait-limit",
+          past[2][3:5] == (writer.threshold_hook.BACKGROUND_TASK_KIND_WHEN_NO_KIND_MATCHES, 75.0), past)
+    check("with no handoff-deferral, a task launched at any time is listed",
+          "blater0080" in [task[0] for task in writer.background_tasks_past_wait_limit_still_running(
+              transcript, now=now)])
+
+    # The writer, run as the agent runs it, on a transcript stamped by the real clock.
+    home = workspace / "past-wait-limit-home"
+    projects = home / ".claude" / "projects" / "-fixture-project"
+    projects.mkdir(parents=True, exist_ok=True)
+    handoffs = workspace / "past-wait-limit-handoffs"
+    handoffs.mkdir(parents=True, exist_ok=True)
+    session_id = "00000000-0000-4000-8000-0000000a0097"
+    real_now = datetime.now(timezone.utc)
+    (projects / f"{session_id}.jsonl").write_text("".join(
+        json.dumps(record) + "\n" for record in background_bash_launch_records(
+            "bsuite0097", "Test suites", suite_command,
+            (real_now - timedelta(minutes=97)).strftime("%Y-%m-%dT%H:%M:%S.000Z"))), encoding="utf-8")
+    written = run_writer(handoffs, "carry on\n", "--agent", "pastwaitlimitcase",
+                         environment_overrides={"HOME": str(home), "CLAUDE_CODE_SESSION_ID": session_id})
+    fields = writer.supervisor.parse_handoff_file(handoffs / "pastwaitlimitcase-handoff.md")
+    expected_field = ('bsuite0097 "Test suites" command: ' + json.dumps(suite_command)
+                      + "; kind: test-suite; wait-limit: 90 minutes; ran: 97 minutes; wait-limit table: "
+                      + "BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND in scripts/handoff-context-threshold-hook.py")
+    check("the session-handoff lists a test suite past its wait-limit with every field",
+          fields.get("background-task-past-wait-limit-1") == expected_field,
+          handoff_text(handoffs, "pastwaitlimitcase"))
+    check("the writer reports the tasks past their wait-limit it recorded",
+          "background tasks past their wait-limit: 1 recorded" in written.stdout, written.stdout)
+    prompt = writer.supervisor.build_ignition_prompt(Path("/x/dialog.md"), fields)
+    check("the successor's first prompt carries the task's five fields and asks for a speed-up "
+          "before a raised wait-limit",
+          expected_field in prompt and "Run each again, then look first for a way to make it faster"
+          in prompt and "raise its kind's wait-limit in the wait-limit table only when you find no such way"
+          in prompt, prompt[:1200])
+
+    lost = run_writer(handoffs, "carry on\n", "--agent", "pastwaitlimitlostcase",
+                      environment_overrides={"HOME": str(home),
+                                             "CLAUDE_CODE_SESSION_ID": "00000000-0000-0000-0000-0000000a0dea"})
+    check("a transcript that cannot be found is reported, with what to do, and the handoff is written",
+          (handoffs / "pastwaitlimitlostcase-handoff.md").is_file()
+          and "background tasks past their wait-limit: not listed (LookupError: no single transcript found"
+          in lost.stdout and "run this script again" in lost.stdout, lost.stdout)
+
+    with mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": ""}):
+        no_session_lines, no_session_status = writer.background_task_past_wait_limit_fields_for_this_session(
+            handoffs, workspace)
+    check("with no session id, nothing is listed and the status says to name the tasks in the next step",
+          no_session_lines == [] and "CLAUDE_CODE_SESSION_ID is unset" in no_session_status
+          and "Find in your own conversation each background task" in no_session_status, no_session_status)
 
 
 THRESHOLD_HOOK_SCRIPT = SYSTEM_DIRECTORY.parent.parent / "scripts" / "handoff-context-threshold-hook.py"
@@ -2180,11 +2444,13 @@ with tempfile.TemporaryDirectory() as temporary_directory_name:
     run_agent_name_and_claim_cases(temporary_directory)
     run_seat_name_the_supervisor_does_not_answer_to_cases(temporary_directory)
     run_spawned_subagent_roster_cases(temporary_directory)
+    run_threshold_hook_and_roster_agree_on_each_subagent_cases(temporary_directory)
     run_roster_never_blocks_a_handoff_cases(temporary_directory)
     run_seat_name_and_directory_from_the_handoff_supervisor_cases(temporary_directory)
     run_completed_task_prune_cases(temporary_directory)
     run_completed_task_prune_remote_store_cases(temporary_directory)
     run_handoff_deferral_fields_cases(temporary_directory)
+    run_background_task_past_wait_limit_cases(temporary_directory)
 
 print()
 if failures:

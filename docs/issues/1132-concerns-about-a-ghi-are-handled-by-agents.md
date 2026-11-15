@@ -56,7 +56,7 @@ From `.claude/skills/cold-read/SKILL.md` on main, step 2, the documents that nee
 
 Step 9, which changes to them go to the user:
 
-> "every change you applied that adds, alters or removes what a program or an agent does, must do or may do, or what the document decides or plans, and every finding you declined that would have made such a change. A correction of past events, of a citation or a reference, or of spelling or punctuation that leaves a sentence's meaning unchanged, does not go to the user. When you cannot tell, it goes to the user."
+> "every change you applied that adds, alters or removes what a program or an agent does, must do or may do, or what the document decides or plans, and every finding you declined that would have made such a change. A finding step 7 deferred, and the line it added to `Deferred-decisions`, do not go to the user. An obvious-error-fix does not go to the user; nor does renumbering headings, steps or list items with every reference to them changed to match, nor adding an open question on its own line that starts with `#open_question` and says nothing about when or by whom it must be settled. When you cannot tell, it goes to the user."
 
 In the example, the fix for the broken link changes no such document in such a way, and no user-ruling needs to change, so the entry never reaches the user.
 

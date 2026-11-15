@@ -850,7 +850,11 @@ try:
           and out.count(f": {TMUX_KILL_GUARD} refuses 1 recorded command, in in-process\n") == 10
           and "  290 more refusal groups are left out here, holding 290 refused recorded commands\n" in out
           and len(groups) == 300, f"status {status}, {len(out)} characters\n{out[:3000]}\n{err}")
-    lines_file = groups_file.with_name(replay.REFUSAL_RIGHT_LINES_FILE_NAME)
+    lines_file = groups_file.with_name(replay.ADDED_GUARD_REFUSAL_GROUP_RIGHTLY_REFUSED_REVIEW_ANSWER_LINES_FILE_NAME)
+    check("a head that adds a guard refusing 300 long commands, each with its own message: the refusal right lines "
+          "file is named added-guard-refusal-group-rightly-refused-review-answer-lines.txt",
+          lines_file.name == "added-guard-refusal-group-rightly-refused-review-answer-lines.txt"
+          and lines_file.exists(), f"{lines_file}")
     lines = lines_file.read_text().splitlines() if lines_file.exists() else []
     check("a head that adds a guard refusing 300 long commands, each with its own message: the refusal right lines "
           "file holds the ready line of every one of the 300 groups, the 290 the list leaves out included",
@@ -1490,21 +1494,33 @@ try:
         (directory / "locked").mkdir(parents=True)
         (directory / "locked" / "file").write_text("x")
         (directory / "locked").chmod(0o500)
+    (locked_run_logs / "verdicts-in-process-head.log").write_text("a step log")
+    removable_scratch = Path(scratch) / "removal-failures-removable-scratch"
+    removable_scratch.mkdir()
     try:
         after_exit_1 = replay.remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures(
             locked_scratch, locked_run_logs, 1)
         after_exit_0 = replay.remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures(
             locked_scratch, locked_run_logs, 0)
+        run_log_file_after_scratch_failure = (locked_run_logs / "verdicts-in-process-head.log").exists()
+        after_exit_0_scratch_removed = (
+            replay.remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures(
+                removable_scratch, locked_run_logs, 0))
     finally:
         for directory in (locked_scratch, locked_run_logs):
             (directory / "locked").chmod(0o700)
     check("a path that cannot be removed is returned with its reason: the scratch directory's after any exit, the "
-          "run log directory's only after an exit 0",
+          "run log directory's only after an exit 0 whose scratch directory was removed",
           any(str(locked_scratch / "locked" / "file") in line for line in after_exit_1)
           and not any(str(locked_run_logs) in line for line in after_exit_1)
           and any(str(locked_scratch / "locked" / "file") in line for line in after_exit_0)
-          and any(str(locked_run_logs / "locked" / "file") in line for line in after_exit_0),
-          f"after exit 1 {after_exit_1}; after exit 0 {after_exit_0}")
+          and not any(str(locked_run_logs) in line for line in after_exit_0)
+          and not removable_scratch.exists()
+          and any(str(locked_run_logs / "locked" / "file") in line for line in after_exit_0_scratch_removed),
+          f"after exit 1 {after_exit_1}; after exit 0 {after_exit_0}; "
+          f"after exit 0, scratch removed {after_exit_0_scratch_removed}")
+    check("the run log directory is kept after an exit 0 whose scratch directory could not be removed, since the "
+          "replay then exits 2", run_log_file_after_scratch_failure, f"after exit 0 {after_exit_0}")
 
     pairs_file = Path(scratch) / "fixture-pairs.json"
     pairs_file.write_text(json.dumps(FIXTURE_PAIRS))
@@ -1955,6 +1971,55 @@ check("each renamed guard's former path maps to a path in GUARDS, and no former 
       not renames_to_paths_not_in_guards and not former_paths_still_in_guards,
       f"mapped to paths not in GUARDS: {renames_to_paths_not_in_guards}; former paths in GUARDS: "
       f"{former_paths_still_in_guards}")
+
+
+def wall_clock_that_jumps_past_the_search_file_budget():
+    """Return a clock that jumps ten seconds after its first read, as a loaded machine's wall clock can."""
+    reads = [0]
+
+    def clock():
+        reads[0] += 1
+        return 1000.0 if reads[0] == 1 else 1010.0
+    return clock
+
+
+search_file_guard = replay.guards_loaded(REPOSITORY_ROOT, False)[0][replay.SEARCH_FILE_GUARD]
+main_defaults = search_file_guard.main.__defaults__
+real_monotonic = time.monotonic
+with tempfile.TemporaryDirectory() as jump_directory:
+    for name in ("-v.txt", "a.txt"):
+        Path(jump_directory, name).touch()
+    try:
+        time.monotonic = wall_clock_that_jumps_past_the_search_file_budget()
+        try:
+            in_process = replay.read_search_file(search_file_guard, "grep x *.txt", None, jump_directory)[0]
+        except Exception as error:
+            in_process = f"EXCEPTION {type(error).__name__}"
+        search_file_guard.main.__defaults__ = (main_defaults[0], wall_clock_that_jumps_past_the_search_file_budget())
+        through_main = replay.search_file_main_outcome(search_file_guard, "grep x *.txt", jump_directory)[0]
+    finally:
+        time.monotonic = real_monotonic
+        search_file_guard.main.__defaults__ = main_defaults
+check("a wall clock that jumps past the search-file guard's budget mid-reading leaves its in-process verdict as is",
+      in_process == "refused", in_process)
+check("a wall clock that jumps past the search-file guard's budget mid-reading leaves its main() verdict as is",
+      through_main == ["refused", 0], through_main)
+
+# The guard reads its clock once per glob word that matches nothing, so 6000 such words read it more often than
+# the budget's 5000 reads allow; a clock that did not advance would let the reading pass.
+budget_command = "grep x " + " ".join(["zz*"] * 6000)
+with tempfile.TemporaryDirectory() as budget_directory:
+    try:
+        past_budget = replay.read_search_file(search_file_guard, budget_command, None, budget_directory)[0]
+    except Exception as error:
+        past_budget = f"EXCEPTION {type(error).__name__}"
+    past_budget_through_main = replay.search_file_main_outcome(search_file_guard, budget_command, budget_directory)
+check("a search-file reading that reads the replay's clock more often than the budget allows spends the budget",
+      past_budget == "EXCEPTION ExpansionBudgetSpent", past_budget)
+check("a search-file main() reading that reads the replay's clock more often than the budget allows lets the "
+      "command through with the over-the-limit note",
+      past_budget_through_main[0] == ["let through with a note", 0]
+      and "longer than the guard's" in (past_budget_through_main[1] or ""), past_budget_through_main)
 
 if failures:
     print(f"{len(failures)} failed")

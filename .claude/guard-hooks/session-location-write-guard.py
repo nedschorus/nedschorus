@@ -11,11 +11,19 @@ import subprocess
 import sys
 from pathlib import Path
 
-_marker_spec = importlib.util.spec_from_file_location(
-    "guard_approval_marker_common",
-    Path(__file__).resolve().parent / "guard-approval-marker-common.py")
-_guard_approval_marker_common = importlib.util.module_from_spec(_marker_spec)
-_marker_spec.loader.exec_module(_guard_approval_marker_common)
+_crash_notice_spec = importlib.util.spec_from_file_location(
+    "guard_hook_crash_fail_open_with_notice_common",
+    Path(__file__).resolve().parent / "guard-hook-crash-fail-open-with-notice-common.py")
+_crash_notice = importlib.util.module_from_spec(_crash_notice_spec)
+_crash_notice_spec.loader.exec_module(_crash_notice)
+
+with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(
+        __file__, __name__ == "__main__"):
+    _marker_spec = importlib.util.spec_from_file_location(
+        "guard_approval_marker_common",
+        Path(__file__).resolve().parent / "guard-approval-marker-common.py")
+    _guard_approval_marker_common = importlib.util.module_from_spec(_marker_spec)
+    _marker_spec.loader.exec_module(_guard_approval_marker_common)
 consume_approval_marker = _guard_approval_marker_common.consume_approval_marker
 
 APPROVAL_MARKER_NAME = ".location-write-approved"
@@ -245,10 +253,7 @@ def target_ignored_by_git(checkout: Path, file_path: str) -> bool:
 
 
 def main() -> int:
-    try:
-        payload = json.loads(sys.stdin.read() or "{}")
-    except json.JSONDecodeError:
-        return 0
+    payload = json.loads(sys.stdin.read() or "{}")
     tool_input = payload.get("tool_input") or {}
     file_path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
     if not file_path:
@@ -308,4 +313,5 @@ def check_write(file_path: str, checkout) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(__file__, True):
+        sys.exit(main())

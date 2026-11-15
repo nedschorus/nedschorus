@@ -43,6 +43,8 @@ THE INVOCATION, as measured working in the 2026-09-04 campaign
 run-astra-and-gemini-cells.py on the cold-read-research machine, not
 committed): `agy --add-dir <repo> --dangerously-skip-permissions --model <id>
 --effort <eff> --print-timeout 30m --output-format text --print <prompt>`.
+That is the campaign's command; the cell's own differs in one flag, as the
+end of this paragraph says.
 `--print` takes the prompt as its value. `--add-dir` is required, or the
 repository's AGENTS.md does not load. `--dangerously-skip-permissions` is what
 lets the Write of the report happen headless. Antigravity's model ids carry the
@@ -64,8 +66,11 @@ stderr. The result's `status` SUCCESS counts as exit 0 and any other status as
 exit 1, unless agy exited by itself, when its own exit code counts. The
 result's `response`, the text the model answered in chat, stands in for agy's
 stdout from then on, so the chat-instead-of-file rule below reads the same
-text it read when agy printed plain text. A run with no result line ends as
-before, when agy exits or at the deadline above. agy's error line, opening
+text it read when agy printed plain text. A run with no result line ends
+when agy exits or at the deadline above. When agy exits 0 without a result
+line, its stdout is raw stream events, not an answer, so the stdout rule below
+is not given it: unless agy wrote the report file, the attempt fails as a
+missing report. agy's error line, opening
 `AGY_ERROR:`, and its no-login line stay on stderr in this format.
 
 THE CHAT-INSTEAD-OF-FILE QUIRK, and how it is handled. The campaign measured
@@ -175,10 +180,10 @@ AGY_LOGGED_OUT_CAUSE_DETAIL = ("agy has no Google login on this machine; "
 STDOUT_REVIEW_MINIMUM_WORDS = 120
 
 
-def stdout_is_a_review(runtime_stdout: str) -> str:
+def stdout_is_a_review(agent_binary_stdout: str) -> str:
     """Return stdout as the report body when long enough, otherwise an empty string."""
-    if len(runtime_stdout.split()) >= STDOUT_REVIEW_MINIMUM_WORDS:
-        return runtime_stdout
+    if len(agent_binary_stdout.split()) >= STDOUT_REVIEW_MINIMUM_WORDS:
+        return agent_binary_stdout
     return ""
 
 

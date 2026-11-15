@@ -117,7 +117,7 @@ def backfill_action(worktree, locked_reason, main_checkout, agents_root, agent_s
         seats = owner_file.agent_seats_whose_claude_code_transcripts_name_subagent(agent_id,
                                                                                    agents_root)
         if len(seats) == 1:
-            return "write", seats[0], (f"{seats[0]}'s Claude Code transcripts name its subagent "
+            return "write", seats[0], (f"{seats[0]}'s Claude Code transcripts name its subagent "  # pragma: no mutate, len(seats) is 1 here, so seats[-1] is seats[0]
                                        f"agent-{agent_id}")
         whose = ("no agent-seat's Claude Code transcripts name" if not seats
                  else f"the Claude Code transcripts of {len(seats)} agent-seats, "

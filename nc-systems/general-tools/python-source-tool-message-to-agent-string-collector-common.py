@@ -17,8 +17,8 @@ whose source holds the text __doc__ anywhere, comments and strings included,
 since argparse prints __doc__ for --help. A string written in a function's return statement is a message too when a
 call of that function, by its bare name, reaches one of the forms above the way a local name
 may, below, as print(stopped_line(...)) does, or is carried by the binding of a local name that is
-followed, as in text = f"failed: {detail()}" then print(text); a string that function's returned
-call carries in turn follows the same way. The function is matched by its name alone, so every function of
+followed, as in text = f"failed: {detail()}" then print(text); when that function's return
+statement holds a call of another function, that function is followed the same way. The function is matched by its name alone, so every function of
 that name in the file is followed. A dict literal's keys, a subscript's index and a comprehension's
 if-conditions are not text, so in raise Answer(400, {"error": text}) only text is a message; nor is
 a name a comprehension binds as its target, so " ".join(note for note in items) carries items, not
@@ -28,9 +28,11 @@ alone. An empty string literal is no message either. A message built with + is o
 its literal pieces joined and each other operand shown as {source}; an f-string
 field in the chain keeps its conversion and format spec, {x!r} and {x:.1f}, as ast.unparse writes
 the field of a standalone f-string. Each entry also holds literal_text, the message's literal
-pieces alone, outside every {...} placeholder, and text_as_agent_reads_it_with_placeholder_stand_ins,
-the message as the agent reads it, with each placeholder shown as <its source>, or as its value
-when it names a module-level string constant whose one assignment is the only binding of that
+pieces with each f-string field or non-literal + operand replaced by the literal text of the
+strings its value may carry, space-separated, so {'up' if ok else 'down'} gives up down, while
+{name}, a subscript's key and a format spec give nothing; a plain string's braces stay as
+written. It also holds text_as_agent_reads_it_with_placeholder_stand_ins, the message as the
+agent reads it, with each placeholder shown as <its source>, or as its value when it names a module-level string constant whose one assignment is the only binding of that
 name anywhere in the file, as module_level_string_values_whose_name_the_file_binds_only_once says.
 A message held in a local name is found when its own function's body binds the name, with =, an annotation or +=, to a
 non-empty string literal, an f-string, a + chain holding a string literal, a string literal
@@ -57,10 +59,13 @@ except ... as or a match capture, hides the function's local of the same name
 everywhere in the class body, lambdas nested in it included. So when the class body assigns
 `text`, a lambda in the class does not follow the function's local `text`, though Python's own
 scoping would let it. A name a nested function, lambda or class body declares global hides the
-function's local of the same name there. A comprehension's target hides the function's local of
-the same name in the comprehension's later parts, though not in its first iterable, which Python
-evaluates outside; a name read inside the target, as text is in `for messages[text] in items`, is
-not bound by it. A function's or lambda's defaults and decorators, and a class's decorators, are
+function's local of the same name there. A comprehension's target hides the function's local, and
+the module's constant, of the same name where the comprehension's later parts read it, though not in
+its first iterable, which Python evaluates outside; a local bound outside the comprehension still
+carries the function's local, so in text = "shown"; message = f"{text}"; [print(message) for text
+in items] "shown" is a message. Only the target's own names, through tuples, lists and starred
+names, are bound by it: a name read inside the target, as text is in `for messages[text] in
+items`, is not, nor is a name a comprehension nested in that subscript binds. A function's or lambda's defaults and decorators, and a class's decorators, are
 read in the scope the definition stands in; so are a function's annotations and a class's bases
 and keywords, unless the definition has type parameters, as in class Holder[T]: then those, and
 each type parameter's bound and default, are read with the type parameters' names hiding the
@@ -131,14 +136,13 @@ def f_string_field_text(field):
 
 def message_text_of_addition_chain(operands, literal_only=False):
     """The literal pieces joined; an f-string field or another operand is shown as {source},
-    or left out when literal_only."""
+    or, when literal_only, as literal_text_carried_by_placeholder gives it."""
     pieces = []
     for operand in operands:
         if isinstance(operand, ast.Constant) and isinstance(operand.value, str):
             pieces.append(operand.value)
         elif literal_only:
-            if isinstance(operand, ast.JoinedStr):
-                pieces.extend(part.value for part in operand.values if isinstance(part, ast.Constant))
+            pieces.append(literal_text_carried_by_placeholder(operand))
         elif isinstance(operand, ast.JoinedStr):
             pieces.extend(part.value if isinstance(part, ast.Constant) else f_string_field_text(part)
                           for part in operand.values)
@@ -236,12 +240,22 @@ def render_string_node_text_as_agent_reads_it_with_placeholder_stand_ins(node, m
 
 
 def literal_text_of_string_node(node):
-    """The node's literal words alone, outside every {...} placeholder."""
+    """The words the node's string literals give: its literal pieces, with each f-string field or
+    non-literal + operand replaced by literal_text_carried_by_placeholder. A plain string literal
+    is its value, braces included, since its braces reach the agent as written."""
     if isinstance(node, ast.BinOp):
         return message_text_of_addition_chain(addition_chain_operands(node), literal_only=True)
     if isinstance(node, ast.JoinedStr):
-        return "".join(part.value for part in node.values if isinstance(part, ast.Constant))
+        return "".join(part.value if isinstance(part, ast.Constant)
+                       else literal_text_carried_by_placeholder(part.value) for part in node.values)
     return node.value
+
+
+def literal_text_carried_by_placeholder(expression):
+    """The literal text of each string the expression's value may carry, space-separated, as
+    string_nodes_without_f_string_parts finds them: up and down in {'up' if ok else 'down'};
+    nothing from a name, a subscript's key, a join's separator or a format spec."""
+    return " ".join(literal_text_of_string_node(node) for node in string_nodes_without_f_string_parts(expression))
 
 
 PRINTING_CALL_NAMES = ("print", "sys.stderr.write", "sys.stdout.write")
@@ -368,6 +382,9 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
         self.helper_printers = helper_printers or {}
         # For each enclosing function, its local name -> the string expressions bound to it.
         self.enclosing_local_string_bindings = []
+        # The names a comprehension's target or a type parameter hides where the visit stands. Only a
+        # name read there is hidden: a local's binding made outside still carries the function's local.
+        self.hidden_names_stack = [frozenset()]
         # Functions whose returned strings are collected, and those this pass found called for text.
         self.text_returning_function_names = set(text_returning_function_names)
         self.function_names_called_for_text = set()
@@ -422,6 +439,9 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
             bindings = local_string_bindings(node)
         self.enclosing_parameter_names.append(parameters)
         self.enclosing_local_string_bindings.append(bindings)
+        # A function's body has names of its own; a lambda or class body still sees the names hidden around it.
+        self.hidden_names_stack.append(self.hidden_names_stack[-1] if isinstance(node, (ast.Lambda, ast.ClassDef))
+                                       else frozenset())
         if isinstance(node, ast.Lambda):
             self.visit(node.body)
         else:
@@ -429,6 +449,7 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
             for statement in node.body:
                 self.visit(statement)
             self.enclosing_names.pop()
+        self.hidden_names_stack.pop()
         self.enclosing_local_string_bindings.pop()
         self.enclosing_parameter_names.pop()
 
@@ -438,20 +459,14 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
     visit_ClassDef = visit_scope
 
     def visit_with_names_hidden(self, nodes, hidden):
-        """Visit the nodes with the innermost function's locals of the hidden names not followed."""
-        if not hidden:
-            for node in nodes:
-                self.visit(node)
-            return
-        has_locals = bool(self.enclosing_local_string_bindings)
-        if has_locals:
-            outer = self.enclosing_local_string_bindings[-1]
-            self.enclosing_local_string_bindings.append(
-                {name: values for name, values in outer.items() if name not in hidden})
+        """Visit the nodes with the hidden names, where the nodes read them, meaning neither the
+        innermost function's locals nor the module's constants of those names. A local's binding
+        made outside the nodes, and carried into them by another name, still means the function's
+        local."""
+        self.hidden_names_stack.append(self.hidden_names_stack[-1] | hidden)
         for node in nodes:
             self.visit(node)
-        if has_locals:
-            self.enclosing_local_string_bindings.pop()
+        self.hidden_names_stack.pop()
 
     def visit_comprehension_parts(self, node):
         """Visit a comprehension's parts, each with the targets bound before it hiding the
@@ -472,7 +487,10 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
         if expression is None or not self.enclosing_local_string_bindings:
             return
         bindings = self.enclosing_local_string_bindings[-1]
-        pending = [(name, is_prompt) for name in names_carried_as_text(expression)]
+        # A hidden name is hidden only where the expression reads it; the bindings followed from
+        # there were made outside, where the name means the function's local.
+        pending = [(name, is_prompt) for name in names_carried_as_text(expression)
+                   if name not in self.hidden_names_stack[-1]]
         followed = set()
         while pending:
             name, reached_as_prompt = pending.pop()
@@ -529,7 +547,9 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
                 continue
             label = f'"{key.value}" value'
             if isinstance(value, ast.Name):
-                if self.enclosing_local_string_bindings and value.id in self.enclosing_local_string_bindings[-1]:
+                if value.id in self.hidden_names_stack[-1]:
+                    pass  # A comprehension's own target: neither the function's local nor the module's constant.
+                elif self.enclosing_local_string_bindings and value.id in self.enclosing_local_string_bindings[-1]:
                     self.collect_local_strings_reaching(value)
                 # A name ending in a suffix is collected already, at its assignment.
                 elif value.id in self.module_string_values and not variable_name_has_tool_message_to_agent_suffix(value.id):
@@ -665,9 +685,17 @@ def type_parameter_names(definition):
 
 
 def comprehension_target_names(target):
-    """The names a comprehension's target binds: those it stores to. A name read inside the
-    target, as text is in `for messages[text] in items`, is not bound."""
-    return {node.id for node in ast.walk(target) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)}
+    """The names a comprehension's target binds: the names of its assignment structure, through
+    tuples, lists and starred names. A subscript's or attribute's target binds no name, so neither
+    text in `for messages[text] in items` nor a name a comprehension nested in such a target binds
+    is bound."""
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, ast.Starred):
+        return comprehension_target_names(target.value)
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return set().union(*(comprehension_target_names(element) for element in target.elts))
+    return set()
 
 
 def comprehension_parts_with_names_they_hide(comprehension):

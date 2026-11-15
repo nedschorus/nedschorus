@@ -3,11 +3,11 @@
 
 A shared name is one other files or agents will meet: a new file path, a top-level
 Python function, class or UPPER_CASE constant that another file in the checkout
-names, a backquoted name or hyphenated phrase in markdown, a new glossary entry,
-and the branch's own name when given. Every file the branch changed is considered
-on each run, so a function written before its first caller is listed once the
-caller exists; a caller may pass a per-file cache so unchanged files are not parsed
-again.
+names, a backquoted name or hyphenated phrase in markdown, or a new glossary entry.
+A branch's own name is not listed, because the naming page needs no check of it.
+Every file the branch changed is considered on each run, so a function written
+before its first caller is listed once the caller exists; a caller may pass a
+per-file cache so unchanged files are not parsed again.
 
 Output lines are `<file>\t<kind>\t<name>`. Exit 0 with no output when nothing is new;
 exit 2, naming the git command, when git cannot answer.
@@ -53,7 +53,6 @@ KIND_PYTHON_CONSTANT = "python-constant"
 KIND_MARKDOWN_BACKQUOTED_NAME = "markdown-backquoted-name"
 KIND_MARKDOWN_HYPHENATED_PHRASE = "markdown-hyphenated-phrase"
 KIND_GLOSSARY_ENTRY = "glossary-entry"
-KIND_BRANCH = "branch"
 PYTHON_KINDS = frozenset({KIND_PYTHON_FUNCTION, KIND_PYTHON_CLASS, KIND_PYTHON_CONSTANT})
 
 # A period ends the phrase unless a word character follows it, as in a file name.
@@ -252,8 +251,7 @@ def names_used_in_other_files(names_and_files, checkout: Path):
             if files_mentioning.get(name, set()) - defining_files[name]}
 
 
-def new_shared_names(checkout: Path, branch_names=(), already_reported=frozenset(),
-                     file_cache=None):
+def new_shared_names(checkout: Path, already_reported=frozenset(), file_cache=None):
     """Find the branch's new shared names.
 
     already_reported holds "kind\\tname" keys the caller has already shown, which are
@@ -307,11 +305,6 @@ def new_shared_names(checkout: Path, branch_names=(), already_reported=frozenset
     used_elsewhere = names_used_in_other_files(python_candidates, checkout)
     found.extend(triple for triple in candidates
                  if triple[1] not in PYTHON_KINDS or triple[2] in used_elsewhere)
-
-    for branch_name in branch_names:
-        remote_branch = git(["branch", "-r", "--list", f"origin/{branch_name}"], checkout)
-        if not remote_branch.strip():
-            found.append(("", KIND_BRANCH, branch_name))
     found = [triple for triple in found if f"{triple[1]}\t{triple[2]}" not in already_reported]
     return sorted(set(found))
 
@@ -365,11 +358,10 @@ def unchecked_new_shared_names_refusal_text(names, what_stopped, rename_instruct
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--checkout", default=".", help="the checkout to scan (default: here)")
-    parser.add_argument("--branch-name", help="a branch name about to be created, to list as well")
     arguments = parser.parse_args()
     try:
         checkout = Path(git(["rev-parse", "--show-toplevel"], Path(arguments.checkout)).strip())
-        names = new_shared_names(checkout, [arguments.branch_name] if arguments.branch_name else [])
+        names = new_shared_names(checkout)
     except GitFailure as failure:
         print(f"new-shared-names-in-changed-files-list: {failure}", file=sys.stderr)
         return 2

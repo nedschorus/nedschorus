@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Watch open pull requests and emit flushed OPENED, NEW-HEAD and READY events.
+"""Watch open pull requests and emit flushed OPENED, NEW-HEAD and READY events, and NEEDS A LOOK events for the GHI-MD edit job's notices.
 
 A draft pull request raises no event: it is not to be reviewed. The baseline
 line lists drafts apart. A pull request that was a draft at the last
@@ -12,16 +12,45 @@ opens and closes between successful polls cannot be recovered. State lives
 only in the process: an opening or a draft marked ready while the watcher is
 not running is absorbed into the next baseline and raises no event.
 
+Each poll, failed or not, also lists the needs-a-look/ directory that
+merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge.py
+writes merge-lane-2's notices to, its pr<number>-<head>.txt files and
+invocation-stopped.txt, and prints NEEDS A LOOK for each regular file in it
+not yet printed by this process, or changed since; the line names the move
+into needs-a-look/handled/ that marks the notice handled. Unlike openings,
+notices already there at the first poll are reported, since a file left
+outside handled/ is unhandled whoever restarted the watcher. So with
+--exit-after-first-poll-with-events, a notice not moved makes every restart
+exit at its first poll, before any pull request event can show: the line
+says to move it as soon as it is read. A missing
+directory, before the job first writes one, raises nothing. A directory that
+cannot be listed raises one NEEDS A LOOK line naming the error, again only
+after a listing has succeeded in between; a notice that cannot be read is
+reported with the error in place of its first line, and an entry whose
+status cannot be read, other than one gone since the listing or a dangling
+link, is reported once with the error. A notice moved out and back between
+two polls, keeping its modification time, is not reported again by the same
+process; one that a poll found missing is reported again when it comes back.
+The watcher never moves or deletes a notice.
+
 Polling needs no public webhook endpoint. GraphQL selects only needed fields
 and avoids gh versions’ differing --json field lists."""
 
 import argparse
 import json
 import os
+import stat
 import subprocess
 import sys
 import time
+import importlib.util
 from pathlib import Path
+
+_ghi_md_edit_job_spec = importlib.util.spec_from_file_location(
+    "ghi_md_edit_pull_requests_check_approve_and_merge", Path(__file__).resolve().with_name(
+        "merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge.py"))
+ghi_md_edit_job = importlib.util.module_from_spec(_ghi_md_edit_job_spec)
+_ghi_md_edit_job_spec.loader.exec_module(ghi_md_edit_job)
 
 DEFAULT_REPO = "nedschorus/nedschorus"
 DEFAULT_POLL_SECONDS = 60.0
@@ -40,6 +69,9 @@ GH_DID_NOT_RUN = -1
 HEAD_SHA_PREFIX_CHARS = 8
 TITLE_SNIPPET_CHARS = 120
 FAILURE_REASON_SNIPPET_CHARS = 300
+NOTICE_FIRST_LINE_CHARS = 300
+# Stands in the reported record for a notice whose status could not be read; no mtime equals it.
+STATUS_UNREADABLE = "status unreadable"
 
 # A short redaction pattern would corrupt ordinary output; reject invalid credentials at startup.
 MINIMUM_PLAUSIBLE_TOKEN_CHARS = 8
@@ -209,6 +241,63 @@ def events_for_poll(known_pull_requests, pull_requests):
     return lines
 
 
+def handled_move_command(directory, name):
+    handled = directory / ghi_md_edit_job.HANDLED_MESSAGES_DIRECTORY_NAME
+    return f"mkdir -p {handled} && mv {directory / name} {handled}/"
+
+
+def needs_a_look_events(directory, state):
+    """Return a NEEDS A LOOK line per notice in directory not yet reported, as state records."""
+    try:
+        entries = sorted(directory.iterdir())
+    except FileNotFoundError:
+        state["unlistable"] = False
+        return []
+    except OSError as error:
+        if state.get("unlistable"):
+            return []
+        state["unlistable"] = True
+        return [f"NEEDS A LOOK: cannot list the GHI-MD edit job's notices in {directory}: "
+                f"{error.strerror or error}; notices there go unreported until it can be listed"]
+    state["unlistable"] = False
+    reported = state.setdefault("reported", {})
+    lines = []
+    present = set()
+    for path in entries:
+        try:
+            status = path.stat()
+        except FileNotFoundError:
+            # Gone since the listing, or a dangling link: nothing to read.
+            continue
+        except OSError as error:
+            present.add(path.name)
+            if reported.get(path.name) != STATUS_UNREADABLE:
+                reported[path.name] = STATUS_UNREADABLE
+                lines.append(f"NEEDS A LOOK {path.name}: (could not read its status: "
+                             f"{error.strerror or error}) -- look at {path}")
+            continue
+        if not stat.S_ISREG(status.st_mode):
+            continue
+        modified = status.st_mtime_ns
+        present.add(path.name)
+        if reported.get(path.name) == modified:
+            continue
+        reported[path.name] = modified
+        try:
+            first_line = (path.read_text(encoding="utf-8", errors="replace")
+                          .splitlines() or ["(empty file)"])[0]
+        except OSError as error:
+            first_line = f"(could not read it: {error.strerror or error})"
+        lines.append(f"NEEDS A LOOK {path.name}: "
+                     f"{one_line_snippet(first_line, NOTICE_FIRST_LINE_CHARS)} -- read {path}, "
+                     f"then at once, before acting on it, move it, or each restart of this "
+                     f"watcher reports it again first: "
+                     f"{handled_move_command(directory, path.name)}")
+    for name in set(reported) - present:
+        del reported[name]
+    return lines
+
+
 def pull_requests_by_number(pull_requests):
     return {pull_request["number"]: pull_request
             for pull_request in pull_requests}
@@ -255,8 +344,12 @@ def parse_arguments(argv):
                              "as the silent baseline")
     parser.add_argument("--exit-after-first-poll-with-events", action="store_true",
                         help="exit 0 after the first poll that prints an "
-                             "OPENED, NEW-HEAD or READY line, once every event of "
-                             "that poll is printed")
+                             "OPENED, NEW-HEAD, READY or NEEDS A LOOK line, once "
+                             "every event of that poll is printed")
+    parser.add_argument("--needs-a-look-directory", type=Path,
+                        default=ghi_md_edit_job.needs_a_look_directory(),
+                        help="the GHI-MD edit job's notices directory to list each "
+                             "poll (default: %(default)s)")
     return parser.parse_args(argv)
 
 
@@ -283,8 +376,12 @@ def main(argv=None):
     known_pull_requests = None
     blind_since = None
     failed_polls = 0
+    notices_state = {}
 
     while True:
+        notice_lines = needs_a_look_events(arguments.needs_a_look_directory, notices_state)
+        for line in notice_lines:
+            emit(line)
         pull_requests, reason = fetch_open_pull_requests(arguments.repo, token)
         if reason is not None:
             failed_polls += 1
@@ -294,6 +391,8 @@ def main(argv=None):
                      "recovers (nothing is being seen; the recovery line "
                      "below flags anything the blindness cost): "
                      + one_line_snippet(reason, FAILURE_REASON_SNIPPET_CHARS))
+            if notice_lines and arguments.exit_after_first_poll_with_events:
+                return 0
             time.sleep(arguments.poll_seconds)
             continue
 
@@ -321,7 +420,7 @@ def main(argv=None):
         event_lines = events_for_poll(known_pull_requests, pull_requests)
         for line in event_lines:
             emit(line)
-        if event_lines and arguments.exit_after_first_poll_with_events:
+        if (event_lines or notice_lines) and arguments.exit_after_first_poll_with_events:
             return 0
         # Drop closed pull requests so reopening produces another OPENED event.
         known_pull_requests = pull_requests_by_number(pull_requests)

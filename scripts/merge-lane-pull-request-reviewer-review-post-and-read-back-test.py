@@ -283,7 +283,8 @@ def merge_lane_cases(scratch):
             ("a finding opening with a hand-written blocking mark",
              [finding(2, "must-fix-now", "**Blocks** b")], "REQUEST_CHANGES",
              "comment on scripts/thing.py:2 whose body already opens with the blocking mark "
-             "**Blocks**"),
+             "**Blocks**; this program writes that mark for each must-fix-now comment, so remove the mark "
+             "from the start of its \"body\""),
             ("a fix-next finding opening, after spaces, with a hand-written mark",
              [finding(3, "fix-next", "  **Blocks:** b")], "APPROVE",
              "already opens with the blocking mark **Blocks:**"),
@@ -305,6 +306,9 @@ def merge_lane_cases(scratch):
              "\"nit\" key"),
             ("a nit whose category is must-fix-now", [nit(2, category="must-fix-now")], "REQUEST_CHANGES",
              "whose \"finding_category\" is 'must-fix-now'; only a fix-in-maintenance finding can be a nit"),
+            ("a nit whose category is file-for-later, which sorts before fix-in-maintenance",
+             [nit(2, category="file-for-later")], "APPROVE",
+             "whose \"finding_category\" is 'file-for-later'; only a fix-in-maintenance finding can be a nit"),
             ("a \"nit\" of false", [nit(2, value=False)], "APPROVE",
              "comment on scripts/thing.py:2 whose \"nit\" is False; give \"nit\" only as the JSON value true, "
              "on a nit, a small fix that names no failure, such as a misspelt name, and omit the \"nit\" key "
@@ -632,8 +636,11 @@ def main():
                 ("a comment whose line is true", review("APPROVE", comments=[
                     {"path": "p", "line": True, "body": "b"}]), "a number \"line\"")):
             result = run_program(scratch, text)
-            check(f"a review file with {name} exits 2, says why, and calls no gh",
+            check(f"a review file with {name} exits 2, says why, calls no gh, and says not to run the "
+                  "reviewer's run again, since it should have refused the file",
                   result.code == 2 and reason in result.stderr and "review not posted" in result.stderr
+                  and "should have refused this file" in result.stderr
+                  and "fix it and run the same command again" not in result.stderr
                   and not result.calls, result.detail)
 
         result = run_program(scratch, review("APPROVE"), token=None)

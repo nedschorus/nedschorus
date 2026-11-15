@@ -9,6 +9,8 @@ Usage:
       [--recorded-inputs-directory DIR] [--mutant-timeout-seconds S]
       [--lock-file PATH] [--survived-and-errored-mutants-json-file PATH]
       [--parallel-mutant-workers N] [--cosmic-ray-sessions-directory-kept-to-resume DIR]
+      [--mutants-run-at-most-shared-evenly-among-changed-files N]
+      [--no-mutant-started-after-unix-time UNIX_TIME]
   scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py
       --recorded-mutant-killed-check DIFF_FILE [DIFF_FILE ...] [--head COMMIT]
       [--checkout DIR] [--python INTERPRETER]
@@ -27,12 +29,16 @@ with every suite whose recorded inputs read that file (the recordings
 scripts/run-all-test-suites.py keeps), plus the file's sibling
 `<name>-test.py` or `<name>-test.sh` when there is one.
 
-THE QUICK MUTATION PASS, run before a push, mutates only the changed lines
-that are failure-handling code: the changed lines inside an `except` clause,
+THE QUICK MUTATION PASS mutates only the changed lines that are
+failure-handling code: the changed lines inside an `except` clause,
 or inside an `if` statement, `while` loop or conditional expression whose test
-reads an exit code (a name or attribute named `returncode`, or ending in
-`exit_code` or `exit_status`), each such clause or statement counted from its
-first line to its last. A clause's or statement's lines that the change did
+reads an exit code: a name or attribute named `returncode`, or ending in
+`exit_code` or `exit_status`; a call of `.wait()`, `os.system`,
+`subprocess.call` or `os.waitstatus_to_exitcode`; or a name that the same
+function sets to one of those, and to nothing wrapped around it, as
+`status = process.wait()` sets `status` for `if status != 0:`. A test of
+`.poll()` does not read an exit code. Each such clause or statement is counted
+from its first line to its last. A clause's or statement's lines that the change did
 not touch are not mutated.
 A changed file with no changed line of
 failure-handling code is not mutated, and is printed as NO FAILURE-HANDLING
@@ -112,7 +118,7 @@ and, outside an nc-test-sandbox, outlives a runner killed with SIGKILL.
 
 PARALLEL MUTANTS. --parallel-mutant-workers N runs N mutants at once, each in a
 scratch worktree of its own at the head, since each worker edits its mutant into
-the file on disk; it needs --cosmic-ray-venv, whose python runs the workers.
+the file on disk; the python of --cosmic-ray-venv runs the workers.
 This script runs itself under that python with
 --cosmic-ray-session-pending-mutants-run-by-parallel-workers, a flag no caller
 gives, in place of `cosmic-ray exec`: it hands each mutant of the session with
@@ -138,6 +144,31 @@ only its mutants with no result, with no baseline when every mutant has one;
 the SUMMARY line and the JSON file still cover all of its mutants. A session
 that cannot be put in place exits 2. Without the flag, each session
 is in the scratch directory and is removed with it.
+
+SOME MUTANTS RUN, THE REST KEPT FOR A LATER RUN. Two flags of the full
+mutation pass, each needing --parallel-mutant-workers and
+--cosmic-ray-sessions-directory-kept-to-resume, leave mutants with no result
+in the kept sessions, where a later run finds them. With either, the session
+of every changed file that has a suite is made, or found kept, before any
+baseline, so the sessions hold every mutant of the change; a file none of
+whose mutants this run runs gets no baseline; and RESUMED is printed only for
+a file whose every mutant has a result. The SUMMARY line counts each mutant
+left with no result as not run, the JSON file gives their number, and the
+exit code is then 1.
+--mutants-run-at-most-shared-evenly-among-changed-files N runs N of the
+change's mutants at most: one from each changed file in turn, until N are
+chosen or none is left, so a short file is given as many as a long one. The
+head commit seeds the order of the files and of each file's mutants, and the
+N are chosen from every mutant cosmic-ray's filters did not skip, with or
+without a result; so a later run with the same head, base and N chooses the
+same mutants and runs only those of them with no result, and a run with a
+larger N, or without the flag, runs others, never one that has a result.
+cosmic-ray gives a mutant a new job id at each `cosmic-ray init`, so a mutant
+is told from the others of its file by its operator, occurrence, start and end
+position and operator arguments, which are the same at every init.
+--no-mutant-started-after-unix-time UNIX_TIME starts no baseline and no
+mutant from that time on; the mutants then running are judged, and the script
+goes on to its SUMMARY line and JSON file.
 
 A renamed file is mutated under its new name. A mutant cosmic-ray could not
 judge, because its worker raised, its suites could not be launched, a suite
@@ -166,7 +197,8 @@ script writes after its SUMMARY line, as one JSON object: "head" and
 "merge_base", the two commits compared; "survived" and "errored", each a list
 of mutants with "module_path", "line", "operator", "diff" and "reason", where
 "line" is the line that must end with a `# pragma: no mutate` comment to skip
-that mutant; and "files_with_no_suite", a list of paths. A file that cannot be
+that mutant; "files_with_no_suite", a list of paths; and "mutants_not_run_count", how
+many of the change's mutants have no result. A file that cannot be
 written exits 2. A run that exits 2 or 3 because it could not run prints no
 SUMMARY line and writes no such file.
 
@@ -191,17 +223,24 @@ its verdict and naming its diff file: MUTANT KILLED when a suite fails with
 the mutant applied; MUTANT SURVIVED when every suite passes with it; MUTANT
 NO LONGER EXISTS when there is nothing to kill, because the line it changes ends with a
 `# pragma: no mutate` comment at the head, or the diff does not apply at the
-head and origin/main, read without fetching, lacks the lines it replaces; and
+head and origin/main, read without fetching, lacks the lines it replaces, or has
+them only where none of the diff's non-blank context lines stands beside them, as a bare
+`continue` the diff replaces has unrelated copies elsewhere; and
 MUTANT COULD NOT BE JUDGED, with what to do, when the diff file cannot be read or
 names no file, the file has no suite while the mutant still applies at the
-head, the diff does not apply at the head
-while origin/main has those lines or cannot tell, the lines it replaces appear
-more than once at the head when a trailing `# pragma: no mutate` comment is
-read as absent, but only once when lines are compared exactly, or the runner judged no
-suite with the mutant applied, as when a suite ran past its own time limit or
-the runner was refused. When those lines appear more than once even when
-compared exactly, as when every copy ends with the comment, the mutant does not apply
-at the head, and origin/main decides between those two verdicts as above. Whether a mutant still exists is decided before
+head, the diff does not apply at the head while origin/main has those lines,
+the diff does not apply at the head and whether origin/main has those lines
+cannot be told (there is no local origin/main, git cannot read the file there,
+or the lines appear there more than once and some copy has one of
+the diff's non-blank context lines beside it), two of the diff's hunks are found at
+places whose lines overlap, some copies of the lines it replaces end with a
+`# pragma: no mutate` comment and others do not, so that the lines appear more
+than once at the head when that comment is ignored but only once when it is
+not, or the runner judged no suite with the mutant applied, as when a suite ran
+past its own time limit or the runner was refused. When those lines appear more
+than once even with the comment counted, as when every copy ends with it, the
+mutant does not apply at the head, and origin/main decides between MUTANT NO
+LONGER EXISTS and MUTANT COULD NOT BE JUDGED as above. Whether a mutant still exists is decided before
 whether its file has a suite, so the mutant of a deleted file no longer exists
 once origin/main lacks the file too. A line starting RECORDED MUTANTS counts each verdict.
 --recorded-mutant-killed-check-verdicts-json-file-to-write, when given, names a file it then writes
@@ -222,7 +261,7 @@ check exits as its own paragraph says: 0 every mutant was killed or no longer
 exists, 1 one survived, 2 one could not be judged or the check could not run,
 a suite failing without a mutant included; never 3):
 0 every mutant was killed, 1 a mutant survived, errored or was
-not run, or a changed file has no suite, 2 could not run (cosmic-ray missing,
+not run, or a changed file has no suite, 2 could not run (cosmic-ray missing or unable to start,
 a git step failed, the nc-head-commit is already in the base, the worktree could
 not be made, a changed file the quick mutation pass reads is not valid Python,
 the JSON file could not be written, or a suite runs out of time, cannot be
@@ -241,9 +280,11 @@ import json
 import math
 import os
 import queue
+import random
 import re
 import shlex
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -260,6 +301,9 @@ EXIT_COULD_NOT_RUN = 2
 EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD = 3
 
 COSMIC_RAY_TOOLS = ("cosmic-ray", "cr-filter-git", "cr-filter-pragma", "cr-filter-lines")
+# In a home directory, not /tmp, so the venv outlasts a reboot or a /tmp clean-up.
+DEFAULT_COSMIC_RAY_VENV = Path.home() / ".local" / "share" / "nedschorus" / "cosmic-ray-venv"
+COSMIC_RAY_VERSION = "8.7.0"
 
 QUICK_MUTATION_PASS_COMMAND_LINE_FLAG = "--quick-mutation-pass"
 FULL_MUTATION_PASS_COMMAND_LINE_FLAG = "--full-mutation-pass"
@@ -305,6 +349,21 @@ COSMIC_RAY_SESSION_PENDING_MUTANTS_RUN_BY_PARALLEL_WORKERS_FLAG = "--cosmic-ray-
 COSMIC_RAY_SESSION_PENDING_MUTANTS_COUNT_SQL_QUERY = (
     "SELECT COUNT(*) FROM work_items WHERE job_id NOT IN (SELECT job_id FROM work_results)")
 COSMIC_RAY_ONE_WORK_ITEM_MUTATE_AND_TEST_FLAG = "--cosmic-ray-one-work-item-mutate-and-test"
+MUTANTS_RUN_AT_MOST_SHARED_EVENLY_AMONG_CHANGED_FILES_FLAG = "--mutants-run-at-most-shared-evenly-among-changed-files"
+NO_MUTANT_STARTED_AFTER_UNIX_TIME_FLAG = "--no-mutant-started-after-unix-time"
+# cosmic-ray 8.7.0's session schema. `cosmic-ray init` gives each mutant a random job_id, so the
+# columns of mutation_specs, the same at every init of one file at one commit, tell which
+# mutant a work item is. A mutant its filters skipped has a result whose worker_outcome is
+# SKIPPED.
+COSMIC_RAY_SESSION_MUTANTS_NOT_SKIPPED_BY_FILTERS_SQL_QUERY = (
+    "SELECT operator_name, occurrence, start_pos_row, start_pos_col, end_pos_row, end_pos_col, "
+    "COALESCE(operator_args, ''), work_items.job_id, "
+    "work_items.job_id IN (SELECT job_id FROM work_results) "
+    "FROM work_items JOIN mutation_specs ON mutation_specs.job_id = work_items.job_id "
+    "WHERE work_items.job_id NOT IN "
+    "(SELECT job_id FROM work_results WHERE worker_outcome = 'SKIPPED')")
+ALL_MUTANTS_WITH_NO_RESULT_ARGUMENT = "all"
+NO_UNIX_TIME_AFTER_WHICH_NO_MUTANT_STARTS_ARGUMENT = "never"
 
 TEST_SUITE_RUNNER_PATH = Path(__file__).resolve().with_name("run-all-test-suites.py")
 # The scheduled full mutation pass reads the suites that fail on the unmutated head from the lines
@@ -363,25 +422,51 @@ def run_or_raise(command, cwd, environment=None, what=None):
     return completed.stdout
 
 
+COSMIC_RAY_VENV_FLAG = "--cosmic-ray-venv"
+COSMIC_RAY_VENV_PLACEHOLDER = "<that venv>"
+# argparse accepts only an unambiguous abbreviation, and --cosmic-ray-sessions-directory-kept-to-resume
+# shares "--cosmic-ray-" with this flag, so the shortest abbreviation parse_arguments accepts is
+# "--cosmic-ray-v". A shorter word, such as an empty option value, is never this flag.
+SHORTEST_COSMIC_RAY_VENV_FLAG_ABBREVIATION_LENGTH = len("--cosmic-ray-v")
+
+
+def build_argv_with_cosmic_ray_venv_flags_replaced_by_placeholder(argv):
+    """Return argv with every --cosmic-ray-venv given, and its value, taken out, and
+    `--cosmic-ray-venv <that venv>` put at its end."""
+    kept, arguments = [], iter(argv)
+    for argument in arguments:
+        name, equals, _ = argument.partition("=")
+        if (len(name) >= SHORTEST_COSMIC_RAY_VENV_FLAG_ABBREVIATION_LENGTH
+                and COSMIC_RAY_VENV_FLAG.startswith(name)):
+            if not equals:
+                next(arguments, None)
+            continue
+        kept.append(argument)
+    return kept + [COSMIC_RAY_VENV_FLAG, COSMIC_RAY_VENV_PLACEHOLDER]
+
+
 def cosmic_ray_tool_paths(venv):
     """Return {tool: path} for the cosmic-ray commands, or raise naming how to install them."""
     found = {}
     for tool in COSMIC_RAY_TOOLS:
-        if venv is not None:
-            candidate = Path(venv).expanduser().resolve() / "bin" / tool
-            path = str(candidate) if candidate.is_file() else None
-        else:
-            path = shutil.which(tool)
-        if path is None:
-            where = (f"in {Path(venv).expanduser() / 'bin'}" if venv is not None
-                     else "on PATH")
+        candidate = Path(venv).expanduser().resolve() / "bin" / tool
+        if not candidate.is_file():
+            quoted = shlex.quote(str(Path(venv).expanduser()))
+            existing_venv_argv = build_argv_with_cosmic_ray_venv_flags_replaced_by_placeholder(
+                sys.argv)
             raise CouldNotRun(
-                f"{PROGRAM}: not run — {tool} is not {where}.\n"
-                f"Install cosmic-ray into a venv of its own, not globally:\n"
-                f"  python3 -m venv /tmp/cosmic-ray-venv\n"
-                f"  /tmp/cosmic-ray-venv/bin/pip install cosmic-ray\n"
-                f"Then run this again with --cosmic-ray-venv /tmp/cosmic-ray-venv.")
-        found[tool] = path
+                f"{PROGRAM}: not run — {tool} is not in {Path(venv).expanduser() / 'bin'}.\n"
+                f"Do these steps on {socket.gethostname()}, the machine this ran on, because "
+                f"the venv is a path there; from another machine, run them over ssh to it.\n"
+                f"If a venv there already holds cosmic-ray=={COSMIC_RAY_VERSION}, skip the "
+                f"install and run this, with <that venv> replaced by the venv's path:\n"
+                f"  python3 {shlex.join(existing_venv_argv)}\n"
+                f"Otherwise install cosmic-ray into {quoted}:\n"
+                f"  python3 -m venv {quoted}\n"
+                f"  {quoted}/bin/pip install cosmic-ray=={COSMIC_RAY_VERSION}\n"
+                f"Then run again:\n"
+                f"  python3 {shlex.join(sys.argv)}")
+        found[tool] = str(candidate)
     return found
 
 
@@ -460,18 +545,54 @@ def quick_mutation_pass_suites(suites, recordings_directory, runner, checkout, e
     return chosen
 
 
-def reads_an_exit_code(expression):
-    return any(EXIT_CODE_NAME.search(node.attr if isinstance(node, ast.Attribute) else node.id)
-               for node in ast.walk(expression) if isinstance(node, (ast.Attribute, ast.Name)))
+SCOPES = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+EXIT_CODE_FUNCTIONS = {("os", "system"), ("subprocess", "call"), ("os", "waitstatus_to_exitcode")}
+
+
+def gives_an_exit_code(node):
+    """Whether the node is itself an exit code: an EXIT_CODE_NAME name or attribute, a call of
+    an EXIT_CODE_FUNCTIONS function, or a `.wait()` call. `.poll()` is left out because
+    nearly every test of it asks whether a process is still running."""
+    if isinstance(node, ast.Name):
+        return bool(EXIT_CODE_NAME.search(node.id))
+    if isinstance(node, ast.Attribute):
+        return bool(EXIT_CODE_NAME.search(node.attr))
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+        return False
+    called = node.func
+    return called.attr == "wait" or (
+        isinstance(called.value, ast.Name) and (called.value.id, called.attr) in EXIT_CODE_FUNCTIONS)
+
+
+def nodes_of_scope(scope):
+    """The nodes inside the scope that belong to no scope nested in it."""
+    pending = list(ast.iter_child_nodes(scope))
+    while pending:
+        node = pending.pop()
+        yield node
+        if not isinstance(node, SCOPES):
+            pending.extend(ast.iter_child_nodes(node))
 
 
 def failure_handling_line_ranges(source):
     """(first line, last line) of each except clause, and of each if, while or conditional
-    expression whose test reads an exit code."""
-    return sorted(
-        (node.lineno, node.end_lineno) for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.ExceptHandler)
-        or (isinstance(node, (ast.If, ast.While, ast.IfExp)) and reads_an_exit_code(node.test)))
+    expression whose test contains an exit code, as gives_an_exit_code() judges, or reads a
+    name its own scope assigned one to."""
+    ranges = []
+    for scope in ast.walk(ast.parse(source)):
+        if not isinstance(scope, SCOPES):
+            continue
+        nodes = list(nodes_of_scope(scope))
+        exit_code_names = {target.id for node in nodes
+                           if isinstance(node, ast.Assign) and gives_an_exit_code(node.value)
+                           for target in node.targets if isinstance(target, ast.Name)}
+        ranges.extend(
+            (node.lineno, node.end_lineno) for node in nodes
+            if isinstance(node, ast.ExceptHandler)
+            or (isinstance(node, (ast.If, ast.While, ast.IfExp)) and any(
+                gives_an_exit_code(read) or (isinstance(read, ast.Name) and read.id in exit_code_names)
+                for read in ast.walk(node.test))))
+    return sorted(ranges)
 
 
 HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
@@ -542,11 +663,14 @@ def run_test_suite_runner_with_its_stderr_on_stdout_stopped_before_cosmic_ray_li
     return exit_code
 
 
-def cosmic_ray_session_pending_mutants_run_by_parallel_workers(config_file, session_file,
-                                                               worktrees):
+def cosmic_ray_session_pending_mutants_run_by_parallel_workers(
+        config_file, session_file, job_ids_to_run, not_started_after_unix_time, worktrees):
     """Run under the cosmic-ray venv's python: run every work item of the session that has no
     result, one worker per worktree at once, each in its own process with that worktree as its
-    working directory, and record each result in the session as `cosmic-ray exec` does.
+    working directory, and record each result in the session as `cosmic-ray exec` does. With
+    job_ids_to_run, only those work items run; a work item not yet started at
+    not_started_after_unix_time, when given, is not run. Each work item not run stays without a
+    result.
 
     Return 0, or 2 after naming each work item whose worker gave no result; that work item stays
     without a result, so a later run of the session runs it again.
@@ -563,8 +687,9 @@ def cosmic_ray_session_pending_mutants_run_by_parallel_workers(config_file, sess
         pending = queue.SimpleQueue()
         count = 0
         for work_item in work_db.pending_work_items:
-            pending.put(work_item)
-            count += 1
+            if job_ids_to_run is None or work_item.job_id in job_ids_to_run:
+                pending.put(work_item)
+                count += 1
         # One None per worker, each ending the worker that takes it.
         for _ in worktrees:
             pending.put(None)
@@ -575,6 +700,10 @@ def cosmic_ray_session_pending_mutants_run_by_parallel_workers(config_file, sess
                 work_item = pending.get()
                 if work_item is None:
                     return
+                if not_started_after_unix_time is not None \
+                        and time.time() >= not_started_after_unix_time:
+                    results.put((work_item.job_id, None))
+                    continue
                 request = {"test_command": config.test_command, "timeout": config.timeout,
                            "mutations": [{
                                "module_path": str(mutation.module_path),
@@ -604,6 +733,8 @@ def cosmic_ray_session_pending_mutants_run_by_parallel_workers(config_file, sess
         # finished its mutant, never by one stopped part-way.
         for _ in range(count):
             job_id, completed = results.get()
+            if completed is None:
+                continue
             if isinstance(completed, OSError):
                 no_result.append(f"work item {job_id}: its worker could not be started "
                                  f"({type(completed).__name__}: {completed})")
@@ -618,9 +749,11 @@ def cosmic_ray_session_pending_mutants_run_by_parallel_workers(config_file, sess
                                   else TestOutcome(said["test_outcome"])),
                     diff=said["diff"]))
             except (ValueError, KeyError, TypeError) as error:
-                last = (completed.stderr.strip() or "nothing").splitlines()[-1]
-                no_result.append(f"work item {job_id}: {error}; its last line on standard "
-                                 f"error: {last}")
+                # All of it: a traceback names its cause before its last line.
+                said = "".join(f"\n      {line}"
+                               for line in (completed.stderr.strip() or "nothing").splitlines())
+                no_result.append(f"work item {job_id}: {error}; it printed on standard "
+                                 f"error:{said}")
         for worker in workers:
             worker.join()
     finally:
@@ -869,8 +1002,8 @@ def test_suite_runner_log_directories_parent_removed_or_named_as_kept(log_direct
         shutil.rmtree(log_directories_parent, ignore_errors=True)
     elif any(log_directories_parent.iterdir()):
         print(f"{TEST_SUITE_RUNNER_LOGS_KEPT_LINE_PREFIX}{log_directories_parent}; "
-              f"remove that directory once you have read them; a later run of {PROGRAM}.py "
-              f"removes it once it has not changed for two days.", file=sys.stderr)
+              f"a later run of scripts/{PROGRAM}.py removes that directory once it has not "
+              f"changed for two days, so you need not remove it yourself.", file=sys.stderr)
     else:
         log_directories_parent.rmdir()
 
@@ -913,7 +1046,7 @@ def cosmic_ray_session_kept_to_resume_has_pending_mutants_or_is_unreadable(sessi
         connection = sqlite3.connect(f"{session.as_uri()}?mode=ro", uri=True)
         try:
             with_no_result = connection.execute(
-                COSMIC_RAY_SESSION_PENDING_MUTANTS_COUNT_SQL_QUERY).fetchone()[0]
+                COSMIC_RAY_SESSION_PENDING_MUTANTS_COUNT_SQL_QUERY).fetchone()[0]  # pragma: no mutate, the query selects one column, COUNT(*), so its last column is its first
             return with_no_result > 0
         finally:
             connection.close()
@@ -991,18 +1124,86 @@ def cosmic_ray_session_not_kept_refusal(path, session_file, error):
             f"a directory you can write to, then run this again with the same options.")
 
 
-def mutation_test_one_file(path, suites, worktrees, scratch, tools, head, merge_base,
-                           arguments, environment, runner, recorded_inputs_directory,
-                           recordings_directory, in_test_sandboxes, log_directories_parent,
-                           failure_handling_ranges=None):
-    """Run cosmic-ray on one file's changed lines; return outcomes_from_dump()'s four values.
+def mutants_chosen_one_per_file_in_turn_in_order_seeded_by_head(mutants_of_file, head, at_most):
+    """At most `at_most` (file, mutant) pairs from `mutants_of_file`, which maps each changed
+    file to its mutants: one mutant from each file in turn until that many are chosen or none
+    is left, so a short file is given as many as a long one. The head commit seeds the order
+    of the files and of each file's mutants, so the same head and mutants give the same
+    pairs."""
+    files = sorted(mutants_of_file)
+    random.Random(head).shuffle(files)
+    waiting = {}
+    for path in files:
+        waiting[path] = sorted(mutants_of_file[path])
+        random.Random(f"{head} {path}").shuffle(waiting[path])
+    chosen = []
+    while len(chosen) < at_most and any(waiting.values()):
+        for path in files:
+            if waiting[path] and len(chosen) < at_most:
+                chosen.append((path, waiting[path].pop()))
+    return chosen
 
-    Each run of the suite runner logs to a directory of its own in log_directories_parent.
 
-    The baseline and cosmic-ray's own steps run in worktrees[0]; with --parallel-mutant-workers,
-    each worktree gets one worker. With failure_handling_ranges, only the changed lines inside
-    them are mutated."""
-    worktree = worktrees[0]
+def cosmic_ray_session_mutants_not_skipped_by_filters(path, session):
+    """{mutant: (job id, whether it has a result)} for each mutant of the session that
+    cosmic-ray's filters did not skip, a mutant being its operator, occurrence, start and end
+    position and operator arguments. Raises CouldNotRun when the session cannot be read."""
+    try:
+        # Not read-only: a run killed while writing a result leaves a hot journal, which only
+        # a connection that can write rolls back.
+        connection = sqlite3.connect(session)
+        try:
+            return {tuple(row[:7]): (row[7], bool(row[8])) for row in connection.execute(
+                COSMIC_RAY_SESSION_MUTANTS_NOT_SKIPPED_BY_FILTERS_SQL_QUERY)}
+        finally:
+            connection.close()
+    except sqlite3.Error as error:
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — the cosmic-ray session of {path}, {session}, cannot be read "
+            f"({type(error).__name__}: {error}), so the mutants to run cannot be chosen.\n"
+            f"Delete that session file, and no other file, then run this again with the same "
+            f"options: the mutants of {path} are then judged again from the first.") from error
+
+
+def cosmic_ray_sessions_made_for_every_file_and_mutant_job_ids_to_run_chosen(
+        files_and_suites, worktree, scratch, tools, head, merge_base, arguments, environment,
+        runner, recorded_inputs_directory, recordings_directory, in_test_sandboxes,
+        log_directories_parent):
+    """Make and filter the kept session of each file that has none, before any baseline, so
+    that every mutant of the change is in a session however few this run reaches. Return, for
+    each file, the job ids of the mutants this run may run: every mutant with no result, as
+    None, or, with MUTANTS_RUN_AT_MOST_SHARED_EVENLY_AMONG_CHANGED_FILES_FLAG, those with no
+    result among the mutants chosen. The mutants are chosen from all that the filters did not
+    skip, with or without a result, so a later run with the same number chooses the same ones
+    and runs none of them twice."""
+    mutants_of_file = {}
+    for path, suites in files_and_suites:
+        config, session, _ = cosmic_ray_config_written_and_session_path_of_one_file(
+            path, suites, scratch, head, merge_base, arguments, runner,
+            recorded_inputs_directory, recordings_directory, in_test_sandboxes,
+            log_directories_parent, None)
+        if not session.is_file():
+            cosmic_ray_session_made_and_filtered(path, config, session, tools, worktree,
+                                                 environment, None)
+        mutants_of_file[path] = cosmic_ray_session_mutants_not_skipped_by_filters(path, session)
+    at_most = arguments.mutants_run_at_most_shared_evenly_among_changed_files
+    if at_most is None:
+        return dict.fromkeys(mutants_of_file)
+    job_ids_to_run = {path: [] for path in mutants_of_file}
+    for path, mutant in mutants_chosen_one_per_file_in_turn_in_order_seeded_by_head(
+            mutants_of_file, head, at_most):
+        job_id, has_result = mutants_of_file[path][mutant]
+        if not has_result:
+            job_ids_to_run[path].append(job_id)
+    return job_ids_to_run
+
+
+def cosmic_ray_config_written_and_session_path_of_one_file(
+        path, suites, scratch, head, merge_base, arguments, runner, recorded_inputs_directory,
+        recordings_directory, in_test_sandboxes, log_directories_parent,
+        failure_handling_ranges):
+    """Write cosmic-ray's config for one file; return (the config, the file's session, kept or
+    in scratch, the limit on one run of its suites)."""
     name = scratch_file_name_stem_under_255_bytes_unique_to_repository_paths(path)
     config = scratch / f"{name}.toml"
     session = scratch / f"{name}.sqlite"
@@ -1011,12 +1212,80 @@ def mutation_test_one_file(path, suites, worktrees, scratch, tools, head, merge_
             cosmic_ray_session_kept_to_resume_path_for_one_file_head_base_and_quick_or_full_mutation_pass(
                 arguments.cosmic_ray_sessions_directory_kept_to_resume, head, merge_base, path,
                 arguments.quick_mutation_pass)
-    baseline_session = scratch / f"{name}.baseline.sqlite"
     mutant_timeout_seconds = (
         arguments.mutant_timeout_seconds if arguments.mutant_timeout_seconds is not None
         else default_mutant_timeout_seconds_from_test_suites_own_time_limits(
             suites, recordings_directory, runner, in_test_sandboxes))
+    config.write_text(cosmic_ray_config_text(
+        path, test_command_for(suites, ".", arguments, recorded_inputs_directory,
+                               mutant_timeout_seconds, log_directories_parent),
+        merge_base,
+        test_suite_runner_backstop_seconds(mutant_timeout_seconds, runner)
+        + MUTANT_TIMEOUT_EXTRA_SECONDS_FOR_TEST_SUITE_RUNNER_TO_STOP_ITS_SUITES,
+        failure_handling_ranges))
+    return config, session, mutant_timeout_seconds
+
+
+def cosmic_ray_session_made_and_filtered(path, config, session, tools, worktree, environment,
+                                         failure_handling_ranges):
+    """Run `cosmic-ray init` and the filters, then put the session in place."""
+    # Renamed into place only once filtered, so a run stopped before then leaves no
+    # session that a later run would resume with its filtered mutants unfiltered.
+    unfiltered = session.with_name(session.name + ".partial")
+    try:
+        unfiltered.parent.mkdir(parents=True, exist_ok=True)
+        unfiltered.unlink(missing_ok=True)
+    except OSError as error:
+        raise CouldNotRun(cosmic_ray_session_not_kept_refusal(path, unfiltered, error)) \
+            from error
+    run_or_raise([tools["cosmic-ray"], "init", str(config), str(unfiltered)], worktree,
+                 environment, what=f"cosmic-ray init for {path}")
+    run_or_raise([tools["cr-filter-git"], "--config", str(config), str(unfiltered)],
+                 worktree, environment, what=f"cr-filter-git for {path}")
+    run_or_raise([tools["cr-filter-pragma"], str(unfiltered)],
+                 worktree, environment, what=f"cr-filter-pragma for {path}")
+    if failure_handling_ranges is not None:
+        run_or_raise([tools["cr-filter-lines"], "--config", str(config), str(unfiltered)],
+                     worktree, environment, what=f"cr-filter-lines for {path}")
+    try:
+        os.replace(unfiltered, session)
+    except OSError as error:
+        raise CouldNotRun(cosmic_ray_session_not_kept_refusal(path, session, error)) \
+            from error
+
+
+def mutation_test_one_file(path, suites, worktrees, scratch, tools, head, merge_base,
+                           arguments, environment, runner, recorded_inputs_directory,
+                           recordings_directory, in_test_sandboxes, log_directories_parent,
+                           failure_handling_ranges=None, mutants_run_are_limited=False,
+                           mutant_job_ids_to_run=None):
+    """Run cosmic-ray on one file's changed lines; return outcomes_from_dump()'s four values.
+
+    Each run of the suite runner logs to a directory of its own in log_directories_parent.
+
+    The baseline and cosmic-ray's own steps run in worktrees[0]; with --parallel-mutant-workers,
+    each worktree gets one worker. With failure_handling_ranges, only the changed lines inside
+    them are mutated. With mutants_run_are_limited, the file's session is already made, only
+    the mutants with mutant_job_ids_to_run run, all with no result when that is None, and
+    neither the baseline nor a mutant runs when there is none to run or the time after which
+    no mutant starts has come."""
+    worktree = worktrees[0]
+    config, session, mutant_timeout_seconds = \
+        cosmic_ray_config_written_and_session_path_of_one_file(
+            path, suites, scratch, head, merge_base, arguments, runner,
+            recorded_inputs_directory, recordings_directory, in_test_sandboxes,
+            log_directories_parent, failure_handling_ranges)
+    baseline_session = scratch / (
+        f"{scratch_file_name_stem_under_255_bytes_unique_to_repository_paths(path)}"
+        f".baseline.sqlite")
     cosmic_ray = [tools["cosmic-ray"]]
+    not_started_after = arguments.no_mutant_started_after_unix_time
+    if mutants_run_are_limited and (
+            mutant_job_ids_to_run == []
+            or not_started_after is not None and time.time() >= not_started_after):
+        return outcomes_from_dump(run_or_raise(
+            [*cosmic_ray, "dump", str(session)], worktree, environment,
+            what=f"cosmic-ray dump for {path}"), mutant_timeout_seconds, runner)
     # A file an earlier run finished needs no baseline: running one would spend the merge's
     # time limit, night after night, on files with nothing left to judge.
     if session.is_file() \
@@ -1027,15 +1296,25 @@ def mutation_test_one_file(path, suites, worktrees, scratch, tools, head, merge_
         return outcomes_from_dump(run_or_raise(
             [*cosmic_ray, "dump", str(session)], worktree, environment,
             what=f"cosmic-ray dump for {path}"), mutant_timeout_seconds, runner)
-    config.write_text(cosmic_ray_config_text(
-        path, test_command_for(suites, ".", arguments, recorded_inputs_directory,
-                               mutant_timeout_seconds, log_directories_parent),
-        merge_base,
-        test_suite_runner_backstop_seconds(mutant_timeout_seconds, runner)
-        + MUTANT_TIMEOUT_EXTRA_SECONDS_FOR_TEST_SUITE_RUNNER_TO_STOP_ITS_SUITES,
-        failure_handling_ranges))
     baseline = run([*cosmic_ray, "baseline", "--session-file",
                     str(baseline_session), str(config)], worktree, environment)
+    if not baseline_session.exists():
+        # Removed first: pip finds a hollowed venv's metadata and reports cosmic-ray installed.
+        venv = shlex.quote(str(Path(tools["cosmic-ray"]).parents[1]))
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — {tools['cosmic-ray']} exited {baseline.returncode} without "
+            f"making its baseline session, so no suite ran and no mutant of {path} can be "
+            f"judged. cosmic-ray's output follows; its last line names the error it stopped "
+            f"on:\n{(baseline.stderr or baseline.stdout).strip()}\n"
+            f"If cosmic-ray's last line names an ImportError or ModuleNotFoundError, the venv "
+            f"holding cosmic-ray is broken: on {socket.gethostname()}, the machine this ran on, "
+            f"rebuild it and run again:\n"
+            f"  rm -rf {venv}\n"
+            f"  python3 -m venv {venv}\n"
+            f"  {venv}/bin/pip install cosmic-ray=={COSMIC_RAY_VERSION}\n"
+            f"  python3 {shlex.join(sys.argv)}\n"
+            f"If cosmic-ray's last line names any other error, running again unchanged fails "
+            f"the same way: fix that error, then run only the last of the four commands above.")
     if baseline.returncode != 0:
         # cosmic-ray writes the baseline's result before it exits 1; a baseline that crashed
         # before writing it leaves nothing to dump, and is reported as failing suites.
@@ -1058,40 +1337,26 @@ def mutation_test_one_file(path, suites, worktrees, scratch, tools, head, merge_
             f"{' '.join(suites)}\n"
             + "\n".join((result or {}).get("output") or ""
                         for _, result in baseline_results).strip())
-    if session.is_file():
-        print(f"RESUMED  {path}: its cosmic-ray session {session} is kept from an earlier run, "
-              f"so only its mutants with no result run", flush=True)
-    else:
-        # Renamed into place only once filtered, so a run stopped before then leaves no
-        # session that a later run would resume with its filtered mutants unfiltered.
-        unfiltered = session.with_name(session.name + ".partial")
-        try:
-            unfiltered.parent.mkdir(parents=True, exist_ok=True)
-            unfiltered.unlink(missing_ok=True)
-        except OSError as error:
-            raise CouldNotRun(cosmic_ray_session_not_kept_refusal(path, unfiltered, error)) \
-                from error
-        run_or_raise([*cosmic_ray, "init", str(config), str(unfiltered)], worktree,
-                     environment, what=f"cosmic-ray init for {path}")
-        run_or_raise([tools["cr-filter-git"], "--config", str(config), str(unfiltered)],
-                     worktree, environment, what=f"cr-filter-git for {path}")
-        run_or_raise([tools["cr-filter-pragma"], str(unfiltered)],
-                     worktree, environment, what=f"cr-filter-pragma for {path}")
-        if failure_handling_ranges is not None:
-            run_or_raise([tools["cr-filter-lines"], "--config", str(config), str(unfiltered)],
-                         worktree, environment, what=f"cr-filter-lines for {path}")
-        try:
-            os.replace(unfiltered, session)
-        except OSError as error:
-            raise CouldNotRun(cosmic_ray_session_not_kept_refusal(path, session, error)) \
-                from error
+    # With the mutants run limited, the session was made before any file's baseline.
+    if not mutants_run_are_limited:
+        if session.is_file():
+            print(f"RESUMED  {path}: its cosmic-ray session {session} is kept from an earlier "
+                  f"run, so only its mutants with no result run", flush=True)
+        else:
+            cosmic_ray_session_made_and_filtered(path, config, session, tools, worktree,
+                                                 environment, failure_handling_ranges)
     if arguments.parallel_mutant_workers is None:
         run_or_raise([*cosmic_ray, "exec", str(config), str(session)], worktree,
                      environment, what=f"cosmic-ray exec for {path}")
     else:
         run_or_raise([tools["python"], str(Path(__file__).resolve()),
                       COSMIC_RAY_SESSION_PENDING_MUTANTS_RUN_BY_PARALLEL_WORKERS_FLAG,
-                      str(config), str(session), *map(str, worktrees)], worktree, environment,
+                      str(config), str(session),
+                      (ALL_MUTANTS_WITH_NO_RESULT_ARGUMENT if mutant_job_ids_to_run is None
+                       else ",".join(mutant_job_ids_to_run)),
+                      (NO_UNIX_TIME_AFTER_WHICH_NO_MUTANT_STARTS_ARGUMENT
+                       if not_started_after is None else repr(not_started_after)),
+                      *map(str, worktrees)], worktree, environment,
                      what=f"the {len(worktrees)} parallel mutant workers for {path}")
     return outcomes_from_dump(run_or_raise(
         [*cosmic_ray, "dump", str(session)], worktree, environment,
@@ -1209,10 +1474,14 @@ def hunk_replaced_lines(old, new):
 
 def recorded_mutant_lines_on_main(checkout, path, hunks, environment):
     """"applies" when origin/main's file takes the mutant, "gone" when the file is not in
-    origin/main's tree or some hunk's replaced lines are nowhere in it, None when it cannot
-    tell: no origin/main, git fails to read the tree or the file, or a hunk's replaced lines
-    appear in it more than once. Context lines alone never make "gone", since a change beside
-    the mutated lines leaves the survivor live."""
+    origin/main's tree or some hunk's replaced lines are nowhere in it, or are in it only at
+    places where none of the hunk's non-blank context lines stands at its own offset from
+    them; None when it cannot tell: no origin/main, git fails to read the tree or the file, or
+    a hunk's replaced lines appear in it more than once, either with a non-blank context line
+    of the hunk beside some copy or in a hunk with no non-blank context line. A short replaced
+    line, such as a bare `continue`, has unrelated copies all over a file, so only a copy that
+    some context line still stands beside can be the mutant's own; one context line suffices,
+    since a change beside the mutated lines leaves the survivor live."""
     if run(["git", "rev-parse", "--verify", "--quiet", "refs/remotes/origin/main^{commit}"],
            checkout, environment).returncode:
         return None
@@ -1230,8 +1499,18 @@ def recorded_mutant_lines_on_main(checkout, path, hunks, environment):
     lines = shown.stdout.split("\n")
     for _, old, new in hunks:
         replaced = hunk_replaced_lines(old, new)
-        if replaced and not any(lines[place:place + len(replaced)] == replaced
-                                for place in range(len(lines) - len(replaced) + 1)):  # pragma: no mutate, a mutant that only lengthens the range adds places whose slices are shorter than replaced, so never equal to it
+        if not replaced:
+            continue
+        start, end = hunk_shared_context_line_counts(old, new)
+        # Padded so a context offset before the file's start or past its end reads no line.
+        padded = [None] * len(old) + lines + [None] * len(old)
+        # A blank line stands beside unrelated copies as often as a bare `continue` does.
+        context = [(offset, line) for offset, line in enumerate(old)
+                   if (offset < start or offset >= len(old) - end) and line.strip()]
+        places = places_of_lines(lines, replaced)
+        if not places or (context and not any(
+                padded[len(old) + place - start + offset] == line
+                for place in places for offset, line in context)):
             return "gone"
     return None
 
@@ -1260,6 +1539,13 @@ def recorded_mutant_places_reading_pragma_as_absent(lines, hunks):
     return [recorded_mutant_hunk_place(lines, old_start, old, new,
                                        line_equal_or_with_pragma_no_mutate_after)
             for old_start, old, new in hunks]
+
+
+def recorded_mutant_hunk_places_overlap(places):
+    """True when two hunks were found at places whose lines overlap: each place is found in
+    the unmutated source, so applying both would make neither hunk's change as recorded."""
+    spans = sorted((at, at + len(old)) for at, old, _ in places)
+    return any(next_start < end for (_, end), (next_start, _) in zip(spans, spans[1:]))
 
 
 def recorded_mutant_place_ends_with_pragma(lines, place):
@@ -1297,6 +1583,17 @@ def recorded_mutant_verdict_without_a_suite_run(checkout, path, hunks, head, sou
             f"{head[:12]}, so no mutation pass makes it; the nightly mutation pass drops it from "
             f"its task once that is on main.")), None
     if all(place is not None for place in places):
+        if recorded_mutant_hunk_places_overlap(places):
+            return ("could not be judged", (
+                f"in {path} at head {head[:12]}, two hunks of this diff file are found at "
+                f"places whose lines overlap, so applying both would not make the mutant as it "
+                f"was recorded, and no suite was run. The diff's `@@` lines give the line "
+                f"numbers the mutant had when it was recorded.\n"
+                f"Make the diff's change by hand at those lines, run the file's suites, and "
+                f"put the file back before you commit. If a suite fails, the mutant is killed: "
+                f"say so in your pull request and mark the survivor task that names this diff "
+                f"file completed once it merges. Otherwise write a test that fails with the "
+                f"change made.")), None
         return None, source_with_recorded_mutant_applied_at_places(lines, places)
     if source_with_recorded_mutant_applied(source, hunks) is None:
         return recorded_mutant_not_applied_verdict(
@@ -1327,8 +1624,10 @@ def recorded_mutant_not_applied_verdict(checkout, path, hunks, head, why_not_app
     on_main = recorded_mutant_lines_on_main(checkout, path, hunks, environment)
     if on_main == "gone":
         return "no longer exists", (
-            f"the lines it replaces in {path} are gone from origin/main too, so there is "
-            f"nothing to kill; the nightly mutation pass drops it from its task.")
+            f"origin/main has no copy of the lines it replaces in {path} with one of the "
+            f"diff's non-blank context lines beside it, so the mutant's own lines are gone from "
+            f"origin/main too, so there is nothing to kill; the nightly mutation pass drops it "
+            f"from its task.")
     if on_main == "applies":
         return "could not be judged", (
             f"it does not apply to {path} at head {head[:12]}: {why_not_applied}. origin/main "
@@ -1342,7 +1641,7 @@ def recorded_mutant_not_applied_verdict(checkout, path, hunks, head, why_not_app
         f"it does not apply to {path} at head {head[:12]}: {why_not_applied}, and whether "
         f"origin/main still has the lines it replaces cannot be told: there is no local "
         f"origin/main, git could not read {path} there, or the lines appear there more than "
-        f"once.\n"
+        f"once and one of the diff's non-blank context lines stands beside some copy.\n"
         f"If your branch changed those lines on purpose, the mutant is gone from your branch: "
         f"once your branch is merged, the nightly mutation pass drops it from its task.\n"
         f"Otherwise, make sure your branch's head has {path} as origin/main has it, commit your "
@@ -1552,7 +1851,7 @@ def parse_arguments(argv):
     which_pass = parser.add_mutually_exclusive_group(required=True)
     which_pass.add_argument(QUICK_MUTATION_PASS_COMMAND_LINE_FLAG, action="store_true",
                             help="mutate only the changed failure-handling code, without the "
-                                 "repository-wide checks; the pass to run before a push")
+                                 "repository-wide checks")
     which_pass.add_argument(FULL_MUTATION_PASS_COMMAND_LINE_FLAG, action="store_true",
                             help="mutate every changed line, with every suite that reads the "
                                  "file; the pass the daily maintenance-job runs")
@@ -1568,8 +1867,8 @@ def parse_arguments(argv):
     parser.add_argument("--base", help="the base the head is compared with (with --head)")
     parser.add_argument("--checkout", default=str(Path(__file__).resolve().parent.parent),
                         help="the checkout the worktree is made from; default, the one this file is in")
-    parser.add_argument("--cosmic-ray-venv", default=None,
-                        help="a venv holding cosmic-ray; default, cosmic-ray on PATH")
+    parser.add_argument("--cosmic-ray-venv", default=str(DEFAULT_COSMIC_RAY_VENV),
+                        help=f"a venv holding cosmic-ray; default, {DEFAULT_COSMIC_RAY_VENV}")
     parser.add_argument("--python", default=sys.executable,
                         help="the interpreter that runs each Python suite; default, this one")
     parser.add_argument("--recorded-inputs-directory", default=None,
@@ -1588,6 +1887,15 @@ def parse_arguments(argv):
                         metavar="DIR",
                         help="keep each file's cosmic-ray session in DIR, and resume a session "
                              "already there, running only its mutants with no result")
+    parser.add_argument(MUTANTS_RUN_AT_MOST_SHARED_EVENLY_AMONG_CHANGED_FILES_FLAG, type=int,
+                        default=None, metavar="N",
+                        help="in the full pass, run only N of the change's mutants, one from "
+                             "each changed file in turn, in an order the head commit seeds; "
+                             "the rest stay with no result in the kept sessions")
+    parser.add_argument(NO_MUTANT_STARTED_AFTER_UNIX_TIME_FLAG, type=float, default=None,
+                        metavar="UNIX_TIME",
+                        help="in the full pass, start no mutant after this time; those not "
+                             "started stay with no result in the kept sessions")
     parser.add_argument("--survived-and-errored-mutants-json-file", default=None,
                         help="a file to write the survived and errored mutants to, as JSON")
     parser.add_argument("--recorded-mutant-killed-check-verdicts-json-file-to-write", default=None,
@@ -1604,9 +1912,18 @@ def parse_arguments(argv):
     if arguments.parallel_mutant_workers is not None:
         if arguments.parallel_mutant_workers < 1:
             parser.error(f"{PARALLEL_MUTANT_WORKERS_FLAG} needs a count of 1 or more")
-        if arguments.cosmic_ray_venv is None:
-            parser.error(f"{PARALLEL_MUTANT_WORKERS_FLAG} needs --cosmic-ray-venv, whose python "
-                         f"runs the workers")
+    for flag, value in (
+            (MUTANTS_RUN_AT_MOST_SHARED_EVENLY_AMONG_CHANGED_FILES_FLAG,
+             arguments.mutants_run_at_most_shared_evenly_among_changed_files),
+            (NO_MUTANT_STARTED_AFTER_UNIX_TIME_FLAG,
+             arguments.no_mutant_started_after_unix_time)):
+        if value is not None and not (
+                arguments.full_mutation_pass and arguments.parallel_mutant_workers is not None
+                and arguments.cosmic_ray_sessions_directory_kept_to_resume is not None):
+            parser.error(f"{flag} needs {FULL_MUTATION_PASS_COMMAND_LINE_FLAG}, "
+                         f"{PARALLEL_MUTANT_WORKERS_FLAG}, whose workers run the mutants it "
+                         f"leaves in, and {COSMIC_RAY_SESSIONS_DIRECTORY_KEPT_TO_RESUME_FLAG}, "
+                         f"where the mutants it leaves out stay for a later run")
     if arguments.pull_request is None and arguments.head is None:
         parser.error("one of the arguments --pull-request --head is required")
     if arguments.head is not None and arguments.base is None:
@@ -1622,8 +1939,12 @@ def main(argv=None):
         return run_test_suite_runner_with_its_stderr_on_stdout_stopped_before_cosmic_ray_limit(
             float(argv[1]), argv[2], argv[3:])
     if argv[:1] == [COSMIC_RAY_SESSION_PENDING_MUTANTS_RUN_BY_PARALLEL_WORKERS_FLAG]:
-        return cosmic_ray_session_pending_mutants_run_by_parallel_workers(argv[1], argv[2],
-                                                                          argv[3:])
+        return cosmic_ray_session_pending_mutants_run_by_parallel_workers(
+            argv[1], argv[2],
+            None if argv[3] == ALL_MUTANTS_WITH_NO_RESULT_ARGUMENT else argv[3].split(","),
+            (None if argv[4] == NO_UNIX_TIME_AFTER_WHICH_NO_MUTANT_STARTS_ARGUMENT
+             else float(argv[4])),
+            argv[5:])
     if argv[:1] == [COSMIC_RAY_ONE_WORK_ITEM_MUTATE_AND_TEST_FLAG]:
         return cosmic_ray_one_work_item_mutate_and_test()
     # A Bash tool timeout or TaskStop sends SIGTERM; raised as SystemExit, the stop still runs the
@@ -1760,6 +2081,20 @@ def quick_or_full_mutation_pass_or_recorded_mutant_killed_check(
                     run_or_raise(["git", "worktree", "add", "--detach", str(each),
                                   head], checkout, environment,
                                  what=f"git worktree add at {head}")
+                mutants_run_are_limited = (
+                    arguments.mutants_run_at_most_shared_evenly_among_changed_files is not None
+                    or arguments.no_mutant_started_after_unix_time is not None)
+                mutant_job_ids_to_run_of_file = {}
+                if mutants_run_are_limited:
+                    mutant_job_ids_to_run_of_file = \
+                        cosmic_ray_sessions_made_for_every_file_and_mutant_job_ids_to_run_chosen(
+                            [(path, suites) for path, suites in (
+                                (path, suites_for_file(path, suites_listed_at_head,
+                                                       recordings_directory, runner))
+                                for path in files) if suites],
+                            worktree, scratch, tools, head, merge_base, arguments, environment,
+                            runner, recorded_inputs_directory, recordings_directory,
+                            in_test_sandboxes, log_directories_parent)
                 for path in files:
                     suites = suites_for_file(path, suites_listed_at_head,
                                              recordings_directory, runner)
@@ -1808,7 +2143,8 @@ def quick_or_full_mutation_pass_or_recorded_mutant_killed_check(
                     counts, survivors, errored, errored_outputs = mutation_test_one_file(
                         path, suites, worktrees, scratch, tools, head, merge_base, arguments,
                         environment, runner, recorded_inputs_directory, recordings_directory,
-                        in_test_sandboxes, log_directories_parent, failure_handling_ranges)
+                        in_test_sandboxes, log_directories_parent, failure_handling_ranges,
+                        mutants_run_are_limited, mutant_job_ids_to_run_of_file.get(path))
                     # Only an errored mutant's log shows a failure reported; a killed mutant's
                     # and the passing baseline's are not read.
                     kept_log_directories |= {
@@ -1860,7 +2196,8 @@ def quick_or_full_mutation_pass_or_recorded_mutant_killed_check(
         try:
             Path(arguments.survived_and_errored_mutants_json_file).write_text(json.dumps({
                 "head": head, "merge_base": merge_base, "survived": all_survivors,
-                "errored": all_errored, "files_with_no_suite": untested}, indent=1) + "\n",
+                "errored": all_errored, "files_with_no_suite": untested,
+                "mutants_not_run_count": totals["not run"]}, indent=1) + "\n",
                 encoding="utf-8")
         except OSError as error:
             print(f"{PROGRAM}: the survived and errored mutants were not written to "

@@ -22,6 +22,8 @@ and a stub agy stands in for the real one.
     reaching it, and a GEMINI_API_KEY the caller set does not reach it, while
     other variables do.
   - Without --model the program refuses, exit 2.
+  - Run in this process with sys.platform set, the program hands agy a fresh
+    temporary working directory on macOS and none on any other platform.
   - The Gemini launcher path the macOS branch loads names an existing file.
 
 The real bwrap cannot start inside the nc-test-sandbox. So the checks only
@@ -217,6 +219,47 @@ def cases_with_the_stand_in_sandbox(root, home):
           repr((result.returncode, result.stdout, result.stderr)))
 
 
+def working_directory_given_to_agy_run(platform):
+    """Run main() in this process as if sys.platform were platform, with which(),
+    the macOS sandbox prefix and subprocess.run stubbed, and return the cwd the
+    program handed subprocess.run, with whether that directory existed then."""
+    seen = {}
+
+    def fake_run(command, **keywords):
+        seen["cwd"] = keywords.get("cwd")
+        seen["existed"] = seen["cwd"] is not None and os.path.isdir(seen["cwd"])
+        return subprocess.CompletedProcess(command, 0)
+
+    saved = (sys.platform, sys.argv, program.shutil.which, program.subprocess.run,
+             program.launcher_credential_sandbox_prefix)
+    sys.platform = platform
+    sys.argv = [str(SCRIPT_PATH), "--model", "m", "prompt"]
+    program.shutil.which = lambda name: f"/stub/{name}"
+    program.subprocess.run = fake_run
+    program.launcher_credential_sandbox_prefix = lambda: ["sandbox-exec"]
+    try:
+        exit_code = program.main()
+    finally:
+        (sys.platform, sys.argv, program.shutil.which, program.subprocess.run,
+         program.launcher_credential_sandbox_prefix) = saved
+    return exit_code, seen.get("cwd"), seen.get("existed")
+
+
+def working_directory_cases():
+    exit_code, cwd, existed = working_directory_given_to_agy_run("darwin")
+    check("on macOS agy runs in a fresh agy-working-directory- temporary directory",
+          exit_code == 0 and cwd is not None and existed
+          and pathlib.Path(cwd).name.startswith("agy-working-directory-"),
+          repr((exit_code, cwd, existed)))
+    # cygwin sorts before darwin and linux after it, so between them they tell
+    # == from <= and >=.
+    for platform in ("linux", "cygwin"):
+        exit_code, cwd, existed = working_directory_given_to_agy_run(platform)
+        check(f"on {platform} agy gets no temporary working directory, since bwrap's "
+              "--chdir sets it",
+              exit_code == 0 and cwd is None, repr((exit_code, cwd, existed)))
+
+
 def main() -> int:
     if not sys.platform.startswith("linux"):
         print("SKIP  every case: the empty-home sandbox is bwrap on Linux, and this "
@@ -235,6 +278,7 @@ def main() -> int:
             cases_with_the_stand_in_sandbox(root, home)
 
     if not real_sandbox_cases_only:
+        working_directory_cases()
         check("the macOS branch's Gemini launcher path names the launcher file",
               program.GEMINI_LAUNCHER_PATH.is_file()
               and program.GEMINI_LAUNCHER_PATH.name == "cold-read-agy-cell.py",

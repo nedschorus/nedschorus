@@ -34,7 +34,7 @@ Steps:
   4. Compare the two refs row by row and print each difference, then the recorded commands the
      guards the head adds refuse, in refusal groups: one guard and one refusal message each, with
      a few of its commands; every group in full is in added-guard-refusal-groups.json, and every group's
-     "refusal right" answer line, ready to copy, is in added-guard-refusal-right-lines.txt.
+     "refusal right" answer line, ready to copy, is in added-guard-refusal-group-rightly-refused-review-answer-lines.txt.
 
 Exit status: 0 when no verdict differs and no added guard refuses a recorded command; 1 when a
 verdict differs or an added guard refuses a recorded command; 2 when the replay itself
@@ -53,7 +53,7 @@ raised for any other reason is not read again. A message that differs while its 
 Files: the run log directory holds the files a reader needs to see why a run exited 1 or 2, each step's log
 and each mode's differences-<mode>.json. By default it is a new directory under --log-store-runs-directory, in
 the log-store on ned-box, removed after an exit 0 and kept after an exit 1 or 2. It also holds
-added-guard-refusal-groups.json and added-guard-refusal-right-lines.txt when an added guard refuses a recorded
+added-guard-refusal-groups.json and added-guard-refusal-group-rightly-refused-review-answer-lines.txt when an added guard refuses a recorded
 command. Everything else, the
 checkouts and the pairs and verdicts files, goes in a scratch directory, by default a temporary directory that
 is removed whenever the replay exits, on an exception, SIGTERM or SIGHUP too, unless its checkouts could not be
@@ -114,7 +114,7 @@ PRINTED_TEXT_LENGTH = 300
 REFUSAL_GROUPS_PRINTED = 10
 REFUSED_COMMANDS_PRINTED_PER_GROUP = 3
 REFUSAL_GROUPS_FILE_NAME = "added-guard-refusal-groups.json"
-REFUSAL_RIGHT_LINES_FILE_NAME = "added-guard-refusal-right-lines.txt"
+ADDED_GUARD_REFUSAL_GROUP_RIGHTLY_REFUSED_REVIEW_ANSWER_LINES_FILE_NAME = "added-guard-refusal-group-rightly-refused-review-answer-lines.txt"
 SCRATCH_OR_RUN_LOG_DIRECTORY_NOT_REMOVED_MESSAGE = (
     "REPLAY FAILED: the paths listed below could not be removed, so "
     "bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check exits 2; any verdicts it printed above "
@@ -528,6 +528,23 @@ def fixed_clock():
     return 1000.0
 
 
+SEARCH_FILE_CLOCK_SECONDS_PER_READ = 0.001
+
+
+def search_file_clock():
+    """Return a clock for one search-file reading that advances SEARCH_FILE_CLOCK_SECONDS_PER_READ each time it is read.
+
+    The guard's glob-expansion budget is measured in seconds, so on the wall clock a loaded machine spends it on
+    one ref's reading and not the other's. On this clock the budget is a count of clock reads, the same at both refs.
+    """
+    reads = [0]
+
+    def clock():
+        reads[0] += 1
+        return reads[0] * SEARCH_FILE_CLOCK_SECONDS_PER_READ
+    return clock
+
+
 def is_failed_reading(verdict):
     return isinstance(verdict, str) and (verdict.startswith("EXCEPTION") or verdict == "TIMEOUT")
 
@@ -560,7 +577,7 @@ def read_pkill_pattern_kill(guard, command, working_directory, search_file_direc
 
 
 def read_search_file(guard, command, working_directory, search_file_directory):
-    reason = guard.analyze_command_text(command, search_file_directory, time.monotonic)
+    reason = guard.analyze_command_text(command, search_file_directory, search_file_clock())
     return "refused" if reason else "passed", reason
 
 
@@ -617,6 +634,11 @@ def read_markdown_push_reminder(guard, command, working_directory, search_file_d
             "\n\n".join(messages) or None]
 
 
+def read_emergency_stop(guard, command, working_directory, search_file_directory):
+    # The hook refuses only while an emergency stop is in force, and no replay has one in force.
+    return "passed", None
+
+
 # A renamed guard's former file path, which a base ref's settings.json may still run, to its path in GUARDS.
 # The line does nothing once main's settings.json no longer runs the former path, and may then be removed.
 BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = {
@@ -658,6 +680,7 @@ GUARDS = {
         read_handoff_deferral_cold_read_full_run_launch,
     ".claude/guard-hooks/git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook.py":
         read_git_worktree_remove_records_ship_first,
+    "nc-systems/skills/emergency-stop/emergency-stop-file-shown-and-push-and-merge-refusal-hook.py": read_emergency_stop,
 }
 SEARCH_FILE_GUARD = ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py"
 
@@ -713,7 +736,7 @@ def search_file_main_outcome(guard, command, working_directory):
     payload = json.dumps({"tool_name": "Bash", "cwd": working_directory, "tool_input": {"command": command}})
     printed = io.StringIO()
     with contextlib.redirect_stdout(printed):
-        exit_status = guard.main(stdin=io.StringIO(payload))
+        exit_status = guard.main(stdin=io.StringIO(payload), clock=search_file_clock())
     text = printed.getvalue().strip()
     if not text:
         return ["silent", exit_status], None
@@ -1200,11 +1223,12 @@ def run_log_directory_made(runs_directory):
 
 
 def remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures(scratch, run_log_directory, status):
-    """Remove the scratch directory, and the run log directory after an exit 0; return a line for each path
-    that could not be removed."""
+    """Remove the scratch directory, and the run log directory after an exit 0 whose scratch directory was
+    removed; return a line for each path that could not be removed. A scratch directory that could not be removed
+    makes the replay exit 2, so its run log directory is kept."""
     could_not_remove = []
     shutil.rmtree(scratch, onexc=lambda _, path, error: could_not_remove.append(f"{path}: {error}"))
-    if status == 0:
+    if status == 0 and not could_not_remove:
         shutil.rmtree(run_log_directory, onexc=lambda _, path, error: could_not_remove.append(f"{path}: {error}"))
     return could_not_remove
 
@@ -1334,7 +1358,7 @@ def replay_with_sigterm_handled(arguments):
         if added_guard_refused:
             groups = added_guard_refusal_groups(refusals_by_mode)
             (run_log_directory / REFUSAL_GROUPS_FILE_NAME).write_text(json.dumps(groups, indent=1))
-            (run_log_directory / REFUSAL_RIGHT_LINES_FILE_NAME).write_text(
+            (run_log_directory / ADDED_GUARD_REFUSAL_GROUP_RIGHTLY_REFUSED_REVIEW_ANSWER_LINES_FILE_NAME).write_text(
                 "".join(refusal_right_line(group) + "\n" for group in groups))
             print_added_guard_refusal_groups(groups, run_log_directory / REFUSAL_GROUPS_FILE_NAME)
         if all_failed:
@@ -1347,7 +1371,7 @@ def replay_with_sigterm_handled(arguments):
             if added_guard_refused:
                 print(NEW_GUARD_REFUSES_MESSAGE.format(
                     groups_file=run_log_directory / REFUSAL_GROUPS_FILE_NAME,
-                    refusal_right_lines_file=run_log_directory / REFUSAL_RIGHT_LINES_FILE_NAME)
+                    refusal_right_lines_file=run_log_directory / ADDED_GUARD_REFUSAL_GROUP_RIGHTLY_REFUSED_REVIEW_ANSWER_LINES_FILE_NAME)
                       + (NEW_GUARD_REFUSES_AND_VERDICT_CHANGED_ENDING if verdict_changed
                          else NEW_GUARD_REFUSES_ONLY_ENDING))
             status = 1

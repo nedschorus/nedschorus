@@ -171,12 +171,14 @@ def run_cases(root):
           f"exit {switched.returncode}, owner {machine.owner_file(unowned)}")
 
     subagent = machine.clone / ".claude" / "worktrees" / "agent-a45a189e6c5e2e31e"
+    # bash, as macOS's /bin/sh is, execs the last command of `-c`, which would replace the fake
+    # claude process before the hook looks for it; `exit $?` keeps the git command from being last.
     claude = root / "bin" / "claude"
     claude.parent.mkdir()
-    claude.symlink_to(shutil.which("sh"))
+    claude.symlink_to(shutil.which("bash"))
     pid_file = root / "claude-pid"
     added = machine.worktree_add(subagent, author=SEAT,
-                                 wrapper=[str(claude), "-c", f'echo $$ > {pid_file}; sh -c "$0"'])
+                                 wrapper=[str(claude), "-c", f'echo $$ > {pid_file}; sh -c "$0"; exit $?'])
     owner = machine.owner_file(subagent)
     key_parts = (owner or {}).get("owner_key", "").split("-")
     claude_pid = pid_file.read_text().strip() if pid_file.is_file() else None
@@ -190,7 +192,7 @@ def run_cases(root):
                  "agent-a45a189e6c5e2e31"):
         by_hand = machine.clone / ".claude" / "worktrees" / name
         added = machine.worktree_add(by_hand, author=SEAT,
-                                     wrapper=[str(claude), "-c", 'sh -c "$0"'])
+                                     wrapper=[str(claude), "-c", 'sh -c "$0"; exit $?'])
         check(f"a worktree named {name} inside .claude/worktrees/ names the agent-seat, "
               "not an agent-session",
               added.returncode == 0
