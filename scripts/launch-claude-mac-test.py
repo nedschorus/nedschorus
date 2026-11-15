@@ -237,6 +237,17 @@ class MacLaunchSandbox:
         tmux.write_text(tmux.read_text(encoding="utf-8").replace(
             '(has-session) exit 1;;', '(has-session) exit 0;;', 1), encoding="utf-8")
 
+    def tmux_lists_one_session_per_socket(self):
+        """Make the tmux stub answer list-sessions with one session named
+        after the socket it was given, in the launcher's name@socket form."""
+        tmux = self.stubs / "tmux"
+        tmux.write_text(tmux.read_text(encoding="utf-8").replace(
+            'for argument in "$@"; do\n',
+            'case " $* " in (*" list-sessions "*) '
+            'seat_socket=$(basename "$2"); echo "$seat_socket@$seat_socket"; '
+            'exit 0;; esac\n'
+            'for argument in "$@"; do\n', 1), encoding="utf-8")
+
     def boot_programs_fail(self):
         """Make the python3 stub fail clean-worktrees.py and
         checkout-freshness-catch-up.py the way a broken run does: a line on
@@ -253,7 +264,8 @@ class MacLaunchSandbox:
             extra_arguments=None, update_timeout_seconds=None,
             seat_github_account=None, inherited_github_token=None,
             ambient_git_identity=None, term_program=None,
-            stdout_on_terminal=False):
+            stdout_on_terminal=False, no_arguments=False,
+            tmux_socket_parent_directory=None):
         """Run the launcher in the sandbox. extra_arguments, when given, is
         placed in LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS the way
         recover-crashed-seats.py's launch_seat places it — after the strip
@@ -265,8 +277,13 @@ class MacLaunchSandbox:
         term_program sets TERM_PROGRAM, which is otherwise stripped so the
         terminal the suite runs in cannot decide a case.
         stdout_on_terminal gives the launcher a pseudo-terminal as stdout in
-        place of a pipe, and returns what it wrote there as result.stdout."""
+        place of a pipe, and returns what it wrote there as result.stdout.
+        no_arguments runs the launcher with no argument at all.
+        tmux_socket_parent_directory sets TMUX_TMPDIR, so the no-name usage
+        walks the sandbox's sockets rather than this machine's."""
         arguments = [seat_name] if attach else [seat_name, "--no-attach"]
+        if no_arguments:
+            arguments = []
         environment = {
             **{key: value for key, value in os.environ.items()
                if key not in ("TERM_PROGRAM", "GH_TOKEN")
@@ -295,6 +312,8 @@ class MacLaunchSandbox:
             environment.update(ambient_git_identity)
         if term_program is not None:
             environment["TERM_PROGRAM"] = term_program
+        if tmux_socket_parent_directory is not None:
+            environment["TMUX_TMPDIR"] = str(tmux_socket_parent_directory)
         if stdout_on_terminal:
             return run_with_stdout_on_terminal(
                 [str(LAUNCHER), *arguments], str(self.workdir), environment)
@@ -936,6 +955,27 @@ def main() -> int:
               and not any(sandbox.workdir.iterdir()),
               (sandbox.invoked_commands()[:200],
                sorted(str(p) for p in sandbox.workdir.iterdir())))
+
+        # No name: the usage names the agent tmux sessions it finds on this
+        # Mac's tmux sockets under its heading.
+        sandbox = MacLaunchSandbox(root / "no-name-lists-sessions")
+        sandbox.tmux_lists_one_session_per_socket()
+        tmux_socket_parent_directory = root / "no-name-lists-sessions" / "tmux-sockets"
+        tmux_socket_directory = tmux_socket_parent_directory / f"tmux-{os.getuid()}"
+        tmux_socket_directory.mkdir(parents=True)
+        # Bound by a relative name: a socket path over about 104 bytes is
+        # refused on macOS, and this suite's resolved temporary root is long there.
+        subprocess.run([sys.executable, "-c",
+                        "import socket; socket.socket(socket.AF_UNIX).bind('seat-a')"],
+                       cwd=str(tmux_socket_directory), check=True)
+        result = sandbox.run("~/agents", no_arguments=True,
+                             tmux_socket_parent_directory=tmux_socket_parent_directory)
+        check("no name: exit 2, naming the sessions found under the running "
+              "agent-seats or leftover-shells heading",
+              result.returncode == 2
+              and "Agent tmux sessions on this Mac now (running agent-seats or "
+                  "leftover-shells): seat-a@seat-a" in result.stderr,
+              (result.returncode, result.stderr[:800]))
 
         # A first argument starting with - is refused as a seat name: the
         # first argument is always the name, so the launcher would otherwise
