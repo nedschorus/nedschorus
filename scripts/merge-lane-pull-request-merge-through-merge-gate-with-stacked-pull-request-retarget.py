@@ -12,8 +12,14 @@ refuses with "mergeStateStatus is UNKNOWN", it runs the gate again, 5 seconds
 apart, at most 8 times in all. When the gate passes, the merge command it
 prints must be exactly the one this program expects; then every open pull
 request whose base branch is this pull request's branch is retargeted to this
-pull request's base branch, and the merge command runs. Once the merge
-succeeds, git in --review-tools-worktree-at-main removes the pull request's
+pull request's base branch, and the merge command runs. Whether the pull
+request merged is decided by the state the program then reads from GitHub,
+not by the merge command's exit code: a GitHub error after the merge is done,
+such as a 502 on the response, makes the command exit nonzero over a merged
+pull request. When it does, the program checks that the pull request's branch
+is gone from GitHub, since the command's --delete-branch part may not have
+run, and deletes it when it is there. When the state cannot be read, a merge
+command that exited 0 counts as a merge. Once the pull request has merged, git in --review-tools-worktree-at-main removes the pull request's
 review worktrees, pr<n>-head and pr<n>-merged, with any changes in them; a
 worktree not there is left alone.
 
@@ -49,15 +55,19 @@ origin/main, so a stale worktree never lets an older gate decide a merge.
 
 Exit codes: 0 merged, with the review worktrees removed, and main's after-merge
 test run passed; 1 the gate refused,
-printed a merge command other than the expected one, or the merge failed; 2 the token file could not be read or
+printed a merge command other than the expected one, or the pull request is
+not merged after the merge command ran; 2 the token file could not be read or
 was empty, --review-tools-worktree-at-main has no scripts/merge-gate.sh, could
 not be fetched or is not at origin/main, the gate could not run or exited with
 a code it does not document, or a read or a retarget on GitHub failed, each
 before any merge; 3 merged, but a step after the merge was not done: a review
-worktree or the pr<n>-merge-commit-on-main-worktree worktree could not be removed, or the
-after-merge test run did not pass, because a suite failed, the runner gave no
+worktree or the pr<n>-merge-commit-on-main-worktree worktree could not be removed, the
+pull request's branch could not be read or deleted after a merge command that exited
+nonzero, or the after-merge test run did not pass, because a suite failed, the runner gave no
 full verdict, or the merge commit could not be read or its worktree made; stdout
-names which.
+names which; 4 the merge command exited nonzero and the pull request's state
+could not be read, so whether it merged is unknown: read its state before doing
+anything else.
 """
 
 import argparse
@@ -96,6 +106,7 @@ EXIT_MERGED = 0
 EXIT_REFUSED = 1
 EXIT_COULD_NOT_RUN = 2
 EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE = 3
+EXIT_MERGE_OUTCOME_UNKNOWN = 4
 MERGE_GATE_DOCUMENTED_EXITS = (0, 1, 2)
 MERGE_GATE = Path("scripts") / "merge-gate.sh"
 
@@ -174,14 +185,17 @@ def printed_merge_command(gate_output):
 
 
 def stacked_pull_requests_retarget(pull_request, environment):
-    """Retarget the open pull requests based on this one's branch; return an exit code."""
+    """Retarget the open pull requests based on this one's branch.
+
+    Return (exit code, the pull request's branch, None when it could not be read).
+    """
     view = run(["gh", "pr", "view", pull_request, "--repo", REPOSITORY,
                 "--json", "headRefName,baseRefName"], environment)
     if view.returncode != 0:
         print(f"STOP: not merged: could not read pull request {pull_request}'s branch, so the "
               f"pull requests based on it could not be found: {gh_error(view)}\n"
               f"Run this again once; if it fails the same way, tell the user this message.")
-        return EXIT_COULD_NOT_RUN
+        return EXIT_COULD_NOT_RUN, None
     branches = json.loads(view.stdout)
     branch, base = branches["headRefName"], branches["baseRefName"]
 
@@ -192,12 +206,12 @@ def stacked_pull_requests_retarget(pull_request, environment):
         print(f"STOP: not merged: could not list the open pull requests, so those based on "
               f"{branch} could not be found: {gh_error(listing)}\n"
               f"Run this again once; if it fails the same way, tell the user this message.")
-        return EXIT_COULD_NOT_RUN
+        return EXIT_COULD_NOT_RUN, branch
     stacked = sorted(entry["number"] for entry in json.loads(listing.stdout)
                      if entry["baseRefName"] == branch)
     if not stacked:
         print(f"no open pull request is based on {branch}")
-        return EXIT_MERGED
+        return EXIT_MERGED, branch
 
     for number in stacked:
         edit = run(["gh", "pr", "edit", str(number), "--repo", REPOSITORY, "--base", base],
@@ -209,10 +223,37 @@ def stacked_pull_requests_retarget(pull_request, environment):
                   f"Retarget #{number} by hand: gh pr edit {number} --repo {REPOSITORY} "
                   f"--base {base}\n"
                   f"Then run this again.")
-            return EXIT_COULD_NOT_RUN
+            return EXIT_COULD_NOT_RUN, branch
         print(f"retargeted pull request #{number} from {branch} to {base}; if this merge "
               f"does not happen, set it back with: gh pr edit {number} --repo {REPOSITORY} "
               f"--base {branch}", flush=True)
+    return EXIT_MERGED, branch
+
+
+def merged_branch_deleted(branch, environment):
+    """Delete the merged pull request's branch from GitHub when it is still there; return
+    an exit code."""
+    path = f"repos/{REPOSITORY}/branches/{branch}"
+    read = run(["gh", "api", path], environment)
+    if read.returncode != 0 and "HTTP 404" in read.stderr:
+        print(f"the branch {branch} is gone from GitHub")
+        return EXIT_MERGED
+    by_hand = f"gh api -X DELETE repos/{REPOSITORY}/git/refs/heads/{branch}"
+    if read.returncode != 0:
+        print(f"STOP: merged, but whether the branch {branch} is gone from GitHub could not "
+              f"be read: {gh_error(read)}\n"
+              f"If it is still there, delete it: {by_hand}\n"
+              f"If that fails, tell the user this message.")
+        return EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
+    deletion = run(["gh", "api", f"repos/{REPOSITORY}/git/refs/heads/{branch}",
+                    "-X", "DELETE"], environment)
+    if deletion.returncode != 0:
+        print(f"STOP: merged, but the branch {branch} is still on GitHub and could not be "
+              f"deleted: {gh_error(deletion)}\n"
+              f"Delete it: {by_hand}\n"
+              f"If that fails, tell the user this message.")
+        return EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
+    print(f"deleted the branch {branch}, which the merge command left on GitHub")
     return EXIT_MERGED
 
 
@@ -399,28 +440,49 @@ def main(argv=None, wait=time.sleep):
               f"Tell the user this message: only the user decides which command is right.")
         return EXIT_REFUSED
 
-    retarget_exit = stacked_pull_requests_retarget(arguments.pull_request, environment)
+    retarget_exit, branch = stacked_pull_requests_retarget(arguments.pull_request, environment)
     if retarget_exit != EXIT_MERGED:
         return retarget_exit
 
-    merge = subprocess.run(expected.split(), env=environment, stdin=subprocess.DEVNULL)
+    merge = run(expected.split(), environment)
+    print(merge.stdout, end="")
     print(f"merge exit {merge.returncode}", flush=True)
+    merge_error = f"the merge command exited {merge.returncode}" + (
+        f": {merge.stderr.strip()}" if merge.stderr.strip() else "")
     state = run(["gh", "pr", "view", arguments.pull_request, "--repo", REPOSITORY,
                  "--json", "state,mergedAt,mergeCommit",
                  "-q", "{state,mergedAt,mc:.mergeCommit.oid}"], environment)
-    print(state.stdout.strip() if state.returncode == 0
-          else f"could not read pull request {arguments.pull_request}'s state after the "
-               f"merge: {gh_error(state)}")
-    if merge.returncode != 0:
-        return EXIT_REFUSED
-    removal_exit = review_worktrees_remove(arguments)
-    # A failed read prints nothing on stdout, which json.loads refuses.
     try:
-        merge_commit = json.loads(state.stdout).get("mc") or ""
-    except (ValueError, AttributeError):
-        merge_commit = ""
-    test_exit = after_merge_test_run(arguments, merge_commit)
-    return removal_exit if test_exit == EXIT_MERGED else test_exit
+        read = json.loads(state.stdout) if state.returncode == 0 else None
+    except ValueError:
+        read = None
+    if not isinstance(read, dict):
+        print(f"could not read pull request {arguments.pull_request}'s state after the "
+              f"merge: {gh_error(state) if state.returncode != 0 else repr(state.stdout)}")
+        if merge.returncode != 0:
+            print(f"STOP: whether pull request {arguments.pull_request} merged is unknown: "
+                  f"{merge_error}\n"
+                  f"Read its state: gh pr view {arguments.pull_request} --repo {REPOSITORY} "
+                  f"--json state,mergeCommit\n"
+                  f"If it is MERGED, do by hand what this program does after a merge: delete "
+                  f"the branch {branch} if GitHub still has it, remove the review worktrees and "
+                  f"test main at the merge commit. Otherwise, run this again.")
+            return EXIT_MERGE_OUTCOME_UNKNOWN
+        read = {"state": "MERGED"}
+    else:
+        print(state.stdout.strip())
+    if read.get("state") != "MERGED":
+        print(f"STOP: not merged: pull request {arguments.pull_request} is "
+              f"{read.get('state')} after the merge command ran; {merge_error}")
+        return EXIT_REFUSED
+    branch_exit = EXIT_MERGED
+    if merge.returncode != 0:
+        print(f"pull request {arguments.pull_request} merged although {merge_error}")
+        branch_exit = merged_branch_deleted(branch, environment)
+    removal_exit = review_worktrees_remove(arguments)
+    test_exit = after_merge_test_run(arguments, read.get("mc") or "")
+    return next((code for code in (test_exit, removal_exit, branch_exit) if code != EXIT_MERGED),
+                EXIT_MERGED)
 
 
 if __name__ == "__main__":

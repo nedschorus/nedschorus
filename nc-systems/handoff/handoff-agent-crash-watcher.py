@@ -134,6 +134,12 @@ _ned_box_home_specification = importlib.util.spec_from_file_location(
     REPOSITORY / "nc-systems" / "general-tools" / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
 ned_box_home_path_constants = importlib.util.module_from_spec(_ned_box_home_specification)
 _ned_box_home_specification.loader.exec_module(ned_box_home_path_constants)
+_mac_reference_checkout_path_constant_specification = importlib.util.spec_from_file_location(
+    "mac_reference_checkout_launcher_scripts_directory_path_constant_common",
+    REPOSITORY / "nc-systems" / "general-tools"
+    / "mac-reference-checkout-launcher-scripts-directory-path-constant-common.py")
+mac_reference_checkout_path_constant = importlib.util.module_from_spec(_mac_reference_checkout_path_constant_specification)
+_mac_reference_checkout_path_constant_specification.loader.exec_module(mac_reference_checkout_path_constant)
 _user_alerts_specification = importlib.util.spec_from_file_location(
     "user_alerts_pending_and_claimed_files_write_claim_release_and_delete_common",
     REPOSITORY / "nc-systems" / "general-tools" / "user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py")
@@ -169,8 +175,8 @@ RESTART_LIMIT_SECONDS = 3600
 # A path in a notice is rewritten to the Mac's mount, so the user can open it there.
 NED_BOX_HOME = ned_box_home_path_constants.NED_BOX_HOME
 MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home_path_constants.MAC_MOUNT_OF_NED_BOX_HOME
-# launch-claude-ubuntu is not on the Mac's PATH; the Mac's checkout holds it.
-MAC_LAUNCHER = "/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu"
+MAC_LAUNCHER = (mac_reference_checkout_path_constant.MAC_REFERENCE_CHECKOUT_LAUNCHER_SCRIPTS_DIRECTORY_PATH
+                + "/launch-claude-ubuntu")
 
 # open-html-page-in-mac-browser-from-ned-box.py's EXIT_USAGE_OR_REFUSED: the page was refused,
 # here or by the Mac, so retrying the page cannot help.

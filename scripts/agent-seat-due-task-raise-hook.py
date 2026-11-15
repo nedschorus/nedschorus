@@ -36,12 +36,12 @@ count can change while the walk runs. The walk-document is the walk-minutes'
 path with `-minutes.md` replaced by `.md`. Its item headings are compared with
 the given heading as the answer program's heading_title reads both, so a
 running count, a deferred note, backticks, spaces and case do not matter. The
-item is decided when the answer program's minutes_record counts its number as
-decided: approved, disapproved, already decided or moved on, but not deferred
-or held. An item whose sub-steps, as 3.1 and 3.2 are of 3, are all decided is
-decided too, because the walk decides such an item only through them. A
-walk-minutes file that does not exist is not decided, since the walk may not
-have written it yet; nor is an item not yet numbered. A walk-document that
+item is decided when the answer program's
+approval_walk_minutes_read_returning_decided_item_numbers counts its number
+as decided; the hook asks that function rather than keeping a rule of its own,
+so it never disagrees with the walk. A walk-minutes file that does not exist
+is not decided, since the walk may not have written it yet; nor is an item not
+yet numbered. A walk-document that
 does not exist, or that holds no item with the heading, or more than one, is
 a fault the hook names as it names an unreadable list: the walk-document
 holds the item before its heading can be named, so its absence means a wrong
@@ -272,11 +272,17 @@ def state_file_path(home: Path, list_id: str) -> Path:
 
 
 def read_tasks(directory: Path, unreadable: "list | None" = None) -> dict:
-    """Every readable task in the list, by id; a missing directory holds none.
+    """Every readable task in the list, by id; a missing directory holds none, and one that
+    exists but cannot be listed raises OSError.
 
     A malformed file is skipped, and its path is appended to `unreadable` when one is given."""
+    # Not Path.glob: it answers a directory it cannot list, even on EIO, as an empty one.
+    try:
+        names = os.listdir(directory)
+    except FileNotFoundError:
+        return {}
     tasks = {}
-    for path in sorted(directory.glob("*.json")):
+    for path in sorted(directory / name for name in names if name.endswith(".json")):
         try:
             task = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -403,14 +409,8 @@ def approval_walk_item_decided_or_problem(condition: dict) -> dict:
     numbers = matching[0][0]
     if not numbers or not minutes.exists():
         return {"met": False}
-    decided, _ = answer_program.minutes_record(
-        walk_finder, minutes.read_text(encoding="utf-8"), parser)
-
-    def decided_through_itself_or_sub_steps(number):
-        sub_steps = [other for unit in units for other in unit[0] if other.startswith(number + ".")]
-        return number in decided or (bool(sub_steps) and all(step in decided for step in sub_steps))
-
-    return {"met": all(decided_through_itself_or_sub_steps(number) for number in numbers)}
+    decided = answer_program.approval_walk_minutes_read_returning_decided_item_numbers(walk_finder, minutes, parser)
+    return {"met": all(number in decided for number in numbers)}
 
 
 def condition_answer(kind: str, condition, checker) -> dict:

@@ -71,6 +71,14 @@ check("an f-string as additionalContext is reported with its placeholders and it
       [(entry["text"], entry["label"]) for entry in found]
       == [("f'hello {name}'", '"additionalContext" value in main()')], found)
 
+found = entries('def main(name, path):\n'
+                '    print(f"hello {name}")\n'
+                '    print("see " + path + " now")\n'
+                '    print("braces {as written}")\n')
+check("placeholder_value_source_code_texts holds an f-string's fields and a + chain's non-literal operands, "
+      "and is empty for a plain string literal",
+      [entry["placeholder_value_source_code_texts"] for entry in found] == [("{name}",), ("{path}",), ()], found)
+
 found = entries('X_MESSAGE = "suffix text"\noutput = {"additionalContext": X_MESSAGE}\n')
 check("a name with a message suffix used as additionalContext is reported once, at its assignment",
       [entry["label"] for entry in found] == ["X_MESSAGE ="], found)
@@ -576,12 +584,27 @@ SCOPE_FORMS_EACH_RULE_ONCE_MISSED = (
      'emit("never shown")\n', []),
     ("a comprehension target hides the function's local at a printed form inside the comprehension",
      'def main(items):\n    text = "local hidden"\n    [print(text) for text in items]\n', []),
+    ("a comprehension target hides the function's local inside a lambda the comprehension calls",
+     'def main(items):\n    text = "lambda hidden"\n    [(lambda: print(text))() for text in items]\n', []),
     ("a helper's parameter printed in a comprehension's first iterable, which the target does not hide",
      'def emit(text):\n    [text for text in print(text)]\nemit("first iterable shown")\n',
      ["first iterable shown"]),
     ("a name read inside a comprehension's target is not bound by it",
      'def main(items, messages):\n    text = "subscript shown"\n    print([text for messages[text] in items])\n',
      ["subscript shown"]),
+    ("a local bound outside a comprehension still carries the function's local into it under another name",
+     'def main(items):\n    text = "carried in shown"\n    message = f"{text}"\n'
+     '    [print(message) for text in items]\n', ["carried in shown", "f'{text}'"]),
+    ("a name a comprehension nested in a target's subscript binds is not bound by the target",
+     'def main(slots):\n    text = "nested comprehension shown"\n'
+     '    [print(text) for slots[sum(text for text in [1])] in [0]]\n', ["nested comprehension shown"]),
+    ("a tuple and starred comprehension target binds each of its names",
+     'def main(items):\n    text = "tuple hidden"\n    note = "starred hidden"\n'
+     '    [print(text, note) for (text, *note) in items]\n', []),
+    ("a comprehension target hides the function's local at a hook output key inside the comprehension",
+     'def main(items):\n    text = "hook key hidden"\n    return [{"reason": text} for text in items]\n', []),
+    ("a comprehension target hides the module's constant at a hook output key inside the comprehension",
+     'text = "module constant hidden"\ndef main(items):\n    return [{"reason": text} for text in items]\n', []),
     ("a type parameter's name hides the function's local in its own bound",
      'def main():\n    text = "type parameter hidden"\n    class Holder[text: print(text)]:\n        pass\n', []),
     ("a type parameter's name hides the helper's parameter in its own bound",

@@ -292,6 +292,21 @@ check("a path in none of the snapshots is NOT FOUND, naming the range actually s
 check("an absolute path carries no repo-relative caveat, because nothing was guessed at",
       not any("read as a path relative" in l for l in report.lines), str(report.lines))
 
+local_test_times_out = FakeRunner([LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE,
+                                   ("test -e", (124, "", "timed out after 30s: test -e"))])
+report = finder.search_local_snapshots(REAPED, "/repo", FakeRunner(
+    [LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE, ("test -e", (-15, "", ""))]))
+check("a local snapshot whose test -e is killed by a signal, a negative exit, is UNAVAILABLE, neither hit nor miss",
+      report.status == UNAVAILABLE and any("exited -15 — no error text" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+
+report = finder.search_local_snapshots(REAPED, "/repo", local_test_times_out)
+check("a local snapshot whose test -e fails with an exit other than 1 is UNAVAILABLE with test's words, not NOT FOUND",
+      report.status == UNAVAILABLE
+      and any(l.startswith("could not search com.apple.TimeMachine.2026-08-31-115113.local") and "exited 124 — timed out"
+              in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+
 # Every failure of mount_apfs is reported verbatim and never classified: a
 # snapshot that would not open was NOT searched, and calling that "not there" is
 # the conflation this file exists to refuse. Exit 77 "Operation not permitted"
@@ -451,6 +466,20 @@ read_in_place = MountTableRunner([
     ("test -e", (1, "", "")),
     LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE,
 ], MOUNT_LISTING)
+read_in_place_test_fails = MountTableRunner([
+    ("test -d " + LIVE_OS_MOUNT, (0, "", "")),
+    ("test -d", (1, "", "")),
+    ("test -e " + LIVE_OS_MOUNT, (2, "", "test: injected failure")),
+    ("test -e", (1, "", "")),
+    LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE,
+], MOUNT_LISTING)
+report = finder.search_local_snapshots(REAPED, "/repo", read_in_place_test_fails)
+check("a snapshot read where macOS has it mounted, whose test -e fails, is unsearched with test's words, not NOT FOUND",
+      report.status == UNAVAILABLE
+      and any(l.startswith("could not search com.apple.TimeMachine.2026-08-31-115113.local")
+              and "exited 2 — test: injected failure" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+
 report = finder.search_local_snapshots(REAPED, "/repo", read_in_place)
 check("a snapshot macOS already has mounted is read where it sits, not mounted again",
       report.status == FOUND
@@ -2568,8 +2597,20 @@ tm_absent = FakeRunner([
     ("diskutil info", (1, "", "Could not find disk: My Passport for Mac")),
 ])
 report = finder.search_time_machine("a/b.md", runner=tm_absent)
-check("a disconnected backup disk is UNAVAILABLE and says to reconnect it",
-      report.status == UNAVAILABLE and any("reconnect" in l.lower() for l in report.lines),
+check("a failed diskutil info is UNAVAILABLE with diskutil's words and exit code, and says to reconnect a "
+      "disconnected disk",
+      report.status == UNAVAILABLE
+      and report.lines == ["the backup disk 'My Passport for Mac' could not be looked up — diskutil info "
+                           "'My Passport for Mac' exited 1 — Could not find disk: My Passport for Mac",
+                           "if the disk is not connected to this Mac, reconnect it and re-run"],
+      str(report.lines))
+
+report = finder.search_time_machine("a/b.md", runner=FakeRunner([
+    ("tmutil destinationinfo", DESTINATION_INFO),
+    ("diskutil info", (1, "Could not find disk: My Passport for Mac\n", "")),
+]))
+check("a failed diskutil info that writes its words to stdout keeps them",
+      any(l.endswith("exited 1 — Could not find disk: My Passport for Mac") for l in report.lines),
       str(report.lines))
 
 DISKUTIL_UNMOUNTED = (0, "   Device Node:               /dev/disk5s2\n"
@@ -2617,6 +2658,27 @@ class RefusesToMountRunner(RemountRunner):
             return DISKUTIL_UNMOUNTED
         return FakeRunner.__call__(self, argv, timeout, cwd)
 
+
+class LookupFailsAfterMountRunner(RemountRunner):
+    """Attached but unmounted; `diskutil mount` succeeds, then `diskutil info` fails."""
+
+    def __call__(self, argv, timeout=None, cwd=None):
+        joined = " ".join(argv)
+        if "diskutil info" in joined and mount_attempts["n"]:
+            self.calls.append(joined)
+            return (1, "", "diskutil: injected lookup failure")
+        return RemountRunner.__call__(self, argv, timeout, cwd)
+
+
+report = finder.search_time_machine("a/b.md", runner=LookupFailsAfterMountRunner(
+    [("tmutil destinationinfo", DESTINATION_INFO)]))
+mount_attempts["n"] = 0
+check("a diskutil info that fails after diskutil mount is UNAVAILABLE with diskutil's words, not 'will not mount'",
+      report.status == UNAVAILABLE
+      and report.lines == ["the backup disk 'My Passport for Mac' could not be looked up after diskutil mount — "
+                           "diskutil info 'My Passport for Mac' exited 1 — diskutil: injected lookup failure"]
+      and report.recovery == [],
+      "%s %s" % (report.lines, report.recovery))
 
 tm_wont_mount = RefusesToMountRunner([("tmutil destinationinfo", DESTINATION_INFO)])
 report = finder.search_time_machine("a/b.md", runner=tm_wont_mount)
@@ -2804,11 +2866,17 @@ check("one refused mount among searched-and-empty snapshots is UNAVAILABLE, list
       and any(l == "searched com.apple.TimeMachine.2026-08-12-202035.backup and did not find it" for l in report.lines),
       "%s %s" % (report.status, report.lines))
 
-tm_none = FakeRunner([("tmutil destinationinfo", (1, "", "tmutil: no destination configured"))])
+tm_none = FakeRunner([("tmutil destinationinfo", (0, "", ""))])
 report = finder.search_time_machine("a/b.md", runner=tm_none)
 check("no configured destination is UNAVAILABLE, saying so without naming the machine a Mac",
       report.status == UNAVAILABLE
       and report.lines == ["no Time Machine destination is configured on this machine"], repr(report.lines))
+
+report = finder.search_time_machine("a/b.md", runner=FakeRunner(
+    [("tmutil destinationinfo", (1, "", "tmutil: injected failure"))]))
+check("a failed tmutil destinationinfo is UNAVAILABLE with tmutil's words and exit code, not 'no destination'",
+      report.status == UNAVAILABLE
+      and report.lines == ["tmutil destinationinfo exited 1 — tmutil: injected failure"], repr(report.lines))
 
 check("arguments_without_repo leaves out --repo with its value, and --repo=, keeping every other argument",
       finder.arguments_without_repo(["a.md", "--repo", "/r", "--skip", "box", "--repo=/s"]) == ["a.md", "--skip", "box"],
@@ -3995,9 +4063,30 @@ with tempfile.TemporaryDirectory() as tmp:
                                               FakeRunner([("test -e", (1, "", ""))] + tm_table))
     check("blob id: a Time Machine snapshot without the path is NOT FOUND", report.status == NOT_FOUND,
           "%s" % report.lines)
-    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", seen, FakeRunner([]))
+    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", seen, FakeRunner(
+        [("tmutil destinationinfo", (127, "", "tmutil: not found on this machine"))]))
     check("blob id: with no Time Machine destination, as on ned-box, it is UNAVAILABLE and says to run on the Mac",
-          report.status == UNAVAILABLE and any("run this program there" in l for l in report.lines), "%s" % report.lines)
+          report.status == UNAVAILABLE and report.lines == [
+              "tmutil: not found on this machine, and Time Machine exists only on macOS, so this machine has no "
+              "Time Machine backup to search; the version was seen on the Mac, so run this program there"],
+          "%s" % report.lines)
+    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", seen, FakeRunner(
+        [("tmutil destinationinfo", (1, "", "tmutil: injected failure"))]))
+    check("blob id: a failed tmutil destinationinfo is UNAVAILABLE with tmutil's words, not 'no destination'",
+          report.status == UNAVAILABLE
+          and report.lines == ["tmutil destinationinfo exited 1 — tmutil: injected failure"], "%s" % report.lines)
+    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", seen, FakeRunner(
+        [("diskutil info", (1, "", "Could not find disk: Backup"))] + tm_table))
+    check("blob id: a failed diskutil info is UNAVAILABLE with diskutil's words, not 'not mounted', and offers no "
+          "mount command",
+          report.status == UNAVAILABLE and report.recovery == []
+          and report.lines == ["the backup disk 'Backup' could not be looked up — diskutil info Backup exited 1 — "
+                               "Could not find disk: Backup"], "%s %s" % (report.lines, report.recovery))
+    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", seen,
+                                              FakeRunner([("test -e", (124, "", "timed out"))] + tm_table))
+    check("blob id: a Time Machine snapshot whose test -e fails with an exit other than 1 is UNAVAILABLE, not NOT FOUND",
+          report.status == UNAVAILABLE and any("exited 124 — timed out" in l for l in report.lines),
+          "%s" % report.lines)
     report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", seen,
                                               FakeRunner([("diskutil info", (0, "Device Node: /dev/disk5s2\n", ""))]
                                                          + tm_table))

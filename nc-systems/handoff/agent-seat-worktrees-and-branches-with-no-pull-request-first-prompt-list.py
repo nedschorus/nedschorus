@@ -153,9 +153,6 @@ def tasks_holding(agent_seat, task_list_directory=None):
         if directory is None:
             directory = Path.home() / hook.TASKS_ROOT_UNDER_HOME / f"nedschorus-{agent_seat}-tasks"
         directory = Path(directory)
-        # read_tasks globs, and a glob of a directory it may not read finds nothing, silently.
-        if directory.exists() and not os.access(directory, os.R_OK | os.X_OK):
-            raise PermissionError(f"no permission to read {directory}")
         tasks = hook.read_tasks(directory, unreadable)
     except Exception as error:
         return TasksHolding(unreadable=[f"{type(error).__name__}: {error}"])

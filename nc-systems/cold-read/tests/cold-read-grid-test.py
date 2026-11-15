@@ -523,7 +523,7 @@ _scratch_directory_common_spec = importlib.util.spec_from_file_location(
     / "test-scratch-directory-whose-earlier-killed-runs-leftovers-are-removed-first-common.py")
 _scratch_directory_common = importlib.util.module_from_spec(_scratch_directory_common_spec)
 _scratch_directory_common_spec.loader.exec_module(_scratch_directory_common)
-SCRATCH_ROOT = _scratch_directory_common.scratch_directory_after_removing_ones_killed_runs_left(
+SCRATCH_ROOT = _scratch_directory_common.make_test_scratch_directory_after_removing_killed_runs_leftovers(
     "cold-read-grid-test-")
 
 
@@ -550,7 +550,7 @@ try:
           not_checked_lines != [],
           f"stdout was {result.stdout!r}")
     check("the lifted line keeps the words that distinguish it from a clean run",
-          any(cell_common.STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE in line
+          any(cell_common.COLD_READ_CELL_STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE in line
               for line in not_checked_lines),
           f"lifted lines were {not_checked_lines!r}")
     check("every cell that could not be checked is named, the Question 4 cell's included",
@@ -763,7 +763,7 @@ try:
           repr(unchecked_lines))
     check("the not-checked line says the missing check is not a clean result, in cell-common's words",
           unchecked_lines != []
-          and all(cell_common.STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE in line for line in unchecked_lines),
+          and all(cell_common.COLD_READ_CELL_STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE in line for line in unchecked_lines),
           repr(unchecked_lines))
 
     # --- A frozen copy that moves while reviewers have written but not exited

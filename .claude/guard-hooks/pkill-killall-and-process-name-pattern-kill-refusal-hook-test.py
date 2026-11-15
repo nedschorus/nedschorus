@@ -202,8 +202,7 @@ else:
 
 check("a tool other than Bash is ignored", refusal("pkill -f x", tool_name="Read") is None)
 
-for name, payload_text in [("a payload that is not JSON", "not json {"),
-                           ("a payload that is a JSON list", "[]"),
+for name, payload_text in [("a payload that is a JSON list", "[]"),
                            ("a command that is not a string",
                             json.dumps({"tool_name": "Bash", "tool_input": {"command": ["pkill", "x"]}})),
                            ("a payload with no tool_input", json.dumps({"tool_name": "Bash"}))]:

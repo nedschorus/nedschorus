@@ -89,7 +89,8 @@ def commit_seeded_cold_read_scratch_repository(repository):
 
     Call it AFTER writing this suite's own seed files into `repository`:
     it copies nc-systems/cold-read/ in, writes the ignore file, and commits the whole
-    tree, seed files included, as `seed`. Returns `repository`.
+    tree, seed files included, as `seed`, which origin/main points at.
+    Returns `repository`.
     """
     # The whole nc-systems/cold-read/ directory, __pycache__ aside, so a shared module
     # added tomorrow needs no edit here (user-ruled 2026-09-20, walk
@@ -118,6 +119,9 @@ def commit_seeded_cold_read_scratch_repository(repository):
     git(repository, "config", "user.name", SEED_COMMIT_AUTHOR_NAME)
     git(repository, "add", "-A")
     git(repository, "commit", "-m", "seed")
+    # The fast read compares a tracked cold-read-target with its text at
+    # `git merge-base HEAD origin/main`; the seed commit stands in for main.
+    git(repository, "update-ref", "refs/remotes/origin/main", "HEAD")
     return repository
 
 

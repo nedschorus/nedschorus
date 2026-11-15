@@ -12,8 +12,9 @@ verdict_for_seat itself, judges the cases marked "judge", sends, and runs on a s
 What it reads, for each agent-seat that has a handoff-supervisor state file
 (`<handoff directory>/<seat>-supervisor-state.json`):
 - the agent-session the supervisor launched last, and its transcript under the projects root,
-  with every subagent transcript under that agent-session's `subagents/` folder, the Workflow-tool
-  agents' under `subagents/workflows/` included;
+  with every subagent transcript under that agent-session's `subagents/` folder, including those
+  under `subagents/workflows/` of the agents a Workflow-tool run starts (Claude Code's Workflow
+  tool runs a script that starts several subagents in the background);
 - the walk-minutes in the agent-seat's `docs/walk/`, the handoff deferral marker file, the task
   list `<tasks root>/nedschorus-<seat>-tasks/`, and, for a usage limit, `oauthAccount.accountUuid`
   in `~/.claude.json`;
@@ -21,7 +22,7 @@ What it reads, for each agent-seat that has a handoff-supervisor state file
 
 It prints one JSON object per agent-seat, one per line. Each holds what the later slice needs
 without reading anything again: the session id, the transcript path, the last time a token was
-spent and the file that showed it, what is running and since when (a subagent that reported and
+spent and the file that showed it, what is running and since when, Workflow-tool runs included (a subagent that reported and
 stopped while background commands it launched still run gets the time of its report under
 `stopped_at` and a list of those commands under `own_running_background_commands`), the matched sentences with the code's reading of each, the agent-seat's last message, the tool calls a judge of the sentences
 looks through, the rule that applies and its decision.
@@ -451,21 +452,32 @@ def logged_in_account(claude_json):
     return account.get("accountUuid") if isinstance(account, dict) else None
 
 
+def tasks_of_task_list(task_directory, unknown_without_them):
+    """Every task in the agent-seat's task list, by id, as the due-task hook reads it; a missing
+    task list holds none. Raises ReadFailure, completed by unknown_without_them, such as "whether it
+    backs a promise of the agent-seat", when the list or one of its task files cannot be read."""
+    unreadable = []
+    try:
+        tasks = due_task_hook.read_tasks(task_directory, unreadable)
+    except OSError as error:
+        raise ReadFailure(f"the task list {task_directory} could not be listed ({error}), so "
+                          f"{unknown_without_them} is unknown. Repair the directory so that it "
+                          "can be listed, then run this program again.") from error
+    if unreadable:
+        raise ReadFailure(f"{unreadable[0]} could not be read as a task with an id, so "
+                          f"{unknown_without_them} is unknown. Repair the file so that it holds a "
+                          "task with an id, or remove it if it is not a task, then run this program "
+                          "again.")
+    return tasks
+
+
 def open_tasks_nothing_holds(task_directory, checker):
     """Open tasks nothing recorded holds back, as the due-task hook counts them for its idle check."""
-    if not task_directory.is_dir():
-        return []
-    unreadable = []
-    tasks = due_task_hook.read_tasks(task_directory, unreadable)
-    if unreadable:
-        raise ReadFailure(f"{unreadable[0]} could not be read as a task with an id, so whether it "
-                          "holds the agent-seat's work is unknown. Repair the file so that it holds "
-                          "a task with an id, or remove it if it is not a task, then run this "
-                          "program again.")
+    tasks = tasks_of_task_list(task_directory, "whether it holds the agent-seat's work")
     # The checker is shared by every agent-seat, so only the failures appended here are this one's.
     failures_before = len(checker.gh_failures)
     free, _ = due_task_hook.unheld_and_held_tasks(tasks, task_directory, checker)
-    if len(checker.gh_failures) > failures_before:
+    if len(checker.gh_failures) > failures_before:  # pragma: no mutate, gh_failures is only appended to, so != gives what > gives; a test kills is not
         kind, number, cause = checker.gh_failures[failures_before]
         raise ReadFailure(f"GitHub could not say whether {kind} {number} holds: {cause}")
     return [{"id": task_id, "subject": tasks[task_id].get("subject")} for task_id in free]
@@ -474,15 +486,7 @@ def open_tasks_nothing_holds(task_directory, checker):
 def open_tasks_with_prerequisites_or_blocked_by(task_directory):
     """Every open task that waits on something, whenever it was created: any of them may be the
     one that backs a promise or a hold."""
-    if not task_directory.is_dir():
-        return []
-    unreadable = []
-    tasks = due_task_hook.read_tasks(task_directory, unreadable)
-    if unreadable:
-        raise ReadFailure(f"{unreadable[0]} could not be read as a task with an id, so whether it "
-                          "backs a promise of the agent-seat is unknown. Repair the file so that "
-                          "it holds a task with an id, or remove it if it is not a task, then run "
-                          "this program again.")
+    tasks = tasks_of_task_list(task_directory, "whether it backs a promise of the agent-seat")
     waiting = []
     for task_id, task in tasks.items():
         prerequisites = (task.get("metadata") or {}).get("prerequisites")
@@ -556,7 +560,7 @@ def tool_calls_since_start_of_earliest_turn_with_sentence_to_judge(facts, judged
 
 
 def rules_three_to_five(verdict, put_off_at, checker, task_directory):
-    running = verdict["running"]["subagents"] or verdict["running"]["background_commands"]
+    running = any(verdict["running"].values())
     if verdict["handoff_deferred_marker"] and not running:
         return {fields.RULE: 3, fields.DECISION: fields.WAKE_HANDOFF_PUT_OFF,
                 fields.TEXT: HANDOFF_PUT_OFF_TEXT.format(time=iso(put_off_at))}
@@ -634,7 +638,9 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
         verdict["running"] = {
             "subagents": running_subagents,
             "background_commands": [{"id": task_id, "started": iso(facts.launch_times.get(task_id))}
-                                    for task_id in flight.background_task_ids]}
+                                    for task_id in flight.background_task_ids],
+            "workflows": [{"id": task_id, "started": iso(flight.launched_at_by_id.get(task_id))}
+                          for task_id in flight.workflow_ids]}
         marker = deferred_marker_files.handoff_deferred_marker_path(
             paths.handoff_directory, session_id)
         try:
@@ -665,23 +671,25 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
         task_directory = paths.tasks_root / f"nedschorus-{seat}-tasks"
         open_waiting_tasks = open_tasks_with_prerequisites_or_blocked_by(task_directory)
         verdict["sentences"] = matched_sentences(facts, since, open_waiting_tasks)
-        raised = [item for item in verdict["sentences"] if item["code_reading"] != fields.NOT_RAISED]
-        if not raised:
-            verdict.update(rules_three_to_five(verdict, put_off_at, checker, task_directory))
-        elif any(item["code_reading"] == fields.JUDGE for item in raised):  # pragma: no mutate, raised holds only the UNBACKED and JUDGE constants themselves, and "unbacked" sorts after "judge", so <= and is give what == gives
-            judged = [item for item in raised if item["code_reading"] == fields.JUDGE]
+        sentences_by_code_reading = fields.verdict_sentences_grouped_by_code_reading(
+            verdict["sentences"])
+        judged = sentences_by_code_reading.get(fields.JUDGE)
+        unbacked = sentences_by_code_reading.get(fields.UNBACKED)
+        if judged:
             verdict[fields.TOOL_CALLS_SINCE_START_OF_EARLIEST_TURN_WITH_SENTENCE_TO_JUDGE] = (
                 tool_calls_since_start_of_earliest_turn_with_sentence_to_judge(facts, judged))
             verdict[fields.OPEN_TASKS_WITH_PREREQUISITES_OR_BLOCKED_BY] = open_waiting_tasks
             # Only the judge can find every sentence backed, and then rules 3 to 5 decide; a
             # sentence code already found unbacked means that can never happen. Rule 2 is set
             # after those reads, so one that fails leaves the rule null.
-            if not any(item["code_reading"] == fields.UNBACKED for item in raised):
+            if not unbacked:
                 verdict[fields.IF_EVERY_SENTENCE_BACKED] = rules_three_to_five(
                     verdict, put_off_at, checker, task_directory)
             verdict.update({fields.RULE: 2, fields.DECISION: fields.JUDGE})
-        else:
+        elif unbacked:
             verdict.update({fields.RULE: 2, fields.DECISION: fields.SEND_UNBACKED})
+        else:
+            verdict.update(rules_three_to_five(verdict, put_off_at, checker, task_directory))
     except ReadFailure as error:
         verdict["errors"].append(str(error))
     return verdict

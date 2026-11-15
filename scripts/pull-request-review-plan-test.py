@@ -692,6 +692,16 @@ def run_agent_text_cases(fixture):
     fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
     plan = fixture.read_review_plan()
     check("reflowed identical messages are omitted", plan["tool_message_to_agent_text_delta"] == [], plan)
+    # The collector builds each side's placeholder tuple separately, so equal tuples are distinct objects.
+    fixture.reset_fixture_to_base()
+    fixture.write_fixture_file("scripts/scoped-messages.py", 'print(\n    f"same moved message for {name}")\n')
+    earlier = fixture.commit_fixture_changes("multiline f-string message")
+    fixture.write_fixture_file("scripts/scoped-messages.py", 'print(f"same moved message for {name}")\n')
+    head = fixture.commit_fixture_changes("reflow f-string message")
+    fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
+    plan = fixture.read_review_plan()
+    check("reflowed identical f-string messages with equal placeholders are omitted",
+          plan["tool_message_to_agent_text_delta"] == [], plan)
     # Modelled on pull request 2119, which changed only the recovery note that
     # IgnitionPlanWithoutConversationTail.compose() builds in a local name and returns in its prompt.
     compose_before = ('class IgnitionPlan:\n    def compose(self):\n        if self.transcript_path is None:\n'
