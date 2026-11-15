@@ -105,7 +105,9 @@ launches and succeed after.
 Run: python3 nc-systems/cold-read/tests/cold-read-fast-read-test.py
 """
 
+import contextlib
 import hashlib
+import io
 import importlib.util
 import json
 import os
@@ -2972,6 +2974,43 @@ with tempfile.TemporaryDirectory() as changed_scratch:
 check("on the walk route the changed-during-read line says the reviewer's copy is gone",
       "(since removed)" in walk_route_line and "kept at" not in walk_route_line,
       repr(walk_route_line))
+
+# The cell's process can exit while the time-limit timer is still stopping its
+# group, whose other members can still write to the launcher output; the
+# section must wait for the timer before it reads that output.
+with tempfile.TemporaryDirectory() as still_stopping_scratch:
+    still_stopping_module = script_under_test_module()
+    still_stopping_answer = Path(still_stopping_scratch) / "answer.md"
+    still_stopping_answer.write_text("STUB ANSWER\n", encoding="utf-8")
+    still_stopping_output = Path(still_stopping_scratch) / "launcher-output.txt"
+    still_stopping_output.write_text("", encoding="utf-8")
+    timer_started_stopping = threading.Event()
+
+    def stop_group_slowly():
+        timer_started_stopping.set()
+        time.sleep(0.3)
+        with still_stopping_output.open("a", encoding="utf-8") as output:
+            output.write("LAST LINE FROM THE GROUP\n")
+
+    class ProcessExitingOnceTimerStartsStopping:
+        returncode = 0
+
+        def wait(self):
+            timer_started_stopping.wait()
+
+    still_stopping_timer = threading.Timer(0, stop_group_slowly)
+    still_stopping_timer.start()
+    still_stopping_stderr = io.StringIO()
+    with contextlib.redirect_stderr(still_stopping_stderr):
+        still_stopping_module.what_should_be_code_section(
+            still_stopping_module.WhatShouldBeCodeQuestionCell(
+                ProcessExitingOnceTimerStartsStopping(), still_stopping_answer,
+                still_stopping_output, Path(still_stopping_scratch) / "target.md",
+                still_stopping_timer, threading.Event(), threading.Event()))
+check("when the Question 4 cell exits while its time-limit timer is still stopping its group, "
+      "the section waits for the timer and re-emits the output the group wrote meanwhile",
+      "LAST LINE FROM THE GROUP" in still_stopping_stderr.getvalue(),
+      repr(still_stopping_stderr.getvalue()))
 
 print()
 if failures:
