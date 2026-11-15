@@ -1414,6 +1414,41 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-left-behind-") as 
           code == 1 and deletion_then_rerun(out, walks, store, "rsync exit 23 during the copy"),
           f"exit {code}: {out}{err}")
 
+    # A copy to a host other than ned-box whose rsync cannot connect (exit 255):
+    # the FAILED line names that host. The store is listed locally, so only the
+    # copy reaches for the host.
+    walks, store, _ = left_walk_and_store("copy-unreachable")
+    remote_destination = left.WalkStoreDestination("nobody@the-mac", "nobody@the-mac",
+                                                   pathlib.PurePosixPath(store))
+    real_left_listing = left.store_digests_and_sizes
+    real_left_ensure = left.shipper.ensure_store
+    real_left_revised = left.approval_walk_document_revised_copy_numbers_from_log_store_directory_listing
+    left.shipper.ensure_store = lambda copy_host, path: real_left_ensure(None, path)
+    left.approval_walk_document_revised_copy_numbers_from_log_store_directory_listing = (
+        lambda copy_host, walk_path, name: real_left_revised(None, walk_path, name))
+
+    def copy_that_cannot_connect(copy_host, sources, walk_path):
+        return subprocess.CompletedProcess(
+            [], left.shipper.RSYNC_EXIT_CONNECTION_FAILED, "",
+            "injected: ssh: connect to host the-mac port 22: Connection refused\n")
+
+    left.store_digests_and_sizes = lambda copy_host, targets: real_left_listing(None, targets)
+    left.rsync_files = copy_that_cannot_connect
+    try:
+        code, out, err = ship_left(walks, remote_destination,
+                                   removal=lambda copy_host, staging_dir: None)
+    finally:
+        left.rsync_files = real_left_rsync
+        left.store_digests_and_sizes = real_left_listing
+        left.shipper.ensure_store = real_left_ensure
+        left.approval_walk_document_revised_copy_numbers_from_log_store_directory_listing = real_left_revised
+    check("a copy whose rsync exits 255 against a host other than ned-box is FAILED, "
+          "exit 1, naming that host unreachable",
+          code == 1 and one_line(out)
+          and out.startswith(f"FAILED: {LEFT_WALK} — nobody@the-mac unreachable during the copy")
+          and "ned-box" not in out.split(" during the copy")[0],
+          f"exit {code}: {out}{err}")
+
     # Renames that fail, then a removal that fails.
     walks, store, destination = left_walk_and_store("renames-failed")
 
