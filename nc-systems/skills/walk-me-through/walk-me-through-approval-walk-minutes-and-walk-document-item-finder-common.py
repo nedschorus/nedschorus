@@ -546,10 +546,10 @@ def item_unit_spans(document_text, parser):
     withdrawn = [token.map[0] for index, token in enumerate(tokens)
                  if token.type == "heading_open" and token.map is not None and token.level == 0
                  and index + 1 < len(tokens) and WITHDRAWN_HEADING.match(tokens[index + 1].content)]
-    headings = [(token.map[0], len(token.markup)) for token in tokens
+    headings = [(token.map[0], heading_level(token)) for token in tokens
                 if token.type == "heading_open" and token.map is not None and token.level == 0]
     raw_starts = item_unit_starts(tokens, lines)
-    levels = [len(tokens[start[0]].markup) if tokens[start[0]].type == "heading_open" else 0 for start in raw_starts]
+    levels = [heading_level(tokens[start[0]]) if tokens[start[0]].type == "heading_open" else 0 for start in raw_starts]
     starts = [start[1:] for start in raw_starts]
     ends = [min([start[4] for start in starts[position + 1:position + 2]] + [len(lines)]
                 + [line for line in withdrawn if line > first and len(numbers) <= 1]
@@ -559,6 +559,12 @@ def item_unit_spans(document_text, parser):
             for index, (numbers, total, problem, _, first) in enumerate(starts)
             if not (numbers and any(revised and set(numbers) <= set(later_numbers)
                                     for later_numbers, _, _, revised, _ in starts[index + 1:]))]
+
+
+def heading_level(token):
+    """The level of heading_open token, 2 for `## A` and for `A` underlined with `---`."""
+    # A setext heading's markup is its underline's one character, so its length is no level.
+    return int(token.tag[1:])
 
 
 def item_unit_starts(tokens, lines):
@@ -587,11 +593,11 @@ def item_unit_starts(tokens, lines):
         if token.map is None or token.level != 0 or token.type not in ("heading_open", "paragraph_open"):
             continue
         if token.type == "heading_open":
-            if withdrawn_level is not None and len(token.markup) > withdrawn_level:
+            if withdrawn_level is not None and heading_level(token) > withdrawn_level:
                 continue
             withdrawn_level = None
             if index + 1 < len(tokens) and WITHDRAWN_HEADING.match(tokens[index + 1].content):
-                withdrawn_level = len(token.markup)
+                withdrawn_level = heading_level(token)
                 continue
         if token.type == "paragraph_open" and not lines[token.map[0]].lstrip().startswith("**"):
             continue
@@ -640,31 +646,36 @@ def approval_walk_item_line_range_within_heading_shared_by_several_items(opening
 
 
 def approval_walk_item_sub_step_units_below_item_in_walk_document(all_units, unit, numbers=None):
-    """Return the units of all_units, as item_unit_spans gives them, below unit that are sub-steps of any item of
-    numbers, by default every item unit names, such as `### Item 3.1 of 9` and `### Item 3.1.1 of 9` after item 3,
-    wherever they sit below it, up to a later unit that names one of numbers or a number above one of them again,
-    such as a later `Item 3 of 12` that reuses 3, which ends the search for 3 and for 3.1 alike: an item's sub-steps
-    may stand after later items, as when the close step's hold-answer path numbers a new item right after an
-    answered sub-step, or a re-plan moves sub-steps past other items keeping their numbers. An unnumbered item is
-    passed over. A sub-step that comes after a numbered unit that is not one of them, or a unit naming no item, is
-    taken only when it gives unit's M, so an older version's `3.1 of 9` below item 4 is left out of item 3 of 10; a
-    sub-step right after one taken is taken whatever its M, as a sub-step written after the hold-answer path raised
-    M is. Pass numbers for one item of a unit that names several, as in `Items 3 and 4 of 9`, so a later `Item 4`
-    does not end item 3's search."""
+    """Return, in walk-document order, the units of all_units, as item_unit_spans gives them, below unit that are
+    sub-steps of an item of numbers, by default every item unit names, each item searched on its own. A unit is a
+    sub-step of an item when one of the numbers it names is, such as `### Item 3.1 of 9`, `### Item 3.1.1 of 9` or
+    `### Items 3.1 and 4.1 of 9` after item 3, wherever it sits below the item, up to a later unit that names the
+    item or a number above it again, such as a later `Item 3 of 12` that reuses 3, which ends the search for 3 and
+    for 3.1 alike, while a later `Item 4 of 12` ends only 4's: an item's sub-steps may stand after later items, as
+    when the close step's hold-answer path numbers a new item right after an answered sub-step, or a re-plan moves
+    sub-steps past other items keeping their numbers. An unnumbered item, and a sub-step of another item unit names,
+    are passed over. A sub-step that comes after any other numbered unit, or a unit naming no item, is taken only
+    when it gives unit's M, so an older version's `3.1 of 9` below item 4 is left out of item 3 of 10; a sub-step
+    right after one taken is taken whatever its M, as a sub-step written after the hold-answer path raised M is."""
     numbers = unit[0] if numbers is None else numbers
-    stops = {".".join(number.split(".")[:depth]) for number in numbers for depth in range(1, number.count(".") + 2)}
-    found, interrupted = [], False
-    for each in [each for each in all_units if each[3] > unit[3]]:
-        if set(each[0]) & stops:
-            break
-        if approval_walk_unit_is_unnumbered_item(each):
-            continue
-        if not each[0] or not all(any(part.startswith(number + ".") for number in numbers) for part in each[0]):
-            interrupted = True
-        elif not interrupted or each[1] == unit[1]:
-            found.append(each)
-            interrupted = False
-    return found
+    siblings = set(unit[0]) | set(numbers)
+    found = []
+    for number in numbers:
+        stops = {".".join(number.split(".")[:depth]) for depth in range(1, number.count(".") + 2)}
+        interrupted = False
+        for each in [each for each in all_units if each[3] > unit[3]]:
+            if set(each[0]) & stops:
+                break
+            if approval_walk_unit_is_unnumbered_item(each):
+                continue
+            if each[0] and any(part.startswith(number + ".") for part in each[0]):
+                if not interrupted or each[1] == unit[1]:
+                    found += [each] if each not in found else []
+                    interrupted = False
+            elif not (each[0] and all(any(part.startswith(sibling + ".") for sibling in siblings)
+                                      for part in each[0])):
+                interrupted = True
+    return sorted(found, key=lambda each: each[3])
 
 
 def approval_walk_item_heading_and_item_page_body_lines(text, parser, all_units, unit, number):
@@ -727,14 +738,6 @@ def approval_walk_unit_is_unnumbered_item(unit):
     when it is shown."""
     numbers, _, problem, _, _ = unit
     return not numbers and problem is None
-
-
-def approval_walk_document_unit_is_dotted_sub_step_of_whole_item_of_any_item_number(unit, numbers):
-    """Whether unit, one of item_unit_spans' units, is a sub-step of a whole item that one of numbers belongs to:
-    every number unit names is dotted, as in `4.2`, and its whole number is that of one of numbers, as 4 is of
-    `4` and of `4.1`."""
-    wholes = {number.split(".")[0] for number in numbers}
-    return bool(unit[0]) and all("." in number and number.split(".")[0] in wholes for number in unit[0])
 
 
 def approval_walk_document_new_item_insert_line_number_past_whole_item_sub_steps_and_withdrawn_versions(

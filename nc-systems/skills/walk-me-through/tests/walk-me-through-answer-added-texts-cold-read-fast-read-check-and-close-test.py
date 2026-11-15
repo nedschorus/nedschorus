@@ -1149,6 +1149,53 @@ def test_close_order_moves_an_unnumbered_item_past_a_sub_step_the_finder_gives_a
           "after 3.1", order == [["3"], ["4"], ["3.1"], "unnumbered"], repr(order))
 
 
+def test_close_order_moves_an_unnumbered_item_past_a_sub_step_of_one_item_of_a_shared_heading():
+    program = load_program()
+    walk_finder = program.load_walk_finder()
+    document = ("# A walk\n\n## Items 3 and 4 of 9: two items\n\n**Item 3 of 9:** three.\n\nA.\n\n"
+                "**Item 4 of 9:** four.\n\nB.\n\n## Item 4 of 12: a later item reusing 4\n\nC.\n\n"
+                "## an item added by hand\n\nD.\n\n### Item 3.1 of 9: item 3's first half\n\nE.\n")
+    units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+    order = [unit[0] or "unnumbered" for unit in
+             program.approval_walk_unnumbered_items_moved_past_the_sub_steps_they_split(walk_finder, units)]
+    check("with items 3 and 4 sharing a heading, a later `Item 4 of 12`, an unnumbered item, then 3.1, close puts the "
+          "unnumbered item after 3.1, which a later reuse of 4 does not take from item 3",
+          order == [["3", "4"], ["4"], ["3.1"], "unnumbered"], repr(order))
+
+
+def test_a_sub_step_heading_shared_by_two_items_is_a_sub_step_of_each():
+    walk_finder = load_program().load_walk_finder()
+    document = ("# A walk\n\n## Items 3 and 4 of 9: two items\n\n**Item 3 of 9:** three.\n\nA.\n\n"
+                "**Item 4 of 9:** four.\n\nB.\n\n### Items 3.1 and 4.1 of 9: both first halves\n\nC.\n")
+    units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+    found = [[each[0] for each in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(
+        units, units[0], [number])] for number in ("3", "4")]
+    check("`Items 3.1 and 4.1 of 9` is a sub-step of item 3 searched alone, and of item 4",
+          found == [[["3.1", "4.1"]], [["3.1", "4.1"]]], repr(found))
+
+
+def test_items_after_a_setext_withdrawn_heading_are_still_found():
+    walk_finder = load_program().load_walk_finder()
+    document = ("# A walk\n\n## Item 3 of 9: three\n\nA.\n\nWithdrawn: Item 3 of 9: the older three\n"
+                "---\n\nB.\n\n## Item 4 of 9: four\n\nC.\n")
+    numbers = [unit[0] for unit in walk_finder.item_unit_spans(document, walk_finder.markdown_parser())]
+    check("an `## Item 4 of 9` after a Withdrawn heading underlined with `---`, a level-two heading, is an item",
+          numbers == [["3"], ["4"]], repr(numbers))
+
+
+def test_an_item_is_not_decided_through_a_sub_step_past_a_later_reuse_of_its_parent_s_number():
+    program = load_program()
+    walk_finder = program.load_walk_finder()
+    document = ("# A walk\n\n## Item 3 of 9: three\n\nA.\n\n### Item 3.1 of 9: the first half\n\nB.\n\n"
+                "## Item 3 of 12: a later item reusing 3\n\nC.\n\n#### Item 3.1.1 of 9: past the reused number\n\nD.\n")
+    units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+    items = [number for unit in units for number in unit[0]]
+    inferred = program.items_decided_through_sub_steps(
+        items, {"3.1.1": "approved"}, program.approval_walk_map_each_item_number_to_direct_sub_steps_found_by_walk_document_item_finder(walk_finder, units))
+    check("approving a 3.1.1 that stands past a later `Item 3 of 12` decides neither 3.1 nor 3", inferred == {},
+          repr(inferred))
+
+
 def test_the_waiting_item_read_step_leaves_out_an_older_sub_step_below_a_later_item():
     document = ("# A walk\n\n## Item 3 of 10: the opening sentence\n\nNew.\n\n### Item 3.1 of 10: the first half\n\n"
                 "Short.\n\n#case_against weak: the page grows.\n\nRecommendation: change it.\n\n"
@@ -2609,7 +2656,8 @@ def test_a_later_close_does_not_post_again_the_ruling_on_an_item_decided_through
 def test_an_item_is_decided_through_a_sub_step_that_is_itself_decided_through_its_sub_steps():
     program = load_program()
     inferred = program.items_decided_through_sub_steps(
-        ["5", "5.1", "5.2", "5.2.1"], {"5.1": "approved", "5.2.1": "approved"})
+        ["5", "5.1", "5.2", "5.2.1"], {"5.1": "approved", "5.2.1": "approved"},
+        {"5": ["5.1", "5.2"], "5.2": ["5.2.1"]})
     check("in a three-level walk, 5.2 is decided through 5.2.1, and then 5 through 5.1 and 5.2, so item 5 is not named "
           "again",
           inferred == {"5.2": "approved", "5": "approved"}, repr(inferred))
