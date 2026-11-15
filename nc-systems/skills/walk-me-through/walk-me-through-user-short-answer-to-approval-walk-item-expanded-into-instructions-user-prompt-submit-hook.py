@@ -120,13 +120,13 @@ counts it only when the agent's last message that showed the item holds the
 item's current text, as the walk finder's
 approval_walk_item_text_as_shown_to_user gives it, word for word. A message
 showed the item when one text block of an assistant record of the transcript
-the payload's transcript_path names, outside any subagent's, holds the item's
-heading; a message holding only the closing line does not count, because a
-closing line writes "Item N, point" where the heading writes "Item N: point".
-Both texts are compared as the Markdown parser renders them, link targets and
-other markup left out, whitespace squeezed, each running count's `of M` and
-each deferred note dropped; the heading must appear, and the item's
-other text in one run after it. When the message does not hold the text, or
+the payload's transcript_path names, outside any subagent's, has a line that
+opens with the item's heading; a closing line, which holds the skill's answer
+letters, never counts as that line. Both texts are compared as the Markdown
+parser renders them, link targets and other markup left out, reference links
+resolved by the definitions of their own text, whitespace squeezed, each
+running count's `of M` and each deferred note dropped; the item's other text
+must appear in one run after the heading's line. When the message does not hold the text, or
 no message showed the item, the answer is not counted, and the text hands the
 agent the item's text to show unchanged before the user answers again. When
 the transcript or the item's text cannot be read, the answer is not counted
@@ -431,34 +431,38 @@ RIDER_LINES = (
     "If what he added cannot be done this turn, record it as a task.",
     "The answer itself means:",
 )
+# Every refusal opens with these words, so that the answer reads as dropped, not as held until the item is shown.
+ANSWER_DISCARDED = "The hook discarded this answer, and does not keep it for later"
+CLOSING_LINE_NAMED = ("the item's closing line, the walk-me-through skill's line that links the item's page and lists "
+                      "the answers")
 ITEM_NOT_SHOWN_LINES = (
-    "The hook did not count this answer to {item}: {reason}, so the user may be answering a version of the item "
-    "he has not seen.",
+    ANSWER_DISCARDED + ": {reason}, so the user may be answering a version of {item} he has not seen.",
     "Record nothing in the walk-minutes and act on none of the answer.",
     "Show the user {item} as the walk-document now has it, the text between the BEGIN and END lines below, "
-    "unchanged and not inside a code block, then end your message with its closing line and wait for him to "
-    "answer again, because only an answer typed after he has seen that text counts.",
+    "unchanged and not inside a code block, then end your message with " + CLOSING_LINE_NAMED + ", and wait for "
+    "him to type his answer again, because only an answer typed after he has seen that text counts.",
     "BEGIN",
     "{text}",
     "END",
 )
-NEVER_SHOWN_REASON = "no message of yours in this agent-session's transcript shows its heading"
+NEVER_SHOWN_REASON = "no message of yours in this agent-session's transcript has a line opening with its heading"
 SHOWN_DIFFERENT_REASON = (
     "your last message that showed it, written at {timestamp}, does not hold its current walk-document text word "
     "for word, whitespace and Markdown markup aside")
 TRANSCRIPT_UNREADABLE_LINES = (
-    "The hook did not count this answer: it could not read this agent-session's transcript {path}, which it reads "
-    "to check that the user was last shown {item} as the walk-document now has it: {error}.",
+    ANSWER_DISCARDED + ": it could not read this agent-session's transcript, {path}, which it reads to check that "
+    "the user was last shown {item} as the walk-document now has it. The error: {error}.",
     "Record nothing in the walk-minutes and act on none of the answer.",
     "Tell the user that line, and that no answer can be counted until the hook can read the transcript; do not "
     "show him the item again for this, because showing it again does not make the transcript readable.",
 )
+NO_TRANSCRIPT_PATH = "which the hook's payload does not name, having no transcript_path"
 ITEM_TEXT_UNREADABLE_LINES = (
-    "The hook did not count this answer: it could not read the text of {item} from the walk-document, so it "
-    "cannot check that the user was last shown the item as it now stands: {problem}.",
+    ANSWER_DISCARDED + ": it could not read the text of {item} from the walk-document, so it cannot check that the "
+    "user was last shown the item as it now stands. Why it could not read the text: {problem}.",
     "Record nothing in the walk-minutes and act on none of the answer.",
     "Correct the walk-document or the walk-minutes as that reason says, then show the user the item in full, end "
-    "your message with its closing line, and wait for him to answer again.",
+    "your message with " + CLOSING_LINE_NAMED + ", and wait for him to type his answer again.",
 )
 RECOMMENDATION_UNKNOWN_LINE = (
     "The hook could not read the recommendation of {item}: {problem}. Read the recommendation in the "
@@ -847,13 +851,15 @@ def checked_item_numbers(answer, walk):
     return [number for number in walk.numbers if set(letters[number]) & set(CHANGE_MAKING_ANSWERS)]
 
 
-def shown_words(markdown, parser):
+def shown_words(markdown, parser, env=None):
     """The words of markdown as the user reads it rendered, as one string: no `#approval_walk_item_` line, no link
     target or other markup, whitespace squeezed, each running count without its `of M`, and no deferred note, which
-    approval_walk_item_text_as_shown_to_user leaves out of the item's heading."""
+    approval_walk_item_text_as_shown_to_user leaves out of the item's heading. env holds the reference definitions
+    of the whole text markdown was cut from, so a reference link in one line renders as it does in the whole."""
     walk_finder = load_walk_finder()
     pieces = []
-    for token in parser.parse(walk_finder.approval_walk_text_with_approval_walk_item_hashtag_lines_removed(markdown)):
+    text = walk_finder.approval_walk_text_with_approval_walk_item_hashtag_lines_removed(markdown)
+    for token in parser.parse(text, {} if env is None else env):
         if token.type == "inline":
             pieces += [" " if child.type in ("softbreak", "hardbreak") else child.content for child in token.children
                        if child.type in ("text", "code_inline", "html_inline", "image", "softbreak", "hardbreak")]
@@ -865,8 +871,9 @@ def shown_words(markdown, parser):
 
 
 def last_showing_message(transcript_path, number, heading, parser):
-    """Return (the shown_words of the newest assistant text block outside a subagent that shows heading, its
-    timestamp), or None when no block does. Raise OSError or ValueError when the transcript cannot be read."""
+    """Return (the shown_words of the newest assistant text block outside a subagent that has a line opening with
+    heading, from the line after that one to the block's end; the block's timestamp), or None when no block does.
+    Raise OSError or ValueError when the transcript cannot be read."""
     reader = load_walk_finder().load_module("claude_code_session_transcript_records_read_backward_common",
                                             TRANSCRIPT_READER_FILE)
     # A cheap test before the parser runs, since a transcript holds thousands of text blocks.
@@ -879,10 +886,16 @@ def last_showing_message(transcript_path, number, heading, parser):
             text = block.get("text") if isinstance(block, dict) and block.get("type") == "text" else None
             if not isinstance(text, str) or not mentions_number.search(text):
                 continue
-            # A closing line reads "Item N, point", never the heading's "Item N: point", so it cannot match.
-            words = shown_words(text, parser)
-            if f" {heading} " in f" {words} ":
-                return words, record.get("timestamp", "an unknown time")
+            env = {}
+            parser.parse(text, env)
+            lines = text.split("\n")
+            for index, line in enumerate(lines):
+                # A closing line opens with the heading's words when the heading has no point, as `## Item 4 of 9`.
+                if not mentions_number.search(line) or ANSWER_LETTERS_TEXT in line:
+                    continue
+                if f"{shown_words(line, parser, env)} ".startswith(f"{heading} "):
+                    return (shown_words("\n".join(lines[index + 1:]), parser, env),
+                            record.get("timestamp", "an unknown time"))
     return None
 
 
@@ -903,10 +916,13 @@ def unseen_item_lines(answer, walk, transcript_path):
             problem = walk.problem or walk.shown_text_problem or f"the walk-document has no text for {item}"
             return [line.format(item=item, problem=problem) for line in ITEM_TEXT_UNREADABLE_LINES]
         heading_line, _, body = text.partition("\n")
-        heading, body = shown_words(heading_line, parser), shown_words(body, parser)
+        env = {}
+        parser.parse(text, env)
+        heading, body = shown_words(heading_line, parser, env), shown_words(body, parser, env)
+        if not transcript_path:
+            return [line.format(path=NO_TRANSCRIPT_PATH, item=item, error="no transcript_path")
+                    for line in TRANSCRIPT_UNREADABLE_LINES]
         try:
-            if not transcript_path:
-                raise OSError("the hook's payload names no transcript_path")
             shown = last_showing_message(transcript_path, number, heading, parser)
         except (OSError, ValueError) as error:
             return [line.format(path=transcript_path, item=item, error=repr(error))
@@ -914,9 +930,8 @@ def unseen_item_lines(answer, walk, transcript_path):
         if shown is None:
             reason = NEVER_SHOWN_REASON
         else:
-            words, timestamp = shown
-            after_heading = f" {words} ".split(f" {heading} ", 1)[1]
-            if not body or f" {body} " in f" {after_heading}":
+            after_heading, timestamp = shown
+            if not body or f" {body} " in f" {after_heading} ":
                 continue
             reason = SHOWN_DIFFERENT_REASON.format(timestamp=timestamp)
         lines += [line.format(item=item, reason=reason, text=text) for line in ITEM_NOT_SHOWN_LINES]
