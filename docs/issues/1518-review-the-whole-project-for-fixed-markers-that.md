@@ -16,7 +16,7 @@ The design-to-main proposal for sorting a design's deferred-decisions (nedlern@n
 
 - `#not_in_this_run` begins a deferred line: "#not_in_this_run retry a failed push. Reason: an optimisation; one failure stops the run and tells the user."
 - `#rejected` begins a line the user turned down for good.
-- `#revisit_when` names the event before which a deferred line must be decided.
+- `#revisit_before` names the event after which a deferred decision becomes expensive to change, and `#revisit_after` names the event the deferred work waits on; either is left off when no such event can be named.
 
 The hashtag form is proposed, not yet a project convention. If the user rejects item 1.1, this review still asks whether a shared marker form is worth having, without assuming hashtags.
 
