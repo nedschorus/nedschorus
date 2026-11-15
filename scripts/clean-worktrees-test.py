@@ -45,8 +45,10 @@ A section covers the branches deleted with git branch -D: a merged and a
 closed pull request's head branch at its refs/pull/<number>/head on the
 scratch origin are deleted and logged; a branch moved after its pull request
 closed, one with an open pull request, one an open task holds and one a
-worktree has checked out are kept; gh failing, origin unreachable, git
-ls-remote running past its timeout, a task list not read in full, a task
+worktree has checked out are kept; a branch freed by a done worktree that no
+later worktree listing names counts as held by no worktree; gh failing,
+origin unreachable, git ls-remote running past its timeout or killed by a
+signal, a task list not read in full, a task
 lists' directory that cannot be listed or whose parent cannot be entered, and
 a refused git branch -D each delete nothing with -D; and the report modes
 name the branch of a done worktree, which --remove deletes with -D after
@@ -3965,6 +3967,31 @@ with tempfile.TemporaryDirectory() as scratch:
           and (slow_failure or "").startswith(
               "`git ls-remote origin 'refs/pull/*/head'` did not finish: "),
           f"{slow_heads} {slow_failure}")
+
+    killed_ls_remote = scratch / "killed-ls-remote-stubs"
+    killed_ls_remote.mkdir()
+    (killed_ls_remote / "git").write_text(
+        '#!/bin/sh\ncase " $* " in *" ls-remote "*) kill -9 $$ ;; esac\n'
+        f'exec {shlex.quote(shutil.which("git"))} "$@"\n', encoding="utf-8")
+    (killed_ls_remote / "git").chmod(0o755)
+    os.environ["PATH"] = f"{killed_ls_remote}{os.pathsep}{saved_path}"
+    try:
+        killed_heads, killed_failure = head_branch_module.pull_request_head_commits_or_failure(checkout)
+    finally:
+        os.environ["PATH"] = saved_path
+    check("a git ls-remote killed by a signal is named as failed, not read as listing no pull request",
+          killed_heads is None
+          and (killed_failure or "").startswith(
+              f"`git ls-remote origin 'refs/pull/*/head'` exited {-signal.SIGKILL}: "),
+          f"{killed_heads} {killed_failure}")
+
+    # A done worktree another agent removed between the cleaner's two worktree listings.
+    freed_but_unlisted = {branch for branch, _ in
+                          head_branch_module.branch_refs_and_tips_with_no_worktree_not_fully_on_main(
+                              checkout, {"closed-head-branch", "checked-out-head-branch"})}
+    check("a freed branch that no listed worktree holds still counts as held by no worktree",
+          {"closed-head-branch", "checked-out-head-branch"} <= freed_but_unlisted,
+          str(freed_but_unlisted))
 
     # A ref lock git branch -D cannot take, as a concurrent git command holds.
     ref_lock = Path(git(checkout, "rev-parse", "--git-path",
