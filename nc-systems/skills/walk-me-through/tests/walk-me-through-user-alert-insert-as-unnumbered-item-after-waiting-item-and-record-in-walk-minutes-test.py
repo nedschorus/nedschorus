@@ -198,7 +198,7 @@ def run_several_alert_cases(root):
           result.returncode == 0
           and document.index("An older part.") < document.index("### Item 4.2 of 9: another part")
           < document.index("## sixth") < document.index("## Items 5 and 6 of 9")
-          and [unit[0] for unit in walk_finder.approval_walk_item_sub_step_units_right_after(units, item_4)]
+          and [unit[0] for unit in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(units, item_4)]
           == [["4.1"], ["4.2"]], result.stderr + document)
     check("the walk-minutes and the output name the whole item the alert follows",
           "added 1 unnumbered item(s) after the whole of item 4," in minutes

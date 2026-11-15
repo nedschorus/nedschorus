@@ -713,7 +713,7 @@ def approval_walk_document_new_item_insert_line_number_past_whole_item_sub_steps
     later unit that is not a sub-step of that whole item, or line_count. For unit `### Item 50.1 of 96` that is
     past sub-step 50.2 and every Withdrawn heading below either, since a unit ends at a Withdrawn heading and a
     sub-step is a unit of its own. An unnumbered item with more of the whole item's sub-steps after it is passed
-    over, as approval_walk_item_sub_step_units_right_after passes over it."""
+    over, as approval_walk_item_sub_step_units_below_item_in_walk_document passes over it."""
     end = None
     for later in [each for each in units if each[3] > unit[3]]:
         if approval_walk_unit_is_unnumbered_item(later):
