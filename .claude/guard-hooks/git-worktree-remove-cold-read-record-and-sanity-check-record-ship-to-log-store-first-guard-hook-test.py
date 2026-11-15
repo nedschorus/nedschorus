@@ -885,6 +885,11 @@ check("env without a directory option still resolves the path against the cwd",
       hook.worktrees_removed_or_unresolved_reason("env -u X git worktree remove .claude/worktrees/A", "/r",
                                                   repository_worktrees)
       == ({Path("/r/.claude/worktrees/A"): False}, None))
+check("builtin with no command after it changes no directory",
+      hook.simple_command_changes_directory(["builtin"]) is False)
+code, output = run_hook(payload_for("git worktree remove /a/nowhere", "/"), runner_answering(0, b""))
+check("a removal when git lists no worktree whose directory exists, so there is nothing to ship, exits 0 silently",
+      (code, output) == (0, None), (code, output))
 
 
 # The deferred removal, end to end: the hook starts the real waiter, detached, which waits for the writer,
