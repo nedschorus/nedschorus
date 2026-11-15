@@ -887,23 +887,25 @@ def restore_work_snapshot(repo, ref, keep, environment=None, out=print):
                 hooks_path = run_git(repo, "config", "--show-origin", "--get", "core.hooksPath")
                 origin, _tab, value = hooks_path.stdout.strip().partition("\t")
                 if hooks_path.returncode == 0:
-                    hooks_path_setting = (
+                    likely_cause = (
+                        f"a likely cause is a core.hooksPath naming another clone's older hook: "
                         f"git's core.hooksPath setting for {repo} is {value}, and the config file "
                         f"that sets it is {origin.removeprefix('file:')}")
                 elif hooks_path.returncode == 1:
-                    hooks_path_setting = (
-                        f"git's core.hooksPath setting for {repo} is not set, so the hook ran from "
-                        f"{common_git_directory(repo)}/hooks")
+                    likely_cause = (
+                        f"git's core.hooksPath setting for {repo} is not set, so the post-checkout "
+                        f"hook that ran is the copy in {common_git_directory(repo)}/hooks; a likely "
+                        f"cause is that this copy is older than "
+                        f"scripts/git-client-side-hooks/post-checkout")
                 else:
-                    hooks_path_setting = (
+                    likely_cause = (
                         f"where the hook ran from is not known, because git config --show-origin "
                         f"--get core.hooksPath in {repo} {git_failure_text(hooks_path)}")
                 raise owners.WorktreeOwnerFileError(
                     f"git worktree add left an owner file naming {json.dumps(written)}, where "
                     f"uncommitted-work-snapshots.py restore names {json.dumps(owner)}. "
                     f"scripts/git-client-side-hooks/post-checkout writes that file and should name "
-                    f"GIT_AUTHOR_NAME's agent-seat as restore does; a likely cause is a "
-                    f"core.hooksPath naming another clone's older hook: {hooks_path_setting}. "
+                    f"GIT_AUTHOR_NAME's agent-seat as restore does; {likely_cause}. "
                     f"uncommitted-work-snapshots.py restore never overwrites an owner file that names another "
                     f"owner, because scripts/clean-worktrees.py decides from the owner when to remove "
                     f"the worktree") from None
@@ -1110,8 +1112,8 @@ def command_exit_code(run, command):
     try:
         return run()
     except WorkSnapshotError as error:
-        print(f"FAILED: {error}. {command} changed nothing. Tell the user what failed; once the "
-              f"cause is fixed, {command} can be run again.")
+        print(f"FAILED: {error}. {command} changed nothing. Tell the user what failed, and run "
+              f"{command} again only after the user says the cause is fixed.")
         return EXIT_STEP_FAILED
 
 
