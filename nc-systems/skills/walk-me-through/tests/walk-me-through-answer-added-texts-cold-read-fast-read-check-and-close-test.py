@@ -1046,6 +1046,60 @@ def test_a_held_new_item_numbered_between_sub_steps_does_not_end_them_for_close_
           f"{numbered}\n{after_close}\n{described(read)}\n{walk_document(case)}")
 
 
+def test_an_unshown_item_comes_after_a_sub_step_past_a_numbered_item_that_the_finder_takes_for_the_item():
+    """The finder takes 3.3 of 10 as item 3 of 10's sub-step although item 5 and 3.2 of 11 stand between it and 3.1,
+    so the unshown item written after 3.1 does not split them, as the alert insert program would not."""
+    document = ("# A walk in which code picks the order\n\n" + numbered_item(1, "one")
+                + "## Item 3 of 10: three\n\nIts parts.\n\n"
+                + "### Item 3.1 of 10: the first part\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+                + unshown_item("urgent", f"{CATEGORY_TAG}must_fix_now")
+                + "## Item 5 of 11: five\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+                + "### Item 3.2 of 11: the second part\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+                + "### Item 3.3 of 10: the third part\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+                + "## Summary\n\nThe walk in short.\n")
+    case = Case(next_to_present="item 3.1 of 10", document=document)
+    case.minutes.write_text(case.minutes.read_text() + approved_line("item 5 of 11")
+                            + "#next_to_present item 3.1 of 10\n")
+    case.run("check")
+    closed = case.run("close")
+    check("with an unshown item after 3.1 of 10, then item 5 decided, 3.2 of 11 and 3.3 of 10, close names 3.2 once "
+          "3.1 is answered, not the unshown item",
+          closed.returncode == 0 and marker(case).rsplit(" of ", 1)[0] == "#next_to_present item 3.2",
+          described(closed) + walk_document(case))
+
+
+def test_close_s_walk_order_ends_an_item_where_the_finder_s_sub_steps_end():
+    program = load_program()
+    walk_finder = program.load_walk_finder()
+
+    def headings_in_walk_order(document):
+        units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+        lines = document.split("\n")
+        moved = program.approval_walk_unnumbered_items_moved_past_the_sub_steps_they_split(walk_finder, units,
+                                                                                         len(lines))
+        return [lines[unit[3]] for unit in moved]
+
+    for name, document, expected in [
+        ("past item 5 to 3.3 of 10, which the finder takes as item 3 of 10's sub-step",
+         "# A walk\n\n## Item 3 of 10: three\n\n### Item 3.1 of 10: a\n\nA.\n\n## X\n\nX.\n\n## Item 5 of 11: five\n\n"
+         "B.\n\n### Item 3.2 of 11: b\n\nC.\n\n### Item 3.3 of 10: c\n\nD.\n\n## Item 6 of 11: six\n\nE.\n",
+         ["## Item 3 of 10: three", "### Item 3.1 of 10: a", "## Item 5 of 11: five", "### Item 3.2 of 11: b",
+          "### Item 3.3 of 10: c", "## X", "## Item 6 of 11: six"]),
+        ("before an older version's whole-item heading, which is no sub-step of the item",
+         "# A walk\n\n## Item 4 of 9: four\n\n### Item 4.1 of 9: a\n\nA.\n\n## X\n\nX.\n\n## Item 4 of 8: four, older\n\n"
+         "### Item 4.1 of 8: a, older\n\nB.\n\n### Item 4.2 of 8: b, older\n\nC.\n\n## Item 5 of 9: five\n\nD.\n",
+         ["## Item 4 of 9: four", "### Item 4.1 of 9: a", "## X", "## Item 4 of 8: four, older",
+          "### Item 4.1 of 8: a, older", "### Item 4.2 of 8: b, older", "## Item 5 of 9: five"]),
+        ("before 2.2 when it follows a held numbered item, whose whole item has no sub-steps",
+         "# A walk\n\n## Item 2 of 5: two\n\n### Item 2.1 of 5: a\n\nA.\n\n## Item 4 of 5: held\n\nB.\n\n## X\n\nX.\n\n"
+         "### Item 2.2 of 5: b\n\nC.\n",
+         ["## Item 2 of 5: two", "### Item 2.1 of 5: a", "## Item 4 of 5: held", "## X", "### Item 2.2 of 5: b"]),
+    ]:
+        found = headings_in_walk_order(document)
+        check(f"close's walk order puts an unnumbered item written after a sub-step {name}", found == expected,
+              repr(found))
+
+
 def read_step_handed_item_3_marker(document, answered):
     """The `#next_to_present` line the read step writes when handed item 3 of 10 of document, with the walk-minutes
     approving each item of answered."""

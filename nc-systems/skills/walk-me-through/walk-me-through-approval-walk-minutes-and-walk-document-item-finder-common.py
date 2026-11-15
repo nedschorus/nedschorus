@@ -698,14 +698,6 @@ def approval_walk_unit_is_unnumbered_item(unit):
     return not numbers and problem is None
 
 
-def approval_walk_document_unit_is_dotted_sub_step_of_whole_item_of_any_item_number(unit, numbers):
-    """Whether unit, one of item_unit_spans' units, is a sub-step of a whole item that one of numbers belongs to:
-    every number unit names is dotted, as in `4.2`, and its whole number is that of one of numbers, as 4 is of
-    `4` and of `4.1`."""
-    wholes = {number.split(".")[0] for number in numbers}
-    return bool(unit[0]) and all("." in number and number.split(".")[0] in wholes for number in unit[0])
-
-
 def approval_walk_document_new_item_insert_line_number_past_whole_item_sub_steps_and_withdrawn_versions(
         units, unit, line_count):
     """Return the 0-based line, of a walk-document of line_count lines whose item_unit_spans are units, where the

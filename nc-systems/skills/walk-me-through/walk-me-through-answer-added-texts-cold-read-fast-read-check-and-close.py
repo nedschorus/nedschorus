@@ -2473,7 +2473,7 @@ def walk_document_order(walk_finder, text, units, parser, document, today):
     approval_walk_item_sub_step_units_below_item_in_walk_document passes over it, so that it does not split them."""
     lines = text.split("\n")
     order, summary = [], None
-    for unit in approval_walk_unnumbered_items_moved_past_the_sub_steps_they_split(walk_finder, units):
+    for unit in approval_walk_unnumbered_items_moved_past_the_sub_steps_they_split(walk_finder, units, len(lines)):
         unit_numbers, first = unit[0], unit[3]
         keys = [first] if walk_finder.approval_walk_unit_is_unnumbered_item(unit) else unit_numbers
         order += [key for key in keys if key not in order]
@@ -2483,22 +2483,22 @@ def walk_document_order(walk_finder, text, units, parser, document, today):
     return order, summary, unshown_items_placing(walk_finder, text, units, parser, document, today)
 
 
-def approval_walk_unnumbered_items_moved_past_the_sub_steps_they_split(walk_finder, units):
-    """units, as item_unit_spans gives them, with each unnumbered item that stands between two sub-steps of one
-    whole item, such as 2.1 and 2.2, moved to just after the last unit of the sub-steps that follow it, as
-    approval_walk_item_sub_step_units_below_item_in_walk_document reads them; the units keep their line numbers."""
-    moved, waiting = [], []
+def approval_walk_unnumbered_items_moved_past_the_sub_steps_they_split(walk_finder, units, line_count):
+    """units, as item_unit_spans gives them for a walk-document of line_count lines, with each unnumbered item below
+    a numbered unit moved to just before the first unit that starts at or past the line where the whole item of the
+    nearest numbered unit above it ends, as
+    approval_walk_document_new_item_insert_line_number_past_whole_item_sub_steps_and_withdrawn_versions gives that
+    line, so that it does not split that whole item's sub-steps; the units keep their line numbers."""
+    insert_line = walk_finder.approval_walk_document_new_item_insert_line_number_past_whole_item_sub_steps_and_withdrawn_versions
+    keyed, numbered_above = [], None
     for unit in units:
-        if walk_finder.approval_walk_unit_is_unnumbered_item(unit):
-            waiting.append(unit)
-            continue
-        numbered_above = [other for other in moved if other[0]]
-        is_sub_step = walk_finder.approval_walk_document_unit_is_dotted_sub_step_of_whole_item_of_any_item_number
-        if waiting and not (numbered_above and is_sub_step(unit, numbered_above[-1][0])):
-            moved += waiting
-            waiting = []
-        moved.append(unit)
-    return moved + waiting
+        if numbered_above and walk_finder.approval_walk_unit_is_unnumbered_item(unit):
+            keyed.append(((insert_line(units, numbered_above, line_count), 0, unit[3]), unit))
+        else:
+            keyed.append(((unit[3], 1, unit[3]), unit))
+        if unit[0]:
+            numbered_above = unit
+    return [unit for _, unit in sorted(keyed, key=lambda pair: pair[0])]
 
 
 class WalkOrderUnusable(Exception):
