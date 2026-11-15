@@ -407,8 +407,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     # pushed-branch advice sends it to scripts/branch-conflict-check.py's report.
     check("a pushed branch is told how to clear a conflict with main, byte for byte",
           "To learn whether the branch conflicts with main, run python3 "
-          "scripts/branch-conflict-check.py in this checkout, and if it reports a "
-          "conflict, do what its report says." in agent_text(result),
+          "scripts/branch-conflict-check.py in this checkout. If it prints `VERDICT: "
+          "CONFLICT`, do what its report says. If it exits 2, it has no answer: do what "
+          "its lines say, then run it again." in agent_text(result),
           agent_text(result))
     check("the pushed head's status says how a conflict is cleared, byte for byte",
           "(frozen: a fix is a new commit on top, never an amend; for a conflict with "
@@ -2737,8 +2738,7 @@ with tempfile.TemporaryDirectory() as failing_git_scratch:
           and "not a git checkout" not in run.stdout
           and catch_up_module.next_step_lines.git_failure_next_step_lines(
               f"`python3 {SCRIPT_PATH.resolve()} --report --repo {level_seat.resolve()}`",
-              text_the_failure_line_contains="because a git command failed",
-              include_the_misspelt_branch_commit_or_path_line=False) in run.stdout
+              text_the_failure_line_contains="because a git command failed") in run.stdout
           and "you gave" not in run.stdout
           and "Nothing needs rerunning" not in run.stdout, run.stdout + run.stderr)
     worktree_list_fails = failing_git_shim("worktree-list-fails-in-modes", '*" worktree list "*')
@@ -3056,6 +3056,29 @@ with tempfile.TemporaryDirectory() as reference_pull_exit_scratch:
           "a branch other than main",
           run.returncode == 1 and "on some-feature, not main" in run.stdout,
           f"rc={run.returncode} {run.stdout} {run.stderr}")
+
+# ---------------------------------------------------------------------------
+# shortened_file_list: a short list is left whole; a long one keeps its whole
+# leading names and says where to see the rest
+# ---------------------------------------------------------------------------
+check("shortened_file_list leaves a list shorter than the limit whole",
+      catch_up_module.shortened_file_list("a.txt, b.txt") == "a.txt, b.txt",
+      catch_up_module.shortened_file_list("a.txt, b.txt"))
+long_file_names = [f"directory/file-{number:04d}.txt" for number in range(200)]
+long_file_list = ", ".join(long_file_names)
+shortened = catch_up_module.shortened_file_list(long_file_list)
+kept_names = shortened.removesuffix(
+    ", and more; run `git status --ignored --untracked-files=all` to see them all").split(", ")
+check("shortened_file_list cuts a list longer than the limit after its last whole name "
+      "within the limit, keeping the names before that cut and ending with where to see the rest",
+      len(long_file_list) > catch_up_module.IGNORED_FILES_SHORT_LIST_CHARACTER_LIMIT
+      and shortened.endswith("to see them all")
+      and kept_names[0] == long_file_names[0]
+      and kept_names == long_file_names[:len(kept_names)]
+      and len(", ".join(kept_names)) <= catch_up_module.IGNORED_FILES_SHORT_LIST_CHARACTER_LIMIT
+      and len(", ".join(long_file_names[:len(kept_names) + 1]))
+          > catch_up_module.IGNORED_FILES_SHORT_LIST_CHARACTER_LIMIT,
+      shortened)
 
 print()
 if failures:

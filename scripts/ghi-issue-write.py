@@ -442,10 +442,10 @@ GH_TIMEOUT_SECONDS = 120
 PUSH_TIME_MARGIN_SECONDS = 120
 ADJUDICATION_TIMEOUT_SECONDS = 420
 # scripts/ghi-guide-agent-ask.py's EXIT_NOT_ABOUT_ISSUES and EXIT_RULING_QUESTION:
-# ghi-guide-agent answered, but with an `out-of-scope` or `escalate:` reply rather
-# than a verdict. Copied rather than imported, because this program runs that
-# one as a subprocess and loads nothing from it; ghi-issue-write-test.py
-# checks the two stay equal.
+# ghi-guide-agent answered, but with a `not-about-issues` or
+# `ask-user-about-ruling:` reply rather than a verdict. Copied rather than
+# imported, because this program runs that one as a subprocess and loads
+# nothing from it; ghi-issue-write-test.py checks the two stay equal.
 GHI_GUIDE_AGENT_ASK_REPLIED_WITHOUT_A_LIST_EXIT_CODES = (2, 3)
 # How each of those two exits' messages opens: NOT_ABOUT_ISSUES_MESSAGE's first
 # line, and RULING_QUESTION_MESSAGE_TEMPLATE up to its {sentence}. The message
@@ -552,8 +552,7 @@ def run(arguments, timeout=GH_TIMEOUT_SECONDS, cwd=None, check=True):
 def git_failure_next_steps(rerun: str, program: str) -> str:
     """What an agent does after a git command this program ran failed."""
     return next_step_lines.git_failure_next_step_lines(
-        rerun, program, include_the_misspelt_branch_commit_or_path_line=True,
-        rerun_fails_when="stops again on a line naming a git command and its exit code",
+        rerun, program, rerun_fails_when="stops again on a line naming a git command and its exit code",
         which_lines_to_quote_in_the_report=('that line and the "So" line after it, from the command that '
                                             'printed this message and from the rerun, or the corrected command'))
 
@@ -670,11 +669,16 @@ def push_branch(worktree, branch, runner, environment=None):
             f"git push of branch {branch} was stopped after {seconds:.0f} "
             "seconds, longer than the pre-push hook's own limit, so the push "
             "did not finish.\n"
-            "Rerun the same command; a rerun is safe: it reads origin first, "
-            "and if the branch got there, it opens the pull request for it "
-            "instead of pushing again.\n"
-            "If it stops the same way again, tell the user the push hangs, "
-            "with this message.", 1) from None
+            "Rerun the same command; a rerun is safe because it reads origin "
+            "first.\n"
+            "If the branch reached origin, the rerun opens the pull request "
+            "for it instead of pushing again.\n"
+            "If the branch did not reach origin, the rerun pushes it again, "
+            "which runs the pre-push hook again.\n"
+            "If the rerun's push is again stopped by this time limit, tell "
+            "the user the push hangs, with this message.\n"
+            "If the rerun fails in any other way, do what its own message "
+            "says.", 1) from None
 
 
 def ghi_md_text_sha256_prefix(file_text: str) -> str:
@@ -733,7 +737,7 @@ def refuse_heading_with_date(heading: str):
     flight and one already on main, so a rerun on a source that is either is
     told that and not to change the heading, which would file a second
     issue; by `create --dry-run`, which judges the heading as a new filing's
-    real run does but reads neither GitHub nor main (see `main`); and by
+    real run does but reads neither the open issues nor main (see `main`); and by
     `edit` only when step 4 will set the title to the heading, so an issue
     already filed under such a title can still be edited, and a filing
     resumed after an earlier run is never refused for a title GitHub
@@ -759,7 +763,7 @@ def balanced_close(text: str, start: int, opening: str, closing: str) -> int:
         if text[index] == "\\":
             index += 2
             continue
-        if text[index] == opening:
+        if text[index] == opening:  # pragma: no mutate, CPython keeps one object per one-character Latin-1 string, so is acts as ==
             depth += 1
         elif text[index] == closing:
             depth -= 1
@@ -812,7 +816,7 @@ def slug(title: str) -> str:
     text = re.sub(r"['\u2019]", "", text)
     joined = "-".join(re.sub(r"[^a-z0-9]+", " ", text).split())
     if len(joined) > GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT:
-        head = joined[:GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT + 1]
+        head = joined[:GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT + 1]  # pragma: no mutate, the limit is even, so ^ 1 gives + 1
         joined = (head.rsplit("-", 1)[0] if "-" in head
                   else joined[:GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT])
     return joined or "issue"
@@ -1815,8 +1819,8 @@ def create_pull_request_for_branch(repo: str, branch: str, number: int,
             "`scripts/ghi-issue-write.py`.\n\nAs a link-only-GHI, that "
             "issue's body is the links to its files, so this file has to "
             "be on main before the body can point at it. Prose under "
-            "`docs/`, silent to reviewers by CLAUDE.md's review-scope "
-            "rule.\n\n#no_defect_fixed\n")
+            "`docs/`, silent to reviewers by the review scope of "
+            "`docs/agents/pr-reviewer-instructions.md`.\n\n#no_defect_fixed\n")
     created = runner(
         ["gh", "pr", "create", "--repo", repo, "--base", "main",
          "--head", branch, "--title", f"GHI-MD for issue {number}: {title}",
@@ -2045,15 +2049,23 @@ def link_body(repo: str, number: int, repository_root: Path, runner, report,
     return True
 
 
-def create(path: Path, repo: str, repository_root: Path, runner, report):
-    """The whole sequence, and the one function the tests drive."""
+def issue_whose_filing_stopped_before_step_5(path: Path, repo: str, runner):
+    """The issue number when `path` is a filed GHI-MD whose issue's body is
+    still the placeholder a create wrote, else None. Step 4 is what puts a
+    file at a filed name, so for such a file step 5 is what is left. Both
+    create and its dry run ask this first, so a dry run takes the path the
+    real run takes."""
     filed_number = issue_number_in_file_name(path)
     if (filed_number is not None and path.is_file()
             and issue_body_carries_pairing_key(repo, filed_number, runner)):
-        # The file this run was given is named for an issue whose body is
-        # still the placeholder a create wrote, so that filing stopped
-        # before step 5. Step 4 is what puts a file at a filed name, so
-        # step 5 is what is left, and this run touches nothing else.
+        return filed_number
+    return None
+
+
+def create(path: Path, repo: str, repository_root: Path, runner, report):
+    """The whole sequence, and the one function the tests drive."""
+    filed_number = issue_whose_filing_stopped_before_step_5(path, repo, runner)
+    if filed_number is not None:
         report(f"resuming issue {filed_number} on its landed file: the "
                "issue's body still carries a pairing key, so an earlier run "
                "stopped before step 5")
@@ -2461,8 +2473,8 @@ def create_pull_request_for_edit_branch(repo: str, branch: str, number: int,
             "`scripts/ghi-issue-write.py`.\n\nAs a link-only-GHI, the "
             "issue's title and body are derived from main's copy of its "
             "files, so this has to land before either follows. Prose "
-            "under `docs/`, silent to reviewers by CLAUDE.md's "
-            "review-scope rule.\n\n#no_defect_fixed\n")
+            "under `docs/`, silent to reviewers by the review scope of "
+            "`docs/agents/pr-reviewer-instructions.md`.\n\n#no_defect_fixed\n")
     created = runner(
         ["gh", "pr", "create", "--repo", repo, "--base", "main",
          "--head", branch, "--title",
@@ -2600,7 +2612,8 @@ def refuse_to_land_edit(repo: str, number: int, relative: str, on_main,
 
 def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
               on_main, moved_from, moved_from_on_main, state, branch,
-              main_commit: str, repository_root: Path, runner, report):
+              main_commit: str, repository_root: Path, runner, report,
+              why=None):
     """Step 3. Returns (True when a pull request is waiting on this edit,
     True when this run pushed the edit or opened its pull request).
 
@@ -2674,6 +2687,8 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
                    "of this file, so they follow when this lands. The "
                    "file's `issue:` frontmatter line is written by the "
                    "tool, not by its author.\n")
+        if why:
+            message += f"\n{why.strip()}\n"
         runner(["git", "commit", "--quiet", "-m", message], cwd=str(worktree))
         push_branch(worktree, branch, runner)
         create_pull_request_for_edit_branch(repo, branch, number, title,
@@ -2931,15 +2946,17 @@ def issue_file_set_for_this_edit(number: int, relative: str, on_main, paths,
     return paths + [relative]
 
 
-def edit(path: Path, repo: str, repository_root: Path, runner, report):
+def edit(path: Path, repo: str, repository_root: Path, runner, report,
+         why=None):
     """The whole edit sequence, and the one function the tests drive."""
     number, finished, _ = edit_saying_whether_this_run_opened_its_pull_request(
-        path, repo, repository_root, runner, report)
+        path, repo, repository_root, runner, report, why=why)
     return number, finished
 
 
 def edit_saying_whether_this_run_opened_its_pull_request(
-        path: Path, repo: str, repository_root: Path, runner, report):
+        path: Path, repo: str, repository_root: Path, runner, report,
+        why=None):
     """`edit`, returning also whether this run pushed the edit or opened its
     pull request: the close operation tells its pending state from its refusal by it."""
     text, title, number, relative = validate_edit(path, repository_root)
@@ -3032,7 +3049,7 @@ def edit_saying_whether_this_run_opened_its_pull_request(
     waiting, opened = land_edit(
         repo, number, title, relative, staged, on_main, moved_from,
         moved_from_on_main, state, branch, main_commit, repository_root, runner,
-        report)
+        report, why=why)
 
     sync_title_on_heading_change(repo, number, document_before_this_edit,
                                  title, paths, issue, runner, report)
@@ -3053,7 +3070,8 @@ CLOSE_GHI_REFUSED_WHILE_OUTCOME_EDIT_PULL_REQUEST_UNMERGED_EXIT_CODE = 67
 CLOSE_REASON_COMPLETED = "completed"
 CLOSE_REASON_NOT_PLANNED = "not planned"
 CLOSE_REASON_DUPLICATE = "duplicate"
-CLOSE_REASON_DUPLICATE_PATTERN = re.compile(r"duplicate (\d+)")
+# An issue number is often written as #12; gh takes 12.
+CLOSE_REASON_DUPLICATE_PATTERN = re.compile(r"duplicate #?(\d+)")
 
 
 def close_reason_gh_arguments(reason_words, number: int):
@@ -3184,7 +3202,8 @@ def main_with_stop_signals_raising_system_exit(argv):
     creator.add_argument(
         "--dry-run", action="store_true",
         help="validate the file and its heading and print what would be "
-             "filed, changing neither GitHub nor git")
+             "filed, or the step a filing that stopped partway would resume "
+             "at, changing neither GitHub nor git")
     editor = sub.add_parser(
         "edit", help="land an edit to a filed GHI-MD, after which the "
                      "issue's title and body follow it")
@@ -3194,6 +3213,10 @@ def main_with_stop_signals_raising_system_exit(argv):
         "--dry-run", action="store_true",
         help="validate the file and print which issue it would edit, "
              "touching neither GitHub nor git")
+    editor.add_argument(
+        "--why",
+        help="what the edit fixes and why, written into the commit message; "
+             "an obvious-error-fix must give it")
     closer = sub.add_parser(
         "close", help="record the outcome through edit, then, once that "
                       "edit has merged, close the issue with its reason")
@@ -3217,8 +3240,12 @@ def main_with_stop_signals_raising_system_exit(argv):
             # still be validated, and create's own root lookup comes later.
             # The heading is judged as a new filing's real run judges it.
             #
-            # A NEW FILING'S, because the dry run reads neither GitHub nor
-            # main, so it cannot see a source whose filing is in flight, is
+            # A filed GHI-MD is the exception: the one gh read below tells
+            # the dry run, as it tells create, that the file resumes at
+            # step 5, and nothing else is judged.
+            #
+            # A NEW FILING'S, because the dry run reads neither the open
+            # issues nor main, so it cannot see a source whose filing is in flight, is
             # already on main, or resumes by its pairing key: for such a
             # source with a dated heading it prints the heading
             # refusal where the real run would refuse otherwise or resume,
@@ -3227,10 +3254,18 @@ def main_with_stop_signals_raising_system_exit(argv):
             # issue (review of PR [GHI heading check runs after the
             # duplicate refusals](https://github.com/nedschorus/nedschorus/pull/838)).
             # Left so on purpose. Reading those states would make the dry
-            # run fetch main and call gh, and it promises to change neither
+            # run fetch main and list the open issues, and it promises to change neither
             # git nor GitHub; and none of the three states can hold a heading
             # this check refuses unless a filing started before 2026-09-30
             # left one.
+            resumed = issue_whose_filing_stopped_before_step_5(
+                path, arguments.repo, run)
+            if resumed is not None:
+                report(f"would resume issue {resumed} at step 5: its body "
+                       "still carries a pairing key, so the real run files "
+                       "nothing and links the body to the issue's files "
+                       "once they are on main")
+                return 0
             text, title = validate(path)
             refuse_heading_with_date(title)
             report(f"would file: {title}")
@@ -3249,7 +3284,7 @@ def main_with_stop_signals_raising_system_exit(argv):
         if arguments.operation == "create":
             create(path, arguments.repo, root, run, report)
             return 0
-        if arguments.operation == "close":
+        if arguments.operation == "close":  # pragma: no mutate, create returned above and argparse allows only edit or close here, and "edit" sorts after "close", so <= matches only close
             close_ghi_after_its_outcome_edit_merges_to_main(
                 path, arguments.reason, arguments.repo, root, run, report)
             return 0
@@ -3260,7 +3295,7 @@ def main_with_stop_signals_raising_system_exit(argv):
             report("the issue's title changes only if this edit changed "
                    "that heading and the issue has one filed GHI-MD")
             return 0
-        edit(path, arguments.repo, root, run, report)
+        edit(path, arguments.repo, root, run, report, why=arguments.why)
         return 0
     except Refused as refusal:
         print(str(refusal), file=sys.stderr)

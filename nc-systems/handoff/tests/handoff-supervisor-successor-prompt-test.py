@@ -1074,8 +1074,7 @@ def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: P
 
     def launch_time_git_sync_next_steps(rerun):
         return supervisor.next_step_lines.git_failure_next_step_lines(
-            rerun, include_the_misspelt_branch_commit_or_path_line=False,
-            rerun_fails_when="prints an error again",
+            rerun, rerun_fails_when="prints an error again",
             which_lines_to_quote_in_the_report=(
                 "the launch-time-git-sync line in this prompt and the error the rerun printed"),
             read_by_a_subagent=False, next_step_to_skip_when_the_rerun_fails_too="act on the rest of this prompt")

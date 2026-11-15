@@ -27,6 +27,13 @@ The user decided this on 2026-10-24, in the approval-walk whose minutes are at `
 
 `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/fleet-restart-at-login/system-requirement-failures-page-draft-2026-10-24.md` holds the page's starting text, pending approval. It covers the eight parts the starting text of the requirements page lists: the network between the Mac and ned-box, ned-box, the Mac, the machines' disks, Claude Code and Anthropic's service, GitHub, Codex, and Gemini. For each it says what stops when the part fails and whether the project has a fallback; today it records none, so every part is a hard dependency. The user has not decided on its text.
 
+## What is decided
+
+The user ruled on these in the fleet-restart-at-login agent-session `c1b8aa3a-c1aa-4e9f-bddc-28d39a7c20ba`, whose transcript is `nedlern@ned-box:/home/nedlern/nedschorus-logs/agent-session-files-by-machine/ned-box/projects/-home-nedlern-agents-fleet-restart-at-login/c1b8aa3a-c1aa-4e9f-bddc-28d39a7c20ba.jsonl`. The page follows them.
+
+- Claude Code being logged out, or ned-box being down, is a failure the user notices on his own, so the page gives its escalation path little, though not nothing. His words, at 2026-10-13T23:11:47Z: "claude logged out etc is very obvious. So we don't need to do much for that. ned-box down -same thing."
+- A failed-restart-notice opens as an HTML page in the Mac's browser rather than in another terminal window. In the same message he asked "crash watcher unable to restart a seat - maybe just pop up on my mac a html page that says what is the problem?", and at 2026-10-13T23:18:24Z he ruled: "Let's do a html page. as another iterm2 window can be lost." Pull request [1299](https://github.com/nedschorus/nedschorus/pull/1299), "Crash watcher notices open as HTML pages in the Mac's browser", built this; its merge commit 8c48d4d27 is on main.
+
 ## Two CLAUDE.md changes that go with the page
 
 Both point at this page, so they travel with it. The user has not decided on either; each needs his approval before it is made. Their full text as last put to him, with the case against each, is at `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/fleet-restart-at-login/items-13.1-13.3-at-removal-2026-10-24.md`, items 13.2 and 13.3. Both proposals name the page by an earlier, longer name, `nedschorus-system-requirements-setup-and-fallback-or-escalation-when-one-fails.md`; the quotes below keep it, because they are the proposals as he saw them. When either is put to him again, and in what lands in `CLAUDE.md`, the name is `nedschorus-system-requirement-failures-fallback-and-escalation-paths.md`.

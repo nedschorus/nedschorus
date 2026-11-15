@@ -521,6 +521,18 @@ def run_cases(scratch: Path):
     check("a bracket that opens no link is kept as text",
           tool.slug("Match [a-z] (letters) only") == "match-a-z-letters-only",
           repr(tool.slug("Match [a-z] (letters) only")))
+    # Odd index for the closing bracket: label_end | 1 would then read past the end.
+    check("a title ending in a bracket that opens no link keeps it as text",
+          tool.slug("Ab [c]") == "ab-c", repr(tool.slug("Ab [c]")))
+    check("a parenthesis outside any link is text, not a link's address",
+          tool.markdown_links_reduced_to_their_text("(draft plan)") == "(draft plan)",
+          repr(tool.markdown_links_reduced_to_their_text("(draft plan)")))
+    check("a link whose address never closes is kept as text",
+          tool.slug("See [a](b") == "see-a-b", repr(tool.slug("See [a](b")))
+    check("a backslash at the end of a link's text ends the text, not the title",
+          tool.slug("See [a\\") == "see-a", repr(tool.slug("See [a\\")))
+    check("a backslash escapes the one character after it, not two",
+          tool.slug("See [a\\b](x)") == "see-a-b", repr(tool.slug("See [a\\b](x)")))
     long_title = " ".join(["word"] * 60)
     long_slug = tool.slug(long_title)
     check("a slug over the character limit is cut at a hyphen, inside it",
@@ -529,6 +541,10 @@ def run_cases(scratch: Path):
           repr(long_slug))
     check("a single word over the character limit is cut at the limit",
           tool.slug("x" * 300) == "x" * tool.GHI_MD_FILE_NAME_SLUG_CHARACTER_LIMIT)
+    word_ending_at_limit_slug = tool.slug("x" * 10 + " " + "y" * 169 + " z")
+    check("a word that ends exactly at the 180-character limit is kept whole",
+          word_ending_at_limit_slug == "x" * 10 + "-" + "y" * 169,
+          repr(word_ending_at_limit_slug))
     log_store_name = (f"99999-{long_slug}"
                       f"{tool.PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX}"
                       f"{tool.PROPOSED_IMPROVEMENTS_OR_CHANGES_SOURCE_GHI_GUIDE_AGENT}"
@@ -1330,6 +1346,36 @@ def run_cases(scratch: Path):
           and not moved.ran("git worktree add")
           and not moved.ran("gh pr create"), str(moved.commands()))
 
+    def dry_run_on_landed(answers):
+        recorder = Recorder(answers)
+        printed, complaint = io.StringIO(), io.StringIO()
+        saved_run = tool.run
+        tool.run = recorder
+        try:
+            with contextlib.redirect_stdout(printed), \
+                    contextlib.redirect_stderr(complaint):
+                code = tool.main(["create", str(landed), "--dry-run",
+                                  "--repo", REPO])
+        finally:
+            tool.run = saved_run
+        return code, printed.getvalue(), complaint.getvalue(), recorder
+
+    code, printed, complaint, dry = dry_run_on_landed(
+        {"gh issue view": Completed('{"body": "in progress ' + KEY + '"}')})
+    check("create --dry-run on a landed file whose body still carries a "
+          "pairing key reports the resume the real run takes",
+          code == 0 and "would resume issue 570 at step 5" in printed
+          and not complaint and dry.commands() == ["gh issue view"],
+          f"code {code}, {printed!r}, {complaint!r}, {dry.commands()}")
+    code, printed, complaint, dry = dry_run_on_landed({
+        "gh issue view": Completed(
+            '{"body": "- [570-a.md](https://github.com/x/y/blob/main/x.md)"}'),
+    })
+    check("create --dry-run on a landed file whose filing finished is "
+          "refused as the real run refuses it",
+          code == 64 and "already named for an issue" in complaint,
+          f"code {code}, {printed!r}, {complaint!r}")
+
     filed_already = Recorder({
         "gh issue view": Completed(
             '{"body": "- [570-a.md](https://github.com/x/y/blob/main/x.md)"}'),
@@ -1401,7 +1447,7 @@ def run_cases(scratch: Path):
     # missing verdict, and the report says what ghi-guide-agent said instead of
     # "did not answer". Exit 3, the ruling question, has its own cases below.
     for case_name, exit_code, first_line in [
-            ("an out-of-scope reply lets the write proceed and says so", 2,
+            ("a not-about-issues reply lets the write proceed and says so", 2,
              "Not a question about GitHub issues: ghi-guide-agent reports which "
              "issues relate to a subject.")]:
         lines = []
@@ -4276,8 +4322,8 @@ def run_main_dispatch_cases(scratch: Path):
         return scratch
 
     def operation_recorder(name):
-        def recorded(path, repo, root, runner, report):
-            calls.append((name, path, repo, root, runner))
+        def recorded(path, repo, root, runner, report, **keywords):
+            calls.append((name, path, repo, root, runner, keywords))
         return recorded
 
     def close_recorder(path, reason_words, repo, root, runner, report):
@@ -4314,12 +4360,16 @@ def run_main_dispatch_cases(scratch: Path):
                 missing_reason = exited.code
         check("main() refuses a close without --reason with 64",
               missing_reason == 64, f"code {missing_reason}")
-        for case_name, argv, operation, repo in [
+        for case_name, argv, operation, repo, keywords in [
                 ("main() hands a live create to create",
                  ["create", str(source), "--repo", "someone/elsewhere"],
-                 "create", "someone/elsewhere"),
+                 "create", "someone/elsewhere", {}),
                 ("main() hands a live edit to edit, with the default repo",
-                 ["edit", str(source)], "edit", tool.DEFAULT_REPO),
+                 ["edit", str(source)], "edit", tool.DEFAULT_REPO,
+                 {"why": None}),
+                ("main() hands an edit's --why to edit",
+                 ["edit", str(source), "--why", "Fixes a false claim."],
+                 "edit", tool.DEFAULT_REPO, {"why": "Fixes a false claim."}),
                 # Without --repo, an edit branch that ignored arguments.repo
                 # and passed DEFAULT_REPO would look the same as one that
                 # honoured it (mac-claude's review of PR "The GHI write
@@ -4327,7 +4377,7 @@ def run_main_dispatch_cases(scratch: Path):
                 # calls", 2026-09-27).
                 ("main() hands a live edit to edit, with the --repo given",
                  ["edit", str(source), "--repo", "someone/elsewhere"],
-                 "edit", "someone/elsewhere")]:
+                 "edit", "someone/elsewhere", {"why": None})]:
             calls.clear()
             try:
                 code = tool.main(argv)
@@ -4338,7 +4388,7 @@ def run_main_dispatch_cases(scratch: Path):
                       if call[0] != "repository_root_of"]
             check(case_name,
                   code == 0 and called == [(operation, source.resolve(), repo,
-                                            scratch, tool.run)],
+                                            scratch, tool.run, keywords)],
                   f"code {code}, {calls}")
     finally:
         (tool.repository_root_of, tool.create, tool.edit,
@@ -4438,7 +4488,9 @@ def run_close_cases(scratch: Path):
             ("completed", ["completed"], ["--reason", "completed"]),
             ("not planned, quoted", ["not planned"],
              ["--reason", "not planned"]),
-            ("duplicate", ["duplicate", "12"], ["--duplicate-of", "12"])]:
+            ("duplicate", ["duplicate", "12"], ["--duplicate-of", "12"]),
+            ("duplicate, the number written with #", ["duplicate", "#12"],
+             ["--duplicate-of", "12"])]:
         finishing = finished_edit()
         result = tool.close_ghi_after_its_outcome_edit_merges_to_main(
             source, reason_words, REPO, scratch, finishing, quiet)
@@ -4464,9 +4516,13 @@ def run_close_cases(scratch: Path):
               refusal.code == 1 and "HTTP 502" in str(refusal), str(refusal))
 
     # A reason the close would reject is refused before anything runs.
+    # "wontfix" and "not planned yet" sort after "not planned", so an
+    # ordering comparison there would accept them.
     for bad in (["fixed"], ["duplicate"], ["duplicate", "570"],
+                ["wontfix"], ["not", "planned", "yet"],
                 ["duplicate", "0"], ["completed", "now"], ["not"],
-                ["duplicate", "twelve"]):
+                ["duplicate", "twelve"], ["duplicate", "#570"],
+                ["duplicate", "##12"]):
         nothing = Recorder()
         try:
             tool.close_ghi_after_its_outcome_edit_merges_to_main(
@@ -4990,7 +5046,8 @@ def run_edit_landing_real_git_cases(scratch: Path):
         return tool.run(arguments, timeout=timeout or tool.GH_TIMEOUT_SECONDS,
                         cwd=cwd, check=check)
 
-    tool.edit(author / relative, REPO, author, runner, quiet)
+    why = "Fixes a false statement; the glossary shows it false."
+    tool.edit(author / relative, REPO, author, runner, quiet, why=why)
 
     pushed = git("ls-remote", "--heads", str(remote), "ghi-570-edit-*")
     branch = pushed.split("refs/heads/")[-1] if pushed else ""
@@ -5004,6 +5061,13 @@ def run_edit_landing_real_git_cases(scratch: Path):
           "not from the main a later fetch moved the ref to",
           landed_parent == base_commit,
           f"parent {landed_parent}, checked {base_commit}")
+    landed_message = git("log", "-1", "--format=%B", f"refs/heads/{branch}",
+                         cwd=remote)
+    check("and the --why paragraph follows the tool's fixed text in its "
+          "commit message",
+          landed_message.endswith("\n\n" + why)
+          and landed_message.startswith("GHI-MD edit for issue 570"),
+          landed_message)
     git("pull", "-q", "origin", "main", cwd=other)
     git("fetch", "-q", "origin", branch, cwd=other)
     merging = subprocess.run(
@@ -5057,10 +5121,16 @@ def run_push_time_limit_cases(scratch: Path):
                   f"{tool.push_time_limit_seconds({}):.0f} seconds, longer "
                   "than the pre-push hook's own limit")
               and "so the push did not finish." in text
-              and "Rerun the same command; a rerun is safe: it reads origin "
-                  "first, and if the branch got there, it opens the pull "
-                  "request for it instead of pushing again." in text
-              and "tell the user the push hangs" in text
+              and "Rerun the same command; a rerun is safe because it reads "
+                  "origin first.\n" in text
+              and "If the branch reached origin, the rerun opens the pull "
+                  "request for it instead of pushing again.\n" in text
+              and "If the branch did not reach origin, the rerun pushes it "
+                  "again, which runs the pre-push hook again.\n" in text
+              and "If the rerun's push is again stopped by this time limit, "
+                  "tell the user the push hangs, with this message.\n" in text
+              and text.endswith("If the rerun fails in any other way, do "
+                                "what its own message says.")
               and recorder.commands() == ["git push --quiet"],
               text + "\n" + str(recorder.commands()))
     except subprocess.TimeoutExpired:

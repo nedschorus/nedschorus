@@ -102,6 +102,11 @@ def git(directory, *arguments):
                           capture_output=True, text=True).stdout.strip()
 
 
+CONFIRMED = "--confirm-dispatching-agent-checked-new-shared-names"
+NAME_CHECKED_SUBCOMMANDS = ("open-pull-request",)
+HEADING = "New shared names: send these to the new-name-propose-and-check-fresh-agent subagent"
+
+
 class Case:
     """A bare origin, the author's clone, a fake gh, and the subagent's worktree once made."""
 
@@ -140,7 +145,11 @@ class Case:
         git(self.repository, "worktree", "add", "-q", "--detach", str(self.worktree))
         return self.worktree
 
-    def run(self, directory, *arguments, **environment):
+    def run(self, directory, *arguments, confirmed=True, **environment):
+        """confirmed: pass the flag saying the dispatching agent checked the new shared names, as a subagent does
+        once it has, to the subcommand that refuses without it."""
+        if confirmed and arguments and arguments[0] in NAME_CHECKED_SUBCOMMANDS:
+            arguments = (*arguments, CONFIRMED)
         completed = subprocess.run([sys.executable, str(PROGRAM), str(NUMBER), *map(str, arguments)],
                                    cwd=directory, capture_output=True, text=True,
                                    stdin=subprocess.DEVNULL, env={**self.environment, **environment})
@@ -564,6 +573,43 @@ def test_open():
         case.close()
 
 
+def test_new_shared_names_wait_for_the_dispatching_agent():
+    case = Case()
+    try:
+        worktree = started(case, findings="1,2")
+        case.commit_change("new-tool.txt")
+        description = case.write_description()
+        code, out, err = case.run(worktree, "open-pull-request", confirmed=False)
+        check("open refuses a file no agent has checked with exit 1, naming it, the subagent's report heading and the "
+              "command to run once it is checked, leaves out the topic branch's name, and pushes and opens nothing",
+              code == 1 and "REFUSED: open-pull-request pushed nothing, because" in err
+              and "  new-tool.txt (file-path)\n" in err and "(branch)" not in err
+              and f"the heading `{HEADING}`" in err
+              and "Make each rename in a commit on the topic branch. Then run: "
+                  f"the same open-pull-request command again, with {CONFIRMED} added\n" in err
+              and "rename-topic-branch" not in err
+              and "topic-one" not in git(case.origin, "branch", "--list") and case.gh_pr_create_calls() == []
+              and description.exists(), err)
+        code, out, err = case.run(worktree, "rename-topic-branch", "topic-renamed")
+        check("there is no rename-topic-branch subcommand", code == 2 and "invalid choice" in err, err)
+        git(worktree, "update-ref", "-d", "refs/remotes/origin/main")
+        code, out, err = case.run(worktree, "open-pull-request", confirmed=False)
+        check("open fails with exit 2 when git cannot list the new shared names, and pushes nothing",
+              code == 2 and "FAILED: the new shared names of the topic branch could not be listed, so "
+                            "open-pull-request pushed nothing: git rev-parse exited 128" in err
+              and "topic-one" not in git(case.origin, "branch", "--list") and case.gh_pr_create_calls() == [], err)
+        git(worktree, "fetch", "-q", "origin")
+        git(worktree, "reset", "-q", "--hard", "origin/main")
+        (worktree / "base.txt").write_text("changed\n")
+        git(worktree, "commit", "-q", "-am", "change a file main has")
+        code, out, err = case.run(worktree, "open-pull-request", confirmed=False)
+        check("open goes on without the flag when the topic branch adds no new shared name, though origin has no "
+              "branch of its name",
+              code == 0 and f"Opened {LINK} for findings 1 and 2" in out, out + err)
+    finally:
+        case.close()
+
+
 def test_open_pushes_the_checked_out_recorded_branch_not_the_last():
     case = Case()
     try:
@@ -613,7 +659,7 @@ def test_open_failures():
         program.push_time_limit_seconds = lambda environment: 0.5
         try:
             with case.in_process(worktree):
-                program.open_pull_request(NUMBER, [1])
+                program.open_pull_request(NUMBER, [1], confirm_dispatching_agent_checked_new_shared_names=True)
         except program.StepFailed as error:
             check("a push that does not finish in time is a StepFailed with the usual instructions",
                   str(error) == "git push -u origin topic-one failed (did not finish within 0.5 s), so no pull request was opened."
@@ -635,7 +681,7 @@ def test_open_failures():
         try:
             with case.in_process(worktree, **{program.pre_push_conflict_check.TIME_BUDGET_ENVIRONMENT_VARIABLE: "7.5"}), \
                     contextlib.redirect_stderr(io.StringIO()) as stderr:
-                code = program.main([str(NUMBER), "open-pull-request", "--handled-finding-numbers", "1"])
+                code = program.main([str(NUMBER), "open-pull-request", "--handled-finding-numbers", "1", CONFIRMED])
         finally:
             program.git_output.run_git = original_run_git
         check("a push that times out is given the conflict check's budget from the environment plus 120 s, rounded up to whole "
@@ -654,7 +700,7 @@ def test_open_failures():
         program.git_output.run_git = push_cannot_start
         try:
             with case.in_process(worktree):
-                program.open_pull_request(NUMBER, [1])
+                program.open_pull_request(NUMBER, [1], confirm_dispatching_agent_checked_new_shared_names=True)
         except program.StepFailed as error:
             check("a push that cannot start is a StepFailed with the usual instructions",
                   "could not start git: injected" in str(error) and error.instructions is None, str(error))
@@ -800,7 +846,7 @@ def test_open_gh_pr_create_second_try_and_gh_pr_list():
     try:
         with case.in_process(worktree, FAKE_GH_CREATE_FAILS_FIRST=str(case.root / "failed-once"), FAKE_GH_FIRST_SLEEPS="1"), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
-            program.open_pull_request(NUMBER, None)
+            program.open_pull_request(NUMBER, None, confirm_dispatching_agent_checked_new_shared_names=True)
         check("gh pr create that does not finish in time once and passes on the second try is recorded, with the notice",
               len(case.gh_pr_create_calls()) == 2
               and out.getvalue().startswith("Notice: gh pr create failed once (gh pr create did not finish within "
@@ -1108,6 +1154,63 @@ def test_clean_up_goes_on_past_each_worktree_and_branch():
         check("a lock without a reason is named as such",
               code == 1 and "is locked (lock reason: none given)" in out
               and f"of the follow-up of {FOLLOWED_UP} is locked (lock reason: none given), so" in out, out + err)
+    finally:
+        case.close()
+
+
+def test_clean_up_claude_code_lock_whose_claude_process_has_ended():
+    # Linux only: the lock's start is a Linux clock-tick count read from /proc, which macOS lacks.
+    if not sys.platform.startswith("linux"):
+        print("SKIP  [this machine cannot run it] a Claude Code lock whose claude process has ended "
+              "is unlocked: the case reads its process's start from /proc")
+        return
+    case = Case()
+    try:
+        worktree = started(case)
+        git(worktree, "push", "-q", "origin", "topic-one")
+        command = "remove-topic-branches-and-worktrees"
+        snapshots = program.owner_file.load_uncommitted_work_snapshots_module_once()
+        start = snapshots.linux_start_ticks(os.getpid())
+        # This test's own process runs; the same pid with another start names a process that has ended.
+        running = f"claude agent agent-a77d25c01f5a06582 (pid {os.getpid()} start {start})"
+        ended = f"claude agent agent-a77d25c01f5a06582 (pid {os.getpid()} start {int(start) + 1})"
+        git(case.repository, "worktree", "lock", "--reason", running, str(worktree))
+        code, out, err = case.run(case.repository, command)
+        check("a Claude Code lock whose claude process runs keeps the worktree, locked, as the harness's",
+              code == 1 and f"Worktree {worktree} is locked by the agent harness (lock reason: {running})" in out
+              and "Unlocked" not in out and worktree.exists()
+              and f"locked {running}" in git(case.repository, "worktree", "list", "--porcelain"), out + err)
+        git(case.repository, "worktree", "unlock", str(worktree))
+        git(case.repository, "worktree", "lock", "--reason", ended, str(worktree))
+        with case.in_process(case.repository), contextlib.redirect_stdout(io.StringIO()) as printed:
+            saved = program.owner_file.claude_code_subagent_worktree_lock_dispatching_process_running_state
+            program.owner_file.claude_code_subagent_worktree_lock_dispatching_process_running_state = (
+                lambda lock: (program.owner_file.UNKNOWN, "whether claude process runs could not be read"))
+            try:
+                code = program.remove_topic_branches_and_worktrees(NUMBER)
+            finally:
+                program.owner_file.claude_code_subagent_worktree_lock_dispatching_process_running_state = saved
+        out = printed.getvalue()
+        check("a Claude Code lock whose claude process cannot be read keeps the worktree, locked, as the harness's",
+              code == 1 and f"Worktree {worktree} is locked by the agent harness (lock reason: {ended})" in out
+              and "Unlocked" not in out and worktree.exists()
+              and f"locked {ended}" in git(case.repository, "worktree", "list", "--porcelain"), out)
+        (worktree / "stray.txt").write_text("stray\n")
+        code, out, err = case.run(case.repository, command)
+        check("a Claude Code lock whose claude process has ended is unlocked, and the worktree is then judged "
+              "as an unlocked one: kept for its untracked file",
+              code == 1 and f"Unlocked worktree {worktree}, since Claude Code's lock names claude process "
+                            f"{os.getpid()}, started at {int(start) + 1}, which has ended.\n" in out
+              and f"Worktree {worktree} holds changed or untracked files" in out and "?? stray.txt" in out
+              and "locked by the agent harness" not in out and worktree.exists()
+              and "locked" not in git(case.repository, "worktree", "list", "--porcelain"), out + err)
+        (worktree / "stray.txt").unlink()
+        git(case.repository, "worktree", "lock", "--reason", ended, str(worktree))
+        code, out, err = case.run(case.repository, command)
+        check("a clean worktree whose Claude Code lock names an ended claude process is unlocked and removed, "
+              "and its pushed branch deleted",
+              code == 0 and f"Unlocked worktree {worktree}," in out and f"Removed worktree {worktree}." in out
+              and "Deleted branch topic-one." in out and not worktree.exists(), out + err)
     finally:
         case.close()
 
@@ -1512,11 +1615,13 @@ def test_print_block_with_replaced_pull_requests():
 
 
 for test in (test_help, test_block_parsing, test_print_block, test_print_block_with_replaced_pull_requests, test_brief_text, test_no_saved_block, test_start,
-             test_open_refusals, test_open, test_open_pushes_the_checked_out_recorded_branch_not_the_last,
+             test_open_refusals, test_open, test_new_shared_names_wait_for_the_dispatching_agent,
+             test_open_pushes_the_checked_out_recorded_branch_not_the_last,
              test_open_failures, test_open_passes_on_what_a_push_that_succeeds_prints,
              test_open_gh_pr_create_second_try_and_gh_pr_list,
              test_push_time_limit_is_the_pre_push_conflict_check_budget_plus_120_seconds,
              test_open_title_and_description_file_removal_failure,
+             test_clean_up_claude_code_lock_whose_claude_process_has_ended,
              test_leave_out_and_finish, test_three_findings, test_waiting_for_user_ruling,
              test_state_failures, test_clean_up, test_clean_up_goes_on_past_each_worktree_and_branch,
              test_clean_up_failure, test_clean_up_run_from_inside_a_worktree_it_removes, test_next_step, test_next_step_branch_choice):

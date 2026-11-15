@@ -89,8 +89,11 @@ def markdown_table_cells_under_header(design_text, header, cell_count):
     into its cells. A row with another number of cells is malformed."""
     lines = design_text.splitlines()
     if lines.count(header) != 1:
-        raise DesignTableMalformed("expected one table headed %r, found %d"
-                                   % (header, lines.count(header)))
+        raise DesignTableMalformed(
+            f"this suite expects exactly one table in {DESIGN_RELATIVE_PATH} headed %r, and found "
+            "%d; the tests that read that table compare nothing until the design has exactly one "
+            "line that is that header, character for character."
+            % (header, lines.count(header)))
     start = lines.index(header)
     rows = []
     for line in lines[start + 2:]:
@@ -98,10 +101,20 @@ def markdown_table_cells_under_header(design_text, header, cell_count):
             break
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         if len(cells) != cell_count:
-            raise DesignTableMalformed("%d cells, not %d: %s" % (len(cells), cell_count, line))
+            raise DesignTableMalformed(
+                f"a row of a table this suite reads in {DESIGN_RELATIVE_PATH} has %d columns where "
+                "its header has %d, so the suite cannot tell which column each cell of the row belongs "
+                "to, and the tests that read that table compare nothing; this suite splits a row at "
+                "every |, so a | inside a cell's text, even inside backticks, adds a column. The "
+                "row: %s"
+                % (len(cells), cell_count, line))
         rows.append(cells)
     if not rows:
-        raise DesignTableMalformed("no rows under %r" % header)
+        raise DesignTableMalformed(
+            f"the table in {DESIGN_RELATIVE_PATH} headed %r has no rows, so the tests that read "
+            "that table have nothing to compare; this suite reads rows from the second line below "
+            "the header, after the separator line, up to the first line that does not start with "
+            "|, and that second line does not start with |." % header)
     return rows
 
 
@@ -110,7 +123,11 @@ def section_3_2_prose_rows(design_text):
     for number, from_cell, trigger_cell, to_cell, _counter in markdown_table_cells_under_header(
             design_text, SECTION_3_2_TABLE_HEADER, 5):
         if not re.fullmatch(r"[1-9][0-9]*", number):
-            raise DesignTableMalformed("section 3.2 row number %r is not a number" % number)
+            raise DesignTableMalformed(
+                f"section 3.2 of {DESIGN_RELATIVE_PATH} has %r in its Row column; this suite pairs "
+                "each row with the TRANSITION_TABLE row of the same number, so every Row value "
+                "must be a whole number from 1 up, with no leading zero, and the tests that read "
+                "section 3.2 compare nothing until every Row value is." % number)
         rows.append(DesignTransitionProseRow(number, from_cell, trigger_cell, to_cell))
     return rows
 
@@ -268,6 +285,13 @@ def transition_row_pairing_mismatches(prose_rows, transition_table, state_table)
     return mismatches
 
 
+SECTION_3_1_STATE_CELL_NOT_ONE_STATE_MESSAGE = (
+    f"section 3.1 of {DESIGN_RELATIVE_PATH} has the State cell %r, which names %d states in "
+    "backticks; this suite takes each row's state from its State cell, which must name exactly "
+    "one state in backticks, so the tests that read section 3.1 compare nothing until every "
+    "State cell does.")
+
+
 def section_3_1_states_and_sub_states(design_text):
     """(state, sub-states in the order listed) for each row of section 3.1."""
     states = []
@@ -275,7 +299,7 @@ def section_3_1_states_and_sub_states(design_text):
             design_text, SECTION_3_1_TABLE_HEADER, 4):
         names = backticked_tokens(state_cell)
         if len(names) != 1:
-            raise DesignTableMalformed("section 3.1 State cell %r names %d states"
+            raise DesignTableMalformed(SECTION_3_1_STATE_CELL_NOT_ONE_STATE_MESSAGE
                                        % (state_cell, len(names)))
         states.append((names[0], tuple(backticked_tokens(sub_states_cell))))
     return states
@@ -294,7 +318,7 @@ def section_3_1_packages_beyond_standard(design_text):
             design_text, SECTION_3_1_TABLE_HEADER, 4):
         names = backticked_tokens(state_cell)
         if len(names) != 1:
-            raise DesignTableMalformed("section 3.1 State cell %r names %d states"
+            raise DesignTableMalformed(SECTION_3_1_STATE_CELL_NOT_ONE_STATE_MESSAGE
                                        % (state_cell, len(names)))
         packages[names[0]] = "" if package_cell == SECTION_3_1_EMPTY_PACKAGE_CELL else package_cell
     return packages
@@ -654,6 +678,60 @@ class EachFailureMessageNamesTheRuleAndOneFixPerCause(unittest.TestCase):
         self.assertIn(f'has a To cell containing "{phrase}"', message)
         self.assertIn("change that value of TO_CELL_PHRASE_OF_DESTINATION_MARKER in this suite",
                       message)
+
+
+class AnUnreadableDesignTableRaisesNamingTheDesignAndWhatIsWrong(unittest.TestCase):
+    """Each way a planted table cannot be read raises, naming the design file and the fault."""
+
+    SECTION_3_2_SEPARATOR = "|---|---|---|---|---|"
+    SECTION_3_1_SEPARATOR = "|---|---|---|---|"
+
+    def raised(self, read, text):
+        with self.assertRaises(DesignTableMalformed) as raised:
+            read(text)
+        message = str(raised.exception)
+        self.assertIn(DESIGN_RELATIVE_PATH, message)
+        return message
+
+    def section_3_2(self, *rows):
+        return "\n".join((SECTION_3_2_TABLE_HEADER, self.SECTION_3_2_SEPARATOR) + rows)
+
+    def section_3_1(self, *rows):
+        return "\n".join((SECTION_3_1_TABLE_HEADER, self.SECTION_3_1_SEPARATOR) + rows)
+
+    def test_a_missing_header_raises_with_the_header_and_the_count(self):
+        message = self.raised(section_3_2_prose_rows, "no table here")
+        self.assertIn("exactly one table in %s headed %r, and found 0;"
+                      % (DESIGN_RELATIVE_PATH, SECTION_3_2_TABLE_HEADER), message)
+
+    def test_a_header_written_twice_raises_with_the_count(self):
+        table = self.section_3_2("| 1 | `a` | b | `c` | — |")
+        message = self.raised(section_3_2_prose_rows, table + "\n\n" + table)
+        self.assertIn("and found 2;", message)
+
+    def test_a_row_with_too_few_columns_raises_with_both_counts_and_the_row(self):
+        message = self.raised(section_3_2_prose_rows, self.section_3_2("| 1 | `a` | b | `c` |"))
+        self.assertIn("has 4 columns where its header has 5,", message)
+        self.assertTrue(message.endswith("The row: | 1 | `a` | b | `c` |"), message)
+
+    def test_a_table_with_no_rows_raises_with_the_header(self):
+        message = self.raised(section_3_2_prose_rows, self.section_3_2("", "| 1 | a | b | c | d |"))
+        self.assertIn("headed %r has no rows," % SECTION_3_2_TABLE_HEADER, message)
+
+    def test_a_row_number_with_a_leading_zero_raises_with_the_number(self):
+        message = self.raised(section_3_2_prose_rows, self.section_3_2("| 01 | `a` | b | `c` | — |"))
+        self.assertIn("has '01' in its Row column;", message)
+
+    def test_a_state_cell_naming_two_states_raises_in_both_section_3_1_readers(self):
+        table = self.section_3_1("| `a` `b` | — | — | x |")
+        for read in (section_3_1_states_and_sub_states, section_3_1_packages_beyond_standard):
+            self.assertIn("has the State cell '`a` `b`', which names 2 states",
+                          self.raised(read, table))
+
+    def test_a_state_cell_naming_no_state_raises_in_both_section_3_1_readers(self):
+        table = self.section_3_1("| plain | — | — | x |")
+        for read in (section_3_1_states_and_sub_states, section_3_1_packages_beyond_standard):
+            self.assertIn("has the State cell 'plain', which names 0 states", self.raised(read, table))
 
 
 if __name__ == "__main__":

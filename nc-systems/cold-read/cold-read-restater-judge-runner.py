@@ -97,7 +97,7 @@ invocation and never launched a run, naming its own fix.
 
 Output: exactly one line on stdout -- the combined result's path on success,
 or a line opening `FAILED` -- and every cold-read-cell's own progress on
-stderr, the launcher's lines and the runtime's alike.
+stderr, the launcher's lines and the agent-binary's alike.
 """
 
 from __future__ import annotations

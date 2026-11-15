@@ -38,6 +38,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -108,6 +109,18 @@ def is_handoff_instruction(stderr):
     return HANDOFF_INSTRUCTION_PATTERN.fullmatch(stderr.strip()) is not None
 
 
+COMPACTED_HANDOFF_INSTRUCTION_PATTERN = re.compile(
+    r"This session has used \d+% \(\d+% counting the tokens its compactions dropped, "
+    r"the figure compared with the threshold and the ceiling\) "
+    r"of its context window, which has reached the reincarnation threshold\. "
+    r"Run the /handoff skill now\.")
+
+
+def is_compacted_handoff_instruction(stderr):
+    """The handoff instruction for a compacted session, both shares filled in."""
+    return COMPACTED_HANDOFF_INSTRUCTION_PATTERN.fullmatch(stderr.strip()) is not None
+
+
 def with_background_tasks_list(stdin_payload, background_tasks_list_is_missing):
     """Claude Code sends the list at every Stop; a payload without one gets an empty list,
     unless the case is about a payload that lacks it."""
@@ -116,10 +129,13 @@ def with_background_tasks_list(stdin_payload, background_tasks_list_is_missing):
     return {**stdin_payload, hook.BACKGROUND_TASKS_PAYLOAD_KEY: []}
 
 
-def list_entry(task_id, task_type, status="running"):
+def list_entry(task_id, task_type, status="running", command=None):
     """One entry of Claude Code's background_tasks list, trimmed from real Stop hook input."""
-    return {"id": task_id, "type": task_type, "status": status,
-            "description": f"a {task_type}"}
+    entry = {"id": task_id, "type": task_type, "status": status,
+             "description": f"a {task_type}"}
+    if command is not None:
+        entry["command"] = command
+    return entry
 
 
 def run_hook(stdin_payload, extra_arguments=(), extra_environment=None,
@@ -197,7 +213,7 @@ def raises_list_could_not_read(entries, transcript_path):
     """True when the list reader refuses rather than answering for the transcripts."""
     try:
         hook.work_in_flight_from_background_tasks(
-            entries, str(transcript_path), hook.DEFAULT_BACKGROUND_TASK_WAIT_MINUTES * 60)
+            entries, str(transcript_path))
     except hook.TranscriptCouldNotBeFullyRead:
         return True
     return False
@@ -219,6 +235,18 @@ def transcript_with_usage(directory, name, input_tokens, cache_read=0, cache_cre
         encoding="utf-8",
     )
     return path
+
+
+def compaction_record(cumulative_dropped_tokens, pre_tokens=448_678, post_tokens=24_858):
+    """A compaction record as Claude Code writes it, trimmed to the fields beside the one the hook reads."""
+    return {
+        "type": "system", "subtype": "compact_boundary",
+        "content": "Conversation compacted", "level": "info",
+        "timestamp": "2026-10-21T05:54:37.110Z",
+        "compactMetadata": {"trigger": "auto", "preTokens": pre_tokens,
+                            "postTokens": post_tokens,
+                            "cumulativeDroppedTokens": cumulative_dropped_tokens},
+    }
 
 
 def transcript_of(directory, name, records):
@@ -329,6 +357,33 @@ def monitor_start_record(task_id="b45e25tz2"):
         }]},
         "toolUseResult": {"taskId": task_id, "timeoutMs": 0, "persistent": True},
     }
+
+
+def workflow_tool_launch_record(task_id):
+    """The Workflow tool's tool_result, read off a real transcript and trimmed to the fields the
+    hook reads: a taskId and a taskType, and no agentId or backgroundTaskId."""
+    return {
+        "type": "user", "timestamp": "2026-11-08T18:11:26.279Z",
+        "message": {"role": "user", "content": [{
+            "tool_use_id": "toolu_01GFDoTE3AsqHgrGKoP7JoUB", "type": "tool_result",
+            "content": f"Workflow launched in background. Task ID: {task_id}\nSummary: Grade "
+                       "each cold-read finding"}]},
+        "toolUseResult": {"status": "async_launched", "taskId": task_id,
+                          "taskType": "local_workflow", "workflowName": "grade-cold-read-findings",
+                          "runId": "wf_429969ca-778",
+                          "summary": "Grade each cold-read finding"},
+    }
+
+
+# The completion notification of the run that result launched, trimmed.
+WORKFLOW_TOOL_RUN_COMPLETED_NOTIFICATION = (
+    "<task-notification>\n"
+    "<task-id>wn6fctb8y</task-id>\n"
+    "<tool-use-id>toolu_01GFDoTE3AsqHgrGKoP7JoUB</tool-use-id>\n"
+    "<status>completed</status>\n"
+    '<summary>Dynamic workflow "Grade each cold-read finding" completed</summary>\n'
+    "<result>clear 6, uncertain 33, drop 7 (46 rows)</result>\n"
+    "</task-notification>")
 
 
 def task_stop_record(task_id, task_type):
@@ -589,6 +644,74 @@ with tempfile.TemporaryDirectory() as workspace:
     check("tail read skips a partially-written final record",
           abs(hook.context_used_percentage_from_transcript(str(partial)) - 40.0) < 0.01)
 
+    # --- The tokens compactions dropped ----------------------------------
+    no_compaction = transcript_of(workspace, "no-compaction.jsonl", [usage_record(200_000)])
+    check("a transcript with no compaction record drops no tokens",
+          hook.compaction_dropped_tokens_from_transcript(str(no_compaction)) == 0,
+          str(hook.compaction_dropped_tokens_from_transcript(str(no_compaction))))
+    two_compactions = transcript_of(workspace, "two-compactions.jsonl", [
+        compaction_record(100_000), usage_record(300_000),
+        compaction_record(250_000), usage_record(200_000)])
+    check("the newest compaction record's running total is the one read",
+          hook.compaction_dropped_tokens_from_transcript(str(two_compactions)) == 250_000,
+          str(hook.compaction_dropped_tokens_from_transcript(str(two_compactions))))
+    check("the count the hook measures is the context used plus the tokens compactions dropped",
+          abs(hook.context_used_plus_compaction_dropped_percentage_from_transcript(
+              str(two_compactions)) - 45.0) < 0.01,
+          str(hook.context_used_plus_compaction_dropped_percentage_from_transcript(
+              str(two_compactions))))
+    fractional_count = transcript_of(workspace, "fractional-count.jsonl", [
+        compaction_record(255_000), usage_record(200_000)])
+    check("that count keeps its fraction",
+          abs(hook.context_used_plus_compaction_dropped_percentage_from_transcript(
+              str(fractional_count)) - 45.5) < 0.01,
+          str(hook.context_used_plus_compaction_dropped_percentage_from_transcript(
+              str(fractional_count))))
+    check("that count is None for a transcript with no usage",
+          hook.context_used_plus_compaction_dropped_percentage_from_transcript(
+              str(Path(workspace) / "not-there.jsonl")) is None)
+    # Quoting a compaction record, in a message or a hook's output, writes its subtype into another record.
+    quoted = transcript_of(workspace, "compaction-quoted.jsonl", [
+        compaction_record(100_000), usage_record(300_000),
+        {"type": "user", "message": {"content": json.dumps(compaction_record(900_000))}},
+        {"type": "system", "subtype": "stop_hook_summary",
+         "content": json.dumps(compaction_record(800_000))},
+        usage_record(200_000)])
+    check("a quoted compaction record is not read as one",
+          hook.compaction_dropped_tokens_from_transcript(str(quoted)) == 100_000,
+          str(hook.compaction_dropped_tokens_from_transcript(str(quoted))))
+    buried_compaction = Path(workspace) / "buried-compaction.jsonl"
+    buried_compaction.write_text("\n".join(
+        [json.dumps(compaction_record(250_000))] + [filler] * 6
+        + [json.dumps(usage_record(200_000))]) + "\n", encoding="utf-8")
+    check("a compaction record behind many large later records is still found",
+          hook.compaction_dropped_tokens_from_transcript(str(buried_compaction)) == 250_000,
+          str(hook.compaction_dropped_tokens_from_transcript(str(buried_compaction))))
+    # The work-in-flight scan reads past such bytes too; raising here would stop the hook at every Stop.
+    undecodable = Path(workspace) / "compaction-undecodable.jsonl"
+    undecodable.write_bytes(
+        (json.dumps(compaction_record(150_000)) + "\n").encode("utf-8")
+        + b'{"type": "user", "note": "\xff\xfe"}\n'
+        + (json.dumps(usage_record(200_000)) + "\n").encode("utf-8"))
+    check("bytes that are not UTF-8 in the transcript are read past",
+          hook.compaction_dropped_tokens_from_transcript(str(undecodable)) == 150_000,
+          str(hook.compaction_dropped_tokens_from_transcript(str(undecodable))))
+    partial_compaction = Path(workspace) / "compaction-partial.jsonl"
+    partial_compaction.write_text(
+        json.dumps(compaction_record(150_000)) + "\n" + json.dumps(usage_record(200_000)) + "\n"
+        + json.dumps(compaction_record(400_000))[:60], encoding="utf-8")
+    check("a compaction record Claude Code is still writing is skipped",
+          hook.compaction_dropped_tokens_from_transcript(str(partial_compaction)) == 150_000,
+          str(hook.compaction_dropped_tokens_from_transcript(str(partial_compaction))))
+    torn_compaction = Path(workspace) / "compaction-torn-then-whole.jsonl"
+    torn_compaction.write_text(
+        json.dumps(compaction_record(100_000))[:60] + "\n"
+        + json.dumps(compaction_record(150_000)) + "\n" + json.dumps(usage_record(200_000)) + "\n",
+        encoding="utf-8")
+    check("a line naming a compaction that is not JSON does not stop the scan before later records",
+          hook.compaction_dropped_tokens_from_transcript(str(torn_compaction)) == 150_000,
+          str(hook.compaction_dropped_tokens_from_transcript(str(torn_compaction))))
+
     # --- Which subagents are still in flight -------------------------------
     # A reincarnation kills the session's in-process subagents with it (2026-08-27),
     # so the hook has to know which of them are running before it fires.
@@ -668,6 +791,18 @@ with tempfile.TemporaryDirectory() as workspace:
     check("a final notification after an interim one takes the subagent out of flight",
           hook.spawned_subagent_ids_in_flight(str(final_after_interim)) == [],
           str(hook.spawned_subagent_ids_in_flight(str(final_after_interim))))
+    in_text_block_list = transcript_of(workspace, "final-notification-in-text-block-list.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record(INCIDENT_SUBAGENT_ID),
+        {"type": "user", "timestamp": "2026-10-27T21:45:00.000Z",
+         "message": {"role": "user", "content": [
+             {"type": "text", "text": "Earlier text."},
+             {"type": "text", "text": FINAL_NOTIFICATION_AFTER_INTERIM}]}},
+    ])
+    check("a final notification held only inside a list of text blocks takes the subagent out of "
+          "flight",
+          hook.spawned_subagent_ids_in_flight(str(in_text_block_list)) == [],
+          str(hook.spawned_subagent_ids_in_flight(str(in_text_block_list))))
 
     # A SendMessage to a finished subagent resumes it, under the same task-id.
     resumed_after_final = transcript_of(workspace, "resumed-after-final-notification.jsonl", [
@@ -754,14 +889,197 @@ with tempfile.TemporaryDirectory() as workspace:
     check("a background task older than the wait is no longer in flight",
           flight.background_task_ids == [], str(flight.background_task_ids))
 
-    # The launch is at 22:41:47.899, so this now makes the age exactly
-    # 1800.000 s: a whole-second now left it 1799.101 and pinned nothing
-    # (merge-lane review of #361, confirmed by mutation: <= flipped to <
-    # still passed).
+    # The launch is at 22:41:47.899, so these nows make the age exactly 1800.000 s and one
+    # millisecond less: a whole-second now would leave it 1799.101 and pin nothing.
     flight = hook.work_in_flight(str(grid_running), thirty_minutes,
                                  now=datetime(2026, 9, 14, 23, 11, 47, 899000, tzinfo=timezone.utc))
-    check("a background task exactly at the wait is still in flight",
+    check("a background task exactly as old as the wait is no longer in flight",
+          flight.background_task_ids == [], str(flight.background_task_ids))
+    flight = hook.work_in_flight(str(grid_running), thirty_minutes,
+                                 now=datetime(2026, 9, 14, 23, 11, 47, 898000, tzinfo=timezone.utc))
+    check("a background task a millisecond younger than the wait is still in flight",
           flight.background_task_ids == ["b27dndn4c"], str(flight.background_task_ids))
+
+    # The first kind whose pattern matches the command gives the wait-limit; a work kind comes
+    # before waiting-task, so a command that both waits and does work keeps the work's limit.
+    for command, expected_minutes in (
+            ("python3 scripts/run-all-test-suites.py", 90),
+            ("python3 scripts/handoff-context-threshold-hook-test.py", 90),
+            # A work kind's name is found past a line break and in any case.
+            ("cd /home/nedlern/x\npython3 scripts/run-all-test-suites.py", 90),
+            ("PYTHON3 SCRIPTS/RUN-ALL-TEST-SUITES.PY", 90),
+            ("python3 scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py --quick", 105),
+            ("gh pr checks 3101 --watch --interval 30", 0),
+            ("gh run watch 12345", 0),
+            ("python3 -u scripts/watch-open-pull-requests-nbd.py --exit-after-first-poll-with-events", 0),
+            ("cd /home/nedlern/x && until grep -q done out.txt; do sleep 5; done", 0),
+            ("while kill -0 4242; do sleep 30; done", 0),
+            ("sleep 120; echo finished", 75),
+            ("sleep 120 >/dev/null 2>&1", 0),
+            ("sleep 600 && python3 nc-systems/cold-read/cold-read-grid.py", 75),
+            ("until grep -q done out.txt; do sleep 5; done; python3 scripts/run-all-test-suites.py", 90),
+            ("until [ -f /tmp/r ]; do sleep 5; done; python3 nc-systems/cold-read/cold-read-grid.py --target CLAUDE.md", 75),
+            ("while pgrep -f x >/dev/null; do sleep 20; done; python3 scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py 1 2 3", 75),
+            ("until [ -s first.out ]; do sleep 10; done && python3 nc-systems/cold-read/cold-read-fast-read.py --target a.md", 75),
+            ("until grep -q done out.txt; do sleep 5; done; cat out.txt | tail -5", 75),
+            ("until [ -f x ]; do sleep 5; done; for p in 1 2 3; do python3 scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py $p; done", 75),
+            ("while kill -0 4242; do\n  sleep 30\ndone > /dev/null 2>&1", 0),
+            ("gh pr checks 3101 --watch && gh pr merge 3101", 75),
+            ("while kill -0 4242; do sleep 30; done && echo finished; gh pr view 12", 75),
+            ("for f in scripts/*-test.py; do python3 $f; done", 90),
+            ("while read -r line; do echo \"$line\" >> out.txt; done < in.txt", 75),
+            ("python3 nc-systems/cold-read/cold-read-grid.py --target docs/x.md", 75),
+            (None, 75)):
+        seconds = hook.background_task_kind_and_wait_limit_minutes_from_command(command)[1] * 60
+        check(f"the wait-limit of {command!r} is {expected_minutes} minutes",
+              seconds == expected_minutes * 60, seconds)
+
+    # Each waiting-task shape, as recorded background launches wrote it, gets 0 alone; with work
+    # beside it, before it, after it or inside its loop, the command gets the no-match limit.
+    waiter = "/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers/loop/watch-and-merge-provisional-ghi-md-edits.sh"
+    waiting_task_shapes = (
+        "sleep 120",
+        "sleep 120 >/dev/null 2>&1",
+        "gh pr checks 3101 --watch --interval 30",
+        "gh run watch 12345",
+        f"bash {waiter}",
+        waiter,
+        f"bash {waiter} 2>&1 | tail -30",
+        "python3 -u scripts/watch-open-pull-requests-nbd.py --exit-after-first-poll-with-events",
+        "/tmp/claude-1000/x/scratchpad/wait-review-runs.sh",
+        "until grep -q done out.txt; do sleep 5; done",
+        "while kill -0 4242; do sleep 30; done",
+        "until [ -f /tmp/r ] && grep -q '^exit=' /tmp/r; do sleep 10; done",
+        "while pgrep -f x >/dev/null; do\n  sleep 20\ndone > /dev/null 2>&1",
+        "end=$(( $(date +%s) + 1200 )); while [ $(date +%s) -lt $end ]; do "
+        f"bash {waiter} 2>&1 | grep -v '^watcher exit 0' | tail -30; done",
+    )
+    work = "./work.sh"
+    for shape in waiting_task_shapes:
+        check(f"the waiting-task shape {shape!r} alone has a wait-limit of 0",
+              hook.background_task_kind_and_wait_limit_minutes_from_command(shape)[1] * 60 == 0,
+              hook.background_task_kind_and_wait_limit_minutes_from_command(shape)[1] * 60)
+        for separator in ("; ", ";", " && ", " || ", " | ", " & ", "\n"):
+            for command in (shape + separator + work, work + separator + shape):
+                seconds = hook.background_task_kind_and_wait_limit_minutes_from_command(command)[1] * 60
+                check(f"work beside a wait, {command!r}, has the no-match wait-limit",
+                      seconds == 75 * 60, seconds)
+    for command in (
+            f"while true; do {work}; sleep 60; done",
+            f"while true; do sleep 60; {work}; done",
+            f"until {work}; do sleep 5; done",
+            f"until grep -q done out.txt; do sleep 5; done; {work}",
+            f"until grep -q done out.txt && {work}; do sleep 5; done",
+            f"end=$(( $(date +%s) + 1200 )); while [ $(date +%s) -lt $end ]; do bash {waiter}; {work}; done",
+            f"end=$(( $(date +%s) + 1200 )); while [ $(date +%s) -lt $end ]; do {work}; bash {waiter}; done",
+            f"bash {waiter} 2>&1 | {work}",
+            f"{work};{waiter}",
+            f"X=$({work}); sleep 5",
+            f"cd $({work}) && sleep 5",
+            f"cd `{work}` && sleep 5",
+            f"sleep `{work}`",
+            f'sleep "$({work})"',
+            f'until grep -q "$({work})" out.txt; do sleep 5; done',
+            f"bash {waiter} $({work})",
+            f"sleep 120 > $({work})",
+            "sleep 120 >/dev/null;./work.sh",
+            "gh run watch 12345 && gh pr merge 3101",
+            "cd /home/nedlern/agents/merge-lane-2; H=/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers; "
+            "python3 scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py "
+            "3220 abc t > $H/merge-3220.log 2>&1; while true; do bash $H/loop/watch-and-merge-provisional-ghi-md-edits.sh; done",
+            "python3 scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py 3220 abc t "
+            "> x 2>&1; while true; do bash h/loop/watch-and-merge-provisional-ghi-md-edits.sh; done"):
+        seconds = hook.background_task_kind_and_wait_limit_minutes_from_command(command)[1] * 60
+        check(f"work inside or around a wait, {command!r}, has the no-match wait-limit",
+              seconds == 75 * 60, seconds)
+    # A variable name the pattern could split many ways made a failed match take minutes.
+    # Five repetitions take about 9 s when that returns, so this case fails by name, not by timeout.
+    many_variables = "export A=$CLAUDE_PROJECT_DIR/a; " * 5 + work
+    started = time.monotonic()
+    seconds = hook.background_task_kind_and_wait_limit_minutes_from_command(many_variables)[1] * 60
+    check("a command of many variables that matches no kind is read within a second",
+          seconds == 75 * 60 and time.monotonic() - started < 1, time.monotonic() - started)
+
+    # With no wait given, the transcript scan gives each task its kind's wait-limit from the
+    # command of the Bash call whose tool_use id the launch record answers.
+    def background_bash_call_record(task_id, command, launched_at):
+        return {"type": "assistant", "timestamp": launched_at,
+                "message": {"role": "assistant", "content": [{
+                    "type": "tool_use", "id": f"toolu_{task_id}", "name": "Bash",
+                    "input": {"command": command, "description": "x",
+                              "run_in_background": True}}]}}
+
+    eighty_minutes_after_launch = datetime(2026, 9, 15, 0, 1, 47, 899000, tzinfo=timezone.utc)
+    for command, in_flight in (("python3 scripts/run-all-test-suites.py", True),
+                               ("python3 nc-systems/cold-read/cold-read-grid.py", False),
+                               (None, False)):
+        records = [usage_record(100_000, cache_read=450_000)]
+        if command is not None:
+            records.append(background_bash_call_record("b27dndn4c", command, GRID_LAUNCHED_AT))
+        records.append(background_task_launch_record("b27dndn4c"))
+        by_kind = transcript_of(workspace, f"grid-by-kind-{in_flight}-{command is None}.jsonl", records)
+        flight = hook.work_in_flight(str(by_kind), now=eighty_minutes_after_launch)
+        check(f"an 80-minute-old task launched by {command!r} is "
+              f"{'in flight' if in_flight else 'not in flight'} by its kind's wait-limit",
+              flight.background_task_ids == (["b27dndn4c"] if in_flight else []),
+              str(flight.background_task_ids))
+    waiting = transcript_of(workspace, "grid-by-kind-waiting-task.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        background_bash_call_record("b27dndn4c", "gh pr checks 3101 --watch", GRID_LAUNCHED_AT),
+        background_task_launch_record("b27dndn4c")])
+    flight = hook.work_in_flight(str(waiting), now=grid_at_13_minutes)
+    check("a 13-minute-old waiting-task is not in flight by the transcript scan",
+          flight.background_task_ids == [], str(flight.background_task_ids))
+    torn_call = transcript_of(workspace, "grid-by-kind-torn-call.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        background_task_launch_record("b27dndn4c")])
+    torn_text = torn_call.read_text(encoding="utf-8")
+    torn_call.write_text(torn_text.replace(
+        "\n", '\n{"message": {"content": [{"type": "tool_use", "id": "toolu_b27dndn4c", '
+               '"input": {"command": "gh pr checks 1 --watch", "run_in_background": true\n', 1),
+        encoding="utf-8")
+    flight = hook.work_in_flight(str(torn_call), now=grid_at_13_minutes)
+    check("a Bash call line that does not parse leaves its task the no-match wait-limit",
+          flight.background_task_ids == ["b27dndn4c"], str(flight.background_task_ids))
+
+    # Only a tool_use block whose run_in_background is the boolean true is a background Bash call,
+    # wherever it stands among the line's blocks. The other block types sort before and after
+    # "tool_use", so an ordering comparison in place of != would let one of them through.
+    background_call = {"type": "tool_use", "id": "toolu_late",
+                       "input": {"command": "sleep 1", "run_in_background": True}}
+    for content, expected in (
+            ([{"type": "text", "text": "Launching."}, background_call], {"toolu_late": "sleep 1"}),
+            ([{"type": "server_tool_use", "id": "toolu_server",
+               "input": {"command": "sleep 1", "run_in_background": True}}], {}),
+            ([{"type": "web_search_tool_result", "id": "toolu_result",
+               "input": {"command": "sleep 1", "run_in_background": True}}], {}),
+            ([{"type": "tool_use", "id": "toolu_one",
+               "input": {"command": "sleep 1", "run_in_background": 1}}], {})):
+        line = json.dumps({"type": "assistant", "message": {"role": "assistant", "content": content}})
+        commands = hook.background_bash_commands_by_tool_use_id_from_line(line)
+        check(f"the background Bash calls in content {content!r} are {expected!r}",
+              commands == expected, str(commands))
+
+    # The tool_use id is the first tool_result block's, past blocks of types that sort before
+    # and after "tool_result".
+    for content, expected in (
+            ([{"type": "text", "text": "x"}, {"type": "tool_result", "tool_use_id": "toolu_answered"}],
+             "toolu_answered"),
+            ([{"type": "tool_use", "id": "toolu_call"}, {"type": "tool_result", "tool_use_id": "toolu_answered"}],
+             "toolu_answered"),
+            ([{"type": "text", "text": "x"}], None)):
+        answered = hook.tool_result_tool_use_id({"type": "user", "message": {"role": "user", "content": content}})
+        check(f"the tool_result in content {content!r} answers {expected!r}",
+              answered == expected, str(answered))
+
+    # A limit of 0 or below means the task is never waited for; any positive limit, however
+    # short, waits for a task whose age cannot be read and for one younger than the limit.
+    for age_seconds, wait_limit_seconds, expected in (
+            (None, -60, False), (None, 0, False), (None, 1, True), (0, 1, True), (0.5, 0.75, True),
+            (1, 1, False)):
+        within = hook.background_task_still_within_wait(age_seconds, wait_limit_seconds)
+        check(f"a task aged {age_seconds!r} s under a {wait_limit_seconds!r} s wait-limit is "
+              f"{'within' if expected else 'past'} its wait", within is expected, str(within))
 
     # A launch whose age cannot be read fails closed, like everything else the
     # scan cannot tell: it counts, and the ceiling bounds it.
@@ -805,6 +1123,35 @@ with tempfile.TemporaryDirectory() as workspace:
     check("the subagent-only view still excludes background tasks",
           hook.spawned_subagent_ids_in_flight(str(both_kinds)) == ["a2573a7737ae643dc"],
           str(hook.spawned_subagent_ids_in_flight(str(both_kinds))))
+
+    workflow_launched = transcript_of(workspace, "workflow-tool-run-launched.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        workflow_tool_launch_record("wn6fctb8y"),
+    ])
+    flight = hook.work_in_flight(str(workflow_launched), thirty_minutes, now=grid_at_13_minutes)
+    check("a Workflow-tool run with no notification since its launch is in flight, dated by its "
+          "launch record, and is neither a subagent nor a background task",
+          flight.workflow_ids == ["wn6fctb8y"] and flight.subagent_ids == []
+          and flight.background_task_ids == []
+          and flight.launched_at_by_id["wn6fctb8y"] == datetime.fromisoformat("2026-11-08T18:11:26.279+00:00"),
+          f"workflows={flight.workflow_ids} subagents={flight.subagent_ids} "
+          f"background={flight.background_task_ids} launched={flight.launched_at_by_id}")
+    workflow_completed = transcript_of(workspace, "workflow-tool-run-completed.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        workflow_tool_launch_record("wn6fctb8y"),
+        *notification_records(WORKFLOW_TOOL_RUN_COMPLETED_NOTIFICATION),
+    ])
+    flight = hook.work_in_flight(str(workflow_completed), thirty_minutes, now=grid_at_13_minutes)
+    check("a Workflow-tool run whose completion notification came is not in flight",
+          flight.workflow_ids == [], str(flight.workflow_ids))
+    workflow_stopped = transcript_of(workspace, "workflow-tool-run-stopped.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        workflow_tool_launch_record("wn6fctb8y"),
+        task_stop_record("wn6fctb8y", "local_workflow"),
+    ])
+    flight = hook.work_in_flight(str(workflow_stopped), thirty_minutes, now=grid_at_13_minutes)
+    check("a Workflow-tool run a TaskStop stopped is not in flight",
+          flight.workflow_ids == [], str(flight.workflow_ids))
 
     truncated_launch = Path(workspace) / "truncated-background-launch.jsonl"
     launch_text = json.dumps(background_task_launch_record("b27dndn4c"))
@@ -866,6 +1213,47 @@ with tempfile.TemporaryDirectory() as workspace:
     flight = hook.work_in_flight(str(subagent_stopped), float("inf"), now=grid_at_13_minutes)
     check("a subagent TaskStop stopped after an interim report is not in flight, though its own "
           "background command never notified",
+          flight.subagent_ids == [], str(flight.subagent_ids))
+
+    # An interim notification queued before the TaskStop can be delivered after it; the stop holds.
+    interim_copy_after_stop = transcript_of(workspace, "subagent-stopped-interim-copy-after.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record("a01d1eb8fe1e4066a"),
+        task_stop_record("a01d1eb8fe1e4066a", "local_agent"),
+        *notification_records(
+            "<task-notification>\n<task-id>a01d1eb8fe1e4066a</task-id>\n<status>completed"
+            "</status>\n<note>This agent stopped with background work of its own still running; "
+            "the result below may be interim.</note>\n<result>12 of 15 deleted.</result>\n"
+            "</task-notification>"),
+    ])
+    copy_subagent_own = hook.subagent_transcript_path(interim_copy_after_stop, "a01d1eb8fe1e4066a")
+    copy_subagent_own.parent.mkdir(parents=True, exist_ok=True)
+    transcript_of(copy_subagent_own.parent, copy_subagent_own.name,
+                  [background_task_launch_record("bdrdn0t9k")])
+    flight = hook.work_in_flight(str(interim_copy_after_stop), float("inf"), now=grid_at_13_minutes)
+    check("an interim notification delivered after a TaskStop does not put the stopped subagent "
+          "back in flight",
+          flight.subagent_ids == [], str(flight.subagent_ids))
+    resumed_after_stop_then_interim = transcript_of(
+        workspace, "subagent-stopped-resumed-then-interim.jsonl", [
+            usage_record(100_000, cache_read=450_000),
+            subagent_spawn_record("a01d1eb8fe1e4066a"),
+            task_stop_record("a01d1eb8fe1e4066a", "local_agent"),
+            subagent_resume_record("a01d1eb8fe1e4066a"),
+            *notification_records(
+                "<task-notification>\n<task-id>a01d1eb8fe1e4066a</task-id>\n<status>completed"
+                "</status>\n<note>This agent stopped with background work of its own still "
+                "running; the result below may be interim.</note>\n<result>Waiting.</result>\n"
+                "</task-notification>"),
+        ])
+    resumed_own = hook.subagent_transcript_path(resumed_after_stop_then_interim, "a01d1eb8fe1e4066a")
+    resumed_own.parent.mkdir(parents=True, exist_ok=True)
+    # The subagent's own transcript shows no running work, so only an applied interim notice
+    # takes it out of flight; a stop the resume failed to clear would skip the notice.
+    transcript_of(resumed_own.parent, resumed_own.name, [])
+    flight = hook.work_in_flight(str(resumed_after_stop_then_interim), float("inf"),
+                                 now=grid_at_13_minutes)
+    check("an interim notification after a resume that followed a TaskStop is applied",
           flight.subagent_ids == [], str(flight.subagent_ids))
 
     # A cut-off stop record, unlike a cut-off launch, is skipped: missing it only leaves the task
@@ -1028,12 +1416,30 @@ with tempfile.TemporaryDirectory() as workspace:
               result.returncode == 2 and len(message_lines) == 2
               and HANDOFF_INSTRUCTION_PATTERN.fullmatch(message_lines[0]) is not None
               and message_lines[1] == (
-                  "The model id claude-something-unreleased is not in "
-                  "CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX, the threshold-hook's context-window "
-                  "table in scripts/handoff-context-threshold-hook.py, so the 35% of its context "
-                  "window this session has used assumes a 200K window; tell the user, so the "
-                  "table can be updated."),
+                  "No prefix in CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX, the threshold-hook's "
+                  "context-window table in scripts/handoff-context-threshold-hook.py, matches the "
+                  "model id claude-something-unreleased, so the 35% of its context window this "
+                  "session has used assumes a 200K-token window. Tell the user, so the table can "
+                  "be updated, then run /handoff without waiting for his answer."),
               f"code {result.returncode}, stderr {result.stderr!r}")
+
+        # At the 200,000 default, // 999 also gives 200, so only a larger default tells a
+        # wrong divisor from the right one.
+        unlisted_model_at_a_million = transcript_with_usage(
+            workspace, "unlisted-model-at-a-million.jsonl", 350_000, model="claude-something-unreleased")
+        marker_file.unlink(missing_ok=True)
+        real_default_window = hook.DEFAULT_CONTEXT_WINDOW_TOKENS
+        hook.DEFAULT_CONTEXT_WINDOW_TOKENS = 1_000_000
+        try:
+            code, stderr = run_hook_in_process(
+                {"session_id": PROBE_SESSION_ID, "transcript_path": str(unlisted_model_at_a_million)})
+        finally:
+            hook.DEFAULT_CONTEXT_WINDOW_TOKENS = real_default_window
+        check("for a model id not in the table, the default window it names is the default in "
+              "thousands, whatever the default is",
+              code == 2 and "so the 35% of its context window this session has used assumes a "
+                            "1000K-token window." in stderr,
+              f"code {code}, stderr {stderr!r}")
 
         marker_file.unlink(missing_ok=True)
         result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(loud)},
@@ -1054,6 +1460,46 @@ with tempfile.TemporaryDirectory() as workspace:
         check("by default the hook fires at 35% of the window",
               result.returncode == 2 and is_handoff_instruction(result.stderr),
               f"code {result.returncode}, stderr {result.stderr[:120]}")
+
+        # --- The context used plus the tokens compactions dropped ------------
+        # A compaction cuts a long session back to a few tens of thousands of tokens, so the
+        # context used alone could stay under the threshold for ever.
+        compacted_under = transcript_of(workspace, "compacted-under.jsonl", [
+            compaction_record(120_000), usage_record(200_000)])  # 20% + 12% = 32%
+        compacted_at = transcript_of(workspace, "compacted-at.jsonl", [
+            compaction_record(130_000), usage_record(200_000)])  # 20% + 13% = 33%
+        marker_file.unlink(missing_ok=True)
+        result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(compacted_under)})
+        check("a compacted session stays silent at 32% counting the dropped tokens",
+              result.returncode == 0 and not result.stderr.strip() and not marker_file.exists(),
+              f"code {result.returncode}, stderr {result.stderr[:160]}")
+        result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(compacted_at)})
+        check("a compacted session at 20% fires at 33% counting the dropped tokens",
+              result.returncode == 2 and is_compacted_handoff_instruction(result.stderr)
+              and marker_file.exists(),
+              f"code {result.returncode}, stderr {result.stderr[:200]}")
+        check("the compacted handoff gives both shares",
+              ("used 20% (33% counting the tokens its compactions dropped, the figure compared "
+               "with the threshold and the ceiling)") in result.stderr,
+              result.stderr[:200])
+        compacted_fractional = transcript_of(workspace, "compacted-fractional.jsonl", [
+            compaction_record(137_000), usage_record(200_000)])  # 20% + 13.7% = 33.7%
+        marker_file.unlink(missing_ok=True)
+        result = run_hook({"session_id": PROBE_SESSION_ID,
+                           "transcript_path": str(compacted_fractional)})
+        check("the compacted handoff rounds the count with the dropped tokens, not truncates it",
+              "used 20% (34% counting the tokens its compactions dropped" in result.stderr,
+              result.stderr[:200])
+        # 90.6% is the context used alone: it truncates to 90, a 1% larger factor gives 91.5 and
+        # a 1% smaller one 89.7, so the share must be computed exactly to read 91%.
+        compacted_used_fractional = transcript_of(workspace, "compacted-used-fractional.jsonl", [
+            compaction_record(10_000), usage_record(906_000)])  # 90.6% + 1% = 91.6%
+        marker_file.unlink(missing_ok=True)
+        result = run_hook({"session_id": PROBE_SESSION_ID,
+                           "transcript_path": str(compacted_used_fractional)})
+        check("the compacted handoff rounds the context used alone, not truncates it",
+              "used 91% (92% counting the tokens its compactions dropped" in result.stderr,
+              result.stderr[:200])
 
         # --- A session its caller reincarnates is left alone ---------------
         # 2026-09-16: ghi-guide-agent, run by scripts/ghi-guide-agent-ask.py as `claude -p`
@@ -1098,6 +1544,42 @@ with tempfile.TemporaryDirectory() as workspace:
         subagent_listed = [list_entry("a2573a7737ae643dc", "subagent")]
         subagent_and_monitor_listed = [*subagent_listed, list_entry("b45e25tz2", "shell")]
 
+        # The ceiling measures the same count as the threshold: 20% used plus 50% dropped is 70%.
+        DROPPED_CEILING_PROBE_SESSION_ID = "handoff-threshold-hook-test-dropped-ceiling-session"
+        dropped_ceiling_markers = (
+            hook.handoff_asked_marker_path(DROPPED_CEILING_PROBE_SESSION_ID),
+            hook.HANDOFF_DIRECTORY / f"{DROPPED_CEILING_PROBE_SESSION_ID}-handoff-deferred")
+        compacted_below_ceiling = transcript_of(workspace, "compacted-below-ceiling.jsonl", [
+            compaction_record(400_000), usage_record(200_000),  # 20% + 40% = 60%
+            subagent_spawn_record("a2573a7737ae643dc", "Build the cold-read tool")])
+        compacted_past_ceiling = transcript_of(workspace, "compacted-past-ceiling.jsonl", [
+            compaction_record(500_000), usage_record(200_000),  # 20% + 50% = 70%
+            subagent_spawn_record("a2573a7737ae643dc", "Build the cold-read tool")])
+        try:
+            result = run_hook({"session_id": DROPPED_CEILING_PROBE_SESSION_ID,
+                               "transcript_path": str(compacted_below_ceiling),
+                               "background_tasks": subagent_listed})
+            check("a compacted session below the ceiling counting the dropped tokens defers, "
+                  "giving both shares",
+                  result.returncode == 2 and "handoff deferred" in result.stderr
+                  and ("Context at 20% (60% counting the tokens its compactions dropped, the figure "
+                       "compared with the threshold and the ceiling)")
+                  in result.stderr and not dropped_ceiling_markers[0].exists(),
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+            for marker in dropped_ceiling_markers:
+                marker.unlink(missing_ok=True)
+            result = run_hook({"session_id": DROPPED_CEILING_PROBE_SESSION_ID,
+                               "transcript_path": str(compacted_past_ceiling),
+                               "background_tasks": subagent_listed})
+            check("a compacted session at 20% used fires past the ceiling counting the dropped "
+                  "tokens, though a subagent runs",
+                  result.returncode == 2 and is_compacted_handoff_instruction(result.stderr)
+                  and dropped_ceiling_markers[0].exists(),
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+        finally:
+            for marker in dropped_ceiling_markers:
+                marker.unlink(missing_ok=True)
+
         result = run_hook({"session_id": DEFERRAL_PROBE_SESSION_ID,
                            "transcript_path": str(running),
                            "background_tasks": subagent_and_monitor_listed})
@@ -1130,8 +1612,8 @@ with tempfile.TemporaryDirectory() as workspace:
               "65% ceiling" in result.stderr, result.stderr[:500])
         # A reader could not tell whether the time limit bounds subagents too.
         check("the deferral says the time limit bounds background tasks, not subagents",
-              "a background task, though not a subagent, counted as finished 75 minutes after its launch"
-              in result.stderr, result.stderr[:600])
+              "a background task, though not a subagent, counted as finished once it is as old as"
+              " its kind's wait-limit" in result.stderr, result.stderr[:600])
         check("the deferral says work started from now on does not delay the handoff",
               "Work you start from now on does not delay that message" in result.stderr,
               result.stderr[:700])
@@ -1283,8 +1765,8 @@ with tempfile.TemporaryDirectory() as workspace:
               result.returncode == 0 and not result.stderr.strip(),
               f"code {result.returncode}, stderr {result.stderr[:200]}")
 
-        # --- A deferral that a compaction pushed below the threshold ---------
-        # Without the deferred marker, every Stop after the compaction returns at
+        # --- A deferral whose count then fell below the threshold ------------
+        # Without the deferred marker, every Stop after the fall returns at
         # the threshold check, so the promised handoff message never comes.
         COMPACTED_PROBE_SESSION_ID = "handoff-threshold-hook-test-compacted-deferral-session"
         compacted_marker_file = (
@@ -1451,8 +1933,11 @@ with tempfile.TemporaryDirectory() as workspace:
                   result.stderr[:250])
             check("the background-task deferral names the task it waits for",
                   "(background task b27dndn4c)" in result.stderr, result.stderr[:600])
-            check("the deferral names the wait as a way the handoff fires",
-                  "75 minute" in result.stderr, result.stderr[:300])
+            check("the deferral names the wait-limit table as a way the handoff fires",
+                  "wait-limit" in result.stderr
+                  and "BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND in "
+                      "scripts/handoff-context-threshold-hook.py" in result.stderr,
+                  result.stderr[:900])
             check("a background-task deferral writes the deferral marker and not the fired one",
                   background_deferred_marker_file.exists() and not background_marker_file.exists(),
                   f"deferred={background_deferred_marker_file.exists()} "
@@ -1508,9 +1993,9 @@ with tempfile.TemporaryDirectory() as workspace:
 
             result = run_hook({"session_id": BACKGROUND_PROBE_SESSION_ID,
                                "transcript_path": str(grid_young),
-                               "background_tasks": grid_young_listed},
-                              ("--background-task-wait-minutes", "5"))
-            check("the wait is configurable: a five-minute wait fires on a ten-minute-old task",
+                               "background_tasks": [list_entry(
+                                   "b27dndn4c", "shell", command="gh pr checks 3101 --watch")]})
+            check("a waiting-task's wait-limit of 0 fires on a ten-minute-old task",
                   result.returncode == 2 and is_handoff_instruction(result.stderr),
                   f"code {result.returncode}, stderr {result.stderr[:200]}")
             background_marker_file.unlink(missing_ok=True)
@@ -1550,7 +2035,6 @@ with tempfile.TemporaryDirectory() as workspace:
         clock = datetime.now(timezone.utc)
         ten_minutes_ago = utc_iso(clock - timedelta(minutes=10))
         two_hours_ago = utc_iso(clock - timedelta(hours=2))
-        wait_seconds = hook.DEFAULT_BACKGROUND_TASK_WAIT_MINUTES * 60
         # The transcript shows a subagent spawned and never finished, so a hook
         # that read the transcript instead of the list would defer.
         list_session = transcript_of(workspace, "background-tasks-list-session.jsonl", [
@@ -1569,7 +2053,7 @@ with tempfile.TemporaryDirectory() as workspace:
 
         def flight_of(entries, transcript=list_session):
             return hook.work_in_flight_from_background_tasks(
-                entries, str(transcript), wait_seconds, now=clock)
+                entries, str(transcript), now=clock)
 
         flight = flight_of([])
         check("an empty list holds nothing, whatever the transcript's notices say", not flight,
@@ -1643,18 +2127,36 @@ with tempfile.TemporaryDirectory() as workspace:
         flight = flight_of([list_entry("bunrecorded", "shell")])
         check("a shell task no transcript records counts as within its wait",
               flight.background_task_ids == ["bunrecorded"], str(flight.background_task_ids))
-        # Launch records carry milliseconds, so the clock is cut to them for an age of exactly the wait.
+        # Launch records carry milliseconds, so the clock is cut to them for an age of exactly a
+        # wait-limit, and one millisecond less.
         boundary_clock = clock.replace(microsecond=clock.microsecond // 1000 * 1000)
-        boundary_session = transcript_of(workspace, "background-tasks-list-launched-exactly-the-wait-ago.jsonl", [
-            usage_record(100_000, cache_read=450_000),
-            background_task_launch_record(
-                "bshellboundary", launched_at=utc_iso(boundary_clock - timedelta(seconds=wait_seconds))),
-        ])
+        for kind_name, command, limit_minutes in (
+                ("nc-mutation-testing",
+                 "python3 scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py", 105),
+                ("test-suite", "cd /tmp/x && python3 scripts/run-all-test-suites.py", 90),
+                ("a command no kind matches", "python3 nc-systems/cold-read/cold-read-grid.py", 75)):
+            for age, holds in ((timedelta(minutes=limit_minutes), False),
+                               (timedelta(minutes=limit_minutes) - timedelta(milliseconds=1), True)):
+                boundary_session = transcript_of(
+                    workspace, f"background-tasks-list-{limit_minutes}-{holds}.jsonl", [
+                        usage_record(100_000, cache_read=450_000),
+                        background_task_launch_record(
+                            "bshellboundary", launched_at=utc_iso(boundary_clock - age))])
+                flight = hook.work_in_flight_from_background_tasks(
+                    [list_entry("bshellboundary", "shell", command=command)], str(boundary_session),
+                    now=boundary_clock)
+                check(f"a {kind_name} shell task {age} old "
+                      f"{'holds' if holds else 'no longer holds'} the handoff",
+                      flight.background_task_ids == (["bshellboundary"] if holds else []),
+                      str(flight.background_task_ids))
+        flight = flight_of([list_entry("bunrecorded", "shell", command="gh pr checks 3101 --watch")])
+        check("an undated waiting-task holds nothing: its wait-limit of 0 beats the unknown age",
+              not flight, str(flight.background_task_ids))
         flight = hook.work_in_flight_from_background_tasks(
-            [list_entry("bshellboundary", "shell")], str(boundary_session), wait_seconds,
-            now=boundary_clock)
-        check("a shell task launched exactly the wait ago still holds the handoff",
-              flight.background_task_ids == ["bshellboundary"], str(flight.background_task_ids))
+            [list_entry("bunrecorded", "shell", command="gh pr checks 3101 --watch")],
+            str(list_session), 10 * 60, now=clock)
+        check("a wait given in seconds applies to every kind, a waiting-task's included",
+              flight.background_task_ids == ["bunrecorded"], str(flight.background_task_ids))
         # A line naming a listed shell task that is not its launch record must not end the reading
         # of the transcript, or a later launch record goes unread and its task counts as undated.
         three_hours_ago = utc_iso(clock - timedelta(hours=3))
@@ -1762,8 +2264,7 @@ with tempfile.TemporaryDirectory() as workspace:
               raises_list_could_not_read([list_entry("bshellyoung", "shell")], torn))
         try:
             hook.work_in_flight_from_background_tasks(
-                [list_entry("bshellyoung", "shell")], str(torn),
-                hook.DEFAULT_BACKGROUND_TASK_WAIT_MINUTES * 60)
+                [list_entry("bshellyoung", "shell")], str(torn))
             torn_message = ""
         except hook.TranscriptCouldNotBeFullyRead as problem:
             torn_message = str(problem)
@@ -1776,8 +2277,7 @@ with tempfile.TemporaryDirectory() as workspace:
             handle.write(long_line + "\n")
         try:
             hook.work_in_flight_from_background_tasks(
-                [list_entry("bshellyoung", "shell")], str(long_torn),
-                hook.DEFAULT_BACKGROUND_TASK_WAIT_MINUTES * 60)
+                [list_entry("bshellyoung", "shell")], str(long_torn))
             long_message = ""
         except hook.TranscriptCouldNotBeFullyRead as problem:
             long_message = str(problem)
@@ -2198,8 +2698,7 @@ with tempfile.TemporaryDirectory() as wait_set_workspace:
             with contextlib.redirect_stderr(io.StringIO()):
                 hook.defer("owner-off-list", 40.0, "40%",
                            hook.WorkInFlight([], ["T"], launching_subagent_id_by_task_id={"T": "A"}),
-                           argparse.Namespace(background_task_wait_minutes=30.0,
-                                              ceiling_used_percentage=65.0),
+                           argparse.Namespace(ceiling_used_percentage=65.0),
                            now=began)
             owner_marker = hook.handoff_deferred_marker_and_refused_commands_files_common.handoff_deferred_marker_read(
                 Path(owner_workspace), "owner-off-list")
@@ -2216,6 +2715,124 @@ with tempfile.TemporaryDirectory() as wait_set_workspace:
     check("a launch time with a zone keeps it",
           hook.record_time({"timestamp": "2026-10-28T21:12:00+01:00"}) == began,
           hook.record_time({"timestamp": "2026-10-28T21:12:00+01:00"}))
+
+# The shared reader of a transcript line's task events, which work_in_flight and the writer's
+# roster both call.
+read_line = hook.task_events_from_claude_code_transcript_line
+spawn_line = json.dumps(subagent_spawn_record("a2573a7737ae643dc", description="the builder"))
+check("the reader returns a spawn with its subagent's id and description",
+      [(event.kind, event.task_id, event.description)
+       for event in read_line(spawn_line, "here", should_raise_on_unparseable_spawn_or_resume_line=True)]
+      == [(hook.SUBAGENT_SPAWNED_BY_AGENT_TOOL_TASK_EVENT, "a2573a7737ae643dc", "the builder")],
+      read_line(spawn_line, "here", should_raise_on_unparseable_spawn_or_resume_line=True))
+two_ids_notification = (
+    "<task-notification>\n<task-id>a3fe2b9aecae01f3b</task-id>\n<task-id>a677554663305e800</task-id>\n"
+    "<status>stopped</status>\n<summary>No completion record was found</summary>\n"
+    "</task-notification>")
+notification_events = read_line(
+    json.dumps(notification_records(two_ids_notification)[1]), "here",
+    should_raise_on_unparseable_spawn_or_resume_line=True)
+check("the reader returns one notification event for each task-id, with the status",
+      [(event.kind, event.task_id, event.status, event.is_interim) for event in notification_events]
+      == [(hook.TASK_NOTIFICATION_TASK_EVENT, "a3fe2b9aecae01f3b", "stopped", False),
+          (hook.TASK_NOTIFICATION_TASK_EVENT, "a677554663305e800", "stopped", False)],
+      notification_events)
+interim_events = read_line(json.dumps(notification_records(INCIDENT_INTERIM_NOTIFICATION)[1]),
+                           "here", should_raise_on_unparseable_spawn_or_resume_line=True)
+check("the reader marks an interim notification",
+      [(event.task_id, event.is_interim) for event in interim_events]
+      == [(INCIDENT_SUBAGENT_ID, True)], interim_events)
+# The line holds the notification JSON-escaped; whitespace opening the <result> must still read
+# as whitespace.
+result_opening_with_whitespace_events = read_line(
+    json.dumps(notification_records(NOT_YET_REPORTED_INTERIM_NOTIFICATION.replace(
+        "<result>", "<result>\n\t"))[1]),
+    "here", should_raise_on_unparseable_spawn_or_resume_line=True)
+check("the reader marks interim a notification whose <result> opens with whitespace, then says the "
+      "report has not come",
+      [(event.task_id, event.is_interim) for event in result_opening_with_whitespace_events]
+      == [(INCIDENT_SUBAGENT_ID, True)], result_opening_with_whitespace_events)
+monitor_event_notification = (
+    "<task-notification>\n<task-id>bzshcbek2</task-id>\n"
+    '<summary>Monitor event: "report files appearing"</summary>\n<event>update</event>\n'
+    "</task-notification>")
+monitor_events = read_line(json.dumps(notification_records(monitor_event_notification)[1]), "here",
+                           should_raise_on_unparseable_spawn_or_resume_line=True)
+check("the reader gives a notification with no <status>, a Monitor event's, no status",
+      [(event.task_id, event.status) for event in monitor_events] == [("bzshcbek2", None)],
+      monitor_events)
+check("the reader returns a resume and a TaskStop",
+      [(event.kind, event.task_id) for line in (
+          json.dumps(subagent_resume_record()), json.dumps(task_stop_record("b5x7", "local_bash")))
+       for event in read_line(line, "here", should_raise_on_unparseable_spawn_or_resume_line=True)]
+      == [(hook.SUBAGENT_RESUMED_BY_SEND_MESSAGE_TASK_EVENT, RESUMED_SUBAGENT_ID),
+          (hook.STOPPED_BY_TASK_STOP_EVENT, "b5x7")])
+cut_resume_line = json.dumps(subagent_resume_record())[:-30]
+for cut_line, marker in ((half_written_spawn_line(), "spawn"), (cut_resume_line, "resume")):
+    try:
+        read_line(cut_line, "transcript.jsonl, line 7",
+                  should_raise_on_unparseable_spawn_or_resume_line=True)
+        refusal = None
+    except hook.TranscriptCouldNotBeFullyRead as problem:
+        refusal = str(problem)
+    check(f"asked to raise, the reader refuses a {marker} line that does not parse, naming the line",
+          refusal is not None and refusal.startswith("transcript.jsonl, line 7: "), refusal)
+    check(f"asked to skip, the reader returns no events for a {marker} line that does not parse",
+          read_line(cut_line, "here", should_raise_on_unparseable_spawn_or_resume_line=False) == [])
+cut_stop_line = json.dumps(task_stop_record("b5x7", "local_bash"))[:-20]
+cut_notification_line = json.dumps(notification_records(FINAL_NOTIFICATION_AFTER_INTERIM)[1])[:-20]
+check("asked to raise, the reader still skips a TaskStop or notification line that does not parse",
+      read_line(cut_stop_line, "here", should_raise_on_unparseable_spawn_or_resume_line=True) == []
+      and read_line(cut_notification_line, "here",
+                    should_raise_on_unparseable_spawn_or_resume_line=True) == [])
+check("the reader returns no events for a marker line that parses to something other than an object",
+      read_line('["async_launched", "resumedAgentId"]', "here",
+                should_raise_on_unparseable_spawn_or_resume_line=True) == [])
+try:
+    read_line(spawn_line, "here")
+    caller_must_choose = False
+except TypeError:
+    caller_must_choose = True
+check("a caller of the reader must choose whether a line that does not parse raises",
+      caller_must_choose)
+
+# --help prints each flag's default, so an agent reads it there and not from the source.
+help_result = subprocess.run([sys.executable, str(HOOK_SCRIPT), "--help"],
+                             capture_output=True, text=True, check=False)
+check("--help exits 0", help_result.returncode == 0, help_result.stderr)
+# argparse wraps help text, so a default can be split across lines.
+help_text = " ".join(help_result.stdout.split())
+help_flags = [flag for flag in re.findall(r"^\s+(--[a-z][a-z-]*)", help_result.stdout, re.MULTILINE)
+              if flag != "--help"]
+check("--help lists the hook's two flags",
+      help_flags == ["--threshold-used-percentage", "--ceiling-used-percentage"], help_flags)
+for flag, default in (("--threshold-used-percentage", 33.0),
+                      ("--ceiling-used-percentage", 65.0)):
+    flag_entry = re.search(re.escape(flag) + r" [A-Z_]+ (.*?)(?= --[a-z]|$)", help_text)
+    check(f"--help shows {flag}'s default, {default}",
+          flag_entry is not None and flag_entry.group(1).endswith(f"(default: {default})"),
+          flag_entry.group(1) if flag_entry else help_text)
+
+
+def runtime_union_annotations(path):
+    """Each `X | Y` annotation Python evaluates at import, which Python 3.9 cannot."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    if any(isinstance(node, ast.ImportFrom) and node.module == "__future__"
+           and any(alias.name == "annotations" for alias in node.names) for node in tree.body):
+        return []
+    annotations = [node.annotation for node in ast.walk(tree) if isinstance(node, (ast.AnnAssign, ast.arg))]
+    annotations += [node.returns for node in ast.walk(tree)
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    return [f"{path.name}:{annotation.lineno}" for annotation in annotations if annotation is not None
+            and any(isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr) for node in ast.walk(annotation))]
+
+
+# The Mac's python3 is Apple's 3.9, which runs this hook and the handoff writer that imports it.
+for importing_script in (HOOK_SCRIPT,
+                         HOOK_SCRIPT.parent.parent / "nc-systems" / "handoff" / "handoff-write-and-check-supervisor.py"):
+    union_annotations = runtime_union_annotations(importing_script)
+    check(f"{importing_script.name} imports under Python 3.9: no `X | None` annotation evaluated at import",
+          not union_annotations, union_annotations)
 
 print()
 if failures:

@@ -467,7 +467,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "This branch is pushed, so its review may be running: do not rebase or amend "
           "it. A fix for this topic is a new commit on top. To learn whether the branch "
           "conflicts with main, run python3 scripts/branch-conflict-check.py in this "
-          "checkout, and if it reports a conflict, do what its report says. Your next "
+          "checkout. If it prints `VERDICT: CONFLICT`, do what its report says. If it exits "
+          "2, it has no answer: do what its lines say, then run it again. Your next "
           "topic starts with "
           "`git checkout -b <name> origin/main`."
           in pushed_warning, pushed_warning)

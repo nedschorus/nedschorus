@@ -83,7 +83,7 @@ if mode == "fail":
     print("SUMMARY: 1 passed, 1 failed, 2 total")
     sys.exit(1)
 if mode == "refuse":
-    print("run-all-test-suites: not run — a refusal for the test", file=sys.stderr)
+    print("scripts/run-all-test-suites.py: not run — a refusal for the test", file=sys.stderr)
     sys.exit(2)
 print("SUMMARY: 2 passed, 0 failed, 2 total")
 '''

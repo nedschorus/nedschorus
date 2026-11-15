@@ -233,7 +233,7 @@ def markdown_parser():
                        MARKDOWN_PARSER_MODULE_FILE).markdown_parser()
 
 
-def approval_walk_item_recommendation_text(lines):
+def approval_walk_item_last_recommendation_text_from_item_lines(lines):
     """The last recommendation in an item's prose_lines, the text after `Recommendation:` as written, without
     emphasis or one trailing period; or None when there is none, or the last one has no text after it."""
     found = [match[1].strip(" *_") for match in RECOMMENDATION.finditer("\n".join(lines))]
@@ -254,9 +254,12 @@ def prose_lines(text, parser, tokens=None):
 
     Every search of a walk file for its structure, such as a marker, a `#new` line, a recommendation, an
     answer line or an outcome tag, runs over these lines, so that an example in code, or a note in a
-    comment the reader never sees, is never read as structure. Text that shows stays: other HTML blocks, and
-    text after a comment's `-->`, as in `<!-- note --> Recommendation: x`. In a paragraph that holds a comment,
-    a code span with comment text in it, such as `<!-- x -->` in backquotes, is cut too."""
+    comment the reader never sees, is never read as structure. A comment is cut from every HTML block, also
+    one that opens with another tag, as in `<div><!-- Recommendation: x --></div>`. Text that shows stays: the
+    rest of an HTML block, and text after a comment's `-->`, as in `<!-- note --> Recommendation: x`. In a
+    paragraph that holds a comment, a code span with comment text in it, such as `<!-- x -->` in backquotes, is
+    cut too. A comment in an HTML block that a blank line ends is cut only to the block's end, so its lines after
+    the blank line stay."""
     lines = text.split("\n")
     for token in parser.parse(text) if tokens is None else tokens:
         if token.map is None:
@@ -264,7 +267,7 @@ def prose_lines(text, parser, tokens=None):
         first, end = token.map
         if token.type in ("fence", "code_block"):
             lines[first:end] = [""] * (end - first)
-        elif (token.type == "html_block" and token.content.lstrip().startswith("<!--")
+        elif (token.type == "html_block"
               or token.type == "inline" and any(child.type == "html_inline" and child.content.startswith("<!--")
                                                 for child in token.children or [])):
             lines[first:end] = without_html_comments(lines[first:end])
@@ -601,6 +604,18 @@ def approval_walk_item_line_range_within_heading_shared_by_several_items(opening
         return first, min(withdrawn + [end])
     later = [line for line in withdrawn + list(starts.values()) if line > starts[number]]
     return starts[number], min(later + [end])
+
+
+def approval_walk_item_sub_step_units_right_after(all_units, unit):
+    """Return the units of all_units, as item_unit_spans gives them, right after unit that are sub-steps of any
+    item unit names, such as `### Item 3.1 of 9` and `### Item 3.1.1 of 9` after item 3, up to the first that is
+    not, so an older version's `3.1 of 9` elsewhere in the walk-document is not among them."""
+    found = []
+    for each in [each for each in all_units if each[3] > unit[3]]:
+        if not each[0] or not all(any(part.startswith(number + ".") for number in unit[0]) for part in each[0]):
+            break
+        found.append(each)
+    return found
 
 
 def approval_walk_unit_is_unnumbered_item(unit):

@@ -233,8 +233,10 @@ def run_cases(root):
           line_of(output, "detached").endswith(
               "0 commit(s) origin/main lacks; on a detached HEAD, so no branch to merge"), output)
     check("the list is followed by how to keep a worktree for the user",
-          "To keep one, do nothing: scripts/clean-worktrees.py never removes a listed worktree "
-          "while it has no owner file.\n" in output, output)
+          "To keep one, lock it with `git worktree lock --reason <why> <worktree>`: "
+          "scripts/clean-worktrees.py removes a worktree with no owner file once nothing in "
+          "it has changed for 2 days and it holds no uncommitted or untracked file.\n" in output,
+          output)
     check("the list ends with the two commands that delete one worktree for the user",
           "  scripts/worktree-owner-file-read-and-write.py write --agent-seat <agent-seat> "
           "--worktree <worktree>\n"
@@ -341,6 +343,12 @@ def run_cases(root):
     check("a --repo that is not a git repository is refused with exit 2",
           not_a_repository.returncode == 2 and "is not a git repository" in not_a_repository.stderr,
           not_a_repository.stderr)
+    repo_without_path = subprocess.run(
+        [sys.executable, str(PROGRAM), "--repo"],
+        env=environment, capture_output=True, text=True, check=False)
+    check("a --repo given last, with no path after it, is refused with exit 2 and the usage",
+          repo_without_path.returncode == 2 and "Usage:" in repo_without_path.stderr,
+          repo_without_path.stderr)
 
 
 if __name__ == "__main__":

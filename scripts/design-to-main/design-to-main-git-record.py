@@ -44,8 +44,11 @@ def parse_state_exit_trailer(message):
     return trailer
 
 
+AGENT_HOME_MARKER_FILE_NAME = "agent-home-marker"
+
+
 class TopicBranchCutRefused(Exception):
-    """Git refused the branch name or the required start point is absent."""
+    """Git refused the branch name, the required start point is absent, or the checkout is an agent-home."""
 
 
 class RefusedBeforeTopicBranchCut(Exception):
@@ -91,6 +94,31 @@ class TopicBranchGitRecord:
         commits = self.commits_on_branch(since=commit)
         return commits[-1] if commits else None
 
+
+    def require_checkout_is_not_an_agent_home(self):
+        """Raise TopicBranchCutRefused in an agent-home, GitCommandFailed when git fails."""
+        # The marker is the one scripts/git-client-side-hooks/pre-commit reads: without this check the cut
+        # would put the agent-home on the topic branch, and the hook would then refuse every state-exit commit.
+        git_directory = pathlib.Path(git_output.run_git(
+            self.repository_dir, ["rev-parse", "--absolute-git-dir"]).decode().strip())
+        if (git_directory / AGENT_HOME_MARKER_FILE_NAME).exists():
+            raise TopicBranchCutRefused(
+                "refused to cut the topic branch %r in %s, because that checkout is an agent-home: "
+                "an agent-home holds no topic work and rests on a detached HEAD at origin/main; "
+                "the run does not start and the checkout is as it was.\n"
+                "Make a worktree for the run, detached at origin/main, by running this shell command:\n"
+                "cd %s && python3 scripts/agent-seat-worktree-create-with-owner-file.py --detach %s origin/main\n"
+                "Then, in Python code of your own, whether the program that called start(%r) and received this "
+                "error or a new one, build the run again over that worktree: a new TopicBranchGitRecord "
+                "(scripts/design-to-main/design-to-main-git-record.py) with the path the command prints as its "
+                "repository_dir, and the component, component_directory, design_path and topic_branch_start_point "
+                "of the refused record; and a new DesignToMainStateMachineFlow "
+                "(scripts/design-to-main/design-to-main-state-machine.py) over the new record, with the launcher "
+                "the refused flow was given. Then call start(%r) on the new flow, which checks the worktree and "
+                "returns the run's state record, and pass that record to the new flow's run_until_ended(), "
+                "whose first step cuts the topic branch in that worktree." % (
+                    self.component, self.repository_dir, self.repository_dir, self.component, self.component,
+                    self.component))
 
     def require_topic_branch_start_point(self):
         """Raise TopicBranchCutRefused when the start point is absent, GitCommandFailed when git fails."""
@@ -200,7 +228,7 @@ class TopicBranchGitRecord:
             self.repository_dir, ["ls-tree", "-z", "HEAD", "--", str(path)])))
 
     def run_state_text_at_last_commit(self):
-        """Return the run-state.json text at HEAD, or None when absent; raise GitCommandFailed when git fails."""
+        """Return the design-to-main-run-state.json text at HEAD, or None when absent; raise GitCommandFailed when git fails."""
         if not self.path_is_at_head(self.run_state_path):
             return None
         return git_output.run_git(

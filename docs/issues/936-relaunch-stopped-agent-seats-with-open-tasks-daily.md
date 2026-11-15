@@ -1,8 +1,8 @@
 ---
-issue: "[Relaunch stopped agent-seats with open tasks daily](https://github.com/nedschorus/nedschorus/issues/936)"
+issue: "[Relaunch stopped agent-seats with open tasks as a maintenance-job](https://github.com/nedschorus/nedschorus/issues/936)"
 ---
 
-# Relaunch stopped agent-seats with open tasks daily
+# Relaunch stopped agent-seats with open tasks as a maintenance-job
 
 Once a day, a scheduled job finds every agent-seat whose task list still holds open tasks while no agent-session of that agent-seat is running, and relaunches each one, supervised, so the work on its list is picked up.
 
@@ -24,7 +24,7 @@ Every piece the job needs is built; nothing joins them on a schedule.
 - **Deciding whether an agent-seat is running, and bringing it back.** `scripts/recover-crashed-seats.py <seat>...` assesses each named agent-seat and acts on what it finds: a live agent-session is left alone; an agent-session that died without a session-handoff is resumed from its last real transcript under the handoff-supervisor; a recorded clean exit, or a leftover idle shell, is asked about on the operator's terminal rather than restarted. Run with no terminal, as a scheduled job runs it, it asks nothing: a recorded exit is reported `NOT RELAUNCHED` and the agent-seat is left down. `--dry-run` reports every decision and launches nothing. Its design is GHI [Crash recovery for seats that died without a handoff: find the last live transcript, resume it supervised](https://github.com/nedschorus/nedschorus/issues/120) and GHI [recover-crashed-seats.py: the six changes ruled 2026-09-02 — exit record, process-identity liveness, parking marker, verified restart, by-hand resume, window](https://github.com/nedschorus/nedschorus/issues/242).
 - **Launching.** `scripts/launch-claude-mac <name> [--no-attach] [--first-prompt-file <path>]` and `scripts/launch-claude-ubuntu <name> [--no-attach] [--first-prompt-file <box-path>]`, run from the Mac, attach to an agent-seat's tmux session or create it, with the handoff-supervisor inside. When an unconsumed session-handoff is waiting for the agent-seat, the new agent-session starts from it; this is the path for an agent-seat that stopped after writing a session-handoff, where `recover-crashed-seats.py` serves one that stopped without writing one.
 - **Restarting after a reboot.** `scripts/restart-live-seats-at-login.py` restarts the agent-seats that were running when the machine went down, selected from the supervisors' heartbeats: GHI [Fleet survives a machine restart without losing seat context: detect, hand off on notice, relaunch at boot, resume from transcript](https://github.com/nedschorus/nedschorus/issues/116). That job selects by "was running at the stop"; this one selects by "has work to do", so it also covers an agent-seat that stopped days before a reboot, or with no reboot at all.
-- **Scheduling.** `nc-systems/general-tools/scheduled-jobs-on-each-machine.json` lists each scheduled job and where it runs, and `nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py --install` makes each machine's crontab and launchd jobs match it. The table holds `transcript-mirror-to-log-store` and `daily-full-test-run-of-main` (00:00 on ned-box, 03:30 on the Mac). This job is one more row.
+- **Scheduling.** `nc-systems/general-tools/scheduled-jobs-on-each-machine.json` lists each scheduled job and where it runs, and `nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py --install` makes each machine's crontab and launchd jobs match it. The table holds `transcript-mirror-to-log-store` and `scheduled-full-test-run-of-main` (00:00 on ned-box, 03:30 on the Mac). This job is one more row.
 
 ## Deferred-decisions
 

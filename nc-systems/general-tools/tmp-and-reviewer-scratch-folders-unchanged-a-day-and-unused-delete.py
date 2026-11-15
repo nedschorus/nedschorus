@@ -22,11 +22,12 @@ WHAT IS KEPT. An entry is kept when any of these holds:
   of every entry under it, at any depth, is under 24 hours old, or in the future;
 - a process uses it: a process of the running account has its working directory, root
   directory, executable, an open file or a file mapped into its memory inside it, or a unix
-  socket is bound to a path inside it, as tmux's server socket is in /tmp/tmux-<uid>. The
+  socket of any account is bound to a path inside it, as tmux's server socket is in /tmp/tmux-<uid>. The
   process table, --proc-filesystem-directory, default /proc, and its net/unix are read just
   before the deletions; a process that cannot be read, such as another account's or one that
   exited during the reading, is not seen;
-- in the reviewer scratch place, its name is rv followed by a pull request's number, and that
+- in the reviewer scratch place, its name is rv followed by a pull request's number, with or
+  without a suffix such as the -r3 of rv1643-r3, and that
   pull request is neither MERGED nor CLOSED as `gh pr list --state all` lists the repository this
   file is in. When the listing fails, or does not hold the number, the folder is kept and the
   failure reported. A folder there whose name gives no number has no pull request to wait for;
@@ -42,7 +43,8 @@ log names every folder a run stopped part way may have deleted; then a summary l
 is written.
 
 Exit status: 0 when done; 1 when anything could not be checked or done: a place, the process
-table or its net/unix that cannot be listed, a folder whose tree cannot be read in full, a pull
+table or its net/unix that cannot be listed, an entry whose owner cannot be checked, a folder
+whose tree cannot be read in full, a pull
 request state that cannot be looked up, the log that cannot be written, or a folder that cannot
 be deleted. Each failure is a line on stderr naming what was not checked or done and why. A
 process table, net/unix or log that cannot be read or written stops the deletions; after any
@@ -110,10 +112,15 @@ def paths_processes_use(proc: Path) -> list:
         raise NeededFileOrListingUnreadable(f"the process table {proc} could not be listed: {error.strerror}")
     try:
         # An open socket's fd link reads socket:[inode], so a bound socket's path is only here:
-        # the eighth field of a line, when there is one.
-        used = [fields[7] for fields in (line.split(maxsplit=7)
-                                         for line in (proc / "net" / "unix").read_text().splitlines()[1:])
-                if len(fields) == 8]
+        # the eighth field of a line, when there is one. It is the path as given to bind(), so both
+        # it and its normalized form are kept: normalizing drops "//" and "/./", but turns a
+        # "link/.." that the kernel followed through a symbolic link into a different path.
+        # realpath is not used because it resolves links as they are now, not as bind() saw them.
+        # normpath keeps exactly two leading slashes, as POSIX allows, so those are collapsed too.
+        bound = [fields[7] for fields in (line.split(maxsplit=7)
+                                          for line in (proc / "net" / "unix").read_text().splitlines()[1:])
+                 if len(fields) == 8]
+        used = bound + [re.sub(r"^/+", "/", os.path.normpath(path)) for path in bound]
     except OSError as error:
         raise NeededFileOrListingUnreadable(f"the unix socket table {proc / 'net' / 'unix'} could not be "
                                             f"read: {error.strerror}")
@@ -191,6 +198,8 @@ def tmp_and_reviewer_scratch_folders_unchanged_a_day_and_unused_delete(
                     folders.append(Path(entry.path))
             except FileNotFoundError:
                 continue
+            except OSError as error:
+                result["failures"].append(f"{entry.path} was kept: it could not be checked: {error.strerror}")
     # The pull requests are looked up before the age check and the process snapshot, so that a
     # folder changed or put to use during the lookup, which may take minutes, is still seen.
     states = None

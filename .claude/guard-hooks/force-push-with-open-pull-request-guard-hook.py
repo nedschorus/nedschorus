@@ -22,29 +22,34 @@ import sys
 import time
 from pathlib import Path
 
-_shell_reader_spec = importlib.util.spec_from_file_location(
-    "shell_command_tree_sitter_bash_reader_common",
-    Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
-    / "shell-command-tree-sitter-bash-reader-common.py")
-shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
-_shell_reader_spec.loader.exec_module(shell_reader)
-is_program = shell_reader.is_program
+_crash_notice_spec = importlib.util.spec_from_file_location(
+    "guard_hook_crash_fail_open_with_notice_common",
+    Path(__file__).resolve().parent / "guard-hook-crash-fail-open-with-notice-common.py")
+_crash_notice = importlib.util.module_from_spec(_crash_notice_spec)
+_crash_notice_spec.loader.exec_module(_crash_notice)
 
-_rebase_or_replace_spec = importlib.util.spec_from_file_location(
-    "pull_request_conflict_with_main_rebase_or_replace_answer_common",
-    Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
-    / "pull-request-conflict-with-main-rebase-or-replace-answer-common.py")
-rebase_or_replace = importlib.util.module_from_spec(_rebase_or_replace_spec)
-_rebase_or_replace_spec.loader.exec_module(rebase_or_replace)
+with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(
+        __file__, __name__ == "__main__"):
+    _shell_reader_spec = importlib.util.spec_from_file_location(
+        "shell_command_tree_sitter_bash_reader_common",
+        Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
+        / "shell-command-tree-sitter-bash-reader-common.py")
+    shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
+    _shell_reader_spec.loader.exec_module(shell_reader)
+
+    _rebase_or_replace_spec = importlib.util.spec_from_file_location(
+        "pull_request_conflict_with_main_rebase_or_replace_answer_common",
+        Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
+        / "pull-request-conflict-with-main-rebase-or-replace-answer-common.py")
+    rebase_or_replace = importlib.util.module_from_spec(_rebase_or_replace_spec)
+    _rebase_or_replace_spec.loader.exec_module(rebase_or_replace)
+is_program = shell_reader.is_program
 
 # Stay below the hook timeout: overrunning it fails open silently.
 # Cap individual probes so one slow answer cannot consume the whole budget.
 PROBE_BUDGET_SECONDS = 20.0
 GH_TIMEOUT_SECONDS = 10.0
 GIT_TIMEOUT_SECONDS = 5.0
-
-ESCAPE_HATCH_VARIABLE = "CLAUDE_MERGE_LANE_ASKED_FOR_THIS_REWRITE"
-ESCAPE_HATCH_ASSIGNMENT = ESCAPE_HATCH_VARIABLE + "=1"
 
 # --force-if-includes alone does not force a push.
 FORCE_LONG_FLAGS = {"--force", "--force-with-lease"}
@@ -79,9 +84,7 @@ DENY_REASON_TEMPLATE = (
     "If you already rebased or amended it locally, keep that work on another "
     "branch (git branch {branch}-rewritten), go back to the pushed head (git "
     "switch -C {branch} origin/{branch}), and redo your change as a new "
-    "commit.\n"
-    "If merge-lane-2 asked you for this force push, run it again with {escape} "
-    "directly in front of the git push command."
+    "commit."
 )
 
 UNRESOLVED_REASON_TEMPLATE = (
@@ -89,9 +92,7 @@ UNRESOLVED_REASON_TEMPLATE = (
     "branch has an open pull request.\n"
     "Run the push again with the checkout path and the branch name written "
     "out, so this guard can check it: git -C <checkout path> push --force "
-    "origin <branch>\n"
-    "If merge-lane-2 asked you for this force push, run it again with {escape} "
-    "directly in front of the git push command."
+    "origin <branch>"
 )
 
 UNCHECKED_NOTE_FIRST_LINE = (
@@ -151,11 +152,10 @@ BUDGET_SPENT_DETAIL = (
 
 
 def find_git_push_invocation(words):
-    """Return sanctioned status, push words and directory override, or None for a non-push."""
+    """Return push words and directory override, or None for a non-push."""
     index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
     if index is None or not is_program(words[index], "git"):
         return None
-    sanctioned = ESCAPE_HATCH_ASSIGNMENT in words[:index]
     wrapper_directory = directory_a_wrapper_sets(words)
     index += 1
     directory_override = None
@@ -181,8 +181,7 @@ def find_git_push_invocation(words):
     if wrapper_directory is not None:
         directory_override = (wrapper_directory if directory_override is None
                               else directory_joined(wrapper_directory, directory_override))
-    return {"sanctioned": sanctioned,
-            "push_words": words[index + 1:],
+    return {"push_words": words[index + 1:],
             "directory_override": directory_override}
 
 
@@ -359,12 +358,10 @@ def analyze_push(invocation, effective_directory, directory_is_unresolved, guard
     override = invocation["directory_override"]
     if override is not None:
         if UNEXPANDED_PATTERN.search(override):
-            return "deny", UNRESOLVED_REASON_TEMPLATE.format(
-                word=override, escape=ESCAPE_HATCH_ASSIGNMENT)
+            return "deny", UNRESOLVED_REASON_TEMPLATE.format(word=override)
         directory = resolve_directory(effective_directory, override)
     elif directory_is_unresolved:
-        return "deny", UNRESOLVED_REASON_TEMPLATE.format(
-            word=directory_is_unresolved, escape=ESCAPE_HATCH_ASSIGNMENT)
+        return "deny", UNRESOLVED_REASON_TEMPLATE.format(word=directory_is_unresolved)
 
     branches, unchecked = [], []
     if not refspecs:
@@ -378,8 +375,7 @@ def analyze_push(invocation, effective_directory, directory_is_unresolved, guard
         if destination is None:
             continue
         if UNEXPANDED_PATTERN.search(destination):
-            return "deny", UNRESOLVED_REASON_TEMPLATE.format(
-                word=destination, escape=ESCAPE_HATCH_ASSIGNMENT)
+            return "deny", UNRESOLVED_REASON_TEMPLATE.format(word=destination)
         if destination == "HEAD":
             branch, detail = current_branch(directory, guard)
             if detail:
@@ -397,7 +393,7 @@ def analyze_push(invocation, effective_directory, directory_is_unresolved, guard
                 == rebase_or_replace.REPLACE_WITH_NEW_PULL_REQUEST):
             return "deny", DENY_REASON_TEMPLATE.format(
                 branch=branch, title=pull_request.get("title") or branch,
-                url=pull_request.get("url"), escape=ESCAPE_HATCH_ASSIGNMENT)
+                url=pull_request.get("url"))
         if detail:
             unchecked.append((branch, detail))
 
@@ -441,7 +437,7 @@ def analyze_command_text(command, payload_cwd, guard):
             directories[substitution] = (effective_directory, directory_is_unresolved)
             continue
         invocation = find_git_push_invocation(words)
-        if invocation is None or invocation["sanctioned"]:
+        if invocation is None:
             continue
         decision, reason = analyze_push(
             invocation, effective_directory, directory_is_unresolved, guard)
@@ -478,10 +474,7 @@ PARSER_UNAVAILABLE_NEXT_STEP_LINES = (
 
 
 def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
-    try:
-        payload = json.load(stdin)
-    except (json.JSONDecodeError, ValueError):
-        return 0
+    payload = json.load(stdin)
     if payload.get("tool_name") != "Bash":
         return 0
     command = (payload.get("tool_input") or {}).get("command") or ""
@@ -503,4 +496,5 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(__file__, True):
+        sys.exit(main())
