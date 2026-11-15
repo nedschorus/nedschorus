@@ -1415,8 +1415,10 @@ def test_restore_failures_say_what_restore_made():
         undo()
     hooks = Path(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir")) / "hooks"
     check(code == snapshots.EXIT_STEP_FAILED
-          and any(f"core.hooksPath setting for {main} is not set, so the hook ran from {hooks}" in line
-                  for line in lines),
+          and any(f"core.hooksPath setting for {main} is not set, so the post-checkout hook that "
+                  f"ran is the copy in {hooks}; a likely cause is that this copy is older than "
+                  "scripts/git-client-side-hooks/post-checkout" in line for line in lines)
+          and not any("core.hooksPath naming another clone" in line for line in lines),
           "the owner-file failure says where the hook ran from when core.hooksPath is not set", lines)
 
     main = new_clone()
@@ -1518,8 +1520,15 @@ def test_command_line_of_restore_and_discard():
     not_a_repository.mkdir()
     failed = subprocess.run([sys.executable, module, "discard", ref, "--repo", str(not_a_repository)],
                             capture_output=True, text=True)
-    check(failed.returncode == 1 and failed.stdout.startswith("FAILED: git for-each-ref"),
-          "a git failure outside restore's and discard's own steps is printed, exit 1",
+    check(failed.returncode == 1 and failed.stdout.startswith("FAILED: git for-each-ref")
+          and f"uncommitted-work-snapshots.py discard {ref} changed nothing" in failed.stdout,
+          "a git failure outside restore's and discard's own steps is printed, exit 1, naming "
+          "discard", failed.stdout + failed.stderr)
+    failed = subprocess.run([sys.executable, module, "restore", ref, "--keep", "new.txt", "--repo",
+                             str(not_a_repository)], capture_output=True, text=True)
+    check(failed.returncode == 1 and failed.stdout.startswith("FAILED: ")
+          and f"uncommitted-work-snapshots.py restore {ref} changed nothing" in failed.stdout,
+          "a git failure outside restore's own steps is printed, exit 1, naming restore",
           failed.stdout + failed.stderr)
 
 
