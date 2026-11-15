@@ -17,9 +17,10 @@ The seams are flags the tests use; cron passes none, so each takes its default:
 The design is GHI "Test suites that run without a sandbox leave per-change test
 runs and run apart, when their own files change or in a quiet gap",
 https://github.com/nedschorus/nedschorus/issues/2381, parts 2 and 4. A selective
-run of scripts/run-all-test-suites.py leaves out every suite listed in its
-SUITES_RUN_WITHOUT_ANY_SANDBOX, so this program is what runs them after a change
-reaches main. It runs on ned-box under cron every 10 minutes.
+run of scripts/run-all-test-suites.py leaves out each suite listed in its
+SUITES_RUN_WITHOUT_ANY_SANDBOX unless the change edits a file that suite reads,
+so this program is what runs every one of them after a change reaches main. It
+runs on ned-box under cron every 10 minutes.
 
 WHAT ONE RUN DOES, in order:
   1. Takes its own lock, the --state-file path with .lock added, without
