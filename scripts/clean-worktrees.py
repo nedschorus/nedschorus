@@ -15,9 +15,10 @@ running. A worktree that is not idle is KEPT, with the reason, when:
   - its owner file cannot be read;
   - it has no owner file, as agent-homes and worktrees made by hand have,
     and is not a merge-lane review checkout;
-  - it is locked with `git worktree lock`, as Claude Code locks a subagent's
-    worktree while the subagent runs, apart from the lock CLAUDE CODE'S LOCK
-    below unlocks;
+  - it is locked with `git worktree lock`, apart from the lock CLAUDE CODE'S
+    LOCK below unlocks; a subagent's worktree, which Claude Code makes through
+    its `WorktreeCreate` hook with an owner file and no lock, is judged by its
+    owner;
   - git would prune it, its directory being gone, unless STOPPED PARTWAY
     below applies;
   - a rebase, merge, cherry-pick or revert is in progress in it, or git
