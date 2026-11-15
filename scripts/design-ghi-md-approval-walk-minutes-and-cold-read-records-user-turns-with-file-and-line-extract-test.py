@@ -7,6 +7,7 @@ Exit codes: 0 all passed, 1 any failed.
 """
 
 import importlib.util
+import io
 import json
 import subprocess
 import sys
@@ -91,6 +92,9 @@ def build(root):
           "said on.\n"
           "\n"
           "Agent note.\n")
+    # A user turn followed by more plain lines than FOLLOWING_LINES_LIMIT, with no stop among them.
+    write(walk / "5-cap-minutes.md",
+          "# Cap\nUser: \"keep going\n" + "".join(f"plain line {n}\n" for n in range(1, 26)))
     # The agent-seat's copy loses to the log-store's copy of the same name.
     write(agents / "seat-a/docs/walk/mixed-topics-minutes.md", "# Stale\nissues/5 the user said \"stale\"\n")
     write(agents / "seat-a/docs/walk/seat-only-minutes.md", "# Seat\nSee issues/5). The user: \"seat copy\"\n")
@@ -152,12 +156,37 @@ def main():
         check("following lines stop at a heading", stops.get(6) == [{"line": 7, "text": "  wrapped on."}], stops)
         check("following lines stop at a blank line", stops.get(9) == [{"line": 10, "text": "said on."}], stops)
         check("list item that is no user turn is not printed", 5 not in stops, stops)
-        check("count line", "docs/issues/5-new-name-design.md: 6 walk-minutes, 1 cold-read-records, 17 user turns"
+        capped = found.get(("5-cap-minutes.md", 2), {}).get("following_lines") or []
+        check("following lines stop at the limit of 20", [row["line"] for row in capped] == list(range(3, 23)),
+              capped)
+        check("count line", "docs/issues/5-new-name-design.md: 7 walk-minutes, 1 cold-read-records, 18 user turns"
               in done.stderr, done.stderr)
 
         missing = run("--log-store", str(Path(temporary) / "absent"))
         check("missing directory exits 2", missing.returncode == 2
               and "--log-store" in missing.stderr and "is not a directory" in missing.stderr, missing.stderr)
+        check("a given directory that is missing is named as given, with what to name instead",
+              missing.stderr == f"--log-store {Path(temporary) / 'absent'} is not a directory.\n"
+              "Run this program again with --log-store naming the log-store, whose walk/*-minutes.md and "
+              "cold-read-records/ this program reads.\n", missing.stderr)
+
+        # A default directory cannot be made absent from outside, so the program is loaded and its default
+        # pointed at a directory that does not exist.
+        spec = importlib.util.spec_from_file_location("user_turns_extract", PROGRAM)
+        program = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(program)
+        absent = Path(temporary) / "absent-default"
+        program.DIRECTORY_COMMAND_LINE_OPTION_TO_DEFAULT_DIRECTORY_AND_FILES_READ_THERE["--log-store"] = (absent, program.DIRECTORY_COMMAND_LINE_OPTION_TO_DEFAULT_DIRECTORY_AND_FILES_READ_THERE["--log-store"][1])
+        stderr, sys.stderr = sys.stderr, io.StringIO()
+        try:
+            code = program.main(["--repository-checkout", str(checkout), "--agents-directory", str(agents)])
+            told = sys.stderr.getvalue()
+        finally:
+            sys.stderr = stderr
+        check("a missing default exits 2 and says the option was left out", code == 2 and told ==
+              f"--log-store was left out, and its default {absent} is not a directory on this machine.\n"
+              "Run this program again with --log-store naming the log-store, whose walk/*-minutes.md and "
+              "cold-read-records/ this program reads.\n", (code, told))
 
     for failure in failures:
         print(f"FAIL {failure}")
