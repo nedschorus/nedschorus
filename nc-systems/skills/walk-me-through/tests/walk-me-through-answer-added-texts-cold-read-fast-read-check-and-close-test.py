@@ -1046,6 +1046,51 @@ def test_a_held_new_item_numbered_between_sub_steps_does_not_end_them_for_close_
           f"{numbered}\n{after_close}\n{described(read)}\n{walk_document(case)}")
 
 
+def read_step_handed_item_3_marker(document, answered):
+    """The `#next_to_present` line the read step writes when handed item 3 of 10 of document, with the walk-minutes
+    approving each item of answered."""
+    case = Case(next_to_present="item 3 of 10", document=document)
+    case.minutes.write_text("# Minutes\n\n" + "".join(approved_line(item) for item in answered)
+                            + "#next_to_present item 3 of 10\n")
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    return marker(case), described(result)
+
+
+def test_the_waiting_item_read_step_finds_a_sub_step_past_a_numbered_item_under_a_heading_shared_with_the_first():
+    document = ("# A walk\n\n## Items 3 to 3.1 of 10: the opening sentence and its first half\n\nOne.\n\n"
+                "#case_against weak: a.\n\nRecommendation: a.\n\n## Item 5 of 11: an item the hold path numbered\n\n"
+                "Five.\n\n### Item 3.2 of 10: the second half\n\nTwo.\n\n#case_against weak: b.\n\n"
+                "Recommendation: b.\n\n## Item 4 of 11: the next item\n\nFour.\n")
+    named, result = read_step_handed_item_3_marker(document, ["item 3.1 of 10", "item 5 of 11"])
+    check("under `Items 3 to 3.1 of 10`, with 3.1 decided and a numbered item before 3.2, the read step handed "
+          "item 3 names 3.2", named == "#next_to_present item 3.2 of 10", named + "\n" + result)
+
+
+def test_the_waiting_item_read_step_takes_a_sub_step_of_a_newer_m_right_after_one_past_a_numbered_item():
+    document = ("# A walk\n\n## Item 3 of 10: the opening sentence\n\nNew.\n\n### Item 3.1 of 10: the first half\n\n"
+                "One.\n\n#case_against weak: a.\n\nRecommendation: a.\n\n"
+                "## Item 5 of 11: an item the hold path numbered\n\nFive.\n\n"
+                "### Item 3.2 of 10: the second half\n\nTwo.\n\n#case_against weak: b.\n\nRecommendation: b.\n\n"
+                "### Item 3.3 of 11: the third part\n\nThree.\n\n#case_against weak: c.\n\nRecommendation: c.\n\n"
+                "## Item 4 of 11: the next item\n\nFour.\n")
+    named, result = read_step_handed_item_3_marker(document, ["item 3.1 of 10", "item 5 of 11", "item 3.2 of 10"])
+    check("with 3.1 and 3.2 of 10 decided past a numbered item, the read step handed item 3 names 3.3, whose "
+          "heading, right after 3.2, gives M 11", named == "#next_to_present item 3.3 of 10", named + "\n" + result)
+
+
+def test_an_item_s_sub_steps_end_at_a_later_heading_that_reuses_its_number():
+    program = load_program()
+    walk_finder = program.load_walk_finder()
+    document = ("# A walk\n\n## Item 3 of 9: three\n\nA.\n\n## Item 4 of 9: four\n\nB.\n\n"
+                "### Item 3.1 of 9: the first half\n\nC.\n\n## Item 3 of 12: a later item reusing the number\n\nD.\n\n"
+                "### Item 3.2 of 9: past the reused number\n\nE.\n")
+    units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+    item_3 = next(unit for unit in units if unit[0] == ["3"] and unit[1] == "9")
+    found = [unit[0] for unit in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(units, item_3)]
+    check("item 3 of 9 takes its `3.1 of 9` below item 4, and no sub-step past the later `Item 3 of 12`",
+          found == [["3.1"]], repr(found))
+
+
 def test_the_waiting_item_read_step_leaves_out_an_older_sub_step_below_a_later_item():
     document = ("# A walk\n\n## Item 3 of 10: the opening sentence\n\nNew.\n\n### Item 3.1 of 10: the first half\n\n"
                 "Short.\n\n#case_against weak: the page grows.\n\nRecommendation: change it.\n\n"
@@ -5113,6 +5158,20 @@ def test_gathering_puts_an_unshown_item_standing_above_answered_items_after_the_
           "answered one, so items stand in the order they were shown",
           shown[:2] == ["three", "above"] and re.search(r"^## Item 4 of \d+: above$", text, re.M) is not None
           and text.index("## Item 2 of 9: two") < text.index("## Item 3 of 9: three") < text.index(": above\n"),
+          f"{shown}\n{text}")
+
+
+def test_gathering_puts_an_unshown_item_after_the_withdrawn_versions_of_the_last_answered_item():
+    document = ("# A walk in which code picks the order\n\n" + numbered_item(1, "one")
+                + unshown_item("above", f"{CATEGORY_TAG}must_fix_now") + numbered_item(2, "two")
+                + numbered_item(3, "three") + "#### Withdrawn version 1 of item 3\n\nAn older three.\n\n"
+                + "## Summary\n\nThe walk in short.\n")
+    case = Case(next_to_present="item 2 of 9", document=document)
+    shown = titles_shown_in_turn(case)
+    text = walk_document(case)
+    check("an unshown item gathered behind the last answered item goes after that item's withdrawn versions, not "
+          "between the item and them",
+          shown[:2] == ["three", "above"] and text.index("An older three.") < text.index(": above\n"),
           f"{shown}\n{text}")
 
 

@@ -3092,10 +3092,20 @@ EDIT_COMPARISON_CASES = (
      "---\ntags:\n  - b\nname: x\n---\nBody.\n",
      "---\ntags:\n  - a\nname: x\n---\nBody.\n",
      (["s1"], ["tags: - a name: x"])),
+    ("a change in a frontmatter-only document's folded value is seen",
+     "---\ndescription: >\n new words\n---\n",
+     "---\ndescription: >\n old words\n---\n",
+     (["s1"], ["description: > old words"])),
 )
 for case_name, text, base_text, expected in EDIT_COMPARISON_CASES:
     found = edit_comparison(text, base_text)
     check(case_name, found == expected, f"{found!r}")
+
+frontmatter_only_marked, _ = sentence_id_markup("---\ndescription: >\n new words\n---\n")
+check("a frontmatter-only document's unit gets its id after the field's key, so the reviewer "
+      "can find the id the edit names",
+      frontmatter_only_marked == "---\ndescription: [s1] >\n new words\n---\n",
+      repr(frontmatter_only_marked))
 
 with tempfile.TemporaryDirectory() as placeholder_scratch:
     placeholder_template = Path(placeholder_scratch) / "prompt.md"
@@ -3206,7 +3216,8 @@ with tempfile.TemporaryDirectory() as edit_scratch:
           "and launches nothing",
           result.returncode == 1 and result.stdout.startswith("FAILED")
           and "git merge-base HEAD origin/main failed" in result.stdout
-          and f"git -C {repository} fetch origin main" in result.stderr
+          and f"\nFirst, run `git -C {repository} fetch origin main`.\nThen, " in result.stderr
+          and "and the fetch's own error output if it failed" in result.stderr
           and not edit_report.parent.exists()
           and launches_counted(edit_counter) == 0
           and launches_counted(question_4_counter_path(edit_counter)) == 0,
