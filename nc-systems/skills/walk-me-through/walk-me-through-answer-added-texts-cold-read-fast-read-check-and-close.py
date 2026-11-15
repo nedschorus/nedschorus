@@ -1233,9 +1233,8 @@ def approval_walk_item_word_counted_line_ranges(walk_finder, text, tokens, parse
     own: each numbered item's own lines, even under a heading it shares with other items; when several items
     are shown together, the lines of their shared heading above the first item's opening; and each of the
     item's numbered sub-steps, such as `### Item 3.1 of 9`, which item_unit_spans reads as units of their own,
-    taken from the units right after the item's own that are sub-steps of any item of that unit, so an older
-    version's `3.1 of 9` elsewhere is not counted, with the lines of a heading several sub-steps share above
-    the first sub-step's opening."""
+    taken as approval_walk_item_sub_step_units_below_item_in_walk_document takes them, with the lines of a heading
+    several sub-steps share above the first sub-step's opening."""
     openings = walk_finder.item_opening_lines(text, parser, tokens)
     all_units = walk_finder.item_unit_spans(text, parser)
 
@@ -1256,7 +1255,7 @@ def approval_walk_item_word_counted_line_ranges(walk_finder, text, tokens, parse
         ranges.append(own_range(unit, number))
         if len(numbers) > 1 and len(unit[0]) > 1:
             ranges += shared_heading_text(unit)
-        for each in walk_finder.approval_walk_item_sub_step_units_right_after(all_units, unit):
+        for each in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(all_units, unit):
             parts = [part for part in each[0] if part.startswith(number + ".") and part not in numbers]
             ranges += [own_range(each, part) for part in parts]
             if parts and len(each[0]) > 1:
@@ -2300,8 +2299,8 @@ def earlier_read_texts_kept_as_withdrawn_versions(walk_finder, minutes, value, n
 
 def approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minutes, value, numbers, total, parser):
     """Return the sub-step, such as 3.1, of the one item numbers names, such as 3, that holds the sub-step
-    next_item names first among the item's sub-steps and theirs, such as 3.1.1, taken from the walk-document's
-    units right after the item's own; next_item's rule decides, so the read step and the close step name the
+    next_item names first among the item's sub-steps and theirs, such as 3.1.1, taken from the walk-document as
+    approval_walk_item_sub_step_units_below_item_in_walk_document takes them; next_item's rule decides, so the read step and the close step name the
     same sub-step. When the walk-document has no heading for that sub-step, such as no 3.1 above 3.1.1, the
     shortest of the named sub-step's levels below the item that has one, such as 3.1.1 for 3.1.1.1. None when
     numbers names several items or next_item names none."""
@@ -2310,7 +2309,7 @@ def approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minut
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     all_units = walk_finder.item_unit_spans(document.read_text(encoding="utf-8"), parser)
     unit = walk_finder.waiting_item_units(document, value, numbers, total, parser, all_units)[1][0]
-    sub_steps = [part for each in walk_finder.approval_walk_item_sub_step_units_right_after(all_units, unit)
+    sub_steps = [part for each in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(all_units, unit)
                  for part in each[0] if part.startswith(numbers[0] + ".")]
     named = next_item(walk_finder, minutes, parser, sub_steps, None, [], [])
     if not named:
@@ -2471,7 +2470,7 @@ def walk_document_order(walk_finder, text, units, parser, document, today):
     """Return (the items of units in walk-document order, the summary item or None, the placing of the unshown
     items), as walk_document_items' docstring says. An unnumbered item written between the sub-steps of one item,
     as in 2.1, then the unnumbered item, then 2.2, comes after the last of them, as
-    approval_walk_item_sub_step_units_right_after passes over it, so that it does not split them."""
+    approval_walk_item_sub_step_units_below_item_in_walk_document passes over it, so that it does not split them."""
     lines = text.split("\n")
     order, summary = [], None
     for unit in approval_walk_unnumbered_items_moved_past_the_sub_steps_they_split(walk_finder, units):
@@ -2487,7 +2486,7 @@ def walk_document_order(walk_finder, text, units, parser, document, today):
 def approval_walk_unnumbered_items_moved_past_the_sub_steps_they_split(walk_finder, units):
     """units, as item_unit_spans gives them, with each unnumbered item that stands between two sub-steps of one
     whole item, such as 2.1 and 2.2, moved to just after the last unit of the sub-steps that follow it, as
-    approval_walk_item_sub_step_units_right_after reads them; the units keep their line numbers."""
+    approval_walk_item_sub_step_units_below_item_in_walk_document reads them; the units keep their line numbers."""
     moved, waiting = [], []
     for unit in units:
         if walk_finder.approval_walk_unit_is_unnumbered_item(unit):

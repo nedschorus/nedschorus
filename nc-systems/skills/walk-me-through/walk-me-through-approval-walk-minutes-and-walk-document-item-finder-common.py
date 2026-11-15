@@ -616,25 +616,24 @@ def approval_walk_item_line_range_within_heading_shared_by_several_items(opening
     return starts[number], min(later + [end])
 
 
-def approval_walk_item_sub_step_units_right_after(all_units, unit):
-    """Return the units of all_units, as item_unit_spans gives them, right after unit that are sub-steps of any
-    item unit names, such as `### Item 3.1 of 9` and `### Item 3.1.1 of 9` after item 3, up to the first that is
-    not, so an older version's `3.1 of 9` elsewhere in the walk-document is not among them. An unnumbered item
-    among them is passed over, because the check program's close step shows it only after them. So is a numbered
-    item among them when a sub-step after it gives unit's M, as in 2.1 of 9, then item 4, then 2.2 of 9, because
-    the close step's hold-answer path numbers a new item where it stands, right after the answered sub-step."""
-    found, passed_over = [], False
+def approval_walk_item_sub_step_units_below_item_in_walk_document(all_units, unit):
+    """Return the units of all_units, as item_unit_spans gives them, below unit that are sub-steps of any item unit
+    names, such as `### Item 3.1 of 9` and `### Item 3.1.1 of 9` after item 3, wherever they sit below it, up to a
+    later unit that names one of unit's items again, such as a later `Item 3 of 12` that reuses the number: an
+    item's sub-steps may stand after later items, as when the close step's hold-answer path numbers a new item
+    right after an answered sub-step, or a re-plan moves sub-steps past other items keeping their numbers. A
+    sub-step that comes after a unit that is not one of them, numbered, unnumbered or naming no item, is taken only
+    when it gives unit's M, so an older version's `3.1 of 9` below item 4 is left out of item 3 of 10; a sub-step
+    right after one taken is taken whatever its M, as a sub-step written after the hold-answer path raised M is."""
+    found, interrupted = [], False
     for each in [each for each in all_units if each[3] > unit[3]]:
-        if approval_walk_unit_is_unnumbered_item(each):
-            continue
-        if not each[0] or not all(any(part.startswith(number + ".") for number in unit[0]) for part in each[0]):
-            if not found or not each[0]:
-                break
-            passed_over = True
-            continue
-        if passed_over and each[1] != unit[1]:
+        if set(each[0]) & set(unit[0]):
             break
-        found.append(each)
+        if not each[0] or not all(any(part.startswith(number + ".") for number in unit[0]) for part in each[0]):
+            interrupted = True
+        elif not interrupted or each[1] == unit[1]:
+            found.append(each)
+            interrupted = False
     return found
 
 
@@ -663,7 +662,7 @@ def approval_walk_item_heading_and_item_page_body_lines(text, parser, all_units,
             body += ["", *lines[max(start, covered):stop]]
         covered = max(covered, stop)
     # A sub-step under its own heading is a unit of its own, which item_unit_spans ends at its first Withdrawn heading.
-    for sub_numbers, _, _, sub_first, sub_end in approval_walk_item_sub_step_units_right_after(all_units, unit):
+    for sub_numbers, _, _, sub_first, sub_end in approval_walk_item_sub_step_units_below_item_in_walk_document(all_units, unit):
         if all(each.startswith(sub_step) for each in sub_numbers):
             body += ["", approval_walk_item_heading_with_deferred_note_removed(lines[sub_first])]
             body += lines[sub_first + 1:sub_end]
