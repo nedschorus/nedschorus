@@ -2036,6 +2036,24 @@ def run_log_store_readme_cases():
           and "`scripts/pull-request-head-test-run.py`" in readme, readme)
 
 
+def run_cases_of_a_git_status_that_fails_after_a_warning(workspace: Path):
+    def status_fails_after_a_warning(checkout, *arguments):
+        return subprocess.CompletedProcess(
+            ["git", "-C", str(checkout), *arguments], 128, "",
+            "warning: unable to access '/home/nedlern/.config/git/attributes': Permission denied\n"
+            "fatal: unknown index entry format 0x61740000\n")
+
+    real_git = scheduled_run.git
+    scheduled_run.git = status_fails_after_a_warning
+    try:
+        result = program.first_tracked_file_that_differs(workspace)
+    finally:
+        scheduled_run.git = real_git
+    check("a git status that fails after a warning: line gives its fatal: line as the reason, "
+          "not the warning before it",
+          result == (None, "fatal: unknown index entry format 0x61740000"), repr(result))
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     # Resolved, because the program resolves the paths it is given and the
     # Mac's temporary directory is reached through a symbolic link.
@@ -2051,6 +2069,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_cases_of_two_writers_at_once(workspace_root)
     run_cases_as_a_program(workspace_root)
     run_cases_of_stderr_that_cannot_be_written(workspace_root)
+    run_cases_of_a_git_status_that_fails_after_a_warning(workspace_root)
     run_log_store_readme_cases()
 
 if failures:
