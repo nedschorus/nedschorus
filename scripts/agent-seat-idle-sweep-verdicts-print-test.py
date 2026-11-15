@@ -51,12 +51,12 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def assistant(text=None, at=LONG_AGO, tokens=100, tool=None, uuid=None):
+def assistant(text=None, at=LONG_AGO, tokens=100, tool=None, uuid=None, tool_id="t"):
     content = []
     if text is not None:
         content.append({"type": "text", "text": text})
     if tool is not None:
-        content.append({"type": "tool_use", "id": "t", "name": tool[0], "input": tool[1]})
+        content.append({"type": "tool_use", "id": tool_id, "name": tool[0], "input": tool[1]})
     return {"type": "assistant", "timestamp": at, "uuid": uuid or f"u-{at}-{text}",
             "message": {"model": "claude-opus-5-5", "content": content,
                         "usage": {"input_tokens": tokens, "output_tokens": tokens}}}
@@ -67,6 +67,16 @@ def user(text, at=LONG_AGO, tool_result=None):
     if tool_result is not None:
         record["toolUseResult"] = tool_result
     return record
+
+
+def task_result(text, at=LONG_AGO, tool_id="t"):
+    """The record holding a task call's result, as Claude Code writes it: a success text such as
+    "Task #1 created successfully: <subject>", or "Task not found" with no is_error."""
+    return user([{"type": "tool_result", "tool_use_id": tool_id, "content": text}], at=at)
+
+
+CREATED = "Task #1 created successfully: report"
+UPDATED = "Updated task #3 blockedBy"
 
 
 def turn_end(at=LONG_AGO):
@@ -232,7 +242,7 @@ try:
                            assistant(tool=("TaskCreate", {"subject": "report",
                                                           "metadata": {"prerequisites": [
                                                               {"pr_merged": 927}]}})),
-                           turn_end()])
+                           task_result(CREATED), turn_end()])
     _, verdicts, _ = machine.run()
     check("promise with a task carrying prerequisites: the judge decides whether it names the event",
           verdicts["alpha"]["sentences"][0]["code_reading"] == "judge"
@@ -240,7 +250,7 @@ try:
     machine = Machine()
     machine.seat("alpha", [user("go"), assistant("I'll hold."),
                            assistant(tool=("TaskUpdate", {"taskId": "3", "addBlockedBy": ["2"]})),
-                           turn_end()])
+                           task_result(UPDATED), turn_end()])
     _, verdicts, _ = machine.run()
     check("a hold backed by addBlockedBy goes to the judge",
           [(s["kind"], s["code_reading"]) for s in verdicts["alpha"]["sentences"]]
@@ -249,7 +259,7 @@ try:
     machine.seat("alpha", [user("go"), assistant("I'll hold."),
                            assistant(tool=("TaskUpdate", {"taskId": "3", "addBlockedBy": ["2"]}),
                                      at=None),
-                           turn_end()])
+                           task_result(UPDATED), turn_end()])
     code, verdicts, _ = machine.run()
     check("a task call in a record with no timestamp cannot back a hold: code finds it unbacked",
           code == 0 and [(s["kind"], s["code_reading"]) for s in verdicts["alpha"]["sentences"]]
@@ -289,7 +299,7 @@ try:
     machine.seat("alpha", [user("go", at="2026-11-02T11:49:00Z"),
                            assistant(tool=("TaskCreate", {"metadata": {"prerequisites": [
                                {"pr_merged": 927}]}}), at="2026-11-02T11:49:30Z"),
-                           user("", at="2026-11-02T11:49:31Z", tool_result={"task": {"id": "1"}}),
+                           task_result(CREATED, at="2026-11-02T11:49:31Z"),
                            assistant(PROMISE), turn_end()])
     _, verdicts, _ = machine.run()
     check("a task created earlier in the promise's own turn backs it, so the judge decides",
@@ -304,6 +314,7 @@ try:
                            user("go", at="2026-11-02T11:49:00Z"),
                            assistant(tool=("TaskCreate", {"metadata": {"prerequisites": [
                                {"pr_merged": 927}]}}), at="2026-11-02T11:49:30Z"),
+                           task_result(CREATED, at="2026-11-02T11:49:31Z"),
                            assistant(PROMISE), turn_end()])
     _, verdicts, _ = machine.run()
     check("a task created earlier in the promise's later turn backs it",
@@ -317,7 +328,7 @@ try:
         machine.seat("alpha", [user("a", at="2026-11-02T11:30:00Z"),
                                assistant(tool=("TaskCreate", {"metadata": {"prerequisites": [
                                    {"pr_merged": 927}]}}), at="2026-11-02T11:35:00Z"),
-                               interrupted, user("new prompt", at="2026-11-02T11:49:00Z"),
+                               task_result(CREATED, at="2026-11-02T11:35:01Z"), interrupted, user("new prompt", at="2026-11-02T11:49:00Z"),
                                assistant(PROMISE), turn_end()])
         _, verdicts, _ = machine.run()
         check(f"a task from a turn ended by {interruption!r} does not back the next turn's promise",
@@ -331,7 +342,8 @@ try:
             meta = {**user(feedback, at="2026-11-02T11:49:45Z"), "isMeta": True}
             records = [user("go", at="2026-11-02T11:49:00Z"),
                        assistant(tool=("TaskCreate", {"metadata": {"prerequisites": [
-                           {"pr_merged": 927}]}}), at="2026-11-02T11:49:30Z")]
+                           {"pr_merged": 927}]}}), at="2026-11-02T11:49:30Z"),
+                       task_result(CREATED, at="2026-11-02T11:49:31Z")]
             records += ([assistant(PROMISE), meta] if after_text else [meta, assistant(PROMISE)])
             machine.seat("alpha", records + [turn_end()])
             code, verdicts, error = machine.run()
@@ -848,47 +860,67 @@ try:
           verdicts["alpha"])
     machine = Machine()
     machine.seat("alpha", [user("go"),
-                           assistant(tool=("TaskCreate", {"metadata": {"prerequisites": [
-                               {"pr_merged": 927}]}}), at="2026-11-02T11:38:00Z"),
+                           assistant(tool=("TaskCreate", {"subject": "after PR 927", "metadata": {
+                               "prerequisites": [{"pr_merged": 927}]}}), at="2026-11-02T11:38:00Z",
+                                     tool_id="t1"),
+                           task_result("Task #1 created successfully: after PR 927",
+                                       at="2026-11-02T11:38:01Z", tool_id="t1"),
                            assistant(tool=("TaskUpdate", {"taskId": "3", "addBlockedBy": ["2"]}),
-                                     at="2026-11-02T11:40:00Z"),
+                                     at="2026-11-02T11:40:00Z", tool_id="t2"),
+                           task_result(UPDATED, at="2026-11-02T11:40:01Z", tool_id="t2"),
+                           assistant(tool=("TaskUpdate", {"taskId": "99", "addBlockedBy": ["2"]}),
+                                     at="2026-11-02T11:42:00Z", tool_id="t3"),
+                           task_result("Task not found", at="2026-11-02T11:42:01Z", tool_id="t3"),
+                           assistant(tool=("TaskUpdate", {"taskId": "4", "addBlockedBy": ["2"]}),
+                                     at="2026-11-02T11:43:00Z", tool_id="t5"),
+                           user([{"type": "tool_result", "tool_use_id": "t5", "is_error": True,
+                                  "content": "InputValidationError: metadata"}],
+                                at="2026-11-02T11:43:01Z"),
+                           assistant(tool=("TaskUpdate", {"taskId": "5", "addBlockedBy": ["2"]}),
+                                     at="2026-11-02T11:44:00Z", tool_id="t6"),
                            assistant(tool=("TaskCreate", {"subject": "plain"}),
-                                     at="2026-11-02T11:45:00Z"),
+                                     at="2026-11-02T11:45:00Z", tool_id="t4"),
+                           task_result("Task #2 created successfully: plain",
+                                       at="2026-11-02T11:45:01Z", tool_id="t4"),
                            assistant(tool=("Bash", {"command": "ls"}), at="2026-11-02T11:46:00Z"),
                            assistant("Done.", at="2026-11-02T11:48:00Z"), turn_end()])
     _, verdicts, _ = machine.run()
-    check("the newest task call that sets prerequisites or addBlockedBy is printed; a later task "
-          "call that sets neither, and a later tool call of another kind, do not move it",
-          verdicts["alpha"].get("last_task_call_setting_prerequisites_or_blocked_by_at")
-          == "2026-11-02T11:40:00Z", verdicts["alpha"])
+    check("each task call that sets prerequisites or addBlockedBy and whose result shows success is "
+          "listed, oldest first; one answered 'Task not found' with no is_error, one whose result is an "
+          "error, one with no result, one that sets neither, and a tool call of another kind are not",
+          verdicts["alpha"].get("successful_task_tool_calls_setting_prerequisites_or_blocked_by")
+          == [{"time": "2026-11-02T11:38:00Z", "name": "TaskCreate", "task": "after PR 927"},
+              {"time": "2026-11-02T11:40:00Z", "name": "TaskUpdate", "task": "3"}],
+          verdicts["alpha"])
     machine = Machine()
     machine.seat("alpha", [user("go"), assistant(tool=("TaskCreate", {"subject": "plain"})),
                            assistant("Done."), turn_end()])
     _, verdicts, _ = machine.run()
-    check("an agent-session whose task calls set neither prerequisites nor addBlockedBy: null",
-          "last_task_call_setting_prerequisites_or_blocked_by_at" in verdicts["alpha"]
-          and verdicts["alpha"]["last_task_call_setting_prerequisites_or_blocked_by_at"] is None,
+    check("an agent-session whose task calls set neither prerequisites nor addBlockedBy: an empty list",
+          verdicts["alpha"].get("successful_task_tool_calls_setting_prerequisites_or_blocked_by") == [],
           verdicts["alpha"])
     machine = Machine()
     machine.seat("alpha", [user("go"),
                            assistant(tool=("TaskCreate", {"subject": "after PR 2042", "metadata": json.dumps(
                                {"prerequisites": [{"pr_merged": 2042}]})}), at="2026-11-02T11:40:00Z"),
+                           task_result(CREATED, at="2026-11-02T11:40:01Z"),
                            assistant("Done.", at="2026-11-02T11:48:00Z"), turn_end()])
     code, verdicts, _ = machine.run()
     check("a task call whose metadata is a JSON string holding prerequisites is read as setting them",
-          code == 0 and verdicts["alpha"].get("last_task_call_setting_prerequisites_or_blocked_by_at")
-          == "2026-11-02T11:40:00Z", (code, verdicts.get("alpha")))
+          code == 0 and verdicts["alpha"].get("successful_task_tool_calls_setting_prerequisites_or_blocked_by")
+          == [{"time": "2026-11-02T11:40:00Z", "name": "TaskCreate", "task": "after PR 2042"}],
+          (code, verdicts.get("alpha")))
     for metadata, kind in [(json.dumps({"branches": ["some-topic-branch"]}), "a JSON object without prerequisites"),
                            ("{not json", "not JSON"),
                            (json.dumps([{"prerequisites": [1]}]), "JSON that is not an object")]:
         machine = Machine()
         machine.seat("alpha", [user("go"),
                                assistant(tool=("TaskUpdate", {"taskId": "1", "metadata": metadata})),
-                               assistant("Done."), turn_end()])
+                               task_result("Updated task #1 metadata"), assistant("Done."), turn_end()])
         code, verdicts, _ = machine.run()
-        check(f"a task call whose metadata is a string holding {kind}: printed, field null",
+        check(f"a task call whose metadata is a string holding {kind}: printed, an empty list",
               code == 0 and "alpha" in verdicts
-              and verdicts["alpha"].get("last_task_call_setting_prerequisites_or_blocked_by_at") is None,
+              and verdicts["alpha"].get("successful_task_tool_calls_setting_prerequisites_or_blocked_by") == [],
               (code, verdicts.get("alpha")))
 
     # --- the task list is read as the due-task hook reads it ------------------------------------
