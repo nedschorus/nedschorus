@@ -46,6 +46,7 @@ _fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 MODULE_RELATIVE = Path("nc-systems/handoff/uncommitted-work-snapshots.py")
 HOOK_RELATIVE = Path("scripts/uncommitted-work-snapshot-hook.py")
+POST_CHECKOUT_HOOK_RELATIVE = Path("scripts/git-client-side-hooks/post-checkout")
 OWNER_FILE_MODULE_RELATIVE = Path("scripts/worktree-owner-file-read-and-write.py")
 CLEANER_RELATIVE = Path("scripts/clean-worktrees.py")
 GIT_OUTPUT_MODULE_RELATIVE = Path(
@@ -1276,6 +1277,9 @@ def test_restore_step_failures():
                  "writing the owner file of")
 
     def worktree_add_writes_another_seats_owner_file(main):
+        clone_copy = main / POST_CHECKOUT_HOOK_RELATIVE
+        clone_copy.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPOSITORY_ROOT / POST_CHECKOUT_HOOK_RELATIVE, clone_copy)
         return git_client_side_hooks_installed_for_agent_seat(main, "seat-six")
 
     failing_case("whose git worktree add wrote an owner file naming another agent-seat",
@@ -1284,11 +1288,25 @@ def test_restore_step_failures():
                  'uncommitted-work-snapshots.py restore names '
                  '{"owner_kind": "agent-seat", "agent_seat": "seat-five"}. '
                  'scripts/git-client-side-hooks/post-checkout writes that file')
-    failing_case("whose git worktree add wrote another agent-seat's owner file, naming the "
-                 "core.hooksPath setting and the config file that sets it",
+    failing_case("whose git worktree add wrote another agent-seat's owner file, naming the hook "
+                 "that ran, from the core.hooksPath setting",
                  worktree_add_writes_another_seats_owner_file,
-                 f"/main is {REPOSITORY_ROOT / 'scripts' / 'git-client-side-hooks'}, and the config "
-                 f"file that sets it is ")
+                 f"the post-checkout hook that ran is {REPOSITORY_ROOT / POST_CHECKOUT_HOOK_RELATIVE}, "
+                 f"because git's core.hooksPath setting for ")
+    failing_case("whose git worktree add wrote another agent-seat's owner file, saying the hook "
+                 "that ran is the clone's own copy",
+                 worktree_add_writes_another_seats_owner_file,
+                 f", which is the same as ")
+
+    def an_older_clone_copy_of_the_hook(main):
+        undo = worktree_add_writes_another_seats_owner_file(main)
+        (main / POST_CHECKOUT_HOOK_RELATIVE).write_text("#!/bin/sh\n# an older copy\n")
+        return undo
+
+    failing_case("whose git worktree add wrote another agent-seat's owner file through a hook that "
+                 "is not the clone's own copy, saying so",
+                 an_older_clone_copy_of_the_hook,
+                 f", which is not the same as ")
 
     real_run_git = snapshots.run_git
 
@@ -1371,7 +1389,8 @@ def test_restore_failures_say_what_restore_made():
           and snapshots.current_ref_value(main, f"refs/heads/{branch}") is None
           and printed.getvalue().startswith(
               f"FAILED: git diff-tree refused by the test. uncommitted-work-snapshots.py restore {ref} "
-              f"changed nothing."),
+              f"changed nothing. Tell the user what failed, and run uncommitted-work-snapshots.py "
+              f"restore {ref} again only after the user says the cause is fixed."),
           "a git failure that ends restore early comes before restore changes anything, as its "
           "message says", printed.getvalue())
 
@@ -1413,13 +1432,13 @@ def test_restore_failures_say_what_restore_made():
     finally:
         snapshots.run_git = real_run_git
         undo()
-    hooks = Path(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir")) / "hooks"
+    hook = Path(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir")) / "hooks" / "post-checkout"
     check(code == snapshots.EXIT_STEP_FAILED
           and any(f"core.hooksPath setting for {main} is not set, so the post-checkout hook that "
-                  f"ran is the copy in {hooks}; a likely cause is that this copy is older than "
-                  "scripts/git-client-side-hooks/post-checkout" in line for line in lines)
-          and not any("core.hooksPath naming another clone" in line for line in lines),
-          "the owner-file failure says where the hook ran from when core.hooksPath is not set", lines)
+                  f"ran is {hook}; it could not be compared with {main / POST_CHECKOUT_HOOK_RELATIVE}: "
+                  in line for line in lines),
+          "the owner-file failure says which hook ran when core.hooksPath is not set, and that it "
+          "could not compare a hook file that is missing", lines)
 
     main = new_clone()
     ref, _worktree = leftover_snapshot(main, "hooks-lookup-fails", {"new.txt": "work\n"}, "9-12")
@@ -1431,7 +1450,7 @@ def test_restore_failures_say_what_restore_made():
         snapshots.run_git = real_run_git
         undo()
     check(code == snapshots.EXIT_STEP_FAILED
-          and any("where the hook ran from is not known, because git config --show-origin --get "
+          and any("which post-checkout hook ran is not known, because git config --show-origin --get "
                   f"core.hooksPath in {main} exited 128: refused by the test" in line for line in lines)
           and not any("is not set" in line for line in lines),
           "the owner-file failure says the core.hooksPath lookup failed when git config exits with an "
