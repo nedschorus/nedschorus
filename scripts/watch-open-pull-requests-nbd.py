@@ -22,8 +22,8 @@ notices already there at the first poll are reported, since a file left
 outside handled/ is unhandled whoever restarted the watcher. So with
 --exit-after-first-poll-with-events, a notice not moved makes every restart
 exit at its first poll, before any pull request event can show, and with
---batch-events-for-seconds N, makes every restart exit N seconds after it
-starts: the line says to move it as soon as it is read. A missing
+--batch-events-for-seconds N, makes every restart exit after its poll at N
+seconds: the line says to move it as soon as it is read. A missing
 directory, before the job first writes one, raises nothing. A directory that
 cannot be listed raises one NEEDS A LOOK line naming the error, again only
 after a listing has succeeded in between; a notice that cannot be read is
@@ -36,11 +36,12 @@ The watcher never moves or deletes a notice.
 
 With --batch-events-for-seconds N, every OPENED, NEW-HEAD, READY and NEEDS A
 LOOK line is held in the process instead of printed, and the watcher prints
-them all, in the order seen, and exits 0: N seconds after it starts when it
-has seen any by then, or else after the first poll past N that has one. WATCH
-lines still print at once. The held lines live only in the process: a watcher
-killed before it exits loses them, and its next start absorbs the openings
-into the baseline.
+them all, in the order seen, and exits 0 once its poll at N seconds finishes,
+if it has seen any by then, or else after the first poll past N that has one.
+A poll can finish up to the GitHub query's timeout per page after it starts.
+WATCH lines still print at once. The held lines live only in the process: a
+watcher killed before it exits loses them, and its next start absorbs the
+openings into the baseline.
 
 Polling needs no public webhook endpoint. GraphQL selects only needed fields
 and avoids gh versions’ differing --json field lists."""
@@ -359,9 +360,12 @@ def parse_arguments(argv):
     when_to_exit.add_argument("--batch-events-for-seconds", type=float, metavar="N",
                               help="hold every OPENED, NEW-HEAD, READY and NEEDS A "
                                    "LOOK line instead of printing it; print them "
-                                   "all and exit 0 N seconds after starting when "
-                                   "any was seen by then, or else after the first "
-                                   "poll past N that has one")
+                                   "all and exit 0 once the poll at N seconds "
+                                   "finishes, if any was seen by then, or else after "
+                                   "the first poll past N that has one; a poll can "
+                                   "take up to "
+                                   f"{GH_QUERY_TIMEOUT_SECONDS:g} seconds per query "
+                                   "page")
     parser.add_argument("--needs-a-look-directory", type=Path,
                         default=ghi_md_edit_job.needs_a_look_directory(),
                         help="the GHI-MD edit job's notices directory to list each "
@@ -420,7 +424,7 @@ def main(argv=None):
     def sleep_until_next_poll():
         seconds = arguments.poll_seconds
         if held_lines:
-            # Poll again at N exactly, so held events print N seconds after the start.
+            # Poll again at N exactly, so held events print once the poll at N finishes.
             seconds = min(seconds, started + batch_seconds - time.monotonic())
         time.sleep(max(seconds, 0))
 

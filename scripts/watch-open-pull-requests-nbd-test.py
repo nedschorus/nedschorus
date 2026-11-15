@@ -591,8 +591,8 @@ def run_batch_events_cases():
              [pull_request(145, "c"), pull_request(146, "b")]],
             200, no_notices, token_file)
         events = [line for line in lines if line.startswith("PR #")]
-        check("--batch-events-for-seconds with events seen before N exits 0 at N, polling "
-              "one last time at N",
+        check("--batch-events-for-seconds with events seen before N exits 0 after one last "
+              "poll at N",
               exit_code == 0 and clock.now - 1000.0 == 200
               and [made - 1000.0 for made in polls_made] == [0, 60, 120, 180, 200],
               f"exit {exit_code!r}, clock {clock.now - 1000.0}, polls {polls_made}")
@@ -622,8 +622,8 @@ def run_batch_events_cases():
             [baseline, baseline + [pull_request(148, "e")], "gh: HTTP 503", "gh: HTTP 503",
              "gh: HTTP 503"],
             150, no_notices, token_file)
-        check("--batch-events-for-seconds prints its held events and exits 0 at N while "
-              "every query fails",
+        check("--batch-events-for-seconds prints its held events and exits 0 after the poll "
+              "at N while every query fails",
               exit_code == 0 and clock.now - 1000.0 == 150
               and any("PR #148 OPENED" in line for line in lines)
               and any("BLIND" in line for line in lines),
@@ -638,7 +638,8 @@ def run_batch_events_cases():
             [baseline, baseline + [pull_request(149, "f")], baseline + [pull_request(149, "f")]],
             120, notices, token_file)
         held = [line for line in lines if not line.startswith("WATCH: ")]
-        check("--batch-events-for-seconds holds a notice present at the first poll until N, "
+        check("--batch-events-for-seconds holds a notice present at the first poll until the "
+              "poll at N, "
               "and prints it before the pull request events after it",
               exit_code == 0 and clock.now - 1000.0 == 120 and len(held) == 2
               and held[0].startswith("NEEDS A LOOK pr9-bbbbbbbbbbbb.txt: pull request 9")
