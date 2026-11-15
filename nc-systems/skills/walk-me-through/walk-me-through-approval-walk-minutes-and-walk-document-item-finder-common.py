@@ -713,16 +713,21 @@ def approval_walk_document_new_item_insert_line_number_past_whole_item_sub_steps
     whole item that unit belongs to ends, and so where an item added after it goes: the first line of the first
     later unit that is not a sub-step of that whole item, or line_count. For unit `### Item 50.1 of 96` that is
     past sub-step 50.2 and every Withdrawn heading below either, since a unit ends at a Withdrawn heading and a
-    sub-step is a unit of its own. An unnumbered item with more of the whole item's sub-steps after it is passed
-    over, as approval_walk_item_sub_step_units_right_after passes over it."""
-    end = None
+    sub-step is a unit of its own. An item with more of the whole item's sub-steps after it is passed over, as
+    approval_walk_item_sub_step_units_right_after passes over it: an unnumbered item always, and a numbered item,
+    such as item 5 between 4.1 and 4.2, only when the next sub-step after it gives unit's M, so an older version's
+    `4.1 of 8` further down does not count."""
+    end, passed_numbered_item = None, False
     for later in [each for each in units if each[3] > unit[3]]:
         if approval_walk_unit_is_unnumbered_item(later):
             end = later[3] if end is None else end
         elif approval_walk_document_unit_is_dotted_sub_step_of_whole_item_of_any_item_number(later, unit[0]):
-            end = None
+            if passed_numbered_item and later[1] != unit[1]:
+                return end
+            end, passed_numbered_item = None, False
         else:
-            return later[3] if end is None else end
+            end = later[3] if end is None else end
+            passed_numbered_item = True
     return line_count if end is None else end
 
 

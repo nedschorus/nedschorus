@@ -215,7 +215,34 @@ def run_several_alert_cases(root):
           and document.index("## an earlier alert") < document.index("### Item 4.2 of 9: another part")
           < document.index("## ninth") < document.index("## Items 5 and 6 of 9"), result.stderr + document)
 
-    withdrawn = WALK_DOCUMENT.replace("## Items 5 and 6", "#### Withdrawn version 1 of item 4\n\nAn older filter.\n\n"
+    held = ("# A walk\n\n## Item 1 of 3: one\n\nRecommendation: go.\n\n## Item 2 of 3: two\n\n"
+            "### Item 2.1 of 3: a part\n\nRecommendation: go.\n\n## Item 3 of 3: a held new item\n\n"
+            "Recommendation: wait.\n\n### Item 2.2 of 3: another part\n\nRecommendation: stop.\n\n"
+            "## Item 4 of 4: four\n\nRecommendation: go.\n")
+    checkout, home = walk_checkout(root, "held-numbered-item", waiting="item 2.1 of 3", document=held)
+    claimed_alert(home, "alert-h", "tenth")
+    result = run(checkout, home, "alert-h")
+    document, _ = files(checkout)
+    check("while sub-step 2.1 waits and a numbered item the close step held stands between 2.1 and 2.2, the alert "
+          "goes after 2.2, after the whole of item 2, as the stop hook's instruction says",
+          result.returncode == 0
+          and document.index("## Item 3 of 3: a held new item") < document.index("### Item 2.2 of 3: another part")
+          < document.index("## tenth") < document.index("## Item 4 of 4: four"), result.stderr + document)
+
+    two_versions = ("# A walk\n\n## Item 4 of 9: four\n\n### Item 4.1 of 9: a part\n\nRecommendation: go.\n\n"
+                    "## Item 4 of 8: four, as first shown\n\n### Item 4.1 of 8: the part, as first shown\n\n"
+                    "Recommendation: go.\n\n## Item 5 of 9: five\n\nRecommendation: go.\n")
+    checkout, home = walk_checkout(root, "two-versions", waiting="item 4.1 of 9", document=two_versions)
+    claimed_alert(home, "alert-v", "eleventh")
+    result = run(checkout, home, "alert-v")
+    document, _ = files(checkout)
+    check("while sub-step 4.1 of 9 waits and an older version, item 4 of 8 with its 4.1 of 8, follows it, the "
+          "alert goes right after 4.1 of 9, before the older version, which is no sub-step of the item",
+          result.returncode == 0
+          and document.index("### Item 4.1 of 9: a part") < document.index("## eleventh")
+          < document.index("## Item 4 of 8: four, as first shown"), result.stderr + document)
+
+    withdrawn =WALK_DOCUMENT.replace("## Items 5 and 6", "#### Withdrawn version 1 of item 4\n\nAn older filter.\n\n"
                                       "## Items 5 and 6", 1)
     checkout, home = walk_checkout(root, "withdrawn-version", document=withdrawn)
     claimed_alert(home, "alert-w", "seventh")
