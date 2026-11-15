@@ -477,7 +477,7 @@ def open_tasks_nothing_holds(task_directory, checker):
     # The checker is shared by every agent-seat, so only the failures appended here are this one's.
     failures_before = len(checker.gh_failures)
     free, _ = due_task_hook.unheld_and_held_tasks(tasks, task_directory, checker)
-    if len(checker.gh_failures) > failures_before:
+    if len(checker.gh_failures) > failures_before:  # pragma: no mutate, gh_failures is only appended to, so != gives what > gives; a test kills is not
         kind, number, cause = checker.gh_failures[failures_before]
         raise ReadFailure(f"GitHub could not say whether {kind} {number} holds: {cause}")
     return [{"id": task_id, "subject": tasks[task_id].get("subject")} for task_id in free]
