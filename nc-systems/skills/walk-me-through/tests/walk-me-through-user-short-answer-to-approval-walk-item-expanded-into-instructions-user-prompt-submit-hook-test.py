@@ -1594,6 +1594,13 @@ def test_missing_walk_document_is_reported_for_a():
           and lines[1].endswith(" does not exist.")
           and lines[2:] == item_text_unreadable_instructions(case.walk / f"{WALK_NAME}.md"),
           f"lines {lines!r}")
+    case.minutes(f"#item_page item 4 of 9 {PAGE_1}\n\n#next_to_present item 4 of 9")
+    lines = case.lines("a")
+    check("a walk-document that is missing, for an item whose minutes record its page, ends the refusal with the "
+          "item's closing line itself",
+          lines is not None and lines[2:] == item_text_unreadable_instructions(
+              case.walk / f"{WALK_NAME}.md", f"[Item 4 of 9]({PAGE_1}) · {LETTERS_AFTER_LINK}"),
+          f"lines {lines!r}")
     lines = case.lines("z")
     check("a walk-document that is missing is reported before acting on Z, which the check does not cover",
           lines is not None and lines[1].startswith("Z means defer"), f"lines {lines!r}")
@@ -1604,13 +1611,22 @@ CLOSING_LINE_NAMED = ("the item's closing line, the walk-me-through skill's line
                       "the answers")
 
 
-def item_text_unreadable_instructions(document, closing_line=None):
-    """The lines after the first of an ITEM_TEXT_UNREADABLE refusal, the walk-minutes shown as the Case shows them."""
+def item_text_unreadable_instructions(path, closing_line=None):
+    """The lines after the first of an ITEM_TEXT_UNREADABLE refusal naming path, the file to change, or none."""
     closing = f"this closing line: {closing_line}" if closing_line else CLOSING_LINE_NAMED
+    where = f", in {path}" if path else ""
     return ["Record nothing in the walk-minutes and act on none of the answer.",
-            "Make the change that the reason above names, in the one of these two files it names: the walk-document "
-            f"{document}, or the walk-minutes <minutes>. Then show the user the item in full, so that he can type his answer again, "
-            f"and end that message with {closing}"]
+            f"Make the change that the reason above names{where}. Then show the user the item's current text in "
+            f"full, so that he can type his answer again, and end that message with {closing}"]
+
+
+def test_an_item_with_no_heading_leaves_the_reason_to_name_the_file():
+    case = Case(next_to_present="item 7 of 9", document=SHOWN_DOCUMENT)
+    lines = case.lines("a")
+    check("a waiting item the walk-document has no heading for leaves an A uncounted, and the reason, not a path the "
+          "hook picks, says what to change", lines is not None and "Why it could not read the text: the "
+          "`#next_to_present` line, `item 7 of 9`, its walk-document has no heading `Item 7`" in lines[1]
+          and lines[2:] == item_text_unreadable_instructions(None), f"lines {lines!r}")
 SHOWN_ITEM = """## Item 4 of 9: a filter
 
 #approval_walk_item_in_category_fix_next
@@ -1641,8 +1657,8 @@ ITEM_4_CLOSING_LINE = f"[Item 4 of 9, a filter](https://claude.ai/artifact/x) ·
 
 def not_shown_lines(answer, reason):
     return [f"The user answered \"{answer}\" to item 4 of 9 of approval-walk {WALK_NAME}.",
-            f"{ANSWER_DISCARDED}, because {reason}, so counting it would record his answer against a version of item "
-            "4 of 9 he may not have seen.",
+            f"{ANSWER_DISCARDED}, because {reason}: the user may not have seen item 4 of 9 as the walk-document now "
+            "has it, so the hook did not count the answer.",
             "Record nothing in the walk-minutes and act on none of the answer.",
             "Show the user item 4 of 9 as the walk-document now has it, the text between the BEGIN and END lines "
             f"below, unchanged and not inside a code block, then end your message with {CLOSING_LINE_NAMED}, and "
@@ -1651,12 +1667,17 @@ def not_shown_lines(answer, reason):
 
 
 def shown_different_reason(minute):
-    return (f"your last message that showed item 4 of 9, written at 2026-11-13T20:{minute:02}:00Z, does not hold the "
-            "item's current walk-document text word for word, whitespace and Markdown markup aside")
+    return (f"the words after the heading of item 4 of 9 in your last message that showed it, written at "
+            f"2026-11-13T20:{minute:02}:00Z, do not contain the item's current walk-document text after its heading as "
+            "one unbroken run: either that message misquoted the item, or the walk-document changed after it. Words "
+            "count; whitespace, line breaks, Markdown markup such as `**` and link targets, `#approval_walk_item_` "
+            "lines and the `of M` in a running count do not")
 
 
 def never_shown_reason(item="item 4 of 9"):
-    return f"no message of yours in this agent-session's transcript has a line opening with the heading of {item}"
+    return (f"no message of yours in this agent-session's transcript has a line opening with the words of {item}'s "
+            "heading, whatever its Markdown markup, `#` included; a message written before the last session-handoff "
+            "is in an earlier agent-session's transcript, which the hook does not read")
 
 
 NEVER_SHOWN_REASON = never_shown_reason()
@@ -1784,12 +1805,12 @@ def test_a_numbered_answer_is_checked_only_for_the_waiting_items_it_approves_or_
           f"lines {lines!r}")
     lines = case.lines("4 a 5 a", transcript)
     check("'4 a 5 a' is not counted when item 5 was never shown", lines is not None
-          and lines[1] == (f"{ANSWER_DISCARDED}, because {never_shown_reason('item 5 of 9')}, so counting it would "
-                           "record his answer against a version of item 5 of 9 he may not have seen."),
+          and lines[1] == (f"{ANSWER_DISCARDED}, because {never_shown_reason('item 5 of 9')}: the user may not have "
+                           "seen item 5 of 9 as the walk-document now has it, so the hook did not count the answer."),
           f"lines {lines!r}")
     lines = case.lines("all a", transcript)
     check("'all a' is not counted when one waiting item was never shown", lines is not None
-          and "item 5 of 9 he may not have seen." in lines[1] and not counted(lines),
+          and "seen item 5 of 9 as the walk-document now has it" in lines[1] and not counted(lines),
           f"lines {lines!r}")
 
 
@@ -1917,6 +1938,15 @@ def test_an_item_whose_heading_link_is_defined_outside_the_item_counts_when_show
     lines = case.lines("a", case.transcript(f"{handed_back}\n\n{ITEM_4_CLOSING_LINE}"))
     check("an answer counts once the agent has shown the handed-back text, which lacks the link's definition",
           bool(handed_back) and counted(lines), f"handed back {handed_back!r}, lines {lines!r}")
+
+
+def test_an_item_whose_heading_link_is_a_file_link_defined_outside_the_item_counts_when_shown():
+    document = REFERENCE_DEFINED_ELSEWHERE_DOCUMENT.replace("https://example.invalid/rows",
+                                                            "file:///Volumes/nedhome/rows.md")
+    case = Case(next_to_present="item 4 of 9", document=document)
+    lines = case.lines("a", case.transcript(document, ITEM_4_CLOSING_LINE))
+    check("an answer counts when the item's heading link is a file: link defined outside the item and the whole "
+          "document was shown", counted(lines), f"lines {lines!r}")
 
 
 RANGE_HEADING_DOCUMENT = """# A walk

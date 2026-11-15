@@ -436,8 +436,8 @@ ANSWER_DISCARDED = "The hook discarded this answer, and does not keep it for lat
 CLOSING_LINE_NAMED = ("the item's closing line, the walk-me-through skill's line that links the item's page and lists "
                       "the answers")
 ITEM_NOT_SHOWN_LINES = (
-    ANSWER_DISCARDED + ", because {reason}, so counting it would record his answer against a version of {item} he "
-    "may not have seen.",
+    ANSWER_DISCARDED + ", because {reason}: the user may not have seen {item} as the walk-document now has it, so "
+    "the hook did not count the answer.",
     "Record nothing in the walk-minutes and act on none of the answer.",
     "Show the user {item} as the walk-document now has it, the text between the BEGIN and END lines below, "
     "unchanged and not inside a code block, then end your message with " + CLOSING_LINE_NAMED + ", and wait for "
@@ -446,11 +446,15 @@ ITEM_NOT_SHOWN_LINES = (
     "{text}",
     "END",
 )
-NEVER_SHOWN_REASON = ("no message of yours in this agent-session's transcript has a line opening with the heading of "
-                      "{item}")
+NEVER_SHOWN_REASON = (
+    "no message of yours in this agent-session's transcript has a line opening with the words of {item}'s heading, "
+    "whatever its Markdown markup, `#` included; a message written before the last session-handoff is in an earlier "
+    "agent-session's transcript, which the hook does not read")
 SHOWN_DIFFERENT_REASON = (
-    "your last message that showed {item}, written at {timestamp}, does not hold the item's current walk-document "
-    "text word for word, whitespace and Markdown markup aside")
+    "the words after the heading of {item} in your last message that showed it, written at {timestamp}, do not "
+    "contain the item's current walk-document text after its heading as one unbroken run: either that message "
+    "misquoted the item, or the walk-document changed after it. Words count; whitespace, line breaks, Markdown "
+    "markup such as `**` and link targets, `#approval_walk_item_` lines and the `of M` in a running count do not")
 TRANSCRIPT_UNREADABLE_LINES = (
     ANSWER_DISCARDED + ": it could not read this agent-session's transcript, {path}, which it reads to check that "
     "the user was last shown {item} as the walk-document now has it. The error: {error}.",
@@ -474,9 +478,8 @@ ITEM_TEXT_UNREADABLE_LINES = (
     ANSWER_DISCARDED + ": it could not read the text of {item} from the walk-document, so it cannot check that the "
     "user was last shown the item as it now stands. Why it could not read the text: {problem}.",
     "Record nothing in the walk-minutes and act on none of the answer.",
-    "Make the change that the reason above names, in the one of these two files it names: the walk-document "
-    "{document}, or the walk-minutes {minutes}. Then show the user the item in full, so that he can type his answer again, and end that message "
-    "with {closing_line}",
+    "Make the change that the reason above names{where}. Then show the user the item's current text in full, "
+    "so that he can type his answer again, and end that message with {closing_line}",
 )
 RECOMMENDATION_UNKNOWN_LINE = (
     "The hook could not read the recommendation of {item}: {problem}. Read the recommendation in the "
@@ -580,8 +583,10 @@ def read_walk(cwd):
         return WalkState(name, count[0], numbers, total, {}, f"the walk-document {document} does not exist",
                          pages=pages, minutes=minutes, document=document)
     text = document.read_text(encoding="utf-8")
+    tokens = parser.parse(text)
+    # Parsed as unseen_item_lines parses the item and the transcript, so a file: definition is kept here too.
     references = {}
-    tokens = parser.parse(text, references)
+    shown_text_parser(walk_finder).parse(text, references)
     spans = walk_finder.item_unit_spans(text, parser)
     recommendations, problems, parts = recommendations_in(
         walk_finder.prose_lines(text, parser, tokens), walk_finder.item_opening_lines(text, parser, tokens),
@@ -890,6 +895,14 @@ def shown_words(markdown, parser, env=None):
     return re.sub(r"\s*" + re.escape(walk_finder.APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT), "", words)
 
 
+def shown_text_parser(walk_finder):
+    """The walk finder's Markdown parser, accepting every link target: by default markdown-it reads a file: link,
+    which walks use, as text, so its target would count as words, and drops a reference definition with one."""
+    parser = walk_finder.markdown_parser()
+    parser.validateLink = lambda url: True
+    return parser
+
+
 def with_walk_document_references(env, references):
     """env, given each reference definition of the walk-document's env references that env does not define."""
     for label, target in references.get("references", {}).items():
@@ -937,18 +950,18 @@ def unseen_item_lines(answer, walk, transcript_path):
     numbers = checked_item_numbers(answer, walk)
     if not numbers:
         return []
-    parser = load_walk_finder().markdown_parser()
-    # markdown-it reads a file: link, which walks use, as text, so its target would count as words.
-    parser.validateLink = lambda url: True
+    parser = shown_text_parser(load_walk_finder())
     lines = []
     for number in numbers:
         item = item_name(number, walk)
         text = walk.shown_texts.get(number)
         if text is None:
             problem = walk.problem or walk.shown_text_problem or f"the walk-document has no text for {item}"
+            # A walk.problem that leaves numbers is the missing walk-document; a shown_text_problem says which file
+            # to change itself, and for an item with two headings offers either.
+            where = f", in {walk.document}" if walk.problem or not walk.shown_text_problem else ""
             closing = closing_line(number, walk)
-            return [line.format(item=item, problem=problem, document=walk.document or "unknown",
-                                minutes=walk.minutes or "unknown",
+            return [line.format(item=item, problem=problem, where=where,
                                 closing_line=f"this closing line: {closing}" if closing else CLOSING_LINE_NAMED)
                     for line in ITEM_TEXT_UNREADABLE_LINES]
         heading_line, _, body = text.partition("\n")
