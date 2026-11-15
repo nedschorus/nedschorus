@@ -15,7 +15,7 @@ The seams are flags the tests use; cron passes none, so each takes its default:
   --test-suite-runner-program   scripts/run-all-test-suites.py in the worktree of step 6
 
 The design is GHI "Test suites that run without a sandbox leave per-change test
-runs and run apart, when their own files change or in a quiet gap",
+runs unless the change edits a file they read, and run on main in a quiet gap",
 https://github.com/nedschorus/nedschorus/issues/2381, parts 2 and 4. A selective
 run of scripts/run-all-test-suites.py leaves out each suite listed in its
 SUITES_RUN_WITHOUT_ANY_SANDBOX unless the change edits a file that suite reads,
