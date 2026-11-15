@@ -436,7 +436,8 @@ ANSWER_DISCARDED = "The hook discarded this answer, and does not keep it for lat
 CLOSING_LINE_NAMED = ("the item's closing line, the walk-me-through skill's line that links the item's page and lists "
                       "the answers")
 ITEM_NOT_SHOWN_LINES = (
-    ANSWER_DISCARDED + ": {reason}, so the user may be answering a version of {item} he has not seen.",
+    ANSWER_DISCARDED + ", because {reason}, so counting it would record his answer against a version of {item} he "
+    "may not have seen.",
     "Record nothing in the walk-minutes and act on none of the answer.",
     "Show the user {item} as the walk-document now has it, the text between the BEGIN and END lines below, "
     "unchanged and not inside a code block, then end your message with " + CLOSING_LINE_NAMED + ", and wait for "
@@ -445,24 +446,37 @@ ITEM_NOT_SHOWN_LINES = (
     "{text}",
     "END",
 )
-NEVER_SHOWN_REASON = "no message of yours in this agent-session's transcript has a line opening with its heading"
+NEVER_SHOWN_REASON = ("no message of yours in this agent-session's transcript has a line opening with the heading of "
+                      "{item}")
 SHOWN_DIFFERENT_REASON = (
-    "your last message that showed it, written at {timestamp}, does not hold its current walk-document text word "
-    "for word, whitespace and Markdown markup aside")
+    "your last message that showed {item}, written at {timestamp}, does not hold the item's current walk-document "
+    "text word for word, whitespace and Markdown markup aside")
 TRANSCRIPT_UNREADABLE_LINES = (
     ANSWER_DISCARDED + ": it could not read this agent-session's transcript, {path}, which it reads to check that "
     "the user was last shown {item} as the walk-document now has it. The error: {error}.",
+    "The remedy: {remedy}",
     "Record nothing in the walk-minutes and act on none of the answer.",
     "Tell the user that line, and that no answer can be counted until the hook can read the transcript; do not "
     "show him the item again for this, because showing it again does not make the transcript readable.",
 )
 NO_TRANSCRIPT_PATH = "which the hook's payload does not name, having no transcript_path"
+# This agent-session cannot repair what Claude Code wrote or failed to name; a session-handoff starts a new transcript.
+NEW_SESSION_REMEDY = "only a new agent-session, which a session-handoff starts, has a transcript the hook can read."
+TRANSCRIPT_REMEDIES = (  # first match wins, so OSError, the widest, comes last
+    (FileNotFoundError, "no file is at that path; check with `ls -l {path}`, and if it is gone, " + NEW_SESSION_REMEDY),
+    (PermissionError, "make the file readable with `chmod u+r {path}`, then ask the user to type his answer again."),
+    (ValueError, "a record in the file is not valid UTF-8 or JSON, which this agent-session cannot repair; "
+                 + NEW_SESSION_REMEDY),
+    (OSError, "check the file and its disk with `ls -l {path}`; if the file cannot be read, " + NEW_SESSION_REMEDY),
+)
+NO_TRANSCRIPT_PATH_REMEDY = "Claude Code named no transcript, which this agent-session cannot change; " + NEW_SESSION_REMEDY
 ITEM_TEXT_UNREADABLE_LINES = (
     ANSWER_DISCARDED + ": it could not read the text of {item} from the walk-document, so it cannot check that the "
     "user was last shown the item as it now stands. Why it could not read the text: {problem}.",
     "Record nothing in the walk-minutes and act on none of the answer.",
-    "Correct the walk-document or the walk-minutes as that reason says, then show the user the item in full, end "
-    "your message with " + CLOSING_LINE_NAMED + ", and wait for him to type his answer again.",
+    "Make the change that the reason above names, in the one of these two files it names: the walk-document "
+    "{document}, or the walk-minutes {minutes}. Then show the user the item in full, so that he can type his answer again, and end that message "
+    "with {closing_line}",
 )
 RECOMMENDATION_UNKNOWN_LINE = (
     "The hook could not read the recommendation of {item}: {problem}. Read the recommendation in the "
@@ -519,12 +533,16 @@ class WalkState:
     """The open approval-walk as the hook read it."""
 
     def __init__(self, name, item, numbers, total, recommendations, problem, recommendation_problems=None,
-                 parts=None, pages=None, points=None, minutes=None, shown_texts=None, shown_text_problem=None):
+                 parts=None, pages=None, points=None, minutes=None, shown_texts=None, shown_text_problem=None,
+                 document=None, references=None):
         self.name, self.item, self.numbers, self.total = name, item, numbers, total
         # item number -> the item's text as approval_walk_item_text_as_shown_to_user gives it, for each waiting item
         self.shown_texts = shown_texts or {}
         self.shown_text_problem = shown_text_problem  # why shown_texts lacks a waiting item, or None
         self.minutes = minutes  # the walk-minutes' path
+        self.document = document  # the walk-document's path
+        # the markdown-it env of the whole walk-document, whose references a reference link in one item may need
+        self.references = references or {}
         # item number -> link of its newest `#item_page` line, or the walk finder's ITEM_PAGE_PUBLISH_FAILED
         self.pages = pages or {}
         self.points = points or {}  # item number -> the point its walk-document heading states
@@ -560,9 +578,10 @@ def read_walk(cwd):
     document = minutes.with_name(name + ".md")
     if not document.is_file():
         return WalkState(name, count[0], numbers, total, {}, f"the walk-document {document} does not exist",
-                         pages=pages, minutes=minutes)
+                         pages=pages, minutes=minutes, document=document)
     text = document.read_text(encoding="utf-8")
-    tokens = parser.parse(text)
+    references = {}
+    tokens = parser.parse(text, references)
     spans = walk_finder.item_unit_spans(text, parser)
     recommendations, problems, parts = recommendations_in(
         walk_finder.prose_lines(text, parser, tokens), walk_finder.item_opening_lines(text, parser, tokens),
@@ -578,7 +597,8 @@ def read_walk(cwd):
     if total is None:
         total = walk_finder.approval_walk_item_total_shown_and_waiting_counted_from_walk_document(spans)
     return WalkState(name, count[0], numbers, total, recommendations, None, problems, parts, pages,
-                     heading_points(text.split("\n"), spans, parser), minutes, shown_texts, shown_text_problem)
+                     heading_points(text.split("\n"), spans, parser), minutes, shown_texts, shown_text_problem,
+                     document, references)
 
 
 def heading_points(lines, spans, parser):
@@ -870,14 +890,25 @@ def shown_words(markdown, parser, env=None):
     return re.sub(r"\s*" + re.escape(walk_finder.APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT), "", words)
 
 
-def last_showing_message(transcript_path, number, heading, parser):
+def with_walk_document_references(env, references):
+    """env, given each reference definition of the walk-document's env references that env does not define."""
+    for label, target in references.get("references", {}).items():
+        env.setdefault("references", {}).setdefault(label, target)
+    return env
+
+
+def last_showing_message(transcript_path, heading, parser, references):
     """Return (the shown_words of the newest assistant text block outside a subagent that has a line opening with
     heading, from the line after that one to the block's end; the block's timestamp), or None when no block does.
-    Raise OSError or ValueError when the transcript cannot be read."""
+    references is the walk-document's env, so that a reference link a block shows without its definition renders as
+    the walk-document's does. Raise OSError or ValueError when the transcript cannot be read."""
     reader = load_walk_finder().load_module("claude_code_session_transcript_records_read_backward_common",
                                             TRANSCRIPT_READER_FILE)
-    # A cheap test before the parser runs, since a transcript holds thousands of text blocks.
-    mentions_number = re.compile(rf"(?<![\d.]){re.escape(number)}(?!\d|\.\d)")
+    # A cheap test before the parser runs, since a transcript holds thousands of text blocks. It looks for the
+    # heading's first number, not the item's, since a range heading, `Items 10 to 12`, holds no 11.
+    first_number = re.search(r"\d+(?:\.\d+)*", heading)
+    mentions_number = re.compile(rf"(?<![\d.]){re.escape(first_number[0])}(?!\d|\.\d)" if first_number
+                                 else re.escape(heading))
     for record in reader.records_newest_first(transcript_path):
         content = (record.get("message") or {}).get("content") if record.get("type") == "assistant" else None
         if record.get("isSidechain") or not isinstance(content, list):
@@ -888,6 +919,7 @@ def last_showing_message(transcript_path, number, heading, parser):
                 continue
             env = {}
             parser.parse(text, env)
+            with_walk_document_references(env, references)
             lines = text.split("\n")
             for index, line in enumerate(lines):
                 # A closing line opens with the heading's words when the heading has no point, as `## Item 4 of 9`.
@@ -914,26 +946,32 @@ def unseen_item_lines(answer, walk, transcript_path):
         text = walk.shown_texts.get(number)
         if text is None:
             problem = walk.problem or walk.shown_text_problem or f"the walk-document has no text for {item}"
-            return [line.format(item=item, problem=problem) for line in ITEM_TEXT_UNREADABLE_LINES]
+            closing = closing_line(number, walk)
+            return [line.format(item=item, problem=problem, document=walk.document or "unknown",
+                                minutes=walk.minutes or "unknown",
+                                closing_line=f"this closing line: {closing}" if closing else CLOSING_LINE_NAMED)
+                    for line in ITEM_TEXT_UNREADABLE_LINES]
         heading_line, _, body = text.partition("\n")
         env = {}
         parser.parse(text, env)
+        with_walk_document_references(env, walk.references)
         heading, body = shown_words(heading_line, parser, env), shown_words(body, parser, env)
         if not transcript_path:
-            return [line.format(path=NO_TRANSCRIPT_PATH, item=item, error="no transcript_path")
-                    for line in TRANSCRIPT_UNREADABLE_LINES]
+            return [line.format(path=NO_TRANSCRIPT_PATH, item=item, error="no transcript_path",
+                                remedy=NO_TRANSCRIPT_PATH_REMEDY) for line in TRANSCRIPT_UNREADABLE_LINES]
         try:
-            shown = last_showing_message(transcript_path, number, heading, parser)
+            shown = last_showing_message(transcript_path, heading, parser, walk.references)
         except (OSError, ValueError) as error:
-            return [line.format(path=transcript_path, item=item, error=repr(error))
-                    for line in TRANSCRIPT_UNREADABLE_LINES]
+            remedy = next(text for kind, text in TRANSCRIPT_REMEDIES if isinstance(error, kind))
+            return [line.format(path=transcript_path, item=item, error=repr(error),
+                                remedy=remedy.format(path=transcript_path)) for line in TRANSCRIPT_UNREADABLE_LINES]
         if shown is None:
-            reason = NEVER_SHOWN_REASON
+            reason = NEVER_SHOWN_REASON.format(item=item)
         else:
             after_heading, timestamp = shown
             if not body or f" {body} " in f" {after_heading} ":
                 continue
-            reason = SHOWN_DIFFERENT_REASON.format(timestamp=timestamp)
+            reason = SHOWN_DIFFERENT_REASON.format(item=item, timestamp=timestamp)
         lines += [line.format(item=item, reason=reason, text=text) for line in ITEM_NOT_SHOWN_LINES]
     return lines
 
