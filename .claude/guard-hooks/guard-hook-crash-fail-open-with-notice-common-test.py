@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Tests for .claude/guard-hooks/guard-hook-crash-fail-open-with-notice-common.py, and for each
-guard that wraps its loads and its main() in it.
+PreToolUse guard .claude/settings.json registers, each of which wraps its loads and its main() in it.
 
-Each guard is crashed for real: once in main(), by a payload whose tool_input is not an object, and
-once while loading the modules it needs, by running a copy of it from a directory that holds
+Each guard is crashed for real: once in main(), by stdin that is not JSON, and, when it loads
+modules of its own, once while loading them, by running a copy of it from a directory that holds
 none of them.
 
 Run: python3 .claude/guard-hooks/guard-hook-crash-fail-open-with-notice-common-test.py
@@ -14,6 +14,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -27,18 +28,27 @@ _spec = importlib.util.spec_from_file_location(
 crash_notice = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(crash_notice)
 
-# Each guard, and whether it loads a module of its own that a copy run elsewhere cannot find.
-GUARDS = (
-    ("instruction-file-guard.py", True),
-    ("session-location-write-guard.py", True),
-    ("backup-and-snapshot-write-guard.py", False),
-    ("synthetic-keystroke-guard-hook.py", True),
-    ("force-push-with-open-pull-request-guard-hook.py", True),
-    ("ghi-issue-write-hand-typed-gh-command-refusal.py", True),
-    ("search-file-argument-read-as-option-guard-hook.py", True),
-    ("claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py", True),
-    ("hand-typed-codex-exec-command-refusal-hook.py", True),
-)
+SETTINGS_PATH = GUARD_HOOKS_DIRECTORY.parent / "settings.json"
+COMMON_MODULE_NAME_PATTERN = re.compile(r'"([A-Za-z0-9_-]+-common\.py)"')
+
+
+def registered_guards():
+    """Return (guard file name, whether it loads a -common.py module a copy run elsewhere cannot
+    find) for each PreToolUse guard under .claude/guard-hooks that .claude/settings.json
+    registers, so that a guard added there is crash-tested without being listed here."""
+    guards = {}
+    settings = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+    for group in settings["hooks"]["PreToolUse"]:
+        for hook in group["hooks"]:
+            for guard_name in re.findall(r"\.claude/guard-hooks/([A-Za-z0-9_.-]+\.py)",
+                                         hook.get("command", "")):
+                source = (GUARD_HOOKS_DIRECTORY / guard_name).read_text(encoding="utf-8")
+                guards[guard_name] = any(
+                    name != MODULE_PATH.name for name in COMMON_MODULE_NAME_PATTERN.findall(source))
+    return sorted(guards.items())
+
+
+GUARDS = registered_guards()
 
 failures = []
 
@@ -133,13 +143,17 @@ check("a guard's own exit, such as a refusal's 2, passes through unchanged", exi
 
 with tempfile.TemporaryDirectory() as temporary_directory:
     scratch = Path(temporary_directory)
+    check("settings.json registers every guard this suite crashes, the ones that load nothing "
+          "of their own included",
+          {"instruction-file-guard.py", "claude-code-artifact-tool-claude-ai-page-delete-refusal-hook.py",
+           "pkill-killall-and-process-name-pattern-kill-refusal-hook.py"}
+          <= {guard_name for guard_name, _ in GUARDS}, GUARDS)
     for guard_name, loads_own_modules in GUARDS:
         guard_path = GUARD_HOOKS_DIRECTORY / guard_name
-        result = subprocess.run([sys.executable, str(guard_path)],
-                                input=json.dumps({"tool_name": "Bash", "tool_input": "not an object"}),
+        result = subprocess.run([sys.executable, str(guard_path)], input="not JSON",
                                 capture_output=True, text=True, timeout=60, cwd=scratch)
-        check_crash_notice(f"{guard_name} crashing in main()", result, guard_name,
-                           "AttributeError")
+        check_crash_notice(f"{guard_name} crashing in main() on stdin that is not JSON", result,
+                           guard_name, "JSONDecodeError")
         if not loads_own_modules:
             continue
         copy_directory = scratch / guard_path.stem / ".claude" / "guard-hooks"

@@ -654,7 +654,6 @@ for shipper in ("nc-systems/cold-read/cold-read-record-ship.py", "scripts/sanity
 
 check("a command with no removal is let through", run_hook(payload_for("ls", "/work")) == (0, None))
 check("another tool is let through", run_hook({"tool_name": "Write", "tool_input": {"file_path": "x"}}) == (0, None))
-check("unreadable hook input is let through", run_hook("not json") == (0, None))
 
 # The shell reader cannot run: the command is let through, and the agent is told what to do.
 readings_as_written = hook.shell_reader.simple_commands
