@@ -1255,8 +1255,8 @@ def approval_walk_item_word_counted_line_ranges(walk_finder, text, tokens, parse
         ranges.append(own_range(unit, number))
         if len(numbers) > 1 and len(unit[0]) > 1:
             ranges += shared_heading_text(unit)
-        for each in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(all_units, unit):
-            parts = [part for part in each[0] if part.startswith(number + ".") and part not in numbers]
+        for each in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(all_units, unit, [number]):
+            parts =[part for part in each[0] if part.startswith(number + ".") and part not in numbers]
             ranges += [own_range(each, part) for part in parts]
             if parts and len(each[0]) > 1:
                 ranges += shared_heading_text(each)
@@ -2309,8 +2309,8 @@ def approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minut
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     all_units = walk_finder.item_unit_spans(document.read_text(encoding="utf-8"), parser)
     unit = walk_finder.waiting_item_units(document, value, numbers, total, parser, all_units)[1][0]
-    sub_steps = [part for each in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(all_units, unit)
-                 for part in each[0] if part.startswith(numbers[0] + ".")]
+    sub_steps = [part for each in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(
+                     all_units, unit, numbers) for part in each[0] if part.startswith(numbers[0] + ".")]
     named = next_item(walk_finder, minutes, parser, sub_steps, None, [], [])
     if not named:
         return None
@@ -2484,21 +2484,27 @@ def walk_document_order(walk_finder, text, units, parser, document, today):
 
 
 def approval_walk_unnumbered_items_moved_past_the_sub_steps_they_split(walk_finder, units):
-    """units, as item_unit_spans gives them, with each unnumbered item that stands between two sub-steps of one
-    whole item, such as 2.1 and 2.2, moved to just after the last unit of the sub-steps that follow it, as
-    approval_walk_item_sub_step_units_below_item_in_walk_document reads them; the units keep their line numbers."""
-    moved, waiting = [], []
+    """units, as item_unit_spans gives them, with each unnumbered item that stands between a numbered unit and the
+    last of that unit's sub-steps, as approval_walk_item_sub_step_units_below_item_in_walk_document finds them, moved
+    to just after that last sub-step, the latest one when several units' sub-steps reach past it, as in 2.1, the
+    unnumbered item, then 2.2, or 3, 4, the unnumbered item, then 3.1; the units keep their line numbers."""
+    after = {}
     for unit in units:
-        if walk_finder.approval_walk_unit_is_unnumbered_item(unit):
-            waiting.append(unit)
+        if not unit[0]:
             continue
-        numbered_above = [other for other in moved if other[0]]
-        is_sub_step = walk_finder.approval_walk_document_unit_is_dotted_sub_step_of_whole_item_of_any_item_number
-        if waiting and not (numbered_above and is_sub_step(unit, numbered_above[-1][0])):
-            moved += waiting
-            waiting = []
+        found = walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(units, unit)
+        last = found[-1][3] if found else None
+        for other in units:
+            if (last is not None and walk_finder.approval_walk_unit_is_unnumbered_item(other)
+                    and unit[3] < other[3] < last):
+                after[other[3]] = max(after.get(other[3], last), last)
+    moved = []
+    for unit in units:
+        if unit[3] in after:
+            continue
         moved.append(unit)
-    return moved + waiting
+        moved += [other for other in units if after.get(other[3]) == unit[3]]
+    return moved
 
 
 class WalkOrderUnusable(Exception):

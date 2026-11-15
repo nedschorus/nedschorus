@@ -15,17 +15,19 @@ The item is found as the walk-me-through hooks and the walk check program find i
 walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py: its unit runs from the heading that
 names it to the next item, a sub-step such as `### Item 4.1 of 9` being an item of its own. An item that shares a
 heading with others keeps only its own lines, from its opening, such as `**Item 12:**`, to the next opening; with
-no opening of its own, it keeps the heading's lines. A `Withdrawn` heading ends the item it falls in, so the
-versions under it are on no page, with one exception: a heading that names several sub-steps, as in
-`### Items 4.1 and 4.2 of 9`, is carried whole, its Withdrawn versions included.
+no opening of its own, it keeps the heading's lines. A `Withdrawn` heading ends the item it falls in, and a
+heading below it in its section starts no item, so the versions under it are on no page, with one exception: on
+item 4's page, a heading that names several of its sub-steps, as in `### Items 4.1 and 4.2 of 9`, is carried
+whole, its Withdrawn versions included.
 
 The skill links a sub-step's closing line to the page of the item the sub-step belongs to, such as item 4's page
 for sub-step 4.1, so item 4's page carries, after its own lines, each of its sub-steps under the sub-step's own
 heading. It takes them wherever they sit below item 4, as the walk finder's
 approval_walk_item_sub_step_units_below_item_in_walk_document says, so an item standing between two of them stays
 off item 4's page and the sub-steps after it are on it, while an older version's `### Item 4.2 of 8` below a later
-item stays off. A sub-step's
-page, built with 4.1, holds that sub-step alone. Under a heading that names an item and its sub-steps, as in
+item stays off. A sub-step's own
+page, built with 4.1, holds that sub-step's lines and its own sub-steps, such as 4.1.1, and none of its siblings':
+under `### Items 4.1 and 4.2 of 9` it keeps only 4.1's lines, as for any heading shared by several items. Under a heading that names an item and its sub-steps, as in
 `## Items 12 to 12.2 of 13`, item 12's page also carries the lines of each sub-step that has an opening of its
 own, such as `**Item 12.1:**`, and leaves off a sub-step with none; it puts these lines in the walk-document's
 order, each line once, so a sub-step's lines that item 12's own already hold are not repeated.

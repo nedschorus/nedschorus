@@ -81,7 +81,10 @@ count, is read as absent, here and by every program that loads this module. A
 running count that names no item still ends the unit before it. A top-level heading that opens with
 `Withdrawn`, as in `#### Withdrawn version 1 of item 4.1`, ends the unit it
 falls in; in a unit that names several items it ends only the item it falls
-in, and the unit's next opening starts the next item, so a version the walk-document keeps after replacing it is never
+in, and the unit's next opening starts the next item. A heading deeper than a
+Withdrawn heading, before the next heading as high or higher, starts no unit,
+so a sub-step heading under `## Withdrawn: Item 4 of 9` is part of the
+withdrawn version. So a version the walk-document keeps after replacing it is never
 read for the item's recommendation, its `#new` lines or its parts. Every search of a walk file for its
 structure, here and in the programs that load this module, reads the lines
 prose_lines returns, in which fenced and indented code is empty and HTML comments
@@ -549,7 +552,9 @@ def item_unit_spans(document_text, parser):
 def item_unit_starts(tokens, lines):
     """Return [(token index, item numbers, M, problem, revised, first line)] for each running count that
     starts a unit, as item_unit_spans' docstring says, before it leaves out the units a later revised heading
-    replaces; a Withdrawn heading starts none. item_opening_lines reads the same starts, so a Withdrawn
+    replaces; a Withdrawn heading starts none, and neither does a heading below it in its section, one deeper than it
+    before the next heading as high or higher, so a `### Item 3.1 of 9` under `## Withdrawn: Item 3 of 9` is the
+    withdrawn version's own and no live item's sub-step. item_opening_lines reads the same starts, so a Withdrawn
     version's labels stop being dropped exactly where a unit starts."""
     starts = []
     group = None
@@ -564,12 +569,18 @@ def item_unit_starts(tokens, lines):
             if count and "." not in count[1]:
                 count_heading_markups.add(token.markup)
     unnumbered_items_possible = count_heading_markups <= {UNNUMBERED_ITEM_HEADING_MARKUP}
+    # The level of the Withdrawn heading whose section the headings read now sit in, or None.
+    withdrawn_level = None
     for index, token in enumerate(tokens):
         if token.map is None or token.level != 0 or token.type not in ("heading_open", "paragraph_open"):
             continue
-        if (token.type == "heading_open" and index + 1 < len(tokens)
-                and WITHDRAWN_HEADING.match(tokens[index + 1].content)):
-            continue
+        if token.type == "heading_open":
+            if withdrawn_level is not None and len(token.markup) > withdrawn_level:
+                continue
+            withdrawn_level = None
+            if index + 1 < len(tokens) and WITHDRAWN_HEADING.match(tokens[index + 1].content):
+                withdrawn_level = len(token.markup)
+                continue
         if token.type == "paragraph_open" and not lines[token.map[0]].lstrip().startswith("**"):
             continue
         content = tokens[index + 1].content.split("\n")[0] if index + 1 < len(tokens) else ""
@@ -616,20 +627,27 @@ def approval_walk_item_line_range_within_heading_shared_by_several_items(opening
     return starts[number], min(later + [end])
 
 
-def approval_walk_item_sub_step_units_below_item_in_walk_document(all_units, unit):
-    """Return the units of all_units, as item_unit_spans gives them, below unit that are sub-steps of any item unit
-    names, such as `### Item 3.1 of 9` and `### Item 3.1.1 of 9` after item 3, wherever they sit below it, up to a
-    later unit that names one of unit's items again, such as a later `Item 3 of 12` that reuses the number: an
-    item's sub-steps may stand after later items, as when the close step's hold-answer path numbers a new item
-    right after an answered sub-step, or a re-plan moves sub-steps past other items keeping their numbers. A
-    sub-step that comes after a unit that is not one of them, numbered, unnumbered or naming no item, is taken only
-    when it gives unit's M, so an older version's `3.1 of 9` below item 4 is left out of item 3 of 10; a sub-step
-    right after one taken is taken whatever its M, as a sub-step written after the hold-answer path raised M is."""
+def approval_walk_item_sub_step_units_below_item_in_walk_document(all_units, unit, numbers=None):
+    """Return the units of all_units, as item_unit_spans gives them, below unit that are sub-steps of any item of
+    numbers, by default every item unit names, such as `### Item 3.1 of 9` and `### Item 3.1.1 of 9` after item 3,
+    wherever they sit below it, up to a later unit that names one of numbers or a number above one of them again,
+    such as a later `Item 3 of 12` that reuses 3, which ends the search for 3 and for 3.1 alike: an item's sub-steps
+    may stand after later items, as when the close step's hold-answer path numbers a new item right after an
+    answered sub-step, or a re-plan moves sub-steps past other items keeping their numbers. An unnumbered item is
+    passed over. A sub-step that comes after a numbered unit that is not one of them, or a unit naming no item, is
+    taken only when it gives unit's M, so an older version's `3.1 of 9` below item 4 is left out of item 3 of 10; a
+    sub-step right after one taken is taken whatever its M, as a sub-step written after the hold-answer path raised
+    M is. Pass numbers for one item of a unit that names several, as in `Items 3 and 4 of 9`, so a later `Item 4`
+    does not end item 3's search."""
+    numbers = unit[0] if numbers is None else numbers
+    stops = {".".join(number.split(".")[:depth]) for number in numbers for depth in range(1, number.count(".") + 2)}
     found, interrupted = [], False
     for each in [each for each in all_units if each[3] > unit[3]]:
-        if set(each[0]) & set(unit[0]):
+        if set(each[0]) & stops:
             break
-        if not each[0] or not all(any(part.startswith(number + ".") for number in unit[0]) for part in each[0]):
+        if approval_walk_unit_is_unnumbered_item(each):
+            continue
+        if not each[0] or not all(any(part.startswith(number + ".") for number in numbers) for part in each[0]):
             interrupted = True
         elif not interrupted or each[1] == unit[1]:
             found.append(each)
@@ -662,7 +680,8 @@ def approval_walk_item_heading_and_item_page_body_lines(text, parser, all_units,
             body += ["", *lines[max(start, covered):stop]]
         covered = max(covered, stop)
     # A sub-step under its own heading is a unit of its own, which item_unit_spans ends at its first Withdrawn heading.
-    for sub_numbers, _, _, sub_first, sub_end in approval_walk_item_sub_step_units_below_item_in_walk_document(all_units, unit):
+    for sub_numbers, _, _, sub_first, sub_end in approval_walk_item_sub_step_units_below_item_in_walk_document(
+            all_units, unit, [number]):
         if all(each.startswith(sub_step) for each in sub_numbers):
             body += ["", approval_walk_item_heading_with_deferred_note_removed(lines[sub_first])]
             body += lines[sub_first + 1:sub_end]
