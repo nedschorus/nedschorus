@@ -67,14 +67,14 @@ CLAIMED_OPENING = ("The user-alerts hook claimed {count} alert(s) that programs 
 ALERT_LINE = "- {title} (alert {id}, file {path})"
 INSERTED_LINES = (
     "The hook added these alerts to approval-walk {walk} as items placed after the whole of its waiting item: past "
-    "that item's sub-steps and `#### Withdrawn version` sections, and before any item already below them, by running "
+    "that item's sub-steps and `#### Withdrawn version` sections, and before the next item below those sub-steps and sections, by running "
     "{command}, which printed:",
     "{output}",
     "Do what those lines say, then act on the user's prompt.",
 )
 INSERT_FAILED_LINES = (
     "The hook tried to add these alerts to approval-walk {walk} as items placed after the whole of its waiting item: "
-    "past that item's sub-steps and `#### Withdrawn version` sections, and before any item already below them, but "
+    "past that item's sub-steps and `#### Withdrawn version` sections, and before the next item below those sub-steps and sections, but "
     "the program it ran failed, so no item was added. The program exited {code}, and printed: {error}",
     "Before you act on the user's prompt, fix the cause that message names, if you can, then run: {command}",
     "Then do what that command prints, and act on the user's prompt.",
@@ -83,8 +83,8 @@ INSERT_FAILED_LINES = (
 )
 WALK_OPEN_LINES = (
     "Before you act on the user's prompt, add the alerts to approval-walk {walk} as items placed after the whole of "
-    "its waiting item: past that item's sub-steps and `#### Withdrawn version` sections, and before any item already "
-    "below them, by running:",
+    "its waiting item: past that item's sub-steps and `#### Withdrawn version` sections, and before the next item "
+    "below those sub-steps and sections, by running:",
     "  python3 {program} --cwd {cwd} {ids}",
     "That program adds each alert as an unnumbered `## <title>` item, as the walk-me-through skill's Re-planning "
     "section says, and writes each alert's `#user_alert <id>` line into the walk-minutes, which keeps the alert "
