@@ -4682,6 +4682,18 @@ def test_a_read_ahead_the_read_step_has_not_used_is_no_items_latest_read():
           latest is not None and latest[0] == "a", repr(latest))
 
 
+def test_a_newer_failed_read_is_no_items_latest_read():
+    program = load_program()
+    reads = SUITE_ROOT / "latest-read-failed"
+    reads.mkdir(parents=True, exist_ok=True)
+    program.write_json(reads / "a-outcome.json", {"status": program.READ_DONE, "item": "item 3 of 4", "finished": 1})
+    program.write_json(reads / "b-outcome.json", {"status": program.READ_FAILED, "item": "item 3 of 4", "finished": 2,
+                                                  "failed": "the fast read exited 1"})
+    latest = program.latest_read(reads, "item 3 of 4")
+    check("the latest read of an item leaves out a newer read that failed",
+          latest is not None and latest[0] == "a", repr(latest))
+
+
 def test_two_earlier_texts_kept_in_one_run_both_land_below_the_item_and_the_next_item_stays_whole():
     case = item_read_case()
     answered_and_closed(case)
