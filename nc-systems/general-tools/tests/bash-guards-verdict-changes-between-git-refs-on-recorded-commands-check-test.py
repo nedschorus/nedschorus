@@ -1663,11 +1663,12 @@ try:
           f"--scratch-directory={existing_scratch}-2 " in fresh_rerun and fresh_ran.returncode == 0
           and (existing_scratch / "checkout-base" / "kept").exists(),
           f"{fresh_rerun}\n{fresh_ran.returncode}\n{fresh_ran.stdout[-2000:]}\n{fresh_ran.stderr[-2000:]}")
+    Path(f"{existing_scratch}-3").mkdir()
     status, out, err = run_replay("HEAD", scratch, "--scratch-directory", str(existing_scratch))
     next_free_rerun = printed_rerun_command(err, "this command already names one: ")
-    check("when <scratch>-2 exists too, after the run above made it, the command names <scratch>-3, the next path "
-          "that does not exist",
-          status == 2 and f"--scratch-directory={existing_scratch}-3 " in next_free_rerun,
+    check("when <scratch>-2, which the run above made, and <scratch>-3 both exist, the command names <scratch>-4, "
+          "the next path that does not exist",
+          status == 2 and f"--scratch-directory={existing_scratch}-4 " in next_free_rerun,
           f"status {status}\n{next_free_rerun}\n{err}")
     dash_value = replay.rerun_command(argparse.Namespace(pairs_file="-pairs.json", scratch_directory=None))
     dash_words = shlex.split(dash_value.split(" && ", 1)[1])
