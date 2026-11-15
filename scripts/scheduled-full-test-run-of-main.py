@@ -196,6 +196,10 @@ handoff_user_review_of_agent_memory_stores_mark = module_loaded_by_path(
     REPOSITORY_ROOT / "nc-systems" / "handoff" / "handoff-user-review-of-agent-memory-stores-mark.py")
 run_all_test_suites = module_loaded_by_path(
     "run_all_test_suites", Path(__file__).resolve().with_name("run-all-test-suites.py"))
+git_output = module_loaded_by_path(
+    "git_machine_readable_output_runner_and_parser_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
 
 SCHEDULED_FULL_TEST_RUN_DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
 # Use the log-store’s established machine and kind names.
@@ -233,14 +237,6 @@ def git(clone: Path, *arguments):
 
 def first_stderr_line_or_no_detail(text: str) -> str:
     return (text.strip().splitlines() or ["no detail"])[0]
-
-
-def first_fatal_or_error_stderr_line_or_no_detail(text: str) -> str:
-    # git worktree add can print progress before its error; prefer the actual error line.
-    for line in text.strip().splitlines():
-        if line.startswith(("fatal:", "error:")):
-            return line
-    return first_stderr_line_or_no_detail(text)
 
 
 def take_scheduled_full_test_run_lock(lock_file: Path):
@@ -284,7 +280,7 @@ def remove_worktree_of_main(clone: Path, worktree: Path):
         give_owner_read_write_and_search_on_every_directory_under(worktree)
         shutil.rmtree(worktree, ignore_errors=True)
     if worktree.exists():
-        return first_stderr_line_or_no_detail(removed.stderr)
+        return git_output.git_stderr_error_text_without_progress_lines(removed.stderr)
     return None
 
 
@@ -492,7 +488,7 @@ def scheduled_full_test_run_under_lock(arguments, now, monotonic, on_ned_box, ma
     if fetched.returncode != 0:
         steps_failed.append((
             f"not run — git fetch origin failed in {clone}: "
-            f"{first_stderr_line_or_no_detail(fetched.stderr)}",
+            f"{git_output.git_stderr_error_text_without_progress_lines(fetched.stderr)}",
             "Fix what git reports, then run this again."))
     else:
         resolved = git(clone, "rev-parse", "--verify", "--quiet",
@@ -509,7 +505,7 @@ def scheduled_full_test_run_under_lock(arguments, now, monotonic, on_ned_box, ma
         if added.returncode != 0:
             steps_failed.append((
                 f"not run — git worktree add --detach {worktree} {commit} failed in "
-                f"{clone}: {first_fatal_or_error_stderr_line_or_no_detail(added.stderr)}",
+                f"{clone}: {git_output.git_stderr_error_text_without_progress_lines(added.stderr)}",
                 "Fix what git reports, then run this again."))
         else:
             try:

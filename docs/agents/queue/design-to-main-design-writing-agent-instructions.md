@@ -33,7 +33,7 @@ One state-exit each time a state you hold is entered: `design-to-main-state-exit
 
 ## Never
 
-Never emit a design whose observable promises the design-contract does not carry; a promise no component-consumer can observe stays in the design and gets no design-requirement (§5.1, §8). Never edit either document after the user's `advance` at `design-acceptance-by-user`, except in a redesign (§8). A nit in your own draft you may fix while you are in it; a nit in a reviewer's notes is not work (§6.1). Never commit, never push, and never write the user-rulings file yourself: the `rulings` field is how a ruling reaches it (§9).
+Never emit a design whose observable promises the design-contract does not carry; a promise no component-consumer can observe stays in the design and gets no design-requirement (§5.1, §8). Never edit either document after the user's `advance` at `design-acceptance-by-user`, except in a redesign (§8). A nit in your own draft you may fix while you are in it; a nit in a reviewer's notes is not work (§6.1, §10). Never commit, never push, and never write the user-rulings file yourself: the `rulings` field is how a ruling reaches it (§9).
 
 ## Example: `create-topic-branch`
 

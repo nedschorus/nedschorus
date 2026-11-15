@@ -2115,10 +2115,11 @@ with tempfile.TemporaryDirectory() as scratch:
     stub_git_directory = scratch / "stub-git"
     stub_git_directory.mkdir()
 
-    def run_one_named(*flags, git_refuses=None, lsof_body=None, log_file=one_named_log,
-                      pull_requests=None, gh_exit_code=None):
+    def run_one_named(*flags, git_refuses=None, git_refusal="echo 'stub git refuses' >&2; exit 1",
+                      lsof_body=None, log_file=one_named_log, pull_requests=None, gh_exit_code=None):
         """Run the cleaner on one named worktree or branch; git_refuses is a pattern of git
-        arguments a stub git exits 1 on, lsof_body a stub lsof's script."""
+        arguments on which a stub git runs the shell commands git_refusal, lsof_body a stub
+        lsof's script."""
         environment = dict(os.environ)
         environment[REMOVALS_LOG_OVERRIDE_VARIABLE] = str(log_file)
         if pull_requests is not None:
@@ -2130,7 +2131,7 @@ with tempfile.TemporaryDirectory() as scratch:
         if git_refuses is not None:
             (stubs / "git").write_text(
                 "#!/bin/sh\n"
-                f'case " $* " in *"{git_refuses}"*) echo "stub git refuses" >&2; exit 1 ;; esac\n'
+                f'case " $* " in *"{git_refuses}"*) {git_refusal} ;; esac\n'
                 f'exec {shutil.which("git")} "$@"\n', encoding="utf-8")
             (stubs / "git").chmod(0o755)
         if lsof_body is not None:
@@ -2542,6 +2543,33 @@ with tempfile.TemporaryDirectory() as scratch:
           kept_and_failed(unreachable_checked, "branch unpushable-branch")
           and git(checkout, "branch", "--list", "unpushable-branch") != ""
           and "git rev-list exited 1" in unreachable_checked.stdout, unreachable_checked.stdout)
+    # A git killed by a signal exits with a negative code, which is no answer either.
+    unreachable_killed = run_one_named(FORCE_DELETE_BRANCH_FLAG, "unpushable-branch",
+                                       git_refuses=" --max-count=1 ", git_refusal="kill -9 $$")
+    check(f"{FORCE_DELETE_BRANCH_FLAG} keeps the branch and fails when the git that checks whether "
+          "origin's refs hold its last commit is killed by a signal",
+          kept_and_failed(unreachable_killed, "branch unpushable-branch")
+          and git(checkout, "rev-parse", "unpushable-branch").strip() == unpushable_tip
+          and f"git rev-list exited {-signal.SIGKILL}" in unreachable_killed.stdout,
+          unreachable_killed.stdout + unreachable_killed.stderr)
+    # Upper-case markers, which no scratch path holds: the error text shown ends at the Y.
+    rev_list_error = "X" * 159 + "Y" + "Z" * 40
+    rev_list_long_error = run_one_named(FORCE_DELETE_BRANCH_FLAG, "unpushable-branch",
+                                        git_refuses=" --max-count=1 ",
+                                        git_refusal=f"echo {rev_list_error} >&2; exit 1")
+    check(f"{FORCE_DELETE_BRANCH_FLAG} shows the first 160 characters of git rev-list's error text",
+          kept_and_failed(rev_list_long_error, "branch unpushable-branch")
+          and rev_list_error[:160] in rev_list_long_error.stdout
+          and "YZ" not in rev_list_long_error.stdout,
+          rev_list_long_error.stdout + rev_list_long_error.stderr)
+    push_error = "X" * 199 + "Y" + "Z" * 40
+    push_long_error = run_one_named(FORCE_DELETE_BRANCH_FLAG, "unpushable-branch",
+                                    git_refuses=" push ", git_refusal=f"echo {push_error} >&2; exit 1")
+    check(f"{FORCE_DELETE_BRANCH_FLAG} shows the first 200 characters of git push's error text",
+          kept_and_failed(push_long_error, "branch unpushable-branch")
+          and git(checkout, "rev-parse", "unpushable-branch").strip() == unpushable_tip
+          and push_error[:200] in push_long_error.stdout and "YZ" not in push_long_error.stdout,
+          push_long_error.stdout + push_long_error.stderr)
     main_named = run_one_named(FORCE_DELETE_BRANCH_FLAG, "main")
     check(f"{FORCE_DELETE_BRANCH_FLAG} never deletes main", kept_and_failed(main_named, "branch main")
           and git(checkout, "branch", "--list", "main") != "", main_named.stdout)
@@ -2597,6 +2625,22 @@ with tempfile.TemporaryDirectory() as scratch:
         bad = run_one_named(*flags)
         check(f"a bad invocation of the one-named modes exits 2: {case}",
               bad.returncode == 2 and gh_wt.exists(), bad.stdout + bad.stderr)
+
+    # Last in this section: it detaches the checkout and leaves local main ahead of origin's.
+    git(checkout, "checkout", "--quiet", "--detach")
+    main_wt = managed / "main-wt"
+    git(checkout, "worktree", "add", str(main_wt), "main")
+    give_stopped_owner(main_wt)
+    origin_main_before = origin_tip("main")
+    main_wt_tip = commit_in(main_wt, "main-work")
+    main_wt_removed = run_one_named(REMOVE_WORKTREE_FLAG, str(main_wt))
+    check(f"{REMOVE_WORKTREE_FLAG} removes a worktree that has main checked out without pushing main "
+          "or deleting it",
+          main_wt_removed.returncode == 0 and not main_wt.exists()
+          and origin_tip("main") == origin_main_before
+          and git(checkout, "rev-parse", "main").strip() == main_wt_tip
+          and "pushed to origin" not in main_wt_removed.stdout,
+          main_wt_removed.stdout + main_wt_removed.stderr)
 
 # --- Merge-lane review checkouts: judged by the pull request their name holds ---
 with tempfile.TemporaryDirectory() as scratch:
@@ -3083,6 +3127,20 @@ with tempfile.TemporaryDirectory() as scratch:
           and git(checkout, "branch", "--list", "stopped-partway-unpushed-wt-branch") == ""
           and git(checkout, "ls-remote", "origin", "refs/heads/stopped-partway-unpushed-wt-branch")
           .startswith(unpushed_commit), unpushed_rerun.stdout + unpushed_rerun.stderr)
+    # A branch name that sorts before main's must be pushed too.
+    before_main_record, _ = stopped_partway("before-main-stopped-partway-unpushed-wt")
+    before_main_commit = git(checkout, "commit-tree", "-p", "origin/main", "-m", "unpushed work before main",
+                             "origin/main^{tree}").strip()
+    git(checkout, "update-ref", "refs/heads/before-main-stopped-partway-unpushed-wt-branch",
+        before_main_commit)
+    before_main_run = run_clean(checkout, "--remove-worktree-and-force-delete-its-branch",
+                                str(before_main_record))
+    check("--remove-worktree-and-force-delete-its-branch, finishing a removal stopped partway, first "
+          "pushes a branch whose name sorts before main's",
+          before_main_run.returncode == 0 and not before_main_record.exists()
+          and git(checkout, "ls-remote", "origin",
+                  "refs/heads/before-main-stopped-partway-unpushed-wt-branch")
+          .startswith(before_main_commit), before_main_run.stdout + before_main_run.stderr)
 
     stuck, _ = stopped_partway("stopped-partway-undeletable-wt")
     (stuck / "kept-dir").mkdir()

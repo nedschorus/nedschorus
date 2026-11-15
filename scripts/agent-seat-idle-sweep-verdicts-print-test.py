@@ -875,6 +875,28 @@ try:
     check("an agent-session whose task calls set neither prerequisites nor addBlockedBy: an empty list",
           verdicts["alpha"].get("successful_task_tool_calls_setting_prerequisites_or_blocked_by") == [],
           verdicts["alpha"])
+    machine = Machine()
+    machine.seat("alpha", [user("go"),
+                           assistant(tool=("TaskCreate", {"subject": "after PR 2042", "metadata": json.dumps(
+                               {"prerequisites": [{"pr_merged": 2042}]})}), at="2026-11-02T11:40:00Z"),
+                           assistant("Done.", at="2026-11-02T11:48:00Z"), turn_end()])
+    code, verdicts, _ = machine.run()
+    check("a task call whose metadata is a JSON string holding prerequisites is read as setting them",
+          code == 0 and verdicts["alpha"].get("successful_task_tool_calls_setting_prerequisites_or_blocked_by")
+          == [{"time": "2026-11-02T11:40:00Z", "name": "TaskCreate", "task": "after PR 2042"}],
+          (code, verdicts.get("alpha")))
+    for metadata, kind in [(json.dumps({"branches": ["some-topic-branch"]}), "a JSON object without prerequisites"),
+                           ("{not json", "not JSON"),
+                           (json.dumps([{"prerequisites": [1]}]), "JSON that is not an object")]:
+        machine = Machine()
+        machine.seat("alpha", [user("go"),
+                               assistant(tool=("TaskUpdate", {"taskId": "1", "metadata": metadata})),
+                               assistant("Done."), turn_end()])
+        code, verdicts, _ = machine.run()
+        check(f"a task call whose metadata is a string holding {kind}: printed, an empty list",
+              code == 0 and "alpha" in verdicts
+              and verdicts["alpha"].get("successful_task_tool_calls_setting_prerequisites_or_blocked_by") == [],
+              (code, verdicts.get("alpha")))
 
     # --- the task list is read as the due-task hook reads it ------------------------------------
     machine = Machine()

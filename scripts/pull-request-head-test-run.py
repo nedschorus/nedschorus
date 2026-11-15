@@ -197,8 +197,7 @@ def first_tracked_file_that_differs(checkout: Path):
     changed = scheduled_full_test_run_of_main.git(
         checkout, "status", "--porcelain", "-z", "--untracked-files=no")
     if changed.returncode != 0:
-        return None, scheduled_full_test_run_of_main.first_stderr_line_or_no_detail(
-            changed.stderr)
+        return None, git_output.git_stderr_error_text_without_progress_lines(changed.stderr)
     entries = git_output.status_entries(changed.stdout)
     if entries:
         return entries[0].path, None
@@ -318,7 +317,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
             steps_failed.append((
                 f"not run — git finds no merge base of {head} and "
                 f"{MAIN_AS_THE_CLONE_HAS_IT} in {checkout}: "
-                f"{scheduled_run.first_stderr_line_or_no_detail(merge_base.stderr)}",
+                f"{git_output.git_stderr_error_text_without_progress_lines(merge_base.stderr)}",
                 "Pass --since the commit the selection starts from, then run this again."))
         else:
             since = merge_base.stdout.strip()

@@ -518,7 +518,15 @@ def open_tasks_with_prerequisites_or_blocked_by(task_directory):
 def sets_prerequisites_or_blocked_by(task_tool_input):
     """Whether a TaskCreate or TaskUpdate call records what a task waits on: the only call that can
     back a promise to act after an event or a hold."""
-    return bool((task_tool_input.get("metadata") or {}).get("prerequisites")
+    metadata = task_tool_input.get("metadata")
+    # The transcript keeps the input as the model wrote it, and TaskCreate accepts metadata
+    # written as a JSON string.
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except ValueError:
+            metadata = None
+    return bool((metadata.get("prerequisites") if isinstance(metadata, dict) else None)
                 or task_tool_input.get("addBlockedBy"))
 
 

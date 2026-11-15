@@ -822,9 +822,9 @@ def check_cases(root, repository, base, frozen_head):
     second = commit_file(repository, "hook.py", "three\n", "second")
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                          "--check", "--answers", answers)
-    check("check: two commits refuse with exit 1, each described with one parent",
+    check("check: two commits refuse with exit 1, each named by its 12-character sha with one parent",
           code == 1 and "has 2 commits" in err and "squash them" in err
-          and "(1 parent)" in err and "1 parents" not in err, err)
+          and f"{amended[:12]} (1 parent), {second[:12]} (1 parent)" in err and "1 parents" not in err, err)
 
     git(repository, "reset", "-q", "--hard", frozen_head)
     git(repository, "merge", "-q", "--no-edit", "origin/main")

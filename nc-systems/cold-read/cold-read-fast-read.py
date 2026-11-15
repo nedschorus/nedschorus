@@ -976,8 +976,11 @@ def sentence_id_markup(text: str, units: dict = None):
     unit_pieces = {}
     code_units = set()
     # Text with no id before the first unit, such as a frontmatter list that
-    # opens the document, belongs to that first unit.
+    # opens the document, belongs to that first unit; when no unit follows,
+    # as in a frontmatter-only document, it becomes a unit of its own whose id
+    # goes on the line it starts on.
     pieces_before_first_unit = []
+    first_piece_line = None
 
     def take(sentence: str, unit_text: str = None, code: bool = False):
         """The id marker for this sentence, or None when there is nothing to
@@ -999,9 +1002,13 @@ def sentence_id_markup(text: str, units: dict = None):
         return f"[{name}]"
 
     def join_last_unit(piece: str):
+        nonlocal first_piece_line
         if unit_pieces:
             unit_pieces[next(reversed(unit_pieces))].append(piece)
         else:
+            if not pieces_before_first_unit:
+                # Every caller appends the piece's line to `marked` next.
+                first_piece_line = len(marked)
             pieces_before_first_unit.append(piece)
 
     def mark_prose(content: str, already_open: bool, prefix: str = "") -> str:
@@ -1086,6 +1093,15 @@ def sentence_id_markup(text: str, units: dict = None):
             marked.append(prefix + mark_prose(content, open_here, prefix))
             continues_previous = ends_open(content)
         index += 1
+
+    if pieces_before_first_unit:
+        name = f"s{counter + 1}"
+        unit_pieces[name] = list(pieces_before_first_unit)
+        sentences[name] = " ".join("\n".join(pieces_before_first_unit).split())
+        line = marked[first_piece_line]
+        field = FRONTMATTER_FIELD_PATTERN.match(line)
+        marked[first_piece_line] = (f"{field.group(1)}[{name}] {field.group(2)}"
+                                    if field else f"{line} [{name}]")
 
     if units is not None:
         for name, pieces in unit_pieces.items():
@@ -1687,12 +1703,14 @@ def main() -> int:
         print(f"{PROGRAM}: no fast read ran and no report was written: the read tells "
               f"the reviewer what the edit changed by comparing the cold-read-target "
               f"with its text at `git merge-base HEAD origin/main`, but {error}\n"
-              + (f"Git could not find origin/main in {error.checkout_root}: run "
-                 f"`git -C {error.checkout_root} fetch origin main`, then run the same "
-                 f"cold-read-fast-read command again.\n"
-                 f"If that fetch fails, or the read fails again: "
-                 if error.origin_main_unresolved else "")
-              + "Give this whole message to the user, or, if you are a subagent, "
+              + (f"Git could not find origin/main in {error.checkout_root}.\n"
+                 f"First, run `git -C {error.checkout_root} fetch origin main`.\n"
+                 f"Then, if the fetch succeeds, run the same cold-read-fast-read "
+                 f"command again.\n"
+                 f"If the fetch fails, or the read fails again: give this whole message, "
+                 f"and the fetch's own error output if it failed, "
+                 if error.origin_main_unresolved else "Give this whole message ")
+              + "to the user, or, if you are a subagent, "
               "to the agent that dispatched you.", file=sys.stderr)
         print(f"FAILED (no fast read ran: a git command failed while finding what the "
               f"edit changed: {error})")
