@@ -978,7 +978,7 @@ def sentence_id_markup(text: str, units: dict = None):
     # Text with no id before the first unit, such as a frontmatter list that
     # opens the document, belongs to that first unit; when no unit follows,
     # as in a frontmatter-only document, it becomes a unit of its own whose id
-    # goes on the line it starts on.
+    # goes on the line it starts on, unless it has no words to restate.
     pieces_before_first_unit = []
     first_piece_line = None
 
@@ -1094,7 +1094,7 @@ def sentence_id_markup(text: str, units: dict = None):
             continues_previous = ends_open(content)
         index += 1
 
-    if pieces_before_first_unit:
+    if carries_words("".join(pieces_before_first_unit)):
         name = f"s{counter + 1}"
         unit_pieces[name] = list(pieces_before_first_unit)
         sentences[name] = " ".join("\n".join(pieces_before_first_unit).split())
