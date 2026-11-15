@@ -1091,6 +1091,64 @@ def test_an_item_s_sub_steps_end_at_a_later_heading_that_reuses_its_number():
           found == [["3.1"]], repr(found))
 
 
+def sub_step_numbers_found(document, item, total):
+    """The numbers of each unit the walk finder takes as sub-steps of the unit that names item with M total."""
+    walk_finder = load_program().load_walk_finder()
+    units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+    unit = next(unit for unit in units if item in unit[0] and unit[1] == total)
+    return [each[0] for each in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(units, unit)]
+
+
+def test_an_unnumbered_item_between_sub_steps_does_not_stop_a_later_sub_step_of_a_raised_m():
+    document = ("# A walk\n\n## Item 3 of 9: three\n\nA.\n\n### Item 3.1 of 9: the first half\n\nB.\n\n"
+                "## an item added by hand\n\nC.\n\n### Item 3.2 of 10: written after a re-plan raised M\n\nD.\n")
+    found = sub_step_numbers_found(document, "3", "9")
+    check("item 3 of 9 takes 3.2 of 10 past the unnumbered item that stands right after 3.1",
+          found == [["3.1"], ["3.2"]], repr(found))
+
+
+def test_the_waiting_item_read_step_finds_a_sub_step_past_a_reuse_of_the_number_of_another_item_of_its_heading():
+    document = ("# A walk\n\n## Items 3 and 4 of 10: two items\n\n**Item 3:** three.\n\nA.\n\n**Item 4:** four.\n\n"
+                "B.\n\n### Item 3.1 of 10: the first half\n\nC.\n\n#case_against weak: a.\n\nRecommendation: a.\n\n"
+                "## Item 4 of 12: a later item reusing 4\n\nD.\n\n### Item 3.2 of 10: the second half\n\nE.\n\n"
+                "#case_against weak: b.\n\nRecommendation: b.\n")
+    named, result = read_step_handed_item_3_marker(document, ["item 3.1 of 10"])
+    check("under `Items 3 and 4 of 10`, with 3.1 decided and a later `Item 4 of 12` before 3.2, the read step "
+          "handed item 3 names 3.2, since 3 was never reused", named == "#next_to_present item 3.2 of 10",
+          named + "\n" + result)
+
+
+def test_a_sub_step_s_own_sub_steps_end_where_its_parent_s_number_is_reused():
+    document = ("# A walk\n\n## Item 3 of 9: three\n\nA.\n\n### Item 3.1 of 9: the first half\n\nB.\n\n"
+                "## Item 3 of 12: a later item reusing 3\n\nC.\n\n#### Item 3.1.1 of 9: past the reused number\n\nD.\n")
+    found = sub_step_numbers_found(document, "3.1", "9")
+    check("sub-step 3.1 of 9 takes no 3.1.1 past the later `Item 3 of 12`", found == [], repr(found))
+
+
+def test_a_sub_step_under_a_withdrawn_item_heading_is_no_live_item_s_sub_step():
+    document = ("# A walk\n\n## Item 3 of 10: three\n\nA.\n\n"
+                "## Withdrawn: Item 3 of 10: the older three\n\nC.\n\n### Item 3.1 of 10: the older first half\n\nD.\n\n"
+                "## Item 5 of 10: five\n\nE.\n\n### Item 5.1 of 10: five's first part\n\nF.\n\n"
+                "#### Withdrawn version 1 of item 5.1\n\nG.\n\n### Item 5.2 of 10: five's second part\n\nH.\n")
+    withdrawn = sub_step_numbers_found(document, "3", "10")
+    live = sub_step_numbers_found(document, "5", "10")
+    check("a `3.1 of 10` under `## Withdrawn: Item 3 of 10` is not the live item 3's, while 5.2 after a deeper "
+          "`#### Withdrawn version` of 5.1 still is item 5's", withdrawn == [] and live == [["5.1"], ["5.2"]],
+          f"{withdrawn!r} {live!r}")
+
+
+def test_close_order_moves_an_unnumbered_item_past_a_sub_step_the_finder_gives_an_earlier_item():
+    program = load_program()
+    walk_finder = program.load_walk_finder()
+    document = ("# A walk\n\n## Item 3 of 9: three\n\nA.\n\n## Item 4 of 9: four\n\nB.\n\n"
+                "## an item added by hand\n\nC.\n\n### Item 3.1 of 9: item 3's first half\n\nD.\n")
+    units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+    order = [unit[0] or "unnumbered" for unit in
+             program.approval_walk_unnumbered_items_moved_past_the_sub_steps_they_split(walk_finder, units)]
+    check("with 3, 4, an unnumbered item, then 3.1, which the finder gives item 3, close puts the unnumbered item "
+          "after 3.1", order == [["3"], ["4"], ["3.1"], "unnumbered"], repr(order))
+
+
 def test_the_waiting_item_read_step_leaves_out_an_older_sub_step_below_a_later_item():
     document = ("# A walk\n\n## Item 3 of 10: the opening sentence\n\nNew.\n\n### Item 3.1 of 10: the first half\n\n"
                 "Short.\n\n#case_against weak: the page grows.\n\nRecommendation: change it.\n\n"
