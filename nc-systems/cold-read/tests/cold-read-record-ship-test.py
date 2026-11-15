@@ -1772,15 +1772,15 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-local-failure-tes
           and (replace_store / "m.md").read_text(encoding="utf-8") == "new minutes\n",
           repr(renamed))
 
-# --- A failed store step's reason: local stdout, ned-box unreachable, ssh exit --
+# --- A failed store step's reason: local stdout, the host unreachable, ssh exit --
 failure_reason = (failing_shipper
-                  .failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit)
+                  .failed_log_store_step_reason_text_build_from_local_stdout_or_log_store_host_unreachable_or_ssh_exit)
 check("a failed local store step's reason is its stdout, the OS's reason, not an ssh exit",
       failure_reason(None, subprocess.CompletedProcess([], 1, "Permission denied", ""))
       == "Permission denied")
-check("a failed remote store step that ssh exited 255 on gives 'ned-box unreachable'",
-      failure_reason("nedlern@ned-box", subprocess.CompletedProcess([], 255, "out", ""))
-      == "ned-box unreachable")
+check("a failed remote store step that ssh exited 255 on names its own host as unreachable",
+      failure_reason("nedlern@the-mac", subprocess.CompletedProcess([], 255, "out", ""))
+      == "nedlern@the-mac unreachable")
 check("a failed remote store step with any other exit gives 'ssh exit N'",
       failure_reason("nedlern@ned-box", subprocess.CompletedProcess([], 1, "out", ""))
       == "ssh exit 1")
@@ -1795,26 +1795,55 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-inventory-timeout
     timeout_record = make_record(timeout_scratch / "records", "timeout-2026-11-12",
                                  {"a.md": REPORT_A})
     real_ssh_command = failing_shipper.SSH_COMMAND
-    real_inventory_timeout = failing_shipper.STORE_INVENTORY_SSH_TIMEOUT_SECONDS
+    real_inventory_timeout = failing_shipper.COLD_READ_RECORD_LOG_STORE_FILE_HASH_LISTING_SSH_CALL_TIMEOUT_SECONDS
     failing_shipper.SSH_COMMAND = [
         "sh", "-c", 'case "$2" in *sha256sum*) exec sleep 30;; *) eval "$2";; esac',
         "ssh-replay"]
-    failing_shipper.STORE_INVENTORY_SSH_TIMEOUT_SECONDS = 1
+    failing_shipper.COLD_READ_RECORD_LOG_STORE_FILE_HASH_LISTING_SSH_CALL_TIMEOUT_SECONDS = 1
     started = time.monotonic()
     try:
         printed = io.StringIO()
         with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(io.StringIO()):
             code = returned_or_raised(lambda: failing_shipper.ship_one(
-                "nobody@ned-box", pathlib.PurePosixPath(timeout_store), timeout_record))
+                "nobody@the-mac", pathlib.PurePosixPath(timeout_store), timeout_record))
     finally:
         failing_shipper.SSH_COMMAND = real_ssh_command
-        failing_shipper.STORE_INVENTORY_SSH_TIMEOUT_SECONDS = real_inventory_timeout
+        failing_shipper.COLD_READ_RECORD_LOG_STORE_FILE_HASH_LISTING_SSH_CALL_TIMEOUT_SECONDS = real_inventory_timeout
     elapsed = time.monotonic() - started
     check("a remote store inventory whose ssh call runs past its time limit is stopped, and "
-          "ship_one prints FAILED with 'ned-box unreachable' and exits 1",
+          "ship_one prints FAILED naming that host unreachable and exits 1",
           code == 1 and elapsed < 20
-          and printed.getvalue().startswith("FAILED: timeout-2026-11-12 — ned-box unreachable;"),
+          and printed.getvalue().startswith("FAILED: timeout-2026-11-12 — nobody@the-mac unreachable;"),
           f"exit {code} after {elapsed:.1f}s: {printed.getvalue()}")
+
+# --- A copy whose rsync cannot reach the store host names that host ---------
+with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-copy-unreachable-test-") as copy_name:
+    copy_scratch = pathlib.Path(copy_name)
+    copy_store = copy_scratch / "store" / "cold-read-records"
+    copy_record = make_record(copy_scratch / "records", "copy-unreachable-2026-11-12",
+                              {"a.md": REPORT_A})
+    real_ssh_command = failing_shipper.SSH_COMMAND
+    real_run = subprocess.run
+    failing_shipper.SSH_COMMAND = ["sh", "-c", 'eval "$2"', "ssh-replay"]
+
+    def rsync_exits_255(command, *args, **kwargs):
+        if command and command[0] == "rsync":
+            return subprocess.CompletedProcess(command, 255, "", "ssh: connect: No route to host\n")
+        return real_run(command, *args, **kwargs)
+
+    subprocess.run = rsync_exits_255
+    try:
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(io.StringIO()):
+            code = returned_or_raised(lambda: failing_shipper.ship_one(
+                "nobody@the-mac", pathlib.PurePosixPath(copy_store), copy_record))
+    finally:
+        failing_shipper.SSH_COMMAND = real_ssh_command
+        subprocess.run = real_run
+    check("a copy whose rsync exits 255 is FAILED naming the store host unreachable, exit 1",
+          code == 1 and printed.getvalue().startswith(
+              "FAILED: copy-unreachable-2026-11-12 — nobody@the-mac unreachable during the copy."),
+          f"exit {code}: {printed.getvalue()}")
 
 # --- A relative record directory means the one under the current directory --
 # Run from a directory outside the shipper's checkout with a relative path:
