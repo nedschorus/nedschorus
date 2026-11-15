@@ -339,9 +339,9 @@ REFUSAL_INSTRUCTIONS = (
     "2. Do not show the new item now: the walk shows it when its turn comes.",
     "3. The flagged text has already reached the user, so leave it. End the message you write next with the line "
     "`I added the question to the walk as a new item.` and then {closing_lines_named}, as the "
-    "walk-me-through skill writes it, as the last text of that message:\n{closing_lines}",
+    "walk-me-through skill writes it, as the last text of that message. {not_in_backticks}\n{closing_lines}",
     "If the flagged text does not ask the user anything, end the turn with only the waiting item's closing line, "
-    "printed below.\n{closing_lines_no_item_added}{no_page}",
+    "printed below. {not_in_backticks}\n{closing_lines_no_item_added}{no_page}",
     "From now on, while an approval-walk is open, put every question for the user, yours or another "
     "agent's, into the walk as an item instead of asking it in prose.",
 )
@@ -652,7 +652,7 @@ def log_refusal(environment, entry):
 
 
 def closing_lines(pages, name, document_text, units, parser, numbers, new_total):
-    """(each waiting item's closing line, in code marks, once the walk's count M is new_total, built by the answer
+    """(each waiting item's closing line, once the walk's count M is new_total, built by the answer
     hook's closing_line with the link of the item's newest `#item_page` line in pages, or NO_PAGE_LINK when the minutes
     record no page for it; the numbers of the items the minutes record no page for)."""
     pages = dict(pages)
@@ -660,7 +660,7 @@ def closing_lines(pages, name, document_text, units, parser, numbers, new_total)
     pages.update(dict.fromkeys(without_page, NO_PAGE_LINK))
     points = answer_hook.heading_points(document_text.split("\n"), units, parser)
     walk = answer_hook.WalkState(name, None, numbers, new_total, {}, None, pages=pages, points=points)
-    return [f"`{answer_hook.closing_line(number, walk)}`" for number in numbers], without_page
+    return [answer_hook.closing_line(number, walk) for number in numbers], without_page
 
 
 def no_walk_in_checkout_refusal(payload, environment, top, walk_directory):
@@ -777,7 +777,7 @@ def output_for(payload, environment, model=model_judgement):
               "category_tags": ", ".join(f"`{check_and_close.WALK_CATEGORY_TAG}{category}`"
                                          for category in check_and_close.WALK_CATEGORIES),
               "closing_lines_named": SEVERAL_CLOSING_LINES_NAMED if numbers[1:] else ONE_CLOSING_LINE_NAMED,
-              "closing_lines": "\n".join(closing),
+              "closing_lines": "\n".join(closing), "not_in_backticks": current_item_hook.NOT_IN_BACKTICKS,
               "closing_lines_no_item_added": "\n".join(closing_no_item_added), "no_page": NO_PAGE_TEMPLATE.format(
                   items=("items " if without_page[1:] else "item ") + " and ".join(without_page),
                   minutes=minutes) if without_page else ""}
