@@ -1051,6 +1051,25 @@ seat.minutes_say("item 2.1 of 3: moved on; the item asked for no decision. <move
 check("approval-walk item whose sub-steps are all decided: raised",
       (context_of(seat.run()) or "").startswith("Act on task 73 "))
 
+seat = WalkSeat()
+seat.waiting_task("78", "Item 2 of 3: The `restore` task finds its commit")
+seat.minutes_say("item 2 of 3: answer held: item 2.1 of 3, raised by a fast-read finding, waits for the "
+                 "user's answer. <open>",
+                 "item 2.1 of 3: moved on; the item asked for no decision. <moved on, no decision>",
+                 "item 2.2 of 3: approved; every text the change adds has had a fast read. <accepted>")
+check("approval-walk item whose answer is held, its sub-steps all decided: not raised",
+      silent(seat.run()))
+
+seat = WalkSeat(document="# Walk\n\n## Item 1 of 2: Parent\n\n## Item 1.1 of 2: Sub one\n\n"
+                         "## Item 1.2 of 2: Sub two\n\n## Item 1.2.1 of 2: Sub two A\n\n"
+                         "## Item 1.2.2 of 2: Sub two B\n\n## Item 2 of 2: Last\n")
+seat.waiting_task("79", "Parent")
+seat.minutes_say("item 1.1 of 2: approved; every text the change adds has had a fast read. <accepted>",
+                 "item 1.2.1 of 2: approved; every text the change adds has had a fast read. <accepted>",
+                 "item 1.2.2 of 2: approved; every text the change adds has had a fast read. <accepted>")
+check("approval-walk item decided through a sub-step itself decided through its sub-steps: raised",
+      (context_of(seat.run()) or "").startswith("Act on task 79 "))
+
 # Items added before it while the walk runs: the walk-document's count and the item's number change.
 seat = WalkSeat(document="# Walk\n\n## Item 1 of 2: First\n\n## The fix\n")
 seat.waiting_task("74", "The fix")

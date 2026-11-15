@@ -38,8 +38,10 @@ the given heading as the answer program's heading_title reads both, so a
 running count, a deferred note, backticks, spaces and case do not matter. The
 item is decided when the answer program's minutes_record counts its number as
 decided: approved, disapproved, already decided or moved on, but not deferred
-or held. An item whose sub-steps, as 3.1 and 3.2 are of 3, are all decided is
-decided too, because the walk decides such an item only through them. A
+or held. An item decided through its sub-steps, as the answer program's
+decided_with_items_whose_sub_steps_are_all_decided says given its
+held_answers_unresolved, is decided too; the hook asks those functions rather
+than keeping a rule of its own, so it never disagrees with the walk. A
 walk-minutes file that does not exist is not decided, since the walk may not
 have written it yet; nor is an item not yet numbered. A walk-document that
 does not exist, or that holds no item with the heading, or more than one, is
@@ -409,14 +411,12 @@ def approval_walk_item_decided_or_problem(condition: dict) -> dict:
     numbers = matching[0][0]
     if not numbers or not minutes.exists():
         return {"met": False}
-    decided, _ = answer_program.minutes_record(
-        walk_finder, minutes.read_text(encoding="utf-8"), parser)
-
-    def decided_through_itself_or_sub_steps(number):
-        sub_steps = [other for unit in units for other in unit[0] if other.startswith(number + ".")]
-        return number in decided or (bool(sub_steps) and all(step in decided for step in sub_steps))
-
-    return {"met": all(decided_through_itself_or_sub_steps(number) for number in numbers)}
+    minutes_text = minutes.read_text(encoding="utf-8")
+    recorded, _ = answer_program.minutes_record(walk_finder, minutes_text, parser)
+    decided = answer_program.decided_with_items_whose_sub_steps_are_all_decided(
+        [number for unit in units for number in unit[0]], recorded,
+        answer_program.held_answers_unresolved(walk_finder, minutes_text, parser))
+    return {"met": all(number in decided for number in numbers)}
 
 
 def condition_answer(kind: str, condition, checker) -> dict:
