@@ -21,7 +21,8 @@ from pathlib import Path
 
 def agent_seat_task_list_task_file_rewrite(task_file, task):
     """Replace task_file with the task dict `task`, so a reader sees the old file or the new one,
-    never a part. Raises OSError, and then leaves task_file as it was and no partial file.
+    never a part. Raises OSError, and then leaves task_file as it was and removes the partial file
+    if it can; a failure to remove it is not reported.
 
     The partial file's name is unique, because programs that rewrite tasks can run at the same
     moment, such as one cleaner per session-handoff.
