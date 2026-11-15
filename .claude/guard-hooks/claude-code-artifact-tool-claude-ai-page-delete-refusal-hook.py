@@ -7,8 +7,9 @@ indefinitely. A hook cannot tell which UI the user is on, so it refuses the acti
 everywhere. The refusal names the artifact the call would have deleted, from the call's
 url, so the agent can give the user the link to delete it himself on claude.ai.
 
-Only the Artifact tool is read. A payload that is not JSON, not an object, or not an
-Artifact call is let through without output, as the other guard hooks do.
+Only the Artifact tool is read. A payload that is not an object, or not an Artifact call,
+is let through without output. A payload that is not JSON lets the call go ahead with the
+crash notice of guard-hook-crash-fail-open-with-notice-common.py, as the other guard hooks do.
 """
 
 # Deferred annotations let the hook load on the Mac's system Python 3.9.
