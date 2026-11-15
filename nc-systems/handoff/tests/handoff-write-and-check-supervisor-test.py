@@ -2444,7 +2444,7 @@ def run_background_task_fields_cases(workspace: Path):
           "written before it was retired, is not read as a background-task field",
           writer.supervisor.numbered_field_values_from(
               {"background-task-started-during-handoff-deferral-1": "blate", "background-task-1": "b1"},
-              writer.supervisor.BACKGROUND_TASK_FIELD_PREFIX) == ["b1"])
+              writer.supervisor.SESSION_HANDOFF_BACKGROUND_TASK_STILL_RUNNING_FIELD_PREFIX) == ["b1"])
 
     unreadable_session_id = "00000000-0000-4000-8000-0000000b9a51"
     (projects / f"{unreadable_session_id}.jsonl").write_text(
