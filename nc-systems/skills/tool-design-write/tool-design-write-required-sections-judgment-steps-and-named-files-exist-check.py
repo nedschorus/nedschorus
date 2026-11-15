@@ -6,7 +6,9 @@ Usage:
 
 Checks one design written with the /tool-design-write skill:
   - each heading in REQUIRED_SECTION_HEADINGS is present, at any level from ##
-    down, outside fenced code blocks;
+    down, outside fenced code blocks; a design with a section "Honest exit"
+    needs only HONEST_EXIT_REQUIRED_SECTION_HEADINGS, and that section names
+    one of HONEST_EXITS in backticks;
   - the section "The judgment steps" holds at least one top-level list item;
   - each top-level item of the section "Files" starts with a backticked repository path;
     an item carrying #file_not_yet_existing_that_this_design_creates names a file that does not exist yet, and an
@@ -56,6 +58,9 @@ HEADING = re.compile(r"^(#{2,6})\s+(.*?)\s*#*\s*$")
 # A nested item describes its parent, such as the change made to a listed file, so only top-level items count.
 TOP_LEVEL_LIST_ITEM = re.compile(r"^(?:[-*+]|\d+[.)])\s+\S")
 FIRST_BACKTICK_SPAN = re.compile(r"`([^`\n]+)`")
+HONEST_EXIT_HEADING = "Honest exit"
+HONEST_EXITS = ("needs-feasibility-evidence", "needs-human-decision", "postponed", "rejected", "unknown")
+HONEST_EXIT_REQUIRED_SECTION_HEADINGS = ("Problem", "What exists today", HONEST_EXIT_HEADING, "Deferred-decisions")
 LINT_MISSING_PATH_PREFIX = "path does not exist: "
 
 
@@ -136,7 +141,14 @@ def check_design(design: Path, repository_root: Path, lint) -> list:
     numbered_lines = list(lint.lines_outside_fenced_code_blocks(lines))
     found_sections = sections(numbered_lines)
     findings = []
-    for heading in REQUIRED_SECTION_HEADINGS:
+    required_headings = REQUIRED_SECTION_HEADINGS
+    if HONEST_EXIT_HEADING in found_sections:
+        required_headings = HONEST_EXIT_REQUIRED_SECTION_HEADINGS
+        honest_exit_lines = found_sections[HONEST_EXIT_HEADING]
+        if not any(f"`{name}`" in line for _, line in honest_exit_lines[1:] for name in HONEST_EXITS):
+            findings.append((honest_exit_lines[0][0], f'section "{HONEST_EXIT_HEADING}" names no honest exit; name one of '
+                             + ", ".join(f"`{name}`" for name in HONEST_EXITS) + ", and what would settle it"))
+    for heading in required_headings:
         if heading not in found_sections:
             findings.append((None, f'section "{heading}" is missing; add a heading "{heading}" '
                              "at any level from ## down, written as .claude/skills/tool-design-write/SKILL.md says"))
@@ -170,6 +182,8 @@ def parse_arguments(argv):
         prog=PROGRAM,
         description=__doc__.splitlines()[0],
         epilog="Required section headings: " + "; ".join(REQUIRED_SECTION_HEADINGS) + ". "
+               f'A design with a section "{HONEST_EXIT_HEADING}" needs only: '
+               + "; ".join(HONEST_EXIT_REQUIRED_SECTION_HEADINGS) + ". "
                "Exits 0 if the form is complete, 1 if a finding is printed, "
                "2 if the design could not be checked.")
     parser.add_argument("design", type=Path, help="the design's Markdown file")

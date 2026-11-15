@@ -75,6 +75,25 @@ None.
 ```
 """
 
+HONEST_EXIT_DESIGN = """# A widget counter
+
+## Problem
+
+Counting widgets by hand loses counts.
+
+## What exists today
+
+`scripts/widget-list.py` lists widgets.
+
+## Honest exit
+
+`needs-feasibility-evidence`: whether the list can be read fast enough; a timing of `scripts/widget-list.py` on the full store settles it.
+
+## Deferred-decisions
+
+None.
+"""
+
 failures = []
 
 
@@ -127,6 +146,27 @@ def main():
         code, out, err = run_checker(fresh_repository(scratch, "no-judgment-step"), text)
         check("judgment steps section with no list item: exit 1",
               code == 1 and 'section "The judgment steps" lists no step' in out, f"{code} {out!r} {err!r}")
+
+        text = COMPLETE_DESIGN.replace("1. Deciding whether an odd widget counts, by a fresh-agent.\n",
+                                       "- None: every step is code.\n")
+        code, out, err = run_checker(fresh_repository(scratch, "all-code"), text)
+        check('judgment steps section whose one item is "None: every step is code.": exit 0',
+              code == 0 and "is complete" in out, f"{code} {out!r} {err!r}")
+
+        code, out, err = run_checker(fresh_repository(scratch, "honest-exit"), HONEST_EXIT_DESIGN)
+        check("honest-exit design with only Problem, What exists today, Honest exit and Deferred-decisions: exit 0",
+              code == 0 and "is complete" in out, f"{code} {out!r} {err!r}")
+
+        text = HONEST_EXIT_DESIGN.replace("`needs-feasibility-evidence`", "a prototype first")
+        code, out, err = run_checker(fresh_repository(scratch, "honest-exit-unnamed"), text)
+        check("honest-exit section that names no honest exit: exit 1",
+              code == 1 and 'section "Honest exit" names no honest exit' in out, f"{code} {out!r} {err!r}")
+
+        text = HONEST_EXIT_DESIGN.replace("## What exists today\n", "## Not What exists today\n")
+        code, out, err = run_checker(fresh_repository(scratch, "honest-exit-missing"), text)
+        check('honest-exit design without "What exists today": exit 1, named, and no other section asked for',
+              code == 1 and 'section "What exists today" is missing' in out
+              and 'section "Files" is missing' not in out, f"{code} {out!r} {err!r}")
 
         text = COMPLETE_DESIGN.replace("- `scripts/widget-counter-test.py` #file_not_yet_existing_that_this_design_creates\n", "")
         code, out, err = run_checker(fresh_repository(scratch, "unmarked-new-path"), text)
