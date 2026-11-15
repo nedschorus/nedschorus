@@ -37,6 +37,12 @@ _attendance_check_spec.loader.exec_module(attendance_check)
 
 HOOK_SCRIPT = (Path(__file__).resolve().parents[1]
                / "walk-me-through-agent-reply-to-user-not-ending-with-waiting-item-closing-line-refusal-stop-hook.py")
+_answer_hook_spec = importlib.util.spec_from_file_location(
+    "walk_me_through_user_short_answer_to_approval_walk_item_expanded_into_instructions_user_prompt_submit_hook",
+    Path(__file__).resolve().parents[1]
+    / "walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-user-prompt-submit-hook.py")
+answer_hook = importlib.util.module_from_spec(_answer_hook_spec)
+_answer_hook_spec.loader.exec_module(answer_hook)
 SUITE_ROOT = Path(tempfile.mkdtemp(prefix="approval-walk-current-item-hook-test-")).resolve()
 failures = []
 
@@ -263,6 +269,26 @@ def test_a_reply_ending_with_the_closing_line_passes_and_one_without_it_is_sent_
     check("the reminder names the walk, its walk-document and its minutes",
           "poem-page-2026-10-12" in reason and str(case.walk / "poem-page-2026-10-12.md") in reason
           and str(case.walk / "poem-page-2026-10-12-minutes.md") in reason, reason)
+
+
+def test_the_closing_lines_shown_are_the_ones_the_answer_hook_builds():
+    """The hook takes its closing lines from the answer hook's closing_line, so a change to the skill's closing-line
+    form there reaches this hook's refusals too."""
+    point = "where the poem page lives"
+    for case_name, pages, link in (
+            ("an item with a page", None, page(2)),
+            ("an item whose publish failed", "#item_page item 2 of 9 publish failed: the Artifact tool timed out\n",
+             None),
+            ("an item with no page", "", "<page link>")):
+        case = Case()
+        case.walk_files(minutes="#next_to_present item 2 of 9.", pages=pages)
+        case.reply("Recorded.")
+        walk = answer_hook.WalkState(None, None, ["2"], 9, {}, None, points={"2": point},
+                                     pages={"2": link or answer_hook.load_walk_finder().ITEM_PAGE_PUBLISH_FAILED})
+        expected = answer_hook.closing_line("2", walk)
+        reason = blocked_reason(case.run()) or ""
+        check(f"for {case_name}, the refusal shows the closing line the answer hook builds",
+              f"\n{expected}\n" in reason + "\n", f"expected {expected!r} in {reason!r}")
 
 
 def test_the_turn_last_text_must_end_with_the_closing_line():
