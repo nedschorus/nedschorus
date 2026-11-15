@@ -2081,6 +2081,7 @@ def run_cases():
               and f"merge {later[:12]}: no task could be opened on alpha's task list, or "
                   f"rewritten there" in completed.stderr
               and "PermissionError" in completed.stderr
+              and f"{alpha_list}/.1.json." in completed.stderr
               and (alpha_list / "1.json").read_text() == before
               and fixture.state_json()["last_tested_main_commit"] == merge
               and job.mutant_key(added) not in fixture.state_json()["tasks_opened"],
@@ -2274,6 +2275,7 @@ def run_cases():
               and "was rechecked on main (1 killed, 0 no longer exists, 1 survived, 0 could not "
                   "be judged), but a file could not be read or written (PermissionError"
                   in completed.stderr
+              and f"{alpha_list}/.1.json." in completed.stderr
               and (alpha_list / "1.json").read_text() == before
               and fixture.state_json() == state_before
               and len(fixture.calls()) == calls_before + 1,

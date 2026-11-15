@@ -12,6 +12,7 @@ Load it by path, under the snake_case form of its file name:
         "agent_seat_task_list_task_file_rewrite_common", <path>)
 """
 
+import contextlib
 import json
 import os
 import tempfile
@@ -32,6 +33,8 @@ def agent_seat_task_list_task_file_rewrite(task_file, task):
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             stream.write(json.dumps(task, indent=2))  # pragma: no mutate, the indent only changes whitespace, and Claude Code and every program here read the task file as JSON
         os.replace(partial, task_file)
-    except BaseException:
-        Path(partial).unlink(missing_ok=True)
+    except OSError:
+        # The caller reports the error that stopped the rewrite, not a failed cleanup after it.
+        with contextlib.suppress(OSError):
+            os.unlink(partial)
         raise

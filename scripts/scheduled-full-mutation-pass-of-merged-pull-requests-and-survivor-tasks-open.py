@@ -451,7 +451,7 @@ agent_seat_task_list = module_loaded_by_path(
     / "agent-seat-task-list-new-pending-task-write-common.py")
 agent_seat_task_list_new_pending_task_write = (
     agent_seat_task_list.agent_seat_task_list_new_pending_task_write)
-task_file_rewrite = module_loaded_by_path(
+agent_seat_task_list_task_file_rewrite = module_loaded_by_path(
     "agent_seat_task_list_task_file_rewrite_common",
     REPOSITORY_ROOT / "nc-systems" / "general-tools"
     / "agent-seat-task-list-task-file-rewrite-common.py").agent_seat_task_list_task_file_rewrite
@@ -819,9 +819,9 @@ def job_failure_task_opened_unless_open(subject, description, arguments,
             if task is not None and task.get("status") != "completed" \
                     and task.get("subject") == subject:
                 if open_task_description_rewritten and task.get("description") != description:
-                    task_file_rewrite(path, {**task, "description": description})
+                    agent_seat_task_list_task_file_rewrite(path, {**task, "description": description})
                 elif open_task_description_addition:
-                    task_file_rewrite(path, {**task, "description": (
+                    agent_seat_task_list_task_file_rewrite(path, {**task, "description": (
                         f"{task.get('description', '')}\n\n{open_task_description_addition}")})
                 return int(path.stem), False
     return agent_seat_task_list_new_pending_task_write(list_directory, subject,
@@ -912,7 +912,7 @@ def survivor_task_rechecked_write(task_file, diff_files, surviving_diff_files, m
         return "left as it was: its file is not a task"
     description = str(task.get("description", ""))
     if not surviving_diff_files:
-        task_file_rewrite(task_file, dict(task, status="completed", description=(
+        agent_seat_task_list_task_file_rewrite(task_file, dict(task, status="completed", description=(
             f"{description}\n\nCompleted by the scheduled full mutation pass: on main at "
             f"{main_commit[:12]}, every mutant this task listed is killed or no longer exists. "
             f"Its record: {record_citation}")))
@@ -929,7 +929,7 @@ def survivor_task_rechecked_write(task_file, diff_files, surviving_diff_files, m
          for diff_file in surviving_diff_files], record_citation))
     if place_named:
         updated["subject"] = survivor_task_subject(place, len(surviving_diff_files))
-    task_file_rewrite(task_file, updated)
+    agent_seat_task_list_task_file_rewrite(task_file, updated)
     return "rewritten to list only the surviving mutants"
 
 
@@ -1245,7 +1245,7 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
                     f"to this task.",
                     [(diff if diff is not None else diff_file.read_text(encoding="utf-8"),
                       diff_file) for diff_file, diff in listed.items()], record_citation)
-                task_file_rewrite(list_directory / f"{found_id}.json", dict(
+                agent_seat_task_list_task_file_rewrite(list_directory / f"{found_id}.json", dict(
                     found_task, subject=survivor_task_subject(place, len(listed)),
                     description=description))
         except OSError as error:

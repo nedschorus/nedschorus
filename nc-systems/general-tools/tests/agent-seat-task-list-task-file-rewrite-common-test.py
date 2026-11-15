@@ -84,16 +84,23 @@ with tempfile.TemporaryDirectory() as scratch:
           and sorted(path.name for path in list_directory.iterdir()) == ["3.json"],
           (raised, sorted(path.name for path in list_directory.iterdir())))
 
-    unwritable = {"id": "3", "not JSON": object()}
+    real_unlink = task_file_rewrite_module.os.unlink
+
+    def failing_unlink(path):
+        raise OSError(13, "Permission denied")
+    task_file_rewrite_module.os.replace = failing_replace
+    task_file_rewrite_module.os.unlink = failing_unlink
     try:
-        rewrite(task_file, unwritable)
+        rewrite(task_file, CHANGED)
         raised = None
-    except TypeError as error:
+    except OSError as error:
         raised = error
-    check("a task that cannot be written as JSON raises, leaves the task file as it was and "
-          "removes the partial file",
-          raised is not None and json.loads(task_file.read_text(encoding="utf-8")) == ORIGINAL
-          and sorted(path.name for path in list_directory.iterdir()) == ["3.json"],
-          (raised, sorted(path.name for path in list_directory.iterdir())))
+    finally:
+        task_file_rewrite_module.os.replace = real_replace
+        task_file_rewrite_module.os.unlink = real_unlink
+    check("when the partial file cannot be removed either, the replace's OSError is the one raised "
+          "and the task file is as it was",
+          raised is not None and raised.errno == 28
+          and json.loads(task_file.read_text(encoding="utf-8")) == ORIGINAL, raised)
 
 sys.exit(1 if failures else 0)
