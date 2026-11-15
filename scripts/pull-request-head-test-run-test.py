@@ -558,12 +558,14 @@ def run_cases_on_ned_box(workspace: Path):
     check("the runner is run once, by the Python running this program, from the checkout, "
           "as <runner> --checkout <checkout> "
           "--only-suites-whose-recorded-inputs-changed-since <since> --log-dir <logs> "
-          "--wait-for-lock-seconds 3600, with no -j and no --recorded-inputs-directory",
+          "--leave-out-suites-that-run-the-real-claude --wait-for-lock-seconds 3600, with no -j "
+          "and no --recorded-inputs-directory",
           len(result.runner_calls) == 1
           and call.get("argv") == [
               str(fixture.runner), "--checkout", str(fixture.checkout),
               "--only-suites-whose-recorded-inputs-changed-since", fixture.merge_base,
-              "--log-dir", str(fixture.logs()), "--wait-for-lock-seconds", "3600"]
+              "--log-dir", str(fixture.logs()), "--leave-out-suites-that-run-the-real-claude",
+              "--wait-for-lock-seconds", "3600"]
           and call.get("run_from") == str(fixture.checkout)
           and os.path.realpath(call.get("executable", "")) == os.path.realpath(sys.executable),
           repr(result))

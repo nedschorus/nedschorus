@@ -72,6 +72,12 @@ Usage:
                 run only these suites, each named by its path from the
                 checkout's top directory, as git lists it; a name git does
                 not list stops the run with exit 2
+  --leave-out-suites-that-run-the-real-claude
+                run no suite in SUITES_THAT_RUN_THE_REAL_CLAUDE, for a run
+                whose claude is not the real one, such as a pull request
+                head test run's; each suite left out gets a line opening
+                with SUITE_THAT_RUNS_THE_REAL_CLAUDE_LEFT_OUT_OF_TEST_RUN_LINE_PREFIX,
+                counts as neither failed nor not run, and records nothing
   --run-time-limit-seconds-not-counting-admission-waits SECONDS
                 once the run has lasted SECONDS, not counting the time in
                 which a suite of the run waited for ADMISSION, kill the
@@ -912,6 +918,10 @@ SUITES_RUN_WITHOUT_ANY_SANDBOX = {
         "agent-seat of this machine, and the sandbox's HOME is empty",
 }
 
+SUITES_THAT_RUN_THE_REAL_CLAUDE = {
+    "nc-systems/general-tools/tests/agent-seat-worktree-create-with-owner-file-claude-code-worktree-create-hook-real-claude-code-test.py",
+}
+
 # Suites that must write the git directory of the repository under test, such as with
 # `git worktree add`. Their git directory is a copy-on-write overlay instead of read-only,
 # so the writes work inside the suite and vanish when it ends.
@@ -972,6 +982,7 @@ ADMISSION_WAITED_LINE_PREFIX = "seconds suites waited for admission: "
 FAILED_SUITE_LINE_PREFIX = "FAIL "
 NOT_RUN_SUITE_LINE_PREFIX = "NOT RUN "
 NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX = "NO-SANDBOX SUITE LEFT OUT OF SELECTIVE TEST RUN "
+SUITE_THAT_RUNS_THE_REAL_CLAUDE_LEFT_OUT_OF_TEST_RUN_LINE_PREFIX = "SUITE THAT RUNS THE REAL CLAUDE LEFT OUT OF TEST RUN "
 SUITE_LINE_LOG_MARK = " — log "
 SUMMARY_LINE_PREFIX = "SUMMARY:"
 FIRST_REPORT_LINE_LOG_DIRECTORY_MARK = "; logs in "
@@ -4047,6 +4058,14 @@ def no_sandbox_suite_file_it_read_that_differs_or_none(suite, recording, files_o
     return next((path for path in read if path in differ), None)
 
 
+def selection_without_suites_that_run_the_real_claude(selection):
+    """(the selection with each selected suite in SUITES_THAT_RUN_THE_REAL_CLAUDE taken out,
+    [those suites])."""
+    left_out = [suite for suite, selected, _ in selection
+                if selected and suite in SUITES_THAT_RUN_THE_REAL_CLAUDE]
+    return [entry for entry in selection if entry[0] not in left_out], left_out
+
+
 def selective_test_run_selection_without_no_sandbox_suites(
         selection, applies, differ, recordings, files_only_strace_saw_by_suite):
     """(the selection with each no-sandbox suite the change does not read taken out,
@@ -4234,6 +4253,7 @@ def parse_arguments(argv):
                         dest="leave_records_unchanged", action="store_true")
     parser.add_argument("--stop-at-first-failing-suite", action="store_true")
     parser.add_argument("--only-suites-named", nargs="+", metavar="SUITE")
+    parser.add_argument("--leave-out-suites-that-run-the-real-claude", action="store_true")
     parser.add_argument("--run-time-limit-seconds-not-counting-admission-waits",
                         dest="run_time_limit_seconds", type=float, metavar="SECONDS")
     arguments = parser.parse_args(argv)
@@ -4377,6 +4397,10 @@ def main(argv=None, platform=None):
         except CouldNotRun as refusal:
             print(refusal, file=sys.stderr)
             return EXIT_COULD_NOT_RUN
+        left_out_running_the_real_claude = []
+        if arguments.leave_out_suites_that_run_the_real_claude:
+            selection, left_out_running_the_real_claude = (
+                selection_without_suites_that_run_the_real_claude(selection))
         selection, left_out = selective_test_run_selection_without_no_sandbox_suites(
             selection, applies=(changed_since is not None and arguments.only_suites_named is None
                                 and in_test_sandboxes),
@@ -4470,6 +4494,12 @@ def main(argv=None, platform=None):
                             f"scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py runs "
                             f"it on main. To run it now: python3 scripts/run-all-test-suites.py "
                             f"--only-suites-named {suite}")
+        for suite in left_out_running_the_real_claude:
+            report.line(f"{SUITE_THAT_RUNS_THE_REAL_CLAUDE_LEFT_OUT_OF_TEST_RUN_LINE_PREFIX}{suite}: it runs "
+                        f"the real claude, and this run was given "
+                        f"--leave-out-suites-that-run-the-real-claude; "
+                        f"scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py runs it on main. "
+                        f"To run it now: python3 scripts/run-all-test-suites.py --only-suites-named {suite}")
 
         run_stop_signals = []
         # What stopped the run: a stop signal's name, with --stop-at-first-failing-suite the
@@ -4731,10 +4761,13 @@ def main(argv=None, platform=None):
             else:
                 report.line(f"case times, suite resources and JUnit XML in {log_dir}")
         skip_count = sum(len(result["skips"]) for result in results)
-        not_selected = (f"; {len(suites) - len(chosen) - len(left_out)} suites not selected, "
+        left_out_count = len(left_out) + len(left_out_running_the_real_claude)
+        not_selected = (f"; {len(suites) - len(chosen) - left_out_count} suites not selected, "
                         f"their recorded inputs unchanged since {changed_since[:12]}"
                         if changed_since is not None else "")
-        left_out_note = (f"; {len(left_out)} no-sandbox suites left out" if left_out else "")
+        left_out_note = ((f"; {len(left_out)} no-sandbox suites left out" if left_out else "")
+                         + (f"; {len(left_out_running_the_real_claude)} suites that run the real "
+                            f"claude left out" if left_out_running_the_real_claude else ""))
         stopped_note = f", {len(stopped)} stopped" if run_stops else ""
         not_run_note = f", {len(not_run)} not run" if not_run else ""
         report.line(f"{SUMMARY_LINE_PREFIX} "
