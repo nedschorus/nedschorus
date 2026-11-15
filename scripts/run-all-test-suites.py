@@ -12,6 +12,7 @@ Usage:
                                  [--leave-recorded-inputs-and-failure-history-unchanged]
                                  [--stop-at-first-failing-suite]
                                  [--only-suites-named SUITE [SUITE ...]]
+                                 [--leave-out-suites-that-run-the-real-claude-cli]
                                  [--run-time-limit-seconds-not-counting-admission-waits SECONDS]
 
   --checkout    the top directory of the checkout to test; default, the
