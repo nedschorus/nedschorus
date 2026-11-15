@@ -2816,8 +2816,7 @@ def items_decided_through_sub_steps(items, words, unresolved=frozenset()):
 def approval_walk_minutes_read_returning_decided_item_numbers(walk_finder, minutes, parser, decided_now=()):
     """Return the item numbers minutes_record finds decided in the walk-minutes at minutes, with decided_now, items
     answered but not yet recorded, counted as decided, plus each item of the walk-document that
-    items_decided_through_sub_steps finds decided through its sub-steps, unless held_answers_unresolved holds it.
-    Every caller that asks whether an item is decided asks this function, so none builds these inputs its own way."""
+    items_decided_through_sub_steps finds decided through its sub-steps, unless held_answers_unresolved holds it."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     minutes_text = minutes.read_text(encoding="utf-8")
     items = [number for unit in walk_finder.item_unit_spans(document.read_text(encoding="utf-8"), parser)
