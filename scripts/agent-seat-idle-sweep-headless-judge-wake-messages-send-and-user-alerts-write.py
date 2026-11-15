@@ -349,32 +349,34 @@ class SweepLog:
 
     def open_wait(self, seat):
         wait = None
-        # The invocation that put PROMISE on the wait, until its PROMISE_MESSAGE is read.
-        promise_message_owed_by = None
+        # Whether a PROMISE step awaits its PROMISE_MESSAGE, and the invocation that logged the
+        # step.
+        owed, owed_by = False, None
         for event in self.of_seat(seat, "wait_step", "wait_ended", PROMISE_MESSAGE):
             invocation = event.get("agent_seat_idle_sweep_invocation_started_at")
             if event["event"] == "wait_ended":
-                wait = None
+                wait, owed = None, False
             elif event["event"] == PROMISE_MESSAGE:
                 if wait is None:
                     continue
-                if promise_message_owed_by not in (None, invocation) or "sentences" not in event:
+                if (owed and owed_by != invocation) or "sentences" not in event:
                     wait[PROMISE_MESSAGES] = None
                 elif wait[PROMISE_MESSAGES] is not None:
                     wait[PROMISE_MESSAGES].append({"at": event["at"], "kinds": set(event["kinds"]),
                                                    "sentences": event["sentences"]})
-                promise_message_owed_by = None
-            elif event["step"] == NUDGE:
-                wait = {"session_id": event["session_id"], "first_idle_at": event["first_idle_at"],
-                        NUDGE: event["at"], "nudge_text": event["text"], PROMISE_MESSAGES: []}
-                promise_message_owed_by = None
-                if event.get("rule") == 2:
-                    wait[PROMISE] = event["at"]
-                    promise_message_owed_by = invocation
+                owed = False
+            elif event["step"] == NUDGE or (wait is not None and event["step"] == PROMISE):
+                if event["step"] == NUDGE:
+                    wait = {"session_id": event["session_id"],
+                            "first_idle_at": event["first_idle_at"], NUDGE: event["at"],
+                            "nudge_text": event["text"], PROMISE_MESSAGES: []}
+                    owed = False
+                    if event.get("rule") != 2:
+                        continue
+                wait[PROMISE] = event["at"]
+                owed, owed_by = True, invocation
             elif wait is not None:
                 wait[event["step"]] = event["at"]
-                if event["step"] == PROMISE:
-                    promise_message_owed_by = invocation
         return wait
 
     def last_judge_answer(self, seat):
@@ -455,15 +457,15 @@ def task_calls_settling_promise_messages(promise_messages, task_calls):
     They settle the messages when every message named only promises to act after an event and
     holds, and each sentence named can have a task of its own recorded after its message: for each
     message, the distinct tasks the calls after it record are at least as many as the sentences it
-    and every later message named. Two calls on one task count once. Code cannot tell which promise
-    a call backs, so the wait_ended event lists the sentences and the calls for a reader to check."""
+    and every later message named. Two calls on one task id count once, a TaskCreate and a later
+    TaskUpdate of that task included. Code cannot tell which promise a call backs, so the wait_ended event lists the sentences and the calls for a reader to check."""
     if any(not message["kinds"] <= TASK_CALL_SETTLED_KINDS for message in promise_messages):
         return None
     calls_after = [[call for call in task_calls
                     if call["time"] and parse_time(call["time"]) > parse_time(message["at"])]
                    for message in promise_messages]
     for index, calls in enumerate(calls_after):
-        tasks = {(call["name"], call["task"]) for call in calls}
+        tasks = {call["task"] for call in calls}
         if len(tasks) < sum(len(message["sentences"]) for message in promise_messages[index:]):
             return None
     return calls_after[0]

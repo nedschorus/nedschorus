@@ -26,8 +26,8 @@ LAST_ACTIVITY = "last_activity"            # {"time": ISO time or null, "source"
 LAST_TOOL_CALL_AT = "last_tool_call_at"
 # [{"time", "name", "task"}], oldest first: each TaskCreate or TaskUpdate call in the
 # agent-session's own transcript that sets metadata.prerequisites or addBlockedBy and whose result
-# shows it succeeded, so a call with no result does not count; "task" is a TaskCreate's subject or
-# a TaskUpdate's taskId
+# shows it succeeded, so a call with no result does not count; "task" is the task id its success
+# result names
 SUCCESSFUL_TASK_TOOL_CALLS_SETTING_PREREQUISITES_OR_BLOCKED_BY = (
     "successful_task_tool_calls_setting_prerequisites_or_blocked_by")
 TURN_ENDED = "turn_ended"

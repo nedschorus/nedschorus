@@ -178,7 +178,7 @@ def run_several_alert_cases(root):
     check("an alert titled \"Item 3's reboot\", which opens with an item's number but no label, keeps its title",
           result.returncode == 0 and "\n## Item 3's reboot\n" in document, result.stderr + document)
 
-    sub_item =WALK_DOCUMENT.replace("## Items 5 and 6", "### Item 4.1 of 9: a part\n\n## Items 5 and 6")
+    sub_item = WALK_DOCUMENT.replace("## Items 5 and 6", "### Item 4.1 of 9: a part\n\n## Items 5 and 6")
     checkout, home = walk_checkout(root, "sub-item", waiting="item 4.1 of 9", document=sub_item)
     claimed_alert(home, "alert-d", "fourth")
     result = run(checkout, home, "alert-d")
@@ -234,6 +234,19 @@ def run_several_alert_cases(root):
           result.returncode == 0
           and document.index("## Item 3 of 3: a held new item") < document.index("### Item 2.2 of 3: another part")
           < document.index("## tenth") < document.index("## Item 4 of 4: four"), result.stderr + document)
+
+    shared = ("# A walk\n\n## Items 4 and 5 of 9: four and five\n\n### Item 4.1 of 9: a part of four\n\n"
+              "Recommendation: go.\n\n### Item 5.1 of 9: a part of five\n\nRecommendation: go.\n\n"
+              "## Item 6 of 9: six\n\nRecommendation: go.\n")
+    checkout, home = walk_checkout(root, "shared-heading-sub-steps", waiting="item 4.1 of 9", document=shared)
+    claimed_alert(home, "alert-k", "shared")
+    result = run(checkout, home, "alert-k")
+    document, _ = files(checkout)
+    check("while sub-step 4.1 of a heading naming items 4 and 5 waits, the alert goes before 5.1, which belongs to "
+          "item 5, not after it",
+          result.returncode == 0
+          and document.index("### Item 4.1 of 9: a part of four") < document.index("## shared")
+          < document.index("### Item 5.1 of 9: a part of five"), result.stderr + document)
 
     two_versions = ("# A walk\n\n## Item 4 of 9: four\n\n### Item 4.1 of 9: a part\n\nRecommendation: go.\n\n"
                     "## Item 4 of 8: four, as first shown\n\n### Item 4.1 of 8: the part, as first shown\n\n"

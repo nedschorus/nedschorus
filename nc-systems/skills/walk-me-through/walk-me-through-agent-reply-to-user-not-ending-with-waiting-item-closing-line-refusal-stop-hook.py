@@ -97,11 +97,14 @@ approval_walk_closing_line_read reads, as that module's docstring says, with
 the answer hook's ANSWER_LETTERS_TEXT after the link: `[Item 4 of 9, <the
 point>](<page link>) · A approve · ...`, or `Item 4 of 9, <the point> · A
 approve · ...` without its link. The point is not compared with the
-walk-document, so a point written with or without escapes passes.
+walk-document, so a point written with or without escapes passes. A line
+that is one code span around a closing line is read as that closing line in
+a code span, which shows the user code whose link cannot be clicked.
 
 THE REPLY PASSES when, for every item the minutes name, the closing line
-nearest the reply's end that names the item, whatever M it gives, links to
-the item's page, or, for an item whose publish failed, has no link.
+nearest the reply's end that names the item, whatever M it gives, is not in
+a code span and links to the item's page, or, for an item whose publish
+failed, has no link.
 
 A WAITING SUB-STEP, an item with a dotted number such as `Item 4.1 of 9`, also
 passes when the reply holds a line that is `[No decision here; type N or next
@@ -121,8 +124,8 @@ passes.
 OUTPUT: {"decision": "block", "reason": <message>}, which keeps the agent
 going with the message as its next instruction: when the walk-minutes hold no
 `#item_page` line for a waiting item, so it was never published; when the
-reply does not end with a waiting item's closing line, or that line's link is
-not the item's page; or when the open walk's minutes line or walk-document
+reply does not end with a waiting item's closing line, that line sits in a
+code span, or its link is not the item's page; or when the open walk's minutes line or walk-document
 cannot be used, so the waiting item is unknown. ON A
 FAULT, such as input that is not JSON or a file it cannot read, the hook
 prints one line naming it on stderr and exits 1: Claude Code records a Stop
@@ -183,6 +186,10 @@ UNPUBLISHED_OPENING_TEMPLATE = (
     "the open approval-walk {walk} has waiting for his answer, so the item's closing line has no page to link to. "
     "The walk-me-through skill publishes every item before any message shows the item or its closing line, "
     "because the page is where the user sees the item in full on every screen he reads.")
+# Agents copy a line shown in backticks with its backticks, and the user then sees it as code whose link
+# cannot be clicked, so every line an agent is to copy is shown alone and bare.
+NOT_IN_BACKTICKS = ("Write the line or lines below as plain text, with no backticks around them: the user sees "
+                    "text between backticks as code, in which a link cannot be clicked.")
 UNPUBLISHED_INSTRUCTIONS = (
     "Publish each such item with the Artifact tool as a private page holding the item as the walk-document "
     "{document} has it, titled `Item N of M: {walk}`, and add the line `#item_page item N of M <page link>` at "
@@ -190,9 +197,10 @@ UNPUBLISHED_INSTRUCTIONS = (
     "If a publish fails, add the line `#item_page item N of M publish failed: <what the Artifact tool said>` "
     "for that item instead.",
     "Then end your reply with each waiting item's closing line, on a line of its own, with nothing after it, as "
-    "the walk-me-through skill writes it: `[Item N of M, <the point>](<page link>) · A approve · ...`; for an "
-    "item whose publish failed, leave out the link, keeping only its text and what follows it: `Item N of M, "
-    "<the point> · A approve · ...`.",
+    "the walk-me-through skill writes it, with the page's link in place of `<page link>` and, in place of "
+    "`<the point>`, the item's walk-document heading with its `Item N of M: ` prefix left out. " + NOT_IN_BACKTICKS + "\n{closing_lines}",
+    "For an item whose publish failed, write its closing line without the link: drop the `[` before `Item` and "
+    "the `](<page link>)` after `<the point>`, keeping the rest of the line.",
 )
 REPLY_LACKS_CLOSING_LINE_OPENING_TEMPLATE = (
     "approval-walk current-item check: your reply to the user does not end with the right closing line for "
@@ -206,13 +214,18 @@ WRONG_LINK_PROBLEM = (
 LINK_AFTER_FAILED_PUBLISH_PROBLEM = (
     "the closing line for `Item {number} of {total}` has a link, but the newest `#item_page` line for it in the "
     "walk-minutes records that its publish failed")
+IN_CODE_SPAN_PROBLEM = (
+    "the closing line for `Item {number} of {total}` sits between backticks, so the user sees it as code and cannot "
+    "click its link")
 NO_LINK_PROBLEM = (
     "the closing line for `Item {number} of {total}` has no link, but the walk-minutes record its page as {page}")
 REPLY_LACKS_CLOSING_LINE_INSTRUCTIONS = (
     "If he has not yet seen the item, show it in full, word for word as the walk-document {document} has it, "
     "starting with its running count, as in `Item 4 of 9: <the point>`, before the closing line.",
     "End your reply with each waiting item's closing line, on a line of its own, with nothing after it, as the "
-    "walk-me-through skill writes it, with <the point> as its walk-document heading states it:\n{closing_lines}",
+    "walk-me-through skill writes it, with, in place of `<the point>`, the item's walk-document heading with its "
+    "`Item N of M: ` prefix left out. "
+    + NOT_IN_BACKTICKS + "\n{closing_lines}",
     "If the link you wrote is the item's current page, published with the Artifact tool, and the walk-minutes "
     "are out of date, keep the link and add the line `#item_page item N of M <that link>` at the end of "
     "{minutes}, since the newest such line for an item is the one this hook reads.",
@@ -226,13 +239,13 @@ REPLY_LACKS_CLOSING_LINE_INSTRUCTIONS = (
     "at the end of {minutes} instead of writing a closing line, and end the turn.",
 )
 NO_DECISION_INSTRUCTIONS = (
-    "If the waiting item is a sub-step that asks for no decision, you may end your reply instead with "
-    "`[No decision here; type N or next to continue.](<page link>)`, where <page link> is the link that "
-    "ends the sub-step's line in {minutes} of the form {page_line}.",
+    "If the waiting item is a sub-step that asks for no decision, you may end your reply instead with the line "
+    "below, where <page link> is the link that ends the sub-step's line in {minutes} of the form {page_line}. "
+    + NOT_IN_BACKTICKS + "\n[No decision here; type N or next to continue.](<page link>)",
     "If {minutes} has no such line, add it at the end of {minutes} first, with the link of the page "
     "you published for the sub-step with the Artifact tool.",
-    "If the newest such line for the sub-step records that its publish failed, end your reply with "
-    "`No decision here; type N or next to continue.` without a link instead.")
+    "If the newest such line for the sub-step records that its publish failed, end your reply instead with this "
+    "line, without a link, as plain text with no backticks around it:\nNo decision here; type N or next to continue.")
 OLD_MARKER_INSTRUCTIONS = (
     "Add this line at the end of {minutes}, below every earlier marker line, and leave "
     "the old lines as they are: {new_line}",
@@ -317,16 +330,29 @@ def turn_reply_text(records):
     return "\n".join(texts)
 
 
+def closing_line_inside_code_span(line, parser, letters):
+    """What approval_walk_closing_line_read reads in the line's code span when the whole line is one code span,
+    else None."""
+    tokens = parser.parseInline(line.strip())[0].children
+    if len(tokens) != 1 or tokens[0].type != "code_inline":
+        return None
+    return walk_finder.approval_walk_closing_line_read(tokens[0].content, parser, letters)
+
+
 def ending_closing_lines(reply, parser, letters):
-    """The closing lines that end the reply, blank lines aside, as the module docstring says, the last line first."""
+    """The closing lines that end the reply, blank lines aside, as the module docstring says, the last line first,
+    each as (item numbers, M, link or None, whether it sits in a code span)."""
     found = []
     for line in reversed(reply.rstrip().split("\n")):
         if not line.strip():
             continue
         closing = walk_finder.approval_walk_closing_line_read(line, parser, letters)
+        in_code_span = closing is None
+        if in_code_span:
+            closing = closing_line_inside_code_span(line, parser, letters)
         if closing is None:
             break
-        found.append(closing)
+        found.append((*closing, in_code_span))
     return found
 
 
@@ -337,8 +363,13 @@ def closing_line_problems(numbers, total, closing_lines, pages, parser):
         page = pages[number]
         expected = None if page == walk_finder.ITEM_PAGE_PUBLISH_FAILED else parser.normalizeLink(page)
         # Nearest the reply's end first, since that is the line the user reads.
-        written = [link for line_numbers, _, link in closing_lines if number in line_numbers]
+        nearest = [(link, in_code_span) for line_numbers, _, link, in_code_span in closing_lines
+                   if number in line_numbers]
+        written = [link for link, _ in nearest]
         values = {"number": number, "total": total, "page": page}
+        if nearest and nearest[0][1]:
+            problems.append(IN_CODE_SPAN_PROBLEM.format(**values))
+            continue
         if written and written[0] == expected:
             continue
         if not written:
@@ -434,18 +465,20 @@ def output_for(payload, environment):
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=str(problem))
     pages = walk_finder.newest_item_page_link_per_item_from_walk_minutes(
         minutes.read_text(encoding="utf-8"), parser)
+    letters = walk_finder.load_module(
+        "walk_me_through_user_short_answer_to_approval_walk_item_expanded_into_instructions_user_prompt_submit_hook",
+        ANSWER_HOOK_FILE).ANSWER_LETTERS_TEXT
     unpublished = [number for number in numbers if number not in pages]
     if unpublished:
         return block(UNPUBLISHED_OPENING_TEMPLATE, UNPUBLISHED_INSTRUCTIONS + no_decision_instructions(unpublished),
                      named=" and ".join(f"`Item {number} of {total}`" for number in unpublished),
-                     page_line=sub_step_page_line(unpublished, total))
+                     page_line=sub_step_page_line(unpublished, total),
+                     closing_lines="\n".join(closing_line_example(number, total, pages.get(number, "<page link>"),
+                                                                  letters) for number in numbers))
     no_decision_links = {walk_finder.approval_walk_sub_step_no_decision_closing_line_page_link_or_none(line)
                          for line in reply.split("\n")}
     numbers_needing_closing_line = [number for number in numbers
                                     if not ("." in number and pages[number] in no_decision_links)]
-    letters = walk_finder.load_module(
-        "walk_me_through_user_short_answer_to_approval_walk_item_expanded_into_instructions_user_prompt_submit_hook",
-        ANSWER_HOOK_FILE).ANSWER_LETTERS_TEXT
     link_parser = walk_finder.markdown_parser()
     # markdown-it refuses a file: link by default and reads it as text, which would hide the wrong link
     # the block must name.
@@ -459,7 +492,7 @@ def output_for(payload, environment):
                  page_line=sub_step_page_line(numbers_needing_closing_line, total),
                  named=" and ".join(f"`Item {number} of {total}`" for number in numbers),
                  problems="; ".join(problems),
-                 closing_lines="\n".join(f"`{closing_line_example(number, total, pages[number], letters)}`"
+                 closing_lines="\n".join(closing_line_example(number, total, pages[number], letters)
                                          for number in numbers))
 
 

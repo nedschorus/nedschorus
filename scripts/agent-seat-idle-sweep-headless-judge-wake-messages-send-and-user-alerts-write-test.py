@@ -605,7 +605,7 @@ check("rule 2: the agent-seat that recorded the task is neither escalated nor re
       (machine.events("wait_step"), machine.events("message_sent"), machine.alerts()))
 check("rule 2: the wait_ended event lists the sentence and the task call taken to settle it",
       [(event.get("sentences"), event.get("task_calls")) for event in machine.events("wait_ended")]
-      == [([PROMISE], [{"time": at(0.8), "name": "TaskCreate", "task": "report on PR 927"}])],
+      == [([PROMISE], [{"time": at(0.8), "name": "TaskCreate", "task": "1"}])],
       machine.events("wait_ended"))
 
 
@@ -665,7 +665,7 @@ check("rule 2: a task call for each of the message's two promises ends the wait,
       [(event["why"], event.get("sentences"), [call["task"] for call in event.get("task_calls", [])])
        for event in machine.events("wait_ended")]
       == [("it recorded what a task waits on after the promise message",
-           [PROMISE, HOLD_SENTENCE], ["report on PR 927", "2"])],
+           [PROMISE, HOLD_SENTENCE], ["1", "2"])],
       machine.events("wait_ended"))
 
 machine = promise_wait_after(
@@ -724,12 +724,82 @@ check("rule 2: a promise message logged on a wait whose first rule 2 message has
       (machine.events("promise_message"), machine.events("wait_ended")))
 
 machine = Machine()
+machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
+machine.script(sent_ok())
+machine.run(0)
+machine.log.write_text("".join(
+    json.dumps({key: value for key, value in event.items()
+                if key != "agent_seat_idle_sweep_invocation_started_at"}) + "\n"
+    for event in machine.events() if event["event"] != "promise_message"))
+machine.append("alpha", cross_session(machine.events("message_sent")[-1]["text"], at(0.5)),
+               assistant(HOLD_SENTENCE, at(1)), turn_end(at(1)))
+machine.script(sent_ok())
+machine.run(7)
+machine.append("alpha", user("ok", at(7.5)),
+               assistant(tool=("TaskCreate", {"subject": "hold the deploy", "metadata": {
+                   "prerequisites": [{"pr_merged": 9}]}}), when=at(7.8), tool_id="t-hold"),
+               task_result("t-hold", "Task #2 created successfully: hold the deploy", at(7.81)),
+               assistant("Recorded.", at(8)), turn_end(at(8)))
+machine.script()
+machine.run(14)
+check("rule 2: on a wait whose first rule 2 message was logged with no invocation stamp and no "
+      "promise_message event, a later promise message does not let a task call end the wait",
+      not machine.events("wait_ended") and len(machine.events("promise_message")) == 1,
+      (machine.events("promise_message"), machine.events("wait_ended")))
+
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
+machine.script(sent_ok())
+machine.run(0)
+machine.append("alpha", cross_session(machine.events("message_sent")[-1]["text"], at(0.5)),
+               assistant(HOLD_SENTENCE, at(1)), turn_end(at(1)))
+machine.script(sent_ok())
+machine.run(7)
+machine.append("alpha", user("ok", at(7.5)),
+               assistant(tool=("TaskCreate", {"subject": "hold the deploy", "metadata": {
+                   "prerequisites": [{"pr_merged": 9}]}}), when=at(7.8), tool_id="t-hold"),
+               task_result("t-hold", "Task #2 created successfully: hold the deploy", at(7.81)),
+               assistant("Recorded.", at(8)), turn_end(at(8)))
+machine.script()
+machine.run(14)
+check("rule 2: two rule 2 messages on one wait, each naming one promise, and one task call after "
+      "the second: the first message's promise has no task of its own, so the wait stays open",
+      not machine.events("wait_ended") and len(machine.events("promise_message")) == 2,
+      (machine.events("promise_message"), machine.events("wait_ended")))
+
+CREATED_THEN_UPDATED = [
+    RECORDED_TASK, RECORDED_TASK_RESULT,
+    assistant(tool=("TaskUpdate", {"taskId": "1", "addBlockedBy": ["4"]}), when=at(0.9),
+              tool_id="t-update-1"),
+    task_result("t-update-1", "Updated task #1 blockedBy", at(0.91))]
+machine = promise_wait_after(TWO_PROMISES, *CREATED_THEN_UPDATED)
+check("rule 2: a TaskCreate and a later TaskUpdate of the same task count as one task, so they do "
+      "not end a wait whose message named two promises",
+      waited_on_to_escalation(machine), (machine.events("wait_step"), machine.events("wait_ended")))
+SAME_SUBJECT_CREATED_TWICE = [
+    record for number in (1, 2)
+    for record in (assistant(tool=("TaskCreate", {"subject": "report", "metadata": {
+                       "prerequisites": [{"pr_merged": 927}]}}), when=at(0.8 + number / 100),
+                             tool_id=f"t-create-{number}"),
+                   task_result(f"t-create-{number}", f"Task #{number} created successfully: report",
+                               at(0.81 + number / 100)))]
+machine = promise_wait_after(TWO_PROMISES, *SAME_SUBJECT_CREATED_TWICE)
+check("rule 2: two TaskCreates with one subject create two tasks, which end a wait whose message "
+      "named two promises",
+      [[call["task"] for call in event.get("task_calls", [])]
+       for event in machine.events("wait_ended")] == [["1", "2"]],
+      machine.events("wait_ended"))
+
+machine = Machine()
 machine.seat("alpha", [user("go"), assistant(f"{PROMISE} {ANNOUNCED}"), turn_end()])
 machine.script({"answer": {"sentences": [{"index": 0, "backed": False, "reason": "no tool call"}]}},
                sent_ok())
 machine.run(0)
 machine.append("alpha", cross_session(machine.events("message_sent")[-1]["text"], at(0.5)),
-               RECORDED_TASK, RECORDED_TASK_RESULT,
+               *CREATED_THEN_UPDATED[:2],
+               assistant(tool=("TaskUpdate", {"taskId": "2", "addBlockedBy": ["1"]}), when=at(0.9),
+                         tool_id="t2"),
+               task_result("t2", "Updated task #2 blockedBy", at(0.91)),
                assistant("Recorded.", at(1)), turn_end(at(1)))
 machine.script()
 machine.run(7)

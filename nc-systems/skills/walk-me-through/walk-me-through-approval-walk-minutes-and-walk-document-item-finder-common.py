@@ -37,11 +37,13 @@ M`, `Items 5 and 6 of M`, `Items 10 to 12 of M` or `Items 12 to 12.3 of M`,
 on a top-level heading or paragraph opening with `**`, outside any list or
 quotation, as markdown-it-py reads the document, and runs to the next running
 count or unnumbered item, or, on a heading, to the next top-level heading as
-high as its own or higher, whatever that heading says. An unnumbered item is a waiting item that has only
+high as its own or higher, unless that heading's label names only the unit's own items, as
+`## Item 20, amended: ...` below `## Item 20 of 30` does. An unnumbered item is a waiting item that has only
 a title: a top-level `## <title>` heading, ATX-style, after the first running
 count, that holds no running count, does not open with `Withdrawn`, and does
-not open with an item label such as `Item 3:`, which in older walks groups
-the sub-steps under it. A title that opens with an item's number but no
+not open with an item label such as `Item 3:`, or with `Items` and its
+numbers, as in `Items 3 to 5 are smaller`, which in older walks group the
+items under them. A title that opens with an item's number but no
 label, as in `## Item 36's three added texts`, is an unnumbered item. A
 walk-document whose whole-number running counts, those with no dot, sit on
 any heading other than `##`, as in `## Part 2` headings over `### Item 2 of
@@ -184,10 +186,12 @@ WITHDRAWN_HEADING = re.compile(r"^[*_\s(]*withdrawn\b", re.I)
 APPROVAL_WALK_ITEM_TAG_LINE = re.compile(r"^\s*#approval_walk_item_", re.I)
 RUNNING_COUNT_TOTAL = re.compile(rf"\b(items?\s+{NUMBER_LIST})\s+of\s+\d+\b", re.I)
 # A `##` heading that opens with an item label but no `of M`, as in `## Item 3: corrections` over `### Item 3.1 of
-# 16`, groups items and is not an item itself. The numbers, read whole, must end the label, so a title that only
-# opens with an item's number, as in `## Item 36's three added texts`, is an unnumbered item.
+# 16`, or with `Items` and its numbers, as in `## Items 3 to 5 are smaller`, groups items and is not an item itself.
+# After `Item`, the numbers, read whole, must end the label, so a title that only opens with an item's number, as in
+# `## Item 36's three added texts`, is an unnumbered item. Group `numbers` holds the numbers.
 ITEM_LABEL_WITHOUT_COUNT = re.compile(
-    rf"^[*_\s]*items?\s+(?>{NUMBER_LIST})[*_]*(?:\s*[:.,\-\u2013\u2014][*_]*(?=\s|$)|\s*$)", re.I)
+    rf"^[*_\s]*(?:item\s+(?P<numbers>(?>{NUMBER_LIST}))[*_]*(?:\s*[:.,\-\u2013\u2014][*_]*(?=\s|$)|\s*$)"
+    rf"|items\s+(?P<plural_numbers>(?>{NUMBER_LIST}))(?=[\s*_:.,;\-\u2013\u2014]|$))", re.I)
 UNNUMBERED_ITEM_HEADING_MARKUP = "##"
 # The close step of the answer program puts this right after a deferred item's running count. It holds a colon, so
 # every pattern that reads a heading past its count reads approval_walk_item_heading_with_deferred_note_removed's line.
@@ -546,14 +550,18 @@ def item_unit_spans(document_text, parser):
     withdrawn = [token.map[0] for index, token in enumerate(tokens)
                  if token.type == "heading_open" and token.map is not None and token.level == 0
                  and index + 1 < len(tokens) and WITHDRAWN_HEADING.match(tokens[index + 1].content)]
-    headings = [(token.map[0], heading_level(token)) for token in tokens
+    headings = [(token.map[0], heading_level(token), label_numbers(tokens[index + 1].content if index + 1 < len(tokens)
+                                                                     else ""))
+                for index, token in enumerate(tokens)
                 if token.type == "heading_open" and token.map is not None and token.level == 0]
     raw_starts = item_unit_starts(tokens, lines)
-    levels = [heading_level(tokens[start[0]]) if tokens[start[0]].type == "heading_open" else 0 for start in raw_starts]
+    levels = [heading_level(tokens[start[0]]) if tokens[start[0]].type == "heading_open" else 0
+              for start in raw_starts]
     starts = [start[1:] for start in raw_starts]
     ends = [min([start[4] for start in starts[position + 1:position + 2]] + [len(lines)]
                 + [line for line in withdrawn if line > first and len(numbers) <= 1]
-                + [line for line, level in headings if line > first and level <= levels[position]])
+                + [line for line, level, labelled in headings
+                   if line > first and heading_ends_unit(level, labelled, levels[position], numbers)])
             for position, (numbers, _, _, _, first) in enumerate(starts)]
     return [(numbers, total, problem, first, ends[index])
             for index, (numbers, total, problem, _, first) in enumerate(starts)
@@ -565,6 +573,27 @@ def heading_level(token):
     """The level of heading_open token, 2 for `## A` and for `A` underlined with `---`."""
     # A setext heading's markup is its underline's one character, so its length is no level.
     return int(token.tag[1:])
+
+
+def label_numbers(heading_text):
+    """Return the set of item numbers a heading's ITEM_LABEL_WITHOUT_COUNT label names, empty when it has none or
+    they name no item."""
+    label = ITEM_LABEL_WITHOUT_COUNT.match(approval_walk_item_heading_with_deferred_note_removed(
+        heading_text.split("\n")[0]))
+    if not label:
+        return set()
+    try:
+        return set(expand_numbers(label["numbers"] or label["plural_numbers"]))
+    except UnusableRange:
+        return set()
+
+
+def heading_ends_unit(level, labelled, unit_level, unit_numbers):
+    """Say whether a top-level heading of level, whose label names the item numbers labelled, ends a unit that
+    starts on a heading of unit_level, 0 for a paragraph, and names unit_numbers. A heading as high as the unit's
+    own or higher ends it, unless its label names only the unit's own items, as `## Item 20, amended: ...` below
+    `## Item 20 of 30` does, which keeps it in that unit."""
+    return level <= unit_level and not (labelled and labelled <= set(unit_numbers))
 
 
 def item_unit_starts(tokens, lines):
@@ -604,6 +633,11 @@ def item_unit_starts(tokens, lines):
         content = tokens[index + 1].content.split("\n")[0] if index + 1 < len(tokens) else ""
         content = approval_walk_item_heading_with_deferred_note_removed(content)
         match = HEADING_COUNT.match(content)
+        # A heading that ends the shared heading's unit in item_unit_spans ends the group too, so a count below it
+        # starts a unit of its own.
+        if token.type == "heading_open" and group and heading_ends_unit(
+                heading_level(token), label_numbers(content), group[2], group[0]):
+            group = None
         if not match:
             # Before the first item, a `##` heading is the walk-document's own, such as its introduction's.
             if (starts and unnumbered_items_possible and token.type == "heading_open"
@@ -617,7 +651,7 @@ def item_unit_starts(tokens, lines):
         except UnusableRange as error:
             numbers, problem = [], f"its walk-document's heading `{content.strip()}` names no item: {error}"
         if token.type == "heading_open":
-            group = (set(numbers), match[2])
+            group = (set(numbers), match[2], heading_level(token))
         elif group and numbers and set(numbers) <= group[0] and match[2] == group[1]:
             continue
         else:
@@ -740,6 +774,14 @@ def approval_walk_unit_is_unnumbered_item(unit):
     return not numbers and problem is None
 
 
+def approval_walk_document_unit_is_dotted_sub_step_of_whole_item_of_any_item_number(unit, numbers):
+    """Whether unit, one of item_unit_spans' units, is a sub-step of a whole item that one of numbers belongs to:
+    every number unit names is dotted, as in `4.2`, and its whole number is that of one of numbers, as 4 is of
+    `4` and of `4.1`."""
+    wholes = {number.split(".")[0] for number in numbers}
+    return bool(unit[0]) and all("." in number and number.split(".")[0] in wholes for number in unit[0])
+
+
 def approval_walk_document_new_item_insert_line_number_past_whole_item_sub_steps_and_withdrawn_versions(
         units, unit, line_count):
     """Return the 0-based line, of a walk-document of line_count lines whose item_unit_spans are units, where the
@@ -749,12 +791,15 @@ def approval_walk_document_new_item_insert_line_number_past_whole_item_sub_steps
     Withdrawn heading below either, since a unit ends at a Withdrawn heading and a sub-step is a unit of its own.
     The finder is asked twice: for the nearest unit at or above unit that names unit's whole number, and for unit
     read as naming its whole numbers, so that a waiting `5.2 of 10` the finder leaves out of item 5 of 9 still
-    keeps the `5.3 of 10` right after it."""
+    keeps the `5.3 of 10` right after it. Of the sub-steps the finder gives a unit that names several items, as in
+    `Items 4 and 5 of 9`, only those of unit's whole items count, so while 4.1 waits a `5.1` below it is not
+    passed over."""
     wholes = sorted({number.split(".")[0] for number in unit[0]})
     whole_items = [(wholes, *unit[1:])] + [each for each in units
                                            if each[3] <= unit[3] and set(each[0]) & set(wholes)][-1:]
     last = max([unit[3]] + [each[3] for whole_item in whole_items
-                            for each in approval_walk_item_sub_step_units_below_item_in_walk_document(units, whole_item)])
+                            for each in approval_walk_item_sub_step_units_below_item_in_walk_document(units, whole_item)
+                            if approval_walk_document_unit_is_dotted_sub_step_of_whole_item_of_any_item_number(each, wholes)])
     return next((each[3] for each in units if each[3] > last), line_count)
 
 

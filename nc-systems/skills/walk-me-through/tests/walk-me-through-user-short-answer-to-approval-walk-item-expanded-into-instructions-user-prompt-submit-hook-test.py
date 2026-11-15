@@ -1594,6 +1594,13 @@ def test_missing_walk_document_is_reported_for_a():
           and lines[1].endswith(" does not exist.")
           and lines[2:] == item_text_unreadable_instructions(case.walk / f"{WALK_NAME}.md"),
           f"lines {lines!r}")
+    case.minutes(f"#item_page item 4 of 9 {PAGE_1}\n\n#next_to_present item 4 of 9")
+    lines = case.lines("a")
+    check("a walk-document that is missing, for an item whose minutes record its page, ends the refusal with the "
+          "item's closing line itself",
+          lines is not None and lines[2:] == item_text_unreadable_instructions(
+              case.walk / f"{WALK_NAME}.md", f"[Item 4 of 9]({PAGE_1}) · {LETTERS_AFTER_LINK}"),
+          f"lines {lines!r}")
     lines = case.lines("z")
     check("a walk-document that is missing is reported before acting on Z, which the check does not cover",
           lines is not None and lines[1].startswith("Z means defer"), f"lines {lines!r}")
@@ -1604,13 +1611,22 @@ CLOSING_LINE_NAMED = ("the item's closing line, the walk-me-through skill's line
                       "the answers")
 
 
-def item_text_unreadable_instructions(document, closing_line=None):
-    """The lines after the first of an ITEM_TEXT_UNREADABLE refusal, the walk-minutes shown as the Case shows them."""
+def item_text_unreadable_instructions(path, closing_line=None):
+    """The lines after the first of an ITEM_TEXT_UNREADABLE refusal naming path, the file to change, or none."""
     closing = f"this closing line: {closing_line}" if closing_line else CLOSING_LINE_NAMED
+    where = f", in {path}" if path else ""
     return ["Record nothing in the walk-minutes and act on none of the answer.",
-            "Make the change that the reason above names, in the one of these two files it names: the walk-document "
-            f"{document}, or the walk-minutes <minutes>. Then show the user the item in full, so that he can type his answer again, "
-            f"and end that message with {closing}"]
+            f"Make the change that the reason above names{where}. Then show the user the item's current text in "
+            f"full, so that he can type his answer again, and end that message with {closing}"]
+
+
+def test_an_item_with_no_heading_leaves_the_reason_to_name_the_file():
+    case = Case(next_to_present="item 7 of 9", document=SHOWN_DOCUMENT)
+    lines = case.lines("a")
+    check("a waiting item the walk-document has no heading for leaves an A uncounted, and the reason, not a path the "
+          "hook picks, says what to change", lines is not None and "Why it could not read the text: the "
+          "`#next_to_present` line, `item 7 of 9`, its walk-document has no heading `Item 7`" in lines[1]
+          and lines[2:] == item_text_unreadable_instructions(None), f"lines {lines!r}")
 SHOWN_ITEM = """## Item 4 of 9: a filter
 
 #approval_walk_item_in_category_fix_next
@@ -1641,8 +1657,8 @@ ITEM_4_CLOSING_LINE = f"[Item 4 of 9, a filter](https://claude.ai/artifact/x) ·
 
 def not_shown_lines(answer, reason):
     return [f"The user answered \"{answer}\" to item 4 of 9 of approval-walk {WALK_NAME}.",
-            f"{ANSWER_DISCARDED}, because {reason}, so counting it would record his answer against a version of item "
-            "4 of 9 he may not have seen.",
+            f"{ANSWER_DISCARDED}, because the user may not have seen item 4 of 9 as the walk-document now has it.",
+            reason,
             "Record nothing in the walk-minutes and act on none of the answer.",
             "Show the user item 4 of 9 as the walk-document now has it, the text between the BEGIN and END lines "
             f"below, unchanged and not inside a code block, then end your message with {CLOSING_LINE_NAMED}, and "
@@ -1651,12 +1667,21 @@ def not_shown_lines(answer, reason):
 
 
 def shown_different_reason(minute):
-    return (f"your last message that showed item 4 of 9, written at 2026-11-13T20:{minute:02}:00Z, does not hold the "
-            "item's current walk-document text word for word, whitespace and Markdown markup aside")
+    return (f"The words after the heading of item 4 of 9 in your last message that showed it, written at "
+            f"2026-11-13T20:{minute:02}:00Z, do not hold the item's current walk-document text after its heading as "
+            "one unbroken run of words; that message may hold other words before or after the run. Either that message "
+            "misquoted "
+            "the item, or the walk-document changed after that message. Only these count as words: the text the "
+            "user reads rendered, code, an image's alt text, HTML and `<!-- -->` comments. Whitespace, line breaks, "
+            "Markdown markup, a link's target (its text counts), `#approval_walk_item_` lines and the `of M` in a "
+            "running count do not.")
 
 
 def never_shown_reason(item="item 4 of 9"):
-    return f"no message of yours in this agent-session's transcript has a line opening with the heading of {item}"
+    return (f"No message of yours in this agent-session's transcript has a line that opens with the words of {item}'s "
+            "heading; `#` marks or other Markdown markup may come before those words. The hook does not read an "
+            "earlier agent-session's transcript, so an item shown only before the last session-handoff must be shown "
+            "again in this agent-session.")
 
 
 NEVER_SHOWN_REASON = never_shown_reason()
@@ -1784,12 +1809,12 @@ def test_a_numbered_answer_is_checked_only_for_the_waiting_items_it_approves_or_
           f"lines {lines!r}")
     lines = case.lines("4 a 5 a", transcript)
     check("'4 a 5 a' is not counted when item 5 was never shown", lines is not None
-          and lines[1] == (f"{ANSWER_DISCARDED}, because {never_shown_reason('item 5 of 9')}, so counting it would "
-                           "record his answer against a version of item 5 of 9 he may not have seen."),
+          and lines[1:3] == [f"{ANSWER_DISCARDED}, because the user may not have seen item 5 of 9 as the "
+                             "walk-document now has it.", never_shown_reason("item 5 of 9")],
           f"lines {lines!r}")
     lines = case.lines("all a", transcript)
     check("'all a' is not counted when one waiting item was never shown", lines is not None
-          and "item 5 of 9 he may not have seen." in lines[1] and not counted(lines),
+          and "seen item 5 of 9 as the walk-document now has it" in lines[1] and not counted(lines),
           f"lines {lines!r}")
 
 
@@ -1919,6 +1944,15 @@ def test_an_item_whose_heading_link_is_defined_outside_the_item_counts_when_show
           bool(handed_back) and counted(lines), f"handed back {handed_back!r}, lines {lines!r}")
 
 
+def test_an_item_whose_heading_link_is_a_file_link_defined_outside_the_item_counts_when_shown():
+    document = REFERENCE_DEFINED_ELSEWHERE_DOCUMENT.replace("https://example.invalid/rows",
+                                                            "file:///Volumes/nedhome/rows.md")
+    case = Case(next_to_present="item 4 of 9", document=document)
+    lines = case.lines("a", case.transcript(document, ITEM_4_CLOSING_LINE))
+    check("an answer counts when the item's heading link is a file: link defined outside the item and the whole "
+          "document was shown", counted(lines), f"lines {lines!r}")
+
+
 RANGE_HEADING_DOCUMENT = """# A walk
 
 ## Items 10 to 12 of 20: grouped
@@ -2008,6 +2042,61 @@ def test_a_title_that_opens_with_an_item_number_but_no_label_ends_the_sub_step_a
     shown = finder.approval_walk_item_text_as_shown_to_user(document, parser, units, unit, "50.1")
     check("a `## Item 36: ...` heading, which groups items and is no item, still ends sub-step 50.1 above it",
           shown == SUB_STEP_50_1 and not any(map(finder.approval_walk_unit_is_unnumbered_item, units)), shown)
+
+
+def finder_shown_text(document, number):
+    finder = load_walk_finder_for_test()
+    parser = finder.markdown_parser()
+    units = finder.item_unit_spans(document, parser)
+    unit = next(unit for unit in units if number in unit[0])
+    return finder.approval_walk_item_text_as_shown_to_user(document, parser, units, unit, number), units
+
+
+def test_a_label_heading_inside_a_shared_heading_keeps_the_shared_heading_items_apart():
+    item_2 = "**Item 2 of 3**\n\nRecommendation: do item 2."
+    document = ("# A walk\n\n## Items 1 and 2 of 3\n\n**Item 1 of 3**\n\nRecommendation: do item 1.\n\n"
+                f"## Item 2: details\n\n{item_2}\n\n## Item 3 of 3: the last\n\nRecommendation: do item 3.\n")
+    shown, _ = finder_shown_text(document, "2")
+    check("item 2 under a shared `## Items 1 and 2 of 3` heading and a `## Item 2: details` heading is item 2's "
+          "text, not item 1's", shown.endswith(item_2) and "do item 1" not in shown, shown)
+
+
+def test_a_setext_heading_has_its_own_level_not_its_underline_length():
+    document = ("# A walk\n\n# Item 1 of 2: the first\n\nA line.\n\nA setext heading in the body\n---\n\n"
+                "Recommendation: do item 1.\n\n# Item 2 of 2: the second\n\nRecommendation: do item 2.\n")
+    shown, _ = finder_shown_text(document, "1")
+    check("a setext `---` heading in the body of a `#` item does not end it", "do item 1" in shown, shown)
+    document = ("# A walk\n\nItem 1 of 2: the first\n---\n\nRecommendation: do item 1.\n\n## Part 2\n\n"
+                "Not item 1.\n\nItem 2 of 2: the second\n---\n\nRecommendation: do item 2.\n")
+    shown, _ = finder_shown_text(document, "1")
+    check("a `## Part 2` heading ends an item on a setext `---` heading", "Not item 1" not in shown, shown)
+
+
+def test_a_grouping_heading_as_high_as_the_item_above_ends_it():
+    document = ("# A walk\n\n## Item 4 of 9: the fourth\n\nRecommendation: do item 4.\n\n"
+                "## Items 5 to 6: fixes\n\nThese are smaller.\n\n### Item 5 of 9: the fifth\n\n"
+                "Recommendation: do item 5.\n")
+    shown, units = finder_shown_text(document, "4")
+    finder = load_walk_finder_for_test()
+    check("a `## Items 5 to 6: fixes` heading ends the `## Item 4 of 9` item above it and is no unnumbered item",
+          "fixes" not in shown and "smaller" not in shown
+          and not any(map(finder.approval_walk_unit_is_unnumbered_item, units)), shown)
+
+
+def test_items_headings_with_words_group_and_amendment_headings_stay_in_their_item():
+    document = ('# A walk\n\n## Item 2 of 9: the second\n\nRecommendation: do item 2.\n\n'
+                '## Items 3 to 5 are smaller; answer each, as in "3 y, 4 y, 5 n"\n\n'
+                '**Item 3 of 9**: the third. Recommendation: do item 3.\n')
+    _, units = finder_shown_text(document, "2")
+    finder = load_walk_finder_for_test()
+    check("a `## Items 3 to 5 are smaller; ...` heading groups items and is no unnumbered item",
+          not any(map(finder.approval_walk_unit_is_unnumbered_item, units)), units)
+    document = ("# A walk\n\n## Item 20 of 30: the twentieth\n\nThe first version.\n\n"
+                "## Item 20, amended: the second version\n\nRecommendation: do the amended item 20.\n\n"
+                "## Item 21 of 30: the next\n\nRecommendation: do item 21.\n")
+    shown, _ = finder_shown_text(document, "20")
+    check("a `## Item 20, amended: ...` heading stays in item 20's text",
+          "amended" in shown and "do the amended item 20" in shown and "item 21" not in shown, shown)
 
 
 def load_walk_finder_for_test():

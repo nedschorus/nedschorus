@@ -1163,6 +1163,20 @@ def test_close_order_moves_an_unnumbered_item_past_a_sub_step_of_one_item_of_a_s
           order == [["3", "4"], ["4"], ["3.1"], "unnumbered"], repr(order))
 
 
+def test_an_item_added_after_a_shared_heading_goes_above_a_later_heading_naming_one_of_its_items_undotted():
+    walk_finder = load_program().load_walk_finder()
+    document = ("# A walk\n\n## Items 4 and 5 of 9: two items\n\n**Item 4 of 9:** four.\n\nA.\n\n"
+                "**Item 5 of 9:** five.\n\nB.\n\n### Items 4.1 and 5 of 9: item 4's first half beside a reuse of 5\n\n"
+                "C.\n\n## Item 6 of 9: six\n\nD.\n")
+    lines = document.split("\n")
+    units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+    insert = walk_finder.approval_walk_document_new_item_insert_line_number_past_whole_item_sub_steps_and_withdrawn_versions(
+        units, units[0], len(lines))
+    check("an item added after `Items 4 and 5 of 9` goes above `Items 4.1 and 5 of 9`, which names 5 undotted and so "
+          "is no sub-step of either item, though the finder gives it item 4",
+          lines[insert].startswith("### Items 4.1 and 5 of 9"), repr(lines[insert]))
+
+
 def test_a_sub_step_heading_shared_by_two_items_is_a_sub_step_of_each():
     walk_finder = load_program().load_walk_finder()
     document = ("# A walk\n\n## Items 3 and 4 of 9: two items\n\n**Item 3 of 9:** three.\n\nA.\n\n"

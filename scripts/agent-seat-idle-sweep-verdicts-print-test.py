@@ -889,7 +889,7 @@ try:
           "listed, oldest first; one answered 'Task not found' with no is_error, one whose result is an "
           "error, one with no result, one that sets neither, and a tool call of another kind are not",
           verdicts["alpha"].get("successful_task_tool_calls_setting_prerequisites_or_blocked_by")
-          == [{"time": "2026-11-02T11:38:00Z", "name": "TaskCreate", "task": "after PR 927"},
+          == [{"time": "2026-11-02T11:38:00Z", "name": "TaskCreate", "task": "1"},
               {"time": "2026-11-02T11:40:00Z", "name": "TaskUpdate", "task": "3"}],
           verdicts["alpha"])
     machine = Machine()
@@ -908,7 +908,7 @@ try:
     code, verdicts, _ = machine.run()
     check("a task call whose metadata is a JSON string holding prerequisites is read as setting them",
           code == 0 and verdicts["alpha"].get("successful_task_tool_calls_setting_prerequisites_or_blocked_by")
-          == [{"time": "2026-11-02T11:40:00Z", "name": "TaskCreate", "task": "after PR 2042"}],
+          == [{"time": "2026-11-02T11:40:00Z", "name": "TaskCreate", "task": "1"}],
           (code, verdicts.get("alpha")))
     for metadata, kind in [(json.dumps({"branches": ["some-topic-branch"]}), "a JSON object without prerequisites"),
                            ("{not json", "not JSON"),

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Add claimed user alerts to the open approval-walk as items after the whole of its waiting item.
+"""Add claimed user alerts to the open approval-walk as items after the whole item that holds its waiting item.
 
 Usage:
   walk-me-through-user-alert-insert-as-unnumbered-item-after-waiting-item-and-record-in-walk-minutes.py [--cwd DIR] ALERT_ID...
@@ -7,10 +7,9 @@ Usage:
 The walk-me-through UserPromptSubmit hook that claims alerts runs this command with the ids it claimed. For
 each alert, read from user-alerts/claimed/<id>.json under ALERTS_MODULE_FILE's directory, in the order given:
 - the walk-document gets a new unnumbered item, `## <the alert's title>`, after the whole item holding the last
-  waiting item, which the walk-minutes' last `#next_to_present` line names, as the walk-me-through skill's
-  Re-planning section says: while sub-step 50.1 waits, past item 50's sub-steps and the `#### Withdrawn version`
-  sections under them, and before any item already below them; its
-  body holds a `#approval_walk_item_first_entered` line giving the day, on this
+  waiting item, which the walk-minutes' last `#next_to_present` line names: while sub-step 50.1 waits, past
+  item 50's sub-steps and the `#### Withdrawn version` sections under them, and before the next item below those
+  sub-steps and sections; its body holds a `#approval_walk_item_first_entered` line giving the day, on this
   machine's clock, the alert was written, the alert's text in a fence and what can be done about it. A title
   that a `##` heading would not read as an unnumbered item, such as "Item 3 of 9: reboot", gets the prefix
   "User alert: ". This program writes no number and no category line: the walk check program's close step
