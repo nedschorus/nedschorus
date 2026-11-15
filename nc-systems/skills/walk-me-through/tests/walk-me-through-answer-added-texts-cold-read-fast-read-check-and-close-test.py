@@ -926,6 +926,29 @@ def test_the_waiting_item_read_step_leaves_out_an_older_version_sub_step_of_the_
           result.returncode == 0 and "had to be run now" in result.stdout, described(result))
 
 
+OLDER_SUB_SUB_STEP_HEADING_ELSEWHERE_DOCUMENT = (
+    "# A walk\n\n## Item 1 of 10: an older item\n\nOld.\n\n#### Item 3.1.3 of 9: an older version's part\n\nOlder.\n\n"
+    "## Item 3 of 10: the opening sentence\n\n### Item 3.1 of 10: the first half\n\n"
+    "#### Item 3.1.1 of 10: its first part\n\nOne.\n\n#case_against weak: a.\n\nRecommendation: a.\n\n"
+    "#### Item 3.1.2 of 10: its second part\n\nTwo.\n\n#case_against weak: b.\n\nRecommendation: b.\n\n"
+    "### Item 3.2 of 10: the second half\n\nThree.\n\n#case_against weak: c.\n\nRecommendation: c.\n")
+
+
+def test_an_older_sub_step_heading_elsewhere_does_not_keep_its_number_s_parent_undecided_for_read_or_close():
+    case = Case(next_to_present="item 3.1.2 of 10", document=OLDER_SUB_SUB_STEP_HEADING_ELSEWHERE_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\n" + approved_line("item 1 of 10") + approved_line("item 3.1.1 of 10")
+                            + "#next_to_present item 3.1.2 of 10\n")
+    case.run("check")
+    closed = case.run("close")
+    after_close = marker(case).rsplit(" of ", 1)[0]
+    case.minutes.write_text(case.minutes.read_text() + "#next_to_present item 3 of 10\n")
+    read = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("with 3.1.1 and 3.1.2 of 10 decided, an older `3.1.3 of 9` below item 1 is not taken for a sub-step of 3.1, "
+          "so close and the read step both count 3.1 decided and name sub-step 3.2",
+          closed.returncode == 0 and read.returncode == 0 and after_close == "#next_to_present item 3.2"
+          and marker(case) == "#next_to_present item 3.2 of 10", described(closed) + described(read))
+
+
 def test_the_waiting_item_read_step_leaves_out_an_older_sub_step_below_a_later_item():
     document = ("# A walk\n\n## Item 3 of 10: the opening sentence\n\nNew.\n\n### Item 3.1 of 10: the first half\n\n"
                 "Short.\n\n#case_against weak: the page grows.\n\nRecommendation: change it.\n\n"
