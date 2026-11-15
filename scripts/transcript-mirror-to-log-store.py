@@ -8,14 +8,19 @@ Usage:
   scripts/transcript-mirror-to-log-store.py --failures-only   # one pass, only FAILED lines (cron)
 
 WHAT IT MIRRORS AND WHERE (user-ruled 2026-09-07, "I think we should backup
-our transcripts to the nedbox"; recorded on nedschorus#7). Six sources under
+our transcripts to the nedbox"; recorded on nedschorus#7). Seven sources under
 the home, the SOURCES table: `~/.claude/projects/`, which holds every
 session's transcript (`<project-key>/<session-id>.jsonl`) and beside them the
 memory store (`<project-key>/memory/`); `~/.claude/handoffs/`;
 `~/.claude/tasks/`, each agent-seat's task list (`<list-name>/<task-id>.json`);
 the seat-brief of each agent-seat, the `CLAUDE.local.md` at the root of each
 directory directly under `~/agents/`, skipping a directory that has none, such
-as a worktree; `~/.claude/CLAUDE.md`, the machine's global instructions; and
+as a worktree; `~/.claude/CLAUDE.md`, the machine's global instructions;
+`~/.claude/agent-seat-terminal-captures/`, each agent-seat's terminal
+captures, which nc-systems/handoff/agent-seat-terminal-captures-common.py
+places there on the Mac only: on ned-box the handoff-supervisor writes them
+straight into the store's ned-box/agent-seat-terminal-captures/, so on
+ned-box this source is absent and has nothing to mirror; and
 the Remote Control reconnect watcher's log directory on the Mac,
 `~/.local/state/claude/<REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM>/`, its
 <REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM>-decisions.jsonl and notices, which ned-box has nowhere else. ned-box has no
@@ -34,6 +39,7 @@ subagent definitions:
   /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/seat-briefs/<seat>/CLAUDE.local.md
   /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/CLAUDE.md
   /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/<REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM>/<REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM>-decisions.jsonl
+  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/agent-seat-terminal-captures/<seat>/<file>
   /home/nedlern/nedschorus-logs/agent-session-files-by-machine/ned-box/projects/...
 
 `mac` and `ned-box` are the names CLAUDE.md uses for the two machines; this
@@ -46,6 +52,10 @@ the store: `nedlern@ned-box:/home/nedlern/nedschorus-logs/agent-session-files-by
 HOW. `rsync -a` of each source into its place, over ssh in batch mode with a
 connect timeout from the Mac, never `--delete`: a transcript that vanishes
 locally stays in the store, and so does the seat-brief of a removed agent-seat.
+A terminal capture the Mac's daily deletion removes stays in the store until
+ned-box's own daily run of
+nc-systems/handoff/agent-seat-terminal-captures-older-than-seven-days-delete.py
+deletes the store's copy, which it does for every machine's copy.
 The seat-briefs and the global CLAUDE.md are single files picked out of a
 directory: the program lists them and hands rsync the list on its stdin
 (`--files-from=-`), and a source whose list is empty has nothing to mirror.
@@ -147,6 +157,7 @@ directory the sources are read from, for the same tests.
 import argparse
 import fcntl
 import functools
+import importlib.util
 import os
 import pathlib
 import shlex
@@ -163,6 +174,13 @@ MACHINE_NAME_ON_STORE_HOST = "ned-box"
 MACHINE_NAME_ELSEWHERE = "mac"
 DESTINATION_ENVIRONMENT_VARIABLE = "TRANSCRIPT_MIRROR_DESTINATION"
 SOURCE_HOME_ENVIRONMENT_VARIABLE = "TRANSCRIPT_MIRROR_SOURCE_HOME"
+
+_agent_seat_terminal_captures_spec = importlib.util.spec_from_file_location(
+    "agent_seat_terminal_captures_common",
+    pathlib.Path(__file__).resolve().parents[1] / "nc-systems" / "handoff"
+    / "agent-seat-terminal-captures-common.py")
+agent_seat_terminal_captures = importlib.util.module_from_spec(_agent_seat_terminal_captures_spec)
+_agent_seat_terminal_captures_spec.loader.exec_module(agent_seat_terminal_captures)
 
 SEAT_BRIEF_FILE_NAME = "CLAUDE.local.md"
 GLOBAL_INSTRUCTIONS_FILE_NAME = "CLAUDE.md"
@@ -194,6 +212,9 @@ SOURCES = (
     (REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM,
      pathlib.Path(".local") / "state" / "claude" / REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM,
      REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM, None),
+    (agent_seat_terminal_captures.AGENT_SEAT_TERMINAL_CAPTURES_DIRECTORY_NAME,
+     agent_seat_terminal_captures.AGENT_SEAT_TERMINAL_CAPTURES_DIRECTORY_UNDER_HOME_ON_A_MACHINE_WITHOUT_THE_LOG_STORE,
+     agent_seat_terminal_captures.AGENT_SEAT_TERMINAL_CAPTURES_DIRECTORY_NAME, None),
 )
 # mirror_one's outcome for a source that is absent or has no files to take.
 NOTHING_TO_MIRROR = "nothing to mirror"
