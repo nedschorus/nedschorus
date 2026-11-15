@@ -2948,10 +2948,11 @@ code, text = run_main(["a/b.md", "--repo", "/nonexistent-not-a-repo", "--transcr
 check("exit 3 when no surface could be searched (git, its reflog, the log-store, transcripts, timeshift all UNAVAILABLE)",
       code == 3 and "Could NOT search: git, git reflog, log-store, transcripts, timeshift" in text,
       "exit=%s\n%s" % (code, text))
+git_failure_argv = ["/repo/a/b.md", "--repo", "/repo", "--transcripts-dir", "/nonexistent",
+                    "--box-ssh-host", "", "--skip", "timemachine", "--skip", "localsnapshots"]
 main_errors = io.StringIO()
 with contextlib.redirect_stderr(main_errors):
-    code, text = run_main(["/repo/a/b.md", "--repo", "/repo", "--transcripts-dir", "/nonexistent",
-                           "--box-ssh-host", "", "--skip", "timemachine", "--skip", "localsnapshots"],
+    code, text = run_main(git_failure_argv,
                           FakeRunner([("rev-parse --git-dir", (0, ".git\n", "")), TOP_LEVEL_FAILS]))
 check("an absolute path git cannot make repo-relative is searched as that absolute path, with git's words on stderr",
       code == 3 and "Searching every history the Mac and ned-box keep for: /repo/a/b.md" in text
@@ -2959,6 +2960,10 @@ check("an absolute path git cannot make repo-relative is searched as that absolu
       "exit=%s\n%s\n%s" % (code, text, main_errors.getvalue()))
 check("... and the docstring's exit-code block promises exactly that",
       "3 when" in finder.__doc__ and "could NOT be searched" in finder.__doc__)
+check("... and the git-failure lines tell the agent to rerun the very command it ran, every argument included",
+      finder.rerun_command(git_failure_argv) in main_errors.getvalue()
+      and "--repo /repo" in finder.rerun_command(git_failure_argv),
+      main_errors.getvalue())
 
 code, text = run_main(["a/b.md", "--repo", "/repo", "--skip", "transcripts", "--skip", "box",
                        "--skip", "timemachine", "--skip", "localsnapshots"],

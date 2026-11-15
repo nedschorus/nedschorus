@@ -2375,7 +2375,11 @@ def build_tool_message_to_agent_printed_when_git_cannot_find_the_repository_top_
 
 
 def rerun_command(arguments):
-    """The command line that runs this program again with arguments, from any directory."""
+    """The command line that runs this program again with arguments.
+
+    Only the program's path is made absolute: a relative path among the arguments, and --repo's default of the
+    current directory, still need the directory the first run started in.
+    """
     return shlex.join(["python3", os.path.abspath(__file__)] + list(arguments))
 
 
