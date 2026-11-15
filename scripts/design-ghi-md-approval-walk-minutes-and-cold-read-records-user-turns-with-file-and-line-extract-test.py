@@ -76,6 +76,21 @@ def build(root):
           "   done: verified.\n"
           "\n"
           "Agent note.\n")
+    # Where a user turn's following lines stop: a list item, a heading, another user turn, a blank line. Line 2
+    # is the nested, truncated quotation that once swallowed the next item's walk record.
+    write(walk / "5-stops-minutes.md",
+          "# Stops\n"
+          "- Item 34: the user answered \"keep the \"old name and\n"
+          "item 35 of 42: the user answered approved (2026-11-05 10:00).\n"
+          "  agent note one\n"
+          "- Item 36: agent narrative.\n"
+          "RULING: keep it,\n"
+          "  wrapped on.\n"
+          "## Next item\n"
+          "User: \"y\"\n"
+          "said on.\n"
+          "\n"
+          "Agent note.\n")
     # The agent-seat's copy loses to the log-store's copy of the same name.
     write(agents / "seat-a/docs/walk/mixed-topics-minutes.md", "# Stale\nissues/5 the user said \"stale\"\n")
     write(agents / "seat-a/docs/walk/seat-only-minutes.md", "# Seat\nSee issues/5). The user: \"seat copy\"\n")
@@ -125,12 +140,19 @@ def main():
             check(f"bare label {form} printed", line in labels, sorted(labels))
         check("User-facing is no speaker", 9 not in labels, sorted(labels))
         wrapped = found.get(("5-labels-minutes.md", 10), {})
-        check("wrapped quotation's continuation printed with its line number",
-              wrapped.get("continuation") == [{"line": 11, "text": "   done or not. If done, then close it,\" and it is"}],
+        check("wrapped line's following lines printed with their line numbers, up to the blank line",
+              wrapped.get("following_lines") == [{"line": 11, "text": "   done or not. If done, then close it,\" and it is"},
+                                                 {"line": 12, "text": "   done: verified."}],
               wrapped)
-        check("closed quotation has no continuation", found.get(("5-labels-minutes.md", 2), {}).get("continuation") == [],
+        check("no following lines before a user turn", found.get(("5-labels-minutes.md", 2), {}).get("following_lines") == [],
               found.get(("5-labels-minutes.md", 2)))
-        check("count line", "docs/issues/5-new-name-design.md: 5 walk-minutes, 1 cold-read-records, 13 user turns"
+        stops = {line: row.get("following_lines") for (name, line), row in found.items() if name == "5-stops-minutes.md"}
+        check("nested truncated quotation stops at the next user turn", stops.get(2) == [], stops)
+        check("following lines stop at a list item", stops.get(3) == [{"line": 4, "text": "  agent note one"}], stops)
+        check("following lines stop at a heading", stops.get(6) == [{"line": 7, "text": "  wrapped on."}], stops)
+        check("following lines stop at a blank line", stops.get(9) == [{"line": 10, "text": "said on."}], stops)
+        check("list item that is no user turn is not printed", 5 not in stops, stops)
+        check("count line", "docs/issues/5-new-name-design.md: 6 walk-minutes, 1 cold-read-records, 17 user turns"
               in done.stderr, done.stderr)
 
         missing = run("--log-store", str(Path(temporary) / "absent"))

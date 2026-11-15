@@ -33,10 +33,11 @@ usually cites a ruling given in an approval-walk, so its walk-minutes are where 
 
 Each printed object has: design (its path), design_number, source_kind (walk-minutes or
 cold-read-triage), walk_minutes_match (as above; "" for a cold-read-triage), source (the file's path), line
-(1-based), heading (the nearest Markdown heading above the line, or ""), text (the line), and continuation:
-when the line opens a double-quoted quotation it does not close, as hard-wrapped minutes do, the lines after
-it up to the one that closes it, a blank line or a heading, each as {line, text}; else []. A count per design
-goes to stderr at the end.
+(1-based), heading (the nearest Markdown heading above the line, or ""), text (the line), and
+following_lines: the lines after it, each as {line, text}, up to a blank line, a list item, a heading or
+another line USER_TURN_LINE matches. They are context, not the user's words: hard-wrapped minutes carry his
+words on past their line, and the reading agent judges where they end. A count per design goes to stderr at
+the end.
 
 Exit codes: 0 done; 2 a directory argument does not exist. A failing git command stops it with git's
 error and a nonzero exit.
@@ -63,9 +64,10 @@ USER_TURN_LINE = re.compile(
     r"|\buser (?:said|asked|answered|ruled|wrote|replied|chose)\b"
     r"|^\s*(?:[-*+]\s+|\d+\.\s+)?(?:\*\*)?(?:user(?:'s words)?|rulings?(?: recorded)?)(?:\*\*)?\s*[:(,]",
     re.IGNORECASE)
-# A quotation the minutes hard-wrap goes on past its line; this many lines bound the search for its close.
-QUOTATION_CONTINUATION_LINE_LIMIT = 20
+# Bounds a run of following lines with no blank line, list item or heading, as a long hard-wrapped paragraph.
+FOLLOWING_LINES_LIMIT = 20
 HEADING_LINE = re.compile(r"^#{1,6} ")
+LIST_ITEM_LINE = re.compile(r"^\s*(?:[-*+]|\d+\.)\s")
 TRIAGE_FILE_NAMES = ("cold-read-triage.md", "triage.md")
 
 
@@ -126,15 +128,15 @@ def walk_minutes_match(name, text, number, names, own_records):
     return None
 
 
-def quotation_left_open(text):
-    """True when text opens a double-quoted quotation it does not close."""
-    return text.count('"') % 2 == 1 or text.count("\u201c") > text.count("\u201d")
+def ends_following_lines(line):
+    return (not line.strip() or HEADING_LINE.match(line) or LIST_ITEM_LINE.match(line)
+            or USER_TURN_LINE.search(line))
 
 
 def user_turns(path):
-    """(line number, nearest heading, line, continuation lines) for each line USER_TURN_LINE matches; the
-    continuation lines are [(line number, line)] that carry on a quotation the line leaves open, up to the line
-    that closes it, a blank line or a heading."""
+    """(line number, nearest heading, line, following lines) for each line USER_TURN_LINE matches; the
+    following lines are [(line number, line)] after it, up to a blank line, a list item, a heading or another
+    line USER_TURN_LINE matches."""
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     heading = ""
     for index, line in enumerate(lines):
@@ -142,13 +144,12 @@ def user_turns(path):
             heading = line.lstrip("#").strip()
         if not USER_TURN_LINE.search(line):
             continue
-        continuation, quoted = [], line
-        for later in range(index + 1, min(index + 1 + QUOTATION_CONTINUATION_LINE_LIMIT, len(lines))):
-            if not quotation_left_open(quoted) or not lines[later].strip() or HEADING_LINE.match(lines[later]):
+        following = []
+        for later in range(index + 1, min(index + 1 + FOLLOWING_LINES_LIMIT, len(lines))):
+            if ends_following_lines(lines[later]):
                 break
-            continuation.append((later + 1, lines[later]))
-            quoted += "\n" + lines[later]
-        yield index + 1, heading, line, continuation
+            following.append((later + 1, lines[later]))
+        yield index + 1, heading, line, following
 
 
 def extract(checkout, log_store, agents_directory, out, err):
@@ -171,12 +172,12 @@ def extract(checkout, log_store, agents_directory, out, err):
                     sources.append(("cold-read-triage", triage, ""))
         count = 0
         for kind, path, match in sources:
-            for line_number, heading, text, continuation in user_turns(path):
+            for line_number, heading, text, following in user_turns(path):
                 out.write(json.dumps({"design": design, "design_number": number, "source_kind": kind,
                                       "walk_minutes_match": match, "source": str(path), "line": line_number, "heading": heading,
                                       "text": text,
-                                      "continuation": [{"line": later, "text": later_text}
-                                                       for later, later_text in continuation]},
+                                      "following_lines": [{"line": later, "text": later_text}
+                                                          for later, later_text in following]},
                                      ensure_ascii=False) + "\n")
                 count += 1
         err.write(f"{design}: {len(own_minutes)} walk-minutes, {len(own_records)} cold-read-records, "
