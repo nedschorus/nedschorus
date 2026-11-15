@@ -102,7 +102,7 @@ Do not put the history of the thing in its name. Words such as `new-`, `old-`, `
 
 When a change makes a name untrue, rename the thing, and in the same commit update every reference to the old name in the repository: callers, imports, paths in scripts, and mentions in documents. Leave the references outside the repository as they are: git history, the log-store, the frozen copies inside cold-read-records, and text already written on GitHub. A change that leaves the name true, such as a bug fix, needs no rename.
 
-Do not abbreviate, except with abbreviations the glossary lists, such as GHI and PR, or that any programmer reads without decoding, such as `id` and `url`. Write them in lowercase inside a name, as in `ghi-issue-write.py` or `pr-reviewer-instructions.md`. Use the abbreviation or the full words for a thing, not both: once `pull-request-` names one family of files, a new file in it does not start `pr-`.
+Do not abbreviate, except with abbreviations the glossary lists, such as GHI and PR, or that any programmer reads without decoding, such as `id` and `url`. Write them in lowercase inside a name, as in `ghi-issue-write.py` or `pr-reviewer-instructions.md`. Write `pr` in a new file or directory name, never `pull-request`, as in `pr-reviewer-instructions.md`, even beside older files whose names start `pull-request-`, except that a test file keeps the name of the program it tests; a function name keeps `pull_request`, a branch name `pull-request` and a glossary term `pull request`. For any other thing, use its abbreviation or its full words, not both.
 
 ## Step 5: use the same words everywhere, and coin new terms with the user
 

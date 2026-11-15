@@ -15,7 +15,8 @@ runs git itself, because telling "not a repository" from other failures needs
 git's message read in one fixed locale; a program that runs git its own way
 reads that message with git_stderr_says_outside_a_repository and
 git_stderr_says_worktree_git_directory_unusable, the one place that knows
-git's words.
+git's words. git_stderr_error_text_without_progress_lines gives, for a
+program's report, why a git command it ran failed.
 
 Load it by path, under the snake_case form of its file name:
 
@@ -339,6 +340,34 @@ def git_stderr_says_outside_a_repository(stderr):
     """True when git's LC_ALL=C stderr says the directory is in no repository."""
     return (OUTSIDE_A_REPOSITORY_MESSAGE in stderr
             and not git_stderr_says_worktree_git_directory_unusable(stderr))
+
+
+GIT_ERROR_LINE_PREFIXES = ("fatal:", "error:")
+GIT_ERROR_MESSAGE_CONTINUATION_LINES_KEPT = 2
+
+
+def git_stderr_error_text_without_progress_lines(stderr):
+    """One line saying why a git command failed: its first `fatal:` or `error:`
+    message, with up to two lines that continue it, else its last non-empty
+    line, else `no detail`.
+
+    git writes progress, such as "Preparing worktree (...)" or "From <url>",
+    before its error, so the first line of a failure's stderr is often not the
+    error. A checkout on a full disk writes one `error:` line per file, and a
+    fetch one line per ref after its error, so only the start of the first
+    message is kept. A failing hook's message has neither prefix and comes
+    last."""
+    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    for index, line in enumerate(lines):
+        if line.startswith(GIT_ERROR_LINE_PREFIXES):
+            message = [line]
+            for following in lines[index + 1:]:
+                if (following.startswith(GIT_ERROR_LINE_PREFIXES)
+                        or len(message) > GIT_ERROR_MESSAGE_CONTINUATION_LINES_KEPT):
+                    break
+                message.append(following)
+            return " ".join(message)
+    return lines[-1] if lines else "no detail"
 
 
 def run_git_unless_outside_a_repository(directory, arguments, **run_options):

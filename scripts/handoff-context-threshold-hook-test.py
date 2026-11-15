@@ -359,6 +359,33 @@ def monitor_start_record(task_id="b45e25tz2"):
     }
 
 
+def workflow_tool_launch_record(task_id):
+    """The Workflow tool's tool_result, read off a real transcript and trimmed to the fields the
+    hook reads: a taskId and a taskType, and no agentId or backgroundTaskId."""
+    return {
+        "type": "user", "timestamp": "2026-11-08T18:11:26.279Z",
+        "message": {"role": "user", "content": [{
+            "tool_use_id": "toolu_01GFDoTE3AsqHgrGKoP7JoUB", "type": "tool_result",
+            "content": f"Workflow launched in background. Task ID: {task_id}\nSummary: Grade "
+                       "each cold-read finding"}]},
+        "toolUseResult": {"status": "async_launched", "taskId": task_id,
+                          "taskType": "local_workflow", "workflowName": "grade-cold-read-findings",
+                          "runId": "wf_429969ca-778",
+                          "summary": "Grade each cold-read finding"},
+    }
+
+
+# The completion notification of the run that result launched, trimmed.
+WORKFLOW_TOOL_RUN_COMPLETED_NOTIFICATION = (
+    "<task-notification>\n"
+    "<task-id>wn6fctb8y</task-id>\n"
+    "<tool-use-id>toolu_01GFDoTE3AsqHgrGKoP7JoUB</tool-use-id>\n"
+    "<status>completed</status>\n"
+    '<summary>Dynamic workflow "Grade each cold-read finding" completed</summary>\n'
+    "<result>clear 6, uncertain 33, drop 7 (46 rows)</result>\n"
+    "</task-notification>")
+
+
 def task_stop_record(task_id, task_type):
     """A TaskStop tool_result that stopped the task, read off a real transcript and trimmed to
     the fields the hook reads."""
@@ -764,6 +791,18 @@ with tempfile.TemporaryDirectory() as workspace:
     check("a final notification after an interim one takes the subagent out of flight",
           hook.spawned_subagent_ids_in_flight(str(final_after_interim)) == [],
           str(hook.spawned_subagent_ids_in_flight(str(final_after_interim))))
+    in_text_block_list = transcript_of(workspace, "final-notification-in-text-block-list.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record(INCIDENT_SUBAGENT_ID),
+        {"type": "user", "timestamp": "2026-10-27T21:45:00.000Z",
+         "message": {"role": "user", "content": [
+             {"type": "text", "text": "Earlier text."},
+             {"type": "text", "text": FINAL_NOTIFICATION_AFTER_INTERIM}]}},
+    ])
+    check("a final notification held only inside a list of text blocks takes the subagent out of "
+          "flight",
+          hook.spawned_subagent_ids_in_flight(str(in_text_block_list)) == [],
+          str(hook.spawned_subagent_ids_in_flight(str(in_text_block_list))))
 
     # A SendMessage to a finished subagent resumes it, under the same task-id.
     resumed_after_final = transcript_of(workspace, "resumed-after-final-notification.jsonl", [
@@ -1085,6 +1124,35 @@ with tempfile.TemporaryDirectory() as workspace:
           hook.spawned_subagent_ids_in_flight(str(both_kinds)) == ["a2573a7737ae643dc"],
           str(hook.spawned_subagent_ids_in_flight(str(both_kinds))))
 
+    workflow_launched = transcript_of(workspace, "workflow-tool-run-launched.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        workflow_tool_launch_record("wn6fctb8y"),
+    ])
+    flight = hook.work_in_flight(str(workflow_launched), thirty_minutes, now=grid_at_13_minutes)
+    check("a Workflow-tool run with no notification since its launch is in flight, dated by its "
+          "launch record, and is neither a subagent nor a background task",
+          flight.workflow_ids == ["wn6fctb8y"] and flight.subagent_ids == []
+          and flight.background_task_ids == []
+          and flight.launched_at_by_id["wn6fctb8y"] == datetime.fromisoformat("2026-11-08T18:11:26.279+00:00"),
+          f"workflows={flight.workflow_ids} subagents={flight.subagent_ids} "
+          f"background={flight.background_task_ids} launched={flight.launched_at_by_id}")
+    workflow_completed = transcript_of(workspace, "workflow-tool-run-completed.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        workflow_tool_launch_record("wn6fctb8y"),
+        *notification_records(WORKFLOW_TOOL_RUN_COMPLETED_NOTIFICATION),
+    ])
+    flight = hook.work_in_flight(str(workflow_completed), thirty_minutes, now=grid_at_13_minutes)
+    check("a Workflow-tool run whose completion notification came is not in flight",
+          flight.workflow_ids == [], str(flight.workflow_ids))
+    workflow_stopped = transcript_of(workspace, "workflow-tool-run-stopped.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        workflow_tool_launch_record("wn6fctb8y"),
+        task_stop_record("wn6fctb8y", "local_workflow"),
+    ])
+    flight = hook.work_in_flight(str(workflow_stopped), thirty_minutes, now=grid_at_13_minutes)
+    check("a Workflow-tool run a TaskStop stopped is not in flight",
+          flight.workflow_ids == [], str(flight.workflow_ids))
+
     truncated_launch = Path(workspace) / "truncated-background-launch.jsonl"
     launch_text = json.dumps(background_task_launch_record("b27dndn4c"))
     cut = launch_text.index('"backgroundTaskId"') + len('"backgroundTaskId": "b27d')
@@ -1348,11 +1416,11 @@ with tempfile.TemporaryDirectory() as workspace:
               result.returncode == 2 and len(message_lines) == 2
               and HANDOFF_INSTRUCTION_PATTERN.fullmatch(message_lines[0]) is not None
               and message_lines[1] == (
-                  "The model id claude-something-unreleased is not in "
-                  "CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX, the threshold-hook's context-window "
-                  "table in scripts/handoff-context-threshold-hook.py, so the 35% of its context "
-                  "window this session has used assumes a 200K window; tell the user, so the "
-                  "table can be updated."),
+                  "No prefix in CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX, the threshold-hook's "
+                  "context-window table in scripts/handoff-context-threshold-hook.py, matches the "
+                  "model id claude-something-unreleased, so the 35% of its context window this "
+                  "session has used assumes a 200K-token window. Tell the user, so the table can "
+                  "be updated, then run /handoff without waiting for his answer."),
               f"code {result.returncode}, stderr {result.stderr!r}")
 
         # At the 200,000 default, // 999 also gives 200, so only a larger default tells a
@@ -1370,7 +1438,7 @@ with tempfile.TemporaryDirectory() as workspace:
         check("for a model id not in the table, the default window it names is the default in "
               "thousands, whatever the default is",
               code == 2 and "so the 35% of its context window this session has used assumes a "
-                            "1000K window;" in stderr,
+                            "1000K-token window." in stderr,
               f"code {code}, stderr {stderr!r}")
 
         marker_file.unlink(missing_ok=True)
@@ -2149,6 +2217,17 @@ with tempfile.TemporaryDirectory() as workspace:
         flight = flight_of([list_entry("anospawn", "subagent")], transcript=list_unknown_session)
         check("with no saved list, a listed subagent whose launch no transcript records holds it",
               hook.awaited_work_still_in_flight(list_unknown_marker, flight), flight.launched_at_by_id)
+        # A foreground Agent call's result carries the agentId with status "completed", which sorts
+        # after "async_launched"; its report quotes "async_launched" so the line is not skipped unparsed.
+        foreground_result = dict(subagent_spawn_record("aforeground"), timestamp=two_hours_ago)
+        foreground_result["toolUseResult"] = {
+            "status": "completed", "agentId": "aforeground", "agentType": "general-purpose",
+            "content": [{"type": "text", "text": "Every spawn record had status async_launched."}]}
+        foreground_session = transcript_of(workspace, "background-tasks-list-foreground-agent.jsonl", [
+            usage_record(100_000, cache_read=450_000), foreground_result])
+        flight = flight_of([list_entry("aforeground", "subagent")], transcript=foreground_session)
+        check("a foreground Agent call's completed result does not date a listed subagent's launch",
+              flight.launched_at_by_id == {}, flight.launched_at_by_id)
         # A subagent launched before the deferral leaves the list while it waits on a shell task it
         # starts after the deferral began; that task stands in for the subagent and holds the handoff.
         owner_session = transcript_of(workspace, "background-tasks-list-unknown-count-owner.jsonl", [
@@ -2674,6 +2753,16 @@ interim_events = read_line(json.dumps(notification_records(INCIDENT_INTERIM_NOTI
 check("the reader marks an interim notification",
       [(event.task_id, event.is_interim) for event in interim_events]
       == [(INCIDENT_SUBAGENT_ID, True)], interim_events)
+# The line holds the notification JSON-escaped; whitespace opening the <result> must still read
+# as whitespace.
+result_opening_with_whitespace_events = read_line(
+    json.dumps(notification_records(NOT_YET_REPORTED_INTERIM_NOTIFICATION.replace(
+        "<result>", "<result>\n\t"))[1]),
+    "here", should_raise_on_unparseable_spawn_or_resume_line=True)
+check("the reader marks interim a notification whose <result> opens with whitespace, then says the "
+      "report has not come",
+      [(event.task_id, event.is_interim) for event in result_opening_with_whitespace_events]
+      == [(INCIDENT_SUBAGENT_ID, True)], result_opening_with_whitespace_events)
 monitor_event_notification = (
     "<task-notification>\n<task-id>bzshcbek2</task-id>\n"
     '<summary>Monitor event: "report files appearing"</summary>\n<event>update</event>\n'

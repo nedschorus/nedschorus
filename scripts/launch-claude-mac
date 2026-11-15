@@ -118,7 +118,7 @@ usage() {
             tmux -S "$seat_socket_path" list-sessions -F "#{session_name}@$(basename "$seat_socket_path")" 2>/dev/null || true
         done | sort -u | tr '\n' ' ')
     if [ -n "$running" ]; then
-        echo "Agent tmux sessions on this Mac now (live seats or after-exit shells): $running" >&2
+        echo "Agent tmux sessions on this Mac now (running agent-seats or leftover-shells): $running" >&2
     else
         echo "No agent tmux sessions on this Mac now." >&2
     fi

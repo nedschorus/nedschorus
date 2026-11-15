@@ -120,7 +120,9 @@ sys.exit(1 if failing else 2 if not_run else 0)
 
 # Stands in for scripts/branch-conflict-check.py in every scratch repository's base commit. FAKE_CONFLICT_CHECK
 # picks its report: unset or "clean" for no conflict, "replace" or "rebase" for a conflict with that answer,
-# "fail" for a run that could not answer, and "killed" for a run a signal ended before it printed anything. FAKE_CONFLICT_CHECK_CALLS records its arguments.
+# "fail" for a run that could not answer, "crash" for an uncaught exception, which Python ends with exit 1 and no
+# verdict, "killed" for a run a signal ended before it printed anything, and "replace-then-exit-2" and
+# "replace-then-killed" for a run that printed a replace answer and then failed. FAKE_CONFLICT_CHECK_CALLS records its arguments.
 FAKE_CONFLICT_CHECK = r'''import json, os, sys
 if os.environ.get("FAKE_CONFLICT_CHECK_CALLS"):
     with open(os.environ["FAKE_CONFLICT_CHECK_CALLS"], "a") as calls:
@@ -132,12 +134,19 @@ if kind == "clean":
 if kind == "fail":
     print("UNFETCHED: git fetch origin failed; do not act on any conflict answer until a run succeeds.")
     sys.exit(2)
+if kind == "crash":
+    raise RuntimeError("the fake conflict check crashed")
 if kind == "killed":
     import signal
     os.kill(os.getpid(), signal.SIGTERM)
 print("VERDICT: CONFLICT -- abc conflicts with origin/main.")
 print("ANSWER: %s -- the fake's answer." % kind)
-print("Cut a new nc-topic-branch from current origin/main.")
+print("Cut a new nc-topic-branch from current origin/main.", flush=True)
+if kind == "replace-then-exit-2":
+    sys.exit(2)
+if kind == "replace-then-killed":
+    import signal
+    os.kill(os.getpid(), signal.SIGTERM)
 sys.exit(1)
 '''
 
@@ -813,9 +822,9 @@ def check_cases(root, repository, base, frozen_head):
     second = commit_file(repository, "hook.py", "three\n", "second")
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                          "--check", "--answers", answers)
-    check("check: two commits refuse with exit 1, each described with one parent",
+    check("check: two commits refuse with exit 1, each named by its 12-character sha with one parent",
           code == 1 and "has 2 commits" in err and "squash them" in err
-          and "(1 parent)" in err and "1 parents" not in err, err)
+          and f"{amended[:12]} (1 parent), {second[:12]} (1 parent)" in err and "1 parents" not in err, err)
 
     git(repository, "reset", "-q", "--hard", frozen_head)
     git(repository, "merge", "-q", "--no-edit", "origin/main")
@@ -1985,6 +1994,8 @@ def suite_cases(root, repository, _base, _frozen_head):
     check("suites: a suite failing at the round's commit and passing at the frozen-head refuses, naming it, "
           "and a suite the frozen-head lacks counts as the round's",
           code == 1 and "so the round's change broke them: b-test.py, c-test.py." in err
+          and f"at the round's commit {broken[:12]} and not at the frozen-head {frozen_head[:12]}, so the round's "
+          "change broke them" in err
           and "These fail at the frozen-head too, so they are not the round's doing: a-test.py." in err
           and "Not pushed yet" not in out, out + err)
     check("suites: the round's commit runs the suites the ready command runs, and the frozen-head only its "
@@ -2009,7 +2020,7 @@ def suite_cases(root, repository, _base, _frozen_head):
     code, out, err = check_with_head(frozen_head, {"FAKE_RUNNER_NOT_RUN": "b-test.py c-test.py"})
     check("suites: suites NOT RUN beside a failure the frozen-head shares fail the check with exit 2, "
           "before any push, and the refusal quotes every NOT RUN line",
-          code == 2 and "did not judge every suite: it printed\n  NOT RUN b-test.py" in err
+          code == 2 and f"run on {fixed[:12]}, did not judge every suite: it printed\n  NOT RUN b-test.py" in err
           and "\n  NOT RUN c-test.py did not start" in err
           and "Not pushed yet" not in out and len(git(repository, "worktree", "list").splitlines()) == 1,
           out + err)
@@ -2036,6 +2047,12 @@ def suite_cases(root, repository, _base, _frozen_head):
           "new shared names are not listed again",
           code == 0 and "nc-test-suites that fail at the frozen-head too, so not because of this round: "
           "a-test.py." in out and runner_calls(root) == [], out + err)
+    code, out, err = run(root, repository, routes_for(fixed, [review(commit_id=fixed)]), "--check", "--answers",
+                         answers, environment_extra=environment)
+    check("suites: a later round on that pushed commit, now its frozen-head, with no commit of its own, names no "
+          "suite from the earlier round's record",
+          code == 0 and "Nothing pushed; the head stays the frozen-head" in out
+          and "fail at the frozen-head too" not in out and runner_calls(root) == [], out + err)
 
     (repository / "other.txt").write_text("other\n")
     git(repository, "add", "other.txt")
@@ -2372,6 +2389,19 @@ def conflict_check_cases(root, repository, _base, frozen_head):
     check("conflict check: a check that cannot answer fails with exit 2, its output quoted, and prints no brief",
           code == 2 and err.startswith("FAILED: ") and "exited 2, so whether this pull request conflicts with main "
           "is not known" in err and "UNFETCHED: git fetch origin failed" in err and out == "", err + out)
+
+    code, out, err = run(root, repository, routes, environment_extra={"FAKE_CONFLICT_CHECK": "crash"})
+    check("conflict check: a check that crashes with exit 1 and no conflict verdict fails with exit 2, "
+          "its traceback quoted, and prints no brief",
+          code == 2 and err.startswith("FAILED: ") and "exited 1, so whether this pull request conflicts with main "
+          "is not known" in err and "RuntimeError: the fake conflict check crashed" in err and out == "", err + out)
+
+    for kind, exit_text in (("replace-then-exit-2", "exited 2"), ("replace-then-killed", "exited -15")):
+        code, out, err = run(root, repository, routes, environment_extra={"FAKE_CONFLICT_CHECK": kind})
+        check(f"conflict check: a check that prints a replace answer and then {exit_text} fails with exit 2 "
+              "and prints neither the replace steps nor the brief",
+              code == 2 and err.startswith("FAILED: ") and exit_text in err and "ANSWER: replace" in err
+              and out == "", err + out)
 
     code, out, err = run(root, repository, routes, environment_extra={"FAKE_CONFLICT_CHECK": "killed"})
     check("conflict check: a check a signal ended fails with exit 2 and prints no brief",

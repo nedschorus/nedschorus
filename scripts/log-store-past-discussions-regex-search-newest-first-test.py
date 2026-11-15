@@ -167,8 +167,8 @@ with tempfile.TemporaryDirectory() as scratch:
     check("hits come newest first", dates == sorted(dates, reverse=True), dates)
     check("the transcripts' subagents directories are not searched",
           "inside a subagent" not in result.stdout, result.stdout)
-    check("a walk file's agent-seat is read from its header",
-          any(h.startswith("2026-10-01  walk  agent-instructions-editor") for h in headers), headers)
+    check("a walk file's hit names no agent-seat, even when its text says \"run by <agent-seat> on\"",
+          [h for h in headers if "  walk" in h] == ["2026-10-01  walk"], headers)
     check("a session's machine and agent-seat are read from its path",
           any("user-messages  ned-box  prime-intellect" in h for h in headers)
           and any("session-dialogs  mac  fleet-restart-at-login" in h for h in headers), headers)
@@ -755,7 +755,7 @@ print(x.render_companion(*x.complete_dialog_turns_and_report(pathlib.Path({str(e
     result = run(root, "^yes$", "--kind", "user-messages")
     answered.unlink()
     check("a pattern anchored to a whole message finds that message in the transcripts",
-          result.returncode == 0 and "USER: yes" in result.stdout, result.stdout + result.stderr)
+          result.returncode == 0 and "[user] yes" in result.stdout, result.stdout + result.stderr)
 
     spoken = root / "agent-session-files-by-machine" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s10.jsonl"
     write(spoken, transcript_records(agent("heron words of the agent", "2026-10-03T00:00:00Z"),
@@ -763,8 +763,43 @@ print(x.render_companion(*x.complete_dialog_turns_and_report(pathlib.Path({str(e
     finding = run(root, "heron words", "--kind", "user-messages")
     spoken.unlink()
     check("user-messages finds the user's words in a transcript and not the agent's",
-          finding.returncode == 0 and "USER: heron words of the user" in finding.stdout
+          finding.returncode == 0 and "[user] heron words of the user" in finding.stdout
           and "of the agent" not in finding.stdout, finding.stdout + finding.stderr)
+
+    injected = root / "agent-session-files-by-machine" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s13.jsonl"
+    write(injected, transcript_records(
+        dict(typed("egret from a hook", "2026-10-03T00:00:00Z"), origin={"kind": "hook"}),
+        dict(typed("egret from a peer", "2026-10-03T00:01:00Z"), origin={"kind": "peer"}, isMeta=True),
+        dict(typed("egret in a claude -p prompt", "2026-10-03T00:02:00Z"), entrypoint="sdk-cli"),
+        dict(typed("egret in a subagent's task", "2026-10-03T00:03:00Z"), isSidechain=True))
+          + '{"type": "user", "message": "egret in a torn record\n'
+          + transcript_records(dict(typed("egret typed by the user", "2026-10-03T00:04:00Z"),
+                                    origin={"kind": "human"})))
+    finding = run(root, "egret", "--kind", "user-messages")
+    injected.unlink()
+    check("user-messages marks the user's typed message [user], after a record that is not JSON, and leaves out "
+          "user records a hook, a peer, a program or a subagent's task wrote",
+          finding.returncode == 0 and "[user] egret typed by the user" in finding.stdout
+          and finding.stdout.count("egret") == 1, finding.stdout + finding.stderr)
+
+    pasted = root / "agent-session-files-by-machine" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s14.jsonl"
+    write(pasted, transcript_records(dict(typed("", "2026-10-03T00:00:00Z"), message={"role": "user", "content": [
+        {"type": "text", "text": "plover in this screenshot"},
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"}}]})))
+    finding = run(root, "plover", "--kind", "user-messages")
+    pasted.unlink()
+    check("user-messages finds a message the user typed with an image pasted",
+          finding.returncode == 0 and "[user] plover in this screenshot" in finding.stdout,
+          finding.stdout + finding.stderr)
+
+    nulled = root / "agent-session-files-by-machine" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s15.jsonl"
+    write(nulled, '{"type": "user", "message": null}\n'
+          + transcript_records(typed("dunlin after a record with no message", "2026-10-03T00:00:00Z")))
+    finding = run(root, "dunlin", "--kind", "user-messages")
+    nulled.unlink()
+    check("user-messages skips a user record whose message is null and still finds the next message",
+          finding.returncode == 0 and "[user] dunlin after a record with no message" in finding.stdout,
+          finding.stdout + finding.stderr)
 
     escaped = root / "agent-session-files-by-machine" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s11.jsonl"
     write(escaped, transcript_records(typed("merge it\nplease now", "2026-10-03T00:02:00Z"),
@@ -776,7 +811,7 @@ print(x.render_companion(*x.complete_dialog_turns_and_report(pathlib.Path({str(e
                               (r"C:\\logs", "path C:\\logs here")):
         finding = run(root, pattern, "--kind", "user-messages")
         check(f"a pattern that matches what JSON escapes finds the message, {pattern}",
-              finding.returncode == 0 and f"USER: {expected}" in finding.stdout, finding.stdout + finding.stderr)
+              finding.returncode == 0 and f"[user] {expected}" in finding.stdout, finding.stdout + finding.stderr)
     escaped.unlink()
 
     for locked_directory in (root / "agent-session-files-by-machine" / "mac" / "projects",
@@ -804,17 +839,6 @@ print(x.render_companion(*x.complete_dialog_turns_and_report(pathlib.Path({str(e
           finding.returncode == 2 and "to date the session dialog " in finding.stderr
           and "to date the session dialog's hits by their turns" in finding.stderr
           and str(hidden) in finding.stderr, finding.stderr)
-
-    walk_file = root / "walk" / "heron-walk-2026-10-01-minutes.md"
-    header_match = json.dumps({"type": "match", "data": {
-        "path": {"text": str(walk_file)}, "lines": {"text": "heron\n"}, "line_number": 5,
-        "submatches": [{"start": 0}]}})
-    header_reporter = stub(scratch, "rg-reports-locked-walk", f"printf '%s\\n' '{header_match}'\n")
-    walk_file.chmod(0)
-    finding = run(root, "heron", "--kind", "walk", environment={PREFIX + "RIPGREP_PROGRAM_OVERRIDE": header_reporter})
-    walk_file.chmod(0o644)
-    check("a walk file whose header cannot be read for its agent-seat is a failure",
-          finding.returncode == 2 and "for its agent-seat" in finding.stderr, finding.stderr)
 
     probe = subprocess.run([sys.executable, "-c", f"""
 import importlib.util, sys

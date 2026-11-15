@@ -518,7 +518,9 @@ class DesignToMainStateMachineFlow:
 
 
     def start(self, component):
-        """Start the run after verifying origin/main is available for the topic branch cut."""
+        """Start the run after verifying the checkout is not an agent-home and origin/main is available
+        for the topic branch cut."""
+        self.git_record.require_checkout_is_not_an_agent_home()
         self.git_record.require_topic_branch_start_point()
         return RunStateRecord(component)
 

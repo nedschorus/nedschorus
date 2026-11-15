@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 from pathlib import Path
 
 PROGRAM = Path(__file__).with_name("agent-seat-idle-sweep-verdicts-print.py")
@@ -155,7 +156,7 @@ _scratch_directory_common_spec = importlib.util.spec_from_file_location(
     / "test-scratch-directory-whose-earlier-killed-runs-leftovers-are-removed-first-common.py")
 _scratch_directory_common = importlib.util.module_from_spec(_scratch_directory_common_spec)
 _scratch_directory_common_spec.loader.exec_module(_scratch_directory_common)
-SUITE_ROOT = _scratch_directory_common.scratch_directory_after_removing_ones_killed_runs_left(
+SUITE_ROOT = _scratch_directory_common.make_test_scratch_directory_after_removing_killed_runs_leftovers(
     "agent-seat-idle-sweep-verdicts-print-test-")
 
 # Set in the copy of this suite the SIGTERM case starts, which waits to be stopped.
@@ -527,8 +528,41 @@ try:
     check("a subagent and a background command running, each with its start: rule 5",
           verdicts["alpha"]["running"] == {
               "subagents": [{"id": "agent-1", "started": "2026-11-02T11:20:00Z"}],
-              "background_commands": [{"id": "bash-1", "started": "2026-11-02T11:25:00Z"}]}
+              "background_commands": [{"id": "bash-1", "started": "2026-11-02T11:25:00Z"}],
+              "workflows": []}
           and verdicts["alpha"]["rule"] == 5, verdicts["alpha"])
+
+    # The Workflow tool's result, trimmed from a real transcript: a taskId, and no agentId or
+    # backgroundTaskId.
+    WORKFLOW_LAUNCH = user("", at="2026-11-02T11:20:00Z",
+                           tool_result={"status": "async_launched", "taskId": "wn6fctb8y",
+                                        "taskType": "local_workflow",
+                                        "workflowName": "grade-cold-read-findings"})
+    machine = Machine()
+    machine.seat("alpha", [user("go"), WORKFLOW_LAUNCH, assistant("Waiting on the workflow."),
+                           turn_end()])
+    _, verdicts, _ = machine.run()
+    check("a Workflow-tool run with no notification since its launch is running, with its start: "
+          "rule 5",
+          verdicts["alpha"]["running"] == {
+              "subagents": [], "background_commands": [],
+              "workflows": [{"id": "wn6fctb8y", "started": "2026-11-02T11:20:00Z"}]}
+          and verdicts["alpha"]["rule"] == 5, verdicts["alpha"])
+    marker = machine.handoffs / "s-1-handoff-deferred"
+    marker.write_text("")
+    _, verdicts, _ = machine.run()
+    check("a handoff put off while a Workflow-tool run is running: not rule 3, which says nothing "
+          "is running",
+          verdicts["alpha"]["rule"] == 5, verdicts["alpha"])
+    machine = Machine()
+    machine.seat("alpha", [user("go"), WORKFLOW_LAUNCH,
+                           user("<task-notification><task-id>wn6fctb8y</task-id><status>completed"
+                                "</status><result>done</result></task-notification>"),
+                           assistant("Done."), turn_end()])
+    _, verdicts, _ = machine.run()
+    check("a Workflow-tool run whose completion notification came is not running",
+          verdicts["alpha"]["running"]["workflows"] == [] and verdicts["alpha"]["rule"] == 4,
+          verdicts["alpha"])
     machine.seat("alpha", [user("go"),
                            user("", tool_result={"status": "async_launched", "agentId": "agent-1"}),
                            user("<task-notification><task-id>agent-1</task-id><status>completed"
@@ -608,7 +642,8 @@ try:
     _, verdicts, _ = machine.run()
     check("a subagent the parent stopped with TaskStop after its interim report is not running, "
           "nor is its own background command",
-          verdicts["alpha"]["running"] == {"subagents": [], "background_commands": []}
+          verdicts["alpha"]["running"] == {"subagents": [], "background_commands": [],
+                                            "workflows": []}
           and verdicts["alpha"]["rule"] == 4, verdicts["alpha"])
 
     # Claude Code delivers a notification queued while the session was busy as a queued_command
@@ -811,6 +846,29 @@ try:
     check("an agent-session with no tool call: last tool call null",
           "last_tool_call_at" in verdicts["alpha"] and verdicts["alpha"]["last_tool_call_at"] is None,
           verdicts["alpha"])
+    machine = Machine()
+    machine.seat("alpha", [user("go"),
+                           assistant(tool=("TaskCreate", {"metadata": {"prerequisites": [
+                               {"pr_merged": 927}]}}), at="2026-11-02T11:38:00Z"),
+                           assistant(tool=("TaskUpdate", {"taskId": "3", "addBlockedBy": ["2"]}),
+                                     at="2026-11-02T11:40:00Z"),
+                           assistant(tool=("TaskCreate", {"subject": "plain"}),
+                                     at="2026-11-02T11:45:00Z"),
+                           assistant(tool=("Bash", {"command": "ls"}), at="2026-11-02T11:46:00Z"),
+                           assistant("Done.", at="2026-11-02T11:48:00Z"), turn_end()])
+    _, verdicts, _ = machine.run()
+    check("the newest task call that sets prerequisites or addBlockedBy is printed; a later task "
+          "call that sets neither, and a later tool call of another kind, do not move it",
+          verdicts["alpha"].get("last_task_call_setting_prerequisites_or_blocked_by_at")
+          == "2026-11-02T11:40:00Z", verdicts["alpha"])
+    machine = Machine()
+    machine.seat("alpha", [user("go"), assistant(tool=("TaskCreate", {"subject": "plain"})),
+                           assistant("Done."), turn_end()])
+    _, verdicts, _ = machine.run()
+    check("an agent-session whose task calls set neither prerequisites nor addBlockedBy: null",
+          "last_task_call_setting_prerequisites_or_blocked_by_at" in verdicts["alpha"]
+          and verdicts["alpha"]["last_task_call_setting_prerequisites_or_blocked_by_at"] is None,
+          verdicts["alpha"])
 
     # --- the task list is read as the due-task hook reads it ------------------------------------
     machine = Machine()
@@ -851,6 +909,38 @@ try:
     machine = Machine()
     machine.seat("alpha", [user("go"), assistant("Done."), turn_end()])
     machine.seat("beta", [user("go"), assistant("Done."), turn_end()])
+    machine.task("alpha", "1")
+    machine.task("beta", "1", metadata={"prerequisites": [{"pr_merged": 50}]})
+    machine.gh_responses.write_text(json.dumps({"pr:50": {"state": "OPEN"}}))
+    unlistable_tasks = machine.tasks / "nedschorus-alpha-tasks"
+    unlistable_tasks.chmod(0o000)
+    try:
+        code, verdicts, _ = machine.run("--agent-seat", "alpha", "--agent-seat", "beta")
+    finally:
+        unlistable_tasks.chmod(0o755)
+    check("a task list that cannot be listed: that agent-seat's error, and the next agent-seat "
+          "still gets its verdict",
+          code == 1 and verdicts.get("alpha", {}).get("rule", "no verdict") is None
+          and verdicts["alpha"]["errors"][0].startswith(f"the task list {unlistable_tasks} could not "
+                                                        "be listed")
+          and verdicts.get("beta", {}).get("errors") == [] and verdicts["beta"]["rule"] == 4,
+          (code, verdicts))
+    unlistable_tasks = Path(tempfile.mkdtemp(dir=str(SUITE_ROOT)))
+    unlistable_tasks.chmod(0o000)
+    try:
+        program.open_tasks_nothing_holds(unlistable_tasks, checker=None)
+        message = None
+    except program.ReadFailure as error:
+        message = str(error)
+    finally:
+        unlistable_tasks.chmod(0o755)
+    check("open tasks nothing holds, from a task list that cannot be listed: a read failure",
+          message is not None
+          and message.startswith(f"the task list {unlistable_tasks} could not be listed")
+          and "holds the agent-seat's work is unknown" in message, message)
+    machine = Machine()
+    machine.seat("alpha", [user("go"), assistant("Done."), turn_end()])
+    machine.seat("beta", [user("go"), assistant("Done."), turn_end()])
     machine.task("alpha", "1", metadata={"prerequisites": [{"pr_merged": 51}]})
     machine.task("beta", "1", metadata={"prerequisites": [{"pr_merged": 50}]})
     machine.gh_responses.write_text(json.dumps({"pr:50": {"state": "MERGED"}}))
@@ -858,6 +948,20 @@ try:
     check("one agent-seat's gh failure is not reported for the next agent-seat",
           code == 1 and "pr_merged 51" in verdicts["alpha"]["errors"][0]
           and verdicts["beta"]["errors"] == [] and verdicts["beta"]["rule"] == 5, verdicts)
+    # Past 256 the two equal failure counts are different int objects, so this case tells a test of
+    # identity from a comparison of the counts.
+    many_failures_tasks = Path(tempfile.mkdtemp(dir=str(SUITE_ROOT)))
+    (many_failures_tasks / "1.json").write_text(
+        json.dumps({"id": "1", "subject": "Free", "status": "pending"}))
+    earlier_seats_checker = types.SimpleNamespace(
+        gh_failures=[("pr_merged", number, "gh failed") for number in range(300)])
+    try:
+        free = program.open_tasks_nothing_holds(many_failures_tasks, earlier_seats_checker)
+    except Exception as error:
+        free = error
+    check("open tasks nothing holds, after 300 gh failures of earlier agent-seats and none of its "
+          "own: the free task, no error",
+          free == [{"id": "1", "subject": "Free"}], free)
 
     # --- rule 2 settled by code asks GitHub nothing ----------------------------------------------
     machine = Machine()
@@ -881,6 +985,21 @@ try:
     check("an unbacked promise beside a sentence for the judge: rule 2, rules 3 to 5 not read",
           code == 0 and verdicts["alpha"]["rule"] == 2 and verdicts["alpha"]["decision"] == "judge"
           and "if_every_sentence_backed" not in verdicts["alpha"], (code, verdicts["alpha"]))
+    machine = Machine()
+    machine.seat("alpha", [user("a", at="2026-11-02T11:20:00Z"),
+                           assistant(tool=("Edit", {"file_path": "old.py"}), at="2026-11-02T11:21:00Z"),
+                           assistant(PROMISE, at="2026-11-02T11:21:30Z"),
+                           turn_end(at="2026-11-02T11:22:00Z"), user("go", at="2026-11-02T11:40:00Z"),
+                           assistant(ANNOUNCED, at="2026-11-02T11:41:00Z"),
+                           assistant(tool=("Bash", {"command": "ls"}), at="2026-11-02T11:42:00Z"),
+                           turn_end(at="2026-11-02T11:43:00Z")])
+    _, verdicts, _ = machine.run("--turn-ending-messages-since", "2026-11-02T11:00:00Z")
+    calls = verdicts["alpha"].get("tool_calls_since_start_of_earliest_turn_with_sentence_to_judge")
+    check("an unbacked promise in an earlier turn than the sentence for the judge: the judge is "
+          "handed the tool calls from the judged sentence's turn on only",
+          [item["code_reading"] for item in verdicts["alpha"].get("sentences", [])]
+          == ["unbacked", "judge"]
+          and calls is not None and [call["name"] for call in calls] == ["Bash"], verdicts["alpha"])
     machine = Machine()
     machine.seat("alpha", IDLE_TURN)
     machine.task("alpha", "1")

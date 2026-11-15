@@ -14,7 +14,7 @@ which finds the open walk, its waiting items and its walk-document's items. It
 also loads the answer hook,
 walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-user-prompt-submit-hook.py,
 for the closing line's answer letters, ANSWER_LETTERS_TEXT, and for its
-closing_line, which builds the closing line the refusal's step 3 gives; and,
+closing_line, which builds the closing lines the refusal gives; and,
 when it refuses, the walk check program,
 walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py, for
 the category and waits-on tags the refusal's step 1 names, which that
@@ -106,7 +106,7 @@ hook cannot run inside it, no session file, no tools, and a cwd outside any
 checkout. When the call fails, runs past MODEL_TIMEOUT_SECONDS, or answers
 without giving each numbered line exactly one entry holding both answers, the hook
 blocks on the first question-like line, saying the model check failed: a missed
-question scrolls away, a false block costs one reworded line.
+question scrolls away, a false block costs one turn ending with the closing line.
 
 AN INTERRUPTION ITEM'S TEXT is not checked either: a line of the text
 checked, a list joined to its lead-in included, is left out when the
@@ -171,7 +171,11 @@ non-blocking error and still ends the turn.
 
 Tool-messages-to-agent follow
 docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
-"""
+
+DURING AN EMERGENCY STOP, while the emergency-stop file is in force or cannot
+be read, this hook is silent: an agent-seat shows no approval-walk item then,
+and every reply goes through. The stop is read by
+nc-systems/skills/emergency-stop/emergency-stop-file-in-force-read-common.py."""
 import datetime
 import functools
 import importlib.util
@@ -190,6 +194,8 @@ WALK_CHECK_PROGRAM = HERE / "walk-me-through-answer-added-texts-cold-read-fast-r
 ANSWER_HOOK_FILE = (HERE / "walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-"
                     "user-prompt-submit-hook.py")
 REPOSITORY_TOP = HERE.parents[2]
+EMERGENCY_STOP_READER_FILE = (Path(__file__).resolve().parent.parent / "emergency-stop"
+                              / "emergency-stop-file-in-force-read-common.py")
 STOP_HOOKS_STAY_SILENT_RULE_FILE = (
     REPOSITORY_TOP / "nc-systems" / "general-tools"
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
@@ -312,14 +318,15 @@ MODEL_CHECK_FAILED_NOTICE = ("the hook's `claude -p` call that has the model jud
 REFUSAL_INSTRUCTIONS = (
     "If the flagged text asks the user to decide or answer something, do these three steps:",
     "1. Add it to the walk-document {document} as an interruption item headed `## <the point of the question>`, "
-    "with no number, placed right after item {last_waiting}. Under the heading, give it a line of its own naming "
+    "with no number, placed after the whole of item {waiting_whole_item}, its sub-steps and withdrawn versions "
+    "included. Under the heading, give it a line of its own naming "
     "its category, the one for how soon its work must happen, one of {category_tags}, and a line "
     "`{waits_on_tag} <title>` for each item it must follow, as the walk-me-through skill's section "
     "\"Re-planning\" says. Do not number it yourself: the close step of "
     "nc-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py "
     "chooses when, among the items not yet shown, the user sees it, by the items it waits on, its category and the "
-    "day it first entered a walk, so it may come later than right after item {last_waiting}, and writes its number "
-    "into this heading then. "
+    "day it first entered a walk, so it may come later than right after item {waiting_whole_item}, and writes its "
+    "number into this heading then. "
     "Quote the question whole "
     "in the item, as its asker wrote it, whether you or another agent, giving each line of the flagged text a "
     "line of its own, word for word, and putting the rest of the question on other lines of the item. This hook passes the "
@@ -332,9 +339,9 @@ REFUSAL_INSTRUCTIONS = (
     "2. Do not show the new item now: the walk shows it when its turn comes.",
     "3. The flagged text has already reached the user, so leave it. End the message you write next with the line "
     "`I added the question to the walk as a new item.` and then {closing_lines_named}, as the "
-    "walk-me-through skill writes it, as the last text of that message:\n{closing_lines}{no_page}",
-    "If the flagged text does not ask the user anything, reword it in your reply so that it no longer reads "
-    "as a question for him, and end the turn.",
+    "walk-me-through skill writes it, as the last text of that message:\n{closing_lines}",
+    "If the flagged text does not ask the user anything, end the turn with only the waiting item's closing line, "
+    "printed below.\n{closing_lines_no_item_added}{no_page}",
     "From now on, while an approval-walk is open, put every question for the user, yours or another "
     "agent's, into the walk as an item instead of asking it in prose.",
 )
@@ -698,6 +705,10 @@ def output_for(payload, environment, model=model_judgement):
     if load_module("agent_session_unattended_by_user_check_common",
                    ATTENDANCE_CHECK_FILE).agent_session_unattended_by_user(environment):
         return None
+    emergency_stop = load_module("emergency_stop_file_in_force_read_common", EMERGENCY_STOP_READER_FILE)
+    stop_state = emergency_stop.read_state(emergency_stop.emergency_stop_folder(environment))
+    if isinstance(stop_state, (emergency_stop.InForce, emergency_stop.Unreadable)):
+        return None
     transcript_path = payload.get("transcript_path")
     if not transcript_path or not Path(transcript_path).expanduser().is_file() or not payload.get("cwd"):
         return None
@@ -758,12 +769,16 @@ def output_for(payload, environment, model=model_judgement):
     check_and_close = load_module("walk_me_through_answer_added_texts_cold_read_fast_read_check_and_close",
                                   WALK_CHECK_PROGRAM)
     closing, without_page = closing_lines(pages, name, document_text, units, parser, numbers, new_total)
-    values = {"walk": name, "last_waiting": waiting, "sentence": sentence, "decided": decided, "waiting": waiting_label,
+    # No item is added when the flagged text asks nothing, so that branch's closing line keeps the walk's count.
+    closing_no_item_added, _ = closing_lines(pages, name, document_text, units, parser, numbers, total)
+    values = {"walk": name, "waiting_whole_item": waiting.split(".")[0], "sentence": sentence, "decided": decided,
+              "waiting": waiting_label,
               "document": document, "waits_on_tag": check_and_close.WALK_WAITS_ON_TAG,
               "category_tags": ", ".join(f"`{check_and_close.WALK_CATEGORY_TAG}{category}`"
                                          for category in check_and_close.WALK_CATEGORIES),
               "closing_lines_named": SEVERAL_CLOSING_LINES_NAMED if numbers[1:] else ONE_CLOSING_LINE_NAMED,
-              "closing_lines": "\n".join(closing), "no_page": NO_PAGE_TEMPLATE.format(
+              "closing_lines": "\n".join(closing),
+              "closing_lines_no_item_added": "\n".join(closing_no_item_added), "no_page": NO_PAGE_TEMPLATE.format(
                   items=("items " if without_page[1:] else "item ") + " and ".join(without_page),
                   minutes=minutes) if without_page else ""}
     lines_out = [REFUSAL_OPENING_TEMPLATE.format(**values)] + [line.format(**values) for line in REFUSAL_INSTRUCTIONS]

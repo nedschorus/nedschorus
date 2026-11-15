@@ -114,6 +114,27 @@ then the answer's lines; while an approval-walk is open, or the walk state
 cannot be read, a last line gives the check step's --user-reply-as-typed flag
 with the prompt, its whitespace runs squeezed, quoted for the shell.
 
+AN ANSWER TO A VERSION THE USER MAY NOT HAVE SEEN. When an answer gives A,
+AO, Aa or D to a waiting item, in any form above, parts included, the hook
+counts it only when the agent's last message that showed the item holds the
+item's current text, as the walk finder's
+approval_walk_item_text_as_shown_to_user gives it, word for word. A message
+showed the item when one text block of an assistant record of the transcript
+the payload's transcript_path names, outside any subagent's, has a line that
+opens with the item's heading; a closing line, which holds the skill's answer
+letters, never counts as that line. Both texts are compared as the Markdown
+parser renders them, link targets and other markup left out, reference links
+resolved by the definitions of their own text, whitespace squeezed, each
+running count's `of M` and each deferred note dropped; the item's other text
+must appear in one run after the heading's line. When the message does not hold the text, or
+no message showed the item, the answer is not counted, and the text hands the
+agent the item's text to show unchanged before the user answers again. When
+the transcript or the item's text cannot be read, the answer is not counted
+either, and the text says why; it does not ask the agent to show the item
+again for an unreadable transcript, because that cannot make it readable. A
+refused answer gets none of the answer's lines and no --user-reply-as-typed
+line.
+
 WHEN READING THE WALK STATE FAILS, such as a minutes file that is not UTF-8,
 the first line says so and why, and the text gives the answer's lines both for
 an open approval-walk and for none. When an A, AO, Aa or D answer reaches an item
@@ -136,6 +157,7 @@ HERE = Path(__file__).resolve().parent
 CHECKOUT = HERE.parents[2]
 WALK_FINDER_FILE = HERE / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py"
 CHECK_PROGRAM = HERE / "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py"
+TRANSCRIPT_READER_FILE = CHECKOUT / "scripts" / "claude-code-session-transcript-records-read-backward-common.py"
 EXPLAIN_SKILL = CHECKOUT / ".claude" / "skills" / "explain" / "SKILL.md"
 
 # Longer forms first, so `ao` is not read as `a` and `approve as obvious` not as `approve`.
@@ -216,8 +238,7 @@ MEANINGS = {
            "If a fast read prints a line opening FAILED, tell the user that line and make no change.",
            "If a finding would change what your recommendation decides, put the changed recommendation to "
            "the user instead of acting on it.",
-           "Otherwise act on it, and say in your next message which fast reads were already done and which "
-           "had to be run.")),
+           "Otherwise act on it.")),
     "AO": (("AO means approve as obvious: the user agrees with the recommendation of {item}{recommended}, "
             "and finds the item obvious. Act as for A, with one difference: the minutes must mark the "
             "answer as obvious.",
@@ -410,6 +431,39 @@ RIDER_LINES = (
     "If what he added cannot be done this turn, record it as a task.",
     "The answer itself means:",
 )
+# Every refusal opens with these words, so that the answer reads as dropped, not as held until the item is shown.
+ANSWER_DISCARDED = "The hook discarded this answer, and does not keep it for later"
+CLOSING_LINE_NAMED = ("the item's closing line, the walk-me-through skill's line that links the item's page and lists "
+                      "the answers")
+ITEM_NOT_SHOWN_LINES = (
+    ANSWER_DISCARDED + ": {reason}, so the user may be answering a version of {item} he has not seen.",
+    "Record nothing in the walk-minutes and act on none of the answer.",
+    "Show the user {item} as the walk-document now has it, the text between the BEGIN and END lines below, "
+    "unchanged and not inside a code block, then end your message with " + CLOSING_LINE_NAMED + ", and wait for "
+    "him to type his answer again, because only an answer typed after he has seen that text counts.",
+    "BEGIN",
+    "{text}",
+    "END",
+)
+NEVER_SHOWN_REASON = "no message of yours in this agent-session's transcript has a line opening with its heading"
+SHOWN_DIFFERENT_REASON = (
+    "your last message that showed it, written at {timestamp}, does not hold its current walk-document text word "
+    "for word, whitespace and Markdown markup aside")
+TRANSCRIPT_UNREADABLE_LINES = (
+    ANSWER_DISCARDED + ": it could not read this agent-session's transcript, {path}, which it reads to check that "
+    "the user was last shown {item} as the walk-document now has it. The error: {error}.",
+    "Record nothing in the walk-minutes and act on none of the answer.",
+    "Tell the user that line, and that no answer can be counted until the hook can read the transcript; do not "
+    "show him the item again for this, because showing it again does not make the transcript readable.",
+)
+NO_TRANSCRIPT_PATH = "which the hook's payload does not name, having no transcript_path"
+ITEM_TEXT_UNREADABLE_LINES = (
+    ANSWER_DISCARDED + ": it could not read the text of {item} from the walk-document, so it cannot check that the "
+    "user was last shown the item as it now stands. Why it could not read the text: {problem}.",
+    "Record nothing in the walk-minutes and act on none of the answer.",
+    "Correct the walk-document or the walk-minutes as that reason says, then show the user the item in full, end "
+    "your message with " + CLOSING_LINE_NAMED + ", and wait for him to type his answer again.",
+)
 RECOMMENDATION_UNKNOWN_LINE = (
     "The hook could not read the recommendation of {item}: {problem}. Read the recommendation in the "
     "walk-document yourself. If you find it, act on {answer_letter} as usual; if you cannot, ask the user "
@@ -465,8 +519,11 @@ class WalkState:
     """The open approval-walk as the hook read it."""
 
     def __init__(self, name, item, numbers, total, recommendations, problem, recommendation_problems=None,
-                 parts=None, pages=None, points=None, minutes=None):
+                 parts=None, pages=None, points=None, minutes=None, shown_texts=None, shown_text_problem=None):
         self.name, self.item, self.numbers, self.total = name, item, numbers, total
+        # item number -> the item's text as approval_walk_item_text_as_shown_to_user gives it, for each waiting item
+        self.shown_texts = shown_texts or {}
+        self.shown_text_problem = shown_text_problem  # why shown_texts lacks a waiting item, or None
         self.minutes = minutes  # the walk-minutes' path
         # item number -> link of its newest `#item_page` line, or the walk finder's ITEM_PAGE_PUBLISH_FAILED
         self.pages = pages or {}
@@ -510,10 +567,18 @@ def read_walk(cwd):
     recommendations, problems, parts = recommendations_in(
         walk_finder.prose_lines(text, parser, tokens), walk_finder.item_opening_lines(text, parser, tokens),
         spans, walk_finder, part_starts(tokens))
+    shown_texts, shown_text_problem = {}, None
+    try:
+        _, units = walk_finder.waiting_item_units(document, value, numbers, total, parser, spans)
+        for number in numbers:
+            unit = next(unit for unit in units if number in unit[0])
+            shown_texts[number] = walk_finder.approval_walk_item_text_as_shown_to_user(text, parser, spans, unit, number)
+    except walk_finder.UnusableRange as problem:
+        shown_text_problem = f"the `#next_to_present` line, `{value}`, {problem}"
     if total is None:
         total = walk_finder.approval_walk_item_total_shown_and_waiting_counted_from_walk_document(spans)
     return WalkState(name, count[0], numbers, total, recommendations, None, problems, parts, pages,
-                     heading_points(text.split("\n"), spans, parser), minutes)
+                     heading_points(text.split("\n"), spans, parser), minutes, shown_texts, shown_text_problem)
 
 
 def heading_points(lines, spans, parser):
@@ -772,6 +837,107 @@ def repeat_line(answer, number, walk):
     return REPEAT_PAGE_LINE.format(answer=answer, item=item_name(number, walk), closing_line=line)
 
 
+def checked_item_numbers(answer, walk):
+    """The waiting items to which the answer gives A, AO, Aa or D, in the order the walk names them."""
+    if walk is None:
+        return []
+    if answer["form"] != "numbered":
+        return list(walk.numbers) if answer["code"] in CHANGE_MAKING_ANSWERS else []
+    parts = answered_parts(answer, walk)
+    letters = {number: [] for number in walk.numbers}
+    for number, letter in answer["pairs"]:
+        # Part numbers answer the one waiting item.
+        letters.get(walk.numbers[0] if parts else number, []).append(letter)
+    return [number for number in walk.numbers if set(letters[number]) & set(CHANGE_MAKING_ANSWERS)]
+
+
+def shown_words(markdown, parser, env=None):
+    """The words of markdown as the user reads it rendered, as one string: no `#approval_walk_item_` line, no link
+    target or other markup, whitespace squeezed, each running count without its `of M`, and no deferred note, which
+    approval_walk_item_text_as_shown_to_user leaves out of the item's heading. env holds the reference definitions
+    of the whole text markdown was cut from, so a reference link in one line renders as it does in the whole."""
+    walk_finder = load_walk_finder()
+    pieces = []
+    text = walk_finder.approval_walk_text_with_approval_walk_item_hashtag_lines_removed(markdown)
+    for token in parser.parse(text, {} if env is None else env):
+        if token.type == "inline":
+            pieces += [" " if child.type in ("softbreak", "hardbreak") else child.content for child in token.children
+                       if child.type in ("text", "code_inline", "html_inline", "image", "softbreak", "hardbreak")]
+        elif token.type in ("fence", "code_block", "html_block"):
+            pieces.append(token.content)
+        pieces.append(" ")
+    words = walk_finder.approval_walk_text_with_running_count_totals_removed(" ".join("".join(pieces).split()))
+    return re.sub(r"\s*" + re.escape(walk_finder.APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT), "", words)
+
+
+def last_showing_message(transcript_path, number, heading, parser):
+    """Return (the shown_words of the newest assistant text block outside a subagent that has a line opening with
+    heading, from the line after that one to the block's end; the block's timestamp), or None when no block does.
+    Raise OSError or ValueError when the transcript cannot be read."""
+    reader = load_walk_finder().load_module("claude_code_session_transcript_records_read_backward_common",
+                                            TRANSCRIPT_READER_FILE)
+    # A cheap test before the parser runs, since a transcript holds thousands of text blocks.
+    mentions_number = re.compile(rf"(?<![\d.]){re.escape(number)}(?!\d|\.\d)")
+    for record in reader.records_newest_first(transcript_path):
+        content = (record.get("message") or {}).get("content") if record.get("type") == "assistant" else None
+        if record.get("isSidechain") or not isinstance(content, list):
+            continue
+        for block in reversed(content):
+            text = block.get("text") if isinstance(block, dict) and block.get("type") == "text" else None
+            if not isinstance(text, str) or not mentions_number.search(text):
+                continue
+            env = {}
+            parser.parse(text, env)
+            lines = text.split("\n")
+            for index, line in enumerate(lines):
+                # A closing line opens with the heading's words when the heading has no point, as `## Item 4 of 9`.
+                if not mentions_number.search(line) or ANSWER_LETTERS_TEXT in line:
+                    continue
+                if f"{shown_words(line, parser, env)} ".startswith(f"{heading} "):
+                    return (shown_words("\n".join(lines[index + 1:]), parser, env),
+                            record.get("timestamp", "an unknown time"))
+    return None
+
+
+def unseen_item_lines(answer, walk, transcript_path):
+    """The lines that refuse the answer when it gives A, AO, Aa or D to a waiting item that the agent's last message
+    showing it does not show as the walk-document now has it, or when that cannot be checked; [] otherwise."""
+    numbers = checked_item_numbers(answer, walk)
+    if not numbers:
+        return []
+    parser = load_walk_finder().markdown_parser()
+    # markdown-it reads a file: link, which walks use, as text, so its target would count as words.
+    parser.validateLink = lambda url: True
+    lines = []
+    for number in numbers:
+        item = item_name(number, walk)
+        text = walk.shown_texts.get(number)
+        if text is None:
+            problem = walk.problem or walk.shown_text_problem or f"the walk-document has no text for {item}"
+            return [line.format(item=item, problem=problem) for line in ITEM_TEXT_UNREADABLE_LINES]
+        heading_line, _, body = text.partition("\n")
+        env = {}
+        parser.parse(text, env)
+        heading, body = shown_words(heading_line, parser, env), shown_words(body, parser, env)
+        if not transcript_path:
+            return [line.format(path=NO_TRANSCRIPT_PATH, item=item, error="no transcript_path")
+                    for line in TRANSCRIPT_UNREADABLE_LINES]
+        try:
+            shown = last_showing_message(transcript_path, number, heading, parser)
+        except (OSError, ValueError) as error:
+            return [line.format(path=transcript_path, item=item, error=repr(error))
+                    for line in TRANSCRIPT_UNREADABLE_LINES]
+        if shown is None:
+            reason = NEVER_SHOWN_REASON
+        else:
+            after_heading, timestamp = shown
+            if not body or f" {body} " in f" {after_heading} ":
+                continue
+            reason = SHOWN_DIFFERENT_REASON.format(timestamp=timestamp)
+        lines += [line.format(item=item, reason=reason, text=text) for line in ITEM_NOT_SHOWN_LINES]
+    return lines
+
+
 def output_for(payload):
     """Return the hook's output for the payload as a dict, or None."""
     answer = parsed_answer(payload.get("prompt") or "")
@@ -783,6 +949,11 @@ def output_for(payload):
         walk, walk_error = None, error
     if named_item_missing(answer, walk, walk_error):
         return None
+    refusal = unseen_item_lines(answer, walk, payload.get("transcript_path"))
+    if refusal:
+        context = "\n".join([OPEN_WALK_OPENING.format(answer=answer["answer"], item=walk.item, walk=walk.name),
+                             *refusal])
+        return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}}
     context = context_for(answer, walk, walk_error)
     if walk is not None or walk_error is not None:
         context += "\n" + USER_REPLY_LINE.format(reply=shlex.quote(" ".join(payload["prompt"].split())))

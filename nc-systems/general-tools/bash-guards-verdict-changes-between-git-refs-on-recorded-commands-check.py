@@ -127,14 +127,16 @@ REGISTERED_CHECKOUT_PATH_EXISTS_MESSAGE = (
     "in this --scratch-directory could not remove; so "
     "bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check adds no worktree there, leaves the path "
     "as it is, and exits 2 before it replays any recorded command.\n"
-    "Remove it with {remove_command}, then run the replay again with "
-    "the same arguments. A replay's worktree holds only the commit it read, so removing it loses no work.")
+    "Remove it with {remove_command}; once that succeeds, run the replay again: {rerun_command}\n"
+    "A replay's worktree holds only the commit it read, so removing it loses no work.")
 UNREGISTERED_CHECKOUT_PATH_EXISTS_MESSAGE = (
     "{checkout} already exists, and git does not list it as a worktree of {repository}, so it is no worktree an "
     "earlier replay left, and it may hold someone's files; "
     "bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check adds no worktree there, leaves the path "
-    "as it is, and exits 2 before it replays any recorded command.\n"
-    "Run the replay again with the same arguments, except a --scratch-directory that does not exist yet.")
+    "as it is, and exits 2 before it replays any recorded command. The path is inside the --scratch-directory, "
+    "{scratch}.\n"
+    "Run the replay again with a --scratch-directory that does not exist yet; this command already names one: "
+    "{fresh_scratch_rerun_command}")
 CHECKOUTS_NOT_REMOVED_MESSAGE = (
     "REPLAY FAILED: these worktrees could not be removed, so "
     "bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check exits 2; any verdicts it printed above "
@@ -634,6 +636,11 @@ def read_markdown_push_reminder(guard, command, working_directory, search_file_d
             "\n\n".join(messages) or None]
 
 
+def read_emergency_stop(guard, command, working_directory, search_file_directory):
+    # The hook refuses only while an emergency stop is in force, and no replay has one in force.
+    return "passed", None
+
+
 # A renamed guard's former file path, which a base ref's settings.json may still run, to its path in GUARDS.
 # The line does nothing once main's settings.json no longer runs the former path, and may then be removed.
 BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = {
@@ -675,6 +682,7 @@ GUARDS = {
         read_handoff_deferral_cold_read_full_run_launch,
     ".claude/guard-hooks/git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook.py":
         read_git_worktree_remove_records_ship_first,
+    "nc-systems/skills/emergency-stop/emergency-stop-file-shown-and-push-and-merge-refusal-hook.py": read_emergency_stop,
 }
 SEARCH_FILE_GUARD = ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py"
 
@@ -1140,6 +1148,26 @@ def registered_checkout_paths(worktree_list_porcelain):
             for line in worktree_list_porcelain.splitlines() if line.startswith("worktree ")}
 
 
+def rerun_command(arguments, scratch_directory=None):
+    """The command that runs this replay again with the parsed arguments, from the directory it ran in; with
+    scratch_directory, that --scratch-directory instead."""
+    words = [sys.executable, os.path.realpath(__file__)]
+    for name, value in vars(arguments).items():
+        value = scratch_directory if name == "scratch_directory" and scratch_directory is not None else value
+        for one in value if isinstance(value, list) else [] if value is None else [value]:
+            # --name=value, because argparse reads a separate value that begins with - as an option.
+            words.append(f"--{name.replace('_', '-')}={one}")
+    # The parsed arguments may be relative paths, which name the same files only from the same directory.
+    return f"cd {shlex.quote(os.getcwd())} && {shlex.join(words)}"
+
+
+def path_beside_that_does_not_exist(path):
+    number = 2
+    while os.path.lexists(f"{path}-{number}"):
+        number += 1
+    return f"{path}-{number}"
+
+
 def worktree_remove_command(repository, checkout):
     # Plain --force refuses a locked checkout, and git worktree remove refuses a path git has not registered.
     return f"git -C {shlex.quote(str(repository))} worktree remove --force --force {shlex.quote(str(checkout))}"
@@ -1173,7 +1201,9 @@ def remove_checkouts(repository, checkouts):
                               f"run rm -rf {shlex.quote(str(checkout))}, which prints what stops the deletion")
             continue
         try:
-            completed = subprocess.run(["git", "-C", repository, "worktree", "remove", "--force", str(checkout)],
+            # Twice, so a lock does not stop it: the checkout is this replay's own, and no one else's lock.
+            completed = subprocess.run(["git", "-C", repository, "worktree", "remove", "--force", "--force",
+                                        str(checkout)],
                                        capture_output=True, text=True, env=child_environment(),
                                        timeout=GIT_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
@@ -1217,11 +1247,12 @@ def run_log_directory_made(runs_directory):
 
 
 def remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures(scratch, run_log_directory, status):
-    """Remove the scratch directory, and the run log directory after an exit 0; return a line for each path
-    that could not be removed."""
+    """Remove the scratch directory, and the run log directory after an exit 0 whose scratch directory was
+    removed; return a line for each path that could not be removed. A scratch directory that could not be removed
+    makes the replay exit 2, so its run log directory is kept."""
     could_not_remove = []
     shutil.rmtree(scratch, onexc=lambda _, path, error: could_not_remove.append(f"{path}: {error}"))
-    if status == 0:
+    if status == 0 and not could_not_remove:
         shutil.rmtree(run_log_directory, onexc=lambda _, path, error: could_not_remove.append(f"{path}: {error}"))
     return could_not_remove
 
@@ -1271,7 +1302,9 @@ def replay_with_sigterm_handled(arguments):
             raise ReplayFailed("\n".join(
                 (REGISTERED_CHECKOUT_PATH_EXISTS_MESSAGE if os.path.realpath(path) in registered
                  else UNREGISTERED_CHECKOUT_PATH_EXISTS_MESSAGE).format(
-                    checkout=path, repository=repository, remove_command=worktree_remove_command(repository, path))
+                    checkout=path, repository=repository, remove_command=worktree_remove_command(repository, path),
+                    scratch=scratch, rerun_command=rerun_command(arguments),
+                    fresh_scratch_rerun_command=rerun_command(arguments, path_beside_that_does_not_exist(scratch)))
                 for path in existing))
         commits = {}
         for label, ref in (("base", arguments.base_ref), ("head", arguments.head_ref)):

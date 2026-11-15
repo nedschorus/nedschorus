@@ -22,7 +22,9 @@ Each invocation, under a lock that keeps two from overlapping:
 5. For each idle agent-seat, applies the verdict's rule: rule 1 wakes it once its limit has ended;
    rule 2 has unbacked promises and announced actions judged and named to it; rule 3 sends the
    handoff text; rule 4 ends a wait no rule 2 message was sent on; rule 5 has the judge
-   decide whether to message it, and write the message. A message starts a wait, unless a wait is
+   decide whether to message it, and write the message. A wait whose rule 2 messages named only
+   promises to act after an event and holds ends when the agent-seat, after the last of them, makes
+   the task call those messages ask for, one that sets prerequisites or addBlockedBy. A message starts a wait, unless a wait is
    already open: 15 minutes later, if the agent-seat is idle, code sends the escalation, which
    quotes the message that opened the wait, and 15 minutes after that writes the user a
    user-alert, once.
@@ -42,19 +44,27 @@ invocation runs its headless agent-sessions one after another, so a slow judge d
 agent-seat's step, and the lock makes the next minute's invocation skip, until it ends. A wait
 does not end when the agent-seat only replies to a message in text; it ends when the agent-seat
 makes a tool call after the nudge that opened the wait or has nothing to do (rule 4), in either
-case only when no rule 2 message was sent on the wait, stops at a usage limit (rule 1), starts a
+case only when no rule 2 message was sent on the wait, makes the task call a rule 2 message
+asked for, as step 5 says, stops at a usage limit (rule 1), starts a
 new agent-session, or spends tokens after the user was told. So an agent-seat that answers each
 rule 3 or rule 5 message with a tool call and goes idle again is nudged again, and never
 escalated; one that answers a rule 2 message with a tool call and a fresh promise is escalated,
 because a tool call that ended a promise wait would let an agent-seat that makes a fresh promise
 at each rule 2 message be nudged again forever and never escalated.
 
-How it fails, and what the user sees: a headless agent-session that fails, is stopped, answers
-JSON code cannot use, or sends to the wrong entry or the wrong text; a message missing from the
+How it fails, and what the user sees: when a sender sends a text other than the one code wrote,
+the text it sent is logged as a sent_text_differs_from_code_text event, step 4's delivery check
+looks for that text, and the agent-seat ned-box-helper, OWNING_AGENT_SEAT, gets a task to find why,
+one task at a time. The difference is this program's defect, with nothing for the user to do, so
+only a failure to write that task is a user-alert. A headless agent-session that fails, is
+stopped, answers JSON code cannot use, or sends to the wrong entry; a message missing from the
 agent-seat's transcript; and a read failure slice 1 reports for the same agent-seat with the same
-text at every run for 2 minutes or more, each become a user-alert, written once, and the invocation
-exits 1; the 2 minutes are counted from the failure's first run and go on through an invocation the
-lock made skip, since only a run that does not meet the failure ends them. A read failure seen once only, such as the last line of a transcript
+text at every run for 2 minutes or more, counted from the failure's first run and through any
+invocation the lock made skip, since only a run that does not meet the failure ends the count,
+each become a user-alert; the invocation goes on to the other agent-seats, then exits 1. Each cause is alerted once; a failed headless
+agent-session is alerted once a day for each agent-seat and cause, such as the headless
+agent-session itself stopping at a usage limit, however claude's text for that cause varies. A read
+failure seen once only, such as the last line of a transcript
 Claude Code is still writing, is logged and not alerted; a run that does not meet it again logs its end, so that it
 coming back later is dated from its return. Any other failure, such as an unwritable log, prints a
 traceback, writes one user-alert per distinct error, and exits 1. A message step is logged before
@@ -92,6 +102,9 @@ fields = verdicts_print.fields
 user_alerts = _load("user_alerts_pending_and_claimed_files_write_claim_release_and_delete_common",
                     _SCRIPTS.parent / "nc-systems" / "general-tools"
                     / "user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py")
+agent_seat_task_list = _load(
+    "agent_seat_task_list_new_pending_task_write_common",
+    _SCRIPTS.parent / "nc-systems" / "general-tools" / "agent-seat-task-list-new-pending-task-write-common.py")
 headless_command_line = _load(
     "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
     _SCRIPTS.parent / "nc-systems" / "general-tools"
@@ -104,6 +117,10 @@ STATE_DIRECTORY = (Path.home() / ".local" / "state" / "nedschorus"
 # The folder's name is the name the receiving agent-seat sees the message come from.
 HEADLESS_WORKING_DIRECTORY_NAME = "agent-seat-idle-sweep"
 RUN_FAILURES_ALERTED_FILE_NAME = "run-failures-alerted.txt"
+# The agent-seat that owns this program: a defect of the program that needs nothing from the user
+# goes to its task list.
+OWNING_AGENT_SEAT = "ned-box-helper"
+SENT_TEXT_DIFFERS_TASK_SUBJECT = "Idle sweep: a headless sender sent a text other than the one code wrote"
 
 WAIT_STEP_SECONDS = 15 * 60
 JUDGE_ASK_AGAIN_SECONDS = 15 * 60
@@ -122,6 +139,9 @@ NUDGE, ESCALATE, TELL_USER = "nudge", "escalate", "tell_user"
 PROMISE = "promise"
 LIMIT_WAKE, ACCOUNT_NOTICE = "limit_wake", "account_notice"
 
+# Kinds of headless failure that run_headless does not name, for headless_failed's key.
+SENDS_WRONG = "the sender's SendMessage calls were not the sends code asked for"
+JUDGE_ANSWER_UNUSABLE = "the judge's answer could not be used"
 DO_NOT_REPLY_SENTENCE = "Do not reply to this message: its sender has exited, so a reply fails."
 ESCALATION_TEXT = ("You've given this {minutes} minutes, please check; if not sure, hand off. At "
                    "{nudge_time} the idle sweep wrote this, which you have not acted on:\n\n"
@@ -133,7 +153,8 @@ LIMIT_ENDED_BY_ACCOUNT = "the claude.ai account logged in on {machine} changed"
 ACCOUNT_NOTICE_TEXT = (
     "The claude.ai account logged in on {machine} changed at {time}. Usage limits are now the new "
     "account's, so a limit message you saw before then, with its reset time, may no longer apply. "
-    "Retry now any work a usage limit stopped, such as a subagent or a cold-read-cell; if the retry "
+    "Retry now any work a usage limit stopped that has not run again since, such as a subagent or "
+    "a cold-read-cell; if the retry "
     "stops on a limit again, that limit is the new account's. A page you published to claude.ai "
     "under the earlier account, such as an approval-walk item page, may not open for the user; "
     "GitHub issue [A read-only web server on ned-box renders Markdown files as web pages on the "
@@ -152,6 +173,11 @@ UNBACKED_SENTENCE_LINES = {
     fields.HOLD: ("You said \"{sentence}\". Record a task whose prerequisites name what releases the "
                   "hold, or tell the user you are no longer holding."),
 }
+# The kinds of sentence whose message asks for a task call that code can see: one that sets
+# prerequisites or addBlockedBy. An announced action or a standing rule only the judge finds done.
+TASK_CALL_SETTLED_KINDS = frozenset((fields.PROMISE_AFTER_EVENT, fields.HOLD))
+# An event logged with each rule 2 message, carrying the kinds of the sentences it names.
+PROMISE_MESSAGE = "promise_message"
 
 SEND_ANSWER_SCHEMA = {"type": "object", "required": ["sent", "reason"],
                       "properties": {"sent": {"type": "boolean"}, "reason": {"type": "string"}}}
@@ -165,6 +191,12 @@ SENTENCES_ANSWER_SCHEMA = {
         "type": "object", "required": ["index", "backed", "reason"],
         "properties": {"index": {"type": "integer"}, "backed": {"type": "boolean"},
                        "reason": {"type": "string"}}}}}}
+
+# Without this sentence, a sender dropped the last sentence from a message that asks the agent-seat
+# a question, taking it for an instruction to the sender.
+KEEP_THE_LAST_SENTENCE = (
+    f'The text ends with the sentence "{DO_NOT_REPLY_SENTENCE}" That sentence is written to the '
+    "agent-seat, not to you, and is part of the message: keep it.")
 
 FIND_THE_ENTRY = """\
 Find the agent-seat's entry with ListAgents (load ListAgents and SendMessage with ToolSearch first \
@@ -181,8 +213,8 @@ judge nothing: the program has decided the message is sent.
 The agent-seat is {seat}. {find_the_entry}
 
 Send it one message with SendMessage, whose "message" is the text between the two lines of dashes \
-below, exactly as written, with nothing added or removed. Then answer: sent true if SendMessage \
-succeeded, otherwise false, and reason, one sentence.
+below, exactly as written, with nothing added or removed. {keep_the_last_sentence} Then answer: \
+sent true if SendMessage succeeded, otherwise false, and reason, one sentence.
 ----------
 {text}
 ----------"""
@@ -195,8 +227,8 @@ Send it, with one SendMessage call for each, to each of these agent-seats: {seat
 agent-seat, {find_the_entry}
 
 Each message is the text between the two lines of dashes below, exactly as written, with nothing \
-added or removed. Then answer: sent true if every send succeeded, otherwise false, and reason, one \
-sentence naming any agent-seat you could not send to.
+added or removed. {keep_the_last_sentence} Then answer: sent true if every send succeeded, \
+otherwise false, and reason, one sentence naming any agent-seat you could not send to.
 ----------
 {text}
 ----------"""
@@ -209,7 +241,7 @@ the JSON below. An approval-walk item waiting on the user holds back only that w
 agent-seat's other work.
 
 Judge whether the agent-seat could act now. If it could, write it one short message saying what you \
-saw. Name each background command and subagent that has not finished or reported, \
+saw. Name each background command, workflow and subagent that has not finished or reported, \
 with how long it has run, and ask whether it is taking longer than expected, such as "Your \
 test-suite run started 25 minutes ago and has not finished. Is it taking longer than expected?". \
 A subagent with stopped_at has stopped and reported: it is not running, and only the background \
@@ -217,8 +249,9 @@ commands it launched, under own_running_background_commands, still run. Say so, 
 those commands with how long it has run, such as "Your subagent ae10c20d94ca876c9 reported 124 \
 minutes ago, but background command bgyicuvln, which it started 131 minutes ago, has not \
 finished. Is it still needed?". \
-With nothing running, ask what is going on, such as "You said "I'm starting the PR 1633 work now" 6 \
-minutes ago and have made no tool call since. What's going on?". If it could not act now, write \
+With nothing running, ask what is going on, such as "Your task "Open the pull request for the \
+reviewed fix" is open and nothing holds it, and you have made no tool call for 12 minutes. What's \
+going on?". If it could not act now, write \
 no message. Send nothing yourself: the program sends the message.
 
 Answer: send, whether the agent-seat should get a message; message, the message, or an empty string \
@@ -287,8 +320,9 @@ class SweepLog:
             self.add_newline = (self.truncate_to is None and bool(data)
                                 and not data.endswith(b"\n"))
 
-    def append(self, event, now):
-        event = {"at": iso(now), **event}
+    def append(self, event, now, agent_seat_idle_sweep_invocation_started_at):
+        event = {"at": iso(now), "agent_seat_idle_sweep_invocation_started_at":
+                 iso(agent_seat_idle_sweep_invocation_started_at), **event}
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.truncate_to is not None:
             os.truncate(self.path, self.truncate_to)
@@ -311,9 +345,13 @@ class SweepLog:
 
     def open_wait(self, seat):
         wait = None
-        for event in self.of_seat(seat, "wait_step", "wait_ended"):
+        for event in self.of_seat(seat, "wait_step", "wait_ended", PROMISE_MESSAGE):
             if event["event"] == "wait_ended":
                 wait = None
+            elif event["event"] == PROMISE_MESSAGE:
+                if wait is not None:
+                    wait[PROMISE_MESSAGE] = event["at"]
+                    wait["promise_kinds"] = wait.get("promise_kinds", set()) | set(event["kinds"])
             elif event["step"] == NUDGE:
                 wait = {"session_id": event["session_id"], "first_idle_at": event["first_idle_at"],
                         NUDGE: event["at"], "nudge_text": event["text"]}
@@ -351,23 +389,20 @@ class SweepLog:
                 if event.get("event") == "message_sent" and event["message_id"] not in checked]
 
     def read_failure_first_seen(self, seat, text):
-        """When the failure's current run began: its latest read_failure, unless a
+        """The event that began the failure's current run: its latest read_failure, unless a
         read_failure_ended follows it."""
         first_seen = None
         for event in self.of_seat(seat, "read_failure", "read_failure_ended"):
             if event["error"] == text:
-                first_seen = event["at"] if event["event"] == "read_failure" else None
+                first_seen = event if event["event"] == "read_failure" else None
         return first_seen
 
     def read_failures_open(self):
         open_failures = set()
+        record = {"read_failure": open_failures.add, "read_failure_ended": open_failures.discard}
         for event in self.events:
-            if event.get("event") in ("read_failure", "read_failure_ended"):
-                key = (event["agent_seat"], event["error"])
-                if event["event"] == "read_failure":
-                    open_failures.add(key)
-                else:
-                    open_failures.discard(key)
+            if event.get("event") in record:
+                record[event["event"]]((event["agent_seat"], event["error"]))
         return open_failures
 
     def alerted(self, key):
@@ -383,6 +418,16 @@ def parse_time(stamp):
     return verdicts_print.parse_time(stamp)
 
 
+def agent_seat_idle_sweep_invocation_started_at(event):
+    """The time of the invocation that logged the event. The judge's ask-again and a read
+    failure's user-alert count their minutes from that invocation, and compare this time with a
+    later invocation's: the event's "at" adds the seconds the invocation had taken, a judge's
+    included, so a step due a whole number of minutes later would come a minute late. A wait's
+    steps and a limit wake count from "at", the time their message went out. An event logged
+    before "agent_seat_idle_sweep_invocation_started_at" was logged has only its "at"."""
+    return event.get("agent_seat_idle_sweep_invocation_started_at", event["at"])
+
+
 def seconds_between(earlier, later):
     earlier = parse_time(earlier) if isinstance(earlier, str) else earlier
     return (later - earlier).total_seconds()
@@ -393,6 +438,7 @@ def seconds_between(earlier, later):
 class HeadlessOutcome:
     def __init__(self):
         self.error = None          # why the headless agent-session failed, or None
+        self.error_kind = None     # the error's cause, worded by code alone: a user-alert's key
         self.answer = None         # its --json-schema answer
         self.sends = []            # [{"to", "message", "succeeded", "result"}]
 
@@ -418,6 +464,7 @@ def run_headless(prompt, schema, tools, working_directory, timeout_seconds):
                                    start_new_session=True)
     except OSError as error:
         outcome.error = f"could not start claude: {error}"
+        outcome.error_kind = "could not start claude"
         return outcome
     try:
         stdout, stderr = process.communicate(prompt, timeout=timeout_seconds)
@@ -425,6 +472,7 @@ def run_headless(prompt, schema, tools, working_directory, timeout_seconds):
         os.killpg(process.pid, signal.SIGKILL)
         stdout, stderr = process.communicate()
         outcome.error = f"stopped after {timeout_seconds} seconds"
+        outcome.error_kind = "stopped at its time limit"
     calls, result = {}, None
     for line in stdout.splitlines():
         try:
@@ -451,14 +499,19 @@ def run_headless(prompt, schema, tools, working_directory, timeout_seconds):
     outcome.sends = list(calls.values())
     if outcome.error:
         return outcome
+    # Such as "usage_limit_reached": the result's text holds a reset time, so it cannot name the cause.
+    api_error = f": {result['api_error']}" if result and result.get("api_error") else ""
     if process.returncode != 0:
         outcome.error = f"claude exited {process.returncode}: {(stderr or stdout)[-500:].strip()}"
+        outcome.error_kind = f"claude exited {process.returncode}{api_error}"
     elif result is None:
         outcome.error = f"claude gave no result event: {stdout[-500:]!r}"
+        outcome.error_kind = "claude gave no result event"
     elif result.get("is_error") or result.get("subtype") != "success":
         outcome.error = f"claude reported an error: {str(result.get('result'))[:500]}"
+        outcome.error_kind = f"claude reported an error{api_error}"
     elif not isinstance(result.get("structured_output"), dict):
-        outcome.error = "claude gave no JSON answer"
+        outcome.error = outcome.error_kind = "claude gave no JSON answer"
     else:
         outcome.answer = result["structured_output"]
     return outcome
@@ -469,19 +522,32 @@ def entry_seat(to):
     return to.split(" [", 1)[0].strip()
 
 
-def send_problems(outcome, seats, text):
-    """What is wrong with a sender's sends: each must go to one of the agent-seats with the text."""
+def send_problems(outcome, seats):
+    """What is wrong with where a sender sent: each send must go to one of the agent-seats, and a
+    send to each must succeed."""
     problems = [f"sent to {send['to']!r}, which is not {', '.join(seats)}"
                 for send in outcome.sends if entry_seat(send["to"]) not in seats]
-    for send in outcome.sends:
-        # Compared as the delivery check compares: a sender may reflow the lines of the text.
-        if (entry_seat(send["to"]) in seats
-                and " ".join(send["message"].split()) != " ".join(text.split())):
-            problems.append(f"sent {entry_seat(send['to'])} a text other than the one code wrote")
     for seat in seats:
         if not any(send["succeeded"] and entry_seat(send["to"]) == seat for send in outcome.sends):
             problems.append(f"no SendMessage to {seat} succeeded")
     return problems
+
+
+def sent_texts_other_than_code_wrote(outcome, seats, text):
+    """Each send to one of the agent-seats whose message is not the text code wrote, as
+    (agent-seat, message)."""
+    # Compared as the delivery check compares: a sender may reflow the lines of the text.
+    return [(entry_seat(send["to"]), send["message"]) for send in outcome.sends
+            if entry_seat(send["to"]) in seats
+            and " ".join(send["message"].split()) != " ".join(text.split())]
+
+
+def text_sent_to(outcome, seat, text):
+    """The message of the last send to the agent-seat that succeeded, or code's text when none
+    did: the text the delivery check looks for."""
+    sent = [send["message"] for send in outcome.sends
+            if send["succeeded"] and entry_seat(send["to"]) == seat]
+    return sent[-1] if sent else text
 
 
 # --- One invocation ---
@@ -505,7 +571,7 @@ class Sweep:
         return self.now + timedelta(seconds=int(time.monotonic() - self.started_monotonic))
 
     def record(self, event):
-        return self.log.append(event, self.current())
+        return self.log.append(event, self.current(), self.now)
 
     def alert(self, key, title, text, action, failure=True):
         """Write a user-alert once for each key, and log it."""
@@ -517,18 +583,70 @@ class Sweep:
         print(f"user-alert {alert_id}: {title}", flush=True)
         return alert_id
 
-    def headless_failed(self, seat, purpose, problem):
+    def headless_failed(self, seat, purpose, problem, kind):
+        """problem is the failure's full text; kind names its cause in words code alone chose, so
+        that a cause met at every invocation, such as a usage limit, gives one user-alert a day."""
         self.failed = True
         self.record({"event": "headless_failed", "agent_seat": seat, "purpose": purpose,
                      "problem": problem})
-        # One user-alert a day for each distinct failure, such as claude being logged out.
-        self.alert(f"headless-failed:{seat}:{purpose}:{problem}:{self.now.date()}",
+        self.alert(f"headless-failed:{seat}:{kind}:{self.now.date()}",
                    f"The idle sweep's headless agent-session for {seat} failed",
                    f"The idle sweep started a headless agent-session to {purpose} for the "
                    f"agent-seat {seat}, and it failed: {problem}",
                    "An agent on ned-box can read the idle sweep's log, "
                    f"{self.log.path}, and the cron output log, and check whether {seat} needs a "
                    "message; run `claude -p` by hand on ned-box to see whether claude is logged out.")
+
+    def sent_texts_differ(self, outcome, seats, text, step):
+        """Log each text a sender sent in place of code's, and give OWNING_AGENT_SEAT a task to
+        find why: the difference is this program's defect, with nothing for the user to do."""
+        differing = sent_texts_other_than_code_wrote(outcome, seats, text)
+        for seat, sent_text in differing:
+            self.record({"event": "sent_text_differs_from_code_text", "agent_seat": seat, "step": step,
+                         "text": text, "sent_text": sent_text})
+        if not differing:
+            return
+        try:
+            task_id = self.owning_agent_seat_task_opened_unless_open()
+        except OSError as error:
+            self.alert(f"owner-task-not-written:{type(error).__name__}: {error}:{self.now.date()}",
+                       f"The idle sweep could not give {OWNING_AGENT_SEAT} a task",
+                       f"A headless agent-session sent {', '.join(seat for seat, _ in differing)} "
+                       "a text other than the one the idle sweep wrote, and the idle sweep could "
+                       f"not write the task that tells {OWNING_AGENT_SEAT} to find why: "
+                       f"{type(error).__name__}: {error}",
+                       f"An agent on ned-box can fix what the error names, such as the task list "
+                       f"directory of {OWNING_AGENT_SEAT} not existing, and give "
+                       f"{OWNING_AGENT_SEAT} the sent_text_differs_from_code_text events of the idle sweep's "
+                       f"log, {self.log.path}.")
+            return
+        if task_id is not None:
+            self.record({"event": "owning_agent_seat_task_opened", "agent_seat": OWNING_AGENT_SEAT,
+                         "task_id": task_id, "subject": SENT_TEXT_DIFFERS_TASK_SUBJECT})
+
+    def owning_agent_seat_task_opened_unless_open(self):
+        """Open the sent-text task on OWNING_AGENT_SEAT's task list unless one not marked
+        completed is there; return the new task's id, or None. Raises OSError."""
+        list_directory = self.paths.tasks_root / f"nedschorus-{OWNING_AGENT_SEAT}-tasks"
+        if list_directory.is_dir():
+            for path in list_directory.glob("*.json"):
+                try:
+                    task = json.loads(path.read_text(encoding="utf-8"))
+                except ValueError:
+                    continue
+                if (task.get("status") != "completed"
+                        and task.get("subject") == SENT_TEXT_DIFFERS_TASK_SUBJECT):
+                    return None
+        return agent_seat_task_list.agent_seat_task_list_new_pending_task_write(
+            list_directory, SENT_TEXT_DIFFERS_TASK_SUBJECT,
+            "A headless agent-session the idle sweep, scripts/agent-seat-idle-sweep-headless-"
+            "judge-wake-messages-send-and-user-alerts-write.py, started to send a message sent a "
+            "text other than the one code wrote. Each time is a sent_text_differs_from_code_text event in the "
+            f"idle sweep's log, {self.log.path}, with the text code wrote and the text sent.\n"
+            "Compare the two, find why the sender changed the text, such as a sender prompt "
+            "that lets it, and fix the cause in a pull request.\n"
+            "Mark this task completed when the fix is merged; the idle sweep opens a new task "
+            "at the next difference.")
 
     def send_wake_message(self, seats, text):
         """The one way a message reaches an agent-seat: end the text with DO_NOT_REPLY_SENTENCE and
@@ -537,11 +655,13 @@ class Sweep:
         text = f"{text}\n\n{DO_NOT_REPLY_SENTENCE}"
         if len(seats) == 1:
             prompt = SENDER_PROMPT.format(seat=seats[0], text=text,
-                                          find_the_entry=FIND_THE_ENTRY.format(seat=seats[0]))
+                                          find_the_entry=FIND_THE_ENTRY.format(seat=seats[0]),
+                                          keep_the_last_sentence=KEEP_THE_LAST_SENTENCE)
         else:
             prompt = NOTICE_SENDER_PROMPT.format(
                 seats=", ".join(seats), text=text,
-                find_the_entry=FIND_THE_ENTRY.format(seat="<agent-seat>"))
+                find_the_entry=FIND_THE_ENTRY.format(seat="<agent-seat>"),
+                keep_the_last_sentence=KEEP_THE_LAST_SENTENCE)
         started_at = self.current()
         outcome = run_headless(prompt, SEND_ANSWER_SCHEMA, SENDING_TOOLS, self.working_directory,
                                self.timeout_seconds)
@@ -550,12 +670,16 @@ class Sweep:
     def send(self, seat, verdict, text, step):
         """Send code's text to one agent-seat; log the send for the delivery check."""
         text, outcome, started_at = self.send_wake_message([seat], text)
-        problems = [outcome.error] if outcome.error else send_problems(outcome, [seat], text)
+        if outcome.error:
+            self.headless_failed(seat, f"send its {step} message", outcome.error,
+                                 outcome.error_kind)
+            return
+        self.sent_texts_differ(outcome, [seat], text, step)
+        problems = send_problems(outcome, [seat])
         if problems:
-            self.headless_failed(seat, f"send its {step} message", "; ".join(problems))
-            return False
-        self.message_sent(seat, verdict, text, step, started_at)
-        return True
+            self.headless_failed(seat, f"send its {step} message", "; ".join(problems), SENDS_WRONG)
+            return
+        self.message_sent(seat, verdict, text_sent_to(outcome, seat, text), step, started_at)
 
     def message_sent(self, seat, verdict, text, step, started_at):
         # The delivery check compares transcript times with the send's start: a sender may run on
@@ -589,15 +713,19 @@ class Sweep:
             return
         text, outcome, started_at = self.send_wake_message(seats, text)
         if outcome.error:
-            self.headless_failed(", ".join(seats), "send the account-change notice", outcome.error)
+            self.headless_failed(", ".join(seats), "send the account-change notice", outcome.error,
+                                 outcome.error_kind)
             return
-        wrong = [problem for problem in send_problems(outcome, seats, text)
+        self.sent_texts_differ(outcome, seats, text, ACCOUNT_NOTICE)
+        wrong = [problem for problem in send_problems(outcome, seats)
                  if not problem.startswith("no SendMessage")]
         if wrong:
-            self.headless_failed(", ".join(seats), "send the account-change notice", "; ".join(wrong))
+            self.headless_failed(", ".join(seats), "send the account-change notice", "; ".join(wrong),
+                                 SENDS_WRONG)
         # The delivery check looks in every listed agent-seat's transcript, sent to or not.
         for seat in seats:
-            self.message_sent(seat, verdicts[seat], text, ACCOUNT_NOTICE, started_at)
+            self.message_sent(seat, verdicts[seat], text_sent_to(outcome, seat, text),
+                              ACCOUNT_NOTICE, started_at)
             limit = verdicts[seat].get(fields.USAGE_LIMIT)
             if verdicts[seat].get(fields.RULE) == 1 and limit:
                 self.record({"event": "limit_wake", "agent_seat": seat,
@@ -645,12 +773,14 @@ class Sweep:
         if first_seen is None:
             self.record({"event": "read_failure", "agent_seat": seat, "error": text})
             return
-        if seconds_between(first_seen, self.now) >= READ_FAILURE_ALERT_AFTER_SECONDS:
+        if (seconds_between(agent_seat_idle_sweep_invocation_started_at(first_seen), self.now)
+                >= READ_FAILURE_ALERT_AFTER_SECONDS):
             # Keyed by the text alone: two readers of one broken file, such as ~/.claude.json,
             # report it in the same words.
             self.alert(f"read-failure:{text}",
                        f"The idle sweep cannot read what it needs for {seat}",
-                       f"Since {first_seen} the idle sweep has failed, each minute, to read: {text}",
+                       f"Since {first_seen['at']} the idle sweep has failed, each minute, to "
+                       f"read: {text}",
                        "An agent on ned-box can open the file the failure names and repair it, or "
                        "tell the user what is wrong with it; until then the idle sweep does not "
                        f"check {seat}.")
@@ -658,7 +788,7 @@ class Sweep:
     def read_failures_end(self):
         """A failure this invocation did not meet again has ended, so that one coming back later
         is dated from its return."""
-        for seat, text in sorted(self.log.read_failures_open() - self.read_failures_this_run):
+        for seat, text in sorted(self.log.read_failures_open() - self.read_failures_this_run):  # pragma: no mutate, read_failure records each failure it adds to read_failures_this_run as open unless it already is, and only this method ends one, so read_failures_this_run is a subset of the open failures and ^ gives what - gives
             self.record({"event": "read_failure_ended", "agent_seat": seat, "error": text})
 
     # --- One idle agent-seat ---
@@ -688,12 +818,18 @@ class Sweep:
                 and parse_time(worked_at) > parse_time(wait[NUDGE])):
             self.end_wait(seat, "it made a tool call after the nudge")
             wait = None
+        recorded_at = verdict.get(fields.LAST_TASK_CALL_SETTING_PREREQUISITES_OR_BLOCKED_BY_AT)
+        if (wait and PROMISE_MESSAGE in wait and wait["promise_kinds"] <= TASK_CALL_SETTLED_KINDS
+                and recorded_at and parse_time(recorded_at) > parse_time(wait[PROMISE_MESSAGE])):
+            self.end_wait(seat, "it recorded what a task waits on after the promise message")
+            wait = None
         if wait and TELL_USER in wait and stretch and parse_time(stretch) > parse_time(wait[TELL_USER]):
             self.end_wait(seat, "it spent tokens after the user was told")
             wait = None
         promise_text = None
         if rule == 2:
-            outcome, promise_text = self.sentences(seat, verdict)
+            outcome, promise = self.sentences(seat, verdict)
+            promise_text, promise_kinds = promise or (None, None)
             fallback = verdict.get(fields.IF_EVERY_SENTENCE_BACKED)
             if outcome == "all backed" and fallback is not None:
                 rule, text = fallback[fields.RULE], fallback.get(fields.TEXT)
@@ -713,6 +849,7 @@ class Sweep:
                 self.start_wait(seat, verdict, stretch, promise_text, 2)
             elif PROMISE not in wait:
                 self.record({"event": "wait_step", "agent_seat": seat, "step": PROMISE})
+            self.record({"event": PROMISE_MESSAGE, "agent_seat": seat, "kinds": promise_kinds})
             self.send(seat, verdict, promise_text, NUDGE)
         elif not wait:
             self.nudge(seat, verdict, rule, text, stretch)
@@ -776,13 +913,15 @@ class Sweep:
                 "approval_walk_items_waiting_on_the_user":
                     verdict.get(fields.APPROVAL_WALK_ITEMS_WAITING_ON_THE_USER),
                 "running_subagents": with_minutes(running.get("subagents", [])),
-                "running_background_commands": with_minutes(running.get("background_commands", []))}
+                "running_background_commands": with_minutes(running.get("background_commands", [])),
+                "running_workflows": with_minutes(running.get("workflows", []))}
 
     def judge_idle_seat(self, seat, verdict, stretch):
         answer = self.log.last_judge_answer(seat)
         if (answer and answer["session_id"] == verdict[fields.SESSION_ID]
                 and answer["last_activity"] == stretch
-                and seconds_between(answer["at"], self.now) < JUDGE_ASK_AGAIN_SECONDS):
+                and seconds_between(agent_seat_idle_sweep_invocation_started_at(answer), self.now)
+                < JUDGE_ASK_AGAIN_SECONDS):
             return
         facts = dict(self.facts(seat, verdict), step=NUDGE)
         idle_minutes = int(seconds_between(stretch, self.now) // 60) if stretch else None
@@ -797,7 +936,8 @@ class Sweep:
                      "send": not problem and answer["send"], "reason": answer.get("reason"),
                      "failed": bool(problem)})
         if problem:
-            self.headless_failed(seat, "judge whether it could act now", problem)
+            self.headless_failed(seat, "judge whether it could act now", problem,
+                                 outcome.error_kind or JUDGE_ANSWER_UNUSABLE)
             return
         if answer["send"]:
             self.start_wait(seat, verdict, stretch, answer["message"], 5)
@@ -805,14 +945,17 @@ class Sweep:
 
     def sentences(self, seat, verdict):
         """Rule 2: judge what code could not settle, and word one message naming every unbacked
-        sentence. Returns ("unbacked", the message), ("failed", None) or ("all backed", None)."""
+        sentence. Returns ("unbacked", (the message, the sorted kinds of the sentences it names)),
+        ("failed", None) or ("all backed", None)."""
         checked = self.log.checked_sentences(seat)
-        new = [item for item in verdict.get(fields.SENTENCES, [])
-               if item["code_reading"] != fields.NOT_RAISED
-               and (item["record_uuid"], item["sentence"]) not in checked]
+        new_by_code_reading = fields.verdict_sentences_grouped_by_code_reading(
+            item for item in verdict.get(fields.SENTENCES, [])
+            if (item["record_uuid"], item["sentence"]) not in checked)
+        judged = new_by_code_reading.get(fields.JUDGE, [])
+        unbacked = new_by_code_reading.get(fields.UNBACKED, [])
+        new = judged + unbacked
         if not new:
             return "all backed", None
-        judged = [item for item in new if item["code_reading"] == fields.JUDGE]
         backed = {}
         if judged:
             facts = dict(self.facts(seat, verdict),
@@ -832,7 +975,8 @@ class Sweep:
                 self.record({"event": "sentence_checked", "agent_seat": seat,
                              "record_uuid": item["record_uuid"], "sentence": item["sentence"]})
             if problem:
-                self.headless_failed(seat, "judge whether its promises are backed", problem)
+                self.headless_failed(seat, "judge whether its promises are backed", problem,
+                                     outcome.error_kind or JUDGE_ANSWER_UNUSABLE)
                 return "failed", None
             for answer in outcome.answer["sentences"]:
                 backed[answer["index"]] = answer["backed"]
@@ -842,14 +986,13 @@ class Sweep:
             for item in new:
                 self.record({"event": "sentence_checked", "agent_seat": seat,
                              "record_uuid": item["record_uuid"], "sentence": item["sentence"]})
-        unbacked = [item for item in new if item["code_reading"] == fields.UNBACKED]
         unbacked += [item for index, item in enumerate(judged) if not backed[index]]
         if not unbacked:
             return "all backed", None
-        return "unbacked", "\n".join(UNBACKED_SENTENCE_LINES[item["kind"]].format(
+        return "unbacked", ("\n".join(UNBACKED_SENTENCE_LINES[item["kind"]].format(
             sentence=item["sentence"],
             minutes=int(seconds_between(item["time"], self.now) // 60) if item["time"] else "some")
-            for item in unbacked)
+            for item in unbacked), sorted({item["kind"] for item in unbacked}))
 
     def usage_limit(self, seat, verdict):
         limit = verdict[fields.USAGE_LIMIT]
