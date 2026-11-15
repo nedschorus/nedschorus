@@ -383,18 +383,18 @@ def test_the_block_message_says_what_to_do():
             ("the message names the waiting item", "goes to the waiting item, item 2,"),
             ("the message gives the interruption item a heading with no number, and names the script whose close "
              "step chooses when it is shown and numbers it",
-             "headed `## <the point of the question>`, with no number, placed after the whole of item 2, its "
-             "sub-steps and withdrawn versions included. Under the heading, "
-             "give it a line of its own naming its category, the one for how soon its work must happen, one of "
+             "headed `## <the point of the question>`, with no number. In the file, place it right after the whole "
+             "of item 2: past that item's sub-steps and `#### Withdrawn version` sections, and before any item "
+             "already below them. Under the heading, give it a line of its own naming its category, the one for how soon its work must happen, one of "
              "`#approval_walk_item_in_category_must_fix_now`, "
              "`#approval_walk_item_in_category_fix_next`, `#approval_walk_item_in_category_fix_during_maintenance`, "
              "`#approval_walk_item_in_category_file_an_improvement_feature_or_change`, and a line "
              "`#approval_walk_item_waits_on <title>` for each item it must follow, as the walk-me-through skill's "
              "section \"Re-planning\" says. Do not number it yourself: the close step of "
              "nc-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py "
-             "chooses when, among the items not yet shown, the user sees it, by the items it waits on, its category "
-             "and the day it first entered a walk, so it may come later than right after item 2, and writes its "
-             "number into this heading then."),
+             "chooses when the user sees it, among the items not yet shown, by the items it waits on, its category "
+             "and the day it first entered a walk, so he may see it later than items placed below it in the file, "
+             "and writes its number into this heading then."),
             ("the message says to quote the question whole with a recommendation",
              "Quote the question whole in the item, as its asker wrote it, whether you or another agent, giving each "
              "line of the flagged text a line of its own, word for word, and putting the rest of the question on "
@@ -505,8 +505,8 @@ def test_while_a_sub_step_waits_the_interruption_item_goes_after_the_whole_item(
     case = Case(document=f"# A walk\n\n{REAL_ITEM_3_1_DOCUMENT_TEXT}\n", minutes="#next_to_present item 3.1 of 6")
     case.reply("Should I merge the pull request now?")
     check_blocked("while sub-step 3.1 waits, the interruption item goes after the whole of item 3, not between its "
-                  "sub-steps", case.run(model="yes"), "placed after the whole of item 3, its sub-steps",
-                  "later than right after item 3,")
+                  "sub-steps", case.run(model="yes"), "place it right after the whole of item 3: past that item's sub-steps",
+                  "later than items placed below it in the file,")
 
 
 def test_a_question_about_something_other_than_the_waiting_item_still_blocks():
@@ -1059,9 +1059,8 @@ def test_two_waiting_items():
     case = Case(minutes="#next_to_present items 2 and 3 of 10")
     case.reply("Should I merge the pull request now?")
     check_blocked("with two items waiting, the interruption item follows the later one and both are named",
-                  case.run(), "`## <the point of the question>`, with no number, placed after the whole of item 3, "
-                  "its sub-steps and withdrawn versions included. Under the heading",
-                  "so it may come later than right after item 3,", "`I added the question to the walk as a new item.`",
+                  case.run(), "`## <the point of the question>`, with no number. In the file, place it right after the whole of "
+                  "item 3: past that item's sub-steps", "`I added the question to the walk as a new item.`",
                   "and then each waiting item's closing line, on a line of its own, as the walk-me-through skill "
                   f"writes it, as the last text of that message:\n`[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the "
                   f"poem page lives](<page link>) · {CLOSING_LINE_ANSWER_LETTERS}`\n`[Item 3 of "

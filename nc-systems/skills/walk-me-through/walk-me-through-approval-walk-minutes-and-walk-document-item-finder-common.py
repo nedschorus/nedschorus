@@ -710,19 +710,18 @@ def approval_walk_document_new_item_insert_line_number_past_whole_item_sub_steps
         units, unit, line_count):
     """Return the 0-based line, of a walk-document of line_count lines whose item_unit_spans are units, where the
     whole item that unit belongs to ends, and so where an item added after it goes: the first line of the first
-    later unit that is not a sub-step of that whole item, or line_count. For unit `### Item 50.1 of 96` that is
-    past sub-step 50.2 and every Withdrawn heading below either, since a unit ends at a Withdrawn heading and a
-    sub-step is a unit of its own. An unnumbered item with more of the whole item's sub-steps after it is passed
-    over, as approval_walk_item_sub_step_units_below_item_in_walk_document passes over it."""
-    end = None
-    for later in [each for each in units if each[3] > unit[3]]:
-        if approval_walk_unit_is_unnumbered_item(later):
-            end = later[3] if end is None else end
-        elif approval_walk_document_unit_is_dotted_sub_step_of_whole_item_of_any_item_number(later, unit[0]):
-            end = None
-        else:
-            return later[3] if end is None else end
-    return line_count if end is None else end
+    unit below unit and below every sub-step that approval_walk_item_sub_step_units_below_item_in_walk_document
+    gives for the whole item, or line_count. For unit `### Item 50.1 of 96` that is past sub-step 50.2 and every
+    Withdrawn heading below either, since a unit ends at a Withdrawn heading and a sub-step is a unit of its own.
+    The finder is asked twice: for the nearest unit at or above unit that names unit's whole number, and for unit
+    read as naming its whole numbers, so that a waiting `5.2 of 10` the finder leaves out of item 5 of 9 still
+    keeps the `5.3 of 10` right after it."""
+    wholes = sorted({number.split(".")[0] for number in unit[0]})
+    whole_items = [(wholes, *unit[1:])] + [each for each in units
+                                           if each[3] <= unit[3] and set(each[0]) & set(wholes)][-1:]
+    last = max([unit[3]] + [each[3] for whole_item in whole_items
+                            for each in approval_walk_item_sub_step_units_below_item_in_walk_document(units, whole_item)])
+    return next((each[3] for each in units if each[3] > last), line_count)
 
 
 def approval_walk_item_total_shown_and_waiting_counted_from_walk_document(units):

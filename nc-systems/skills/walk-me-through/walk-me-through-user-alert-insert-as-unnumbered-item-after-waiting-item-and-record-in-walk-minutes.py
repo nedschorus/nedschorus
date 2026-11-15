@@ -8,7 +8,8 @@ The walk-me-through UserPromptSubmit hook that claims alerts runs this command w
 each alert, read from user-alerts/claimed/<id>.json under ALERTS_MODULE_FILE's directory, in the order given:
 - the walk-document gets a new unnumbered item, `## <the alert's title>`, after the whole item holding the last
   waiting item, which the walk-minutes' last `#next_to_present` line names, as the walk-me-through skill's
-  Re-planning section says: after item 50's sub-steps and withdrawn versions while sub-step 50.1 waits; its
+  Re-planning section says: while sub-step 50.1 waits, past item 50's sub-steps and the `#### Withdrawn version`
+  sections under them, and before any item already below them; its
   body holds a `#approval_walk_item_first_entered` line giving the day, on this
   machine's clock, the alert was written, the alert's text in a fence and what can be done about it. A title
   that a `##` heading would not read as an unnumbered item, such as "Item 3 of 9: reboot", gets the prefix
