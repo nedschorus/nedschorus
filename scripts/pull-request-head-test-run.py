@@ -9,7 +9,7 @@ A partial append can leave a torn record that prevents subsequent records from b
 The runner's output is copied to stderr line by line as it arrives, so a run stopped before
 it ends still shows its progress; stdout keeps only the SUMMARY line and where the record went.
 
-The runner is given --leave-out-suites-that-run-the-real-claude: a head test run runs a pull
+The runner is given --leave-out-suites-that-run-the-real-claude-cli: a head test run runs a pull
 request's code, so it starts no real claude, and the merge-lane puts a claude that exits 1 first
 on its PATH.
 
@@ -349,7 +349,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
         command = [
             sys.executable, str(runner), "--checkout", str(checkout),
             "--only-suites-whose-recorded-inputs-changed-since", since,
-            "--log-dir", str(logs), "--leave-out-suites-that-run-the-real-claude"]
+            "--log-dir", str(logs), "--leave-out-suites-that-run-the-real-claude-cli"]
         if arguments.recorded_inputs_directory:
             command += ["--recorded-inputs-directory", arguments.recorded_inputs_directory]
         try:

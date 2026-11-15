@@ -1440,7 +1440,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
               and runner.NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX not in printed,
               (code, suites_started, printed[-800:]))
 
-        # --- --leave-out-suites-that-run-the-real-claude ---
+        # --- --leave-out-suites-that-run-the-real-claude-cli ---
         def note_and_fail_the_claude_suite(top, interpreter, suite, *arguments, **options):
             # As in a pull request head test run, whose claude first on PATH exits 1.
             suites_started.append(suite)
@@ -1452,11 +1452,11 @@ with tempfile.TemporaryDirectory() as scratch_name:
                 scratch / f"main-left-out-{label}" / "recorded", left_out_repository),
                 "outside-test.py").exists()
 
-        real_claude = {"SUITES_THAT_RUN_THE_REAL_CLAUDE": {"outside-test.py"}}
+        real_claude = {"SUITES_THAT_RUN_THE_REAL_CLAUDE_CLI": {"outside-test.py"}}
         selective = ("--only-suites-whose-recorded-inputs-changed-since", "HEAD")
         code, printed = left_out_run("real-claude-run", *selective,
                                      run_one_suite=note_and_fail_the_claude_suite, **real_claude)
-        check("without --leave-out-suites-that-run-the-real-claude, a selective run runs a suite "
+        check("without --leave-out-suites-that-run-the-real-claude-cli, a selective run runs a suite "
               "that runs the real claude when the change edits its file, and it fails where "
               "claude exits 1",
               code == runner.EXIT_SOME_FAILED
@@ -1465,22 +1465,22 @@ with tempfile.TemporaryDirectory() as scratch_name:
               and recorded("real-claude-run"),
               (code, suites_started, printed[-1500:]))
         for label, extra in (("real-claude-left-out-selective", selective), ("real-claude-left-out-full", ())):
-            code, printed = left_out_run(label, *extra, "--leave-out-suites-that-run-the-real-claude",
+            code, printed = left_out_run(label, *extra, "--leave-out-suites-that-run-the-real-claude-cli",
                                          run_one_suite=note_and_fail_the_claude_suite, **real_claude)
             left_out_lines = [line for line in printed.splitlines() if line.startswith(
-                runner.SUITE_THAT_RUNS_THE_REAL_CLAUDE_LEFT_OUT_OF_TEST_RUN_LINE_PREFIX)]
-            check(f"{label}: --leave-out-suites-that-run-the-real-claude leaves out the suite that "
+                runner.SUITE_THAT_RUNS_THE_REAL_CLAUDE_CLI_LEFT_OUT_OF_TEST_RUN_LINE_PREFIX)]
+            check(f"{label}: --leave-out-suites-that-run-the-real-claude-cli leaves out the suite that "
                   f"runs the real claude, prints its LEFT OUT line with the command that runs it "
                   f"by hand, counts it in the SUMMARY apart from the suites not selected, "
                   f"records nothing for it, and exits 0",
                   code == runner.EXIT_ALL_PASSED and suites_started == ["a-test.py"]
                   and len(left_out_lines) == 1
                   and left_out_lines[0].startswith(
-                      f"{runner.SUITE_THAT_RUNS_THE_REAL_CLAUDE_LEFT_OUT_OF_TEST_RUN_LINE_PREFIX}outside-test.py: ")
+                      f"{runner.SUITE_THAT_RUNS_THE_REAL_CLAUDE_CLI_LEFT_OUT_OF_TEST_RUN_LINE_PREFIX}outside-test.py: ")
                   and left_out_lines[0].endswith("--only-suites-named outside-test.py")
                   and "SELECTED outside-test.py" not in printed
                   and "FAIL" not in printed
-                  and "1 suites that run the real claude left out" in printed
+                  and "1 suites that run the real claude CLI left out" in printed
                   # Left out, not counted again among the suites not selected.
                   and ("0 suites not selected" in printed) == bool(extra)
                   and runner.NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX not in printed
@@ -1489,7 +1489,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
         check("this runner lists the trial against the installed Claude Code among the suites that "
               "run the real claude",
               "nc-systems/general-tools/tests/agent-seat-worktree-create-with-owner-file-claude-code-"
-              "worktree-create-hook-real-claude-code-test.py" in runner.SUITES_THAT_RUN_THE_REAL_CLAUDE)
+              "worktree-create-hook-real-claude-code-test.py" in runner.SUITES_THAT_RUN_THE_REAL_CLAUDE_CLI)
 
         two_suites = scratch / "two-suites-repository"
         two_suites.mkdir()
