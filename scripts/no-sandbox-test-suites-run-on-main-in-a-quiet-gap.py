@@ -94,7 +94,7 @@ exits 0.
 EXIT. 0 the run finished, whatever the suites did, or no run was due, or
 another run or a no-sandbox suite held its lock; 2 bad invocation or a refused
 --record-follow-up-request-sent; 4 the run stopped: the fetch, the worktree, the
-runner or a write failed, which the state file records where it can.
+runner or a write failed, or the runner reported a suite NOT RUN, which the state file records where it can.
 
 SCHEDULE. Installed on ned-box alone by
 nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py, from the

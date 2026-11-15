@@ -66,7 +66,7 @@ Usage:
                 once a suite fails, kill the suites running beside it, as a
                 stop signal does, and start no other; the run exits 1, and
                 each suite killed is reported as stopped, not as failed. A
-                suite whose nc-test-sandbox did not start does not stop the run
+                suite NOT RUN, as HOW EACH SUITE IS JUDGED says, does not stop the run
   --only-suites-named SUITE [SUITE ...]
                 run only these suites, each named by its path from the
                 checkout's top directory, as git lists it; a name git does
@@ -460,7 +460,8 @@ OUTPUT. A first line naming the checkout, its commit, whether tracked files
 differ from that commit, the suite count, the interpreter's own --version
 answer and path, -j, and the log directory. Then one line per suite as it
 finishes: `PASS <path> (<seconds>s)`, `FAIL <path> exit <code>
-(<seconds>s)` or `NOT RUN <path> did not start: ...`, with `, <n> skipped`
+(<seconds>s)`, `NOT RUN <path> did not start: ...` or `NOT RUN <path>
+stopped by an outside cause: <the suite's last line>`, with `, <n> skipped`
 when it printed SKIP lines. Then the failed suites again, each with its log,
 the suites not run, each with its log, and every SKIP line, each with its
 suite, so the end of the output holds everything needed. The last line
@@ -3359,8 +3360,7 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         result["stopped by"] = stopped_by
     if sandbox_started is False and exit_code != 0:
         result["test sandbox did not start"] = True
-    elif (exit_code == NC_TEST_SUITE_EXIT_CODE_FOR_NOT_RUN_BECAUSE_A_CAUSE_OUTSIDE_THIS_REPOSITORY_STOPPED_ITS_CASES
-          and timed_out is None and stopped_by is None and not killed_at_memory_ceiling):
+    elif exit_code == NC_TEST_SUITE_EXIT_CODE_FOR_NOT_RUN_BECAUSE_A_CAUSE_OUTSIDE_THIS_REPOSITORY_STOPPED_ITS_CASES:
         result["stopped by an outside cause"] = (
             last_output_line(log_file)[:SUITE_STOPPED_BY_AN_OUTSIDE_CAUSE_REASON_MAX_CHARACTERS]
             or "its output names no cause")

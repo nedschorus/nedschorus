@@ -2114,6 +2114,29 @@ with tempfile.TemporaryDirectory() as scratch:
           and any(line.startswith(module.NOT_RUN_SUITE_LINE_PREFIX + "claude-limit-test.py ")
                   for line in lines(result.stdout)), (result.returncode, result.stdout))
 
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"silent-test.py": f"sys.exit({OUTSIDE_CAUSE_EXIT})\n",
+                     "long-cause-test.py": f"print('x' * 1000)\nsys.exit({OUTSIDE_CAUSE_EXIT})\n",
+                     "passes-test.py": PASSES})
+    result = run(root, "--stop-at-first-failing-suite", "-j", "1")
+    long_line = next((line for line in lines(result.stdout)
+                      if line.startswith(module.NOT_RUN_SUITE_LINE_PREFIX + "long-cause-test.py ")), "")
+    check("a suite that exits the outside-cause exit code with no output is NOT RUN with "
+          "\"its output names no cause\", a long last line is cut to "
+          "SUITE_STOPPED_BY_AN_OUTSIDE_CAUSE_REASON_MAX_CHARACTERS, and neither stops a run "
+          "given --stop-at-first-failing-suite",
+          result.returncode == module.EXIT_COULD_NOT_RUN
+          and any(line.startswith(module.NOT_RUN_SUITE_LINE_PREFIX + "silent-test.py stopped by an "
+                                  "outside cause: its output names no cause")
+                  for line in lines(result.stdout))
+          and "x" * module.SUITE_STOPPED_BY_AN_OUTSIDE_CAUSE_REASON_MAX_CHARACTERS + " (" in long_line
+          and "x" * (module.SUITE_STOPPED_BY_AN_OUTSIDE_CAUSE_REASON_MAX_CHARACTERS + 1) not in long_line
+          and "passes-test.py" in ran(root) and "stopped at" not in result.stdout,
+          (result.returncode, result.stdout))
+    check("the last output line of a log that cannot be read is empty",
+          module.last_output_line(root / "no-such.log") == "")
+
 # A run killed by SIGKILL leaves its suites' strace directories behind. On
 # Linux a later run removes them only when the killed run's record shows that
 # nothing of it still runs.
