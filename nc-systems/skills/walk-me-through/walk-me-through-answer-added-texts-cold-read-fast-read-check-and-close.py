@@ -2206,7 +2206,7 @@ def item_title(walk_finder, line):
     # a space before it, as in `x ** 2`, closes nothing.
     code = [span.span() for span in walk_finder.CODE_SPAN.finditer(title)]
     closer = next((found.start() for found in re.finditer(re.escape(opener), title) if opener
-                   and found.start() > 0 and not title[found.start() - 1].isspace()
+                   and found.start() > 0 and not title[found.start() - 1].isspace()  # pragma: no mutate, the return above leaves no opener at position 0, so > 0, > -1 and >= 0 agree
                    and not any(start <= found.start() < end for start, end in code)), None)
     if closer is not None:
         title = title[:closer] + title[closer + len(opener):]
