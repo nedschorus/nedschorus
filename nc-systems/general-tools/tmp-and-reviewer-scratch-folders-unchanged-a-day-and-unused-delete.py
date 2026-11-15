@@ -119,7 +119,7 @@ def paths_processes_use(proc: Path) -> list:
         # normpath keeps exactly two leading slashes, as POSIX allows, so those are collapsed too.
         bound = [fields[7] for fields in (line.split(maxsplit=7)
                                           for line in (proc / "net" / "unix").read_text().splitlines()[1:])
-                 if len(fields) == 8]
+                 if len(fields) == 8]  # pragma: no mutate, split(maxsplit=7) gives at most 8 fields, so >= 8 is == 8
         used = bound + [re.sub(r"^/+", "/", os.path.normpath(path)) for path in bound]
     except OSError as error:
         raise NeededFileOrListingUnreadable(f"the unix socket table {proc / 'net' / 'unix'} could not be "
