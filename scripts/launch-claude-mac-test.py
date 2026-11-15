@@ -745,10 +745,10 @@ def main() -> int:
               git_identity(sandbox.supervisor_environment()))
         sandbox = MacLaunchSandbox(root / "git-identity-ambient")
         sandbox.run("~/agents", seat_name="seat-a", ambient_git_identity={
-            "GIT_AUTHOR_NAME": "Edward Lerner",
-            "GIT_AUTHOR_EMAIL": "junk@lerner1.com",
-            "GIT_COMMITTER_NAME": "Edward Lerner",
-            "GIT_COMMITTER_EMAIL": "junk@lerner1.com"})
+            "GIT_AUTHOR_NAME": "Ambient User",
+            "GIT_AUTHOR_EMAIL": "ambient-user@example.invalid",
+            "GIT_COMMITTER_NAME": "Ambient User",
+            "GIT_COMMITTER_EMAIL": "ambient-user@example.invalid"})
         check("git identity: an identity in the launching shell is replaced, not inherited",
               git_identity(sandbox.supervisor_environment())
               == seat_git_identity("seat-a"),
