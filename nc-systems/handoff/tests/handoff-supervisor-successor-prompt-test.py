@@ -1116,7 +1116,7 @@ def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: P
             del os.environ["FAIL_GIT_CALL_CONTAINING"]
         check(f"a failed `git {call}` leaves the branch-state instruction out and prints which branch and why",
               instruction == "" and what_is_printed in console.getvalue()
-              and f"so the new agent-session's initial-agent-instructions do not tell it to leave the head of {branch_named} as it is.\n" in console.getvalue()
+              and f"so the new agent-session's initial-agent-instructions leave out the instruction that tells it to add no commit to {branch_named} and rewrite none of its history, and to start new work on a branch from origin/main.\n" in console.getvalue()
               and f"handoff-supervisor: could not tell whether {branch_named} is pushed, " in console.getvalue()
               and "handoff-supervisor: this launch goes ahead without that instruction, and nobody needs to act on "
               "this message: a git error that persists also fails the new agent-session's own git commands, "

@@ -454,8 +454,9 @@ BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION = (
 # Printed to the handoff-supervisor's console, which the agent-session never reads.
 BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE = (
     "handoff-supervisor: could not tell whether {branch} is pushed, "
-    "so the new agent-session's initial-agent-instructions do not tell it to leave the head of {branch} "
-    "as it is.\n"
+    "so the new agent-session's initial-agent-instructions leave out the instruction that tells it "
+    "to add no commit to {branch} and rewrite none of its history, and to start new work on a "
+    "branch from origin/main.\n"
     "handoff-supervisor: why: {cause}\n"
     "handoff-supervisor: this launch goes ahead without that instruction, and nobody needs to act on "
     "this message: a git error that persists also fails the new agent-session's own git commands, "
