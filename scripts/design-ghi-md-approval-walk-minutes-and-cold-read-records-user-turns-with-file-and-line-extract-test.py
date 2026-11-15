@@ -9,6 +9,7 @@ Exit codes: 0 all passed, 1 any failed.
 import importlib.util
 import io
 import json
+import socket
 import subprocess
 import sys
 import tempfile
@@ -164,11 +165,18 @@ def main():
 
         missing = run("--log-store", str(Path(temporary) / "absent"))
         check("missing directory exits 2", missing.returncode == 2
-              and "--log-store" in missing.stderr and "is not a directory" in missing.stderr, missing.stderr)
+              and "--log-store" in missing.stderr and "does not exist" in missing.stderr, missing.stderr)
         check("a given directory that is missing is named as given, with what to name instead",
-              missing.stderr == f"--log-store {Path(temporary) / 'absent'} is not a directory.\n"
+              missing.stderr == f"--log-store {Path(temporary) / 'absent'} does not exist.\n"
               "Run this program again with --log-store naming the log-store, whose walk/*-minutes.md and "
               "cold-read-records/ this program reads.\n", missing.stderr)
+
+        a_file = Path(temporary) / "a-file"
+        a_file.write_text("")
+        not_directory = run("--log-store", str(a_file))
+        check("a given path that is a file exits 2 and says it is not a directory",
+              not_directory.returncode == 2 and not_directory.stderr.startswith(
+                  f"--log-store {a_file} is not a directory.\n"), not_directory.stderr)
 
         # A default directory cannot be made absent from outside, so the program is loaded and its default
         # pointed at a directory that does not exist.
@@ -184,7 +192,7 @@ def main():
         finally:
             sys.stderr = stderr
         check("a missing default exits 2 and says the option was left out", code == 2 and told ==
-              f"--log-store was left out, and its default {absent} is not a directory on this machine.\n"
+              f"--log-store was left out, and its default {absent} does not exist on {socket.gethostname()}.\n"
               "Run this program again with --log-store naming the log-store, whose walk/*-minutes.md and "
               "cold-read-records/ this program reads.\n", (code, told))
 
