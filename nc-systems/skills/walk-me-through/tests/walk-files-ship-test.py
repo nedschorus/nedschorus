@@ -1449,6 +1449,29 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-left-behind-") as 
           and "ned-box" not in out.split(" during the copy")[0],
           f"exit {code}: {out}{err}")
 
+    # On ned-box the copy is local while the citation still names ned-box, so
+    # a local rsync that exits 255 must be reported by its exit code, not as
+    # the citation host unreachable.
+    walks, store, _ = left_walk_and_store("local-copy-exit-255")
+    ned_box_destination = left.WalkStoreDestination(None, "nedlern@ned-box",
+                                                    pathlib.PurePosixPath(store))
+
+    def local_copy_that_exits_255(copy_host, sources, walk_path):
+        return subprocess.CompletedProcess(
+            [], left.shipper.RSYNC_EXIT_CONNECTION_FAILED, "", "injected: rsync exit 255\n")
+
+    left.rsync_files = local_copy_that_exits_255
+    try:
+        code, out, err = ship_left(walks, ned_box_destination,
+                                   removal=lambda copy_host, staging_dir: None)
+    finally:
+        left.rsync_files = real_left_rsync
+    check("a local copy whose rsync exits 255 is FAILED with 'rsync exit 255', "
+          "not the citation host named unreachable",
+          code == 1 and one_line(out)
+          and out.startswith(f"FAILED: {LEFT_WALK} — rsync exit 255 during the copy"),
+          f"exit {code}: {out}{err}")
+
     # Renames that fail, then a removal that fails.
     walks, store, destination = left_walk_and_store("renames-failed")
 

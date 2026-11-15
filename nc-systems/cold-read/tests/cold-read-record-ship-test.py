@@ -1858,6 +1858,33 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-copy-unreachable-
               "FAILED: copy-unreachable-2026-11-12 — nobody@the-mac unreachable during the copy."),
           f"exit {code}: {printed.getvalue()}")
 
+# --- A local copy whose rsync exits 255 gives its exit code, not a host -----
+with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-local-copy-255-test-") as local_name:
+    local_scratch = pathlib.Path(local_name)
+    local_store = local_scratch / "store" / "cold-read-records"
+    local_record = make_record(local_scratch / "records", "local-copy-255-2026-11-15",
+                               {"a.md": REPORT_A})
+    real_run = subprocess.run
+
+    def local_rsync_exits_255(command, *args, **kwargs):
+        if command and command[0] == "rsync":
+            return subprocess.CompletedProcess(command, 255, "", "injected: rsync exit 255\n")
+        return real_run(command, *args, **kwargs)
+
+    subprocess.run = local_rsync_exits_255
+    try:
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(io.StringIO()):
+            code = returned_or_raised(lambda: failing_shipper.ship_one(
+                None, pathlib.PurePosixPath(local_store), local_record))
+    finally:
+        subprocess.run = real_run
+    check("a local copy whose rsync exits 255 is FAILED with 'rsync exit 255 during the copy', "
+          "not 'None unreachable', exit 1",
+          code == 1 and printed.getvalue().startswith(
+              "FAILED: local-copy-255-2026-11-15 — rsync exit 255 during the copy"),
+          f"exit {code}: {printed.getvalue()}")
+
 # --- A relative record directory means the one under the current directory --
 # Run from a directory outside the shipper's checkout with a relative path:
 # the record under that directory is the one shipped.
