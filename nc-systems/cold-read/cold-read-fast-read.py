@@ -1057,12 +1057,12 @@ def sentence_id_markup(text: str, units: dict = None):
                                    and (not stripped or indent > block_scalar_field_indent))
                 if not in_block_scalar:
                     block_scalar_field_indent = None
-                field = FRONTMATTER_FIELD_PATTERN.match(line)
+                field = None if in_block_scalar else FRONTMATTER_FIELD_PATTERN.match(line)
                 marker = take(field.group(2), line) if field else None
                 if not field:
                     # A folded value's continuation or a list entry: part
                     # of the field above it. A block scalar's line is all
-                    # value, even when it ends in a colon, as `Warning:` does.
+                    # value, even when it looks like a key, as `Warning:` does.
                     join_last_unit(line, line if in_block_scalar
                                    else FRONTMATTER_KEY_PATTERN.sub("", line))
                 elif BLOCK_SCALAR_INDICATOR_PATTERN.match(field.group(2)):

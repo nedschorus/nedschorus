@@ -3100,10 +3100,24 @@ EDIT_COMPARISON_CASES = (
      "---\ndescription: |\n  Danger:\n---\n",
      "---\ndescription: |\n  Warning:\n---\n",
      (["s1"], ["description: | Warning:"])),
+    ("a change to a frontmatter-only block scalar line shaped like a field is seen",
+     "---\ndescription: |\n  Danger: ***\n---\n",
+     "---\ndescription: |\n  Warning: ***\n---\n",
+     (["s1"], ["description: | Warning: ***"])),
 )
 for case_name, text, base_text, expected in EDIT_COMPARISON_CASES:
     found = edit_comparison(text, base_text)
     check(case_name, found == expected, f"{found!r}")
+
+block_scalar_marked, _ = sentence_id_markup("---\ndescription: |\n  Note: words here\n---\n")
+check("a block scalar's line shaped like a field gets no id inside the scalar's text; the id goes after the field's key",
+      block_scalar_marked == "---\ndescription: [s1] |\n  Note: words here\n---\n",
+      repr(block_scalar_marked))
+
+worded_before_first_unit = sentence_id_markup("---\ntags:\n  - Foo\n---\nBody.\n")
+check("frontmatter words before the first unit join that unit and make no unit of their own",
+      worded_before_first_unit == ("---\ntags:\n  - Foo\n---\n[s1] Body.\n", {"s1": "Body."}),
+      repr(worded_before_first_unit))
 
 frontmatter_only_marked, _ = sentence_id_markup("---\ndescription: >\n new words\n---\n")
 check("a frontmatter-only document's unit gets its id after the field's key, so the reviewer "
@@ -3111,13 +3125,18 @@ check("a frontmatter-only document's unit gets its id after the field's key, so 
       frontmatter_only_marked == "---\ndescription: [s1] >\n new words\n---\n",
       repr(frontmatter_only_marked))
 
-for wordless_document in ("***\n", "---\n\n---\n", "---\ntitle: ***\n---\n", "---\ntags:\n---\n"):
+for wordless_document in ("***\n", "---\n\n---\n", "---\ntitle: ***\n---\n", "---\ntags:\n---\n",
+                          "---\ndescription: |\n  ***\ntags:\n---\n"):
     wordless_found = sentence_id_markup(wordless_document)
     check(f"a document of text with no words, {wordless_document!r}, makes no unit",
           wordless_found == (wordless_document, {}), repr(wordless_found))
 
 for worded_document, worded_sentence in (("---\ndescription: |\n  Warning:\n---\n", "description: | Warning:"),
-                                         ("---\ntitle:***\n---\n", "title:***")):
+                                         ("---\ntitle:***\n---\n", "title:***"),
+                                         ("---\ndescription: |\n  Warning: ***\n---\n",
+                                          "description: | Warning: ***"),
+                                         ("---\ndescription: |\n  ***\n\n  Warning:\n---\n",
+                                          "description: | *** Warning:")):
     worded_found = sentence_id_markup(worded_document)
     check(f"a frontmatter-only document whose only words look like a key, {worded_document!r}, "
           "makes one unit",
