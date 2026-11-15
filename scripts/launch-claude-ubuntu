@@ -112,8 +112,10 @@ usage() {
          done | sort -u') || listing_exit_status=$?
     if [ "$listing_exit_status" -ne 0 ]; then
         echo "launch-claude-ubuntu: could not list the agent tmux sessions on $AGENT_BOX: ssh exited $listing_exit_status (ssh's own message, if any, is above). This says nothing about which agents are running there." >&2
+        echo "If you ran this on ned-box itself, run it from the Mac instead: it reaches the box over ssh." >&2
+        echo "Otherwise check that the box is up and that ssh $AGENT_BOX works from this machine, then run it again." >&2
     elif [ -n "$running" ]; then
-        echo "Agent tmux sessions on the box now (live seats or after-exit shells): $(printf '%s\n' "$running" | tr '\n' ' ')" >&2
+        echo "Agent tmux sessions on the box now (running agent-seats or leftover-shells): $(printf '%s\n' "$running" | tr '\n' ' ')" >&2
     else
         echo "No agent tmux sessions on the box now." >&2
     fi

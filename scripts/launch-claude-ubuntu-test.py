@@ -996,7 +996,9 @@ def main() -> int:
                   and "could not list the agent tmux sessions on stub-box: "
                       f"ssh exited {ssh_exit_code}" in stderr
                   and "ssh: Could not resolve hostname stub-box" in stderr
-                  and "No agent tmux sessions" not in stderr,
+                  and "No agent tmux sessions" not in stderr
+                  and "run it from the Mac instead" in stderr
+                  and "check that the box is up and that ssh stub-box works" in stderr,
                   (result["launched"].returncode, stderr[:800]))
 
         harness = LaunchHarness(root / "no-name-listing-empty")
@@ -1014,8 +1016,8 @@ def main() -> int:
         result = harness.run([])
         check("no name, the listing finds sessions: they are named on one line",
               result["launched"].returncode == 2
-              and "Agent tmux sessions on the box now (live seats or after-exit "
-                  "shells): seat-a@seat-a seat-b@default" in result["launched"].stderr,
+              and "Agent tmux sessions on the box now (running agent-seats or "
+                  "leftover-shells): seat-a@seat-a seat-b@default" in result["launched"].stderr,
               (result["launched"].returncode, result["launched"].stderr[:800]))
 
         # A first argument starting with - is refused as a seat name: the
