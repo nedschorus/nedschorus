@@ -2109,7 +2109,7 @@ def start_read_ahead_of_item_after(walk_finder, top, minutes, parser, numbers, t
         walk_name = minutes.name[:-len(walk_finder.MINUTES_SUFFIX)]
         start_read_ahead(item_reads_directory(walk_finder, minutes), after_named, text,
                          walk_fast_read_name(walk_name, after_named), fast_read_program, top,
-                         number_predicted=isinstance(after[0], int))
+                         number_predicted=isinstance(after[0], int))  # pragma: no mutate, next_item is given the same numbers as answered and waiting, so it names at most one item and after[-1] is after[0]
     except Failure as problem:
         return READ_AHEAD_NOT_STARTED.format(item=named, problem=problem)
     return None
