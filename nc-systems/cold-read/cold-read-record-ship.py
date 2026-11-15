@@ -587,6 +587,15 @@ def failed_log_store_step_reason_text_build_from_local_stdout_or_log_store_host_
     return f"ssh exit {completed.returncode}"
 
 
+def failed_log_store_rsync_step_reason_text_build_from_log_store_host_unreachable_or_rsync_exit(
+        host, completed: subprocess.CompletedProcess) -> str:
+    """The reason a FAILED line gives for an rsync into the store that failed.
+    A local store's rsync runs no ssh, so its exit 255 is rsync's own."""
+    if host is not None and completed.returncode == RSYNC_EXIT_CONNECTION_FAILED:
+        return f"{host} unreachable"
+    return f"rsync exit {completed.returncode}"
+
+
 class FirstLineUnreadable(Exception):
     """A file's first line could not be read; the message says why."""
 
@@ -1431,8 +1440,8 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
         capture_output=True, text=True, check=False)
     if transferred.returncode != 0:
         left_behind = remove_staging_directory(host, staging_dir)
-        reason = (f"{host} unreachable" if transferred.returncode == RSYNC_EXIT_CONNECTION_FAILED
-                  else f"rsync exit {transferred.returncode}")
+        reason = failed_log_store_rsync_step_reason_text_build_from_log_store_host_unreachable_or_rsync_exit(
+            host, transferred)
         staging_note = (f"; removing the staging directory then failed "
                         f"({left_behind}). {deletion}" if left_behind else ".")
         print(f"FAILED: {name} — {reason} during the copy{staging_note} {rerun}")
