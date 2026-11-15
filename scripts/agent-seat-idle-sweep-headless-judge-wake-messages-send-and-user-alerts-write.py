@@ -58,7 +58,7 @@ stopped, answers JSON code cannot use, or sends to the wrong entry; a message mi
 agent-seat's transcript; and a read failure slice 1 reports for the same agent-seat with the same
 text at every run for 2 minutes or more, counted from the failure's first run and through any
 invocation the lock made skip, since only a run that does not meet the failure ends the count,
-each become a user-alert, and the invocation exits 1. Each cause is alerted once; a failed headless
+each become a user-alert; the invocation goes on to the other agent-seats, then exits 1. Each cause is alerted once; a failed headless
 agent-session is alerted once a day for each agent-seat and cause, such as the headless
 agent-session itself stopping at a usage limit, however claude's text for that cause varies. A read
 failure seen once only, such as the last line of a transcript
