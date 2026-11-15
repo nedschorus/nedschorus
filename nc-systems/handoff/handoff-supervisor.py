@@ -10,12 +10,18 @@ trips the safety classifier.
 The cycle, per reincarnation:
   1. Watch the handoff file for a session-handoff-sequence-number above the last consumed.
   2. Kill the running session, and remove the agent-seat's finished worktrees.
+     When the handoff carries ask-user-before-restart, print "restart? y/n" on
+     this program's own terminal, the agent-seat's tmux window, and stop the
+     agent-seat unless the answer is y; with no terminal, stop it without
+     asking, and print which agent-seat stopped and the launcher command that
+     starts it again.
   2a. Unless the handoff carries ask-user-before-restart, fast-forward the checkout this
      program runs from to origin/main, and, when the checkout is then on
      main's commit, whether it moved or was already there, replace this
      process with a fresh start of this program from that checkout
      (os.execv, so the process ID stays, and the lock file keeps naming it).
-     The handoff is still unconsumed, so the fresh process carries out steps
+     An ask-user-before-restart handoff skips this step, because the fresh
+     process would ask "restart? y/n" again at startup. The handoff is still unconsumed, so the fresh process carries out steps
      3 to 6 below at startup, as after a reboot: it extracts the dialog
      (step 3); when the dialog cannot be extracted, the successor starts with
      no conversation-tail, and has the recovery note step 3 describes
@@ -65,8 +71,9 @@ The handoff file the agent writes (simple `key: value` lines):
   next-step:            the first action the successor takes
   session-handoff-sequence-number: predecessor's number plus one (a session-handoff
                         written before the rename carries it as restart-counter)
-  ask-user-before-restart: optional; any value makes the supervisor ask before
-                        relaunching (a session-handoff written before the rename
+  ask-user-before-restart: optional; any value makes the supervisor ask the user
+                        "restart? y/n" on its terminal before relaunching, as
+                        step 2 of the cycle says (a session-handoff written before the rename
                         carries it as dont-restart)
   spawned-subagent-<n>: optional, one per subagent still working when the
                         handoff was written; the reincarnation kills them, so the
@@ -144,6 +151,24 @@ from typing import Optional
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIRECTORY = REPOSITORY_ROOT / "scripts"
+_mac_reference_checkout_path_constant_specification = importlib.util.spec_from_file_location(
+    "mac_reference_checkout_launcher_scripts_directory_path_constant_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    / "mac-reference-checkout-launcher-scripts-directory-path-constant-common.py")
+mac_reference_checkout_path_constant = importlib.util.module_from_spec(_mac_reference_checkout_path_constant_specification)
+_mac_reference_checkout_path_constant_specification.loader.exec_module(mac_reference_checkout_path_constant)
+mac_launcher_command = (
+    mac_reference_checkout_path_constant.mac_reference_checkout_launcher_path_agent_seat_start_command_text_for_user_to_type)
+
+
+def ask_user_to_start_agent_seat_from_mac_terminal(agent_seat: str) -> str:
+    # The handoff-supervisor runs on its agent-seat's machine.
+    return mac_reference_checkout_path_constant.mac_reference_checkout_launcher_agent_seat_start_command_agent_instruction_to_ask_user_to_type_in_mac_terminal(
+        agent_seat, handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box())
+
+
+def mac_launcher_command_for_agent_seat_on_this_machine(agent_seat: str) -> str:
+    return mac_launcher_command(agent_seat, handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box())
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
     "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
@@ -381,6 +406,7 @@ BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX = (
     "background-task-started-during-handoff-deferral-")
 COLD_READ_FULL_RUN_COMMAND_REFUSED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX = (
     "cold-read-full-run-command-refused-during-handoff-deferral-")
+BACKGROUND_TASK_PAST_WAIT_LIMIT_FIELD_PREFIX = "background-task-past-wait-limit-"
 WRITTEN_BY_SESSION_UNKNOWN_VALUE = "unknown"
 
 # The prompt goes on to the next step; a stop must hold that back too.
@@ -393,8 +419,7 @@ def launch_time_git_sync_git_failure_next_steps(error) -> str:
     """The next-step lines for a GitCommandFailed the launch-time-git-sync reports."""
     rerun = f"`{shlex.join(['git', '-C', str(error.directory), *error.arguments])}`"
     return next_step_lines.git_failure_next_step_lines(
-        rerun, include_the_misspelt_branch_commit_or_path_line=False,
-        rerun_fails_when=LAUNCH_TIME_GIT_SYNC_RERUN_FAILS_WHEN, which_lines_to_quote_in_the_report=LAUNCH_TIME_GIT_SYNC_WHICH_LINES_TO_QUOTE_IN_THE_REPORT,
+        rerun, rerun_fails_when=LAUNCH_TIME_GIT_SYNC_RERUN_FAILS_WHEN, which_lines_to_quote_in_the_report=LAUNCH_TIME_GIT_SYNC_WHICH_LINES_TO_QUOTE_IN_THE_REPORT,
         read_by_a_subagent=False,
         next_step_to_skip_when_the_rerun_fails_too=LAUNCH_TIME_GIT_SYNC_STOP_HOLDS_BACK)
 
@@ -575,6 +600,14 @@ BACKGROUND_TASKS_STARTED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE = (
     "{joined_tasks}. Run again any whose result you still need."
 )
 
+BACKGROUND_TASKS_PAST_WAIT_LIMIT_SENTENCE_TEMPLATE = (
+    "When the session you are replacing ended, it had {task_count} background Bash task(s), none "
+    "of them a waiting-task, each still running past its kind's wait-limit, so they were stopped: "
+    "{joined_tasks}. Run each again, then look first for a way to make it faster, such as removing "
+    "repeated work or running its steps in parallel, and raise its kind's wait-limit in the "
+    "wait-limit table only when you find no such way."
+)
+
 COLD_READ_FULL_RUN_COMMANDS_REFUSED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE = (
     "During the handoff-deferral of the session you are replacing, a hook refused "
     "{command_count} cold-read-full-run(s), because each would have outlasted that session, and "
@@ -704,6 +737,14 @@ def clear_agent_exit_record_from_supervisor_state(state: dict) -> None:
     state.pop(AGENT_EXIT_CODE_STATE_KEY, None)
     state.pop(AGENT_EXIT_RECORDED_AT_STATE_KEY, None)
     state.pop(AGENT_EXIT_REASON_STATE_KEY, None)
+
+
+def no_terminal_to_ask_user_before_restart_stop_message(agent_seat: str, handoff_path: Path) -> str:
+    return (f"handoff-supervisor: the agent-seat {agent_seat}'s session-handoff asks the user "
+            "before restarting, and this handoff-supervisor has no terminal to ask on, so it "
+            f"stopped {agent_seat} without restarting it.\n"
+            f"To start it again, {ask_user_to_start_agent_seat_from_mac_terminal(agent_seat)}. "
+            f"The new session is not given the session-handoff's next step, which stays in {handoff_path}.")
 
 
 def agent_exit_record_is_a_stop_at_an_ask_user_before_restart_handoff(state: dict) -> bool:
@@ -1198,6 +1239,11 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
     if late_tasks:
         lines.append(BACKGROUND_TASKS_STARTED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE.format(
             task_count=len(late_tasks), joined_tasks="; ".join(late_tasks)))
+    past_wait_limit_tasks = numbered_field_values_from(
+        handoff_fields, BACKGROUND_TASK_PAST_WAIT_LIMIT_FIELD_PREFIX)
+    if past_wait_limit_tasks:
+        lines.append(BACKGROUND_TASKS_PAST_WAIT_LIMIT_SENTENCE_TEMPLATE.format(
+            task_count=len(past_wait_limit_tasks), joined_tasks="; ".join(past_wait_limit_tasks)))
     refused_commands = numbered_field_values_from(
         handoff_fields, COLD_READ_FULL_RUN_COMMAND_REFUSED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX)
     if refused_commands:
@@ -1838,11 +1884,19 @@ LOG_OF_REMOVALS_RECORD_BY_HAND_PHRASES = (
     ": if that printf command fails too, do not run scripts/clean-worktrees.py again; ")
 
 
+# clean-worktrees.py prints this for a branch it deleted with git branch -D, which held commits
+# origin/main lacks, so it is not counted among the branches with nothing beyond main.
+FORCE_DELETED_BRANCH_MARKER = ": deleted with git branch -D, its last commit "
+
+
 def summarize_worktree_cleanup_output(lines) -> str:
     """Return one report line from the cleaner's output."""
     removed = sum(1 for line in lines if ": removed" in line)
+    force_deleted = [line for line in lines
+                     if line.startswith("branch ") and FORCE_DELETED_BRANCH_MARKER in line]
     deleted = sum(1 for line in lines
-                  if (line.startswith("branch ") and ": deleted" in line)
+                  if (line.startswith("branch ") and ": deleted" in line
+                      and FORCE_DELETED_BRANCH_MARKER not in line)
                   or (": removed" in line and line.endswith(" deleted")))
     kept_for_records = [line for line in lines if KEPT_FOR_RECORDS_MARKER in line]
     # A kept-for-records line holds FAILED, so it is counted here and not again among the failures.
@@ -1876,6 +1930,9 @@ def summarize_worktree_cleanup_output(lines) -> str:
               for line in failed]
     report = (f"worktree cleanup: {removed} finished worktree(s) removed, "
               f"{deleted} branch ref(s) with nothing beyond main deleted")
+    if force_deleted:
+        report += (f"; {len(force_deleted)} finished pull request's head branch(es), holding commits "
+                   f"main lacks, deleted with git branch -D: " + "; ".join(force_deleted))
     if discarded:
         report += (f"; {len(discarded)} of the removed held uncommitted, untracked or "
                    f"ignored files: " + "; ".join(discarded))
@@ -2496,7 +2553,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             if read_ask_user_before_restart_reason_from_session_handoff_fields(boot_fields):
                 # Boot recovery must honor ask-user-before-restart too; a deliberate stand-down needs an exit record.
                 if not sys.stdin.isatty():
-                    print("handoff-supervisor: ask-user-before-restart, and no terminal to ask on; stopping")
+                    print(no_terminal_to_ask_user_before_restart_stop_message(settings.agent, settings.handoff_path))
                     state["consumed_counter"] = boot_counter
                     record_agent_exit_in_supervisor_state(
                         settings.state_path, state, None, reason=AGENT_EXIT_REASON_STOPPED_AT_AN_ASK_USER_BEFORE_RESTART_HANDOFF)
@@ -2606,9 +2663,9 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                                                          session_id, error), file=sys.stderr)
                 return 5
         else:
-            consecutive_resumes_without_new_work = 0
+            consecutive_resumes_without_new_work = 0  # pragma: no mutate, the None below makes the death path reset the count before any read of it
             substantive_turns_at_the_last_resume = None
-        verb = "resuming" if next_launch_resumes_the_session else "launching"
+        verb ="resuming" if next_launch_resumes_the_session else "launching"
         print(f"handoff-supervisor: {verb} session {session_id} (generation {generation})")
         # Read at each launch: a resume after a crash is when a dead agent's work-snapshots appear.
         leftover_work_snapshots = uncommitted_work_snapshot_text(
@@ -2687,7 +2744,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         if read_ask_user_before_restart_reason_from_session_handoff_fields(handoff_fields):
             if not sys.stdin.isatty():
                 # Without a terminal, asking would raise EOFError before consuming the handoff and trigger it again next time.
-                print("handoff-supervisor: ask-user-before-restart, and no terminal to ask on; stopping")
+                print(no_terminal_to_ask_user_before_restart_stop_message(settings.agent, settings.handoff_path))
                 answer = "n"
             else:
                 answer = input("handoff-supervisor: restart? y/n ").strip().lower()
@@ -2802,9 +2859,7 @@ def main(argv=None) -> int:
         print(
             "handoff-supervisor: startup stopped because the agent-seat was not started "
             "by a launcher that pins its task list; CLAUDE_CODE_TASK_LIST_ID is unset or empty.\n"
-            "For an agent-seat on the Mac, start it on the Mac with scripts/launch-claude-mac.\n"
-            "For an agent-seat on ned-box, start it on the Mac with scripts/launch-claude-ubuntu, "
-            "which reaches ned-box over ssh.",
+            f"To start the agent-seat, {ask_user_to_start_agent_seat_from_mac_terminal(arguments.agent)}.",
             file=sys.stderr,
         )
         return 2
@@ -2814,10 +2869,9 @@ def main(argv=None) -> int:
     except AgentSeatGithubTokenUnreadableError as error:
         print(agent_seat_github_token_unreadable_so_agent_seat_not_started_message_build(
             "handoff-supervisor", error,
-            "start the agent-seat again with its launcher, from the Mac: "
-            f"`launch-claude-ubuntu {arguments.agent}` for an agent-seat on ned-box, "
-            f"`launch-claude-mac {arguments.agent}` for one on the Mac. If the launcher left a "
-            "shell open in the agent-seat's tmux session, exit that shell first."),
+            "ask the user, in the Terminal on his Mac that shows the agent-seat's tmux session, first to "
+            "exit the shell the launcher left open there, if it left one, and then to run "
+            f"`{mac_launcher_command_for_agent_seat_on_this_machine(arguments.agent)}`."),
             file=sys.stderr)
         return AGENT_SEAT_GITHUB_TOKEN_UNREADABLE_EXIT_STATUS
     if arguments.agent_seat_github_token_file_readable_check_only:

@@ -565,7 +565,7 @@ try:
     check("the budget is read during that walk, after the 256th name",
           len(readings_taken) == 3, str(len(readings_taken)))
 
-    for raw in ["not json", json.dumps({"tool_name": "Edit"}),
+    for raw in [json.dumps({"tool_name": "Edit"}),
                 json.dumps({"tool_name": "Bash", "tool_input": {}}),
                 json.dumps({"tool_name": "Bash", "tool_input": {"command": ""}}),
                 json.dumps(["Bash"])]:

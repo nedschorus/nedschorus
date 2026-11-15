@@ -233,7 +233,8 @@ LEAVE_IT_ADVICE = (
     "This branch is pushed, so its review may be running. Do not rebase or "
     "amend it. A fix for this topic is a new commit on top, pushed once. To learn "
     "whether the branch conflicts with main, run python3 scripts/branch-conflict-check.py "
-    "in this checkout, and if it reports a conflict, do what its report says. "
+    "in this checkout. If it prints `VERDICT: CONFLICT`, do what its report says. If it "
+    "exits 2, it has no answer: do what its lines say, then run it again. "
     "Start your next topic with `git checkout -b <name> origin/main`."
 )
 # A branch whose own commits are already on a remote branch, under another
@@ -306,8 +307,7 @@ GIT_FAILED_NOTES_DELIVERY_AGENT_NEXT_STEP_LINES = (
     "{program} printed, git's error included."
 )
 GIT_FAILED_RERUN_NEXT_STEP_LINES = next_step_lines.git_failure_next_step_lines(
-    "{rerun}", text_the_failure_line_contains="because a git command failed",
-    include_the_misspelt_branch_commit_or_path_line=False)
+    "{rerun}", text_the_failure_line_contains="because a git command failed")
 
 
 def git_failed_text(prefix: str, what: str, error, next_steps: str, rerun: str = None) -> str:
@@ -1058,7 +1058,7 @@ def move_detached_checkout_forward(checkout: Path, git_dir: Path, ahead: int):
         lines.append(DETACHED_WORK_OF_ITS_OWN_LINE)
     if reasons:
         return "blocked", reasons, lines, ""
-    moved = run_git(["merge", "--ff-only", "--no-overwrite-ignore", "origin/main"], checkout, timeout=120)
+    moved = run_git(["merge", "--ff-only", "--no-overwrite-ignore", "origin/main"], checkout, timeout=120)  # pragma: no mutate, a limit a second longer or shorter on a fast-forward changes nothing a test can see without a git merge that runs for two minutes
     if moved.returncode == 0:
         return "moved", [], [], ""
     # Every line, not the first: git names the untracked file on a later line.
@@ -1247,12 +1247,12 @@ def ignored_files_a_rebase_onto_main_would_replace(checkout: Path):
     never appears among the ignored files.
     """
     main_paths = set(git_output.nul_separated_fields(run_git_or_raise(
-        ["ls-tree", "-r", "-z", "--name-only", "origin/main"], checkout, timeout=30).stdout))
+        ["ls-tree", "-r", "-z", "--name-only", "origin/main"], checkout, timeout=30).stdout))  # pragma: no mutate, a limit a second longer or shorter changes nothing a test can see without a git listing that runs for thirty seconds
     main_directories = {parent for path in main_paths
-                        for parent in map(str, PurePosixPath(path).parents)} - {"."}
+                        for parent in map(str, PurePosixPath(path).parents)} - {"."}  # pragma: no mutate, git never lists "." as an ignored path, so whether main_directories holds "." decides nothing
     ignored = git_output.nul_separated_fields(run_git_or_raise(
         ["ls-files", "-z", "--others", "--ignored", "--exclude-standard"], checkout,
-        timeout=30).stdout)
+        timeout=30).stdout)  # pragma: no mutate, a limit a second longer or shorter changes nothing a test can see without a git listing that runs for thirty seconds
     return sorted(path for path in ignored
                   if path.rstrip("/") in main_paths or path.rstrip("/") in main_directories
                   or any(str(parent) in main_paths
@@ -1753,7 +1753,7 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
         write_stamp(stamp_path, stamp)
         return False
 
-    pulled = run_git(["merge", "--ff-only", "--no-overwrite-ignore", "origin/main"], reference, timeout=120)
+    pulled = run_git(["merge", "--ff-only", "--no-overwrite-ignore", "origin/main"], reference, timeout=120)  # pragma: no mutate, a limit a second longer or shorter on a fast-forward changes nothing a test can see without a git merge that runs for two minutes
     if pulled.returncode != 0:
         detail = pulled.stderr.strip() or "no detail"
         stamp["last_action"] = "reference ff-only refused"

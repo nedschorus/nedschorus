@@ -18,7 +18,7 @@ directory directly under `~/agents/`, skipping a directory that has none, such
 as a worktree; `~/.claude/CLAUDE.md`, the machine's global instructions; and
 the Remote Control reconnect watcher's log directory on the Mac,
 `~/.local/state/claude/<REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM>/`, its
-decisions.jsonl and notices, which ned-box has nowhere else. ned-box has no
+<REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM>-decisions.jsonl and notices, which ned-box has nowhere else. ned-box has no
 such directory, because there the watcher writes into the log-store itself.
 Git tracks none of these; for the Mac, the store's copy is the only one off
 the machine.
@@ -33,7 +33,7 @@ subagent definitions:
   /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/tasks/<list-name>/<task-id>.json
   /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/seat-briefs/<seat>/CLAUDE.local.md
   /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/CLAUDE.md
-  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/<REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM>/decisions.jsonl
+  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/<REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM>/<REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM>-decisions.jsonl
   /home/nedlern/nedschorus-logs/agent-session-files-by-machine/ned-box/projects/...
 
 `mac` and `ned-box` are the names CLAUDE.md uses for the two machines; this

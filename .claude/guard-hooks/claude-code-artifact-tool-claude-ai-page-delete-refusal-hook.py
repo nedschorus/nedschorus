@@ -14,8 +14,16 @@ Artifact call is let through without output, as the other guard hooks do.
 # Deferred annotations let the hook load on the Mac's system Python 3.9.
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
+from pathlib import Path
+
+_crash_notice_spec = importlib.util.spec_from_file_location(
+    "guard_hook_crash_fail_open_with_notice_common",
+    Path(__file__).resolve().parent / "guard-hook-crash-fail-open-with-notice-common.py")
+_crash_notice = importlib.util.module_from_spec(_crash_notice_spec)
+_crash_notice_spec.loader.exec_module(_crash_notice)
 
 NO_LINK_TEXT = "(no link in the call)"
 
@@ -50,10 +58,7 @@ def deny(reason):
 
 
 def main(stdin=sys.stdin) -> int:
-    try:
-        payload = json.load(stdin)
-    except (json.JSONDecodeError, ValueError):
-        return 0
+    payload = json.load(stdin)
     if not isinstance(payload, dict) or payload.get("tool_name") != "Artifact":
         return 0
     refusal = refusal_for_tool_input(payload.get("tool_input"))
@@ -63,4 +68,5 @@ def main(stdin=sys.stdin) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(__file__, True):
+        sys.exit(main())
