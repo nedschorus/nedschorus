@@ -193,16 +193,12 @@ def run_several_alert_cases(root):
     parser = walk_finder.markdown_parser()
     units = walk_finder.item_unit_spans(document, parser)
     item_4 = next(unit for unit in units if unit[0] == ["4"])
-    close_spec = importlib.util.spec_from_file_location(
-        "check_and_close", HERE / "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py")
-    close = importlib.util.module_from_spec(close_spec)
-    close_spec.loader.exec_module(close)
     check("while sub-step 4.1 waits, with a withdrawn version of it and sub-step 4.2 below it, the alert goes after "
           "the whole of item 4, so 4.2 stays a sub-step of item 4",
           result.returncode == 0
           and document.index("An older part.") < document.index("### Item 4.2 of 9: another part")
           < document.index("## sixth") < document.index("## Items 5 and 6 of 9")
-          and [unit[0] for unit in close.approval_walk_item_sub_step_units_right_after(units, item_4)]
+          and [unit[0] for unit in walk_finder.approval_walk_item_sub_step_units_right_after(units, item_4)]
           == [["4.1"], ["4.2"]], result.stderr + document)
     check("the walk-minutes and the output name the whole item the alert follows",
           "added 1 unnumbered item(s) after the whole of item 4," in minutes
@@ -239,6 +235,32 @@ def run_several_alert_cases(root):
           "alert by hand, and change nothing",
           result.returncode == 1 and "`##` part headings" in result.stderr and "alert-e" in result.stderr
           and "Traceback" not in result.stderr and files(checkout) == before, result.stderr)
+
+
+def run_unnumbered_item_count_cases(root):
+    # 257 existing items: past the integers Python caches, so the counts are equal but distinct objects.
+    existing = "".join(f"## waiting point {number}\n\nRecommendation: go.\n\n" for number in range(257))
+    checkout, home = walk_checkout(root, "existing-unnumbered",
+                                   document=WALK_DOCUMENT + "\n" + existing)
+    claimed_alert(home, "alert-a", "first")
+    result = run(checkout, home, "alert-a")
+    document, _ = files(checkout)
+    units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+    check("with 257 unnumbered items already in the walk-document, the alert is added as the 258th",
+          result.returncode == 0 and "\n## first\n" in document
+          and sum(map(walk_finder.approval_walk_unit_is_unnumbered_item, units)) == 258,
+          result.stderr)
+
+    checkout, home = walk_checkout(root, "heading-in-action")
+    claimed_alert(home, "alert-a", "first")
+    path = home / ".local/state/nedschorus/user-alerts/claimed" / "alert-a.json"
+    alert = json.loads(path.read_text(encoding="utf-8"))
+    path.write_text(json.dumps({**alert, "action": "Restart it.\n\n## a second heading"}), encoding="utf-8")
+    before = files(checkout)
+    result = run(checkout, home, "alert-a")
+    check("an alert whose text outside the fence adds a second unnumbered item makes the program exit 1 and "
+          "change nothing", result.returncode == 1 and "Traceback" not in result.stderr
+          and files(checkout) == before, result.stderr)
 
 
 def run_marker_in_title_cases(root):
@@ -390,6 +412,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     scratch = Path(temporary_directory)
     run_one_alert_cases(scratch)
     run_several_alert_cases(scratch)
+    run_unnumbered_item_count_cases(scratch)
     run_marker_in_title_cases(scratch)
     run_refusal_cases(scratch)
     run_repeated_id_and_title_spanning_two_headings_cases(scratch)

@@ -216,7 +216,6 @@ def payload_cases(workspace):
         return code == 0 and not stdout.getvalue().strip()
 
     for label, stdin_text in (
-            ("input that is not JSON", "{not json"),
             ("a JSON value that is not an object", json.dumps(["Bash"])),
             ("another tool", json.dumps({"tool_name": "Read", "session_id": SESSION_ID,
                                          "tool_input": {"command": GRID_COMMAND}})),

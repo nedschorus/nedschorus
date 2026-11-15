@@ -15,7 +15,7 @@ An agent-seat's work is the body of related work it owns: a subject area with sh
 The user's reasoning, which this model serves:
 
 - An agent with focused context is smarter than one carrying unrelated history. Confusion is the expensive failure.
-- **An idle agent-seat costs almost nothing** — no tokens, no attention — so never merge two agent-seats' unrelated work to keep an agent-seat busy. It is not literally free: an unretired agent-seat holds a directory and a branch, and retiring it later takes the steps below. That cost is small and one-time.
+- **An idle agent-seat costs almost nothing** — no tokens, no attention — so never merge two agent-seats' unrelated work to keep an agent-seat busy. It is not literally free: an unretired agent-seat holds an agent-home, and retiring it later takes the steps below. That cost is small and one-time.
 - The natural unit of work is a series of related tasks; at the end of a series, the agent writes a handoff and the session is replaced, so the next series starts on a clean context.
 - Agent-seats are resumed weeks later, so a name must say what the agent-seat is for without opening anything.
 
@@ -29,7 +29,7 @@ An agent-seat name is one word. It is an address typed to reach an agent, not a 
 
 They are different, and confusing them loses work.
 
-**Paused** — the agent-seat's current series is done and nobody is using it. Exit the session; the handoff-supervisor stops with it. The handoff, worktree and branch all stay exactly as they are. This is the ordinary way to leave an agent-seat, and it needs no cleanup.
+**Paused** — the agent-seat's current series is done and nobody is using it. Exit the session; the handoff-supervisor stops with it. The handoff and the worktree both stay exactly as they are. This is the ordinary way to leave an agent-seat, and it needs no cleanup.
 
 **Retired** — the name is being freed or repurposed. Four steps, in order:
 
@@ -64,7 +64,7 @@ Three things about that command worth knowing before you rely on it:
 - **An unconsumed handoff outranks the first-prompt file.** If `~/.claude/handoffs/<seat>-handoff.md` holds a handoff the handoff-supervisor has not yet consumed, it boots from that; `--first-prompt-file` seeds every other launch. To seed an agent-seat from another agent-seat's context deliberately, copy that agent-seat's handoff to `~/.claude/handoffs/<seat>-handoff.md` before launching.
 - **A session that ends without writing a handoff leaves no thread behind.** The next launch of that name starts from the first-prompt file. The handoff — not the session — is the thing that carries an agent-seat's thread. Its companion is the conversation tail, `~/.claude/handoffs/<seat>-dialog-NNNN.md`, numbered by generation: the successor is told to read it first, and when the tail leaves earlier turns out, the whole dialog waits beside it in `<seat>-dialog-NNNN-complete.md` for when it needs more.
 
-The launcher creates the agent-seat's worktree on its own branch **before the session starts**, because project settings — the status line, the context-threshold handoff hook, the instruction-file guard — are wired through `.claude/settings.json` in the working directory, read at session start, and an agent started in a directory without it runs with none of them. When the worktree cannot be made, the launcher says so and starts the session anyway.
+The launcher creates the agent-seat's worktree, detached at `origin/main`, **before the session starts**, because project settings — the status line, the context-threshold handoff hook, the instruction-file guard — are wired through `.claude/settings.json` in the working directory, read at session start, and an agent started in a directory without it runs with none of them. When the worktree cannot be made, the launcher says so and starts the session anyway.
 
 ## What separate branches do and do not protect
 

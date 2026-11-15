@@ -32,9 +32,13 @@ scripts/run-all-test-suites.py keeps), plus the file's sibling
 THE QUICK MUTATION PASS mutates only the changed lines that are
 failure-handling code: the changed lines inside an `except` clause,
 or inside an `if` statement, `while` loop or conditional expression whose test
-reads an exit code (a name or attribute named `returncode`, or ending in
-`exit_code` or `exit_status`), each such clause or statement counted from its
-first line to its last. A clause's or statement's lines that the change did
+reads an exit code: a name or attribute named `returncode`, or ending in
+`exit_code` or `exit_status`; a call of `.wait()`, `os.system`,
+`subprocess.call` or `os.waitstatus_to_exitcode`; or a name that the same
+function sets to one of those, and to nothing wrapped around it, as
+`status = process.wait()` sets `status` for `if status != 0:`. A test of
+`.poll()` does not read an exit code. Each such clause or statement is counted
+from its first line to its last. A clause's or statement's lines that the change did
 not touch are not mutated.
 A changed file with no changed line of
 failure-handling code is not mutated, and is printed as NO FAILURE-HANDLING
@@ -219,13 +223,16 @@ its verdict and naming its diff file: MUTANT KILLED when a suite fails with
 the mutant applied; MUTANT SURVIVED when every suite passes with it; MUTANT
 NO LONGER EXISTS when there is nothing to kill, because the line it changes ends with a
 `# pragma: no mutate` comment at the head, or the diff does not apply at the
-head and origin/main, read without fetching, lacks the lines it replaces; and
+head and origin/main, read without fetching, lacks the lines it replaces, or has
+them only where none of the diff's non-blank context lines stands beside them, as a bare
+`continue` the diff replaces has unrelated copies elsewhere; and
 MUTANT COULD NOT BE JUDGED, with what to do, when the diff file cannot be read or
 names no file, the file has no suite while the mutant still applies at the
 head, the diff does not apply at the head while origin/main has those lines,
 the diff does not apply at the head and whether origin/main has those lines
 cannot be told (there is no local origin/main, git cannot read the file there,
-or the lines appear there more than once), two of the diff's hunks are found at
+or the lines appear there more than once and some copy has one of
+the diff's non-blank context lines beside it), two of the diff's hunks are found at
 places whose lines overlap, some copies of the lines it replaces end with a
 `# pragma: no mutate` comment and others do not, so that the lines appear more
 than once at the head when that comment is ignored but only once when it is
@@ -254,7 +261,7 @@ check exits as its own paragraph says: 0 every mutant was killed or no longer
 exists, 1 one survived, 2 one could not be judged or the check could not run,
 a suite failing without a mutant included; never 3):
 0 every mutant was killed, 1 a mutant survived, errored or was
-not run, or a changed file has no suite, 2 could not run (cosmic-ray missing,
+not run, or a changed file has no suite, 2 could not run (cosmic-ray missing or unable to start,
 a git step failed, the nc-head-commit is already in the base, the worktree could
 not be made, a changed file the quick mutation pass reads is not valid Python,
 the JSON file could not be written, or a suite runs out of time, cannot be
@@ -315,7 +322,7 @@ PRAGMA_NO_MUTATE_COMMENT = re.compile(r"\s*#.*pragma: no mutate.*")
 # Each checks one rule across a whole class of the repository's files, so its recording reads
 # nearly every module; the quick mutation pass leaves it out.
 REPOSITORY_WIDE_CHECKS = (
-    "nc-systems/general-tools/tests/common-module-wording-copied-into-other-test-files-guard-for-each-wording-module-test.py",
+    "nc-systems/general-tools/tests/common-module-wording-copied-into-other-test-files-scan-of-every-tracked-test-file-fails-on-any-copy-test.py",
     "scripts/code-comments-carry-no-history-markers-test.py",
     "scripts/edited-file-path-within-checkout-root-and-git-check-ignore-defined-once-test.py",
     "scripts/every-repository-program-help-option-test.py",
@@ -538,18 +545,54 @@ def quick_mutation_pass_suites(suites, recordings_directory, runner, checkout, e
     return chosen
 
 
-def reads_an_exit_code(expression):
-    return any(EXIT_CODE_NAME.search(node.attr if isinstance(node, ast.Attribute) else node.id)
-               for node in ast.walk(expression) if isinstance(node, (ast.Attribute, ast.Name)))
+SCOPES = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+EXIT_CODE_FUNCTIONS = {("os", "system"), ("subprocess", "call"), ("os", "waitstatus_to_exitcode")}
+
+
+def gives_an_exit_code(node):
+    """Whether the node is itself an exit code: an EXIT_CODE_NAME name or attribute, a call of
+    an EXIT_CODE_FUNCTIONS function, or a `.wait()` call. `.poll()` is left out because
+    nearly every test of it asks whether a process is still running."""
+    if isinstance(node, ast.Name):
+        return bool(EXIT_CODE_NAME.search(node.id))
+    if isinstance(node, ast.Attribute):
+        return bool(EXIT_CODE_NAME.search(node.attr))
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+        return False
+    called = node.func
+    return called.attr == "wait" or (
+        isinstance(called.value, ast.Name) and (called.value.id, called.attr) in EXIT_CODE_FUNCTIONS)
+
+
+def nodes_of_scope(scope):
+    """The nodes inside the scope that belong to no scope nested in it."""
+    pending = list(ast.iter_child_nodes(scope))
+    while pending:
+        node = pending.pop()
+        yield node
+        if not isinstance(node, SCOPES):
+            pending.extend(ast.iter_child_nodes(node))
 
 
 def failure_handling_line_ranges(source):
     """(first line, last line) of each except clause, and of each if, while or conditional
-    expression whose test reads an exit code."""
-    return sorted(
-        (node.lineno, node.end_lineno) for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.ExceptHandler)
-        or (isinstance(node, (ast.If, ast.While, ast.IfExp)) and reads_an_exit_code(node.test)))
+    expression whose test contains an exit code, as gives_an_exit_code() judges, or reads a
+    name its own scope assigned one to."""
+    ranges = []
+    for scope in ast.walk(ast.parse(source)):
+        if not isinstance(scope, SCOPES):
+            continue
+        nodes = list(nodes_of_scope(scope))
+        exit_code_names = {target.id for node in nodes
+                           if isinstance(node, ast.Assign) and gives_an_exit_code(node.value)
+                           for target in node.targets if isinstance(target, ast.Name)}
+        ranges.extend(
+            (node.lineno, node.end_lineno) for node in nodes
+            if isinstance(node, ast.ExceptHandler)
+            or (isinstance(node, (ast.If, ast.While, ast.IfExp)) and any(
+                gives_an_exit_code(read) or (isinstance(read, ast.Name) and read.id in exit_code_names)
+                for read in ast.walk(node.test))))
+    return sorted(ranges)
 
 
 HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
@@ -959,8 +1002,8 @@ def test_suite_runner_log_directories_parent_removed_or_named_as_kept(log_direct
         shutil.rmtree(log_directories_parent, ignore_errors=True)
     elif any(log_directories_parent.iterdir()):
         print(f"{TEST_SUITE_RUNNER_LOGS_KEPT_LINE_PREFIX}{log_directories_parent}; "
-              f"remove that directory once you have read them; a later run of {PROGRAM}.py "
-              f"removes it once it has not changed for two days.", file=sys.stderr)
+              f"a later run of scripts/{PROGRAM}.py removes that directory once it has not "
+              f"changed for two days, so you need not remove it yourself.", file=sys.stderr)
     else:
         log_directories_parent.rmdir()
 
@@ -1003,7 +1046,7 @@ def cosmic_ray_session_kept_to_resume_has_pending_mutants_or_is_unreadable(sessi
         connection = sqlite3.connect(f"{session.as_uri()}?mode=ro", uri=True)
         try:
             with_no_result = connection.execute(
-                COSMIC_RAY_SESSION_PENDING_MUTANTS_COUNT_SQL_QUERY).fetchone()[0]
+                COSMIC_RAY_SESSION_PENDING_MUTANTS_COUNT_SQL_QUERY).fetchone()[0]  # pragma: no mutate, the query selects one column, COUNT(*), so its last column is its first
             return with_no_result > 0
         finally:
             connection.close()
@@ -1255,6 +1298,23 @@ def mutation_test_one_file(path, suites, worktrees, scratch, tools, head, merge_
             what=f"cosmic-ray dump for {path}"), mutant_timeout_seconds, runner)
     baseline = run([*cosmic_ray, "baseline", "--session-file",
                     str(baseline_session), str(config)], worktree, environment)
+    if not baseline_session.exists():
+        # Removed first: pip finds a hollowed venv's metadata and reports cosmic-ray installed.
+        venv = shlex.quote(str(Path(tools["cosmic-ray"]).parents[1]))
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — {tools['cosmic-ray']} exited {baseline.returncode} without "
+            f"making its baseline session, so no suite ran and no mutant of {path} can be "
+            f"judged. cosmic-ray's output follows; its last line names the error it stopped "
+            f"on:\n{(baseline.stderr or baseline.stdout).strip()}\n"
+            f"If cosmic-ray's last line names an ImportError or ModuleNotFoundError, the venv "
+            f"holding cosmic-ray is broken: on {socket.gethostname()}, the machine this ran on, "
+            f"rebuild it and run again:\n"
+            f"  rm -rf {venv}\n"
+            f"  python3 -m venv {venv}\n"
+            f"  {venv}/bin/pip install cosmic-ray=={COSMIC_RAY_VERSION}\n"
+            f"  python3 {shlex.join(sys.argv)}\n"
+            f"If cosmic-ray's last line names any other error, running again unchanged fails "
+            f"the same way: fix that error, then run only the last of the four commands above.")
     if baseline.returncode != 0:
         # cosmic-ray writes the baseline's result before it exits 1; a baseline that crashed
         # before writing it leaves nothing to dump, and is reported as failing suites.
@@ -1414,10 +1474,14 @@ def hunk_replaced_lines(old, new):
 
 def recorded_mutant_lines_on_main(checkout, path, hunks, environment):
     """"applies" when origin/main's file takes the mutant, "gone" when the file is not in
-    origin/main's tree or some hunk's replaced lines are nowhere in it, None when it cannot
-    tell: no origin/main, git fails to read the tree or the file, or a hunk's replaced lines
-    appear in it more than once. Context lines alone never make "gone", since a change beside
-    the mutated lines leaves the survivor live."""
+    origin/main's tree or some hunk's replaced lines are nowhere in it, or are in it only at
+    places where none of the hunk's non-blank context lines stands at its own offset from
+    them; None when it cannot tell: no origin/main, git fails to read the tree or the file, or
+    a hunk's replaced lines appear in it more than once, either with a non-blank context line
+    of the hunk beside some copy or in a hunk with no non-blank context line. A short replaced
+    line, such as a bare `continue`, has unrelated copies all over a file, so only a copy that
+    some context line still stands beside can be the mutant's own; one context line suffices,
+    since a change beside the mutated lines leaves the survivor live."""
     if run(["git", "rev-parse", "--verify", "--quiet", "refs/remotes/origin/main^{commit}"],
            checkout, environment).returncode:
         return None
@@ -1435,8 +1499,18 @@ def recorded_mutant_lines_on_main(checkout, path, hunks, environment):
     lines = shown.stdout.split("\n")
     for _, old, new in hunks:
         replaced = hunk_replaced_lines(old, new)
-        if replaced and not any(lines[place:place + len(replaced)] == replaced
-                                for place in range(len(lines) - len(replaced) + 1)):  # pragma: no mutate, a mutant that only lengthens the range adds places whose slices are shorter than replaced, so never equal to it
+        if not replaced:
+            continue
+        start, end = hunk_shared_context_line_counts(old, new)
+        # Padded so a context offset before the file's start or past its end reads no line.
+        padded = [None] * len(old) + lines + [None] * len(old)
+        # A blank line stands beside unrelated copies as often as a bare `continue` does.
+        context = [(offset, line) for offset, line in enumerate(old)
+                   if (offset < start or offset >= len(old) - end) and line.strip()]
+        places = places_of_lines(lines, replaced)
+        if not places or (context and not any(
+                padded[len(old) + place - start + offset] == line
+                for place in places for offset, line in context)):
             return "gone"
     return None
 
@@ -1550,8 +1624,10 @@ def recorded_mutant_not_applied_verdict(checkout, path, hunks, head, why_not_app
     on_main = recorded_mutant_lines_on_main(checkout, path, hunks, environment)
     if on_main == "gone":
         return "no longer exists", (
-            f"the lines it replaces in {path} are gone from origin/main too, so there is "
-            f"nothing to kill; the nightly mutation pass drops it from its task.")
+            f"origin/main has no copy of the lines it replaces in {path} with one of the "
+            f"diff's non-blank context lines beside it, so the mutant's own lines are gone from "
+            f"origin/main too, so there is nothing to kill; the nightly mutation pass drops it "
+            f"from its task.")
     if on_main == "applies":
         return "could not be judged", (
             f"it does not apply to {path} at head {head[:12]}: {why_not_applied}. origin/main "
@@ -1565,7 +1641,7 @@ def recorded_mutant_not_applied_verdict(checkout, path, hunks, head, why_not_app
         f"it does not apply to {path} at head {head[:12]}: {why_not_applied}, and whether "
         f"origin/main still has the lines it replaces cannot be told: there is no local "
         f"origin/main, git could not read {path} there, or the lines appear there more than "
-        f"once.\n"
+        f"once and one of the diff's non-blank context lines stands beside some copy.\n"
         f"If your branch changed those lines on purpose, the mutant is gone from your branch: "
         f"once your branch is merged, the nightly mutation pass drops it from its task.\n"
         f"Otherwise, make sure your branch's head has {path} as origin/main has it, commit your "

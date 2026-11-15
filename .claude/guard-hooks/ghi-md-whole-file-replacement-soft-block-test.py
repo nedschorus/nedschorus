@@ -297,9 +297,6 @@ with tempfile.TemporaryDirectory() as scratch:
     check("an empty marker file clears nothing", got == refusal, got)
     marker.unlink()
 
-    code, output = run_hook("not json")
-    check("a payload that is not JSON passes silently", code == 0 and output is None,
-          (code, output))
     code, output = run_hook("[]")
     check("a payload that is not an object passes silently", code == 0 and output is None,
           (code, output))

@@ -390,6 +390,8 @@ with tempfile.TemporaryDirectory() as workspace:
     code, out, err = run(root, "docs/bad-stamp.md")
     check("a stamp that is not a date is reported as one",
           code == 1 and "is not a date" in out, f"{code} {out}")
+    check("a stamp that is not a date counts no citation as pinned",
+          "citation(s) not checked" not in err, err)
 
     # A SHAPE IS NOT A CALENDAR, and getting this wrong is silent. September
     # has thirty days, so 2026-09-31 passes a shape test and then sorts above

@@ -1249,7 +1249,7 @@ def ignored_files_a_rebase_onto_main_would_replace(checkout: Path):
     main_paths = set(git_output.nul_separated_fields(run_git_or_raise(
         ["ls-tree", "-r", "-z", "--name-only", "origin/main"], checkout, timeout=30).stdout))  # pragma: no mutate, a limit a second longer or shorter changes nothing a test can see without a git listing that runs for thirty seconds
     main_directories = {parent for path in main_paths
-                        for parent in map(str, PurePosixPath(path).parents)} - {"."}  # pragma: no mutate, git never lists "." as an ignored path, so whether main_directories holds "." decides nothing
+                        for parent in map(str, PurePosixPath(path).parents)}
     ignored = git_output.nul_separated_fields(run_git_or_raise(
         ["ls-files", "-z", "--others", "--ignored", "--exclude-standard"], checkout,
         timeout=30).stdout)  # pragma: no mutate, a limit a second longer or shorter changes nothing a test can see without a git listing that runs for thirty seconds

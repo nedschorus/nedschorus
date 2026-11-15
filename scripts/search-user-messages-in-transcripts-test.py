@@ -88,6 +88,36 @@ with tempfile.TemporaryDirectory() as directory:
 
 with tempfile.TemporaryDirectory() as directory:
     path = write_transcript(directory, [
+        {"type": "user", "message": {"role": "user", "content": [
+            {"type": "text", "text": "see this screenshot"},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"}},
+            {"type": "text", "text": "and fix it"}]}},
+        dict(typed("ignored"), message={"role": "user", "content": [
+            {"type": "text", "text": "a hook's words beside an image"},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"}}]},
+             origin={"kind": "hook"}),
+        tool_result("diff output"),
+        agent("Looking."),
+    ])
+    texts = user_texts(path)
+    check("a message typed with an image pasted is read from its text blocks, and a hook's is still left out",
+          texts == ["see this screenshot\nand fix it"], texts)
+
+with tempfile.TemporaryDirectory() as directory:
+    path = write_transcript(directory, [
+        {"type": "user", "message": None},
+        {"type": "assistant", "message": None},
+        typed("still read after records whose message is null"),
+    ])
+    try:
+        texts = user_texts(path)
+    except AttributeError as error:
+        texts = f"raised AttributeError: {error}"
+    check("user and assistant records whose message is null are skipped, and the next message is read",
+          texts == ["still read after records whose message is null"], texts)
+
+with tempfile.TemporaryDirectory() as directory:
+    path = write_transcript(directory, [
         typed("start"),
         queued("<cross-session-message from=\"peer\">hello</cross-session-message>", "peer"),
         queued("<task-notification>done</task-notification>", "task-notification"),
@@ -187,6 +217,12 @@ with tempfile.TemporaryDirectory() as directory:
     texts = user_texts(path)
     check("a compaction summary and a handoff successor's opening prompt are not the user's",
           texts == ["I said: Read the file — the dialog from the session you are continuing is long"], texts)
+
+compaction_summary = typed("This session is being continued from a previous conversation that ran out of context.")
+check("typed_by_user, given no flag, treats a compaction summary as a program's; with the flag false it returns the text",
+      search_module.typed_by_user(compaction_summary) is None
+      and search_module.typed_by_user(compaction_summary, False) == compaction_summary["message"]["content"],
+      (search_module.typed_by_user(compaction_summary), search_module.typed_by_user(compaction_summary, False)))
 
 with tempfile.TemporaryDirectory() as directory:
     path = write_transcript(directory, [

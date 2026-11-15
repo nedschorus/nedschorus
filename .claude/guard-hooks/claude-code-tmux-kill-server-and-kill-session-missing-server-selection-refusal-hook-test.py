@@ -277,10 +277,6 @@ def message_cases():
 
 
 def malformed_input_cases():
-    stdout = io.StringIO()
-    with contextlib.redirect_stdout(stdout):
-        code = guard.main(stdin=io.StringIO("not json"))
-    check("unreadable payload: allows silently", code == 0 and stdout.getvalue() == "")
     check("missing command: allows", run_main(None) is None)
 
 

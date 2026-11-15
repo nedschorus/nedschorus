@@ -32,6 +32,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import NamedTuple, Optional
 
 # Every Stop hook obeys this rule first: see the module's docstring.
 _stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_location(
@@ -110,10 +111,11 @@ HANDOFF_INSTRUCTION = (
 )
 
 MODEL_ID_NOT_IN_CONTEXT_WINDOW_TABLE_LINE = (
-    "The model id {model} is not in CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX, the threshold-hook's "
-    "context-window table in scripts/handoff-context-threshold-hook.py, so the {share} of its "
-    "context window this session has used assumes a {default_window_thousands}K window; tell the "
-    "user, so the table can be updated."
+    "No prefix in CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX, the threshold-hook's context-window "
+    "table in scripts/handoff-context-threshold-hook.py, matches the model id {model}, so the "
+    "{share} of its context window this session has used assumes a "
+    "{default_window_thousands}K-token window. Tell the user, so the table can be updated, then "
+    "run /handoff without waiting for his answer."
 )
 
 BACKGROUND_TASKS_LIST_MISSING_SENTENCE = (
@@ -301,6 +303,10 @@ class TranscriptCouldNotBeFullyRead(Exception):
 
 SPAWNED_SUBAGENT_STATUS = "async_launched"
 
+# The Workflow tool's result carries SPAWNED_SUBAGENT_STATUS with a taskId of this taskType, and no
+# agentId; the run's completion notification and a TaskStop name that taskId.
+WORKFLOW_TOOL_RUN_TASK_TYPE = "local_workflow"
+
 # SendMessage to a finished subagent resumes it under the same task-id; its next notification decides.
 RESUMED_SUBAGENT_KEY = "resumedAgentId"
 
@@ -317,6 +323,102 @@ BACKGROUND_BASH_CALL_KEY = '"run_in_background"'
 # Completion notifications use these tags across several record types.
 TASK_NOTIFICATION_PATTERN = re.compile(r"<task-notification>(.*?)</task-notification>", re.S)
 TASK_NOTIFICATION_TASK_ID_PATTERN = re.compile(r"<task-id>([^<]+)</task-id>")
+TASK_NOTIFICATION_STATUS_PATTERN = re.compile(r"<status>(.*?)</status>")
+
+SUBAGENT_SPAWNED_BY_AGENT_TOOL_TASK_EVENT = "spawned"
+SUBAGENT_RESUMED_BY_SEND_MESSAGE_TASK_EVENT = "resumed"
+WORKFLOW_TOOL_RUN_LAUNCHED_TASK_EVENT = "workflow-launched"
+STOPPED_BY_TASK_STOP_EVENT = "stopped"
+TASK_NOTIFICATION_TASK_EVENT = "task-notification"
+
+
+class ClaudeCodeTranscriptTaskEvent(NamedTuple):
+    kind: str
+    task_id: str
+    record: dict
+    description: Optional[str] = None
+    # A Monitor event's task-notification carries no <status>.
+    status: Optional[str] = None
+    is_interim: bool = False
+
+
+def task_events_from_claude_code_transcript_line(
+        line: str, where: str, *, should_raise_on_unparseable_spawn_or_resume_line: bool) -> list:
+    """Return the task events one transcript line records, as ClaudeCodeTranscriptTaskEvent, in
+    this order: a subagent's spawn or a Workflow-tool run's launch, a resume by SendMessage, a TaskStop, then one event for each
+    task-id of each <task-notification> in the record's decoded strings, whatever record holds it.
+
+    Every task-id is returned, a background command's too, and every repeat of a notification,
+    so each caller applies its own rules. `where` names the line in the refusal.
+    A line that is not valid JSON gives no events. If it holds a spawn or resume marker and
+    should_raise_on_unparseable_spawn_or_resume_line is True, it raises
+    TranscriptCouldNotBeFullyRead instead, because a missed spawn or resume could hide a running
+    subagent, while a missed stop or notification only leaves its task counted as running.
+    """
+    is_spawn_candidate = SPAWNED_SUBAGENT_STATUS in line
+    is_resume_candidate = RESUMED_SUBAGENT_KEY in line
+    has_notification = "<task-notification>" in line
+    if not (is_spawn_candidate or is_resume_candidate or has_notification
+            or TASK_STOP_TOOL_RESULT_MARKER_KEY in line):
+        return []
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError as problem:
+        if should_raise_on_unparseable_spawn_or_resume_line and (
+                is_spawn_candidate or is_resume_candidate):
+            raise TranscriptCouldNotBeFullyRead(
+                f"{where}: a spawn or resume record did not parse ({problem}); the line's first "
+                f"200 characters: {line[:200].rstrip()!r}") from problem
+        return []
+    if not isinstance(record, dict):
+        return []
+    tool_result = record.get("toolUseResult")
+    if not isinstance(tool_result, dict):
+        tool_result = {}
+    events = []
+    agent_id = tool_result.get("agentId")
+    if tool_result.get("status") == SPAWNED_SUBAGENT_STATUS and agent_id:
+        events.append(ClaudeCodeTranscriptTaskEvent(
+            SUBAGENT_SPAWNED_BY_AGENT_TOOL_TASK_EVENT, agent_id, record,
+            description=tool_result.get("description")))
+    workflow_task_id = tool_result.get("taskId")
+    if tool_result.get("status") == SPAWNED_SUBAGENT_STATUS \
+            and tool_result.get("taskType") == WORKFLOW_TOOL_RUN_TASK_TYPE \
+            and isinstance(workflow_task_id, str):
+        events.append(ClaudeCodeTranscriptTaskEvent(
+            WORKFLOW_TOOL_RUN_LAUNCHED_TASK_EVENT, workflow_task_id, record,
+            description=tool_result.get("summary")))
+    resumed_id = tool_result.get(RESUMED_SUBAGENT_KEY)
+    if resumed_id:
+        events.append(ClaudeCodeTranscriptTaskEvent(
+            SUBAGENT_RESUMED_BY_SEND_MESSAGE_TASK_EVENT, resumed_id, record))
+    stopped_id = tool_result.get("task_id")
+    if TASK_STOP_TOOL_RESULT_MARKER_KEY in tool_result and isinstance(stopped_id, str):
+        events.append(ClaudeCodeTranscriptTaskEvent(STOPPED_BY_TASK_STOP_EVENT, stopped_id, record))
+    if has_notification:
+        # Read the decoded strings: in the line's JSON text, a <result> that opens with a newline
+        # opens with the two characters \n, which the recognizer does not take for whitespace.
+        for text in _strings_in_document_order(record):
+            for notification in TASK_NOTIFICATION_PATTERN.findall(text):
+                is_interim = interim_recognizer.task_notification_is_interim(notification)
+                status = TASK_NOTIFICATION_STATUS_PATTERN.search(notification)
+                for task_id in TASK_NOTIFICATION_TASK_ID_PATTERN.findall(notification):
+                    events.append(ClaudeCodeTranscriptTaskEvent(
+                        TASK_NOTIFICATION_TASK_EVENT, task_id, record,
+                        status=status.group(1) if status else None, is_interim=is_interim))
+    return events
+
+
+def _strings_in_document_order(value):
+    """Yield every string value inside a parsed JSON value, decoded, in the order the line holds them."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _strings_in_document_order(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _strings_in_document_order(item)
 
 
 def background_bash_commands_by_tool_use_id_from_line(line: str) -> dict:
@@ -558,8 +660,10 @@ def spawned_subagent_ids_in_flight(transcript_path: str) -> list:
 def work_in_flight(transcript_path: str, background_task_wait_seconds=None,
                    now=None, should_read_subagent_own_transcripts=True,
                    should_raise_on_undecodable_bytes=False) -> WorkInFlight:
-    """Return running subagents and background tasks in launch order.
+    """Return running subagents, Workflow-tool runs and background tasks in launch order.
 
+    A Workflow-tool run counts from its launch until a final task-notification or a TaskStop names
+    it.
     A subagent counts from its spawn, or from a resume after a SendMessage, until a final
     task-notification or a TaskStop call stops it; a TaskStop also ends a background task, and the
     background tasks of a subagent it stopped. One whose last task-notification is interim counts
@@ -579,6 +683,7 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds=None,
         now = datetime.now(timezone.utc)
 
     spawned_ids = []
+    workflow_ids = []
     launched_task_ids = []
     launched_task_age = {}
     launched_task_command = {}
@@ -593,59 +698,46 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds=None,
         decoding_errors = "strict" if should_raise_on_undecodable_bytes else "replace"
         with path.open("r", encoding="utf-8", errors=decoding_errors) as handle:
             for line_number, line in enumerate(handle, start=1):
-                is_spawn_candidate = SPAWNED_SUBAGENT_STATUS in line
-                is_launch_candidate = BACKGROUND_TASK_LAUNCH_KEY in line
-                is_resume_candidate = RESUMED_SUBAGENT_KEY in line
-                is_stop_candidate = TASK_STOP_TOOL_RESULT_MARKER_KEY in line
-                if is_spawn_candidate or is_launch_candidate or is_resume_candidate or \
-                        is_stop_candidate:
+                where = f"{path}, line {line_number}"
+                for event in task_events_from_claude_code_transcript_line(
+                        line, where, should_raise_on_unparseable_spawn_or_resume_line=True):
+                    if event.kind == SUBAGENT_SPAWNED_BY_AGENT_TOOL_TASK_EVENT:
+                        if event.task_id not in spawned_ids:
+                            spawned_ids.append(event.task_id)
+                            launched_at_by_id[event.task_id] = record_time(event.record)
+                    elif event.kind == WORKFLOW_TOOL_RUN_LAUNCHED_TASK_EVENT:
+                        if event.task_id not in workflow_ids:
+                            workflow_ids.append(event.task_id)
+                            launched_at_by_id[event.task_id] = record_time(event.record)
+                    elif event.kind == SUBAGENT_RESUMED_BY_SEND_MESSAGE_TASK_EVENT:
+                        last_notification_is_interim.pop(event.task_id, None)
+                        stopped_ids.discard(event.task_id)
+                    elif event.kind == STOPPED_BY_TASK_STOP_EVENT:
+                        last_notification_is_interim[event.task_id] = False
+                        stopped_ids.add(event.task_id)
+                    # An interim notice queued before a TaskStop can arrive after it.
+                    elif not (event.is_interim and event.task_id in stopped_ids):
+                        last_notification_is_interim[event.task_id] = event.is_interim
+                if BACKGROUND_TASK_LAUNCH_KEY in line:
                     try:
                         record = json.loads(line)
-                    except (json.JSONDecodeError, UnicodeDecodeError) as problem:
-                        # A stop record not read only leaves its task counted as running.
-                        if is_spawn_candidate or is_launch_candidate or is_resume_candidate:
-                            raise TranscriptCouldNotBeFullyRead(
-                                f"{path}, line {line_number}: a spawn, resume or launch record did "
-                                f"not parse ({problem}); the line's first 200 characters: "
-                                f"{line[:200].rstrip()!r}"
-                            ) from problem
-                        record = None
+                    except json.JSONDecodeError as problem:
+                        raise TranscriptCouldNotBeFullyRead(
+                            f"{where}: a background-command launch record did not parse "
+                            f"({problem}); the line's first 200 characters: "
+                            f"{line[:200].rstrip()!r}") from problem
                     tool_result = record.get("toolUseResult") if isinstance(record, dict) else None
-                    if not isinstance(tool_result, dict):
-                        tool_result = {}
-                    if is_spawn_candidate and \
-                            tool_result.get("status") == SPAWNED_SUBAGENT_STATUS:
-                        agent_id = tool_result.get("agentId")
-                        if agent_id and agent_id not in spawned_ids:
-                            spawned_ids.append(agent_id)
-                            launched_at_by_id[agent_id] = record_time(record)
-                    # A resume clears the subagent's last notification and its stop, so it counts
-                    # as in flight again; a record without the key uses None, which is never a key.
-                    last_notification_is_interim.pop(tool_result.get(RESUMED_SUBAGENT_KEY), None)
-                    stopped_ids.discard(tool_result.get(RESUMED_SUBAGENT_KEY))
-                    if is_launch_candidate:
-                        task_id = tool_result.get(BACKGROUND_TASK_LAUNCH_KEY)
-                        if task_id and task_id not in launched_task_age:
-                            launched_task_ids.append(task_id)
-                            launched_task_age[task_id] = record_age_seconds(record, now)
-                            launched_task_command[task_id] = background_command_by_tool_use_id.get(
-                                tool_result_tool_use_id(record))
-                            launched_at_by_id[task_id] = record_time(record)
-                    stopped_id = tool_result.get("task_id")
-                    if TASK_STOP_TOOL_RESULT_MARKER_KEY in tool_result and isinstance(stopped_id, str):
-                        last_notification_is_interim[stopped_id] = False
-                        stopped_ids.add(stopped_id)
+                    task_id = tool_result.get(BACKGROUND_TASK_LAUNCH_KEY) \
+                        if isinstance(tool_result, dict) else None
+                    if task_id and task_id not in launched_task_age:
+                        launched_task_ids.append(task_id)
+                        launched_task_age[task_id] = record_age_seconds(record, now)
+                        launched_task_command[task_id] = background_command_by_tool_use_id.get(
+                            tool_result_tool_use_id(record))
+                        launched_at_by_id[task_id] = record_time(record)
                 if BACKGROUND_BASH_CALL_KEY in line:
                     background_command_by_tool_use_id.update(
                         background_bash_commands_by_tool_use_id_from_line(line))
-                if "<task-id>" in line:
-                    for notification in TASK_NOTIFICATION_PATTERN.findall(line):
-                        interim = interim_recognizer.task_notification_is_interim(notification)
-                        for task_id in TASK_NOTIFICATION_TASK_ID_PATTERN.findall(notification):
-                            # An interim notice queued before a TaskStop can arrive after it.
-                            if interim and task_id in stopped_ids:
-                                continue
-                            last_notification_is_interim[task_id] = interim
     except (OSError, UnicodeDecodeError) as problem:
         raise TranscriptCouldNotBeFullyRead(f"{path}: {problem}") from problem
 
@@ -672,6 +764,7 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds=None,
         [agent_id for agent_id in spawned_ids if subagent_still_in_flight(agent_id)],
         [task_id for task_id in launched_task_ids
          if task_id not in finished_ids and still_within_wait(task_id)],
+        [task_id for task_id in workflow_ids if task_id not in finished_ids],
         launched_at_by_id=launched_at_by_id,
     )
 
