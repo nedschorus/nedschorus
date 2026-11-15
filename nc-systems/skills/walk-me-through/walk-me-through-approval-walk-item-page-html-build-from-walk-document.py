@@ -98,30 +98,8 @@ def item_lines_and_count(walk_finder, document, text, number, parser):
     if len(naming) > 1:  # pragma: no mutate, naming is not empty here, so > 1 and != 1 pick the same lists
         headings = "\n".join(f"line {unit[3] + 1}: {lines[unit[3]]}" for unit in naming)
         raise Refused(SEVERAL_HEADINGS.format(document=document, number=number, headings=headings))
-    numbers, total, _, first, end = naming[0]
-    heading = walk_finder.approval_walk_item_heading_with_deferred_note_removed(lines[first])
-    # The skill links a sub-step's closing line to its item's page, so the item's page carries its sub-steps.
-    sub_step = number + "."
-    if len(numbers) > 1:
-        openings = walk_finder.item_opening_lines(text, parser)
-        ranges = [walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
-            openings, first, end, each, numbers, total) for each in [number, *(n for n in numbers if n.startswith(sub_step))]]
-        # A sub-step with no opening of its own would bring in the unit's lines above the item's own opening.
-        ranges = ranges[:1] + [(start, stop) for start, stop in ranges[1:] if start != first]
-    else:
-        ranges = [(first, end)]
-    # An item with no opening of its own has a range that already holds its sub-steps' ranges.
-    body, covered = [], first + 1
-    for start, stop in sorted(ranges):
-        if max(start, covered) < stop:
-            body += ["", *lines[max(start, covered):stop]]
-        covered = max(covered, stop)
-    # A sub-step under its own heading is a unit of its own, which the finder ends at its first Withdrawn heading.
-    for sub_numbers, _, _, sub_first, sub_end in walk_finder.approval_walk_item_sub_step_units_right_after(units, naming[0]):
-        if all(each.startswith(sub_step) for each in sub_numbers):
-            body += ["", walk_finder.approval_walk_item_heading_with_deferred_note_removed(lines[sub_first])]
-            body += lines[sub_first + 1:sub_end]
-    return body, heading, total
+    heading, body = walk_finder.approval_walk_item_heading_and_item_page_body_lines(text, parser, units, naming[0], number)
+    return body, heading, naming[0][1]
 
 
 def rendered_item_html(parser, heading, body):
