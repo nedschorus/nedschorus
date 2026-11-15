@@ -380,16 +380,6 @@ def closing_line_problems(numbers, total, closing_lines, pages, parser):
     return problems
 
 
-def closing_line_example(number, total, page, letters, points):
-    """The item's closing line as the walk-me-through skill writes it, its point read from its walk-document
-    heading, so the agent copies the line and builds none of it."""
-    point = points.get(number)
-    label = f"Item {number} of {total}" + (f", {point}" if point else "")
-    if page == walk_finder.ITEM_PAGE_PUBLISH_FAILED:
-        return f"{label} · {letters}"
-    return f"[{label}]({page}) · {letters}"
-
-
 def no_decision_instructions(numbers):
     return NO_DECISION_INSTRUCTIONS if any("." in number for number in numbers) else ()
 
@@ -470,13 +460,17 @@ def output_for(payload, environment):
         ANSWER_HOOK_FILE)
     letters = answer_hook.ANSWER_LETTERS_TEXT
     points = answer_hook.heading_points(document.read_text(encoding="utf-8").split("\n"), units, parser)
+
+    def closing_lines(lines_pages):
+        walk = answer_hook.WalkState(None, None, numbers, total, {}, None, pages=lines_pages, points=points)
+        return "\n".join(answer_hook.closing_line(number, walk) for number in numbers)
+
     unpublished = [number for number in numbers if number not in pages]
     if unpublished:
         return block(UNPUBLISHED_OPENING_TEMPLATE, UNPUBLISHED_INSTRUCTIONS + no_decision_instructions(unpublished),
                      named=" and ".join(f"`Item {number} of {total}`" for number in unpublished),
                      page_line=sub_step_page_line(unpublished, total),
-                     closing_lines="\n".join(closing_line_example(number, total, pages.get(number, "<page link>"),
-                                                                  letters, points) for number in numbers))
+                     closing_lines=closing_lines({number: pages.get(number, "<page link>") for number in numbers}))
     no_decision_links = {walk_finder.approval_walk_sub_step_no_decision_closing_line_page_link_or_none(line)
                          for line in reply.split("\n")}
     numbers_needing_closing_line = [number for number in numbers
@@ -494,8 +488,7 @@ def output_for(payload, environment):
                  page_line=sub_step_page_line(numbers_needing_closing_line, total),
                  named=" and ".join(f"`Item {number} of {total}`" for number in numbers),
                  problems="; ".join(problems),
-                 closing_lines="\n".join(closing_line_example(number, total, pages[number], letters, points)
-                                         for number in numbers))
+                 closing_lines=closing_lines(pages))
 
 
 def main():
