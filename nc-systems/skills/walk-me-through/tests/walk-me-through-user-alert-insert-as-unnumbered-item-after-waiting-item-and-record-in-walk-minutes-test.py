@@ -204,6 +204,17 @@ def run_several_alert_cases(root):
           "added 1 unnumbered item(s) after the whole of item 4," in minutes
           and "after the whole of item 4." in result.stdout, minutes + result.stdout)
 
+    split = sub_steps.replace("### Item 4.2", "## an earlier alert\n\nRecommendation: wait.\n\n### Item 4.2", 1)
+    checkout, home = walk_checkout(root, "split-sub-steps", waiting="item 4.1 of 9", document=split)
+    claimed_alert(home, "alert-p", "ninth")
+    result = run(checkout, home, "alert-p")
+    document, _ = files(checkout)
+    check("while sub-step 4.1 waits and an unnumbered item already stands between 4.1 and 4.2, the alert goes "
+          "after 4.2, as the close step's walk order moves that unnumbered item there",
+          result.returncode == 0
+          and document.index("## an earlier alert") < document.index("### Item 4.2 of 9: another part")
+          < document.index("## ninth") < document.index("## Items 5 and 6 of 9"), result.stderr + document)
+
     withdrawn = WALK_DOCUMENT.replace("## Items 5 and 6", "#### Withdrawn version 1 of item 4\n\nAn older filter.\n\n"
                                       "## Items 5 and 6", 1)
     checkout, home = walk_checkout(root, "withdrawn-version", document=withdrawn)

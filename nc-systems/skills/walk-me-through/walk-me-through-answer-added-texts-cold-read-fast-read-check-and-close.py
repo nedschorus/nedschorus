@@ -2494,8 +2494,8 @@ def approval_walk_unnumbered_items_moved_past_the_sub_steps_they_split(walk_find
             waiting.append(unit)
             continue
         numbered_above = [other for other in moved if other[0]]
-        wholes = tuple({number.split(".")[0] + "." for number in numbered_above[-1][0]}) if numbered_above else ()
-        if waiting and not (unit[0] and wholes and all(part.startswith(wholes) for part in unit[0])):
+        is_sub_step = walk_finder.approval_walk_document_unit_is_dotted_sub_step_of_whole_item_of_any_item_number
+        if waiting and not (numbered_above and is_sub_step(unit, numbered_above[-1][0])):
             moved += waiting
             waiting = []
         moved.append(unit)
