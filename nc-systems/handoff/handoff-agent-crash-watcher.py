@@ -43,11 +43,10 @@ the death stays handled until that supervisor, or a new one, polls later. A
 later poll shows the seat ran again, so its next death is a new crash. Each
 death is reported once, whichever verdict it is first confirmed under: a
 verdict that changes over the same death, as when a passing process makes
-recovery refuse a seat with a recorded exit, reports nothing more. The one
-exception is a crash beneath a refusal already reported, which is restarted,
-because that report restarted nothing; a failure of that restart is reported
-too. Times
-are compared as parsed moments at the supervisor's own precision, which
+recovery refuse a seat with a recorded exit, reports nothing more. A crash
+beneath a refusal already reported is still restarted, because that report
+restarted nothing; if that restart fails, its failure is reported, the one
+death reported a second time. Times are compared as parsed moments at the supervisor's own precision, which
 carries microseconds. A restart that succeeded counts as a sighting of the
 seat running; after a failed attempt the poll is recorded again, so the
 attempt's own brief run is part of the death it was handling.
