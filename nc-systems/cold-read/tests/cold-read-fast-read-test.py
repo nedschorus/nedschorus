@@ -3107,7 +3107,7 @@ check("a frontmatter-only document's unit gets its id after the field's key, so 
       frontmatter_only_marked == "---\ndescription: [s1] >\n new words\n---\n",
       repr(frontmatter_only_marked))
 
-for wordless_document in ("***\n", "---\n\n---\n"):
+for wordless_document in ("***\n", "---\n\n---\n", "---\ntitle: ***\n---\n", "---\ntags:\n---\n"):
     wordless_found = sentence_id_markup(wordless_document)
     check(f"a document of text with no words, {wordless_document!r}, makes no unit",
           wordless_found == (wordless_document, {}), repr(wordless_found))

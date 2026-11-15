@@ -912,6 +912,7 @@ TABLE_ROW_PATTERN = re.compile(r"^(\s*\|)(.*)$")
 LIST_ITEM_PATTERN = re.compile(r"^(\s*(?:[-*+]|\d+[.)])\s+)(.*)$")
 BLOCKQUOTE_PATTERN = re.compile(r"^(\s*>+\s*)(.*)$")
 FRONTMATTER_FIELD_PATTERN = re.compile(r"^(\s*[A-Za-z0-9_.-]+:\s+)(\S.*)$")
+FRONTMATTER_KEY_PATTERN = re.compile(r"^\s*[A-Za-z0-9_.-]+:(?=\s|$)")
 CODE_FENCE_PATTERN = re.compile(r"^\s*(```|~~~)")
 
 
@@ -1094,7 +1095,9 @@ def sentence_id_markup(text: str, units: dict = None):
             continues_previous = ends_open(content)
         index += 1
 
-    if carries_words("".join(pieces_before_first_unit)):
+    # A frontmatter key is not restatable text, as in take(): test the values.
+    if carries_words("".join(FRONTMATTER_KEY_PATTERN.sub("", piece)
+                             for piece in pieces_before_first_unit)):
         name = f"s{counter + 1}"
         unit_pieces[name] = list(pieces_before_first_unit)
         sentences[name] = " ".join("\n".join(pieces_before_first_unit).split())
