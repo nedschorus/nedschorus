@@ -21,9 +21,10 @@ versions under it are on no page, with one exception: a heading that names sever
 
 The skill links a sub-step's closing line to the page of the item the sub-step belongs to, such as item 4's page
 for sub-step 4.1, so item 4's page carries, after its own lines, each of its sub-steps under the sub-step's own
-heading. It takes them from the units right after item 4's own, passing over an unnumbered item, up to the first
-unit that is not a sub-step of item 4, so an older version's `### Item 4.2 of 8` elsewhere in the walk-document
-stays off the page. A sub-step's
+heading. It takes them from the units right after item 4's own up to the first unit that is not a sub-step of
+item 4, so an older version's `### Item 4.2 of 8` elsewhere in the walk-document stays off the page. An item
+standing between two of item 4's sub-steps, an unnumbered item or a numbered one followed by a sub-step that gives
+item 4's M, is skipped: it stays off item 4's page, and the sub-steps after it are on it. A sub-step's
 page, built with 4.1, holds that sub-step alone. Under a heading that names an item and its sub-steps, as in
 `## Items 12 to 12.2 of 13`, item 12's page also carries the lines of each sub-step that has an opening of its
 own, such as `**Item 12.1:**`, and leaves off a sub-step with none; it puts these lines in the walk-document's

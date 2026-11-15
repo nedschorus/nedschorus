@@ -610,12 +610,19 @@ def approval_walk_item_sub_step_units_right_after(all_units, unit):
     """Return the units of all_units, as item_unit_spans gives them, right after unit that are sub-steps of any
     item unit names, such as `### Item 3.1 of 9` and `### Item 3.1.1 of 9` after item 3, up to the first that is
     not, so an older version's `3.1 of 9` elsewhere in the walk-document is not among them. An unnumbered item
-    among them is passed over, because the check program's close step shows it only after them."""
-    found = []
+    among them is passed over, because the check program's close step shows it only after them. So is a numbered
+    item among them when a sub-step after it gives unit's M, as in 2.1 of 9, then item 4, then 2.2 of 9, because
+    the close step's hold-answer path numbers a new item where it stands, right after the answered sub-step."""
+    found, passed_over = [], False
     for each in [each for each in all_units if each[3] > unit[3]]:
         if approval_walk_unit_is_unnumbered_item(each):
             continue
         if not each[0] or not all(any(part.startswith(number + ".") for number in unit[0]) for part in each[0]):
+            if not found or not each[0]:
+                break
+            passed_over = True
+            continue
+        if passed_over and each[1] != unit[1]:
             break
         found.append(each)
     return found

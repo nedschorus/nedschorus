@@ -313,6 +313,17 @@ Four.
     check("an unnumbered item between sub-steps 3.1 and 3.2 stays off item 3's page, and 3.2 is still on it",
           result.returncode == 0 and "One." in page and "Two." in page and "Alert." not in page
           and "Four." not in page, page)
+    numbered_item_between_sub_steps = unnumbered_item_between_sub_steps.replace(
+        "## an alert the walk has not shown yet", "## Item 5 of 11: an alert the walk showed before 3.2")
+    result, page = built(scratch, "3", document=numbered_item_between_sub_steps)
+    check("a numbered item between sub-steps 3.1 and 3.2 of 10, as the close step's hold-answer path numbers one, "
+          "stays off item 3's page, and 3.2 is still on it",
+          result.returncode == 0 and "One." in page and "Two." in page and "Alert." not in page
+          and "Four." not in page, page)
+    result, page = built(scratch, "3", document=numbered_item_between_sub_steps.replace(
+        "### Item 3.2 of 10", "### Item 3.2 of 9"))
+    check("past a numbered item, a sub-step whose M is not item 3's, as an older version's `3.2 of 9`, stays off "
+          "item 3's page", result.returncode == 0 and "One." in page and "Two." not in page, page)
     openings_out_of_number_order = """# A walk
 
 ## Items 12 to 12.2 of 13: a group

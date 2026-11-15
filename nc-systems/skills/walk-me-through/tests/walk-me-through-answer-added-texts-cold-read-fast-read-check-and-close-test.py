@@ -1020,6 +1020,32 @@ def test_an_unshown_item_written_between_sub_steps_comes_after_them_in_close_and
           f"{shown}\n{text}")
 
 
+def test_a_held_new_item_numbered_between_sub_steps_does_not_end_them_for_close_or_the_read_step():
+    """close --hold-answer-until-new-item-answered numbers the new item where it stands, right after the answered
+    sub-step 2.1, so a numbered item stands between 2.1 and 2.2."""
+    document = ("# A walk in which code picks the order\n\n" + numbered_item(1, "one")
+                + "## Item 2 of 9: two\n\nIts parts.\n\n"
+                + "### Item 2.1 of 9: the first part\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+                + unshown_item("the change a finding raised", FIX_NEXT_LINE)
+                + "### Item 2.2 of 9: the second part\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+                + numbered_item(3, "three") + "## Summary\n\nThe walk in short.\n")
+    case = Case(next_to_present="item 2.1 of 9", document=document)
+    case.run("check")
+    held = case.run("close", "--hold-answer-until-new-item-answered")
+    numbered = marker(case)
+    case.run("check")
+    closed = case.run("close")
+    after_close = marker(case).rsplit(" of ", 1)[0]
+    case.minutes.write_text(case.minutes.read_text() + "#next_to_present item 2 of 9\n")
+    read = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("with the held new item numbered between sub-steps 2.1 and 2.2, close and the read step handed item 2 both "
+          "name 2.2 once the new item is answered",
+          held.returncode == 0 and numbered == "#next_to_present item 4 of 5" and closed.returncode == 0
+          and after_close == "#next_to_present item 2.2" and read.returncode == 0
+          and marker(case) == "#next_to_present item 2.2 of 9",
+          f"{numbered}\n{after_close}\n{described(read)}\n{walk_document(case)}")
+
+
 def test_the_waiting_item_read_step_leaves_out_an_older_sub_step_below_a_later_item():
     document = ("# A walk\n\n## Item 3 of 10: the opening sentence\n\nNew.\n\n### Item 3.1 of 10: the first half\n\n"
                 "Short.\n\n#case_against weak: the page grows.\n\nRecommendation: change it.\n\n"
