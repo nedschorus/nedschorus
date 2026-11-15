@@ -4,7 +4,7 @@ prints for each agent-seat, and the values its rule, decision and sentences may 
 
 Not a program to run. The printing program takes nine field names from here, rule, decision,
 text, if_every_sentence_backed, last_turn_ending_message, last_tool_call_at,
-last_task_call_setting_prerequisites_or_blocked_by_at,
+successful_task_tool_calls_setting_prerequisites_or_blocked_by,
 tool_calls_since_start_of_earliest_turn_with_sentence_to_judge and
 open_tasks_with_prerequisites_or_blocked_by, and every value it prints for
 decision, kind and code_reading; it writes the other field names as literals. Its test checks every verdict it prints with
@@ -26,7 +26,8 @@ LAST_ACTIVITY = "last_activity"            # {"time": ISO time or null, "source"
 LAST_TOOL_CALL_AT = "last_tool_call_at"
 # [{"time", "name", "task"}], oldest first: each TaskCreate or TaskUpdate call in the
 # agent-session's own transcript that sets metadata.prerequisites or addBlockedBy and whose result
-# succeeded; "task" is a TaskCreate's subject or a TaskUpdate's taskId
+# shows it succeeded, so a call with no result does not count; "task" is a TaskCreate's subject or
+# a TaskUpdate's taskId
 SUCCESSFUL_TASK_TOOL_CALLS_SETTING_PREREQUISITES_OR_BLOCKED_BY = (
     "successful_task_tool_calls_setting_prerequisites_or_blocked_by")
 TURN_ENDED = "turn_ended"

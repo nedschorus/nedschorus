@@ -93,6 +93,9 @@ AGENT_EXIT_CODE_KEY = "agent_exit_code"
 USAGE_LIMIT_API_ERROR = "usage_limit_reached"
 SYNTHETIC_MODEL = "<synthetic>"
 TASK_TOOL_NAMES = ("TaskCreate", "TaskUpdate")
+# The texts Claude Code's task tools return on success: "Task #<n> created successfully: <subject>"
+# and "Updated task #<n> <fields>".
+TASK_TOOL_SUCCESS_RESULT_PATTERN = re.compile(r"Task #\d+ created successfully\b|Updated task #\d+\b")
 HANDOFF_PUT_OFF_TEXT = ("Your handoff was put off at {time} and nothing is running now. "
                         "Is now a good time to hand off?")
 
@@ -350,10 +353,10 @@ def read_main_transcript(path):
     turn_started_at = None
     awaiting_turn_start = True
     task_tool_calls = []                 # (tool use id, (time, name, input))
-    failed_tool_use_ids = set()
+    succeeded_task_tool_use_ids = set()
     for record in transcript_records(path):
         moment = parse_time(record.get("timestamp"))
-        failed_tool_use_ids.update(failed_tool_result_ids(record))
+        succeeded_task_tool_use_ids.update(succeeded_task_tool_result_ids(record))
         if awaiting_turn_start and record.get("type") == "user":
             turn_started_at = moment
             awaiting_turn_start = False
@@ -389,18 +392,32 @@ def read_main_transcript(path):
                 launched = result.get(key)
                 if isinstance(launched, str) and launched not in facts.launch_times:
                     facts.launch_times[launched] = moment
-    # A failed TaskUpdate, such as one on a task id that does not exist, records nothing.
     facts.task_tool_calls = [call for tool_use_id, call in task_tool_calls
-                             if tool_use_id not in failed_tool_use_ids]
+                             if tool_use_id in succeeded_task_tool_use_ids]
     return facts
 
 
-def failed_tool_result_ids(record):
+def succeeded_task_tool_result_ids(record):
+    """The tool use ids whose result in this record shows a task call that recorded something.
+    A TaskUpdate on a task id that does not exist returns "Task not found" with no is_error, and a
+    call whose turn was interrupted has no result, so only the success text counts."""
     content = (record.get("message") or {}).get("content")
     if record.get("type") != "user" or not isinstance(content, list):
         return []
     return [block.get("tool_use_id") for block in content
-            if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error")]
+            if isinstance(block, dict) and block.get("type") == "tool_result"
+            and not block.get("is_error")
+            and TASK_TOOL_SUCCESS_RESULT_PATTERN.match(tool_result_text(block))]
+
+
+def tool_result_text(block):
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(part.get("text", "") for part in content
+                       if isinstance(part, dict) and isinstance(part.get("text"), str))
+    return ""
 
 
 def newest_token_spend_in(path):

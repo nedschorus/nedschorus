@@ -375,10 +375,6 @@ class SweepLog:
                 wait[event["step"]] = event["at"]
                 if event["step"] == PROMISE:
                     promise_message_owed_by = invocation
-        # A rule 2 message logged with no PROMISE_MESSAGE in its own invocation was sent before
-        # PROMISE_MESSAGE events existed, so what it named is unknown.
-        if wait is not None and promise_message_owed_by is not None:
-            wait[PROMISE_MESSAGES] = None
         return wait
 
     def last_judge_answer(self, seat):
