@@ -48,7 +48,8 @@ words on past their line, and the reading agent judges where they end. At most F
 
 Exit codes: 0 done; 2 a path that should be a directory does not exist or is not a directory, whether
 given with its option or the default of an option left out; the message says which, and names the host
-for a default. A failing git command stops it with git's error and a nonzero exit.
+for a default; 2 also when argparse rejects the command line, with its usage message. A failing git
+command stops it with git's error and a nonzero exit.
 """
 
 import argparse
