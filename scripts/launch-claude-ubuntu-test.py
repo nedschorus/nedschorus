@@ -982,8 +982,11 @@ def main() -> int:
         # With no name, the usage lists the agent tmux sessions on the box.
         # A listing whose ssh fails says so, passing ssh's message through,
         # and is never read as an empty box.
-        for label, ssh_exit_code in (("ssh cannot reach the box", 255),
-                                     ("the listing command fails on the box", 1)):
+        # ssh exits 255 when it cannot connect, so only then is the reader
+        # sent to check the connection.
+        for label, ssh_exit_code, connected in (
+                ("ssh cannot reach the box", 255, False),
+                ("the listing command fails on the box", 1, True)):
             harness = LaunchHarness(root / f"no-name-listing-fails-{ssh_exit_code}")
             write_stub(harness.stubs, "ssh",
                        'echo "ssh: Could not resolve hostname stub-box" >&2\n'
@@ -996,10 +999,19 @@ def main() -> int:
                   and "could not list the agent tmux sessions on stub-box: "
                       f"ssh exited {ssh_exit_code}" in stderr
                   and "ssh: Could not resolve hostname stub-box" in stderr
-                  and "No agent tmux sessions" not in stderr
-                  and "run it from the Mac instead" in stderr
-                  and "check that the box is up and that ssh stub-box works" in stderr,
+                  and "No agent tmux sessions" not in stderr,
                   (result["launched"].returncode, stderr[:800]))
+            connection_lines_shown = ("run it from the Mac instead" in stderr
+                                      and "check that the box is up and that ssh stub-box works" in stderr)
+            box_answered_line_shown = ("stub-box answered, so the connection works; "
+                                       "the listing command failed there" in stderr)
+            check(f"no name, {label}: "
+                  + ("says the box answered and the listing failed there, not to check the connection"
+                     if connected else
+                     "says to run it from the Mac or check the connection, not that the box answered"),
+                  (box_answered_line_shown and not connection_lines_shown) if connected
+                  else (connection_lines_shown and not box_answered_line_shown),
+                  stderr[:800])
 
         harness = LaunchHarness(root / "no-name-listing-empty")
         result = harness.run([])
