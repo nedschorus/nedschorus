@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Is a tool design's form complete: every required section, at least one judgment step, and every named file existing or marked #created_by_the_build?
+"""Is a tool design's form complete: every required section, at least one judgment step, and every named file existing or marked #file_not_yet_existing_that_this_design_creates?
 
 Usage:
   tool-design-write-required-sections-judgment-steps-and-named-files-exist-check.py DESIGN [--repository-root DIR]
@@ -9,13 +9,13 @@ Checks one design written with the /tool-design-write skill:
     down, outside fenced code blocks;
   - the section "The judgment steps" holds at least one list item;
   - each item of the section "Files" starts with a backticked repository path;
-    an item carrying #created_by_the_build names a file that does not exist yet, and an
+    an item carrying #file_not_yet_existing_that_this_design_creates names a file that does not exist yet, and an
     item without it names a file that does;
   - each backticked repository path in the design exists, or is the path of a
-    #created_by_the_build item of "Files". Which backticked text counts as a path, and
+    #file_not_yet_existing_that_this_design_creates item of "Files". Which backticked text counts as a path, and
     which lines are skipped, is scripts/md-drift-lint.py's rule, so a design
     this program passes has no "path does not exist" finding from that lint
-    other than its #created_by_the_build paths.
+    other than its #file_not_yet_existing_that_this_design_creates paths.
 
 Prints one finding per line, "<design>:<line>: <problem>" or "<design>: <problem>",
 each with what to do, then one summary line.
@@ -38,7 +38,7 @@ EXIT_COULD_NOT_CHECK = 2
 
 JUDGMENT_STEPS_HEADING = "The judgment steps"
 FILES_HEADING = "Files"
-CREATED_BY_THE_BUILD_HASHTAG = "#created_by_the_build"
+FILE_NOT_YET_EXISTING_HASHTAG = "#file_not_yet_existing_that_this_design_creates"
 REQUIRED_SECTION_HEADINGS = (
     "Problem",
     "Goals and non-goals",
@@ -53,7 +53,8 @@ REQUIRED_SECTION_HEADINGS = (
 )
 
 HEADING = re.compile(r"^(#{2,6})\s+(.*?)\s*#*\s*$")
-LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\S")
+# A nested item describes its parent, such as the change made to a listed file, so only top-level items count.
+TOP_LEVEL_LIST_ITEM = re.compile(r"^(?:[-*+]|\d+[.)])\s+\S")
 FIRST_BACKTICK_SPAN = re.compile(r"`([^`\n]+)`")
 LINT_MISSING_PATH_PREFIX = "path does not exist: "
 
@@ -102,12 +103,12 @@ def sections(numbered_lines):
 
 def list_items(section_lines):
     return [(line_number, line) for line_number, line in section_lines[1:]
-            if LIST_ITEM.match(line)]
+            if TOP_LEVEL_LIST_ITEM.match(line)]
 
 
 def files_section_findings(files_lines, design, repository_root, lint):
-    """Return the findings on the Files items, and the paths they mark #created_by_the_build."""
-    created_by_the_build_paths = set()
+    """Return the findings on the Files items, and the path each item names."""
+    listed_paths = set()
     findings = []
     for line_number, line in list_items(files_lines):
         span = FIRST_BACKTICK_SPAN.search(line)
@@ -116,17 +117,17 @@ def files_section_findings(files_lines, design, repository_root, lint):
                              "file's repository path in backticks"))
             continue
         path = lint.without_line_suffix(span.group(1).strip()).lstrip("/")
+        listed_paths.add(path)
         exists = lint.resolve(path, design, repository_root) is not None
-        if CREATED_BY_THE_BUILD_HASHTAG in line:
-            created_by_the_build_paths.add(path)
+        if FILE_NOT_YET_EXISTING_HASHTAG in line:
             if exists:
-                findings.append((line_number, f"{path} is marked {CREATED_BY_THE_BUILD_HASHTAG} but already exists; "
-                                 f"remove {CREATED_BY_THE_BUILD_HASHTAG} when the build changes that file, or name the "
+                findings.append((line_number, f"{path} is marked {FILE_NOT_YET_EXISTING_HASHTAG} but already exists; "
+                                 f"remove {FILE_NOT_YET_EXISTING_HASHTAG} when the build changes that file, or name the "
                                  "new file the build creates"))
         elif not exists:
-            findings.append((line_number, f"{path} does not exist; add {CREATED_BY_THE_BUILD_HASHTAG} to this item "
+            findings.append((line_number, f"{path} does not exist; add {FILE_NOT_YET_EXISTING_HASHTAG} to this item "
                              "when the build creates it, otherwise correct the path"))
-    return findings, created_by_the_build_paths
+    return findings, listed_paths
 
 
 def check_design(design: Path, repository_root: Path, lint) -> list:
@@ -144,9 +145,9 @@ def check_design(design: Path, repository_root: Path, lint) -> list:
         if not list_items(judgment_lines):
             findings.append((judgment_lines[0][0], f'section "{JUDGMENT_STEPS_HEADING}" lists no step; '
                              "list each step that needs judgment as a list item"))
-    created_by_the_build_paths = set()
+    files_item_paths = set()
     if FILES_HEADING in found_sections:
-        files_findings, created_by_the_build_paths = files_section_findings(
+        files_findings, files_item_paths = files_section_findings(
             found_sections[FILES_HEADING], design, repository_root, lint)
         findings.extend(files_findings)
     skipped_markers = lint.HISTORY_MARKERS + lint.FOREIGN_ROOT_MARKERS
@@ -157,10 +158,10 @@ def check_design(design: Path, repository_root: Path, lint) -> list:
             if not problem.startswith(LINT_MISSING_PATH_PREFIX):
                 continue
             word = problem[len(LINT_MISSING_PATH_PREFIX):]
-            if lint.without_line_suffix(word).lstrip("/") in created_by_the_build_paths:
+            if lint.without_line_suffix(word).lstrip("/") in files_item_paths:
                 continue
             findings.append((line_number, f"{word} does not exist; list it in the Files section with "
-                             f"{CREATED_BY_THE_BUILD_HASHTAG} when the build creates it, otherwise correct the path"))
+                             f"{FILE_NOT_YET_EXISTING_HASHTAG} when the build creates it, otherwise correct the path"))
     return sorted(set(findings), key=lambda finding: (finding[0] or 0, finding[1]))
 
 

@@ -1,11 +1,11 @@
 ---
 name: tool-design-write
-description: Use when you are about to write or revise the design of an in-house tool, program, hook or module of this project, before any of its code is written, and when the design-writing state of design-to-main asks for a design. Grounds the design in the code that exists, recommends one design or says honestly why it cannot, names the steps that need judgment, and runs the program that checks the design's required sections and the files it names.
+description: Use when you are about to write or revise the design of an in-house tool, a script, hook or scheduled job this project writes and keeps in its repository, before any of its code is written, and when the design-writing state of design-to-main asks for a design. Grounds the design in the code that exists, recommends one design or says honestly why it cannot, names the steps that need judgment, and runs the program that checks the design's required sections and the files it names.
 ---
 
 # tool-design-write
 
-A design says what will be built, why, and how, before code is written. This skill changes no code: what it produces is the design's own Markdown file, a GHI-MD under `docs/issues/` with the front matter line `kind: design`, and the design is the master until its code is on main. Questions the user asked of past designs, again and again, are listed with citations in `docs/issues/17-code-design-questions-the-user-asked-of-past-designs.md`; a design answers each one that applies to it before the user has to ask.
+A design says what will be built, why, and how, before code is written. This skill changes no code: what it produces is the design's own Markdown file, named and placed as the Design document entry of `docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md` says, and, when it is a GHI-MD, written as the ghi-write skill says. Questions the user asked of past designs, again and again, are listed with citations in `docs/issues/17-code-design-questions-the-user-asked-of-past-designs.md`; a design answers each one that applies to it before the user has to ask.
 
 ## Two working rules
 
@@ -28,7 +28,7 @@ Give the design these sections, as headings at any level from `##` down. `nc-sys
 - **Failure behaviour**: what the tool does when each step, input, dependency or machine fails, stops partway or is run twice, what it prints, its exit code by `docs/nedschorus-wiki/nedschorus-how-a-program-reports-success-failure-and-findings-with-its-exit-code.md`, and who is told.
 - **Alternatives considered**: the smaller design, doing nothing, and each other reasonable design, each with why it was not chosen.
 - **Tests**: how each part is tested, and the command and output that show the built tool works.
-- **Files**: a list item for each file the build creates or changes, in the order the build makes them, each starting with the file's repository path in backticks; an item for a file the build creates carries `#created_by_the_build`. Choose each new name by `docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md`.
+- **Files**: a list item for each file the build creates or changes, in the order the build makes them, each starting with the file's repository path in backticks; an item for a file the build creates carries `#file_not_yet_existing_that_this_design_creates`. Choose each new name by `docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md`.
 - **Deferred-decisions**: as the project glossary defines the section.
 
 Then run `python3 nc-systems/skills/tool-design-write/tool-design-write-required-sections-judgment-steps-and-named-files-exist-check.py <design path>` and fix each finding it prints, until it exits 0.

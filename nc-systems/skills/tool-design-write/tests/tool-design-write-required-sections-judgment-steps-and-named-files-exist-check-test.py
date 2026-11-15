@@ -60,9 +60,10 @@ Counting by hand.
 
 ## Files
 
-- `scripts/widget-counter.py` #created_by_the_build
-- `scripts/widget-counter-test.py` #created_by_the_build
-- `scripts/widget-list.py`, gains a `--count` flag.
+- `scripts/widget-counter.py` #file_not_yet_existing_that_this_design_creates
+- `scripts/widget-counter-test.py` #file_not_yet_existing_that_this_design_creates
+- `scripts/widget-list.py`, gains a flag:
+  - the flag is `--count`, and nothing else changes.
 
 ## Deferred-decisions
 
@@ -110,7 +111,7 @@ def main():
         scratch = Path(scratch_name)
 
         code, out, err = run_checker(fresh_repository(scratch, "complete"), COMPLETE_DESIGN)
-        check("complete design, with a judgment step under ###, #created_by_the_build paths and a fenced block: exit 0",
+        check("complete design, with a judgment step under ###, a nested Files item naming no file, #file_not_yet_existing_that_this_design_creates paths and a fenced block: exit 0",
               code == 0 and "is complete" in out, f"{code} {out!r} {err!r}")
 
         for heading in checker.REQUIRED_SECTION_HEADINGS:
@@ -127,22 +128,23 @@ def main():
         check("judgment steps section with no list item: exit 1",
               code == 1 and 'section "The judgment steps" lists no step' in out, f"{code} {out!r} {err!r}")
 
-        text = COMPLETE_DESIGN.replace("- `scripts/widget-counter-test.py` #created_by_the_build\n", "")
+        text = COMPLETE_DESIGN.replace("- `scripts/widget-counter-test.py` #file_not_yet_existing_that_this_design_creates\n", "")
         code, out, err = run_checker(fresh_repository(scratch, "unmarked-new-path"), text)
-        check("a named path that does not exist and is not a #created_by_the_build item: exit 1",
+        check("a named path that does not exist and is not a #file_not_yet_existing_that_this_design_creates item: exit 1",
               code == 1 and "scripts/widget-counter-test.py does not exist; list it in the Files section" in out,
               f"{code} {out!r} {err!r}")
 
-        text = COMPLETE_DESIGN.replace("- `scripts/widget-list.py`, gains", "- `scripts/widget-list.py` #created_by_the_build, gains")
+        text = COMPLETE_DESIGN.replace("- `scripts/widget-list.py`, gains", "- `scripts/widget-list.py` #file_not_yet_existing_that_this_design_creates, gains")
         code, out, err = run_checker(fresh_repository(scratch, "new-file-exists"), text)
-        check("a #created_by_the_build item whose file exists: exit 1",
-              code == 1 and "scripts/widget-list.py is marked #created_by_the_build but already exists" in out,
+        check("a #file_not_yet_existing_that_this_design_creates item whose file exists: exit 1",
+              code == 1 and "scripts/widget-list.py is marked #file_not_yet_existing_that_this_design_creates but already exists" in out,
               f"{code} {out!r} {err!r}")
 
         text = COMPLETE_DESIGN.replace("- `scripts/widget-list.py`, gains", "- `scripts/widget-lister.py`, gains")
         code, out, err = run_checker(fresh_repository(scratch, "files-item-missing"), text)
-        check("a Files item without #created_by_the_build whose file does not exist: exit 1",
-              code == 1 and "scripts/widget-lister.py does not exist; add #created_by_the_build to this item" in out,
+        check("a Files item without #file_not_yet_existing_that_this_design_creates whose file does not exist: exit 1, one finding",
+              code == 1 and "scripts/widget-lister.py does not exist; add #file_not_yet_existing_that_this_design_creates to this item" in out
+              and out.count("widget-lister.py") == 1,
               f"{code} {out!r} {err!r}")
 
         text = COMPLETE_DESIGN.replace("## Deferred-decisions", "- the widget store\n\n## Deferred-decisions")
