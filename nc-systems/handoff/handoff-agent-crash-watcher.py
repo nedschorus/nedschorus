@@ -46,8 +46,8 @@ verdict that changes over the same death, as when a passing process makes
 recovery refuse a seat with a recorded exit, reports nothing more. A crash
 beneath a refusal already reported is still restarted, because that report
 restarted nothing; if that restart fails, its failure is reported, the one
-death reported a second time. Times are compared as parsed moments at the supervisor's own precision, which
-carries microseconds. A restart that succeeded counts as a sighting of the
+death reported a second time. Times are compared as parsed moments at the
+supervisor's own precision, which carries microseconds. A restart that succeeded counts as a sighting of the
 seat running; after a failed attempt the poll is recorded again, so the
 attempt's own brief run is part of the death it was handling.
 
