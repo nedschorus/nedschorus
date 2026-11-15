@@ -9,6 +9,10 @@ so no agent-seat's tmux server is reachable; the agent it launches is a stub tha
 and exits 0, which stops the supervisor. The captures directory is a scratch one, named by
 AGENT_SEAT_TERMINAL_CAPTURES_DESTINATION.
 
+It also checks that a suite run from an agent-seat's own tmux pane, as agents run test files,
+starts no pipe-pane on that pane: TMUX and TMUX_PANE are set, and a stub tmux that records its
+calls is first on PATH, before handoff-supervisor-test-fixture.py loads.
+
 Run: python3 nc-systems/handoff/tests/handoff-supervisor-terminal-capture-test.py
 (exit 0 = all passed)
 """
@@ -30,6 +34,12 @@ _git_environment_fixture_spec = importlib.util.spec_from_file_location(
 _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
+
+# As in an agent-seat's own pane, before the fixture loads; the fixture must drop both.
+CALLING_PANE_TMUX = "/tmp/tmux-calling-seat/default,1,0"
+CALLING_PANE = "%99"
+os.environ["TMUX"] = CALLING_PANE_TMUX
+os.environ["TMUX_PANE"] = CALLING_PANE
 
 _handoff_supervisor_test_fixture_spec = importlib.util.spec_from_file_location(
     "handoff_supervisor_test_fixture",
@@ -61,8 +71,12 @@ def wait_until(condition, seconds=WAIT_SECONDS):
 tmux_directory = Path(tempfile.mkdtemp(prefix="tcap-", dir="/tmp" if os.path.isdir("/tmp") else None))
 try:
     with fixture.handoff_supervisor_suite_workspace() as workspace:
-        os.environ.pop("TMUX", None)
-        os.environ.pop("TMUX_PANE", None)
+        check("loading the fixture drops the calling pane's TMUX and TMUX_PANE, and points the "
+              "terminal captures at the scratch HOME",
+              "TMUX" not in os.environ and "TMUX_PANE" not in os.environ
+              and os.environ.get(captures.AGENT_SEAT_TERMINAL_CAPTURES_DESTINATION_ENVIRONMENT_VARIABLE, "")
+              .startswith(str(fixture.SCRATCH_HOME_DIRECTORY)),
+              f"TMUX={os.environ.get('TMUX')!r} TMUX_PANE={os.environ.get('TMUX_PANE')!r}")
         os.environ["TMUX_TMPDIR"] = str(tmux_directory)
         captures_directory = workspace / "captures"
         os.environ[captures.AGENT_SEAT_TERMINAL_CAPTURES_DESTINATION_ENVIRONMENT_VARIABLE] = str(captures_directory)
@@ -82,6 +96,30 @@ try:
             sys.executable, str(SCRIPT_PATH), "--agent", SEAT, "--cd", str(seat_directory),
             "--handoff-dir", str(workspace / "handoffs"), "--agent-command", str(stub_agent),
             "--agent-update-timeout-seconds", "0"))
+        recording_tmux_directory = workspace / "recording-tmux"
+        recording_tmux_directory.mkdir()
+        recorded_calls = workspace / "recorded-tmux-calls"
+        (recording_tmux_directory / "tmux").write_text(
+            f"#!{sys.executable}\nimport sys\n"
+            f"open({str(recorded_calls)!r}, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n",
+            encoding="utf-8")
+        (recording_tmux_directory / "tmux").chmod(0o755)
+        started_from_a_suite = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "--agent", SEAT, "--cd", str(seat_directory),
+             "--handoff-dir", str(workspace / "handoffs-of-the-suite-run"), "--agent-command", str(stub_agent),
+             "--agent-update-timeout-seconds", "0"],
+            capture_output=True, text=True, check=False, timeout=WAIT_SECONDS,
+            env=dict(os.environ, PATH=f"{recording_tmux_directory}{os.pathsep}{os.environ.get('PATH', '')}"))
+        calls = recorded_calls.read_text(encoding="utf-8") if recorded_calls.exists() else ""
+        check(f"a supervisor a suite starts from an agent-seat's own pane ({CALLING_PANE}) runs no "
+              "tmux pipe-pane on it, and says its own terminal output is not captured",
+              "pipe-pane" not in calls and CALLING_PANE not in calls
+              and "is not being captured to a file: this handoff-supervisor is not in a tmux pane"
+              in started_from_a_suite.stdout,
+              f"tmux calls {calls!r}; stdout {started_from_a_suite.stdout[-1500:]!r}")
+        if counter.exists():
+            counter.unlink()
+
         configuration = tmux_directory / "empty.conf"
         configuration.write_text("set -g remain-on-exit on\n", encoding="utf-8")
         started = subprocess.run(

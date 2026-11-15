@@ -23,8 +23,9 @@ agent-seat-terminal-captures-older-than-seven-days-delete.py, beside this file, 
 terminal capture whose last write is more than seven days old.
 
 The start never stops an agent-seat: when the terminal capture cannot start, because the
-supervisor is not in a tmux pane, the directory cannot be made, or tmux fails, the start returns a
-line saying why, which the supervisor prints, and the agent-seat runs uncaptured.
+supervisor is not in a tmux pane, the directory cannot be made, tmux fails, or the capture file
+does not appear, the start returns a line saying why, which the supervisor prints, and the
+agent-seat runs uncaptured.
 """
 
 import os
@@ -43,6 +44,10 @@ LOG_STORE_AGENT_SESSION_FILES_BY_MACHINE_DIRECTORY = Path(
 AGENT_SEAT_TERMINAL_CAPTURES_DIRECTORY_UNDER_HOME_ON_A_MACHINE_WITHOUT_THE_LOG_STORE = Path(".claude") / AGENT_SEAT_TERMINAL_CAPTURES_DIRECTORY_NAME
 AGENT_SEAT_TERMINAL_CAPTURES_KEPT_DAYS = 7
 TMUX_PIPE_PANE_TIMEOUT_SECONDS = 30
+# tmux pipe-pane exits 0 before the shell it starts opens the file, so a file that cannot be
+# opened shows only as a file that never appears. The wait delays the agent-seat's launch.
+AGENT_SEAT_TERMINAL_CAPTURE_FILE_APPEAR_WAIT_SECONDS = 2
+AGENT_SEAT_TERMINAL_CAPTURE_FILE_APPEAR_POLL_SECONDS = 0.05
 # Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 NOT_CAPTURED_OPENING_LINE = "this agent-seat's terminal output is not being captured to a file"
 AGENT_SEAT_TERMINAL_CAPTURE_NOT_STARTED_AGENT_SEAT_RUNS_UNCAPTURED_MESSAGE_LINE = (
@@ -111,4 +116,14 @@ def agent_seat_terminal_capture_start_in_this_tmux_pane(agent_seat_name: str) ->
         return (f"{NOT_CAPTURED_OPENING_LINE}: tmux pipe-pane exited {completed.returncode}"
                 f"{': ' + tmux_said if tmux_said else ', saying nothing'}.\n"
                 f"{AGENT_SEAT_TERMINAL_CAPTURE_NOT_STARTED_AGENT_SEAT_RUNS_UNCAPTURED_MESSAGE_LINE}")
+    deadline = time.monotonic() + AGENT_SEAT_TERMINAL_CAPTURE_FILE_APPEAR_WAIT_SECONDS
+    while not path.exists() and time.monotonic() < deadline:
+        time.sleep(AGENT_SEAT_TERMINAL_CAPTURE_FILE_APPEAR_POLL_SECONDS)
+    if not path.exists():
+        machine = LOG_STORE_HOSTNAME if this_machine_is_the_log_store_host() else "the Mac"
+        return (f"{NOT_CAPTURED_OPENING_LINE}: tmux pipe-pane started, but the terminal capture "
+                f"file {path} did not appear within {AGENT_SEAT_TERMINAL_CAPTURE_FILE_APPEAR_WAIT_SECONDS} seconds, so "
+                f"the shell tmux started could not open it, as when the directory is not writable "
+                f"or the disk is full.\n"
+                f"{DIRECTORY_NOT_MADE_REMEDY_TEMPLATE.format(machine=machine, directory=path.parent)}")
     return f"this agent-seat's terminal output is captured to {path}"

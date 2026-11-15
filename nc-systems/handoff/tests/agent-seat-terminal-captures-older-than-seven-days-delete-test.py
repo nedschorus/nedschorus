@@ -81,6 +81,18 @@ with tempfile.TemporaryDirectory() as scratch_name:
     check("a file directly in the captures directory, not in an agent-seat's directory, is left alone",
           stray_top_level_file.exists())
 
+    # A supervisor start has just made "z-just-started-seat" and its capture file is not there
+    # yet; an earlier agent-seat directory, sorted first, has a capture deleted in the same run.
+    store_with_a_just_made_directory = scratch / "store-with-a-just-made-directory"
+    capture_file(store_with_a_just_made_directory, "a-seat", "20261001T000000Z-a-seat-terminal-capture.log", 30)
+    capture_file(store_with_a_just_made_directory, "a-seat", "20261105T000000Z-a-seat-terminal-capture.log", 0.1)
+    (store_with_a_just_made_directory / "z-just-started-seat").mkdir()
+    exit_code, output = run(["--captures-directory", str(store_with_a_just_made_directory)])
+    check("an empty agent-seat directory this run deleted nothing from is kept, though an earlier "
+          "directory had a capture deleted: a supervisor start may have just made it",
+          exit_code == 0 and (store_with_a_just_made_directory / "z-just-started-seat").is_dir()
+          and "deleted 1 capture(s)" in output, output)
+
     exit_code, output = run(["--captures-directory", str(scratch / "never-made")])
     check("a captures directory that does not exist is not a failure: exit 0, nothing deleted",
           exit_code == 0 and "deleted 0 capture(s)" in output and "FAILED" not in output, output)

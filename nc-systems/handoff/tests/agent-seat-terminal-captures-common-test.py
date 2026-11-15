@@ -94,7 +94,16 @@ with tempfile.TemporaryDirectory() as scratch_name:
               and f"`{launch_command}`, run on the Mac" in line and "do not stop it" in line
               and not captures_directory.exists(), line)
 
-    succeeding = stub_tmux(scratch / "succeeding-tmux", "sys.exit(0)\n")
+    # As real tmux does, exits 0 at once and leaves the shell it starts to open the file;
+    # an open that fails, as in an unwritable directory, is never seen by the caller.
+    opening_the_file_as_the_shell_would = (
+        "import shlex\n"
+        "try:\n"
+        "    open(shlex.split(sys.argv[-1])[-1], 'a').close()\n"
+        "except OSError:\n"
+        "    pass\n"
+        "sys.exit(0)\n")
+    succeeding = stub_tmux(scratch / "succeeding-tmux", opening_the_file_as_the_shell_would)
     line = start_with(dict(in_pane_environment,
                            PATH=f"{succeeding}{os.pathsep}{base_environment.get('PATH', '')}"))
     argv = json.loads((succeeding / "argv.json").read_text())
@@ -105,10 +114,32 @@ with tempfile.TemporaryDirectory() as scratch_name:
           argv[:3] == ["pipe-pane", "-t", "%7"] and "-o" not in argv and len(argv) == 4
           and argv[3].startswith("exec cat >> '") and str(captures_directory) in argv[3]
           and "/MD-skills/" in argv[3] and argv[3].endswith("-MD-skills-terminal-capture.log'"), str(argv))
-    check("the start makes the agent-seat's directory and says where the terminal output is captured",
+    check("the start makes the agent-seat's directory, sees the capture file appear, and says where "
+          "the terminal output is captured",
           line.startswith(f"this agent-seat's terminal output is captured to {captures_directory}/MD-skills/")
           and line.endswith("-MD-skills-terminal-capture.log")
-          and (captures_directory / "MD-skills").is_dir() and captured_files == [], line)
+          and [str(path) for path in captured_files] == [line.split(" captured to ", 1)[1]], line)
+
+    unwritable_captures_directory = scratch / "unwritable captures"
+    (unwritable_captures_directory / "MD-skills").mkdir(parents=True)
+    (unwritable_captures_directory / "MD-skills").chmod(0o500)
+    try:
+        for hostname, machine in (("ned-box", "ned-box"), ("els-MacBook-Pro", "the Mac")):
+            with mock.patch.object(captures.socket, "gethostname", return_value=hostname), \
+                    mock.patch.object(captures, "AGENT_SEAT_TERMINAL_CAPTURE_FILE_APPEAR_WAIT_SECONDS", 0.3):
+                line = start_with(dict(in_pane_environment, **{OVERRIDE: str(unwritable_captures_directory)},
+                                       PATH=f"{succeeding}{os.pathsep}{base_environment.get('PATH', '')}"))
+            check(f"an agent-seat directory the shell cannot write in, on {machine}: tmux pipe-pane exits 0, "
+                  "but the capture file never appears, so the line says nothing is captured, why, "
+                  f"and to check the directory on {machine}",
+                  line.startswith("this agent-seat's terminal output is not being captured to a file: "
+                                  "tmux pipe-pane started, but the terminal capture file "
+                                  f"{unwritable_captures_directory}/MD-skills/")
+                  and "did not appear within 0.3 seconds" in line
+                  and f"on {machine}, run `ls -ld {unwritable_captures_directory}/MD-skills`" in line
+                  and not any((unwritable_captures_directory / "MD-skills").iterdir()), line)
+    finally:
+        (unwritable_captures_directory / "MD-skills").chmod(0o700)
 
     for label, body, expected in (
             ("exits nonzero with an error", "sys.stderr.write('no such pane: %7\\n'); sys.exit(1)\n",

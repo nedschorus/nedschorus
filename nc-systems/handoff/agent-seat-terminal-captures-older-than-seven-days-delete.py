@@ -83,6 +83,9 @@ def delete_old_captures(directory: Path, oldest_kept_modification_time: float, d
             print(f"FAILED: could not list {seat_directory} ({error}). {FAILED_PATH_KEPT_UNTIL_A_RUN_CAN_DELETE_IT_LINE}")
             failed += 1
             continue
+        # Counted per agent-seat directory: one a supervisor start has just made, before its
+        # capture file appears, is empty but this run emptied nothing in it, so it stays.
+        deleted_in_seat_directory = 0
         for path in files:
             try:
                 if path.stat().st_mtime >= oldest_kept_modification_time:
@@ -92,11 +95,12 @@ def delete_old_captures(directory: Path, oldest_kept_modification_time: float, d
                 else:
                     path.unlink()
                     print(f"deleted {path}")
-                deleted += 1
+                deleted_in_seat_directory += 1
             except OSError as error:
                 print(f"FAILED: could not delete {path} ({error}). {FAILED_PATH_KEPT_UNTIL_A_RUN_CAN_DELETE_IT_LINE}")
                 failed += 1
-        if not dry_run and deleted and not any(seat_directory.iterdir()):
+        deleted += deleted_in_seat_directory
+        if not dry_run and deleted_in_seat_directory and not any(seat_directory.iterdir()):
             try:
                 seat_directory.rmdir()
             except OSError as error:
