@@ -2821,19 +2821,36 @@ def held_answers_unresolved(walk_finder, minutes_text, parser):
             for number in held_numbers} - decided
 
 
-def items_decided_through_sub_steps(items, words, unresolved=frozenset()):
+def approval_walk_map_each_item_number_to_direct_sub_steps_found_by_walk_document_item_finder(walk_finder, units):
+    """Return {item number: its direct sub-steps, such as 3.1 and 3.2 for 3, but not 3.1.1} for each item of units,
+    as item_unit_spans gives them, taken from the sub-steps approval_walk_item_sub_step_units_below_item_in_walk_document
+    gives the item, and from the item's own unit, as in `Items 3 and 3.1 of 9`."""
+    sub_steps_of = {}
+    for unit in units:
+        for number in unit[0]:
+            direct = sub_steps_of.setdefault(number, [])
+            below = walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(units, unit, [number])
+            for part in unit[0] + [part for each in below for part in each[0]]:
+                if part.rsplit(".", 1)[0] == number and part != number and part not in direct:
+                    direct.append(part)
+    return sub_steps_of
+
+
+def items_decided_through_sub_steps(items, words, sub_steps_of, unresolved=frozenset()):
     """Return {item: its `#ruling_given` word} for each item of items, such as 3, not in words, the decided items
-    with their words, nor in unresolved, the items whose held answer is unresolved, that has sub-steps among items,
-    such as 3.1 and 3.2, every one of them in words or, deeper, decided through its own sub-steps; an item is never
-    decided through its parent. Its word is its sub-steps' one word once moved_on is left out, moved_on when that
-    leaves none, and part_answers when it leaves more than one."""
+    with their words, nor in unresolved, the items whose held answer is unresolved, that has direct sub-steps in
+    sub_steps_of, as
+    approval_walk_map_each_item_number_to_direct_sub_steps_found_by_walk_document_item_finder
+    gives them, among items, such as 3.1 and 3.2, every one of them in words or, deeper, decided through its own
+    sub-steps; an item is never decided through its parent. Its word is its sub-steps' one word once moved_on is
+    left out, moved_on when that leaves none, and part_answers when it leaves more than one."""
     words, inferred = dict(words), {}
     numbered = [item for item in items if isinstance(item, str)]
     # Deepest first, so a sub-step decided through its own sub-steps, as 5.2 through 5.2.1, counts for its parent.
     for item in sorted(numbered, key=lambda number: -number.count(".")):
         if item in words or item in unresolved:
             continue
-        sub_steps = [other for other in numbered if other.rsplit(".", 1)[0] == item and other != item]
+        sub_steps = [other for other in sub_steps_of.get(item, []) if other in numbered]
         if sub_steps and all(other in words for other in sub_steps):
             ruled = {words[other] for other in sub_steps} - {RULING_GIVEN_MOVED_ON}
             words[item] = inferred[item] = (RULING_GIVEN_MOVED_ON if not ruled else ruled.pop() if len(ruled) == 1
@@ -2847,11 +2864,13 @@ def approval_walk_minutes_read_returning_decided_item_numbers(walk_finder, minut
     items_decided_through_sub_steps finds decided through its sub-steps, unless held_answers_unresolved holds it."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     minutes_text = minutes.read_text(encoding="utf-8")
-    items = [number for unit in walk_finder.item_unit_spans(document.read_text(encoding="utf-8"), parser)
-             for number in unit[0]]
+    units = walk_finder.item_unit_spans(document.read_text(encoding="utf-8"), parser)
+    items = [number for unit in units for number in unit[0]]
     decided = minutes_record(walk_finder, minutes_text, parser)[0] | set(decided_now)
     return decided | set(items_decided_through_sub_steps(
-        items, dict.fromkeys(decided), held_answers_unresolved(walk_finder, minutes_text, parser)))
+        items, dict.fromkeys(decided), approval_walk_map_each_item_number_to_direct_sub_steps_found_by_walk_document_item_finder(
+            walk_finder, units),
+        held_answers_unresolved(walk_finder, minutes_text, parser)))
 
 
 def next_item(walk_finder, minutes, parser, order, summary, answered_numbers, waiting_numbers, placing=None,
@@ -3050,8 +3069,10 @@ def close(arguments):
     if answered != DEFERRED:
         deferred_item_heading_noted(walk_finder, minutes, answered_numbers, total, parser, noted=False)
     before = minutes.read_text(encoding="utf-8")
+    sub_steps_of = approval_walk_map_each_item_number_to_direct_sub_steps_found_by_walk_document_item_finder(
+        walk_finder, units or [])
     inferred_before = items_decided_through_sub_steps(order, minutes_ruling_words(walk_finder, before, parser)[0],
-                                                      held_answers_unresolved(walk_finder, before, parser))
+                                                      sub_steps_of, held_answers_unresolved(walk_finder, before, parser))
     append_to_minutes(minutes, [recorded])
     word = RULING_GIVEN_WORDS[held_outcome] if held_outcome else word
     rulings = [(number, word) for number in answered_numbers]
@@ -3070,7 +3091,8 @@ def close(arguments):
     unresolved = held_answers_unresolved(walk_finder, after, parser)
     # An item this close decides through its last sub-step gets its ruling too, so a pull request held on it moves.
     rulings += [(number, inferred_word) for number, inferred_word
-                in items_decided_through_sub_steps(order, words, unresolved).items() if number not in inferred_before]
+                in items_decided_through_sub_steps(order, words, sub_steps_of, unresolved).items()
+                if number not in inferred_before]
     numbers = next_item(walk_finder, minutes, parser, order, summary, answered_numbers, waiting_numbers, placing)
     if numbers and isinstance(numbers[0], int):
         first = numbers[0]
