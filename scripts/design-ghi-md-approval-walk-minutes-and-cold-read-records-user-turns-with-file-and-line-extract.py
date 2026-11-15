@@ -33,7 +33,10 @@ usually cites a ruling given in an approval-walk, so its walk-minutes are where 
 
 Each printed object has: design (its path), design_number, source_kind (walk-minutes or
 cold-read-triage), walk_minutes_match (as above; "" for a cold-read-triage), source (the file's path), line
-(1-based), heading (the nearest Markdown heading above the line, or ""), and text (the line). A count per design goes to stderr at the end.
+(1-based), heading (the nearest Markdown heading above the line, or ""), text (the line), and continuation:
+when the line opens a double-quoted quotation it does not close, as hard-wrapped minutes do, the lines after
+it up to the one that closes it, a blank line or a heading, each as {line, text}; else []. A count per design
+goes to stderr at the end.
 
 Exit codes: 0 done; 2 a directory argument does not exist. A failing git command stops it with git's
 error and a nonzero exit.
@@ -49,12 +52,19 @@ from pathlib import Path
 DEFAULT_LOG_STORE = Path("/home/nedlern/nedschorus-logs")
 DEFAULT_AGENTS_DIRECTORY = Path("/home/nedlern/agents")
 DESIGN_KIND_LINE = re.compile(r"^kind: design", re.MULTILINE)
-# Old walk-minutes quote him as `The user, <date>: "..."` or `Item 4 answer in full: "..."`; newer ones carry
-# the line walk-me-through's check program writes, `item 3 of 16: the user answered approved ... in his words
-# "..."`; a cold-read-triage.md line cites his decision with its date and the approval-walk that recorded it.
+# Old walk-minutes quote him as `The user, <date>: "..."`, `Item 4 answer in full: "..."`, or under a bare
+# label at the line's start, `User: "..."`, `- User (<date>): ...`, `User asked ...`, `RULING: ...`; newer
+# ones carry the line walk-me-through's check program writes, `item 3 of 16: the user answered approved ... in
+# his words "..."`; a cold-read-triage.md line cites his decision with its date and the approval-walk that
+# recorded it. A bare label must end in `:`, `(` or `,`, because hard-wrapped minutes also start lines with
+# `user` or `ruling` in mid-sentence, and `User-facing` names no speaker.
 USER_TURN_LINE = re.compile(
-    r"\bthe user\b|\buser-ruled\b|\bin his words\b|\banswer in full\b|\bhe (?:said|asked|answered|ruled)\b",
+    r"\bthe user\b|\buser-ruled\b|\bhis words\b|\banswer in full\b|\bhe (?:said|asked|answered|ruled)\b"
+    r"|\buser (?:said|asked|answered|ruled|wrote|replied|chose)\b"
+    r"|^\s*(?:[-*+]\s+|\d+\.\s+)?(?:\*\*)?(?:user(?:'s words)?|rulings?(?: recorded)?)(?:\*\*)?\s*[:(,]",
     re.IGNORECASE)
+# A quotation the minutes hard-wrap goes on past its line; this many lines bound the search for its close.
+QUOTATION_CONTINUATION_LINE_LIMIT = 20
 HEADING_LINE = re.compile(r"^#{1,6} ")
 TRIAGE_FILE_NAMES = ("cold-read-triage.md", "triage.md")
 
@@ -116,14 +126,29 @@ def walk_minutes_match(name, text, number, names, own_records):
     return None
 
 
+def quotation_left_open(text):
+    """True when text opens a double-quoted quotation it does not close."""
+    return text.count('"') % 2 == 1 or text.count("\u201c") > text.count("\u201d")
+
+
 def user_turns(path):
-    """(line number, nearest heading, line) for each line USER_TURN_LINE matches."""
+    """(line number, nearest heading, line, continuation lines) for each line USER_TURN_LINE matches; the
+    continuation lines are [(line number, line)] that carry on a quotation the line leaves open, up to the line
+    that closes it, a blank line or a heading."""
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     heading = ""
-    for number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+    for index, line in enumerate(lines):
         if HEADING_LINE.match(line):
             heading = line.lstrip("#").strip()
-        if USER_TURN_LINE.search(line):
-            yield number, heading, line
+        if not USER_TURN_LINE.search(line):
+            continue
+        continuation, quoted = [], line
+        for later in range(index + 1, min(index + 1 + QUOTATION_CONTINUATION_LINE_LIMIT, len(lines))):
+            if not quotation_left_open(quoted) or not lines[later].strip() or HEADING_LINE.match(lines[later]):
+                break
+            continuation.append((later + 1, lines[later]))
+            quoted += "\n" + lines[later]
+        yield index + 1, heading, line, continuation
 
 
 def extract(checkout, log_store, agents_directory, out, err):
@@ -146,10 +171,13 @@ def extract(checkout, log_store, agents_directory, out, err):
                     sources.append(("cold-read-triage", triage, ""))
         count = 0
         for kind, path, match in sources:
-            for line_number, heading, text in user_turns(path):
+            for line_number, heading, text, continuation in user_turns(path):
                 out.write(json.dumps({"design": design, "design_number": number, "source_kind": kind,
                                       "walk_minutes_match": match, "source": str(path), "line": line_number, "heading": heading,
-                                      "text": text}, ensure_ascii=False) + "\n")
+                                      "text": text,
+                                      "continuation": [{"line": later, "text": later_text}
+                                                       for later, later_text in continuation]},
+                                     ensure_ascii=False) + "\n")
                 count += 1
         err.write(f"{design}: {len(own_minutes)} walk-minutes, {len(own_records)} cold-read-records, "
                   f"{count} user turns\n")

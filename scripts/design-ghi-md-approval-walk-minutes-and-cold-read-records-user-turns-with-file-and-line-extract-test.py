@@ -60,6 +60,22 @@ def build(root):
           "which makes its change. Fast reads:\n")
     write(walk / "mixed-topics-minutes.md", "# Mixed\n## Item 3\nOn GHI 5, he asked \"what does the user see?\"\n")
     write(walk / "other-design-minutes.md", "# Other\nOn GHI 55 the user said \"no\".\n")
+    # Bare speaker labels, as the older walk-minutes write them, and a quotation hard-wrapped over two lines.
+    write(walk / "5-labels-minutes.md",
+          "# Labels\n"
+          "User: \"Why is it skipped?\"\n"
+          "  - User: \"does this cover designs too?\"\n"
+          "User asked whether the count is right.\n"
+          "User (2026-10-19): keep it.\n"
+          "RULING: close it.\n"
+          "Rulings recorded: both items.\n"
+          "Quoting his words: \"no guard\".\n"
+          "User-facing text changed.\n"
+          "3. Whether to close it: the user asked the direct question, \"is 120\n"
+          "   done or not. If done, then close it,\" and it is\n"
+          "   done: verified.\n"
+          "\n"
+          "Agent note.\n")
     # The agent-seat's copy loses to the log-store's copy of the same name.
     write(agents / "seat-a/docs/walk/mixed-topics-minutes.md", "# Stale\nissues/5 the user said \"stale\"\n")
     write(agents / "seat-a/docs/walk/seat-only-minutes.md", "# Seat\nSee issues/5). The user: \"seat copy\"\n")
@@ -103,7 +119,18 @@ def main():
         triage = found.get(("triage.md", 2), {})
         check("triage line from the design's record", triage.get("source_kind") == "cold-read-triage", triage)
         check("other design's record not read", ("cold-read-triage.md", 1) not in found)
-        check("count line", "docs/issues/5-new-name-design.md: 4 walk-minutes, 1 cold-read-records, 5 user turns"
+        labels = {line for name, line in found if name == "5-labels-minutes.md"}
+        for line, form in ((2, "User:"), (3, "- User:"), (4, "User asked"), (5, "User (date):"), (6, "RULING:"),
+                           (7, "Rulings recorded:"), (8, "his words without in")):
+            check(f"bare label {form} printed", line in labels, sorted(labels))
+        check("User-facing is no speaker", 9 not in labels, sorted(labels))
+        wrapped = found.get(("5-labels-minutes.md", 10), {})
+        check("wrapped quotation's continuation printed with its line number",
+              wrapped.get("continuation") == [{"line": 11, "text": "   done or not. If done, then close it,\" and it is"}],
+              wrapped)
+        check("closed quotation has no continuation", found.get(("5-labels-minutes.md", 2), {}).get("continuation") == [],
+              found.get(("5-labels-minutes.md", 2)))
+        check("count line", "docs/issues/5-new-name-design.md: 5 walk-minutes, 1 cold-read-records, 13 user turns"
               in done.stderr, done.stderr)
 
         missing = run("--log-store", str(Path(temporary) / "absent"))
