@@ -856,9 +856,6 @@ with tempfile.TemporaryDirectory() as scratch_name:
           == runner.test_suite_cgroup_scope_command(runner.TEST_SUITE_MEMORY_CEILING_BYTES)
           and runner.test_suite_memory_ceiling_bytes("scripts/a-test.py")
           == runner.TEST_SUITE_MEMORY_CEILING_BYTES, runner.test_suite_cgroup_scope_command())
-    check("a suite named as needing more memory gets its own ceiling",
-          all(runner.test_suite_memory_ceiling_bytes(suite) == ceiling for suite, ceiling in
-              runner.TEST_SUITE_MEMORY_CEILING_BYTES_OF_SUITES_THAT_NEED_MORE.items()))
     out_of_memory = {"suite": "scripts/a-test.py", "exit": 1, "seconds": 1.0, "skips": [],
                      "out of memory": {"processes killed": 2, "ceiling": 4 * 10**9}}
     lines = [runner.suite_line(out_of_memory),
@@ -1101,18 +1098,26 @@ with tempfile.TemporaryDirectory() as scratch_name:
     # with one process killed at its ceiling gives.
     def scope_that_killed_one_process(statistics_descriptor, in_bwrap, memory_ceiling_bytes):
         ceilings.append(memory_ceiling_bytes)
+        real_scopes.append(real_prefix(statistics_descriptor, in_bwrap, memory_ceiling_bytes))
         return ("bash", "-c", '"$@"; status=$?; printf "usage_usec 1000000\\nmemory.peak 5\\n'
                 f'oom_kill 1\\n" >&{statistics_descriptor}; exit $status', "scope")
 
     (repository / "exits-zero-test.py").write_text("print('PASS  a case')\n")
     real_prefix = runner.command_prefix_running_one_suite_in_its_cgroup_scope
     runner.command_prefix_running_one_suite_in_its_cgroup_scope = scope_that_killed_one_process
+    (repository / "scripts").mkdir(exist_ok=True)
+    (repository / "scripts" / "scheduled-full-test-run-of-main-test.py").write_text(
+        "print('PASS  a case')\n")
     ceilings = []
+    real_scopes = []
     try:
         zero = runner.run_one_suite(repository, sys.executable, "exits-zero-test.py", log_dir,
                                     in_cgroup_scope=True)
         one = runner.run_one_suite(repository, sys.executable, "timed-test.py", log_dir,
                                    in_cgroup_scope=True)
+        scheduled_full_run = runner.run_one_suite(
+            repository, sys.executable, "scripts/scheduled-full-test-run-of-main-test.py",
+            log_dir, in_cgroup_scope=True)
     finally:
         runner.command_prefix_running_one_suite_in_its_cgroup_scope = real_prefix
     check("a suite that exits 0 after the kernel killed one of its processes at its memory "
@@ -1120,10 +1125,15 @@ with tempfile.TemporaryDirectory() as scratch_name:
           zero["exit"] == -signal.SIGKILL and runner.suite_failed(zero)
           and zero["out of memory"] == {"processes killed": 1,
                                         "ceiling": runner.TEST_SUITE_MEMORY_CEILING_BYTES}
-          and ceilings == [runner.TEST_SUITE_MEMORY_CEILING_BYTES] * 2
+          and ceilings[:2] == [runner.TEST_SUITE_MEMORY_CEILING_BYTES] * 2
           and zero["peak_memory_bytes"] == 5, zero)
     check("a suite that fails by its own exit after such a kill keeps its exit code, out of "
           "memory", one["exit"] == 1 and one["out of memory"]["processes killed"] == 1, one)
+    check("the scheduled full test run's suite runs in a cgroup scope with a memory ceiling "
+          "of 24 GB, and is reported out of memory at that ceiling",
+          f"MemoryMax={24 * 10**9}" in real_scopes[2]
+          and scheduled_full_run["out of memory"]["ceiling"] == 24 * 10**9,
+          (real_scopes[2], scheduled_full_run))
 
     # --- On the Mac, the suite's output goes straight to its log, as it always did ---
     mac_result = runner.run_one_suite(repository, sys.executable, "timed-test.py", log_dir,
