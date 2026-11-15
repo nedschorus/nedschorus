@@ -709,7 +709,7 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds=None,
                         if event.task_id not in workflow_ids:
                             workflow_ids.append(event.task_id)
                             launched_at_by_id[event.task_id] = record_time(event.record)
-                    elif event.kind == SUBAGENT_RESUMED_BY_SEND_MESSAGE_TASK_EVENT:
+                    elif event.kind == SUBAGENT_RESUMED_BY_SEND_MESSAGE_TASK_EVENT:  # pragma: no mutate, the kinds left here are "resumed", "stopped" and "task-notification", and only "resumed" sorts at or before "resumed", so <= acts as ==
                         last_notification_is_interim.pop(event.task_id, None)
                         stopped_ids.discard(event.task_id)
                     elif event.kind == STOPPED_BY_TASK_STOP_EVENT:

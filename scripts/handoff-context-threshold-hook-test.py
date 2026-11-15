@@ -2778,6 +2778,13 @@ check("the reader returns a resume and a TaskStop",
        for event in read_line(line, "here", should_raise_on_unparseable_spawn_or_resume_line=True)]
       == [(hook.SUBAGENT_RESUMED_BY_SEND_MESSAGE_TASK_EVENT, RESUMED_SUBAGENT_ID),
           (hook.STOPPED_BY_TASK_STOP_EVENT, "b5x7")])
+# The marker key only in the line's text, as in a tool's output, passes the reader's first filter.
+unmarked_task_id_record = {"type": "user", "timestamp": GRID_LAUNCHED_AT, "toolUseResult": {
+    "task_id": "b5x7", "stdout": f'"{hook.TASK_STOP_TOOL_RESULT_MARKER_KEY}": "local_bash"'}}
+unmarked_task_id_events = read_line(json.dumps(unmarked_task_id_record), "here",
+                                    should_raise_on_unparseable_spawn_or_resume_line=True)
+check("the reader returns no TaskStop for a tool result with a task_id but not the TaskStop "
+      "marker key", unmarked_task_id_events == [], unmarked_task_id_events)
 cut_resume_line = json.dumps(subagent_resume_record())[:-30]
 for cut_line, marker in ((half_written_spawn_line(), "spawn"), (cut_resume_line, "resume")):
     try:
