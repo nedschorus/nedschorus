@@ -325,6 +325,15 @@ def program_environment(base, mode="ok", plan=None, backup_mode="not-found"):
     return environment
 
 
+def fail_on_traceback(arguments, stderr):
+    """Records a failure when the program died with a traceback, which every
+    case rejects: a crash exits 1, the code for "not found", so a case that
+    expects exit 1 passes on a crash unless this checks."""
+    if "Traceback" in stderr:
+        check(f"the run with {arguments!r} ends without a traceback", False,
+              stderr)
+
+
 def run(base, query, mode="ok", plan=None, cwd=None, backup_mode="not-found",
         extra_environment=None, double_dash=False):
     """(exit code, stdout, stderr) of one run of the program, from `cwd`
@@ -335,6 +344,7 @@ def run(base, query, mode="ok", plan=None, cwd=None, backup_mode="not-found",
                              *(["--"] if double_dash else []), query],
                             capture_output=True, text=True, cwd=cwd or base,
                             env=environment, timeout=120)
+    fail_on_traceback(query, result.stderr)
     return result.returncode, result.stdout, result.stderr
 
 
@@ -1230,7 +1240,7 @@ with scratch() as directory:
     check("no rerun when the candidate list was cut, since the cut candidates "
           "may have other names",
           code == 1 and RERUN_LINE_OPENING not in stdout
-          and "were considered" in stdout and "Traceback" not in stderr,
+          and "were considered" in stdout,
           stdout + stderr)
 
 # --- A query with directories is found only at its own path ---------------------
@@ -1719,6 +1729,7 @@ with scratch() as directory:
         [sys.executable, str(PROGRAM),
          str(linked / "docs" / "linked-worktree-probe.md")],
         capture_output=True, text=True, cwd=base, env=environment, timeout=120)
+    fail_on_traceback("linked-worktree-probe.md", result.stderr)
     # The failure line is matched whole. The query's own path begins with
     # the project's (linked-project-wt), so "the project's path appears
     # somewhere below NOT searched" held without the listing being named
@@ -2018,6 +2029,7 @@ with scratch() as directory:
         result = subprocess.run(["sh", "-c", script], capture_output=True,
                                 text=True, env=program_environment(base),
                                 timeout=120)
+        fail_on_traceback(query, result.stderr)
         return result.returncode, result.stdout, result.stderr
 
     code, stdout, stderr = run_in_removed_directory("docs/gone-dir-probe.md")
@@ -2025,7 +2037,7 @@ with scratch() as directory:
           "searches nothing",
           code == 3 and "the current directory no longer exists" in stdout
           and "Run again with the file's absolute path" in stdout
-          and "Searched:" not in stdout and "Traceback" not in stderr,
+          and "Searched:" not in stdout,
           f"exit {code}\n{stdout}{stderr}")
     code, stdout, stderr = run_in_removed_directory("./gone-dir-probe.md")
     check("... and so does ./ before a bare name",
@@ -2035,7 +2047,7 @@ with scratch() as directory:
     check("a bare name needs no current directory, and is still searched "
           "from a removed one",
           code == 0 and "/agents/s/docs/gone-dir-probe.md"
-          in sections(stdout)[0] and "Traceback" not in stderr,
+          in sections(stdout)[0],
           f"exit {code}\n{stdout}{stderr}")
     # PR 703 review 5308486733, inline at :896: git refuses to start in a
     # directory that no longer exists, so every git surface went unsearched
@@ -2136,6 +2148,7 @@ with scratch() as directory:
         [sys.executable, str(PROGRAM),
          str(asked_worktree / "docs" / "common-dir-probe.md")],
         capture_output=True, text=True, cwd=base, env=environment, timeout=120)
+    fail_on_traceback("common-dir-probe.md", result.stderr)
     check("a whole run with GIT_COMMON_DIR naming another clone finds the "
           "asked clone's commit at its linked worktree's path, exit 0",
           result.returncode == 0
