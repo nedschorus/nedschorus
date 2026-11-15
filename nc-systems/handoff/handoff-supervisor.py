@@ -318,10 +318,6 @@ claude_code_session_transcript_lookup_and_text_search_common = importlib.util.mo
 _claude_code_session_transcript_lookup_and_text_search_common_spec.loader.exec_module(claude_code_session_transcript_lookup_and_text_search_common)
 # Live supervisors resolve this path at import; moving the extractor would break those processes.
 EXTRACTOR_PATH = SCRIPTS_DIRECTORY / "handoff-extract-conversation.py"
-_handoff_extract_conversation_spec = importlib.util.spec_from_file_location(
-    "handoff_extract_conversation", EXTRACTOR_PATH)
-handoff_extract_conversation = importlib.util.module_from_spec(_handoff_extract_conversation_spec)
-_handoff_extract_conversation_spec.loader.exec_module(handoff_extract_conversation)
 CLEAN_WORKTREES_PATH = SCRIPTS_DIRECTORY / "clean-worktrees.py"
 FINISHED_WORKTREE_REMOVAL_TIMEOUT_SECONDS = 180
 WORKTREE_CLEANER_STOP_GRACE_SECONDS = 5
