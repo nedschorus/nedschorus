@@ -178,7 +178,7 @@ def run_several_alert_cases(root):
     check("an alert titled \"Item 3's reboot\", which opens with an item's number but no label, keeps its title",
           result.returncode == 0 and "\n## Item 3's reboot\n" in document, result.stderr + document)
 
-    sub_item =WALK_DOCUMENT.replace("## Items 5 and 6", "### Item 4.1 of 9: a part\n\n## Items 5 and 6")
+    sub_item = WALK_DOCUMENT.replace("## Items 5 and 6", "### Item 4.1 of 9: a part\n\n## Items 5 and 6")
     checkout, home = walk_checkout(root, "sub-item", waiting="item 4.1 of 9", document=sub_item)
     claimed_alert(home, "alert-d", "fourth")
     result = run(checkout, home, "alert-d")

@@ -2044,6 +2044,61 @@ def test_a_title_that_opens_with_an_item_number_but_no_label_ends_the_sub_step_a
           shown == SUB_STEP_50_1 and not any(map(finder.approval_walk_unit_is_unnumbered_item, units)), shown)
 
 
+def finder_shown_text(document, number):
+    finder = load_walk_finder_for_test()
+    parser = finder.markdown_parser()
+    units = finder.item_unit_spans(document, parser)
+    unit = next(unit for unit in units if number in unit[0])
+    return finder.approval_walk_item_text_as_shown_to_user(document, parser, units, unit, number), units
+
+
+def test_a_label_heading_inside_a_shared_heading_keeps_the_shared_heading_items_apart():
+    item_2 = "**Item 2 of 3**\n\nRecommendation: do item 2."
+    document = ("# A walk\n\n## Items 1 and 2 of 3\n\n**Item 1 of 3**\n\nRecommendation: do item 1.\n\n"
+                f"## Item 2: details\n\n{item_2}\n\n## Item 3 of 3: the last\n\nRecommendation: do item 3.\n")
+    shown, _ = finder_shown_text(document, "2")
+    check("item 2 under a shared `## Items 1 and 2 of 3` heading and a `## Item 2: details` heading is item 2's "
+          "text, not item 1's", shown.endswith(item_2) and "do item 1" not in shown, shown)
+
+
+def test_a_setext_heading_has_its_own_level_not_its_underline_length():
+    document = ("# A walk\n\n# Item 1 of 2: the first\n\nA line.\n\nA setext heading in the body\n---\n\n"
+                "Recommendation: do item 1.\n\n# Item 2 of 2: the second\n\nRecommendation: do item 2.\n")
+    shown, _ = finder_shown_text(document, "1")
+    check("a setext `---` heading in the body of a `#` item does not end it", "do item 1" in shown, shown)
+    document = ("# A walk\n\nItem 1 of 2: the first\n---\n\nRecommendation: do item 1.\n\n## Part 2\n\n"
+                "Not item 1.\n\nItem 2 of 2: the second\n---\n\nRecommendation: do item 2.\n")
+    shown, _ = finder_shown_text(document, "1")
+    check("a `## Part 2` heading ends an item on a setext `---` heading", "Not item 1" not in shown, shown)
+
+
+def test_a_grouping_heading_as_high_as_the_item_above_ends_it():
+    document = ("# A walk\n\n## Item 4 of 9: the fourth\n\nRecommendation: do item 4.\n\n"
+                "## Items 5 to 6: fixes\n\nThese are smaller.\n\n### Item 5 of 9: the fifth\n\n"
+                "Recommendation: do item 5.\n")
+    shown, units = finder_shown_text(document, "4")
+    finder = load_walk_finder_for_test()
+    check("a `## Items 5 to 6: fixes` heading ends the `## Item 4 of 9` item above it and is no unnumbered item",
+          "fixes" not in shown and "smaller" not in shown
+          and not any(map(finder.approval_walk_unit_is_unnumbered_item, units)), shown)
+
+
+def test_items_headings_with_words_group_and_amendment_headings_stay_in_their_item():
+    document = ('# A walk\n\n## Item 2 of 9: the second\n\nRecommendation: do item 2.\n\n'
+                '## Items 3 to 5 are smaller; answer each, as in "3 y, 4 y, 5 n"\n\n'
+                '**Item 3 of 9**: the third. Recommendation: do item 3.\n')
+    _, units = finder_shown_text(document, "2")
+    finder = load_walk_finder_for_test()
+    check("a `## Items 3 to 5 are smaller; ...` heading groups items and is no unnumbered item",
+          not any(map(finder.approval_walk_unit_is_unnumbered_item, units)), units)
+    document = ("# A walk\n\n## Item 20 of 30: the twentieth\n\nThe first version.\n\n"
+                "## Item 20, amended: the second version\n\nRecommendation: do the amended item 20.\n\n"
+                "## Item 21 of 30: the next\n\nRecommendation: do item 21.\n")
+    shown, _ = finder_shown_text(document, "20")
+    check("a `## Item 20, amended: ...` heading stays in item 20's text",
+          "amended" in shown and "do the amended item 20" in shown and "item 21" not in shown, shown)
+
+
 def load_walk_finder_for_test():
     path = HOOK_SCRIPT.parent / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py"
     spec = importlib.util.spec_from_file_location("walk_finder_for_short_answer_hook_test", path)
