@@ -27,7 +27,8 @@ LAST_TOOL_CALL_AT = "last_tool_call_at"
 # [{"time", "name", "task"}], oldest first: each TaskCreate or TaskUpdate call in the
 # agent-session's own transcript that sets metadata.prerequisites or addBlockedBy and whose result
 # succeeded; "task" is a TaskCreate's subject or a TaskUpdate's taskId
-TASK_CALLS_SETTING_PREREQUISITES_OR_BLOCKED_BY = "task_calls_setting_prerequisites_or_blocked_by"
+SUCCESSFUL_TASK_TOOL_CALLS_SETTING_PREREQUISITES_OR_BLOCKED_BY = (
+    "successful_task_tool_calls_setting_prerequisites_or_blocked_by")
 TURN_ENDED = "turn_ended"
 # [{"walk_minutes": path, "next_to_present": value}]
 APPROVAL_WALK_ITEMS_WAITING_ON_THE_USER = "approval_walk_items_waiting_on_the_user"
@@ -60,7 +61,7 @@ OPEN_TASKS_WITH_PREREQUISITES_OR_BLOCKED_BY = "open_tasks_with_prerequisites_or_
 
 ALWAYS_PRESENT = (AGENT_SEAT, SESSION_ID, TRANSCRIPT_PATH, CHECKED_AT, ERRORS, RULE)
 OPTIONAL = (DECISION, NOT_CHECKED, SUPERVISOR_LAST_POLL_AT, LAST_ACTIVITY, LAST_TOOL_CALL_AT,
-            TASK_CALLS_SETTING_PREREQUISITES_OR_BLOCKED_BY, TURN_ENDED,
+            SUCCESSFUL_TASK_TOOL_CALLS_SETTING_PREREQUISITES_OR_BLOCKED_BY, TURN_ENDED,
             APPROVAL_WALK_ITEMS_WAITING_ON_THE_USER, IDLE, NOT_IDLE_BECAUSE, RUNNING,
             HANDOFF_DEFERRED_MARKER,
             USAGE_LIMIT, SENTENCES, OPEN_TASKS_NOTHING_HOLDS, TEXT, IF_EVERY_SENTENCE_BACKED,

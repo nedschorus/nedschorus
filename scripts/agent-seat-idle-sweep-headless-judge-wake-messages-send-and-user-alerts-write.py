@@ -859,7 +859,8 @@ class Sweep:
         if wait and wait[PROMISE_MESSAGES]:
             settling_calls = task_calls_settling_promise_messages(
                 wait[PROMISE_MESSAGES],
-                verdict.get(fields.TASK_CALLS_SETTING_PREREQUISITES_OR_BLOCKED_BY) or [])
+                verdict.get(
+                    fields.SUCCESSFUL_TASK_TOOL_CALLS_SETTING_PREREQUISITES_OR_BLOCKED_BY) or [])
             if settling_calls is not None:
                 self.end_wait(seat, "it recorded what a task waits on after the promise message",
                               sentences=[sentence for message in wait[PROMISE_MESSAGES]

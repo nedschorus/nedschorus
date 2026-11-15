@@ -635,7 +635,7 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
                                     "source": str(source) if last_spend else None}
         verdict[fields.LAST_TOOL_CALL_AT] = iso(max(
             (moment for moment, _, _ in facts.tool_calls if moment), default=None))
-        verdict[fields.TASK_CALLS_SETTING_PREREQUISITES_OR_BLOCKED_BY] = [
+        verdict[fields.SUCCESSFUL_TASK_TOOL_CALLS_SETTING_PREREQUISITES_OR_BLOCKED_BY] = [
             {"time": iso(moment), "name": name,
              "task": tool_input.get("subject") if name == "TaskCreate" else tool_input.get("taskId")}
             for moment, name, tool_input in facts.task_tool_calls

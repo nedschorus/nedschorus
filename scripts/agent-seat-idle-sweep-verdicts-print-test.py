@@ -864,7 +864,7 @@ try:
     _, verdicts, _ = machine.run()
     check("each task call that sets prerequisites or addBlockedBy is listed, oldest first; one whose "
           "result failed, one that sets neither, and a tool call of another kind are not",
-          verdicts["alpha"].get("task_calls_setting_prerequisites_or_blocked_by")
+          verdicts["alpha"].get("successful_task_tool_calls_setting_prerequisites_or_blocked_by")
           == [{"time": "2026-11-02T11:38:00Z", "name": "TaskCreate", "task": "after PR 927"},
               {"time": "2026-11-02T11:40:00Z", "name": "TaskUpdate", "task": "3"}],
           verdicts["alpha"])
@@ -873,7 +873,7 @@ try:
                            assistant("Done."), turn_end()])
     _, verdicts, _ = machine.run()
     check("an agent-session whose task calls set neither prerequisites nor addBlockedBy: an empty list",
-          verdicts["alpha"].get("task_calls_setting_prerequisites_or_blocked_by") == [],
+          verdicts["alpha"].get("successful_task_tool_calls_setting_prerequisites_or_blocked_by") == [],
           verdicts["alpha"])
 
     # --- the task list is read as the due-task hook reads it ------------------------------------
