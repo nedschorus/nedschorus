@@ -2612,7 +2612,8 @@ def refuse_to_land_edit(repo: str, number: int, relative: str, on_main,
 
 def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
               on_main, moved_from, moved_from_on_main, state, branch,
-              main_commit: str, repository_root: Path, runner, report):
+              main_commit: str, repository_root: Path, runner, report,
+              why=None):
     """Step 3. Returns (True when a pull request is waiting on this edit,
     True when this run pushed the edit or opened its pull request).
 
@@ -2686,6 +2687,8 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
                    "of this file, so they follow when this lands. The "
                    "file's `issue:` frontmatter line is written by the "
                    "tool, not by its author.\n")
+        if why:
+            message += f"\n{why.strip()}\n"
         runner(["git", "commit", "--quiet", "-m", message], cwd=str(worktree))
         push_branch(worktree, branch, runner)
         create_pull_request_for_edit_branch(repo, branch, number, title,
@@ -2943,15 +2946,17 @@ def issue_file_set_for_this_edit(number: int, relative: str, on_main, paths,
     return paths + [relative]
 
 
-def edit(path: Path, repo: str, repository_root: Path, runner, report):
+def edit(path: Path, repo: str, repository_root: Path, runner, report,
+         why=None):
     """The whole edit sequence, and the one function the tests drive."""
     number, finished, _ = edit_saying_whether_this_run_opened_its_pull_request(
-        path, repo, repository_root, runner, report)
+        path, repo, repository_root, runner, report, why=why)
     return number, finished
 
 
 def edit_saying_whether_this_run_opened_its_pull_request(
-        path: Path, repo: str, repository_root: Path, runner, report):
+        path: Path, repo: str, repository_root: Path, runner, report,
+        why=None):
     """`edit`, returning also whether this run pushed the edit or opened its
     pull request: the close operation tells its pending state from its refusal by it."""
     text, title, number, relative = validate_edit(path, repository_root)
@@ -3044,7 +3049,7 @@ def edit_saying_whether_this_run_opened_its_pull_request(
     waiting, opened = land_edit(
         repo, number, title, relative, staged, on_main, moved_from,
         moved_from_on_main, state, branch, main_commit, repository_root, runner,
-        report)
+        report, why=why)
 
     sync_title_on_heading_change(repo, number, document_before_this_edit,
                                  title, paths, issue, runner, report)
@@ -3208,6 +3213,10 @@ def main_with_stop_signals_raising_system_exit(argv):
         "--dry-run", action="store_true",
         help="validate the file and print which issue it would edit, "
              "touching neither GitHub nor git")
+    editor.add_argument(
+        "--why",
+        help="what the edit fixes and why, written into the commit message; "
+             "an obvious-error-fix must give it")
     closer = sub.add_parser(
         "close", help="record the outcome through edit, then, once that "
                       "edit has merged, close the issue with its reason")
@@ -3286,7 +3295,7 @@ def main_with_stop_signals_raising_system_exit(argv):
             report("the issue's title changes only if this edit changed "
                    "that heading and the issue has one filed GHI-MD")
             return 0
-        edit(path, arguments.repo, root, run, report)
+        edit(path, arguments.repo, root, run, report, why=arguments.why)
         return 0
     except Refused as refusal:
         print(str(refusal), file=sys.stderr)
