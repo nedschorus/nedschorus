@@ -46,13 +46,15 @@ words on past their line, and the reading agent judges where they end. At most F
 (20) following lines are given. After each design's lines, one count line goes to stderr:
 `<design path>: <n> walk-minutes, <n> cold-read-records, <n> user turns`.
 
-Exit codes: 0 done; 2 a directory does not exist, whether given with its option or the default of an
-option left out. A failing git command stops it with git's error and a nonzero exit.
+Exit codes: 0 done; 2 a path that should be a directory does not exist or is not a directory, whether
+given with its option or the default of an option left out; the message says which, and names the host
+for a default. A failing git command stops it with git's error and a nonzero exit.
 """
 
 import argparse
 import json
 import re
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -210,8 +212,9 @@ def main(argv=None):
         given = arguments[option[2:].replace("-", "_")]
         directory = given or default
         if not directory.is_dir():
-            told = (f"{option} {directory} is not a directory." if given else
-                    f"{option} was left out, and its default {directory} is not a directory on this machine.")
+            found = "does not exist" if not directory.exists() else "is not a directory"
+            told = (f"{option} {directory} {found}." if given else
+                    f"{option} was left out, and its default {directory} {found} on {socket.gethostname()}.")
             sys.stderr.write(f"{told}\nRun this program again with {option} naming {reads}.\n")
             return 2
         directories[option] = directory
