@@ -788,6 +788,33 @@ def run_cases_on_ned_box(workspace: Path):
     check("a failed fetch leaves no worktree", fixture.worktree_is_gone(cut_off),
           fixture_git(cut_off, "worktree", "list"))
 
+    real_git = program.git
+
+    def fetch_fails_after_its_from_line(clone, *arguments):
+        if arguments[:1] == ("fetch",):
+            return subprocess.CompletedProcess(
+                ["git", "-C", str(clone), *arguments], 1, "",
+                "From https://github.com/nedschorus/nedschorus\n"
+                "error: cannot lock ref 'refs/remotes/origin/main': is at 1 but expected 2\n"
+                "error: some local refs could not be updated\n")
+        return real_git(clone, *arguments)
+
+    program.git = fetch_fails_after_its_from_line
+    try:
+        result = fixture.run()
+    finally:
+        program.git = real_git
+    record_lines = (fixture.record("ned-box") or "").splitlines()
+    check("a fetch that fails after its From line is recorded and printed with git's error: "
+          "line, not the From line",
+          result.code == 4 and result.runner_calls == []
+          and any(line.startswith("not run — git fetch origin failed in ")
+                  and line.endswith(": error: cannot lock ref 'refs/remotes/origin/main': "
+                                    "is at 1 but expected 2")
+                  for line in record_lines)
+          and "error: cannot lock ref" in result.stderr and "From https" not in result.stderr,
+          (repr(result), record_lines))
+
 
 def run_cases_on_the_mac(workspace: Path):
     fixture = Fixture(workspace / "on-the-mac")

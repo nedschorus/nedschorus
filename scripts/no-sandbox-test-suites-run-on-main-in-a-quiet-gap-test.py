@@ -443,6 +443,29 @@ with tempfile.TemporaryDirectory() as directory:
           "1 but expected 2 ! 1..3  main -> origin/main  (unable to update local ref)",
           (code, printed, s.state()))
 
+    def worktree_remove_fails_after_a_warning(clone, *arguments, **options):
+        if arguments[:2] == ("worktree", "remove"):
+            return subprocess.CompletedProcess(
+                arguments, 128, "", "warning: unable to unlink 'suite.log': Permission denied\n"
+                "fatal: failed to delete 'worktree-of-main': Directory not empty\n")
+        if arguments[:2] == ("worktree", "prune"):
+            return subprocess.CompletedProcess(arguments, 0, "", "")
+        return real_add(clone, *arguments, **options)
+
+    class RmtreeThatRemovesNothing:
+        @staticmethod
+        def rmtree(*arguments, **options):
+            pass
+
+    stuck = s.temporary / "a-worktree-that-cannot-be-removed"
+    stuck.mkdir()
+    with constants(git=worktree_remove_fails_after_a_warning, shutil=RmtreeThatRemovesNothing):
+        why = program.remove_worktree(s.clone, stuck)
+    stuck.rmdir()
+    check("a worktree remove that fails after a warning: line gives its fatal: line as the "
+          "reason, not the warning before it",
+          why == "fatal: failed to delete 'worktree-of-main': Directory not empty", why)
+
     def rev_parse_fails(clone, *arguments, **options):
         if arguments[:1] == ("rev-parse",):
             return subprocess.CompletedProcess(arguments, 128, "", "fatal: no such ref")
