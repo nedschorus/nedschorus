@@ -717,32 +717,46 @@ def approval_walk_item_heading_and_item_page_body_lines(text, parser, all_units,
     text, whose unit of all_units, as item_unit_spans gives them, is unit, as the item page builder puts them on the
     item's page and its docstring says: a Withdrawn version left out, an item that shares a heading keeping only its
     own lines, and the item's sub-steps after its own lines."""
-    numbers, total, _, first, end = unit
     lines = text.split("\n")
-    heading = approval_walk_item_heading_with_deferred_note_removed(lines[first])
+    heading = approval_walk_item_heading_with_deferred_note_removed(lines[unit[3]])
     # The skill links a sub-step's closing line to its item's page, so the item's page carries its sub-steps.
     sub_step = number + "."
-    if len(numbers) > 1:
-        openings = item_opening_lines(text, parser)
-        ranges = [approval_walk_item_line_range_within_heading_shared_by_several_items(
-            openings, first, end, each, numbers, total) for each in [number, *(n for n in numbers if n.startswith(sub_step))]]
-        # A sub-step with no opening of its own would bring in the unit's lines above the item's own opening.
-        ranges = ranges[:1] + [(start, stop) for start, stop in ranges[1:] if start != first]
-    else:
+    openings = []
+    body = own_lines_of_unit(text, parser, lines, unit, openings, [number, *(n for n in unit[0] if n.startswith(sub_step))]
+                             if len(unit[0]) > 1 else None)
+    # A sub-step under its own heading is a unit of its own, which item_unit_spans ends at its first Withdrawn heading.
+    # A sub-step heading shared with another item's sub-step, as `Items 3.1 and 4.1 of 9`, gives only this item's.
+    for sub_unit in approval_walk_item_sub_step_units_below_item_in_walk_document(all_units, unit, [number]):
+        own = [each for each in sub_unit[0] if each.startswith(sub_step)]
+        body += ["", approval_walk_item_heading_with_deferred_note_removed(lines[sub_unit[3]])]
+        body += own_lines_of_unit(text, parser, lines, sub_unit, openings,
+                                  own if len(own) < len(sub_unit[0]) else None)[1:]
+    return heading, body
+
+
+def own_lines_of_unit(text, parser, lines, unit, openings, own=None):
+    """Return the lines below unit's heading line, each run of them after a blank line, that belong to the item
+    numbers own of the item numbers unit names: all of them when own is None, and otherwise, as
+    approval_walk_item_line_range_within_heading_shared_by_several_items gives each, the lines of own's first
+    number and those of each later one that has an opening of its own. openings is a list that holds
+    item_opening_lines' result once one call has needed it, so that the walk-document is read once."""
+    numbers, total, _, first, end = unit
+    if own is None:
         ranges = [(first, end)]
-    # An item with no opening of its own has a range that already holds its sub-steps' ranges.
+    else:
+        if not openings:
+            openings.append(item_opening_lines(text, parser))
+        ranges = [approval_walk_item_line_range_within_heading_shared_by_several_items(
+            openings[0], first, end, each, numbers, total) for each in own]
+        # A number with no opening of its own would bring in the unit's lines above the first number's own opening.
+        ranges = ranges[:1] + [(start, stop) for start, stop in ranges[1:] if start != first]
+    # A number with no opening of its own has a range that already holds the later numbers' ranges.
     body, covered = [], first + 1
     for start, stop in sorted(ranges):
         if max(start, covered) < stop:
             body += ["", *lines[max(start, covered):stop]]
         covered = max(covered, stop)
-    # A sub-step under its own heading is a unit of its own, which item_unit_spans ends at its first Withdrawn heading.
-    for sub_numbers, _, _, sub_first, sub_end in approval_walk_item_sub_step_units_below_item_in_walk_document(
-            all_units, unit, [number]):
-        if all(each.startswith(sub_step) for each in sub_numbers):
-            body += ["", approval_walk_item_heading_with_deferred_note_removed(lines[sub_first])]
-            body += lines[sub_first + 1:sub_end]
-    return heading, body
+    return body
 
 
 def approval_walk_text_with_approval_walk_item_hashtag_lines_removed(text):
