@@ -926,6 +926,71 @@ def test_the_waiting_item_read_step_leaves_out_an_older_version_sub_step_of_the_
           result.returncode == 0 and "had to be run now" in result.stdout, described(result))
 
 
+def decided_item_numbers_of(name, document, approved):
+    """The decided set approval_walk_minutes_read_returning_decided_item_numbers returns for document, with the
+    walk-minutes approving each item of approved."""
+    program = load_program()
+    walk_finder = program.load_walk_finder()
+    directory = SUITE_ROOT / f"decided-set-{name}"
+    directory.mkdir(parents=True)
+    (directory / "a-walk.md").write_text(document)
+    minutes = directory / ("a-walk" + walk_finder.MINUTES_SUFFIX)
+    minutes.write_text("# Minutes\n\n" + "".join(approved_line(item) for item in approved))
+    return program.approval_walk_minutes_read_returning_decided_item_numbers(
+        walk_finder, minutes, walk_finder.markdown_parser())
+
+
+def test_the_decided_set_finds_an_item_s_sub_steps_wherever_they_sit_in_the_walk_document():
+    alert_between = ("# A walk\n\n## Item 1 of 10: one\n\nA.\n\n## Item 3 of 10: three\n\nB.\n\n"
+                     "### Item 3.1 of 10: the first half\n\nC.\n\n#### Item 3.1.1 of 10: its first part\n\nD.\n\n"
+                     "## merge-lane-2 has been idle 41 minutes\n\n#approval_walk_item_in_category_fix_next\n\nE.\n\n"
+                     "#### Item 3.1.2 of 10: its second part\n\nF.\n\n### Item 3.2 of 10: the second half\n\nG.\n")
+    decided = decided_item_numbers_of("alert-between", alert_between, ["item 1 of 10", "item 3.1.1 of 10"])
+    check("with a user-alert inserted between sub-steps 3.1.1 and 3.1.2, deciding 3.1.1 decides neither 3.1 nor 3",
+          {"3", "3.1"}.isdisjoint(decided) and {"1", "3.1.1"} <= set(decided), repr(sorted(map(str, decided))))
+    after_later_item = ("# A walk\n\n## Item 14 of 18: fourteen\n\nA.\n\n## Item 15 of 18: fifteen\n\nB.\n\n"
+                        "## Item 14.1 of 18: its first part\n\nC.\n\n## Item 14.2 of 18: its second part\n\nD.\n")
+    decided = decided_item_numbers_of("after-later-item", after_later_item, ["item 14.1 of 18", "item 14.2 of 18"])
+    check("sub-steps 14.1 and 14.2 placed after item 15, both decided, decide item 14",
+          "14" in decided, repr(sorted(map(str, decided))))
+    decided = decided_item_numbers_of("after-later-item-half", after_later_item, ["item 14.1 of 18"])
+    check("with only 14.1 of the sub-steps placed after item 15 decided, item 14 stays undecided",
+          "14" not in decided, repr(sorted(map(str, decided))))
+    mixed = ("# A walk\n\n## Items 3 to 3.2 of 10: three and its parts\n\nA.\n\n## Item 4 of 10: four\n\nB.\n")
+    decided = decided_item_numbers_of("mixed-unit", mixed, ["item 3.1 of 10", "item 3.2 of 10"])
+    check("in one unit `Items 3 to 3.2`, deciding 3.1 and 3.2 decides 3",
+          "3" in decided, repr(sorted(map(str, decided))))
+    older_inside = ("# A walk\n\n## Item 3 of 10: three\n\nA.\n\n### Item 3.1 of 10: the first half\n\nB.\n\n"
+                    "#### Item 3.1.1 of 10: its first part\n\nC.\n\n#### Item 3.1.3 of 9: an older part\n\nD.\n\n"
+                    "#### Item 3.1.2 of 10: its second part\n\nE.\n")
+    decided = decided_item_numbers_of("older-inside", older_inside, ["item 3.1.1 of 10", "item 3.1.2 of 10"])
+    check("an older `3.1.3 of 9` that no Withdrawn or revised heading retires keeps 3.1 undecided, so the item is "
+          "never decided early", "3.1" not in decided, repr(sorted(map(str, decided))))
+
+
+REUSED_OLDER_SUB_STEP_NUMBER_DOCUMENT = (
+    "# A walk\n\n## Item 1 of 10: an older item\n\nOld.\n\n#### Item 3.1.1 of 9: an older version's part\n\nOlder.\n\n"
+    "## Item 3 of 10: the opening sentence\n\n### Item 3.1 of 10: the first half\n\n"
+    "#### Item 3.1.1 of 10: its first part\n\nOne.\n\n#case_against weak: a.\n\nRecommendation: a.\n\n"
+    "#### Item 3.1.2 of 10: its second part\n\nTwo.\n\n#case_against weak: b.\n\nRecommendation: b.\n\n"
+    "### Item 3.2 of 10: the second half\n\nThree.\n\n#case_against weak: c.\n\nRecommendation: c.\n")
+
+
+def test_an_older_heading_reusing_a_sub_step_number_leaves_close_and_the_read_step_naming_the_same_sub_step():
+    case = Case(next_to_present="item 3.1.2 of 10", document=REUSED_OLDER_SUB_STEP_NUMBER_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\n" + approved_line("item 1 of 10") + approved_line("item 3.1.1 of 10")
+                            + "#next_to_present item 3.1.2 of 10\n")
+    case.run("check")
+    closed = case.run("close")
+    after_close = marker(case).rsplit(" of ", 1)[0]
+    case.minutes.write_text(case.minutes.read_text() + "#next_to_present item 3 of 10\n")
+    read = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("with an older `3.1.1 of 9` below item 1 and 3.1.1 and 3.1.2 of 10 decided, close and the read step both "
+          "count 3.1 decided and name sub-step 3.2",
+          closed.returncode == 0 and read.returncode == 0 and after_close == "#next_to_present item 3.2"
+          and marker(case) == "#next_to_present item 3.2 of 10", described(closed) + described(read))
+
+
 def test_the_waiting_item_read_step_leaves_out_an_older_sub_step_below_a_later_item():
     document = ("# A walk\n\n## Item 3 of 10: the opening sentence\n\nNew.\n\n### Item 3.1 of 10: the first half\n\n"
                 "Short.\n\n#case_against weak: the page grows.\n\nRecommendation: change it.\n\n"
