@@ -35,10 +35,12 @@ process; one that a poll found missing is reported again when it comes back.
 The watcher never moves or deletes a notice.
 
 With --batch-events-for-seconds N, every OPENED, NEW-HEAD, READY and NEEDS A
-LOOK line is held in the process instead of printed, and the watcher prints
-them all, in the order seen, and exits 0 once its poll at N seconds finishes,
-if it has seen any by then, or else after the first poll past N that has one.
-A poll can finish up to the GitHub query's timeout per page after it starts.
+LOOK line is held in the process instead of printed. The watcher prints them
+all, in the order seen, and exits 0 when a poll finishes N or more seconds
+after the start while it holds a line, even a line that poll found. Once it
+holds a line, it starts its next poll no later than N seconds after the
+start. A poll can finish up to the GitHub query's timeout per page after it
+starts.
 WATCH lines still print at once. The held lines live only in the process: a
 watcher killed before it exits loses them, and its next start absorbs the
 openings into the baseline.
@@ -360,9 +362,10 @@ def parse_arguments(argv):
     when_to_exit.add_argument("--batch-events-for-seconds", type=float, metavar="N",
                               help="hold every OPENED, NEW-HEAD, READY and NEEDS A "
                                    "LOOK line instead of printing it; print them "
-                                   "all and exit 0 once the poll at N seconds "
-                                   "finishes, if any was seen by then, or else after "
-                                   "the first poll past N that has one; a poll can "
+                                   "all and exit 0 when a poll finishes N or more "
+                                   "seconds after the start while any is held, even "
+                                   "one that poll found; once one is held, the next "
+                                   "poll starts by N at the latest; a poll can "
                                    "take up to "
                                    f"{GH_QUERY_TIMEOUT_SECONDS:g} seconds per query "
                                    "page")
