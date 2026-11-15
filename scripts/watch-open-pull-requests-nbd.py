@@ -21,8 +21,9 @@ into needs-a-look/handled/ that marks the notice handled. Unlike openings,
 notices already there at the first poll are reported, since a file left
 outside handled/ is unhandled whoever restarted the watcher. So with
 --exit-after-first-poll-with-events, a notice not moved makes every restart
-exit at its first poll, before any pull request event can show: the line
-says to move it as soon as it is read. A missing
+exit at its first poll, before any pull request event can show, and with
+--batch-events-for-seconds N, makes every restart exit N seconds after it
+starts: the line says to move it as soon as it is read. A missing
 directory, before the job first writes one, raises nothing. A directory that
 cannot be listed raises one NEEDS A LOOK line naming the error, again only
 after a listing has succeeded in between; a notice that cannot be read is
@@ -32,6 +33,14 @@ link, is reported once with the error. A notice moved out and back between
 two polls, keeping its modification time, is not reported again by the same
 process; one that a poll found missing is reported again when it comes back.
 The watcher never moves or deletes a notice.
+
+With --batch-events-for-seconds N, every OPENED, NEW-HEAD, READY and NEEDS A
+LOOK line is held in the process instead of printed, and the watcher prints
+them all, in the order seen, and exits 0: N seconds after it starts when it
+has seen any by then, or else after the first poll past N that has one. WATCH
+lines still print at once. The held lines live only in the process: a watcher
+killed before it exits loses them, and its next start absorbs the openings
+into the baseline.
 
 Polling needs no public webhook endpoint. GraphQL selects only needed fields
 and avoids gh versions’ differing --json field lists."""
@@ -342,10 +351,17 @@ def parse_arguments(argv):
                              "a draft, at the first poll as OPENED, instead "
                              "of taking them "
                              "as the silent baseline")
-    parser.add_argument("--exit-after-first-poll-with-events", action="store_true",
-                        help="exit 0 after the first poll that prints an "
-                             "OPENED, NEW-HEAD, READY or NEEDS A LOOK line, once "
-                             "every event of that poll is printed")
+    when_to_exit = parser.add_mutually_exclusive_group()
+    when_to_exit.add_argument("--exit-after-first-poll-with-events", action="store_true",
+                              help="exit 0 after the first poll that prints an "
+                                   "OPENED, NEW-HEAD, READY or NEEDS A LOOK line, once "
+                                   "every event of that poll is printed")
+    when_to_exit.add_argument("--batch-events-for-seconds", type=float, metavar="N",
+                              help="hold every OPENED, NEW-HEAD, READY and NEEDS A "
+                                   "LOOK line instead of printing it; print them "
+                                   "all and exit 0 N seconds after starting when "
+                                   "any was seen by then, or else after the first "
+                                   "poll past N that has one")
     parser.add_argument("--needs-a-look-directory", type=Path,
                         default=ghi_md_edit_job.needs_a_look_directory(),
                         help="the GHI-MD edit job's notices directory to list each "
@@ -357,6 +373,10 @@ def main(argv=None):
     arguments = parse_arguments(argv)
     if arguments.poll_seconds <= 0:
         warn("watch-open-pull-requests-nbd: --poll-seconds must be > 0")
+        return 2
+    batch_seconds = arguments.batch_events_for_seconds
+    if batch_seconds is not None and batch_seconds <= 0:
+        warn("watch-open-pull-requests-nbd: --batch-events-for-seconds must be > 0")
         return 2
     owner, slash, name = arguments.repo.partition("/")
     if not (owner and slash and name) or "/" in name:
@@ -377,11 +397,36 @@ def main(argv=None):
     blind_since = None
     failed_polls = 0
     notices_state = {}
+    started = time.monotonic()
+    held_lines = []
+
+    def report(lines):
+        if batch_seconds is None:
+            for line in lines:
+                emit(line)
+        else:
+            held_lines.extend(lines)
+
+    def poll_ends_the_watch(poll_lines):
+        """Print what batching held when the watch is over; return whether it is."""
+        if batch_seconds is None:
+            return bool(poll_lines) and arguments.exit_after_first_poll_with_events
+        if not held_lines or time.monotonic() - started < batch_seconds:
+            return False
+        for line in held_lines:
+            emit(line)
+        return True
+
+    def sleep_until_next_poll():
+        seconds = arguments.poll_seconds
+        if held_lines:
+            # Poll again at N exactly, so held events print N seconds after the start.
+            seconds = min(seconds, started + batch_seconds - time.monotonic())
+        time.sleep(max(seconds, 0))
 
     while True:
         notice_lines = needs_a_look_events(arguments.needs_a_look_directory, notices_state)
-        for line in notice_lines:
-            emit(line)
+        report(notice_lines)
         pull_requests, reason = fetch_open_pull_requests(arguments.repo, token)
         if reason is not None:
             failed_polls += 1
@@ -391,9 +436,9 @@ def main(argv=None):
                      "recovers (nothing is being seen; the recovery line "
                      "below flags anything the blindness cost): "
                      + one_line_snippet(reason, FAILURE_REASON_SNIPPET_CHARS))
-            if notice_lines and arguments.exit_after_first_poll_with_events:
+            if poll_ends_the_watch(notice_lines):
                 return 0
-            time.sleep(arguments.poll_seconds)
+            sleep_until_next_poll()
             continue
 
         if blind_since is not None:
@@ -418,13 +463,12 @@ def main(argv=None):
                                    else pull_requests_by_number(pull_requests))
 
         event_lines = events_for_poll(known_pull_requests, pull_requests)
-        for line in event_lines:
-            emit(line)
-        if (event_lines or notice_lines) and arguments.exit_after_first_poll_with_events:
+        report(event_lines)
+        if poll_ends_the_watch(notice_lines + event_lines):
             return 0
         # Drop closed pull requests so reopening produces another OPENED event.
         known_pull_requests = pull_requests_by_number(pull_requests)
-        time.sleep(arguments.poll_seconds)
+        sleep_until_next_poll()
 
 
 if __name__ == "__main__":

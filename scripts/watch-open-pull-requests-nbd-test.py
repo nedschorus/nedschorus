@@ -28,7 +28,9 @@ interval the fake would otherwise read a half-written file and the suite
 would flake.
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -513,11 +515,152 @@ def run_needs_a_look_unit_cases():
           / job.STATE_DIRECTORY_NAME / "needs-a-look", "")
 
 
+class PollsRanOut(Exception):
+    """Raised by the scripted fetch when the watcher polls past the script."""
+
+
+class FakeClock:
+    """Stands in for the watcher's `time` module: sleep advances monotonic, and
+    each sleep records how many lines stdout held then."""
+
+    def __init__(self, output):
+        self.now = 1000.0
+        self.output = output
+        self.lines_printed_at_each_sleep = []
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.lines_printed_at_each_sleep.append(len(self.output.getvalue().splitlines()))
+        self.now += seconds
+
+
+def run_batched_watcher(polls, batch_seconds, needs_a_look_directory, token_file):
+    """Run main() in-process with --batch-events-for-seconds, a fake clock and
+    the scripted polls, each a list of pull requests or a failure reason string.
+    Return (exit code, stdout lines, clock, polls made)."""
+    output = io.StringIO()
+    clock = FakeClock(output)
+    polls_made = []
+
+    def scripted_fetch(_repo, _token):
+        if len(polls_made) == len(polls):
+            raise PollsRanOut(f"the watcher polled a {len(polls) + 1}th time")
+        poll = polls[len(polls_made)]
+        polls_made.append(clock.now)
+        return (None, poll) if isinstance(poll, str) else (poll, None)
+
+    saved = (watcher_module.time, watcher_module.fetch_open_pull_requests,
+             list(watcher_module.SECRETS_TO_REDACT))
+    watcher_module.time = clock
+    watcher_module.fetch_open_pull_requests = scripted_fetch
+    try:
+        with contextlib.redirect_stdout(output):
+            try:
+                exit_code = watcher_module.main([
+                    "--poll-seconds", "60", "--token-file", str(token_file),
+                    "--needs-a-look-directory", str(needs_a_look_directory),
+                    "--batch-events-for-seconds", str(batch_seconds)])
+            except PollsRanOut as error:
+                exit_code = f"still running: {error}"
+    finally:
+        (watcher_module.time, watcher_module.fetch_open_pull_requests,
+         watcher_module.SECRETS_TO_REDACT[:]) = saved
+    return exit_code, output.getvalue().splitlines(), clock, polls_made
+
+
+def run_batch_events_cases():
+    def pull_request(number, head_sha):
+        return {"number": number, "head_sha": head_sha * 40, "title": "t",
+                "is_draft": False, "author": "nedlern"}
+
+    with tempfile.TemporaryDirectory() as scratch:
+        scratch = Path(scratch)
+        token_file = scratch / "fixture.token"
+        token_file.write_text(FIXTURE_TOKEN + "\n", encoding="utf-8")
+        no_notices = scratch / "no-notices"
+        baseline = [pull_request(145, "a")]
+
+        # Polls at 0, 60, 120, 180 and 200 seconds after the start; events at 60 and 120.
+        exit_code, lines, clock, polls_made = run_batched_watcher(
+            [baseline,
+             baseline + [pull_request(146, "b")],
+             [pull_request(145, "c"), pull_request(146, "b")],
+             [pull_request(145, "c"), pull_request(146, "b")],
+             [pull_request(145, "c"), pull_request(146, "b")]],
+            200, no_notices, token_file)
+        events = [line for line in lines if line.startswith("PR #")]
+        check("--batch-events-for-seconds with events seen before N exits 0 at N, polling "
+              "one last time at N",
+              exit_code == 0 and clock.now - 1000.0 == 200
+              and [made - 1000.0 for made in polls_made] == [0, 60, 120, 180, 200],
+              f"exit {exit_code!r}, clock {clock.now - 1000.0}, polls {polls_made}")
+        check("--batch-events-for-seconds prints every event it held, in the order seen",
+              events == ["PR #146 OPENED bbbbbbbb nedlern: t",
+                         "PR #145 NEW-HEAD cccccccc nedlern: t"], "\n".join(lines))
+        check("--batch-events-for-seconds prints no event before it exits",
+              clock.lines_printed_at_each_sleep and all(
+                  count == 1 for count in clock.lines_printed_at_each_sleep)
+              and lines[0].startswith("WATCH: watching"),
+              f"{clock.lines_printed_at_each_sleep}\n" + "\n".join(lines))
+
+        # No event by N = 100: polls at 0, 60, 120 and 180 seconds; the event comes at 180.
+        exit_code, lines, clock, polls_made = run_batched_watcher(
+            [baseline, baseline, baseline, baseline + [pull_request(147, "d")],
+             baseline + [pull_request(147, "d")]],
+            100, no_notices, token_file)
+        check("--batch-events-for-seconds with no event before N keeps polling past N and "
+              "exits 0 at the first poll with an event, printing it",
+              exit_code == 0 and len(polls_made) == 4 and clock.now - 1000.0 == 180
+              and [line for line in lines if line.startswith("PR #")]
+              == ["PR #147 OPENED dddddddd nedlern: t"],
+              f"exit {exit_code!r}, polls {polls_made}\n" + "\n".join(lines))
+
+        # An event held before N, then every query fails from before N to past it.
+        exit_code, lines, clock, polls_made = run_batched_watcher(
+            [baseline, baseline + [pull_request(148, "e")], "gh: HTTP 503", "gh: HTTP 503",
+             "gh: HTTP 503"],
+            150, no_notices, token_file)
+        check("--batch-events-for-seconds prints its held events and exits 0 at N while "
+              "every query fails",
+              exit_code == 0 and clock.now - 1000.0 == 150
+              and any("PR #148 OPENED" in line for line in lines)
+              and any("BLIND" in line for line in lines),
+              f"exit {exit_code!r}, clock {clock.now - 1000.0}\n" + "\n".join(lines))
+
+        # A notice already there at the first poll is held like any event, not an exit.
+        notices = scratch / "needs-a-look"
+        notices.mkdir()
+        (notices / "pr9-bbbbbbbbbbbb.txt").write_text("pull request 9 needs a look\n",
+                                                       encoding="utf-8")
+        exit_code, lines, clock, polls_made = run_batched_watcher(
+            [baseline, baseline + [pull_request(149, "f")], baseline + [pull_request(149, "f")]],
+            120, notices, token_file)
+        held = [line for line in lines if not line.startswith("WATCH: ")]
+        check("--batch-events-for-seconds holds a notice present at the first poll until N, "
+              "and prints it before the pull request events after it",
+              exit_code == 0 and clock.now - 1000.0 == 120 and len(held) == 2
+              and held[0].startswith("NEEDS A LOOK pr9-bbbbbbbbbbbb.txt: pull request 9")
+              and held[1] == "PR #149 OPENED ffffffff nedlern: t",
+              f"exit {exit_code!r}, clock {clock.now - 1000.0}\n" + "\n".join(lines))
+
+        result = subprocess.run(
+            [sys.executable, str(WATCH_SCRIPT), "--token-file", str(token_file),
+             "--exit-after-first-poll-with-events", "--batch-events-for-seconds", "60"],
+            capture_output=True, text=True, timeout=EVENT_WAIT_BACKSTOP_SECONDS)
+        check("--exit-after-first-poll-with-events and --batch-events-for-seconds together "
+              "exit 2, naming both, before any query",
+              result.returncode == 2 and "not allowed with argument" in result.stderr,
+              f"rc={result.returncode} stderr={result.stderr!r}")
+
+
 def run_bad_invocation_cases(token_file, missing_token_file):
     """Bad invocations exit 2 with one stderr line, before any query."""
     for flags, label in [
             (["--poll-seconds", "0"], "--poll-seconds 0"),
             (["--poll-seconds", "-1"], "--poll-seconds -1"),
+            (["--batch-events-for-seconds", "0"], "--batch-events-for-seconds 0"),
             (["--repo", "no-slash"], "--repo no-slash"),
             (["--repo", "a/b/c"], "--repo a/b/c")]:
         try:
@@ -1051,6 +1194,7 @@ def run_subprocess_cases():
 if __name__ == "__main__":
     run_unit_cases()
     run_needs_a_look_unit_cases()
+    run_batch_events_cases()
     run_subprocess_cases()
     print()
     if failures:
