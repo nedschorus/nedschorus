@@ -115,7 +115,7 @@ None in the program: choosing the base, deciding whether to rebase, running the 
 
 ## Deferred-decisions
 
-- Who builds this, and when. This GHI-MD's first version gave the design to the agent-seat reboot-test, after the design of GHI 2381; the user approved the outline on 2026-11-02 in ned-box-helper's approval-walk. The agent-seat that builds it is settled before the build starts.
+- Who builds this, and when. This GHI-MD's first version gave the design to the agent-seat reboot-test, after the design of GHI [Test suites that run without a sandbox leave per-change test runs unless the change edits a file they read, and run on main in a quiet gap](https://github.com/nedschorus/nedschorus/issues/2381); the user approved the outline on 2026-11-02 in ned-box-helper's approval-walk. The agent-seat that builds it is settled before the build starts.
 - The base. The approved item names "the main commit the suites were chosen against", and the user's 00:55Z decision 2 names the merge base. The two are the same commit for a never-pushed branch after step 3, and differ for a pushed branch that main has moved past; this design follows decision 2. If the user meant `origin/main` for a pushed branch too, step 4 and the pre-push step's lookup change together.
 - How the two-minute report reaches the user without telling him on every push: the design prints it after every passing test run while the median stays over two minutes; once a day per machine, or once only, are the alternatives, and so is a notice the program shows the user itself rather than through the agent. The user decides; until he does, the build prints it as the design says.
 - Whether merge-lane-2's head test run reuses a passing result for suites whose recorded inputs are identical, as the Opus report proposes. Without it, a round still runs its suites twice, once by the author and once in the head test run. Not part of this design.
@@ -125,6 +125,12 @@ None in the program: choosing the base, deciding whether to rebase, running the 
 - What happens to the runner and the push when the push program itself is stopped mid-run, such as when its agent-session ends.
 - Whether the record also names the runner's commit, so that a change to the reference-checkout's runner makes an older record stale; the head test run tests again before merge either way.
 - Whether the fix-round program's `--check`, once it passes, runs the push program itself, so the fix-round's subagent cannot push out of order.
+- How this design meets main as it now stands, settled before the build starts: commit dca3e247e (2026-11-04) took the test run out of the pre-push hook and removed `scripts/git-client-side-hooks-pre-push-selective-test-run.py`, and commit ca36b61db (2026-11-07) moved the fix-round's test run into the fix-round program's `--check` and removed `PRE_PUSH_TEST_COMMAND` and the brief's test step, so "What is wrong" and the callers that Design lists, among them the `CLAUDE.md` bullet beginning "Before pushing", the hand-merge text in `scripts/branch-conflict-check.py` and `PUSH_GOES_ON_LINE`, no longer match the code.
+- Whether the command the pre-push hook's refusal gives passes `--remote-branch` for a never-pushed branch, which step 3 then does not rebase onto origin/main; and, with `--remote-branch`, whether the program checks that the commit is not behind or diverged from that remote branch, and which name `<branch>` stands for in its `git push`.
+- What the program does when `head_state` returns `pushed` with no commits to push.
+- What the pre-push hook's refusal tells the agent when no worktree, or more than one, has the rejected commit checked out; or whether the push program takes a commit and cuts its own detached worktree, as `scripts/ghi-issue-write.py` does.
+- How an agent that runs the push program in the background reads the printed two-minute report, and whether a hook refuses a foreground run of the push program and gives the background form.
+- Whether the push program reruns a failed nc-test-suite at the base commit, so the fix-round's subagent judges only failures this round's change caused.
 - Whether old records are ever removed. Each is a few hundred bytes; none is removed until the number of files shows a need.
 
 ## Why it matters
