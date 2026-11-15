@@ -1697,6 +1697,52 @@ def test_closing_lines_alone_after_the_item_was_shown_do_not_hide_the_message_th
           "version", lines == not_shown_lines("a", shown_different_reason(0)), f"lines {lines!r}")
 
 
+def test_a_deferred_item_shown_word_for_word_counts():
+    deferred = SHOWN_DOCUMENT.replace(
+        "## Item 4 of 9: a filter", "## Item 4 of 9 (deferred: moved to just before the summary item): a filter")
+    case = Case(next_to_present="item 4 of 9", document=deferred)
+    lines = case.lines("a", case.transcript(deferred, ITEM_4_CLOSING_LINE))
+    check("an answer to a deferred item whose heading, deferred note included, was shown word for word counts",
+          counted(lines), f"lines {lines!r}")
+    stale = deferred.replace("leave the filter out", "add the filter")
+    lines = case.lines("a", case.transcript(stale, ITEM_4_CLOSING_LINE))
+    check("an answer to a deferred item shown in an old version is still refused",
+          lines == not_shown_lines("a", shown_different_reason(0)), f"lines {lines!r}")
+
+
+OLDER_FORM_DOCUMENT = """# A walk
+
+## Item 4 of 9: a filter
+
+### What a filter does
+
+A filter would hide old rows.
+
+[No decision here; type N or next to continue.](https://claude.ai/artifact/x)
+
+### The choice
+
+Recommendation: leave the filter out.
+
+## Item 5 of 9: the next item
+
+Recommendation: do the next thing.
+"""
+
+
+def test_an_older_form_item_counts_once_the_text_handed_back_is_shown():
+    case = Case(next_to_present="item 4 of 9", document=OLDER_FORM_DOCUMENT)
+    lines = case.lines("a", case.transcript("Here is the plan.", ITEM_4_CLOSING_LINE))
+    check("an answer to an older-form item never shown is refused, with its text handed back",
+          lines is not None and "BEGIN" in lines and "END" in lines, f"lines {lines!r}")
+    handed_back = "\n".join(lines[lines.index("BEGIN") + 1:lines.index("END")])
+    check("the handed-back text keeps the sub-step's no-decision line",
+          "No decision here; type N or next to continue." in handed_back, handed_back)
+    lines = case.lines("a", case.transcript(f"{handed_back}\n\n{ITEM_4_CLOSING_LINE}"))
+    check("an answer to an older-form item counts once the agent has shown the text the hook handed back",
+          counted(lines), f"lines {lines!r}")
+
+
 def test_an_answer_to_an_item_no_message_showed_is_not_counted():
     case = Case(next_to_present="item 4 of 9", document=SHOWN_DOCUMENT)
     lines = case.lines("a", case.transcript("Here is the plan.", ITEM_4_CLOSING_LINE))

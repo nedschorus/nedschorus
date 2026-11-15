@@ -121,10 +121,11 @@ item's current text, as the walk finder's
 approval_walk_item_text_as_shown_to_user gives it, word for word. A message
 showed the item when one text block of an assistant record of the transcript
 the payload's transcript_path names, outside any subagent's, holds the item's
-heading once its closing lines are cut out, so a message holding only the
-closing line does not count. Both texts are compared as the Markdown parser
-renders them, link targets and other markup left out, whitespace squeezed and
-each running count's `of M` dropped; the heading must appear, and the item's
+heading; a message holding only the closing line does not count, because a
+closing line writes "Item N, point" where the heading writes "Item N: point".
+Both texts are compared as the Markdown parser renders them, link targets and
+other markup left out, whitespace squeezed, each running count's `of M` and
+each deferred note dropped; the heading must appear, and the item's
 other text in one run after it. When the message does not hold the text, or
 no message showed the item, the answer is not counted, and the text hands the
 agent the item's text to show unchanged before the user answers again. When
@@ -848,7 +849,8 @@ def checked_item_numbers(answer, walk):
 
 def shown_words(markdown, parser):
     """The words of markdown as the user reads it rendered, as one string: no `#approval_walk_item_` line, no link
-    target or other markup, whitespace squeezed, and each running count without its `of M`."""
+    target or other markup, whitespace squeezed, each running count without its `of M`, and no deferred note, which
+    approval_walk_item_text_as_shown_to_user leaves out of the item's heading."""
     walk_finder = load_walk_finder()
     pieces = []
     for token in parser.parse(walk_finder.approval_walk_text_with_approval_walk_item_hashtag_lines_removed(markdown)):
@@ -858,15 +860,8 @@ def shown_words(markdown, parser):
         elif token.type in ("fence", "code_block", "html_block"):
             pieces.append(token.content)
         pieces.append(" ")
-    return walk_finder.approval_walk_text_with_running_count_totals_removed(" ".join("".join(pieces).split()))
-
-
-def without_closing_lines(text, parser):
-    """text without the lines the walk finder reads as a closing line, which name an item without showing it."""
-    walk_finder = load_walk_finder()
-    return "\n".join(line for line in text.split("\n")
-                     if walk_finder.approval_walk_closing_line_read(line, parser, ANSWER_LETTERS_TEXT) is None
-                     and walk_finder.approval_walk_sub_step_no_decision_closing_line_page_link_or_none(line) is None)
+    words = walk_finder.approval_walk_text_with_running_count_totals_removed(" ".join("".join(pieces).split()))
+    return re.sub(r"\s*" + re.escape(walk_finder.APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT), "", words)
 
 
 def last_showing_message(transcript_path, number, heading, parser):
@@ -884,7 +879,8 @@ def last_showing_message(transcript_path, number, heading, parser):
             text = block.get("text") if isinstance(block, dict) and block.get("type") == "text" else None
             if not isinstance(text, str) or not mentions_number.search(text):
                 continue
-            words = shown_words(without_closing_lines(text, parser), parser)
+            # A closing line reads "Item N, point", never the heading's "Item N: point", so it cannot match.
+            words = shown_words(text, parser)
             if f" {heading} " in f" {words} ":
                 return words, record.get("timestamp", "an unknown time")
     return None
