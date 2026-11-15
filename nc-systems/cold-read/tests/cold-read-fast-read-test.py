@@ -3082,10 +3082,34 @@ EDIT_COMPARISON_CASES = (
      "| a |\n|:-|\n", "| a |\n|-|\n", (["s1"], ["| a | |-|"])),
     ("a deletion alone is reported as removed text",
      "One.\n", "One. Two.\n", ([], ["Two."])),
+    ("one of two identical sentences deleted is one removal",
+     "Two.\n", "Two. Two.\n", ([], ["Two."])),
+    ("a change on a folded frontmatter value's continuation line changes its field",
+     "---\nname: x\ndescription: >\n  new words\n---\nBody.\n",
+     "---\nname: x\ndescription: >\n  old words\n---\nBody.\n",
+     (["s1"], ["name: x description: > old words"])),
+    ("a change to a frontmatter list that opens the document changes the first unit",
+     "---\ntags:\n  - b\nname: x\n---\nBody.\n",
+     "---\ntags:\n  - a\nname: x\n---\nBody.\n",
+     (["s1"], ["tags: - a name: x"])),
 )
 for case_name, text, base_text, expected in EDIT_COMPARISON_CASES:
     found = edit_comparison(text, base_text)
     check(case_name, found == expected, f"{found!r}")
+
+with tempfile.TemporaryDirectory() as placeholder_scratch:
+    placeholder_template = Path(placeholder_scratch) / "prompt.md"
+    placeholder_template.write_text(
+        _fast_read.fast_clarify_prompt_with_edit_placeholders_filled(
+            [], ["Read {TARGET_PATH} and write {REPORT_PATH}."]), encoding="utf-8")
+    placeholder_prompt = cell_common.compose_prompt(
+        placeholder_template, Path("/the/target.md"), Path("/the/report.md"))
+    check("removed text that holds {TARGET_PATH} or {REPORT_PATH} reaches the reviewer as "
+          "the base held it, not with the launcher's paths filled in",
+          '"Read \\u007bTARGET_PATH} and write \\u007bREPORT_PATH}."' in placeholder_prompt
+          and json.loads('"Read \\u007bTARGET_PATH} and write \\u007bREPORT_PATH}."')
+          == "Read {TARGET_PATH} and write {REPORT_PATH}.",
+          placeholder_prompt[-400:])
 
 with tempfile.TemporaryDirectory() as edit_scratch:
     edit_scratch = Path(edit_scratch).resolve()
@@ -3132,6 +3156,27 @@ with tempfile.TemporaryDirectory() as edit_scratch:
           and "told what the edit did" not in edit_report.read_text(encoding="utf-8"),
           f"exit {result.returncode}; stderr={result.stderr[-300:]!r}")
 
+    # A document committed on the branch after origin/main: absent at the
+    # merge base, so it is read whole.
+    repository = build_scratch_repository(edit_scratch)
+    new_relative = "docs/drafts/a-new-design.md"
+    (repository / new_relative).write_text("# A new design\n\nOne line.\n", encoding="utf-8")
+    scratch_repository_fixture.git(repository, "add", new_relative)
+    scratch_repository_fixture.git(repository, "commit", "-q", "-m", "new design")
+    new_report = (repository / "cold-read-records"
+                  / f"a-new-design-{FIXED_RECORD_STAMP_FOR_TESTS}" / "cold-read-fast-read.md")
+    edit_prompt.unlink(missing_ok=True)
+    result = run_fast_read(
+        repository, edit_stubs,
+        {"*": {"report": "STUB FAST READ\n", "dump_prompt": str(edit_prompt)}},
+        new_report, new_relative, edit_counter)
+    received = edit_prompt.read_text(encoding="utf-8") if edit_prompt.is_file() else ""
+    check("a tracked document absent at the merge base is read with none for both",
+          result.returncode == 0
+          and "Sentences the edit added or changed: none." in received
+          and "no longer holds: none." in received,
+          f"exit {result.returncode}; stderr={result.stderr[-300:]!r}")
+
     # A file git does not track needs no merge-base, so a missing origin/main
     # does not stop its read.
     repository = build_scratch_repository(edit_scratch)
@@ -3165,6 +3210,25 @@ with tempfile.TemporaryDirectory() as edit_scratch:
           and not edit_report.parent.exists()
           and launches_counted(edit_counter) == 0
           and launches_counted(question_4_counter_path(edit_counter)) == 0,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr[-400:]!r}")
+
+    # origin/main with no commit in common with HEAD: merge-base exits 1 with
+    # no message, and a fetch would not fix it, so none is offered.
+    repository = build_scratch_repository(edit_scratch)
+    unrelated_root = scratch_repository_fixture.git(
+        repository, "commit-tree", "HEAD^{tree}", "-m", "unrelated root").strip()
+    scratch_repository_fixture.git(repository, "update-ref", "refs/remotes/origin/main",
+                                   unrelated_root)
+    result = run_fast_read(
+        repository, edit_stubs, {"*": {"report": "STUB FAST READ\n"}},
+        edit_report, design_relative, edit_counter)
+    check("when HEAD and origin/main share no commit, the read prints FAILED and hands the "
+          "message on without offering a fetch",
+          result.returncode == 1 and result.stdout.startswith("FAILED")
+          and "git merge-base HEAD origin/main failed" in result.stdout
+          and "fetch origin main" not in result.stderr
+          and "Give this whole message to the user" in result.stderr
+          and launches_counted(edit_counter) == 0,
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr[-400:]!r}")
 
 print()
