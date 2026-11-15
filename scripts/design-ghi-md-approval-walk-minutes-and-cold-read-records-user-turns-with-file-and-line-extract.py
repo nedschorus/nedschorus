@@ -6,8 +6,9 @@ Usage:
   scripts/design-ghi-md-approval-walk-minutes-and-cold-read-records-user-turns-with-file-and-line-extract.py
       [--repository-checkout DIR] [--log-store DIR] [--agents-directory DIR]
 
-  --repository-checkout  default the checkout this file is in; its docs/issues/*.md are read as they stand
-                         in the working tree, and its git history gives each design's past file names
+  --repository-checkout  default the checkout this program is in; the checkout's docs/issues/*.md are read
+                         as they stand in the working tree, and its git history gives each design's past
+                         file names
   --log-store            default /home/nedlern/nedschorus-logs; its walk/*-minutes.md and
                          cold-read-records/*/ are read
   --agents-directory     default /home/nedlern/agents; its */docs/walk/*-minutes.md are read when the
@@ -23,24 +24,30 @@ A walk-minutes file is about a design, for the reason printed as walk_minutes_ma
 `-minutes.md`, is the name of a cold-read-record about the design (record-name), because a cold-read
 approval-walk is named after its cold-read-record; when its name starts with `<number>-` or `ghi-<number>-`
 (number-prefix); or when its text cites `issues/<number>`, `GHI <number>` or one of the design's past file
-names (cites). Many approval-walks carry items on several designs, so a cites match is the whole file's, and
-the reading agent tells which of its lines are about the design.
+names (cites). When a file matches a design in more than one of these ways, the first in that order is
+printed. Many approval-walks carry items on several designs, so a cites match is the whole file's, and the
+reading agent tells which of its lines are about the design. A walk-minutes file about several designs is
+read once for each of them, and each of its lines is printed once per design, with that design's path and
+number.
 
 A user turn is a line of a walk-minutes file, or of a cold-read-record's cold-read-triage.md or triage.md,
 that USER_TURN_LINE matches. Every such line is printed, with no filter on what it says: which lines are
-questions or rulings about a design is the reading agent's judgment. A line in a cold-read-triage.md
-usually cites a ruling given in an approval-walk, so its walk-minutes are where the user spoke.
+questions or rulings about a design is the reading agent's judgment. A line in a cold-read-triage.md or
+triage.md usually cites a ruling given in an approval-walk, so that approval-walk's walk-minutes are where
+the user spoke.
 
-Each printed object has: design (its path), design_number, source_kind (walk-minutes or
-cold-read-triage), walk_minutes_match (as above; "" for a cold-read-triage), source (the file's path), line
+Each printed object has: design (its path), design_number, source_kind (walk-minutes, or cold-read-triage
+for a line of either cold-read-triage.md or triage.md), walk_minutes_match (as above; "" for a
+cold-read-triage), source (the file's path), line
 (1-based), heading (the nearest Markdown heading above the line, or ""), text (the line), and
 following_lines: the lines after it, each as {line, text}, up to a blank line, a list item, a heading or
 another line USER_TURN_LINE matches. They are context, not the user's words: hard-wrapped minutes carry his
-words on past their line, and the reading agent judges where they end. A count per design goes to stderr at
-the end.
+words on past their line, and the reading agent judges where they end. At most FOLLOWING_LINES_LIMIT
+(20) following lines are given. After each design's lines, one count line goes to stderr:
+`<design path>: <n> walk-minutes, <n> cold-read-records, <n> user turns`.
 
-Exit codes: 0 done; 2 a directory argument does not exist. A failing git command stops it with git's
-error and a nonzero exit.
+Exit codes: 0 done; 2 a directory does not exist, whether given with its option or the default of an
+option left out. A failing git command stops it with git's error and a nonzero exit.
 """
 
 import argparse
@@ -69,6 +76,15 @@ FOLLOWING_LINES_LIMIT = 20
 HEADING_LINE = re.compile(r"^#{1,6} ")
 LIST_ITEM_LINE = re.compile(r"^\s*(?:[-*+]|\d+\.)\s")
 TRIAGE_FILE_NAMES = ("cold-read-triage.md", "triage.md")
+# Each directory option, in extract()'s argument order: its default and what the program reads there.
+DIRECTORY_COMMAND_LINE_OPTION_TO_DEFAULT_DIRECTORY_AND_FILES_READ_THERE = {
+    "--repository-checkout": (Path(__file__).resolve().parent.parent,
+                              "a checkout of this repository, whose docs/issues/*.md this program reads"),
+    "--log-store": (DEFAULT_LOG_STORE,
+                    "the log-store, whose walk/*-minutes.md and cold-read-records/ this program reads"),
+    "--agents-directory": (DEFAULT_AGENTS_DIRECTORY,
+                           "the directory of agent-homes, whose */docs/walk/*-minutes.md this program reads"),
+}
 
 
 def designs_in(checkout):
@@ -186,17 +202,20 @@ def extract(checkout, log_store, agents_directory, out, err):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--repository-checkout", type=Path, default=Path(__file__).resolve().parent.parent)
-    parser.add_argument("--log-store", type=Path, default=DEFAULT_LOG_STORE)
-    parser.add_argument("--agents-directory", type=Path, default=DEFAULT_AGENTS_DIRECTORY)
-    arguments = parser.parse_args(argv)
-    for name in ("repository_checkout", "log_store", "agents_directory"):
-        if not getattr(arguments, name).is_dir():
-            sys.stderr.write(f"--{name.replace('_', '-')} {getattr(arguments, name)} is not a directory.\n"
-                             "Give a directory that exists, or leave the option out for its default.\n")
+    for option in DIRECTORY_COMMAND_LINE_OPTION_TO_DEFAULT_DIRECTORY_AND_FILES_READ_THERE:
+        parser.add_argument(option, type=Path)
+    arguments = vars(parser.parse_args(argv))
+    directories = {}
+    for option, (default, reads) in DIRECTORY_COMMAND_LINE_OPTION_TO_DEFAULT_DIRECTORY_AND_FILES_READ_THERE.items():
+        given = arguments[option[2:].replace("-", "_")]
+        directory = given or default
+        if not directory.is_dir():
+            told = (f"{option} {directory} is not a directory." if given else
+                    f"{option} was left out, and its default {directory} is not a directory on this machine.")
+            sys.stderr.write(f"{told}\nRun this program again with {option} naming {reads}.\n")
             return 2
-    extract(arguments.repository_checkout, arguments.log_store, arguments.agents_directory,
-            sys.stdout, sys.stderr)
+        directories[option] = directory
+    extract(*directories.values(), sys.stdout, sys.stderr)
     return 0
 
 
