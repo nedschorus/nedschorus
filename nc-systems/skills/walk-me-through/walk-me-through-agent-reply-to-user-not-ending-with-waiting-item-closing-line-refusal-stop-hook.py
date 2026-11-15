@@ -188,8 +188,8 @@ UNPUBLISHED_OPENING_TEMPLATE = (
     "because the page is where the user sees the item in full on every screen he reads.")
 # Agents copy a line shown in backticks with its backticks, and the user then sees it as code whose link
 # cannot be clicked, so every line an agent is to copy is shown alone and bare.
-NOT_IN_BACKTICKS = ("Write each line below without backticks around it, because a line between backticks "
-                    "shows the user code, whose link cannot be clicked:")
+NOT_IN_BACKTICKS = ("Write the line or lines below as plain text, with no backticks around them: the user sees "
+                    "text between backticks as code, in which a link cannot be clicked.")
 UNPUBLISHED_INSTRUCTIONS = (
     "Publish each such item with the Artifact tool as a private page holding the item as the walk-document "
     "{document} has it, titled `Item N of M: {walk}`, and add the line `#item_page item N of M <page link>` at "
@@ -197,10 +197,10 @@ UNPUBLISHED_INSTRUCTIONS = (
     "If a publish fails, add the line `#item_page item N of M publish failed: <what the Artifact tool said>` "
     "for that item instead.",
     "Then end your reply with each waiting item's closing line, on a line of its own, with nothing after it, as "
-    "the walk-me-through skill writes it, with the page's link in place of `<page link>` and <the point> as its "
-    "walk-document heading states it. " + NOT_IN_BACKTICKS + "\n{closing_lines}",
+    "the walk-me-through skill writes it, with the page's link in place of `<page link>` and, in place of "
+    "`<the point>`, the item's walk-document heading with its `Item N of M: ` prefix left out. " + NOT_IN_BACKTICKS + "\n{closing_lines}",
     "For an item whose publish failed, write its closing line without the link: drop the `[` before `Item` and "
-    "the `](<page link>)` after the point, keeping the rest of the line.",
+    "the `](<page link>)` after `<the point>`, keeping the rest of the line.",
 )
 REPLY_LACKS_CLOSING_LINE_OPENING_TEMPLATE = (
     "approval-walk current-item check: your reply to the user does not end with the right closing line for "
@@ -223,7 +223,8 @@ REPLY_LACKS_CLOSING_LINE_INSTRUCTIONS = (
     "If he has not yet seen the item, show it in full, word for word as the walk-document {document} has it, "
     "starting with its running count, as in `Item 4 of 9: <the point>`, before the closing line.",
     "End your reply with each waiting item's closing line, on a line of its own, with nothing after it, as the "
-    "walk-me-through skill writes it, with <the point> as its walk-document heading states it. "
+    "walk-me-through skill writes it, with, in place of `<the point>`, the item's walk-document heading with its "
+    "`Item N of M: ` prefix left out. "
     + NOT_IN_BACKTICKS + "\n{closing_lines}",
     "If the link you wrote is the item's current page, published with the Artifact tool, and the walk-minutes "
     "are out of date, keep the link and add the line `#item_page item N of M <that link>` at the end of "
@@ -244,7 +245,7 @@ NO_DECISION_INSTRUCTIONS = (
     "If {minutes} has no such line, add it at the end of {minutes} first, with the link of the page "
     "you published for the sub-step with the Artifact tool.",
     "If the newest such line for the sub-step records that its publish failed, end your reply instead with this "
-    "line, without a link and without backticks around it:\nNo decision here; type N or next to continue.")
+    "line, without a link, as plain text with no backticks around it:\nNo decision here; type N or next to continue.")
 OLD_MARKER_INSTRUCTIONS = (
     "Add this line at the end of {minutes}, below every earlier marker line, and leave "
     "the old lines as they are: {new_line}",
