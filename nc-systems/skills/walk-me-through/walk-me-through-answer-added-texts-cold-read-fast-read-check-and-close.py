@@ -2094,10 +2094,8 @@ def start_read_ahead_of_item_after(walk_finder, top, minutes, parser, numbers, t
     try:
         count, order, summary, units, placing = walk_document_items(walk_finder, minutes, named, numbers, total,
                                                                     parser, WAITING_ITEM_READ_STEP, top)
-        text = minutes.read_text(encoding="utf-8")
-        decided, deferrals = minutes_record(walk_finder, text, parser)
-        after = next_item(order, summary, numbers, numbers, decided | set(numbers), deferrals, placing,
-                          held_answers_unresolved(walk_finder, text, parser))
+        after = next_item(walk_finder, minutes, parser, order, summary, numbers, numbers, placing,
+                          decided_now=numbers)
         if not after:
             return None
         if isinstance(after[0], int):
@@ -2313,10 +2311,7 @@ def approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minut
     unit = walk_finder.waiting_item_units(document, value, numbers, total, parser, all_units)[1][0]
     sub_steps = [part for each in walk_finder.approval_walk_item_sub_step_units_right_after(all_units, unit)
                  for part in each[0] if part.startswith(numbers[0] + ".")]
-    text = minutes.read_text(encoding="utf-8")
-    decided, deferrals = minutes_record(walk_finder, text, parser)
-    named = next_item(sub_steps, None, [], [], decided, deferrals,
-                      unresolved=held_answers_unresolved(walk_finder, text, parser))
+    named = next_item(walk_finder, minutes, parser, sub_steps, None, [], [])
     if not named:
         return None
     # A walk-document may give sub-sub-steps 2.1.1 to 2.1.3 no heading for 2.1: step into the next level that has one.
@@ -2684,14 +2679,13 @@ def unnumbered_item_text_once_numbered(walk_finder, minutes, first, units, numbe
     return "\n".join(lines[first:end]).strip()
 
 
-def new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numbers, parser, placing, summary,
-                                      decided):
+def new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numbers, parser, placing, summary):
     """Number the unnumbered item right after the answered items' unit in the walk-document, as the close step's
     HOLD_ANSWER_FLAG asks, and return the `#next_to_present` value naming it; raise Failure, writing nothing, when
     the unit right after is not unnumbered, or when it waits on an item still to come: an unshown item of placing,
     the walk-document's placing of its unshown items, the summary item, or a numbered item that is neither answered
-    now nor among decided, the items the minutes decide, an item whose sub-steps are all answered now or decided
-    counting as decided."""
+    now nor decided, as approval_walk_minutes_read_returning_decided_item_numbers says
+    with the answered items decided now."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     text = document.read_text(encoding="utf-8")
     units = walk_finder.item_unit_spans(text, parser)
@@ -2706,9 +2700,7 @@ def new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numb
         raise Failure(NO_UNNUMBERED_ITEM_AFTER.format(document=document, item=" and ".join(answered_numbers),
                                                       found=found))
     lines = text.split(NEWLINE)
-    decided = decided_with_items_whose_sub_steps_are_all_decided(
-        [number for unit in units for number in unit[0]], decided | set(answered_numbers),
-        held_answers_unresolved(walk_finder, minutes.read_text(encoding="utf-8"), parser))
+    decided = approval_walk_minutes_read_returning_decided_item_numbers(walk_finder, minutes, parser, answered_numbers)
     # An unnumbered item is keyed by its heading's line index, an int; a numbered one by its number, a str.
     to_come = sorted((other for other in placing.get(units[after][3], (None, set()))[1]
                       if other in placing or other == summary
@@ -2821,13 +2813,21 @@ def items_decided_through_sub_steps(items, words, unresolved=frozenset()):
     return inferred
 
 
-def decided_with_items_whose_sub_steps_are_all_decided(items, decided, unresolved=frozenset()):
-    """decided, plus each item items_decided_through_sub_steps finds decided through its sub-steps."""
-    return set(decided) | set(items_decided_through_sub_steps(items, dict.fromkeys(decided), unresolved))
+def approval_walk_minutes_read_returning_decided_item_numbers(walk_finder, minutes, parser, decided_now=()):
+    """Return the item numbers minutes_record finds decided in the walk-minutes at minutes, with decided_now, items
+    answered but not yet recorded, counted as decided, plus each item of the walk-document that
+    items_decided_through_sub_steps finds decided through its sub-steps, unless held_answers_unresolved holds it."""
+    document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
+    minutes_text = minutes.read_text(encoding="utf-8")
+    items = [number for unit in walk_finder.item_unit_spans(document.read_text(encoding="utf-8"), parser)
+             for number in unit[0]]
+    decided = minutes_record(walk_finder, minutes_text, parser)[0] | set(decided_now)
+    return decided | set(items_decided_through_sub_steps(
+        items, dict.fromkeys(decided), held_answers_unresolved(walk_finder, minutes_text, parser)))
 
 
-def next_item(order, summary, answered_numbers, waiting_numbers, decided, deferrals, placing=None,
-              unresolved=frozenset()):
+def next_item(walk_finder, minutes, parser, order, summary, answered_numbers, waiting_numbers, placing=None,
+              decided_now=()):
     """Return the item numbers the `#next_to_present` line must name next, or [] when the minutes record
     every item.
 
@@ -2839,11 +2839,13 @@ def next_item(order, summary, answered_numbers, waiting_numbers, decided, deferr
     item after it in the walk-document that is not deferred, and goes round once. The unshown items placing
     holds come together, in the order unshown_items_in_walk_order gives, where the first of them comes on that
     round, or just before the summary item or a deferred item when one of those comes sooner; an item is passed
-    over while an item it waits on is still to come. An item whose sub-steps are all decided counts as decided,
-    unless it is in unresolved, as decided_with_items_whose_sub_steps_are_all_decided says.
+    over while an item it waits on is still to come. An item is decided as
+    approval_walk_minutes_read_returning_decided_item_numbers says, with decided_now decided too; the minutes at
+    minutes give the deferrals.
     """
     placing = placing or {}
-    decided = decided_with_items_whose_sub_steps_are_all_decided(order, decided, unresolved)
+    decided = approval_walk_minutes_read_returning_decided_item_numbers(walk_finder, minutes, parser, decided_now)
+    deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)[1]
     recorded = {item for item in order if item in decided or deferrals[item] > 1}
     still_waiting = [item for item in waiting_numbers if item not in recorded and item not in answered_numbers]
     if still_waiting:
@@ -2966,9 +2968,8 @@ def close(arguments):
         # numbers nothing and writes nothing.
         _, _, summary, _, placing = walk_document_items(walk_finder, minutes, value, waiting_numbers, total, parser,
                                                         f"close {HOLD_ANSWER_FLAG}", top, stamp=False)
-        decided, _ = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
         value = new_item_for_held_answer_numbered(walk_finder, minutes, value, answered_numbers, parser, placing,
-                                                  summary, decided)
+                                                  summary)
         waiting, waiting_numbers, total = waiting_items(walk_finder, value, minutes)
     if not set(answered_numbers) <= set(waiting_numbers):
         append_to_minutes(minutes, [CLOSE_HELD_MINUTES.format(item=item, new_item=waiting),
@@ -3037,13 +3038,12 @@ def close(arguments):
         rulings += [(number, word) for line in held
                     for number in walk_finder.parse_items(line.split(": ")[0])[0]]
     after = minutes.read_text(encoding="utf-8")
-    words, deferrals = minutes_ruling_words(walk_finder, after, parser)
+    words, _ = minutes_ruling_words(walk_finder, after, parser)
     unresolved = held_answers_unresolved(walk_finder, after, parser)
     # An item this close decides through its last sub-step gets its ruling too, so a pull request held on it moves.
     rulings += [(number, inferred_word) for number, inferred_word
                 in items_decided_through_sub_steps(order, words, unresolved).items() if number not in inferred_before]
-    numbers = next_item(order, summary, answered_numbers, waiting_numbers, set(words), deferrals, placing,
-                        unresolved)
+    numbers = next_item(walk_finder, minutes, parser, order, summary, answered_numbers, waiting_numbers, placing)
     if numbers and isinstance(numbers[0], int):
         first = numbers[0]
         if first in placing:  # Not the summary item, which stays where it is.
