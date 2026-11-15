@@ -763,7 +763,7 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic, start_wai
             failures = []
             for worktree in dict.fromkeys(worktree for worktree, _ in being_written):
                 error = start_waiter(worktree, removed[worktree],
-                                     [record for held_in, record in being_written if held_in == worktree],
+                                     [record for held_in, record in being_written if held_in == worktree],  # pragma: no mutate, this branch runs only for one removed worktree, so every held_in equals it
                                      worktrees[0])
                 if error is not None:
                     failures.append(REMOVAL_NOT_DEFERRED_FAILURE_TEMPLATE.format(worktree=worktree, error=error))
