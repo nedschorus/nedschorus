@@ -215,6 +215,19 @@ with tempfile.TemporaryDirectory() as workspace:
     check("a backticked path with a line suffix is reported",
           code == 1 and "line 428" in out, f"{code} {out}")
 
+    for dash in ("-", "–"):
+        write_document(root, "docs/suffix-range.md",
+                       document(body=f"Today's test is `scripts/moved.py:40{dash}44`."))
+        code, out, err = run(root, "docs/suffix-range.md")
+        check(f"a backticked path with a line-range suffix written with {dash!r} is reported",
+              code == 1 and "lines 40-44" in out, f"{code} {out}")
+    write_code(root, "scripts/settled.py", CODE, date="2026-04-01")
+    write_document(root, "docs/suffix-range-settled.md",
+                   document(body="Today's test is `scripts/settled.py:40-44`."))
+    code, out, err = run(root, "docs/suffix-range-settled.md")
+    check("a line-range suffix on a file unchanged since the stamp is not reported",
+          code == 0 and out == "", f"{code} {out}")
+
     write_document(root, "docs/singular.md",
                    document(body="It is named in `scripts/moved.py` line 375."))
     code, out, err = run(root, "docs/singular.md")
@@ -377,6 +390,8 @@ with tempfile.TemporaryDirectory() as workspace:
     code, out, err = run(root, "docs/bad-stamp.md")
     check("a stamp that is not a date is reported as one",
           code == 1 and "is not a date" in out, f"{code} {out}")
+    check("a stamp that is not a date counts no citation as pinned",
+          "citation(s) not checked" not in err, err)
 
     # A SHAPE IS NOT A CALENDAR, and getting this wrong is silent. September
     # has thirty days, so 2026-09-31 passes a shape test and then sorts above

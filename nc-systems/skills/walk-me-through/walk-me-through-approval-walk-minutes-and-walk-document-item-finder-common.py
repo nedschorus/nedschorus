@@ -606,6 +606,18 @@ def approval_walk_item_line_range_within_heading_shared_by_several_items(opening
     return starts[number], min(later + [end])
 
 
+def approval_walk_item_sub_step_units_right_after(all_units, unit):
+    """Return the units of all_units, as item_unit_spans gives them, right after unit that are sub-steps of any
+    item unit names, such as `### Item 3.1 of 9` and `### Item 3.1.1 of 9` after item 3, up to the first that is
+    not, so an older version's `3.1 of 9` elsewhere in the walk-document is not among them."""
+    found = []
+    for each in [each for each in all_units if each[3] > unit[3]]:
+        if not each[0] or not all(any(part.startswith(number + ".") for number in unit[0]) for part in each[0]):
+            break
+        found.append(each)
+    return found
+
+
 def approval_walk_unit_is_unnumbered_item(unit):
     """Whether unit, one of item_unit_spans' units, is an unnumbered item: a waiting item the close step numbers
     when it is shown."""

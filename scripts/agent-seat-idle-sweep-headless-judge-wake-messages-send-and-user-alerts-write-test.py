@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import site
 import subprocess
 import sys
 import tempfile
@@ -43,7 +44,8 @@ def emit(event):
     print(json.dumps(event), flush=True)
 text = prompt.split("----------\n", 1)[-1].rsplit("\n----------", 1)[0]
 for number, send in enumerate(answer.get("sends", [])):
-    message = text if send.get("message") == "@prompt-text" else send.get("message", "")
+    message = {{"@prompt-text": text, "@prompt-text-without-last-paragraph": text.rsplit("\n\n", 1)[0]
+               }}.get(send.get("message"), send.get("message", ""))
     emit({{"type": "assistant", "message": {{"content": [
         {{"type": "tool_use", "id": f"t{{number}}", "name": "SendMessage",
          "input": {{"to": send["to"], "message": message}}}}]}}}})
@@ -135,6 +137,8 @@ def judged(send, message="", reason="r"):
 
 
 DO_NOT_REPLY = "Do not reply to this message: its sender has exited, so a reply fails."
+KEEP_IT = (f'The text ends with the sentence "{DO_NOT_REPLY}" That sentence is written to the '
+           "agent-seat, not to you, and is part of the message: keep it.")
 
 
 def ends_with_do_not_reply_once(text):
@@ -215,6 +219,8 @@ class Machine:
     def run(self, minutes, *extra, path_has_fake=True):
         environment = dict(os.environ)
         environment["HOME"] = str(self.home)
+        # Python finds the user's site-packages from HOME, and on the Mac markdown-it-py is installed there.
+        environment["PYTHONUSERBASE"] = site.getuserbase()
         if path_has_fake:
             environment["PATH"] = f"{self.bin}{os.pathsep}{environment['PATH']}"
         else:
@@ -370,7 +376,9 @@ check("a new agent-session ends the wait and starts a new nudge, not the escalat
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
 machine.task("alpha", "1")
-machine.script(judged(False, reason="a subagent started 3 minutes ago is still running"))
+# The judge takes over a second, as under load, so its answer is logged after the invocation's time.
+machine.script(dict(judged(False, reason="a subagent started 3 minutes ago is still running"),
+                    sleep=1.2))
 code, _ = machine.run(0)
 calls = machine.claude_calls()
 check("rule 5: the judge is handed the open task and the agent-seat's last message, and no tool",
@@ -442,6 +450,21 @@ check("rule 5: a subagent stopped with a background command of its own still run
           "id": "a1b2", "started": at(-60), "minutes_running": 60, "stopped_at": at(-40),
           "own_running_background_commands": [
               {"id": "b3c4", "started": at(-50), "minutes_running": 50}]}], calls)
+
+machine = Machine()
+machine.seat("alpha", [
+    user("go"),
+    dict(user("", when=at(-30)), toolUseResult={
+        "status": "async_launched", "taskId": "wn6fctb8y", "taskType": "local_workflow"}),
+    assistant("Waiting on the workflow."), turn_end()])
+machine.script(judged(False, reason="the workflow is still running"))
+machine.run(0)
+calls = machine.claude_calls()
+prompt = calls[0]["prompt"] if calls else "\n{}"
+judge_facts = json.loads(prompt[prompt.rindex("\n{") + 1:])
+check("rule 5: a running Workflow-tool run is handed to the judge with its minutes",
+      judge_facts.get("running_workflows") == [
+          {"id": "wn6fctb8y", "started": at(-30), "minutes_running": 30}], calls)
 
 # --- rule 2: promises and announced actions -------------------------------------------------------
 PROMISE = "I'll report when PR 927 merges."
@@ -564,6 +587,19 @@ calls = machine.claude_calls()
 check("rule 2 judged unbacked: a second headless agent-session sends the announced-action line",
       len(calls) == 2 and 'You said "I\'m starting the PR 1633 work now." 12 minutes ago and have '
       "not done it. Do it now, or tell the user why not." in calls[1]["prompt"], calls)
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(f"{PROMISE} {ANNOUNCED}"), turn_end()])
+machine.script({"answer": {"sentences": [{"index": 0, "backed": True, "reason": "a test runs"}]}},
+               sent_ok())
+machine.run(0)
+calls = machine.claude_calls()
+prompt = calls[0]["prompt"] if calls else "\n{}"
+judge_facts = json.loads(prompt[prompt.rindex("\n{") + 1:])
+check("rule 2, a promise code finds unbacked and an announced action to judge: the judge gets only "
+      "the announced action, and the message names only the promise",
+      [item["sentence"] for item in judge_facts.get("sentences", [])] == [ANNOUNCED]
+      and len(calls) == 2 and "You promised \"I'll report when PR 927 merges.\"" in calls[1]["prompt"]
+      and ANNOUNCED not in calls[1]["prompt"], calls)
 for case, answer in (("an index missing", {"sentences": []}),
                      ("backed not true or false", {"sentences": [{"index": 0, "backed": "yes",
                                                                   "reason": "r"}]})):
@@ -630,6 +666,8 @@ check("an account change: one headless agent-session sends the notice to every a
 check("an account change: the notice is the wake of an agent-seat idle at a limit, no second one",
       [event["agent_seat"] for event in machine.events("limit_wake")] == ["alpha"]
       and len(calls) == 1, machine.events("limit_wake"))
+check("an account change: the notice's sender is told that the do-not-reply sentence is part of "
+      "the message", KEEP_IT in calls[0]["prompt"].replace("\n", " "), calls)
 machine.script()
 machine.run(3)
 check("the account change is noticed once", not machine.claude_calls(), machine.claude_calls())
@@ -663,6 +701,122 @@ check("a notice missing from a listed agent-seat's transcript: a user-alert, exi
       code == 1 and len(machine.alerts()) == 1 and "account notice" in machine.alerts()[0]["title"],
       machine.alerts())
 
+# --- a sender that sends a text other than the one code wrote --------------------------------------
+# Every such case seen dropped the do-not-reply sentence and still reached the agent-seat.
+OWNER_TASKS = "nedschorus-ned-box-helper-tasks"
+SENT_TEXT_TASK_SUBJECT = "Idle sweep: a headless sender sent a text other than the one code wrote"
+DROPPED = send_to("alpha", "@prompt-text-without-last-paragraph")
+
+
+def owner_tasks(machine):
+    directory = machine.tasks / OWNER_TASKS
+    tasks = []
+    for path in sorted(directory.glob("*.json")) if directory.is_dir() else []:
+        try:
+            tasks.append(json.loads(path.read_text()))
+        except ValueError:
+            pass
+    return tasks
+
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+(machine.tasks / OWNER_TASKS).mkdir()
+(machine.tasks / OWNER_TASKS / "7.json").write_text("{not json")
+machine.script({"sends": [DROPPED], "answer": {"sent": True, "reason": "r"}})
+code, output = machine.run(0)
+differs = machine.events("sent_text_differs_from_code_text")
+sent = machine.events("message_sent")
+check("a sender that drops the do-not-reply sentence: no user-alert, no headless failure, exit 0",
+      code == 0 and not machine.alerts() and not machine.events("headless_failed"),
+      (code, output, machine.alerts()))
+check("a sender that drops the do-not-reply sentence: the text code wrote and the text sent are logged",
+      len(differs) == 1 and differs[0]["agent_seat"] == "alpha" and differs[0]["step"] == "nudge"
+      and ends_with_do_not_reply_once(differs[0]["text"])
+      and differs[0]["sent_text"] == differs[0]["text"].rsplit("\n\n", 1)[0], differs)
+check("a sender that drops the do-not-reply sentence: the send is logged with the text sent, for the "
+      "delivery check", len(sent) == 1 and sent[0]["text"] == differs[0]["sent_text"], sent)
+tasks = owner_tasks(machine)
+check("a sender that drops the do-not-reply sentence: ned-box-helper gets a pending task, past a task "
+      "file that is not JSON",
+      len(tasks) == 1 and tasks[0]["subject"] == SENT_TEXT_TASK_SUBJECT
+      and tasks[0]["status"] == "pending" and str(machine.log) in tasks[0]["description"]
+      and [event["task_id"] for event in machine.events("owning_agent_seat_task_opened")] == [8],
+      (tasks, machine.events("owning_agent_seat_task_opened")))
+machine.append("alpha", cross_session(sent[0]["text"], at(0.2)), assistant("On it.", at(0.3)),
+               turn_end(at(0.4)))
+machine.script()
+code, _ = machine.run(2)
+check("the text sent found in the agent-seat's transcript: no user-alert",
+      [event["found"] for event in machine.events("delivery_checked")] == [True]
+      and not machine.alerts(), (machine.events("delivery_checked"), machine.alerts()))
+machine.script({"sends": [DROPPED], "answer": {"sent": True, "reason": "r"}})
+machine.run(17)
+check("a second difference while the task is open: logged, and no second task",
+      len(machine.events("sent_text_differs_from_code_text")) == 2 and len(owner_tasks(machine)) == 1
+      and len(machine.events("owning_agent_seat_task_opened")) == 1, owner_tasks(machine))
+task_path = machine.tasks / OWNER_TASKS / "8.json"
+task_path.write_text(json.dumps(dict(json.loads(task_path.read_text()), status="completed")))
+machine.script({"sends": [DROPPED], "answer": {"sent": True, "reason": "r"}})
+machine.handoff_put_off("s-2")
+machine.seat("alpha", DONE_TURN, session="s-2")
+machine.run(40)
+check("a difference after the task is completed: a new task",
+      [event["task_id"] for event in machine.events("owning_agent_seat_task_opened")] == [8, 9],
+      machine.events("owning_agent_seat_task_opened"))
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+machine.script({"sends": [DROPPED], "answer": {"sent": True, "reason": "r"}})
+code, _ = machine.run(0)
+alerts = machine.alerts()
+check("a difference whose task cannot be written: one user-alert naming the error, without the "
+      "claude -p remedy, exit 1",
+      code == 1 and len(alerts) == 1 and "could not give ned-box-helper a task" in alerts[0]["title"]
+      and "FileNotFoundError" in json.dumps(alerts[0]) and "claude -p" not in json.dumps(alerts[0])
+      and len(machine.events("sent_text_differs_from_code_text")) == 1
+      and len(machine.events("message_sent")) == 1, (code, alerts))
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+(machine.tasks / OWNER_TASKS).mkdir()
+machine.script({"sends": [DROPPED, send_to("beta")], "answer": {"sent": True, "reason": "r"}})
+code, _ = machine.run(0)
+failed = machine.events("headless_failed")
+check("a difference beside a send to another entry: the difference goes to the task, the other "
+      "entry to a user-alert",
+      code == 1 and len(machine.events("sent_text_differs_from_code_text")) == 1 and len(owner_tasks(machine)) == 1
+      and len(failed) == 1 and failed[0]["problem"] == "sent to 'beta [abc123]', which is not alpha"
+      and len(machine.alerts()) == 1, (failed, machine.alerts()))
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.seat("beta", DONE_TURN)
+(machine.tasks / OWNER_TASKS).mkdir()
+machine.run(0)
+machine.account("account-2")
+machine.script({"sends": [DROPPED, send_to("beta")], "answer": {"sent": True, "reason": "r"}})
+code, _ = machine.run(1)
+differs = machine.events("sent_text_differs_from_code_text")
+sent = {event["agent_seat"]: event["text"] for event in machine.events("message_sent")}
+check("an account notice sent to one agent-seat with another text: logged, a task, no user-alert, "
+      "and each agent-seat's send logged with the text it was sent",
+      code == 0 and not machine.alerts() and [event["agent_seat"] for event in differs] == ["alpha"]
+      and differs[0]["step"] == "account_notice" and len(owner_tasks(machine)) == 1
+      and sent["alpha"] == differs[0]["sent_text"] and sent["beta"] == differs[0]["text"],
+      (code, machine.alerts(), differs, sent))
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+machine.script(sent_ok())
+machine.run(0)
+check("the sender is told that the do-not-reply sentence is part of the message",
+      KEEP_IT in machine.claude_calls()[0]["prompt"].replace("\n", " "), machine.claude_calls())
+
 # --- headless agent-sessions that fail --------------------------------------------------------------
 FAILURES = (
     ("exits nonzero", {"exit": 1}, "claude exited 1"),
@@ -673,8 +827,6 @@ FAILURES = (
      "no JSON answer"),
     ("sends to another entry", {"sends": [send_to("beta")], "answer": {"sent": True, "reason": "r"}},
      "sent to 'beta [abc123]'"),
-    ("sends another text", {"sends": [send_to("alpha", "hello")],
-                            "answer": {"sent": True, "reason": "r"}}, "a text other than"),
     ("has its send fail", {"sends": [send_to("alpha", is_error=True)],
                            "answer": {"sent": False, "reason": "r"}}, "no SendMessage to alpha"),
     ("runs past its time", {"sleep": 5, "answer": {"sent": True, "reason": "r"}}, "stopped after"),
@@ -705,7 +857,10 @@ for case, answer, words in FAILURES + EXACT_FAILURES:
     machine.seat("alpha", DONE_TURN)
     machine.handoff_put_off()
     machine.script(answer)
-    code, output = machine.run(0, "--headless-timeout-seconds", "1")
+    # Only the case that runs past its time gets the 1-second limit: under load, starting the fake
+    # claude alone can take a second, which would turn any other case into a stop.
+    code, output = machine.run(0, *(("--headless-timeout-seconds", "1")
+                                    if case == "runs past its time" else ()))
     failed = machine.events("headless_failed")
     exact = (case, answer, words) in EXACT_FAILURES
     check(f"a sender that {case}: logged, a user-alert, exit 1, no delivery check pending",
@@ -1014,6 +1169,36 @@ check("a nudge logged after an earlier headless agent-session carries the time i
       set(nudges) == {"alpha", "beta"} and max(datetime.fromisoformat(stamp.replace("Z", "+00:00"))
                                                for stamp in nudges.values())
       >= START + timedelta(seconds=2), nudges)
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+machine.seat("beta", DONE_TURN)
+(machine.handoffs / "beta-supervisor-state.json").write_text("{not json")
+machine.script(dict(sent_ok(), sleep=1.2))
+machine.run(0)
+machine.script()
+code, _ = machine.run(2)
+check("a read failure logged after an earlier headless agent-session: alerted 2 minutes after the "
+      "invocation that logged it",
+      code == 1 and any("for beta" in alert["title"] for alert in machine.alerts()),
+      (code, machine.alerts()))
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.task("alpha", "1")
+machine.log.parent.mkdir()
+machine.log.write_text(json.dumps(
+    {"event": "judge_answer", "at": at(0), "agent_seat": "alpha", "rule": 5, "session_id": "s-1",
+     "last_activity": LONG_AGO, "send": False, "reason": "r", "failed": False}) + "\n")
+machine.script(judged(False))
+machine.run(14)
+asked_at_14 = machine.claude_calls()
+machine.script(judged(False))
+machine.run(15)
+check("a judge answer logged without agent_seat_idle_sweep_invocation_started_at: "
+      "the next ask is counted from its at",
+      not asked_at_14 and len(machine.claude_calls()) == 1, (asked_at_14, machine.events()))
 
 # --- a read failure that persists keeps the run failing ---------------------------------------------
 machine = Machine()

@@ -261,6 +261,10 @@ DESTINATION_ENVIRONMENT_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
 TRIAGE_FILE_REPLACED_IN_THE_STORE = record_names.COLD_READ_TRIAGE_FILE_NAME
 
 SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
+# Seconds the store inventory's ssh call may take: the 10-second connect and
+# a sha256sum of one cold-read-record, well inside the 240 seconds the
+# git-worktree-remove guard waits for the whole shipment.
+STORE_INVENTORY_SSH_TIMEOUT_SECONDS = 60
 # Seconds rsync waits on a silent connection before giving up.
 RSYNC_IO_TIMEOUT_SECONDS = "120"
 # ssh's exit code when it could not connect, which rsync passes through.
@@ -529,7 +533,7 @@ def record_directory_being_written_lock_is_held_by_any_process(record_dir: pathl
     descriptor = os.open(record_dir, os.O_RDONLY)
     try:
         # Exclusive, since every writer holds the lock shared.
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)  # pragma: no mutate, the two flags are distinct bits, so + and ^ give the same as |
     except BlockingIOError:
         return True
     finally:
@@ -783,8 +787,9 @@ def local_inventory(record_dir: pathlib.Path) -> dict:
 def store_inventory(host, store_dir: pathlib.PurePosixPath):
     """{relative path: sha256} of the store's copy of this cold-read-record,
     and the process that produced it. An absent directory is an empty
-    inventory with exit 0; an unreachable host is ssh's exit 255 and an
-    inventory of None, and a local read that fails is exit 1 and None.
+    inventory with exit 0; an unreachable host, or an ssh call that runs past
+    STORE_INVENTORY_SSH_TIMEOUT_SECONDS, is ssh's exit 255 and an inventory of
+    None, and a local read that fails is exit 1 and None.
 
     sha256 on both sides -- Python's hashlib here, sha256sum on ned-box -- is
     the digest the cold-read-grid already records for the cold-read-target, so
@@ -799,8 +804,14 @@ def store_inventory(host, store_dir: pathlib.PurePosixPath):
             lambda: local_inventory(directory) if directory.is_dir() else {})
     script = (f"if [ -d '{store_dir}' ]; then cd '{store_dir}' && "
               f"find . -type f -exec sha256sum {{}} +; fi")
-    completed = subprocess.run(SSH_COMMAND + [host, script],
-                               capture_output=True, text=True, check=False)
+    command = SSH_COMMAND + [host, script]
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, check=False,
+                                   timeout=STORE_INVENTORY_SSH_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(
+            command, RSYNC_EXIT_CONNECTION_FAILED, "",
+            f"ssh {host} timed out after {STORE_INVENTORY_SSH_TIMEOUT_SECONDS} seconds\n"), None
     if completed.returncode != 0:
         return completed, None
     inventory = {}
@@ -1500,7 +1511,7 @@ def ship_from_command_line(description: str, records_dir: pathlib.Path,
 
     RULE 4 REACHES THAT KIND ONLY THROUGH THE NAME triage.md, which a
     sanity-check record does not use: its twice-written file is
-    finding-dispositions.md, written at the run's close and updated as the
+    sanity-check-finding-dispositions.md, written at the run's close and updated as the
     findings' status moves, and it stays add-only and refused on difference.
     That is the same defect rule 4 fixes here, left open in that kind.
 

@@ -30,7 +30,7 @@ common = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(common)
 
 PREFIX = "scratch-directory-common-test-"
-LATER = time.time() + common.LEFT_BY_A_KILLED_RUN_AFTER_UNCHANGED_SECONDS + 60
+LATER = time.time() + common.SCRATCH_DIRECTORY_UNCHANGED_SECONDS_BEFORE_COUNTED_AS_LEFT_BY_A_KILLED_RUN + 60
 failures = 0
 
 
@@ -49,7 +49,7 @@ import importlib.util, os, signal, shutil, sys
 spec = importlib.util.spec_from_file_location("common", {str(MODULE_PATH)!r})
 common = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(common)
-root = common.scratch_directory_after_removing_ones_killed_runs_left({PREFIX!r}, temp_dir=sys.argv[1])
+root = common.make_test_scratch_directory_after_removing_killed_runs_leftovers({PREFIX!r}, temp_dir=sys.argv[1])
 try:
     (root / "case-1").mkdir()
     (root / "case-1" / "file").write_text("x")
@@ -91,7 +91,7 @@ try:
     stuck = temp_dir / f"{PREFIX}stuck123"
     (stuck / "inner").mkdir(parents=True)
     (stuck / "inner" / "file").write_text("x")
-    long_ago = time.time() - common.LEFT_BY_A_KILLED_RUN_AFTER_UNCHANGED_SECONDS - 60
+    long_ago = time.time() - common.SCRATCH_DIRECTORY_UNCHANGED_SECONDS_BEFORE_COUNTED_AS_LEFT_BY_A_KILLED_RUN - 60
     after_stuck = temp_dir / f"{PREFIX}zzzzzzzz"
     after_stuck.mkdir()
     for path in (stuck / "inner" / "file", stuck / "inner", stuck, after_stuck):
@@ -107,7 +107,7 @@ try:
               not after_stuck.exists() and removed == [after_stuck], removed)
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            fresh = common.scratch_directory_after_removing_ones_killed_runs_left(PREFIX, temp_dir=temp_dir)
+            fresh = common.make_test_scratch_directory_after_removing_killed_runs_leftovers(PREFIX, temp_dir=temp_dir)
         check("the run that could not remove it still gets its scratch directory",
               fresh.is_dir() and fresh.name.startswith(PREFIX), fresh)
         check("the run that could not remove it says so on standard error",
@@ -145,13 +145,13 @@ try:
     for path in (left_in_tmp, left_in_fallback):
         path.mkdir()
         os.utime(path, (long_ago, long_ago))
-    real_tmp = common.TMP
+    real_tmp = common.SLASH_TMP_PATH_SWEPT_FOR_KILLED_RUNS_LEFTOVERS_BESIDES_SYSTEM_TEMP_DIRECTORY
     common.tempfile = type("TempfileStandIn", (), {"gettempdir": staticmethod(lambda: str(fallback_temp_dir))})
-    common.TMP = temp_dir
+    common.SLASH_TMP_PATH_SWEPT_FOR_KILLED_RUNS_LEFTOVERS_BESIDES_SYSTEM_TEMP_DIRECTORY = temp_dir
     try:
         removed, kept = common.remove_scratch_directories_killed_runs_left(PREFIX)
     finally:
-        common.tempfile, common.TMP = tempfile, real_tmp
+        common.tempfile, common.SLASH_TMP_PATH_SWEPT_FOR_KILLED_RUNS_LEFTOVERS_BESIDES_SYSTEM_TEMP_DIRECTORY = tempfile, real_tmp
     check("given no temp directory, a sweep whose system temp directory fell back from /tmp sweeps /tmp too",
           sorted(removed) == sorted([left_in_tmp, left_in_fallback]) and kept == [], (removed, kept))
     shutil.rmtree(fallback_temp_dir)

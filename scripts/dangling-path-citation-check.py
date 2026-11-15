@@ -42,7 +42,8 @@ HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 NAMED_PATH_TOKEN_SEPARATOR = re.compile(r"[\s'\"()\[\]`]+")
 PLAIN_PATH_TOKEN_SEPARATOR = re.compile(r"[\s'\"()\[\]]+")
 
-# Project tests use a -test stem or a tests directory, regardless of extension.
+# A project test is a program whose stem ends -test, or any file in a tests directory.
+# A Markdown file's stem can end -test without it being a test: a GHI-MD is named after its issue's title.
 PROJECT_TEST_FILE_STEM_ENDING = "-test"
 PROJECT_TEST_DIRECTORY_NAME = "tests"
 
@@ -206,12 +207,13 @@ def base_already_cites(cited: str, base_cited_paths: set, citing_path: pathlib.P
     return bool(candidates & base_cited_paths)
 
 
-def is_project_test_file(path: pathlib.Path, repository_root: pathlib.Path) -> bool:
+def is_project_test_file(path: pathlib.Path, repository_root: pathlib.Path, lint) -> bool:
     try:
         relative = path.resolve().relative_to(repository_root.resolve())
     except ValueError:
         return False
-    return (relative.stem.endswith(PROJECT_TEST_FILE_STEM_ENDING)
+    return ((relative.stem.endswith(PROJECT_TEST_FILE_STEM_ENDING)
+             and relative.suffix in lint.PROGRAM_SUFFIXES)
             or PROJECT_TEST_DIRECTORY_NAME in relative.parts[:-1])
 
 
@@ -221,7 +223,7 @@ def findings_for_file(path: pathlib.Path, changed: set, lint, root_directories: 
     if lint.in_frozen_measured_data(path, REPOSITORY_ROOT):
         return
     # Skip test fixtures only forward; backward checks must still catch stale module citations.
-    if is_project_test_file(path, REPOSITORY_ROOT):
+    if is_project_test_file(path, REPOSITORY_ROOT, lint):
         return
     if path.suffix == ".md":
         for line_number, problem in lint.lint_markdown(path, REPOSITORY_ROOT):

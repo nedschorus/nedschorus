@@ -201,22 +201,25 @@ COMMAND_FAILED = ("{program_name} {mode} failed: {reason}. Tell the user, with t
                   "the command again once the cause is fixed.")
 RESTORE_INCOMPLETE = ("{program_name} --restore: not every file was put back; the lines this "
                       "command printed to standard output say what was done to each. A file that "
-                      "failed is either unchanged, still holding the version the user declined, "
-                      "or fully put back, or deleted when it has no approved version, with no log "
-                      "line recording it; a failed write may also leave a file named "
-                      "<its path>.<process id>.restore beside it. Tell the user which files "
-                      "failed and why.\n"
+                      "failed is in one of two states. Either it is unchanged, still holding the "
+                      "version the user declined; or it was put back, or deleted when it has no "
+                      "approved version, but no line in the store's log records that it was. A "
+                      "failed write may also leave, in the same directory, a file whose name "
+                      "begins with the file's name and ends in .restore. Tell the user which "
+                      "files failed and why, giving the error on each file's Failed on line.\n"
                       "For a file that failed, do not run git commit --only -m \"Put back the "
                       "approved <file name>\" -- <path>, the command this hook's message asking "
                       "about the change gave for a declined version in a commit: the file may "
                       "still hold the declined version, and the command would commit it.")
 MARKER_SURVIVED = (
     "{program_name} --approve: the approval above is recorded, but its marker {marker} could not "
-    "be deleted: {reason}. While the marker exists, a later --approve would spend the user's "
-    "words a second time.\n"
+    "be deleted: {reason}. While the marker exists, the next --approve, for any later change, "
+    "would read the same approval from it again and record that later change as approved "
+    "although no one approved it.\n"
     "Run: rm -f {quoted_marker}\n"
     "Do not ask the user again and do not run --approve again: the approval is already recorded.\n"
-    "If rm fails too, tell the user, with this message.")
+    "If rm fails too, tell the user, with this message, that he must delete {marker} himself, "
+    "on the machine that holds this checkout, before --approve runs in this checkout again.")
 
 
 class ApprovalRecordedButApprovalMarkerNotDeleted(Exception):
@@ -878,7 +881,10 @@ def entries_after(entries, position):
     the window. Neither the reflog's length nor a stored index tells two equal lines apart,
     because expiry can drop older entries and move a later equal line to the stored index; and
     when the line is gone, a guess from times can leave out a commit made in its second. A
-    position an earlier version of this hook stored is [commit, time] alone."""
+    position an earlier version of this hook stored is [commit, time] alone; when no entry, or
+    more than one, holds that pair, the window is unknown too, so nothing is approved as git's
+    own work. A version origin/main holds, or one the agent's own successful Edit wrote on an
+    approved version, is still approved without asking."""
     if not position:
         return []
     if len(position) < 4:
@@ -1268,7 +1274,7 @@ def run_hook(payload):
             window = [] if stocking else entries_after(entries, state.get("reflog"))
             # Loading the in-progress check costs more than a whole quiet run, so it is asked
             # only when there is something it could change. An unknown window (None) approves
-            # nothing as git's own work, so every changed version is asked about.
+            # nothing as git's own work.
             if changed or unsettled or window or state.get("stopped"):
                 quiet = git_operation_in_progress(checkout)
             if quiet:

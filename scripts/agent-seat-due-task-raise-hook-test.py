@@ -16,6 +16,7 @@ import importlib.util
 import json
 import os
 import shutil
+import site
 import subprocess
 import sys
 import tempfile
@@ -48,8 +49,22 @@ STOP_PAYLOAD = json.dumps({
     "cwd": "/", "hook_event_name": "Stop", "stop_hook_active": False,
 })
 DEFER_LINE = ("If a task above cannot be acted on yet, record what it now waits on with "
-              "TaskUpdate instead: a pull request or a GHI in a new metadata.prerequisites, "
-              "or a task with addBlockedBy.")
+              "TaskUpdate instead: a pull request, a GHI or an approval-walk item in a new "
+              "metadata.prerequisites, or a task with addBlockedBy.")
+CORRECT_PREREQUISITES_LINE = (
+    'Correct the task with TaskUpdate, giving its metadata a "prerequisites" list whose entries '
+    'are each one of {"pr_merged": <number>}, {"issue_closed": <number>} or '
+    '{"approval_walk_item_decided": {"approval_walk_minutes_file_path": "<absolute path of the '
+    'walk-minutes file>", "approval_walk_item_heading": "<the item\'s heading in the '
+    'walk-document>"}}; if the task waits on no pull request, GHI or approval-walk item, set '
+    '"prerequisites" to null, and record any task on your own task list it waits on with '
+    "addBlockedBy.")
+
+
+def problem_text(task_id, problem, subject=None):
+    subject = subject if subject is not None else f"Subject of task {task_id}"
+    return (f'Task {task_id} "{subject}" is never raised as its metadata.prerequisites stand, '
+            f"because {problem}.\n{CORRECT_PREREQUISITES_LINE}")
 
 GH_STAND_IN = """#!{python}
 import json, os, sys, time
@@ -88,6 +103,8 @@ def seat_session_environment():
     """This process's environment as an agent-seat's own attended session
     gives it to a Stop hook: attended, and no caller owning the session."""
     environment = dict(os.environ)
+    # The cases move HOME, from which Python finds the user's site-packages; on the Mac markdown-it-py is there.
+    environment["PYTHONUSERBASE"] = site.getuserbase()
     environment["CLAUDE_CODE_SESSION_ATTENDED"] = "1"
     environment.pop("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER", None)
     return environment
@@ -434,8 +451,25 @@ seat.task("45", metadata={"prerequisites": []})
 seat.task("46", metadata={"prerequisites": [{"pr_merged": 107}, {"merged_by": "x"}]})
 seat.task("47", metadata={"prerequisites": [{"pr_merged": "107"}]})
 seat.respond({"pr:107": {"state": "MERGED", "title": "T", "url": "https://x/107"}})
-check("empty prerequisites, an unknown condition, a non-number condition: never raise",
-      silent(seat.run()), seat.gh_calls())
+result = seat.run()
+check("empty prerequisites, an unknown condition, a non-number condition: each named to the "
+      "agent, none raised, and gh never asked",
+      context_of(result) == "\n".join((
+          problem_text("45", "it is an empty list, which names nothing to wait on"),
+          problem_text("46", 'its entry {"merged_by": "x"} names the kind "merged_by", which this '
+                             "hook does not know"),
+          problem_text("47", 'its entry {"pr_merged": "107"} does not give a positive whole '
+                             "number")))
+      and seat.gh_calls() == [], (context_of(result), seat.gh_calls()))
+check("unreadable prerequisites: named once, then silent", silent(seat.run()))
+seat.task("46", metadata={"prerequisites": [{"waits_on": 107}]})
+check("unreadable prerequisites changed to another unreadable value: named again",
+      context_of(seat.run()) == problem_text(
+          "46", 'its entry {"waits_on": 107} names the kind "waits_on", which this hook does not '
+                "know"))
+seat.task("46", metadata={"prerequisites": [{"pr_merged": 107}]})
+check("unreadable prerequisites corrected and met: raised",
+      (context_of(seat.run()) or "").startswith("Act on task 46 "))
 
 seat = Seat()
 seat.task("48", metadata={"prerequisites": [{"pr_merged": 108}]})
@@ -555,7 +589,9 @@ check("prerequisites not yet met, blockers completed: silent", silent(seat.run()
 seat = Seat()
 seat.task("116", metadata={"prerequisites": []}, blocked_by=["117"])
 seat.task("117", status="completed")
-check("unreadable prerequisites, blockers completed: never raised", silent(seat.run()))
+check("unreadable prerequisites, blockers completed: named, never raised",
+      context_of(seat.run()) == problem_text(
+          "116", "it is an empty list, which names nothing to wait on"))
 
 # --- malformed input ----------------------------------------------------------------
 seat = Seat()
@@ -933,6 +969,160 @@ check("next-action: a walk-minutes file that cannot be read is reported, saying 
           "approval-walk is open" in result.stderr
       and "Tell the user this whole message" in result.stderr
       and not seat.state_path.exists(), result)
+
+# --- approval-walk items ------------------------------------------------------------
+WALK_DOCUMENT = """# Walk
+
+## Item 1 of 3: The memory-file refusal shows each agent only its lines
+
+Recommendation: approve.
+
+## Item 2 of 3: The `restore` task finds its commit
+
+## Item 2.1 of 3: Why a rebase closes it early
+
+## Item 2.2 of 3: The design's new sentences
+
+## Item 3 of 3: What this walk decided
+"""
+ITEM_1 = "The memory-file refusal shows each agent only its lines"
+
+
+class WalkSeat(Seat):
+    """A Seat with an approval-walk's walk-document and walk-minutes beside its task list."""
+
+    def __init__(self, document=WALK_DOCUMENT):
+        super().__init__()
+        walk_directory = self.home / "checkout" / "docs" / "walk"
+        walk_directory.mkdir(parents=True)
+        self.document = walk_directory / "w-2026-11-12.md"
+        self.document.write_text(document)
+        self.minutes = walk_directory / "w-2026-11-12-minutes.md"
+
+    def minutes_say(self, *lines):
+        self.minutes.write_text("# Minutes: w-2026-11-12\n\n" + "".join(f"{line}\n" for line in lines))
+
+    def waiting_task(self, task_id, heading, subject=None):
+        self.task(task_id, subject=subject, metadata={"prerequisites": [{"approval_walk_item_decided": {
+            "approval_walk_minutes_file_path": str(self.minutes),
+            "approval_walk_item_heading": heading}}]})
+
+
+seat = WalkSeat()
+seat.waiting_task("70", ITEM_1, subject="Build item 1")
+check("approval-walk item, walk-minutes not written yet: not raised, nothing named",
+      silent(seat.run()))
+seat.minutes_say("#next_to_present item 1 of 3",
+                 'item 1 of 3: the user answered approved (2026-11-12 10:00) in his words "A", which '
+                 "makes its change. Fast reads:")
+check("approval-walk item answered by check but not yet closed: not raised", silent(seat.run()))
+seat.minutes_say("#next_to_present item 2 of 3",
+                 'item 1 of 3: the user answered approved (2026-11-12 10:00) in his words "A", which '
+                 "makes its change. Fast reads:",
+                 "item 1 of 3: approved; every text the change adds has had a fast read. <accepted>")
+result = seat.run()
+check("approval-walk item closed <accepted>: raised, with the exact text",
+      context_of(result) == (f'Act on task 70 "Build item 1" now: its prerequisites are met: the '
+                             f'approval-walk item "{ITEM_1}" is decided in {seat.minutes}.'
+                             f"\n{DEFER_LINE}"), repr(context_of(result)))
+check("approval-walk item: raised once, then silent", silent(seat.run()))
+check("approval-walk item: gh never asked", seat.gh_calls() == [], seat.gh_calls())
+
+seat = WalkSeat()
+seat.waiting_task("71", f"Item 1 of 3: {ITEM_1}")
+seat.minutes_say("item 1 of 3: disapproved; every text the change adds has had a fast read. <rejected>")
+check("approval-walk item closed <rejected>, named with its running count: raised",
+      (context_of(seat.run()) or "").startswith("Act on task 71 "))
+
+seat = WalkSeat()
+seat.waiting_task("72", ITEM_1)
+seat.minutes_say("item 1 of 3: deferred; it moves to just before the summary item. <open>")
+check("approval-walk item deferred, <open>: not raised", silent(seat.run()))
+seat.minutes_say("item 1 of 3: deferred; it moves to just before the summary item. <open>",
+                 "item 1 of 3: deferred a second time, so it leaves the walk and stays open. <open>")
+check("approval-walk item deferred a second time, <open>: not raised", silent(seat.run()))
+
+seat = WalkSeat()
+seat.waiting_task("73", "Item 2 of 3: The `restore` task finds its commit")
+seat.minutes_say("item 2.1 of 3: moved on; the item asked for no decision. <moved on, no decision>")
+check("approval-walk item with sub-steps, one sub-step decided: not raised", silent(seat.run()))
+seat.minutes_say("item 2.1 of 3: moved on; the item asked for no decision. <moved on, no decision>",
+                 "item 2.2 of 3: approved; every text the change adds has had a fast read. <accepted>")
+check("approval-walk item whose sub-steps are all decided: raised",
+      (context_of(seat.run()) or "").startswith("Act on task 73 "))
+
+# Items added before it while the walk runs: the walk-document's count and the item's number change.
+seat = WalkSeat(document="# Walk\n\n## Item 1 of 2: First\n\n## The fix\n")
+seat.waiting_task("74", "The fix")
+seat.minutes_say("item 1 of 2: approved; every text the change adds has had a fast read. <accepted>")
+check("approval-walk item not yet numbered: not raised, nothing named", silent(seat.run()))
+seat.document.write_text("# Walk\n\n## Item 1 of 19: First\n\n## Item 2 of 19: Added\n\n"
+                         "## Item 3 of 19 (deferred: moved to just before the summary item): Also added\n\n"
+                         "## Item 4 of 19: The fix\n")
+seat.minutes_say("item 1 of 2: approved; every text the change adds has had a fast read. <accepted>",
+                 "item 2 of 19: approved; every text the change adds has had a fast read. <accepted>")
+check("approval-walk item renumbered, another item decided: not raised", silent(seat.run()))
+seat.minutes_say("item 1 of 2: approved; every text the change adds has had a fast read. <accepted>",
+                 "item 2 of 19: approved; every text the change adds has had a fast read. <accepted>",
+                 "item 4 of 19: already decided by the user-ruling of 2026-11-01; the walk does not "
+                 "come back to it. <accepted>")
+check("approval-walk item renumbered and decided: raised",
+      (context_of(seat.run()) or "").startswith("Act on task 74 "))
+
+seat = WalkSeat()
+seat.waiting_task("75", "A heading the walk-document lacks")
+seat.minutes_say("item 1 of 3: approved; every text the change adds has had a fast read. <accepted>")
+result = seat.run()
+check("approval-walk item whose heading is not in the walk-document: named, not raised",
+      context_of(result) == problem_text(
+          "75", f"the walk-document {seat.document} holds no item heading that reads \"A heading "
+                "the walk-document lacks\" once its running count is left out"),
+      repr(context_of(result)))
+check("approval-walk item whose heading is not found: named once, then silent", silent(seat.run()))
+
+seat = WalkSeat(WALK_DOCUMENT + "\n## Item 4 of 4: " + ITEM_1 + "\n")
+seat.waiting_task("79", ITEM_1)
+seat.minutes_say("item 1 of 3: approved; every text the change adds has had a fast read. <accepted>")
+result = seat.run()
+check("approval-walk item whose heading two items share, the first decided: named, not raised",
+      context_of(result) == problem_text(
+          "79", f"the walk-document {seat.document} holds 2 item headings that read \"{ITEM_1}\" "
+                "once its running count is left out"),
+      repr(context_of(result)))
+
+seat = WalkSeat()
+seat.waiting_task("76", ITEM_1)
+seat.minutes_say("item 1 of 3: approved; every text the change adds has had a fast read. <accepted>")
+seat.document.unlink()
+check("approval-walk item whose walk-document does not exist: named, since the path is wrong",
+      context_of(seat.run()) == problem_text(
+          "76", f"the walk-document {seat.document}, which the walk-minutes path {seat.minutes} "
+                "names, does not exist"))
+
+seat = WalkSeat()
+mistyped = seat.minutes.with_name("w-2026-11-21-minutes.md")
+seat.task("80", metadata={"prerequisites": [{"approval_walk_item_decided": {
+    "approval_walk_minutes_file_path": str(mistyped), "approval_walk_item_heading": ITEM_1}}]})
+check("approval-walk item named by a mistyped walk-minutes path, neither file there: named",
+      context_of(seat.run()) == problem_text(
+          "80", f"the walk-document {mistyped.with_name('w-2026-11-21.md')}, which the walk-minutes "
+                f"path {mistyped} names, does not exist"))
+
+seat = Seat()
+seat.task("77", metadata={"prerequisites": [{"approval_walk_item_decided": {
+    "approval_walk_minutes_file_path": "docs/walk/w-minutes.md", "approval_walk_item_heading": "x"}}]})
+check("approval-walk item with a relative walk-minutes path: named as unreadable",
+      "is never raised as its metadata.prerequisites stand, because its entry" in (
+          context_of(seat.run()) or ""))
+
+seat = WalkSeat()
+seat.waiting_task("78", ITEM_1)
+seat.minutes_say("item 1 of 3: deferred; it moves to just before the summary item. <open>")
+seat.task("79")
+unheld, held = hook.unheld_and_held_tasks(hook.read_tasks(seat.task_directory),
+                                          seat.task_directory, hook.GitHubConditionChecker({}, 0))
+check("approval-walk item not decided: the next-action list counts the task held",
+      unheld == ["79"] and held == 1, (unheld, held))
 
 shutil.rmtree(SUITE_ROOT, ignore_errors=True)
 print()

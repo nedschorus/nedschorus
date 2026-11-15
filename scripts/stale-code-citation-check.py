@@ -152,8 +152,9 @@ def line_number_citations(document: pathlib.Path, repository_root: pathlib.Path,
         for column, found, word in marks:
             suffixed = lint.LINE_SUFFIXED_PATH.match(word)
             if suffixed:
-                cited = int(suffixed.group("line"))
-                yield number, found, cited, cited, word
+                first = int(suffixed.group("line"))
+                last = int(suffixed.group("last_line") or first)
+                yield number, found, first, last, word
         for match in LINE_NUMBER_PHRASE.finditer(line):
             earlier = [found for column, found, word in marks if column < match.start()]
             if not earlier:
@@ -313,8 +314,7 @@ def findings_for_document(document: pathlib.Path, repository_root: pathlib.Path,
             return [], 0
         return [(stamp_line,
                  f"{DESIGN_AS_OF_NAME} is {stamp!r}, which is not a date: "
-                 f"write a day the calendar has, as YYYY-MM-DD, so a cited "
-                 f"file's history can be compared against it")], 0
+                 f"write a day the calendar has, as YYYY-MM-DD")], 0
 
     pinned = pinned_line_ranges(text, repository_root, lint)
     findings = []

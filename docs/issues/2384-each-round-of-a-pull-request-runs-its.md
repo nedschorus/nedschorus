@@ -111,7 +111,7 @@ None in the program: choosing the base, deciding whether to rebase, running the 
 
 - The push program: it refuses `main`, a detached HEAD without `--remote-branch`, a git operation in progress, and each kind of change git would test but not push, and does not refuse the two named files; it rebases a never-pushed branch, stops on a branch behind or diverged from its remote branch, and leaves alone a pushed branch, a branch pushed under another name, and any push with `--remote-branch`; it stops on `unknown`; it aborts a rebase that conflicts and pushes nothing; a failing test run logs its seconds, writes no record and pushes nothing; a passing test run writes the record before the push, and writes none when HEAD or the checkout changed during it; a push that fails keeps the record, and a second invocation with the same tree and base pushes without a test run; the two-minute line appears when the median of the last 20 records, or of every record when there are fewer, is over 120 seconds, and not otherwise.
 - The pre-push step: it refuses a pushed commit with no record, with a record of another tree, and with a record of another base, naming the command with `--remote-branch` for each branch; it lets through a commit whose record matches; the hook's other steps run as before.
-- Each failure-handling line of both programs gets a test that causes the failure, checked by nc-mutation-testing, as `CLAUDE.md` requires.
+- Each failure-handling line of both programs gets a test that causes the failure, as `CLAUDE.md` requires; after the merge, `scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py` checks those tests by nc-mutation-testing in its nightly run.
 
 ## Deferred-decisions
 

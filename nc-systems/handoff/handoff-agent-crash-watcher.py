@@ -89,8 +89,9 @@ AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER):
 the seat runs, but outside the user's systemd manager, so the test suites' low CPU weight does
 not reach it, and that gets a notice, with no alert. A page or window the Mac cannot be reached for,
 a notice's or a restarted seat's, stays pending and is tried again on every run. Every decision, each restart
-and each task included, is appended to decisions.jsonl in LOG_DIRECTORY; the notices are
-kept beside it.
+and each task included, is appended to AGENT_CRASH_WATCHER_DECISIONS_FILE_NAME in LOG_DIRECTORY; the notices are
+kept beside it. LOG_DIRECTORY may also hold decisions.jsonl, the same log under an earlier
+name, which no run writes.
 
 Off ned-box the program refuses: the agents root it reads is ned-box's.
 
@@ -133,6 +134,12 @@ _ned_box_home_specification = importlib.util.spec_from_file_location(
     REPOSITORY / "nc-systems" / "general-tools" / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
 ned_box_home_path_constants = importlib.util.module_from_spec(_ned_box_home_specification)
 _ned_box_home_specification.loader.exec_module(ned_box_home_path_constants)
+_mac_reference_checkout_path_constant_specification = importlib.util.spec_from_file_location(
+    "mac_reference_checkout_launcher_scripts_directory_path_constant_common",
+    REPOSITORY / "nc-systems" / "general-tools"
+    / "mac-reference-checkout-launcher-scripts-directory-path-constant-common.py")
+mac_reference_checkout_path_constant = importlib.util.module_from_spec(_mac_reference_checkout_path_constant_specification)
+_mac_reference_checkout_path_constant_specification.loader.exec_module(mac_reference_checkout_path_constant)
 _user_alerts_specification = importlib.util.spec_from_file_location(
     "user_alerts_pending_and_claimed_files_write_claim_release_and_delete_common",
     REPOSITORY / "nc-systems" / "general-tools" / "user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py")
@@ -145,6 +152,7 @@ agent_seat_task_list = importlib.util.module_from_spec(_agent_seat_task_list_spe
 _agent_seat_task_list_specification.loader.exec_module(agent_seat_task_list)
 
 LOG_DIRECTORY = Path(ned_box_home_path_constants.NED_BOX_HOME) / "nedschorus-logs" / PROGRAM
+AGENT_CRASH_WATCHER_DECISIONS_FILE_NAME = "handoff-agent-seat-died-without-session-handoff-restart-watcher-decisions.jsonl"
 STATE_DIRECTORY = Path("~/.local/state/nedschorus").expanduser()
 STATE_DIRECTORY_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_STATE_DIRECTORY"
 LOG_DIRECTORY_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_LOG_DIRECTORY"
@@ -167,8 +175,8 @@ RESTART_LIMIT_SECONDS = 3600
 # A path in a notice is rewritten to the Mac's mount, so the user can open it there.
 NED_BOX_HOME = ned_box_home_path_constants.NED_BOX_HOME
 MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home_path_constants.MAC_MOUNT_OF_NED_BOX_HOME
-# launch-claude-ubuntu is not on the Mac's PATH; the Mac's checkout holds it.
-MAC_LAUNCHER = "/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu"
+MAC_LAUNCHER = (mac_reference_checkout_path_constant.MAC_REFERENCE_CHECKOUT_LAUNCHER_SCRIPTS_DIRECTORY_PATH
+                + "/launch-claude-ubuntu")
 
 # open-html-page-in-mac-browser-from-ned-box.py's EXIT_USAGE_OR_REFUSED: the page was refused,
 # here or by the Mac, so retrying the page cannot help.
@@ -180,6 +188,9 @@ RECOVERY_WINDOW_NOT_OPENED_EXIT_STATUS = 3
 
 # recover-crashed-seats.py's AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER.
 AGENT_SEAT_STARTED_OUTSIDE_USER_SYSTEMD_MANAGER_RECOVERY_REPORT_LINE_MARKER = "STARTED OUTSIDE THE USER'S SYSTEMD MANAGER"
+
+# recover-crashed-seats.py's SEAT_ALREADY_RUNNING_REPORT_MARKER.
+SEAT_ALREADY_RUNNING_REPORT_MARKER = "ALREADY RUNNING"
 
 # How a notice hands its problem on: the user sits at his Mac, whose windows onto
 # ned-box's agent-seats are where he types to them.
@@ -560,7 +571,7 @@ class Watcher:
 
     @property
     def decisions_path(self) -> Path:
-        return self.log_directory / "decisions.jsonl"
+        return self.log_directory / AGENT_CRASH_WATCHER_DECISIONS_FILE_NAME
 
     def log(self, seat, decision, **details):
         self.log_directory.mkdir(parents=True, exist_ok=True)
@@ -921,7 +932,7 @@ class Watcher:
             return
         exit_code, output = self.recover(seat)
         if (exit_code in (0, RECOVERY_WINDOW_NOT_OPENED_EXIT_STATUS)
-                and "ALREADY RUNNING" not in output):
+                and SEAT_ALREADY_RUNNING_REPORT_MARKER not in output):
             # Recovery exits 0 or 3 only once the seat's supervisor survived its settle: a sighting.
             self.mark_seen_running(record, self.now)
             self.record_recovery_attempt(record, died_at, "restarted")

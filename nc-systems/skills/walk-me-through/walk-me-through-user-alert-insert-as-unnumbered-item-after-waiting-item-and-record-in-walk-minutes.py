@@ -101,8 +101,7 @@ NEXT_STEPS_LINES = (
     "<what you will do on ned-box, or what the user does and where>`, as the walk-me-through skill's section "
     "\"Each item\" says; until the `Recommendation:` line is there, the short-answer hook finds no recommendation "
     "for the item.",
-    "In your next message to the user, say that you added the items, as the skill's section \"Re-planning\" "
-    "says. Present each added item when its turn comes, as for any item; the walk check program numbers it then.",
+    "Present each added item when its turn comes, as for any item; the walk check program numbers it then.",
 )
 
 

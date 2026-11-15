@@ -216,8 +216,7 @@ MEANINGS = {
            "If a fast read prints a line opening FAILED, tell the user that line and make no change.",
            "If a finding would change what your recommendation decides, put the changed recommendation to "
            "the user instead of acting on it.",
-           "Otherwise act on it, and say in your next message which fast reads were already done and which "
-           "had to be run.")),
+           "Otherwise act on it.")),
     "AO": (("AO means approve as obvious: the user agrees with the recommendation of {item}{recommended}, "
             "and finds the item obvious. Act as for A, with one difference: the minutes must mark the "
             "answer as obvious.",

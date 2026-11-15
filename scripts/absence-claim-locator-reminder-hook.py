@@ -340,7 +340,7 @@ def match_is_excluded(number, sentence, before, after):
         return True
     # "no test case on main is lost", "nobody's lines are lost".
     # "The file with no backup is gone": after a preposition, the "no" phrase is not the subject.
-    if number == 2 and re.search(r"(?<!\bwith )(?<!\bwithout )(?<!\bof )(?<!\bfor )\b(?:no|nobody's|neither)\s+(?:[\w'-]+\s+){0,4}$", before, re.I):
+    if number == 2 and re.search(r"(?<!\bwith )(?<!\bwithout )(?<!\bof )(?<!\bfor )\b(?:no|nobody's|neither)\s+(?:[\w'-]+\s+){0,4}$", before, re.I):  # pragma: no mutate, no pattern is numbered below 2, so <= 2 matches only 2
         return True
     # What a test or check verifies: "the tests check that the temporary folder is gone".
     if re.search(r"\b(?:tests?|checks?)\s+(?:\w+\s+){0,2}(?:that|whether)\b", before, re.I):
@@ -374,7 +374,7 @@ def match_is_excluded(number, sentence, before, after):
     # A definition: "step 4 uses the word for another file: the old version kept beside a revised text that is not in the repository".
     # The defining verb stands before the colon that opens the definition, and the match sits in a relative clause of
     # the defining phrase; "This means the following: the transcript is not in the repository" makes a claim.
-    if (number == 6 and ":" in before and re.search(r"\b(?:uses?|means|refers? to|stands? for)\b", before.rsplit(":", 1)[0], re.I)
+    if (number == 6 and ":" in before and re.search(r"\b(?:uses?|means|refers? to|stands? for)\b", before.rsplit(":", 1)[0], re.I)  # pragma: no mutate, >= 6 adds only pattern 12, which the guard above already excludes before that or which
             and re.search(r"\b(?:that|which)\s+(?:(?:is|are|was|were)\s+)?$", before, re.I)):
         return True
     # "missing" as a verb: "the record is missing a field".

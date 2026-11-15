@@ -698,7 +698,8 @@ failed but the run gave no full verdict: a suite was not run because its
 nc-test-sandbox did not start, the run was not run to the end, its records
 could not be written, or the run could not start (not a checkout's top
 directory, no suites listed, git or the interpreter unusable, a COMMIT git
-cannot resolve, a suite --only-suites-named names that git does not list);
+cannot resolve, a suite --only-suites-named names that git does not list, a
+--log-dir that cannot be created or written to);
 3 when another run holds the lock, where a lock is taken.
 """
 
@@ -729,7 +730,9 @@ import time
 import xml.etree.ElementTree
 from pathlib import Path
 
-PROGRAM = "run-all-test-suites"
+# Messages open with the path an agent can run; file names in the temporary directory cannot hold "/".
+PROGRAM = "scripts/run-all-test-suites.py"
+PROGRAM_FILE_NAME_STEM = "run-all-test-suites"
 
 TEST_SUITE_PATHSPEC = "*-test.py"
 # Python audit hooks cannot see shell reads; without strace, a shell recording
@@ -1858,7 +1861,7 @@ def remove_old_temporary_log_directories_without_run_records(
         with contextlib.suppress(OSError, ValueError, KeyError):
             named.add(Path(json.loads(path.read_text())["log_dir"]))
     removed, failures = [], []
-    for log_dir in sorted(temp_dir.glob(f"{PROGRAM}-*")):
+    for log_dir in sorted(temp_dir.glob(f"{PROGRAM_FILE_NAME_STEM}-*")):
         if log_dir in named or not log_dir.is_dir():
             continue
         if (log_dir / LOG_DIRECTORY_LOCK_FILE_NAME).exists():
@@ -2427,7 +2430,7 @@ def write_case_times_suite_resources_and_junit_xml_of_run(log_dir, results):
                 f"{'' if result.get('cpu_seconds') is None else format(result['cpu_seconds'], '.3f')}\t"
                 f"{'' if result.get('peak_memory_bytes') is None else result['peak_memory_bytes']}\t"
                 f"{result.get('resources_note') or ''}\n")
-    root = xml.etree.ElementTree.Element("testsuites", name=PROGRAM)
+    root = xml.etree.ElementTree.Element("testsuites", name=PROGRAM_FILE_NAME_STEM)
     for result in results:
         cases = result.get("cases") or []
         failed = sum(1 for case in cases if case["verdict"] == "FAIL")
@@ -2847,7 +2850,7 @@ def empty_file_bound_over_a_listening_socket_in_test_sandbox():
 
     Fails rather than return a file that is not empty, which would hand a suite that
     content."""
-    path = Path(tempfile.gettempdir()) / f"{PROGRAM}-empty-file-covering-sockets-{os.getuid()}"
+    path = Path(tempfile.gettempdir()) / f"{PROGRAM_FILE_NAME_STEM}-empty-file-covering-sockets-{os.getuid()}"
     descriptor = os.open(path, os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW, 0o444)
     try:
         status = os.fstat(descriptor)
@@ -3634,7 +3637,7 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used,
         "files_fingerprint": file_list_fingerprint(files),
     }
     if strace_used:
-        recording["files_only_strace_saw"] = sorted((touched - seen_by_hook) & files)
+        recording["files_only_strace_saw"] = sorted((touched - seen_by_hook) & files)  # pragma: no mutate, seen_by_hook is a copy of touched, which only grows after the copy, so ^ gives what - gives
     return recording
 
 
@@ -3715,11 +3718,8 @@ def files_only_strace_saw_file_for(directory, suite):
 def recorded_run_passed_and_skipped_only_cases_this_machine_cannot_run(recording):
     """True when the recorded run passed and skipped only cases marked as ones this machine
     cannot run, so it reached every file the suite reads."""
-    skipped = recording.get("skipped_cases")
-    marked = recording.get("skipped_cases_this_machine_cannot_run")
-    return (recording.get("exit") == 0
-            and isinstance(skipped, int) and not isinstance(skipped, bool)
-            and isinstance(marked, int) and not isinstance(marked, bool) and skipped == marked)
+    return (recording["exit"] == 0
+            and recording["skipped_cases"] == recording["skipped_cases_this_machine_cannot_run"])  # pragma: no mutate, the marked skips are some of the skips, so their count never exceeds it and <= gives what == gives
 
 
 def save_files_only_strace_saw(directory, recording):
@@ -3739,7 +3739,7 @@ def save_files_only_strace_saw(directory, recording):
     descriptor, temporary = tempfile.mkstemp(dir=directory, prefix=target.name + ".",
                                              suffix=".tmp")
     with os.fdopen(descriptor, "w") as written:
-        written.write(json.dumps(kept, indent=1, sort_keys=True) + "\n")
+        written.write(json.dumps(kept) + "\n")
     os.replace(temporary, target)
 
 
@@ -3900,6 +3900,11 @@ def added_or_deleted_name(before, after):
     return name, "added" if name in after else "deleted"
 
 
+def and_how_many_more(paths):
+    rest = paths[1:]
+    return f" and {len(rest)} more" if rest else ""
+
+
 def selection_reason(suite, recording, checkout, commit, files_only_strace_saw=None):
     """Return (selected, reason) for one suite."""
     # Recordings are shared across branches; compare both against COMMIT and the recording.
@@ -3935,15 +3940,13 @@ def selection_reason(suite, recording, checkout, commit, files_only_strace_saw=N
 
     changed_reads = [path for path in reads if path in differ]
     if changed_reads:
-        more = f" and {len(changed_reads) - 1} more" if len(changed_reads) > 1 else ""
-        return True, f"it reads {changed_reads[0]}, which differs{more}"
+        return True, f"it reads {changed_reads[0]}, which differs{and_how_many_more(changed_reads)}"
     if files_only_strace_saw is not None:
         changed = [path for path in files_only_strace_saw["files_only_strace_saw"]
                    if path in differ]
         if changed:
-            more = f" and {len(changed) - 1} more" if len(changed) > 1 else ""
-            return True, (f"it reads {changed[0]}, which differs{more}, as only the strace run "
-                          f"of {files_only_strace_saw['recorded_at']} saw")
+            return True, (f"it reads {changed[0]}, which differs{and_how_many_more(changed)}, "
+                          f"as only the strace run of {files_only_strace_saw['recorded_at']} saw")
     for path in looked_for:
         if checkout.there_then(path) != checkout.there_now(path):
             verb = "added" if checkout.there_now(path) else "deleted"
@@ -3969,9 +3972,8 @@ def selection_reason(suite, recording, checkout, commit, files_only_strace_saw=N
     stale = [path for path, blob in reads.items()
              if checkout.hashes_now.get(path, "not in the checkout") != blob]
     if stale:
-        more = f" and {len(stale) - 1} more" if len(stale) > 1 else ""
-        return True, (f"its recording read another copy of {stale[0]}{more} than the "
-                      f"checkout holds, so what it reads here is unknown")
+        return True, (f"its recording read another copy of {stale[0]}{and_how_many_more(stale)} "
+                      f"than the checkout holds, so what it reads here is unknown")
     for path, there in looked_for.items():
         if checkout.there_now(path) != there:
             return True, (f"its recording looked for {path} where it was "
@@ -4089,6 +4091,10 @@ SUITE_FAILED_LINE = re.compile(
     r"^FAIL (?P<suite>\S.*?) (?:exit \d+|killed by (?:signal \d+|\S+))"
     r"(?:, OUT OF MEMORY: [^(]*?)?(?: \(| — log )")
 NOT_RUN_TO_THE_END_LINE_PREFIX = f"{PROGRAM}: not run to the end"
+# A runner from before its messages opened with the file path prints the bare-name form, and a
+# frozen-head or a saved result can come from such a runner, so a reader matches either.
+TEST_RUNNER_WHOLE_RUN_NOT_RUN_TO_THE_END_LINE_PREFIXES_FILE_PATH_AND_BARE_NAME_FORMS = (
+    NOT_RUN_TO_THE_END_LINE_PREFIX, "run-all-test-suites: not run to the end")
 RUN_STOPPED_AT_RUN_TIME_LIMIT_NOT_COUNTING_ADMISSION_WAITS_LINE_PREFIX = f"{NOT_RUN_TO_THE_END_LINE_PREFIX} — the run passed its run time limit"
 TEST_SUITE_ADMISSION_WAIT_CEILING_PASSED_LINE_PREFIX = (
     f"{NOT_RUN_TO_THE_END_LINE_PREFIX} — a suite could not get a test slot")
@@ -4100,7 +4106,7 @@ def run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_b
     A nonzero exit without that, such as an empty output, a run cut short, or records that
     could not be written after every suite passed, judged no suite."""
     lines = text.splitlines()
-    if any(line.startswith(NOT_RUN_TO_THE_END_LINE_PREFIX) for line in lines):
+    if any(line.startswith(TEST_RUNNER_WHOLE_RUN_NOT_RUN_TO_THE_END_LINE_PREFIXES_FILE_PATH_AND_BARE_NAME_FORMS) for line in lines):
         return False
     return any(SUITE_FAILED_LINE.match(line) for line in lines)
 
@@ -4281,15 +4287,21 @@ def main(argv=None, platform=None):
         globals().update(sandbox_lists)
         if arguments.log_dir:
             log_dir = Path(arguments.log_dir).resolve()
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_dir_handle = lock_explicit_log_directory(log_dir)
+            try:
+                log_dir.mkdir(parents=True, exist_ok=True)
+                log_dir_handle = lock_explicit_log_directory(log_dir)
+            except OSError as error:
+                print(f"{PROGRAM}: not run — could not write to the log directory {log_dir} "
+                      f"({error}).\nRun this again with a --log-dir that this account can create "
+                      f"and write to.", file=sys.stderr)
+                return EXIT_COULD_NOT_RUN
             if log_dir_handle is None:
                 print(f"{PROGRAM}: not run — another run is writing to the log directory "
                       f"{log_dir}.\nRun this again with another --log-dir, or after that "
                       f"run has finished.", file=sys.stderr)
                 return EXIT_LOCKED
         else:
-            log_dir = Path(tempfile.mkdtemp(prefix=f"{PROGRAM}-"))
+            log_dir = Path(tempfile.mkdtemp(prefix=f"{PROGRAM_FILE_NAME_STEM}-"))
         if platform.startswith("linux"):
             run_record = RunRecord(run_records_directory_for_lock_file(arguments.lock_file), log_dir,
                                    log_dir_is_temporary=not arguments.log_dir)
@@ -4528,13 +4540,16 @@ def main(argv=None, platform=None):
                        for suite in chosen]
             pending = set(running)
             stop_acted_on = False
+            # The first failure that ends the run; the loop still collects the suites
+            # already running, so a suite that failed counts toward the exit.
+            run_ended_by = None
             run_started = time.monotonic()
             while pending:
                 done, pending = concurrent.futures.wait(
                     pending, timeout=RUN_STOP_SIGNAL_CHECK_SECONDS,
                     return_when=concurrent.futures.FIRST_COMPLETED)
-                if arguments.run_time_limit_seconds is not None and not run_stops and \
-                        time.monotonic() - run_started - (
+                if arguments.run_time_limit_seconds is not None and pending and not run_stops \
+                        and time.monotonic() - run_started - (
                             admission.seconds_while_any_suite_of_this_run_waited_for_admission()
                             if admission is not None else 0.0) \
                         > arguments.run_time_limit_seconds:
@@ -4553,7 +4568,7 @@ def main(argv=None, platform=None):
                         result = finished.result()
                     except (TestRunStoppedBeforeSuiteStarted,
                             MachineWideTestSuiteAdmissionCancelled):
-                        if run_stops:
+                        if run_stops or run_ended_by is not None:
                             continue
                         raise
                     except (MachineWideTestSuiteAdmissionCouldNotDecide,
@@ -4564,30 +4579,31 @@ def main(argv=None, platform=None):
                         # A suite already waiting for admission is running as far as its future knows.
                         if admission is not None:
                             admission.cancel()
-                        if isinstance(error, MachineWideTestSuiteAdmissionWaitedPastCeiling):
-                            report.line(f"{TEST_SUITE_ADMISSION_WAIT_CEILING_PASSED_LINE_PREFIX}: "
-                                        f"{error}")
-                            report.line("The machine stayed too busy to start it. Run this again "
-                                        "once the machine is quieter. The suites already running "
-                                        "finish first.")
-                            report.close()
-                            return (EXIT_SOME_FAILED if any(map(suite_failed, results))
-                                    else EXIT_COULD_NOT_RUN)
-                        what = ("admission failed" if isinstance(error, MachineWideTestSuiteAdmissionCouldNotDecide)
-                                else "a suite's nc-test-sandbox could not be built"
-                                if isinstance(error, SignalSandboxCouldNotStart)
-                                else "a suite could not be started")
-                        report.line(f"{PROGRAM}: not run to the end — {what}: {error}")
-                        report.line("Fix what it names, then run this again. The suites already "
-                                    "running finish first.")
-                        report.close()
-                        return (EXIT_SOME_FAILED if any(map(suite_failed, results))
-                                else EXIT_COULD_NOT_RUN)
-                    results.append(result)
-                    report.line(suite_line(result))
-                    if result.get("output_note"):
-                        report.line(f"{result['suite']}: {result['output_note']}")
+                        run_ended_by = run_ended_by or error
+                    else:
+                        results.append(result)
+                        report.line(suite_line(result))
+                        if result.get("output_note"):
+                            report.line(f"{result['suite']}: {result['output_note']}")
         restore_signal_handlers(signal_handlers_replaced)
+        if run_ended_by is not None:
+            if isinstance(run_ended_by, MachineWideTestSuiteAdmissionWaitedPastCeiling):
+                report.line(f"{TEST_SUITE_ADMISSION_WAIT_CEILING_PASSED_LINE_PREFIX}: "
+                            f"{run_ended_by}")
+                report.line("The machine stayed too busy to start it. Run this again "
+                            "once the machine is quieter. The suites already running "
+                            "finished first.")
+            else:
+                what = ("admission failed"
+                        if isinstance(run_ended_by, MachineWideTestSuiteAdmissionCouldNotDecide)
+                        else "a suite's nc-test-sandbox could not be built"
+                        if isinstance(run_ended_by, SignalSandboxCouldNotStart)
+                        else "a suite could not be started")
+                report.line(f"{PROGRAM}: not run to the end — {what}: {run_ended_by}")
+                report.line("Fix what it names, then run this again. The suites already "
+                            "running finished first.")
+            report.close()
+            return EXIT_SOME_FAILED if any(map(suite_failed, results)) else EXIT_COULD_NOT_RUN
         # A stop that came after the last suite ended cut nothing short, so the run is
         # reported and recorded as usual.
         if run_stop_signals and (len(results) < len(chosen)

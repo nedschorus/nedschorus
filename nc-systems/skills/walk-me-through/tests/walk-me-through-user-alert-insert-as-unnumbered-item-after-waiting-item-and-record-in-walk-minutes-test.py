@@ -8,6 +8,7 @@ in-process because a title it would prefix differently ends in the same refusal 
 import importlib.util
 import json
 import os
+import site
 import subprocess
 import sys
 import tempfile
@@ -89,8 +90,10 @@ def claimed_alert(home, alert_id, title):
 
 
 def run(checkout, home, *alert_ids):
+    # Python finds the user's site-packages from HOME, and on the Mac markdown-it-py is installed there.
+    environment = {**os.environ, "HOME": str(home), "PYTHONUSERBASE": site.getuserbase()}
     return subprocess.run([sys.executable, str(PROGRAM), "--cwd", str(checkout), *alert_ids],
-                          capture_output=True, text=True, env={**os.environ, "HOME": str(home)}, check=False)
+                          capture_output=True, text=True, env=environment, check=False)
 
 
 def files(checkout):
@@ -188,6 +191,32 @@ def run_several_alert_cases(root):
           "alert by hand, and change nothing",
           result.returncode == 1 and "`##` part headings" in result.stderr and "alert-e" in result.stderr
           and "Traceback" not in result.stderr and files(checkout) == before, result.stderr)
+
+
+def run_unnumbered_item_count_cases(root):
+    # 257 existing items: past the integers Python caches, so the counts are equal but distinct objects.
+    existing = "".join(f"## waiting point {number}\n\nRecommendation: go.\n\n" for number in range(257))
+    checkout, home = walk_checkout(root, "existing-unnumbered",
+                                   document=WALK_DOCUMENT + "\n" + existing)
+    claimed_alert(home, "alert-a", "first")
+    result = run(checkout, home, "alert-a")
+    document, _ = files(checkout)
+    units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+    check("with 257 unnumbered items already in the walk-document, the alert is added as the 258th",
+          result.returncode == 0 and "\n## first\n" in document
+          and sum(map(walk_finder.approval_walk_unit_is_unnumbered_item, units)) == 258,
+          result.stderr)
+
+    checkout, home = walk_checkout(root, "heading-in-action")
+    claimed_alert(home, "alert-a", "first")
+    path = home / ".local/state/nedschorus/user-alerts/claimed" / "alert-a.json"
+    alert = json.loads(path.read_text(encoding="utf-8"))
+    path.write_text(json.dumps({**alert, "action": "Restart it.\n\n## a second heading"}), encoding="utf-8")
+    before = files(checkout)
+    result = run(checkout, home, "alert-a")
+    check("an alert whose text outside the fence adds a second unnumbered item makes the program exit 1 and "
+          "change nothing", result.returncode == 1 and "Traceback" not in result.stderr
+          and files(checkout) == before, result.stderr)
 
 
 def run_marker_in_title_cases(root):
@@ -339,6 +368,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     scratch = Path(temporary_directory)
     run_one_alert_cases(scratch)
     run_several_alert_cases(scratch)
+    run_unnumbered_item_count_cases(scratch)
     run_marker_in_title_cases(scratch)
     run_refusal_cases(scratch)
     run_repeated_id_and_title_spanning_two_headings_cases(scratch)

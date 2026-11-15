@@ -19,7 +19,9 @@ TERMS. A mutant's key is the SHA-256 of a JSON list of its file path, cosmic-ray
 operator and diff. A mutant's diff file holds its diff, as
 scheduled-full-mutation-pass-runs-of-merged-pull-requests/surviving-mutant-diffs/<key>.diff
 under --log-store-root, which is where
---recorded-mutant-killed-check reads it from. A survivor task is a task this
+the --recorded-mutant-killed-check of
+scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py, the
+mutation testing program, reads it from. A survivor task is a task this
 program opens for the surviving mutants of one line; its subject starts
 `Surviving mutants in <file>:<line>: ` (`Surviving mutant in` in a task an
 earlier version opened). The task's owner is the agent-seat whose task list
@@ -45,12 +47,15 @@ WHAT ONE RUN DOES, in order.
   3. Reads the state file. With no state file, it writes one naming
      origin/main and tests nothing: the merges after that commit are tested
      from the next run on.
-  4. Checks that each survivor task the state names still lists each of its
-     mutants: the task file is still on its owner's task list, not marked
-     completed, and its description still names each mutant's diff file. A
-     mutant whose task no longer holds it, because the task is marked
-     completed, or its file is gone or cannot be read, or its description no
-     longer names the diff file, goes one of three ways:
+  4. Checks that each survivor task the state names still holds each of its
+     mutants: the task file is still on its owner's task list and not marked
+     completed. A task whose description no longer names a mutant's diff file,
+     as after an agent rewrites the description, still holds the mutant unless
+     exactly one other open task names the diff file, and the recheck writes
+     the description again. A mutant whose task no longer holds it, because
+     the task is marked completed, or its file is gone or cannot be read, or
+     its description no longer names the diff file while another open task
+     does, goes one of three ways:
      - Moved: when exactly one other task on the same list, not marked
        completed, names its diff file, the state alone is changed to name that
        task, as when an agent moves the mutants of several survivor tasks into
@@ -59,9 +64,10 @@ WHAT ONE RUN DOES, in order.
      - Finished: when its task is marked completed and no task not marked
        completed names its diff file, the state stops naming it.
      - Reported once: in every other case, which is one of these:
-       - its task's file is gone or cannot be read, or its task is not marked
-         completed but no longer names the diff file, and no other open task
+       - its task's file is gone or cannot be read, and no other open task
          names the diff file, or two or more do;
+       - its task is not marked completed but no longer names the diff file,
+         and two or more other open tasks do;
        - its task is marked completed and two or more other open tasks name
          the diff file.
      Reporting it goes like this:
@@ -89,9 +95,11 @@ WHAT ONE RUN DOES, in order.
      worktree of its own, and its suites still wait for the suite runner's
      admission.
   7. Opens a survivor task for each line with surviving mutants (TASKS
-     below), then records the commit as tested, and, when mutants of it were
-     not run, under merges_with_mutants_not_run in the state, so a merge has
-     its first pass once.
+     below), and one job failure task for the merge's ERRORED mutants (JOB
+     FAILURE TASKS below), then records the commit as tested, and, when
+     mutants of it were not run, under merges_with_mutants_not_run in the
+     state, so a merge has its first pass once. No ERRORED mutant is run
+     again.
   8. The second pass, when the first pass reached every merge: runs the
      mutants not run, newest merge first (THE TWO PASSES below), and opens
      their survivor tasks.
@@ -113,7 +121,8 @@ time of its commit, mutants_not_run_count, and
 surviving_mutant_keys_already_handled, the key of each surviving mutant an
 earlier run of the merge reported, which a later run of the merge leaves out,
 since the mutation testing program reports the survivors of every run of a
-merge each time.
+merge each time, and errored_mutant_keys_already_reported, which an entry may
+lack, the same for each ERRORED mutant, whose key holds its line as well.
 The second pass takes the merges recorded there, newest first, and runs the
 mutation testing program on each as the first pass does, but with
 --no-mutant-started-after-unix-time in place of
@@ -127,8 +136,9 @@ schedule of the form `<minute> <hour> * * *`: a run still going when cron
 starts the next one would make that one exit
 EXIT_ANOTHER_RUN_HOLDS_THE_LOCK. From that time on the second pass starts on
 no further merge. The mutation testing program is sent SIGTERM when it is
-still going after --merge-timeout-seconds or, when sooner, half of those 30
-minutes after that time; the merge then keeps its place under
+still going after --merge-timeout-seconds or, when sooner, once half of
+--second-pass-stops-starting-mutants-seconds-before-next-scheduled-run has
+passed since that time; the merge then keeps its place under
 merges_with_mutants_not_run, and the run exits
 EXIT_MERGE_CARRIED_ON_TO_NEXT_RUN. After each merge the second pass opens the
 survivor tasks of the mutants it ran, as step 7 does, and writes the merge's
@@ -139,7 +149,8 @@ last_tested_main_commit. No merge is dropped from merges_with_mutants_not_run
 for being old.
 
 CARRYING A MERGE ON. Each merge's cosmic-ray sessions are kept in
-COSMIC_RAY_SESSIONS_KEPT_FOR_UNFINISHED_MERGES_DIRECTORY_NAME/<merge> under
+cosmic-ray-sessions-kept-for-unfinished-merges/<merge>
+(COSMIC_RAY_SESSIONS_KEPT_FOR_UNFINISHED_MERGES_DIRECTORY_NAME) under
 --state-directory. A run of the mutation testing program still going after
 --merge-timeout-seconds is sent SIGTERM, on which that program removes its
 scratch worktrees; in the first pass, the merge is not recorded as tested, the
@@ -174,9 +185,8 @@ counts as given a task when the state names a task for each of its surviving
 mutants or when its owner's list holds a survivor task for the line not
 marked completed, which covers a task opened just before a write of the state
 or the `.highwatermark` failed. The record names the failure, and the run
-exits EXIT_STEP_FAILED. A mutant the mutation testing program reports
-ERRORED, and a changed file with no suite, are named in the record and get no
-task.
+exits EXIT_STEP_FAILED. A changed file with no suite is named in the record
+and gets no task.
 
 TASKS. The surviving mutants of one merge are grouped by file and line, and
 each line gets at most one survivor task. A mutant the state already names is
@@ -205,8 +215,8 @@ whose owner's list holds a survivor task for it not marked completed gets no
 second task: that task is rewritten to list its mutants the state names and
 the line's new ones, with one command for them all, and the state names that
 task for each. A task Claude Code rewrites at the same moment as this
-program can lose either rewrite; step 4 of the next run then reports each
-mutant the task no longer lists.
+program can lose either rewrite; the next run's recheck then lists again each
+mutant the state gives the task.
 
 THE RECHECK runs, for each survivor task the state names, the mutation
 testing program's --recorded-mutant-killed-check with every diff file the
@@ -218,6 +228,9 @@ the state. A task with no mutant left is marked completed, with a line saying
 why at the end of its description. A task with fewer mutants left, or whose
 description does not give the command for exactly the mutants left or does
 not end with SURVIVOR_TASK_DESCRIPTION_LAST_LINE_LEAVE_TASK_OPEN_FOR_NIGHTLY_RECHECK,
+"Leave this task open: the nightly mutation pass completes it once no mutant
+it lists survives on main, or the line is gone or ends with a `# pragma: no
+mutate` comment.",
 as in a task an earlier version opened, is rewritten to list only them; its
 other keys, status included, are kept. A mutant the program could not judge
 stays listed. A run of the program still going after
@@ -228,25 +241,30 @@ EXIT_SURVIVOR_TASK_MUTANTS_NOT_JUDGED_TASK_LEFT_AS_IT_WAS. Each rechecked
 mutant adds about 30 seconds to the run.
 
 JOB FAILURE TASKS. The run opens a task on the task list of the agent-seat
-JOB_FAILURE_TASK_AGENT_SEAT names, saying what failed and what to do, for each
+JOB_FAILURE_TASK_AGENT_SEAT names, fleet-restart-at-login, saying what failed and what to do, for each
 failure of the run itself: a step that failed, as above; a merge recorded
 as untestable, opened as AN UNTESTABLE MERGE above says; a merge carried on
 in the first pass with no mutant judged beyond those its kept sessions held
 before the run; a
 survivor task whose recheck gave no verdicts; a run record that could not be
-written, opened after the failed write; and any merge still not recorded as
+written, opened after the failed write; any merge still not recorded as
 tested MERGE_STILL_UNTESTED_TASK_OPENED_AFTER_SECONDS_SINCE_MERGE, three days,
 after its merge commit, the sign that the first pass no longer keeps up and
-that it must run fewer mutants. A failed step's task has the first line of
-its message as its subject, and an untestable or a carried-on merge's task
-names the merge; an untestable merge's task also names the failing suites,
-and asks for the merge's changed lines to be mutation-tested at a later main
-commit where they pass.
+that it must run fewer mutants; and a merge with mutants the mutation testing
+program reports ERRORED, whose suites gave no verdict on them (ERRORED
+MUTANTS below). A failed step's task has the first line of its message as
+its subject; the task of an untestable merge, a carried-on merge or a merge
+with ERRORED mutants names the merge; an untestable merge's task also names
+the failing suites, and asks for the merge's changed lines to be
+mutation-tested at a later main commit where they pass.
 Each of the other three kinds has one task with a fixed subject:
-SURVIVOR_TASKS_NOT_RECHECKED_TASK_SUBJECT, whose description names the
-survivor tasks not rechecked; RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT, whose
-description gives the error; and
-MERGES_STILL_UNTESTED_THREE_DAYS_AFTER_MERGING_TASK_SUBJECT, whose
+SURVIVOR_TASKS_NOT_RECHECKED_TASK_SUBJECT, "Nightly full mutation pass:
+survivor tasks left as they were, because their recheck gave no verdicts",
+whose description names the survivor tasks not rechecked;
+RUN_RECORD_NOT_WRITTEN_TASK_SUBJECT, "Nightly full mutation pass: a run's
+record was not written", whose description gives the error; and
+MERGES_STILL_UNTESTED_THREE_DAYS_AFTER_MERGING_TASK_SUBJECT, "Nightly full
+mutation pass: merges still untested three days after they merged", whose
 description gives the untested merges' count and the oldest. Each run rewrites
 the description of such a task while it is open. While a task with the same
 subject is open on that list, no second one is opened, and the record names
@@ -255,6 +273,21 @@ completes it once the cause is fixed. A task that cannot be opened is named
 in the record and on standard error, and the run exits EXIT_STEP_FAILED; the
 task for a record not written, when it cannot be opened, is named on standard
 error only, and the run still exits EXIT_RECORD_NOT_WRITTEN.
+
+ERRORED MUTANTS. A merge with ERRORED mutants is recorded as tested all the
+same, and gets one job failure task, opened before the merge is recorded.
+The task names each such mutant by file, line and cosmic-ray operator, with
+the reason the mutation testing program gives from the mutant's output, such
+as `No space left on device` or a timeout, or `cosmic-ray could not judge it`
+when it gives none, and asks the agent-seat to judge each, fix each cause in
+this project, and complete the task once it has. The run never runs
+an ERRORED mutant again. A later run of the merge, in the second pass, acts
+only when it reports an ERRORED mutant that errored_mutant_keys_already_reported
+does not hold: while the task is open, it adds those mutants to the end of the
+task's description, keeping what the agent-seat wrote there; once the task is
+completed, it opens the task again, naming every ERRORED mutant that run
+reports. A task that cannot be opened or added to is a failed step, and the
+merge is not recorded as tested.
 
 THE RECORD is one text file per run in the log-store:
 
@@ -267,7 +300,8 @@ the mutation testing program's SUMMARY line, or, for a merge recorded as
 untestable, the suites that fail on its unchanged code, or, for a merge carried on, how
 many mutants are judged, a line per job failure task, a line per surviving
 mutant with the task it was given or was added to, a line per ERRORED mutant
-and changed file with no suite, each failure, a line opening MUTANTS NOT RUN
+with its reason and its job failure task, a line per changed file with no
+suite, each failure, a line opening MUTANTS NOT RUN
 with how many mutants of how many merges recorded as tested are not run, and
 the oldest such merge with its age in days, read in the maintenance cycle,
 where the user decides when old ones are dropped, and the wall-clock seconds.
@@ -286,21 +320,22 @@ user's systemd, which outlives the shell, with its output in the same log:
 
     systemd-run --user --unit=scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open-by-hand --collect -p StandardOutput=append:/home/nedlern/.claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.log -p StandardError=append:/home/nedlern/.claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.log /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py
 
-The cron line:
+The cron line, at 00:30 in ned-box's local time, America/Los_Angeles (Pacific):
 
     30 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py >> /home/nedlern/.claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.log 2>&1
 
 Exit codes: 0 every survivor task was rechecked and every merge since the last
-run had its first pass and its survivors given tasks, or was recorded as
-untestable with its job failure task opened, or the first run wrote the state
-file; EXIT_STEP_FAILED (4) a step failed, as above;
+run had its first pass and its survivors and ERRORED mutants given tasks, or
+was recorded as untestable with its job failure task opened, or the first run
+wrote the state file; EXIT_STEP_FAILED (4) a step failed, as above;
 EXIT_RECORD_NOT_WRITTEN (5) the record could not be written;
 EXIT_ANOTHER_RUN_HOLDS_THE_LOCK (6) another run holds the lock;
 EXIT_OPENED_TASK_NO_LONGER_HOLDS_ITS_SURVIVOR (7) no step failed, but a
 mutant a survivor task an earlier run opened held was reported at step 4:
-its task's file is gone or cannot be read, or its task, not marked completed,
-no longer lists it, and no other open task or two or more name it; or its
-task is marked completed and two or more other open tasks name it;
+its task's file is gone or cannot be read, and no other open task or two or
+more name it; or its task, not marked completed, no longer lists it, and two
+or more other open tasks name it; or its task is marked completed and two or
+more other open tasks name it;
 EXIT_SURVIVOR_TASK_MUTANTS_NOT_JUDGED_TASK_LEFT_AS_IT_WAS (8) no step failed
 and no task was lost, but the recheck gave no verdicts for a survivor task;
 EXIT_MERGE_CARRIED_ON_TO_NEXT_RUN (9) none of those, but a merge ran past the
@@ -353,6 +388,7 @@ DEFAULT_STATE_DIRECTORY = (Path.home() / ".local" / "state" / "nedschorus"
 STATE_FILE_NAME = "state.json"
 UNTESTABLE_MERGES_STATE_KEY = "untestable_merges"
 MERGES_WITH_MUTANTS_NOT_RUN_STATE_KEY = "merges_with_mutants_not_run"
+ERRORED_MUTANT_KEYS_ALREADY_REPORTED_STATE_KEY = "errored_mutant_keys_already_reported"
 FIRST_PASS_MUTANTS_RUN_PER_MERGE_AT_MOST = 12
 SCHEDULED_JOBS_ON_EACH_MACHINE_JSON_FILE = (
     REPOSITORY_ROOT / "nc-systems" / "general-tools" / "scheduled-jobs-on-each-machine.json")
@@ -470,7 +506,9 @@ def read_state(state_file):
         for not_run in state.get(MERGES_WITH_MUTANTS_NOT_RUN_STATE_KEY, {}).values():
             if not isinstance(not_run["merged_at_unix_seconds"], int) \
                     or not isinstance(not_run["mutants_not_run_count"], int) \
-                    or not isinstance(not_run["surviving_mutant_keys_already_handled"], list):
+                    or not isinstance(not_run["surviving_mutant_keys_already_handled"], list) \
+                    or not isinstance(
+                        not_run.get(ERRORED_MUTANT_KEYS_ALREADY_REPORTED_STATE_KEY, []), list):
                 raise TypeError(f"a merge under {MERGES_WITH_MUTANTS_NOT_RUN_STATE_KEY} holds "
                                 f"the wrong type")
     except (ValueError, KeyError, TypeError) as error:
@@ -482,7 +520,8 @@ def read_state(state_file):
             f"a commit hash, and tasks_opened, an object, and may hold "
             f"{MERGES_WITH_MUTANTS_NOT_RUN_STATE_KEY}, an object that gives each merge an "
             f"object holding merged_at_unix_seconds and mutants_not_run_count, both whole "
-            f"numbers, and surviving_mutant_keys_already_handled, a list.\n"
+            f"numbers, and surviving_mutant_keys_already_handled, a list, and may hold "
+            f"{ERRORED_MUTANT_KEYS_ALREADY_REPORTED_STATE_KEY}, a list.\n"
             f"Otherwise delete it: the next run then starts from origin/main, and merges since "
             f"the last good run go untested.") from error
     return state
@@ -555,24 +594,28 @@ def task_ids_on_list_open_naming_mutant(list_directory, key):
 
 def lost_tasks_reported(state, arguments, record):
     """Drop from the state in memory each task that is completed or no longer holds its mutant,
-    and re-point a mutant to the one other open task on its owner's list that names it.
+    and re-point a mutant to the one other open task on its owner's list that names it. An open
+    task whose description no longer names its mutant keeps the mutant while no other open task
+    names it.
 
-    Return one line per task that no longer holds its mutant, is not completed, and has no
-    single open task on the list naming the mutant, and per completed task whose mutant more
-    than one open task names; the caller writes the state. Raises OSError when another task
+    Return one line per task whose file is gone or is not a task and that has no single open
+    task on the list naming the mutant, and per task, open or completed, whose mutant more than
+    one other open task names; the caller writes the state. Raises OSError when another task
     file on the list cannot be read."""
     lost = []
     for key, given in list(state["tasks_opened"].items()):
         list_directory = arguments.task_lists_directory / f"nedschorus-{given['agent_seat']}-tasks"
         task_file = list_directory / f"{given['task_id']}.json"
         completed = False
+        open_task = False
         try:
             task = task_file_read(task_file)
         except OSError as error:
             why = f"the task file cannot be read ({type(error).__name__}: {error})"
         else:
             completed = task is not None and task.get("status") == "completed"
-            if not completed and task_names_mutant(task, key):
+            open_task = task is not None and not completed
+            if open_task and task_names_mutant(task, key):
                 continue
             why = ("it is marked completed" if completed
                    else "its description no longer names the mutant's diff file")
@@ -588,6 +631,10 @@ def lost_tasks_reported(state, arguments, record):
                           f"task #{naming[0]} on {given['agent_seat']}'s task list, not task "
                           f"#{given['task_id']} ({why})")
             state["tasks_opened"][key] = dict(given, task_id=naming[0])
+            continue
+        if open_task and not naming:
+            # The state, not the description, records which task holds the mutant: agents
+            # rewrite descriptions, and the recheck lists the state's mutants in it again.
             continue
         lost.append(f"task #{given['task_id']} on {given['agent_seat']}'s task list "
                     f"({task_file}) no longer holds the surviving mutant "
@@ -757,10 +804,13 @@ def mutation_testing_hand_run_command(arguments, merge, parent, workers, session
 
 
 def job_failure_task_opened_unless_open(subject, description, arguments,
-                                        open_task_description_rewritten=False):
+                                        open_task_description_rewritten=False,
+                                        open_task_description_addition=None):
     """Open a task with this subject on JOB_FAILURE_TASK_AGENT_SEAT's task list, unless a task
     there not marked completed has the same subject; with open_task_description_rewritten,
-    that open task's description is replaced by this one. Return (its id, True when opened
+    that open task's description is replaced by this one, and with
+    open_task_description_addition, that text is added to the end of the open task's
+    description, keeping what an agent-seat wrote there. Return (its id, True when opened
     now). Raises OSError."""
     list_directory = (arguments.task_lists_directory
                       / f"nedschorus-{JOB_FAILURE_TASK_AGENT_SEAT}-tasks")
@@ -773,6 +823,9 @@ def job_failure_task_opened_unless_open(subject, description, arguments,
                     and task.get("subject") == subject:
                 if open_task_description_rewritten and task.get("description") != description:
                     task_file_rewrite(path, {**task, "description": description})
+                elif open_task_description_addition:
+                    task_file_rewrite(path, {**task, "description": (
+                        f"{task.get('description', '')}\n\n{open_task_description_addition}")})
                 return int(path.stem), False
     return agent_seat_task_list_new_pending_task_write(list_directory, subject,
                                                        description), True
@@ -940,6 +993,91 @@ def untestable_merge_recorded(arguments, state, state_file, merge, parent, merge
     else:
         state["last_tested_main_commit"] = merge
     write_state(state_file, state)
+
+
+def errored_mutant_key(mutant):
+    """The SHA-256 of a JSON list of the mutant's file path, line, cosmic-ray operator and diff.
+    Unlike mutant_key(), it holds the line, because an ERRORED mutant's diff can be empty."""
+    return hashlib.sha256(json.dumps(
+        [mutant["module_path"], mutant["line"], mutant["operator"], mutant["diff"]]
+    ).encode()).hexdigest()
+
+
+def errored_mutant_named(mutant):
+    return f"{mutant['module_path']}:{mutant['line']} {mutant['operator']}"
+
+
+def errored_mutant_reason(mutant):
+    """The reason the mutation testing program gives from the mutant's output; it gives none
+    when cosmic-ray itself recorded the mutant as not judgeable."""
+    return mutant["reason"] or "cosmic-ray could not judge it"
+
+
+def errored_mutants_job_failure_task_subject(merge):
+    return (f"Nightly full mutation pass: mutants of merge {merge[:12]} ended ERRORED, judged "
+            f"neither killed nor survived")
+
+
+def errored_mutants_named(errored):
+    """A line per mutant with its reason, then its diff's lines indented."""
+    return "\n".join(
+        f"- {errored_mutant_named(mutant)}, reason: {errored_mutant_reason(mutant)}"
+        + "".join(f"\n      {line}" for line in mutant["diff"].splitlines())
+        for mutant in errored)
+
+
+def errored_mutants_job_failure_task_opened(arguments, merge, merge_subject, errored,
+                                            errored_not_reported, record, record_citation):
+    """Open the one job failure task of a merge with ERRORED mutants, naming each with its
+    reason, or add to the end of the open one's description the ERRORED mutants no earlier run
+    reported, errored_not_reported. Raises StepFailed when the task cannot be opened or added
+    to, before the merge is recorded as tested, so the next run tries the merge again."""
+    subject = errored_mutants_job_failure_task_subject(merge)
+    named = errored_mutants_named(errored)
+    description = (
+        f"The scheduled full mutation pass on ned-box ran the mutation testing program on merge "
+        f"{merge} ({merge_subject}), and {len(errored)} of its mutants ended ERRORED: their "
+        f"suites gave no verdict, so each is neither killed nor survived. The run recorded the "
+        f"merge as tested anyway, and does not run these mutants again. Each mutant, as file, "
+        f"line and cosmic-ray operator, with the reason the mutation testing program gives "
+        f"from its output and its diff when it has one:\n\n"
+        f"{named}\n\n"
+        f"Its record: {record_citation}\n"
+        f"A reason's advice to run the mutation testing program again is written for a hand "
+        f"run of it; the nightly run follows none.\n"
+        f"For each mutant, judge from its reason where the cause is:\n"
+        f"- When the cause is in this project, such as a mutant that makes a suite hang or a "
+        f"suite that cannot start: fix the cause in a pull request.\n"
+        f"- When the cause is outside the code and still there, such as a disk on ned-box "
+        f"still full: remove it, such as by freeing space on that disk.\n"
+        f"- When the cause was outside the code and has passed, such as a busy machine: "
+        f"nothing needs fixing.\n"
+        f"- When the reason names no cause, as `cosmic-ray could not judge it` does: nothing "
+        f"here shows one; say so in this task's description.\n"
+        f"Mark this task completed once you have judged every mutant listed and fixed each "
+        f"cause you found in this project.")
+    try:
+        task_id, opened = job_failure_task_opened_unless_open(
+            subject, description, arguments, open_task_description_addition=(
+            f"A later run of merge {merge[:12]}, with its record at {record_citation}, reported "
+            f"{len(errored_not_reported)} more ERRORED mutants; judge each as above:\n\n"
+            f"{errored_mutants_named(errored_not_reported)}"))
+    except OSError as error:
+        raise StepFailed(
+            f"merge {merge[:12]} ({merge_subject}): {len(errored)} of its mutants ended "
+            f"ERRORED, but their job failure task could not be opened or added to on "
+            f"{JOB_FAILURE_TASK_AGENT_SEAT}'s task list ({type(error).__name__}: {error}), so "
+            f"the merge is not recorded as tested and no later merge is tested. The next run "
+            f"tries this merge again, and gives no surviving mutant a second task.\n"
+            f"Fix what the error names, such as a task list directory that does not exist, "
+            f"then run this program again on ned-box: {RUN_BY_HAND}") from error
+    for mutant in errored:
+        record.append(f"  ERRORED {errored_mutant_named(mutant)} "
+                      f"({errored_mutant_reason(mutant)}): named in task #{task_id}")
+    how = ("opened" if opened else "already open, so none opened, and the ERRORED mutants no "
+           "earlier run reported are added to the end of its description:")
+    record.append(f"JOB FAILURE TASK: {how} task #{task_id} on {JOB_FAILURE_TASK_AGENT_SEAT}'s "
+                  f"task list, {subject}")
 
 
 def summary_line(stdout):
@@ -1141,17 +1279,31 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
                              if key in added_keys else f"already given task #{found_id}")
                           + f" on {owner}'s task list")
         write_state(state_file, state)
-    for mutant in errored:
-        record.append(f"  ERRORED {mutant['module_path']}:{mutant['line']} {mutant['operator']}"
-                      f" ({mutant['reason'] or 'cosmic-ray could not judge it'}): no task")
+    errored_already_reported = set(
+        not_run_before.get(ERRORED_MUTANT_KEYS_ALREADY_REPORTED_STATE_KEY, ()))
+    errored_not_reported = [mutant for mutant in errored
+                            if errored_mutant_key(mutant) not in errored_already_reported]
+    if errored_not_reported:
+        errored_mutants_job_failure_task_opened(arguments, merge, merge_subject, errored,
+                                                errored_not_reported, record, record_citation)
+    else:
+        for mutant in errored:
+            record.append(f"  ERRORED {errored_mutant_named(mutant)} "
+                          f"({errored_mutant_reason(mutant)}): an earlier run of this merge "
+                          f"already gave it a job failure task")
     for path in files_with_no_suite:
         record.append(f"  NO SUITE {path}: its changed lines were not mutation-tested; no task")
     if mutants_not_run_count:
-        state.setdefault(MERGES_WITH_MUTANTS_NOT_RUN_STATE_KEY, {})[merge] = {
+        not_run = {
             "merged_at_unix_seconds": int(merged_at),
             "mutants_not_run_count": mutants_not_run_count,
             "surviving_mutant_keys_already_handled": sorted(
                 already_handled | {mutant_key(mutant) for mutant in survived})}
+        errored_reported = errored_already_reported | {errored_mutant_key(mutant)
+                                                       for mutant in errored}
+        if errored_reported:
+            not_run[ERRORED_MUTANT_KEYS_ALREADY_REPORTED_STATE_KEY] = sorted(errored_reported)
+        state.setdefault(MERGES_WITH_MUTANTS_NOT_RUN_STATE_KEY, {})[merge] = not_run
     elif in_second_pass:
         del state[MERGES_WITH_MUTANTS_NOT_RUN_STATE_KEY][merge]
     if not in_second_pass:

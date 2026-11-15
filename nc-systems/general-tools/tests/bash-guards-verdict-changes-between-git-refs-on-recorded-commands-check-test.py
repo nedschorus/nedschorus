@@ -851,6 +851,10 @@ try:
           and "  290 more refusal groups are left out here, holding 290 refused recorded commands\n" in out
           and len(groups) == 300, f"status {status}, {len(out)} characters\n{out[:3000]}\n{err}")
     lines_file = groups_file.with_name(replay.ADDED_GUARD_REFUSAL_GROUP_RIGHTLY_REFUSED_REVIEW_ANSWER_LINES_FILE_NAME)
+    check("a head that adds a guard refusing 300 long commands, each with its own message: the refusal right lines "
+          "file is named added-guard-refusal-group-rightly-refused-review-answer-lines.txt",
+          lines_file.name == "added-guard-refusal-group-rightly-refused-review-answer-lines.txt"
+          and lines_file.exists(), f"{lines_file}")
     lines = lines_file.read_text().splitlines() if lines_file.exists() else []
     check("a head that adds a guard refusing 300 long commands, each with its own message: the refusal right lines "
           "file holds the ready line of every one of the 300 groups, the 290 the list leaves out included",
@@ -1490,21 +1494,33 @@ try:
         (directory / "locked").mkdir(parents=True)
         (directory / "locked" / "file").write_text("x")
         (directory / "locked").chmod(0o500)
+    (locked_run_logs / "verdicts-in-process-head.log").write_text("a step log")
+    removable_scratch = Path(scratch) / "removal-failures-removable-scratch"
+    removable_scratch.mkdir()
     try:
         after_exit_1 = replay.remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures(
             locked_scratch, locked_run_logs, 1)
         after_exit_0 = replay.remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures(
             locked_scratch, locked_run_logs, 0)
+        run_log_file_after_scratch_failure = (locked_run_logs / "verdicts-in-process-head.log").exists()
+        after_exit_0_scratch_removed = (
+            replay.remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures(
+                removable_scratch, locked_run_logs, 0))
     finally:
         for directory in (locked_scratch, locked_run_logs):
             (directory / "locked").chmod(0o700)
     check("a path that cannot be removed is returned with its reason: the scratch directory's after any exit, the "
-          "run log directory's only after an exit 0",
+          "run log directory's only after an exit 0 whose scratch directory was removed",
           any(str(locked_scratch / "locked" / "file") in line for line in after_exit_1)
           and not any(str(locked_run_logs) in line for line in after_exit_1)
           and any(str(locked_scratch / "locked" / "file") in line for line in after_exit_0)
-          and any(str(locked_run_logs / "locked" / "file") in line for line in after_exit_0),
-          f"after exit 1 {after_exit_1}; after exit 0 {after_exit_0}")
+          and not any(str(locked_run_logs) in line for line in after_exit_0)
+          and not removable_scratch.exists()
+          and any(str(locked_run_logs / "locked" / "file") in line for line in after_exit_0_scratch_removed),
+          f"after exit 1 {after_exit_1}; after exit 0 {after_exit_0}; "
+          f"after exit 0, scratch removed {after_exit_0_scratch_removed}")
+    check("the run log directory is kept after an exit 0 whose scratch directory could not be removed, since the "
+          "replay then exits 2", run_log_file_after_scratch_failure, f"after exit 0 {after_exit_0}")
 
     pairs_file = Path(scratch) / "fixture-pairs.json"
     pairs_file.write_text(json.dumps(FIXTURE_PAIRS))

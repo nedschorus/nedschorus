@@ -316,7 +316,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and any(line.startswith("FAIL killed-test.py killed by SIGTERM — log ")
                   for line in out), out)
     check("the first line names the checkout, its commit and the suite count",
-          out[0].startswith(f"run-all-test-suites: {repo.resolve()} at ")
+          out[0].startswith(f"scripts/run-all-test-suites.py: {repo.resolve()} at ")
           and "(tracked files match that commit); 6 suites listed by git;" in out[0],
           out[:1])
     check("the whole report is also written to test-run-report.txt in the log directory",
@@ -543,7 +543,7 @@ with tempfile.TemporaryDirectory() as scratch:
           (result.returncode, result.stdout[-500:], result.stderr))
     check("a run given a wait says on stderr that it is waiting for the lock, before "
           "anything else",
-          result.stderr.startswith(f"run-all-test-suites: waiting up to 1 s for "
+          result.stderr.startswith(f"scripts/run-all-test-suites.py: waiting up to 1 s for "
                                    f"{root / 'free.lock'}\n"), result.stderr)
 
 with tempfile.TemporaryDirectory() as scratch:
@@ -576,7 +576,7 @@ with tempfile.TemporaryDirectory() as scratch:
         run_stdout, run_stderr = waiting_run.communicate()
     check("a suite committed while the run waits for the lock is run: the run lists the "
           "suites after it takes the lock",
-          waiting_line.startswith("run-all-test-suites: waiting up to 60 s for ")
+          waiting_line.startswith("scripts/run-all-test-suites.py: waiting up to 60 s for ")
           and waiting_run.returncode == 0 and ran(root) == ["a-test.py", "b-test.py"],
           (waiting_line, waiting_run.returncode, ran(root), run_stderr))
 
@@ -606,7 +606,7 @@ with tempfile.TemporaryDirectory() as scratch:
         run_stdout, run_stderr = waiting_run.communicate()
     check("a checkout whose suites are all removed while the run waits is refused once the "
           "run holds the lock: exit 2, nothing run, and the refusal on stderr",
-          waiting_line.startswith("run-all-test-suites: waiting up to 60 s for ")
+          waiting_line.startswith("scripts/run-all-test-suites.py: waiting up to 60 s for ")
           and waiting_run.returncode == 2 and ran(root) == []
           and "git lists no" in run_stderr and run_stdout == "",
           (waiting_line, waiting_run.returncode, ran(root), run_stderr))
@@ -724,7 +724,7 @@ with tempfile.TemporaryDirectory() as scratch:
           (ran(root), result.stdout, result.stderr))
     check("with an ambient GIT_DIR, the first line names the checkout's own commit",
           bool(out) and out[0].startswith(
-              f"run-all-test-suites: {repo.resolve()} at {checkout_commit} "
+              f"scripts/run-all-test-suites.py: {repo.resolve()} at {checkout_commit} "
               f"(tracked files match that commit); 1 suites listed by git;"),
           (checkout_commit, out[:1]))
     check("with an ambient GIT_DIR, a checkout whose suites all pass exits 0",
@@ -738,6 +738,40 @@ with tempfile.TemporaryDirectory() as scratch:
 # deciding against them was a measured decision and widening the list later
 # should trip a case.
 module = load_program_module()
+
+# --- Output from a runner before the file-path opener is still read ----------
+# A frozen-head, or a saved result, can come from a runner whose lines open with the bare name.
+for opener in ("scripts/run-all-test-suites.py", "run-all-test-suites"):
+    check(f"a run whose output says '{opener}: not run to the end' is read as not ended, though a "
+          "suite's FAIL line precedes it",
+          not module.run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal(
+              f"FAIL a-test.py exit 1 (0.1s)\n{opener}: not run to the end — stopped by SIGTERM.\n"))
+
+# --- Files made in the temporary directory are named by the stem, not the path --
+# PROGRAM holds a "/", which would name a directory under TMPDIR that does not exist.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"a-test.py": PASSES})
+    temporary = root / "tmp"
+    temporary.mkdir()
+    environment = dict(os.environ, TMPDIR=str(temporary))
+    environment[RAN_FILE_VARIABLE] = str(root / "ran.txt")
+    result = subprocess.run(
+        [sys.executable, str(PROGRAM), "--checkout", str(root / "repo"), "--lock-file", str(root / "run.lock"),
+         "--recorded-inputs-directory", str(root / "recordings"),
+         "--suite-files-only-strace-saw-lists-directory", str(root / "recordings")],
+        capture_output=True, text=True, env=environment, stdin=subprocess.DEVNULL, check=False)
+    check("a run with no --log-dir makes its log directory in TMPDIR and passes",
+          result.returncode == 0 and ran(root) == ["a-test.py"], (result.returncode, result.stdout, result.stderr))
+    was_tempdir = tempfile.tempdir
+    try:
+        tempfile.tempdir = str(temporary)
+        covering = pathlib.Path(module.empty_file_bound_over_a_listening_socket_in_test_sandbox())
+    finally:
+        tempfile.tempdir = was_tempdir
+    check("the empty file covering a listening socket is made in the temporary directory, named by the stem",
+          covering.parent == temporary and covering.name.startswith("run-all-test-suites-empty-file-"), covering)
+
 check("the variable this file sets, so its fixture runs run as in a full run, is the one the "
       "program's signal sandbox sets",
       module.SIGNAL_SANDBOX_INSIDE_VARIABLE == "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX",
@@ -1348,6 +1382,10 @@ with tempfile.TemporaryDirectory() as scratch:
           and kept_list(root / "recordings") is None
           and any(line.startswith("inputs recorded by python-audit-hook, kept in")
                   for line in lines(hook_alone.stdout)), hook_alone.stdout)
+    check("a run that runs every suite says nothing of the suites' missing lists of files only "
+          "strace saw, since only a selective run reads them",
+          not any("have no list of the files only strace saw" in line
+                  for line in lines(hook_alone.stdout)), hook_alone.stdout)
 
     traced = run(root, "--record-inputs-with-strace", environment_extra=fake,
                  driver=FAKE_STRACE_DRIVER)
@@ -1395,7 +1433,7 @@ with tempfile.TemporaryDirectory() as scratch:
           (ran(root), selected.stdout))
     check("a selective run says, on Linux only, that suites have no list of files only strace "
           "saw",
-          any(line.startswith("run-all-test-suites: 2 of 2 suites have no list of the files "
+          any(line.startswith("scripts/run-all-test-suites.py: 2 of 2 suites have no list of the files "
                               "only strace saw them read from the last 36 hours")
               for line in lines(unlisted.stdout)) == sys.platform.startswith("linux"),
           unlisted.stdout)
@@ -1487,17 +1525,20 @@ notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_o
     {"a-test.py": kept_hours_before_now(35), "b-test.py": kept_hours_before_now(37)},
     pathlib.Path("/store"), NOW)
 check("a list older than the limit is named, with the time it was recorded",
-      notice is not None and notice.startswith("run-all-test-suites: 1 of 2 suites")
+      notice is not None and notice.startswith("scripts/run-all-test-suites.py: 1 of 2 suites")
       and "has not recorded every suite since 2026-11-02T23:00:00Z" in notice
       and "If you have not yet told the user in this agent-session that the scheduled full test "
           "run's lists are stale: tell him" in notice,
       notice)
 notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
     ["a-test.py"], {}, pathlib.Path("/store"), NOW)
-check("a missing list is named, with the directory it was looked for in",
-      notice is not None and notice.startswith("run-all-test-suites: 1 of 1 suites")
+check("a missing list is named, with the directory it was looked for in and the log-store "
+      "directory of the scheduled run's records",
+      notice is not None and notice.startswith("scripts/run-all-test-suites.py: 1 of 1 suites")
       and "36 hours in /store," in notice
-      and "has not recorded every suite at all," in notice, notice)
+      and "has not recorded every suite at all," in notice
+      and "nedlern@ned-box:/home/nedlern/nedschorus-logs/scheduled-full-test-runs-of-main/ned-box/." in notice,
+      notice)
 with tempfile.TemporaryDirectory() as scratch:
     store = pathlib.Path(scratch)
     for name, body in (("not-json", "{"), ("no-list", '{"recorded_at": "2026-11-04T00:00:00Z"}'),
@@ -1505,6 +1546,62 @@ with tempfile.TemporaryDirectory() as scratch:
         (store / f"{name}-test.py.files-only-strace-saw.json").write_text(body)
         check(f"a list that is {name.replace('-', ' ')} is not used",
               module.load_files_only_strace_saw(store, f"{name}-test.py") is None, name)
+
+for exit_code, skipped, marked, kept in (
+        (0, 0, 0, True), (-signal.SIGKILL, 0, 0, False), (1, 0, 0, False), (0, 1, 0, False),
+        (0, 2, 2, True)):
+    check(f"a run that exited {exit_code} and skipped {skipped} case(s), {marked} of them marked "
+          f"as ones this machine cannot run, {'keeps' if kept else 'does not keep'} its list of "
+          f"files only strace saw",
+          module.recorded_run_passed_and_skipped_only_cases_this_machine_cannot_run(
+              {"exit": exit_code, "skipped_cases": skipped,
+               "skipped_cases_this_machine_cannot_run": marked}) is kept)
+
+
+class SelectionCheckout:
+    """The checkout selection_reason compares a recording against: differ maps each path that
+    differs to its status, and hashes_now each file to its blob hash."""
+
+    def __init__(self, differ, hashes_now):
+        self.differ = differ
+        self.hashes_now = hashes_now
+        self.entries_then = self.entries_now = {}
+        self.fingerprint_now = "fingerprint"
+
+    def there_then(self, path):
+        return False
+
+    def there_now(self, path):
+        return False
+
+
+def selection_reason_for(reads, differ, files_only_strace_saw=None, hashes_now=None):
+    recording = {"format": module.RECORDED_INPUTS_FORMAT_VERSION, "exit": 0, "skipped_cases": 0,
+                 "skipped_cases_this_machine_cannot_run": 0, "reads": reads, "looked_for": {},
+                 "lists": {}, "git_commands_on_the_checkout": []}
+    return module.selection_reason("a-test.py", recording,
+                                   SelectionCheckout(differ, hashes_now or {}), "0" * 40,
+                                   files_only_strace_saw)[1]
+
+
+THREE_DIFFER = {"one.txt": "M", "two.txt": "M", "three.txt": "M"}
+for paths, more in ((["one.txt", "two.txt"], " and 1 more"),
+                    (["one.txt", "two.txt", "three.txt"], " and 2 more")):
+    reason = selection_reason_for({path: "blob" for path in paths}, THREE_DIFFER)
+    check(f"a suite that reads {len(paths)} files that differ names the first and counts the rest",
+          reason == f"it reads one.txt, which differs{more}", reason)
+    reason = selection_reason_for(
+        {}, THREE_DIFFER, {"recorded_at": "2026-11-04T00:00:00Z", "files_only_strace_saw": paths})
+    check(f"a suite that reads {len(paths)} files that differ, seen only by strace, names the "
+          f"first on the list and counts the rest",
+          reason == f"it reads one.txt, which differs{more}, as only the strace run of "
+                    f"2026-11-04T00:00:00Z saw", reason)
+    reason = selection_reason_for({path: "recorded blob" for path in paths}, {},
+                                  hashes_now={path: "another blob" for path in paths})
+    check(f"a recording that read another copy of {len(paths)} files than the checkout holds "
+          f"names the first and counts the rest",
+          reason == f"its recording read another copy of one.txt{more} than the checkout holds, "
+                    f"so what it reads here is unknown", reason)
 
 # --- Saving recordings while runs in other checkouts save them too -----------
 # A sitecustomize.py on the program's PYTHONPATH holds each run at a barrier
@@ -2071,6 +2168,19 @@ if linux_only_cases_run_here("the removal of what a killed run left, decided fro
         check("a run refuses a --log-dir another run is writing to, with exit 3",
               result.returncode == 3 and "another run is writing to the log directory"
               in result.stderr, (result.returncode, result.stderr))
+        unwritable = root / "unwritable"
+        unwritable.mkdir()
+        unwritable.chmod(0o555)
+        for case, log_dir in (("it cannot create", unwritable / "logs"),
+                              ("it cannot write to", unwritable)):
+            result = run(root, "--log-dir", str(log_dir), lock_file=root / "another.lock")
+            check(f"a run given a --log-dir {case} says so and exits 2, with no traceback",
+                  result.returncode == 2 and result.stderr.startswith(
+                      f"scripts/run-all-test-suites.py: not run — could not write to the log "
+                      f"directory {log_dir.resolve()} (")
+                  and "\nRun this again with a --log-dir that this account can create and "
+                  "write to.\n" in result.stderr and "Traceback" not in result.stderr,
+                  (result.returncode, result.stderr))
 
 # --- Git calls that read no file of the checkout -----------------------------
 # Full arguments distinguish location and config reads from calls whose

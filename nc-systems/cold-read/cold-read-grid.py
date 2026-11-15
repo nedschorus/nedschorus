@@ -238,7 +238,7 @@ _fast_read_spec.loader.exec_module(fast_read)
 # never counts it among an agent-binary's cells.
 COLD_READ_FULL_RUN_WHAT_SHOULD_BE_CODE_QUESTION_ANSWER_REPORT_FILE_NAME = "question-4-what-should-be-code-answer.md"
 WHAT_SHOULD_BE_CODE_QUESTION_PROMPT_FILE_NAME = "cold-read-grid-what-should-be-code-prompt.md"
-# The log also contains runtime and model text; only program-prefixed lines are cell status.
+# The log also contains agent-binary and model text; only program-prefixed lines are cell status.
 CELL_PROGRAM_NAMES = tuple(path.stem for path in CELL_LAUNCHERS.values())
 # Pin terminology effort explicitly so launcher tier-map changes cannot change the pass.
 GRID_CELL_ROSTER = (

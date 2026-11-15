@@ -336,10 +336,10 @@ def machine_name(host):
     return host if host else "this machine"
 
 
-def dash_names_a_word_expanded_to(command, word, machines, unchecked):
-    """Return the names beginning with - that the first path component of word matches in
-    the directory command ran in; or None, with one line in unchecked, when that directory
-    could not be listed."""
+def names_a_word_expanded_to(command, word, machines, unchecked):
+    """Return, sorted, the names that the first path component of word matches in the
+    directory command ran in; or None, with one line in unchecked, when that directory could
+    not be listed."""
     try:
         entries = machines.directory_entries(command.host, command.directory)
     except MachineStateQueryGotNoAnswer as error:
@@ -350,8 +350,7 @@ def dash_names_a_word_expanded_to(command, word, machines, unchecked):
             unchecked.append(line)
         return None
     pattern = fnmatch_pattern(word.split("/", 1)[0])
-    return sorted(name for name in entries
-                  if name.startswith("-") and fnmatch.fnmatchcase(name, pattern))
+    return sorted(name for name in entries if fnmatch.fnmatchcase(name, pattern))
 
 
 GREP_PROGRAMS = frozenset({"grep", "egrep", "fgrep", "zgrep", "ugrep"})
@@ -396,14 +395,15 @@ def glob_dash_name_causes(placed, machines, unchecked):
             if command.program in GREP_PROGRAMS
             else (arguments.index("--") if "--" in arguments else len(arguments), frozenset()))
         for position, word in enumerate(words[:options_end]):
-            if position in option_values:
-                continue
             first_component = word.split("/", 1)[0]
             if plain(first_component) == first_component or word.startswith(("/", "~")):
                 continue
-            dashed = dash_names_a_word_expanded_to(command, word, machines, unchecked)
-            if dashed is None:
+            names = names_a_word_expanded_to(command, word, machines, unchecked)
+            if names is None:
                 break
+            # An option's value takes only the first name of its glob; grep reads the rest as
+            # it reads any other word.
+            dashed = [name for name in names[position in option_values:] if name.startswith("-")]
             if dashed:
                 causes.append(Cause(GLOB_DASH_NAME, (
                     f"`{plain(word)}` expanded, in {command.directory} on "
@@ -446,7 +446,7 @@ def agents_grep_options_and_patterns_without_file_names(command, machines, unche
                  if not (position < options_end and position not in option_values
                          and argument.startswith("-") and plain(word) != word
                          and command.directory is not None
-                         and dash_names_a_word_expanded_to(command, word, machines, unchecked))]
+                         and names_a_word_expanded_to(command, word, machines, unchecked))]
     kept = []
     pattern_given = False
     index = 0
@@ -490,9 +490,18 @@ def does_command_own_redirect_send_stderr_elsewhere_than_stdout(command):
     pointing anywhere but the stdout the command started with, which the agent is shown."""
     shown, closed = "shown", "closed"
     points_to = {1: shown, 2: shown}
+
+    def file_destination(target):
+        special = re.fullmatch(r"/dev/(?:std(out|err)|fd/(\d+))", target)
+        if special:
+            source = {"out": 1, "err": 2}.get(special.group(1)) or int(special.group(2))
+            return points_to.get(source, closed)
+        return ("file", target)
+
     for operator, target in command.redirects:
-        if operator in ("&>", "&>>") or operator == ">&" and not target.isdigit() and target != "-":
-            points_to[1] = points_to[2] = ("file", target)
+        descriptor = re.fullmatch(r"(\d+)(-?)", target)
+        if operator in ("&>", "&>>") or operator == ">&" and not descriptor and target != "-":
+            points_to[1] = points_to[2] = file_destination(target)
             continue
         match = REDIRECT_OPERATOR.fullmatch(operator)
         if not match:
@@ -502,18 +511,13 @@ def does_command_own_redirect_send_stderr_elsewhere_than_stdout(command):
         if kind in (">&", "<&"):
             if dash or target in ("-", ""):
                 points_to[fd] = closed
-            elif target.isdigit():
-                points_to[fd] = points_to.get(int(target), closed)
+            elif descriptor:
+                source = int(descriptor.group(1))
+                points_to[fd] = points_to.get(source, closed)
+                if descriptor.group(2) and source != fd:
+                    points_to[source] = closed  # A move, such as 2>&1-, closes its source.
             continue
-        if kind == "<":
-            points_to[fd] = ("input", target)
-            continue
-        special = re.fullmatch(r"/dev/(?:std(out|err)|fd/(\d+))", target)
-        if special:
-            source = {"out": 1, "err": 2}.get(special.group(1)) or int(special.group(2))
-            points_to[fd] = points_to.get(source, closed)
-        else:
-            points_to[fd] = ("file", target)
+        points_to[fd] = file_destination(target)
     return points_to[2] != shown
 
 
