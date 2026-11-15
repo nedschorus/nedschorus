@@ -856,9 +856,6 @@ with tempfile.TemporaryDirectory() as scratch_name:
           == runner.test_suite_cgroup_scope_command(runner.TEST_SUITE_MEMORY_CEILING_BYTES)
           and runner.test_suite_memory_ceiling_bytes("scripts/a-test.py")
           == runner.TEST_SUITE_MEMORY_CEILING_BYTES, runner.test_suite_cgroup_scope_command())
-    check("a suite named as needing more memory gets its own ceiling",
-          all(runner.test_suite_memory_ceiling_bytes(suite) == ceiling for suite, ceiling in
-              runner.TEST_SUITE_MEMORY_CEILING_BYTES_OF_SUITES_THAT_NEED_MORE.items()))
     out_of_memory = {"suite": "scripts/a-test.py", "exit": 1, "seconds": 1.0, "skips": [],
                      "out of memory": {"processes killed": 2, "ceiling": 4 * 10**9}}
     lines = [runner.suite_line(out_of_memory),
@@ -1101,18 +1098,26 @@ with tempfile.TemporaryDirectory() as scratch_name:
     # with one process killed at its ceiling gives.
     def scope_that_killed_one_process(statistics_descriptor, in_bwrap, memory_ceiling_bytes):
         ceilings.append(memory_ceiling_bytes)
+        real_scopes.append(real_prefix(statistics_descriptor, in_bwrap, memory_ceiling_bytes))
         return ("bash", "-c", '"$@"; status=$?; printf "usage_usec 1000000\\nmemory.peak 5\\n'
                 f'oom_kill 1\\n" >&{statistics_descriptor}; exit $status', "scope")
 
     (repository / "exits-zero-test.py").write_text("print('PASS  a case')\n")
     real_prefix = runner.command_prefix_running_one_suite_in_its_cgroup_scope
     runner.command_prefix_running_one_suite_in_its_cgroup_scope = scope_that_killed_one_process
+    (repository / "scripts").mkdir(exist_ok=True)
+    (repository / "scripts" / "scheduled-full-test-run-of-main-test.py").write_text(
+        "print('PASS  a case')\n")
     ceilings = []
+    real_scopes = []
     try:
         zero = runner.run_one_suite(repository, sys.executable, "exits-zero-test.py", log_dir,
                                     in_cgroup_scope=True)
         one = runner.run_one_suite(repository, sys.executable, "timed-test.py", log_dir,
                                    in_cgroup_scope=True)
+        scheduled_full_run = runner.run_one_suite(
+            repository, sys.executable, "scripts/scheduled-full-test-run-of-main-test.py",
+            log_dir, in_cgroup_scope=True)
     finally:
         runner.command_prefix_running_one_suite_in_its_cgroup_scope = real_prefix
     check("a suite that exits 0 after the kernel killed one of its processes at its memory "
@@ -1120,10 +1125,15 @@ with tempfile.TemporaryDirectory() as scratch_name:
           zero["exit"] == -signal.SIGKILL and runner.suite_failed(zero)
           and zero["out of memory"] == {"processes killed": 1,
                                         "ceiling": runner.TEST_SUITE_MEMORY_CEILING_BYTES}
-          and ceilings == [runner.TEST_SUITE_MEMORY_CEILING_BYTES] * 2
+          and ceilings[:2] == [runner.TEST_SUITE_MEMORY_CEILING_BYTES] * 2
           and zero["peak_memory_bytes"] == 5, zero)
     check("a suite that fails by its own exit after such a kill keeps its exit code, out of "
           "memory", one["exit"] == 1 and one["out of memory"]["processes killed"] == 1, one)
+    check("the scheduled full test run's suite runs in a cgroup scope with a memory ceiling "
+          "of 24 GB, and is reported out of memory at that ceiling",
+          f"MemoryMax={24 * 10**9}" in real_scopes[2]
+          and scheduled_full_run["out of memory"]["ceiling"] == 24 * 10**9,
+          (real_scopes[2], scheduled_full_run))
 
     # --- On the Mac, the suite's output goes straight to its log, as it always did ---
     mac_result = runner.run_one_suite(repository, sys.executable, "timed-test.py", log_dir,
@@ -1612,6 +1622,86 @@ with tempfile.TemporaryDirectory() as scratch_name:
               code == runner.EXIT_ALL_PASSED and seconds >= 12
               and runner.RUN_STOPPED_AT_RUN_TIME_LIMIT_NOT_COUNTING_ADMISSION_WAITS_LINE_PREFIX
               not in printed, (code, seconds, printed[-800:]))
+
+        def suite_passes_after_two_seconds(*arguments, **options):
+            time.sleep(2)
+            return suite_passes(*arguments, **options)
+
+        # The loop checks the limit only every RUN_STOP_SIGNAL_CHECK_SECONDS; set that long,
+        # so the first check comes when the only suite has already ended, past the limit.
+        code, printed, _ = main_given(
+            "run-time-limit-after-last-suite", run_repository,
+            "--run-time-limit-seconds-not-counting-admission-waits", "1",
+            run_one_suite=suite_passes_after_two_seconds, RUN_STOP_SIGNAL_CHECK_SECONDS=30,
+            **as_if_bwrap)
+        check("a run whose last suite ends past the run time limit, with no suite left "
+              "pending, is not reported as stopped by the limit: every suite passed, so it exits 0",
+              code == runner.EXIT_ALL_PASSED
+              and runner.RUN_STOPPED_AT_RUN_TIME_LIMIT_NOT_COUNTING_ADMISSION_WAITS_LINE_PREFIX
+              not in printed, (code, printed[-800:]))
+
+        two_suites_repository = scratch / "two-suites-wait-ceiling-repository"
+        two_suites_repository.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=two_suites_repository, check=True)
+        for name in ("a-test.py", "b-test.py"):
+            (two_suites_repository / name).write_text("print('PASS  only case')\n")
+        subprocess.run(["git", "add", "."], cwd=two_suites_repository, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q",
+                        "-m", "start"], cwd=two_suites_repository, check=True)
+        suite_fails = suite_ends_with(1)
+
+        # B raises only once A has been admitted: were B to raise first, the run would cancel
+        # A's admission and A would never fail.
+        a_admitted = threading.Event()
+
+        def a_fails_after_b_waited_past_ceiling(top, interpreter, suite, *arguments, **options):
+            if suite == "b-test.py":
+                a_admitted.wait(30)
+                raise runner.MachineWideTestSuiteAdmissionWaitedPastCeiling(
+                    "b-test.py waited past the ceiling in this test")
+            a_admitted.set()
+            time.sleep(1.5)
+            return suite_fails(top, interpreter, suite, *arguments, **options)
+
+        code, printed, _ = main_given(
+            "wait-ceiling-then-failed-suite", two_suites_repository, "-j", "2",
+            run_one_suite=a_fails_after_b_waited_past_ceiling, **as_if_bwrap)
+        check("a suite that fails after another suite waited past the admission ceiling still "
+              "counts: the run collects it, prints its line and exits 1, not 2",
+              code == runner.EXIT_SOME_FAILED
+              and any(line.startswith(runner.TEST_SUITE_ADMISSION_WAIT_CEILING_PASSED_LINE_PREFIX)
+                      for line in printed.splitlines())
+              and "a-test.py" in printed and "Traceback" not in printed,
+              (code, printed[-800:]))
+
+        a_running = threading.Event()
+        a_stopped_by_the_run = []
+
+        def a_runs_until_stopped_after_b_waited_past_ceiling(top, interpreter, suite, *arguments,
+                                                             **options):
+            if suite == "b-test.py":
+                a_running.wait(30)
+                raise runner.MachineWideTestSuiteAdmissionWaitedPastCeiling(
+                    "b-test.py waited past the ceiling in this test")
+            a_running.set()
+            given_up_at = time.monotonic() + 20
+            while not options["run_stops"] and time.monotonic() < given_up_at:
+                time.sleep(0.1)
+            a_stopped_by_the_run.append(bool(options["run_stops"]))
+            return suite_passes(top, interpreter, suite, *arguments, **options)
+
+        code, printed, seconds = main_given(
+            "wait-ceiling-then-suite-past-run-time-limit", two_suites_repository, "-j", "2",
+            "--run-time-limit-seconds-not-counting-admission-waits", "2",
+            run_one_suite=a_runs_until_stopped_after_b_waited_past_ceiling, **as_if_bwrap)
+        check("a suite still running after another suite waited past the admission ceiling is "
+              "stopped at the run time limit, and the run exits 2",
+              code == runner.EXIT_COULD_NOT_RUN and a_stopped_by_the_run == [True]
+              and seconds < 15
+              and any(line.startswith(runner.TEST_SUITE_ADMISSION_WAIT_CEILING_PASSED_LINE_PREFIX)
+                      for line in printed.splitlines())
+              and "Traceback" not in printed,
+              (code, seconds, a_stopped_by_the_run, printed[-800:]))
 
     slow_repository = scratch / "slow-repository"
     slow_repository.mkdir()

@@ -5,7 +5,7 @@ A `*-common.py` module that holds the master copy of wording programs print is
 pinned word for word by its own tests alone. Every other test gets the wording
 by calling the module, so a change to it fails one suite, not every suite of a
 program that prints it. A guard suite calls
-common_module_wording_copies_in_other_test_files for each such module, and
+common_module_wording_copies_in_other_test_files_find for each such module, and
 fails while a list it returns is not empty.
 
 The module's wording is each string literal assigned at its top level, and each
@@ -93,7 +93,7 @@ def _literal_pieces(node, left_out):
     return pieces
 
 
-def common_module_wording_pieces(module_path):
+def common_module_wording_pieces_searched_for_in_other_test_files_extract(module_path):
     """Return {piece: sorted names of the constants and functions that hold it}, whitespace made single."""
     tree = ast.parse(Path(module_path).read_text(encoding="utf-8"))
     docstrings = _docstring_nodes(tree)
@@ -166,7 +166,7 @@ def _run_words(piece, first, last_window_start):
     return piece, " ".join(words).strip(string.punctuation)
 
 
-def common_module_wording_copies_in_other_test_files(module_path, checkout_root):
+def common_module_wording_copies_in_other_test_files_find(module_path, checkout_root):
     """Return (test file path relative to checkout_root, line, run, names) for each copy, in path and line order.
 
     line is the first line of the literal holding the copy; run is the longest run of words the literal shares
@@ -174,7 +174,7 @@ def common_module_wording_copies_in_other_test_files(module_path, checkout_root)
     """
     checkout_root = Path(checkout_root)
     own_test_prefix = Path(module_path).name[:-len(".py")]
-    pieces = common_module_wording_pieces(module_path)
+    pieces = common_module_wording_pieces_searched_for_in_other_test_files_extract(module_path)
     listed = subprocess.run(["git", "-C", str(checkout_root), "ls-files", "-z", "--", "*.py"],
                             capture_output=True, text=True, check=True,
                             timeout=GIT_LS_FILES_TIMEOUT_SECONDS,
@@ -190,8 +190,8 @@ def common_module_wording_copies_in_other_test_files(module_path, checkout_root)
     return sorted((relative, line, run, sorted(names)) for (relative, line, run), names in names_by_copy.items())
 
 
-def copied_wording_report_line(copy):
-    """The line a failing guard prints for one copy that common_module_wording_copies_in_other_test_files found."""
+def common_module_wording_copy_in_other_test_file_report_line_build(copy):
+    """The line a failing guard prints for one copy that common_module_wording_copies_in_other_test_files_find found."""
     relative, line, piece, names = copy
     return (f"{relative}:{line} keeps its own copy of wording that {' or '.join(names)} holds: "
             f"\"{piece}\". Get it by calling {' or '.join(names)} from the module instead.")

@@ -124,17 +124,31 @@ class Case:
         path.write_text(f"# Minutes\n\n{text}\n")
         return path
 
-    def run(self, prompt=None, stdin_text=None):
+    def transcript(self, *texts, records=()):
+        """Write the transcript the payload names: records, then one assistant record per text, oldest first."""
+        path = self.checkout.parent / "transcript.jsonl"
+        lines = [*records, *({"type": "assistant", "timestamp": f"2026-11-13T20:{index:02}:00Z",
+                              "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}
+                             for index, text in enumerate(texts))]
+        path.write_text("".join(json.dumps(line) + "\n" for line in lines))
+        return path
+
+    def run(self, prompt=None, stdin_text=None, transcript_path=None):
+        """Run the hook. With no transcript_path, the transcript's one agent message shows the whole walk-document as
+        it now stands, so the hook's check that the user saw the waiting item passes."""
+        if transcript_path is None:
+            document = self.walk / f"{WALK_NAME}.md"
+            transcript_path = self.transcript(document.read_text() if document.is_file() else "")
         payload = {"hook_event_name": "UserPromptSubmit", "session_id": "test-session",
-                   "cwd": str(self.checkout), "prompt": prompt}
+                   "cwd": str(self.checkout), "prompt": prompt, "transcript_path": str(transcript_path)}
         return subprocess.run(
             [sys.executable, str(HOOK_SCRIPT)],
             input=json.dumps(payload) if stdin_text is None else stdin_text,
             capture_output=True, text=True, cwd=self.checkout)
 
-    def lines(self, prompt):
+    def lines(self, prompt, transcript_path=None):
         """The additionalContext's lines, or None when the hook printed nothing or failed."""
-        result = self.run(prompt)
+        result = self.run(prompt, transcript_path=transcript_path)
         if result.returncode != 0 or not result.stdout.strip():
             return None
         output = json.loads(result.stdout)
@@ -1571,10 +1585,238 @@ def test_two_unclosed_approval_walks_are_reported_naming_both():
 def test_missing_walk_document_is_reported_for_a():
     case = Case(next_to_present="item 4 of 9", document=None)
     lines = case.lines("a")
-    check("a walk-document that is missing is reported before acting on A",
-          lines is not None and any(line.startswith("The hook could not read the recommendation of item 4 of 9: "
-                                                    "the walk-document ") for line in lines),
+    check("a walk-document that is missing leaves an A uncounted, saying why, before anything else",
+          lines is not None and lines[1].startswith(
+              "The hook did not count this answer: it could not read the text of item 4 of 9 from the walk-document, "
+              "so it cannot check that the user was last shown the item as it now stands: the walk-document ")
+          and lines[1].endswith(" does not exist.") and lines[2:] == list(ITEM_TEXT_UNREADABLE_INSTRUCTIONS),
           f"lines {lines!r}")
+    lines = case.lines("z")
+    check("a walk-document that is missing is reported before acting on Z, which the check does not cover",
+          lines is not None and lines[1].startswith("Z means defer"), f"lines {lines!r}")
+
+
+ITEM_TEXT_UNREADABLE_INSTRUCTIONS = (
+    "Record nothing in the walk-minutes and act on none of the answer.",
+    "Correct the walk-document or the walk-minutes as that reason says, then show the user the item in full, end "
+    "your message with its closing line, and wait for him to answer again.")
+SHOWN_ITEM = """## Item 4 of 9: a filter
+
+#approval_walk_item_in_category_fix_next
+
+#approval_walk_item_first_entered 2026-11-12
+
+A filter would hide old rows, as [the rows page](file:///Volumes/nedhome/rows.md) shows.
+
+#new Hide rows older than a year.
+
+**Recommendation: leave the filter out.**
+"""
+SHOWN_DOCUMENT = "# A walk\n\n" + SHOWN_ITEM + """
+## Item 5 of 9: the next item
+
+Recommendation: do the next thing.
+"""
+# What the hook hands the agent for SHOWN_ITEM: no tag lines, and the heading's count without its `of M`.
+SHOWN_ITEM_TEXT = """## Item 4: a filter
+
+A filter would hide old rows, as [the rows page](file:///Volumes/nedhome/rows.md) shows.
+
+#new Hide rows older than a year.
+
+**Recommendation: leave the filter out.**"""
+ITEM_4_CLOSING_LINE = f"[Item 4 of 9, a filter](https://claude.ai/artifact/x) · {LETTERS_AFTER_LINK}"
+
+
+def not_shown_lines(answer, reason):
+    return [f"The user answered \"{answer}\" to item 4 of 9 of approval-walk {WALK_NAME}.",
+            f"The hook did not count this answer to item 4 of 9: {reason}, so the user may be answering a version "
+            "of the item he has not seen.",
+            "Record nothing in the walk-minutes and act on none of the answer.",
+            "Show the user item 4 of 9 as the walk-document now has it, the text between the BEGIN and END lines "
+            "below, unchanged and not inside a code block, then end your message with its closing line and wait for "
+            "him to answer again, because only an answer typed after he has seen that text counts.",
+            "BEGIN", *SHOWN_ITEM_TEXT.split("\n"), "END"]
+
+
+def shown_different_reason(minute):
+    return (f"your last message that showed it, written at 2026-11-13T20:{minute:02}:00Z, does not hold its current "
+            "walk-document text word for word, whitespace and Markdown markup aside")
+
+
+NEVER_SHOWN_REASON = "no message of yours in this agent-session's transcript shows its heading"
+
+
+def counted(lines):
+    """Whether the hook counted the answer: it expanded the answer and did not say it did not count it."""
+    return lines is not None and not any("did not count" in line for line in lines)
+
+
+def test_an_answer_counts_when_the_last_message_showing_the_item_holds_its_text_however_marked_up():
+    case = Case(next_to_present="item 4 of 9", document=SHOWN_DOCUMENT)
+    # The agent's message leaves out the tag lines, wraps lines anew, drops the bold and the link's target, and
+    # gives the count an `of M` the walk-document has since changed; text before and after the item is its own.
+    message = ("The revised item:\n\n### Item 4 of 8: a filter\n\nA filter would hide\nold rows, as the rows page "
+               "shows.\n\n#new  Hide rows older than a year.\n\nRecommendation: leave the filter out.\n\n"
+               + ITEM_4_CLOSING_LINE)
+    for prompt in ("a", "AO", "Aa", "d", "a, and file a task", "a if the tests pass", "4 a", "all a"):
+        lines = case.lines(prompt, case.transcript(message))
+        check(f"{prompt!r} counts when the item's text was shown with other markup and line breaks", counted(lines)
+              or (prompt == "d" and lines is not None and lines[1].startswith("D means disapprove")),
+              f"lines {lines!r}")
+    lines = case.lines("a", case.transcript(SHOWN_ITEM))
+    check("an answer counts when the message shows the tag lines too", counted(lines), f"lines {lines!r}")
+
+
+def test_an_answer_to_an_item_revised_after_it_was_shown_is_not_counted_and_the_new_text_is_handed_over():
+    old_recommendation = SHOWN_DOCUMENT.replace("leave the filter out", "add the filter")
+    old_new_line = SHOWN_DOCUMENT.replace("older than a year", "older than a month")
+    for changed, shown in (("Recommendation", old_recommendation), ("#new", old_new_line)):
+        case = Case(next_to_present="item 4 of 9", document=SHOWN_DOCUMENT)
+        transcript = case.transcript(shown, ITEM_4_CLOSING_LINE)
+        for prompt in ("a", "AO", "Aa", "D"):
+            result = case.run(prompt, transcript_path=transcript)
+            context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"] if not_blocked(result) else ""
+            check(f"{prompt!r} after only the item's {changed} line changed is not counted, and the agent is handed "
+                  "the item's current text, with no check command and no reply line",
+                  context.split("\n") == not_shown_lines(prompt, shown_different_reason(0)),
+                  f"exit {result.returncode}, context {context!r}, stderr {result.stderr!r}")
+
+
+def test_closing_lines_alone_after_the_item_was_shown_do_not_hide_the_message_that_showed_it():
+    case = Case(next_to_present="item 4 of 9", document=SHOWN_DOCUMENT)
+    no_link_closing_line = f"Item 4 of 9, a filter · {LETTERS_AFTER_LINK}"
+    transcript = case.transcript(SHOWN_DOCUMENT, *[f"Done.\n\n{ITEM_4_CLOSING_LINE}"] * 9,
+                                 f"Done.\n\n{no_link_closing_line}")
+    lines = case.lines("a", transcript)
+    check("an answer after ten messages holding only the item's closing line counts by the message that showed the "
+          "item in full", counted(lines), f"lines {lines!r}")
+    stale = SHOWN_DOCUMENT.replace("leave the filter out", "add the filter")
+    lines = case.lines("a", case.transcript(stale, *[ITEM_4_CLOSING_LINE] * 10))
+    check("an answer after closing lines is still refused when the message that showed the item showed an old "
+          "version", lines == not_shown_lines("a", shown_different_reason(0)), f"lines {lines!r}")
+
+
+def test_a_deferred_item_shown_word_for_word_counts():
+    deferred = SHOWN_DOCUMENT.replace(
+        "## Item 4 of 9: a filter", "## Item 4 of 9 (deferred: moved to just before the summary item): a filter")
+    case = Case(next_to_present="item 4 of 9", document=deferred)
+    lines = case.lines("a", case.transcript(deferred, ITEM_4_CLOSING_LINE))
+    check("an answer to a deferred item whose heading, deferred note included, was shown word for word counts",
+          counted(lines), f"lines {lines!r}")
+    stale = deferred.replace("leave the filter out", "add the filter")
+    lines = case.lines("a", case.transcript(stale, ITEM_4_CLOSING_LINE))
+    check("an answer to a deferred item shown in an old version is still refused",
+          lines == not_shown_lines("a", shown_different_reason(0)), f"lines {lines!r}")
+
+
+OLDER_FORM_DOCUMENT = """# A walk
+
+## Item 4 of 9: a filter
+
+### What a filter does
+
+A filter would hide old rows.
+
+[No decision here; type N or next to continue.](https://claude.ai/artifact/x)
+
+### The choice
+
+Recommendation: leave the filter out.
+
+## Item 5 of 9: the next item
+
+Recommendation: do the next thing.
+"""
+
+
+def test_an_older_form_item_counts_once_the_text_handed_back_is_shown():
+    case = Case(next_to_present="item 4 of 9", document=OLDER_FORM_DOCUMENT)
+    lines = case.lines("a", case.transcript("Here is the plan.", ITEM_4_CLOSING_LINE))
+    check("an answer to an older-form item never shown is refused, with its text handed back",
+          lines is not None and "BEGIN" in lines and "END" in lines, f"lines {lines!r}")
+    handed_back = "\n".join(lines[lines.index("BEGIN") + 1:lines.index("END")])
+    check("the handed-back text keeps the sub-step's no-decision line",
+          "No decision here; type N or next to continue." in handed_back, handed_back)
+    lines = case.lines("a", case.transcript(f"{handed_back}\n\n{ITEM_4_CLOSING_LINE}"))
+    check("an answer to an older-form item counts once the agent has shown the text the hook handed back",
+          counted(lines), f"lines {lines!r}")
+
+
+def test_an_answer_to_an_item_no_message_showed_is_not_counted():
+    case = Case(next_to_present="item 4 of 9", document=SHOWN_DOCUMENT)
+    lines = case.lines("a", case.transcript("Here is the plan.", ITEM_4_CLOSING_LINE))
+    check("an answer when no message showed the item's heading is not counted",
+          lines == not_shown_lines("a", NEVER_SHOWN_REASON), f"lines {lines!r}")
+    subagent = {"type": "assistant", "isSidechain": True, "timestamp": "2026-11-13T19:00:00Z",
+                "message": {"role": "assistant", "content": [{"type": "text", "text": SHOWN_DOCUMENT}]}}
+    user = {"type": "user", "message": {"role": "user", "content": SHOWN_DOCUMENT}}
+    lines = case.lines("a", case.transcript(ITEM_4_CLOSING_LINE, records=[subagent, user]))
+    check("a subagent's message or the user's own showing the item does not count as the agent showing it",
+          lines == not_shown_lines("a", NEVER_SHOWN_REASON), f"lines {lines!r}")
+    for prompt in ("z", "e", "r", "o"):
+        lines = case.lines(prompt, case.transcript("Here is the plan."))
+        check(f"{prompt!r} is not checked, since it approves nothing", lines is not None
+              and not any("did not count" in line for line in lines), f"lines {lines!r}")
+
+
+def test_a_numbered_answer_is_checked_only_for_the_waiting_items_it_approves_or_disapproves():
+    document = SHOWN_DOCUMENT.replace("## Item 5 of 9: the next item", "## Item 5 of 9: the next item\n\nMore.")
+    case = Case(next_to_present="items 4 and 5 of 9", document=document)
+    transcript = case.transcript(document.split("## Item 5")[0])
+    lines = case.lines("4 a 5 z", transcript)
+    check("'4 a 5 z' counts when item 4 was shown, though item 5, deferred, never was", counted(lines),
+          f"lines {lines!r}")
+    lines = case.lines("4 a 5 a", transcript)
+    check("'4 a 5 a' is not counted when item 5 was never shown", lines is not None
+          and lines[1].startswith("The hook did not count this answer to item 5 of 9: " + NEVER_SHOWN_REASON),
+          f"lines {lines!r}")
+    lines = case.lines("all a", transcript)
+    check("'all a' is not counted when one waiting item was never shown", lines is not None
+          and lines[1].startswith("The hook did not count this answer to item 5 of 9: ") and not counted(lines),
+          f"lines {lines!r}")
+
+
+def test_an_unreadable_transcript_leaves_the_answer_uncounted_and_names_the_path_and_error():
+    case = Case(next_to_present="item 4 of 9", document=SHOWN_DOCUMENT)
+    missing = case.checkout.parent / "no-such-transcript.jsonl"
+    not_utf8 = case.checkout.parent / "not-utf8.jsonl"
+    not_utf8.write_bytes(b'{"type": "assistant", "text": "\xff"}\n{"type": "user"}\n')
+    for path, error in ((missing, "FileNotFoundError"), (not_utf8, "UnicodeDecodeError")):
+        lines = case.lines("a", path)
+        check(f"a transcript that raises {error} leaves the answer uncounted, naming the path and the error, and "
+              "does not ask for the item to be shown again",
+              lines is not None and len(lines) == 4
+              and lines[1].startswith(f"The hook did not count this answer: it could not read this agent-session's "
+                                      f"transcript {path}, which it reads to check that the user was last shown item "
+                                      f"4 of 9 as the walk-document now has it: {error}(")
+              and lines[2] == "Record nothing in the walk-minutes and act on none of the answer."
+              and lines[3] == ("Tell the user that line, and that no answer can be counted until the hook can read "
+                               "the transcript; do not show him the item again for this, because showing it again "
+                               "does not make the transcript readable."), f"lines {lines!r}")
+
+
+def test_the_item_text_handed_over_is_the_walk_finders_shared_text_as_shown():
+    finder = load_walk_finder_for_test()
+    parser = finder.markdown_parser()
+    units = finder.item_unit_spans(SHOWN_DOCUMENT, parser)
+    unit = next(unit for unit in units if "4" in unit[0])
+    check("the shared text as shown leaves out the tag lines and the heading's `of M`",
+          finder.approval_walk_item_text_as_shown_to_user(SHOWN_DOCUMENT, parser, units, unit, "4") == SHOWN_ITEM_TEXT,
+          finder.approval_walk_item_text_as_shown_to_user(SHOWN_DOCUMENT, parser, units, unit, "4"))
+    withdrawn = SHOWN_DOCUMENT.replace("\n## Item 5", "\n#### Withdrawn version 1 of item 4\n\nOld text.\n\n## Item 5")
+    units = finder.item_unit_spans(withdrawn, parser)
+    unit = next(unit for unit in units if "4" in unit[0])
+    check("the shared text as shown leaves out a Withdrawn version",
+          finder.approval_walk_item_text_as_shown_to_user(withdrawn, parser, units, unit, "4") == SHOWN_ITEM_TEXT)
+
+
+def load_walk_finder_for_test():
+    path = HOOK_SCRIPT.parent / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py"
+    spec = importlib.util.spec_from_file_location("walk_finder_for_short_answer_hook_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_a_marker_value_naming_no_item_is_reported_for_a_and_d():
@@ -1725,6 +1967,16 @@ def test_items_under_a_shared_heading_whose_openings_are_not_read_get_no_recomme
                                           "grouped`")
                           and f"because {missing} has no opening it reads" in line for line in lines),
                   f"lines {lines!r}")
+
+
+def test_items_under_a_shared_heading_with_no_openings_and_no_recommendation_line_say_there_is_none():
+    document = shared_heading_document("Item five fixes a path. Item six drops a sentence.\n")
+    for number in ("5", "6"):
+        lines = Case(next_to_present=f"item {number} of 9", document=document).lines("a")
+        check(f"under a shared heading with no openings and no recommendation, item {number} gets the line saying "
+              "it has no recommendation line, not that its part could not be told apart",
+              lines is not None and unknown_line(f"item {number} of 9", NO_RECOMMENDATION, "A") in lines
+              and not any("has no opening it reads" in line for line in lines), f"lines {lines!r}")
 
 
 def main():

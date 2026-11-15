@@ -60,8 +60,8 @@ WHAT IS PINNED HERE.
     runtime=agy, gemini-3.8-flash-medium, effort medium, tier fast.
 
   - The reviewer's instructions the model receives are the template embedded
-    in the script -- not the skill's prompt file -- with both paths
-    substituted and no placeholder left.
+    in the script -- not the skill's prompt file -- with both paths and
+    the edit substituted and no placeholder left.
 
   - That embedded template is current: it is byte-for-byte the text of
     .claude/skills/cold-read/prompts/fast-clarify-prompt.md, the editable source of
@@ -105,7 +105,9 @@ launches and succeed after.
 Run: python3 nc-systems/cold-read/tests/cold-read-fast-read-test.py
 """
 
+import contextlib
 import hashlib
+import io
 import importlib.util
 import json
 import os
@@ -259,7 +261,8 @@ sys.exit(step.get("exit", 0))
 # plan, counts in a counter of its own and writes the report path its prompt
 # names; otherwise, with no plan it fails, so a case that does not plan the
 # backup sees it fail. "report" writes the report and succeeds; "fail_stderr"
-# is what a failure prints; "dump_prompt" saves the prompt; "pid_file" saves
+# is what a failure prints; "dump_prompt" saves the prompt; "dump_settings"
+# saves the value of --settings; "pid_file" saves
 # the stub's process ID, first thing; "wait_for_file" fails unless that file
 # appears within 20 s; "sleep_seconds" sleeps that long after it; "hang"
 # sleeps past any deadline a case sets; "concurrent_read_answer" exits 0 without writing its own report, after
@@ -285,6 +288,8 @@ if "pid_file" in plan:
     pathlib.Path(plan["pid_file"]).write_text(str(os.getpid()), encoding="utf-8")
 if "dump_prompt" in plan:
     pathlib.Path(plan["dump_prompt"]).write_text(prompt, encoding="utf-8")
+if "dump_settings" in plan:
+    pathlib.Path(plan["dump_settings"]).write_text(argv[argv.index("--settings") + 1], encoding="utf-8")
 if "wait_for_file" in plan:
     for _ in range(200):
         if pathlib.Path(plan["wait_for_file"]).exists():
@@ -812,6 +817,36 @@ with tempfile.TemporaryDirectory() as scratch:
           and "cold-read-fast-read: #cold_read_fast_read_sonnet_backup_ran " in result.stderr,
           repr(result.stderr))
 
+    # The Gemini cell runs agy, not Claude Code, so its run has no Claude Code settings to check.
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
+    sonnet_backup_settings = scratch / "sonnet-backup-settings.json"
+    question_4_settings = scratch / "question-4-settings.json"
+    sonnet_backup_settings.unlink(missing_ok=True)
+    question_4_settings.unlink(missing_ok=True)
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_stderr": "stub agy: the gemini cause\n"}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: of the walk item\n",
+                     "dump_settings": str(sonnet_backup_settings)},
+        question_4_plan={"report": QUESTION_4_STUB_ANSWER,
+                         "dump_settings": str(question_4_settings)},
+    )
+    sonnet_backup_settings_read = (json.loads(sonnet_backup_settings.read_text(encoding="utf-8"))
+                                   if sonnet_backup_settings.is_file() else None)
+    question_4_settings_read = (json.loads(question_4_settings.read_text(encoding="utf-8"))
+                                if question_4_settings.is_file() else None)
+    check("Question 4's claude run, and no other claude run of the same fast read, "
+          'gets "promptCacheTtl": "5m" in its --settings',
+          result.returncode == 0
+          and question_4_settings_read is not None
+          and question_4_settings_read.get("promptCacheTtl") == "5m"
+          and sonnet_backup_settings_read is not None
+          and "promptCacheTtl" not in sonnet_backup_settings_read,
+          f"exit {result.returncode}; Question 4 settings={question_4_settings_read!r}; "
+          f"Sonnet backup settings={sonnet_backup_settings_read!r}; stderr={result.stderr!r}")
+
     repository = build_scratch_repository(scratch)
     suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
@@ -1241,6 +1276,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and "Question 4 was not answered" in report_text
           and f"no answer within {5 / 60:g} minutes" in report_text
           and f"for up to {5 / 60:g} minutes" in result.stderr
+          and f"or is still running {5 / 60:g} minutes from its start" in result.stderr
           and QUESTION_4_STUB_ANSWER.strip() not in report_text,
           f"exit {result.returncode}; report={report_text!r}; stderr={result.stderr!r}")
     hanging_stub_pid = (int(hanging_stub_pid_file.read_text())
@@ -1551,7 +1587,9 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(str(cell_report_path)))
     expected_prompt = (script_under_test_module().FAST_CLARIFY_PROMPT_TEMPLATE
                        .replace("{TARGET_PATH}", "{TARGET_PATH}")
-                       .replace("{REPORT_PATH}", str(cell_report_path)))
+                       .replace("{REPORT_PATH}", str(cell_report_path))
+                       .replace("{CHANGED_SENTENCE_IDS}", "none")
+                       .replace("{REMOVED_TEXT}", "none"))
     check("the model receives the template embedded in the script",
           result.returncode == 0
           and received_prompt.strip().replace(
@@ -1562,10 +1600,12 @@ with tempfile.TemporaryDirectory() as scratch:
           marked_copy_name in received_prompt
           and str(repository / walk_draft_relative) not in received_prompt,
           repr(received_prompt[:300]))
-    check("both paths are substituted and no placeholder remains",
+    check("both paths and the edit are substituted and no placeholder remains",
           named_cell_report is not None
           and "{TARGET_PATH}" not in received_prompt
-          and "{REPORT_PATH}" not in received_prompt,
+          and "{REPORT_PATH}" not in received_prompt
+          and "{CHANGED_SENTENCE_IDS}" not in received_prompt
+          and "{REMOVED_TEXT}" not in received_prompt,
           repr(received_prompt[:300]))
     # The scratch checkout has no .claude/skills/cold-read/prompts/ tree at
     # all, so the case above also proves the read did not need the skill's
@@ -2972,6 +3012,224 @@ with tempfile.TemporaryDirectory() as changed_scratch:
 check("on the walk route the changed-during-read line says the reviewer's copy is gone",
       "(since removed)" in walk_route_line and "kept at" not in walk_route_line,
       repr(walk_route_line))
+
+# The cell's process can exit while the time-limit timer is still stopping its
+# group, whose other members can still write to the launcher output; the
+# section must wait for the timer before it reads that output.
+with tempfile.TemporaryDirectory() as still_stopping_scratch:
+    still_stopping_module = script_under_test_module()
+    still_stopping_answer = Path(still_stopping_scratch) / "answer.md"
+    still_stopping_answer.write_text("STUB ANSWER\n", encoding="utf-8")
+    still_stopping_output = Path(still_stopping_scratch) / "launcher-output.txt"
+    still_stopping_output.write_text("", encoding="utf-8")
+    timer_started_stopping = threading.Event()
+
+    def stop_group_slowly():
+        timer_started_stopping.set()
+        time.sleep(0.3)
+        with still_stopping_output.open("a", encoding="utf-8") as output:
+            output.write("LAST LINE FROM THE GROUP\n")
+
+    class ProcessExitingOnceTimerStartsStopping:
+        returncode = 0
+
+        def wait(self):
+            timer_started_stopping.wait()
+
+    still_stopping_timer = threading.Timer(0, stop_group_slowly)
+    still_stopping_timer.start()
+    still_stopping_stderr = io.StringIO()
+    with contextlib.redirect_stderr(still_stopping_stderr):
+        still_stopping_module.what_should_be_code_section(
+            still_stopping_module.WhatShouldBeCodeQuestionCell(
+                ProcessExitingOnceTimerStartsStopping(), still_stopping_answer,
+                still_stopping_output, Path(still_stopping_scratch) / "target.md",
+                still_stopping_timer, threading.Event(), threading.Event()))
+check("when the Question 4 cell exits while its time-limit timer is still stopping its group, "
+      "the section waits for the timer and re-emits the output the group wrote meanwhile",
+      "LAST LINE FROM THE GROUP" in still_stopping_stderr.getvalue(),
+      repr(still_stopping_stderr.getvalue()))
+
+# --- The edit: what changed against origin/main --------------------------
+# Called in-process: the comparison is a pure function of the two texts.
+edit_comparison = _fast_read.cold_read_target_compare_with_base_text_returning_added_or_changed_sentence_ids_and_removed_text_units
+EDIT_COMPARISON_CASES = (
+    ("a changed sentence is named, and its old text is removed",
+     "One. Two changed.\n", "One. Two.\n", (["s2"], ["Two."])),
+    ("a sentence rewrapped across lines is not changed",
+     "One sentence\nwrapped here.\n", "One sentence wrapped here.\n", ([], [])),
+    ("a change on a wrapped sentence's second line is seen",
+     "One sentence\nwrapped there.\n", "One sentence\nwrapped here.\n",
+     (["s1"], ["One sentence wrapped here."])),
+    ("a sentence moved unchanged is not changed",
+     "Two. One.\n", "One. Two.\n", ([], [])),
+    ("a duplicated sentence is an addition",
+     "One. Two. One.\n", "One. Two.\n", (["s3"], [])),
+    ("a sentence replaced by a copy of another is a change",
+     "One. One.\n", "One. Two.\n", (["s2"], ["Two."])),
+    ("a literal sentence id in the text is text, not a boundary",
+     "Use [s12] there.\n", "Use [s12] here.\n", (["s1"], ["Use [s12] here."])),
+    ("a heading's level is part of the heading",
+     "One.\n\n## Title\n", "One.\n\n# Title\n", (["s2"], ["# Title"])),
+    ("a list marker is part of its item",
+     "1. Item.\n", "- Item.\n", (["s1"], ["- Item."])),
+    ("a code fence's language is part of the block",
+     "```js\nx = 1\n```\n", "```py\nx = 1\n```\n", (["s1"], ["```py\nx = 1\n```"])),
+    ("whitespace inside a code block is compared exactly",
+     "```\nprint('a  b')\n```\n", "```\nprint('a b')\n```\n",
+     (["s1"], ["```\nprint('a b')\n```"])),
+    ("a table's separator row belongs to the row above it",
+     "| a |\n|:-|\n", "| a |\n|-|\n", (["s1"], ["| a | |-|"])),
+    ("a deletion alone is reported as removed text",
+     "One.\n", "One. Two.\n", ([], ["Two."])),
+    ("one of two identical sentences deleted is one removal",
+     "Two.\n", "Two. Two.\n", ([], ["Two."])),
+    ("a change on a folded frontmatter value's continuation line changes its field",
+     "---\nname: x\ndescription: >\n  new words\n---\nBody.\n",
+     "---\nname: x\ndescription: >\n  old words\n---\nBody.\n",
+     (["s1"], ["name: x description: > old words"])),
+    ("a change to a frontmatter list that opens the document changes the first unit",
+     "---\ntags:\n  - b\nname: x\n---\nBody.\n",
+     "---\ntags:\n  - a\nname: x\n---\nBody.\n",
+     (["s1"], ["tags: - a name: x"])),
+)
+for case_name, text, base_text, expected in EDIT_COMPARISON_CASES:
+    found = edit_comparison(text, base_text)
+    check(case_name, found == expected, f"{found!r}")
+
+with tempfile.TemporaryDirectory() as placeholder_scratch:
+    placeholder_template = Path(placeholder_scratch) / "prompt.md"
+    placeholder_template.write_text(
+        _fast_read.fast_clarify_prompt_with_edit_placeholders_filled(
+            [], ["Read {TARGET_PATH} and write {REPORT_PATH}."]), encoding="utf-8")
+    placeholder_prompt = cell_common.compose_prompt(
+        placeholder_template, Path("/the/target.md"), Path("/the/report.md"))
+    check("removed text that holds {TARGET_PATH} or {REPORT_PATH} reaches the reviewer as "
+          "the base held it, not with the launcher's paths filled in",
+          '"Read \\u007bTARGET_PATH} and write \\u007bREPORT_PATH}."' in placeholder_prompt
+          and json.loads('"Read \\u007bTARGET_PATH} and write \\u007bREPORT_PATH}."')
+          == "Read {TARGET_PATH} and write {REPORT_PATH}.",
+          placeholder_prompt[-400:])
+
+with tempfile.TemporaryDirectory() as edit_scratch:
+    edit_scratch = Path(edit_scratch).resolve()
+    edit_stubs = edit_scratch / "stub-bin"
+    edit_counter = edit_scratch / "stub-launch-counter"
+    edit_prompt = edit_scratch / "received-prompt.txt"
+    design_relative = "docs/drafts/a-design.md"
+    edit_report = (edit_scratch / "scratch-checkout" / "cold-read-records"
+                   / f"a-design-{FIXED_RECORD_STAMP_FOR_TESTS}" / "cold-read-fast-read.md")
+
+    # A tracked document changed since origin/main: the reviewer is told what changed.
+    repository = build_scratch_repository(edit_scratch)
+    (repository / design_relative).write_text(
+        "# A design\n\nOne committed line.\n\nOne added line.\n", encoding="utf-8")
+    result = run_fast_read(
+        repository, edit_stubs,
+        {"*": {"report": "STUB FAST READ\n", "dump_prompt": str(edit_prompt)}},
+        edit_report, design_relative, edit_counter)
+    received = edit_prompt.read_text(encoding="utf-8") if edit_prompt.is_file() else ""
+    check("an edit of a document on origin/main names its added sentence, and only that one, "
+          "in the reviewer's prompt",
+          result.returncode == 0
+          and "Sentences the edit added or changed: [s3]." in received
+          and "no longer holds: none." in received,
+          f"exit {result.returncode}; stderr={result.stderr[-300:]!r}")
+    check("the report's coverage section says what the reviewer was told about the edit",
+          edit_report.is_file()
+          and "sentences added or changed, 1; text removed or replaced, 0."
+          in edit_report.read_text(encoding="utf-8"))
+
+    # A tracked document identical to its origin/main text: no edit, so no labels.
+    repository = build_scratch_repository(edit_scratch)
+    edit_prompt.unlink(missing_ok=True)
+    result = run_fast_read(
+        repository, edit_stubs,
+        {"*": {"report": "STUB FAST READ\n", "dump_prompt": str(edit_prompt)}},
+        edit_report, design_relative, edit_counter)
+    received = edit_prompt.read_text(encoding="utf-8") if edit_prompt.is_file() else ""
+    check("an unchanged document gives the reviewer none for both, and the report no edit line",
+          result.returncode == 0
+          and "Sentences the edit added or changed: none." in received
+          and "no longer holds: none." in received
+          and edit_report.is_file()
+          and "told what the edit did" not in edit_report.read_text(encoding="utf-8"),
+          f"exit {result.returncode}; stderr={result.stderr[-300:]!r}")
+
+    # A document committed on the branch after origin/main: absent at the
+    # merge base, so it is read whole.
+    repository = build_scratch_repository(edit_scratch)
+    new_relative = "docs/drafts/a-new-design.md"
+    (repository / new_relative).write_text("# A new design\n\nOne line.\n", encoding="utf-8")
+    scratch_repository_fixture.git(repository, "add", new_relative)
+    scratch_repository_fixture.git(repository, "commit", "-q", "-m", "new design")
+    new_report = (repository / "cold-read-records"
+                  / f"a-new-design-{FIXED_RECORD_STAMP_FOR_TESTS}" / "cold-read-fast-read.md")
+    edit_prompt.unlink(missing_ok=True)
+    result = run_fast_read(
+        repository, edit_stubs,
+        {"*": {"report": "STUB FAST READ\n", "dump_prompt": str(edit_prompt)}},
+        new_report, new_relative, edit_counter)
+    received = edit_prompt.read_text(encoding="utf-8") if edit_prompt.is_file() else ""
+    check("a tracked document absent at the merge base is read with none for both",
+          result.returncode == 0
+          and "Sentences the edit added or changed: none." in received
+          and "no longer holds: none." in received,
+          f"exit {result.returncode}; stderr={result.stderr[-300:]!r}")
+
+    # A file git does not track needs no merge-base, so a missing origin/main
+    # does not stop its read.
+    repository = build_scratch_repository(edit_scratch)
+    scratch_repository_fixture.git(repository, "update-ref", "-d", "refs/remotes/origin/main")
+    untracked_relative = "docs/drafts/untracked-notes.md"
+    (repository / untracked_relative).write_text("# Notes\n\nNot committed.\n", encoding="utf-8")
+    untracked_report = (repository / "cold-read-records"
+                        / f"untracked-notes-{FIXED_RECORD_STAMP_FOR_TESTS}" / "cold-read-fast-read.md")
+    edit_prompt.unlink(missing_ok=True)
+    result = run_fast_read(
+        repository, edit_stubs,
+        {"*": {"report": "STUB FAST READ\n", "dump_prompt": str(edit_prompt)}},
+        untracked_report, untracked_relative, edit_counter)
+    received = edit_prompt.read_text(encoding="utf-8") if edit_prompt.is_file() else ""
+    check("an untracked document is read with none for both, even without origin/main",
+          result.returncode == 0
+          and "Sentences the edit added or changed: none." in received
+          and "no longer holds: none." in received,
+          f"exit {result.returncode}; stderr={result.stderr[-300:]!r}")
+
+    # Without origin/main a tracked document's edit cannot be found: the read
+    # stops before it creates a record or launches a cell.
+    result = run_fast_read(
+        repository, edit_stubs, {"*": {"report": "STUB FAST READ\n"}},
+        edit_report, design_relative, edit_counter)
+    check("when git cannot find the edit, the read prints FAILED, creates no record "
+          "and launches nothing",
+          result.returncode == 1 and result.stdout.startswith("FAILED")
+          and "git merge-base HEAD origin/main failed" in result.stdout
+          and f"git -C {repository} fetch origin main" in result.stderr
+          and not edit_report.parent.exists()
+          and launches_counted(edit_counter) == 0
+          and launches_counted(question_4_counter_path(edit_counter)) == 0,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr[-400:]!r}")
+
+    # origin/main with no commit in common with HEAD: merge-base exits 1 with
+    # no message, and a fetch would not fix it, so none is offered.
+    repository = build_scratch_repository(edit_scratch)
+    unrelated_root = scratch_repository_fixture.git(
+        repository, "commit-tree", "HEAD^{tree}", "-m", "unrelated root").strip()
+    scratch_repository_fixture.git(repository, "update-ref", "refs/remotes/origin/main",
+                                   unrelated_root)
+    result = run_fast_read(
+        repository, edit_stubs, {"*": {"report": "STUB FAST READ\n"}},
+        edit_report, design_relative, edit_counter)
+    check("when HEAD and origin/main share no commit, the read prints FAILED and hands the "
+          "message on without offering a fetch",
+          result.returncode == 1 and result.stdout.startswith("FAILED")
+          and "git merge-base HEAD origin/main failed" in result.stdout
+          and "fetch origin main" not in result.stderr
+          and "Give this whole message to the user" in result.stderr
+          and launches_counted(edit_counter) == 0,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr[-400:]!r}")
 
 print()
 if failures:

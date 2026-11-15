@@ -89,6 +89,14 @@ are cut out, or the parser's own tokens, as item starts are, so a line in code o
 in a comment is never an item's start, a marker, a recommendation or a recorded
 answer.
 
+AN ITEM'S TEXT. approval_walk_item_heading_and_item_page_body_lines gives the
+lines of an item that the item page builder puts on its page.
+approval_walk_item_text_as_shown_to_user gives the text the user must have been
+shown before his answer to the item counts: the same lines without the
+`#approval_walk_item_` lines, which the check program writes for agents, and
+with the heading's running count without its `of M`, which changes when items
+are added to the walk.
+
 ITEM PAGES. The walk-me-through skill publishes each item as a page before
 any message shows it, and records the page's link in the walk-minutes as a
 line `#item_page item N of M <link>`, or, when the publish failed, as
@@ -167,6 +175,8 @@ CLOSING_LINE_LABEL = re.compile(rf"Items?\s+({NUMBER_LIST})\s+of\s+(\d+)(?:,\s.*
 # Only right after the count, as in `(revised)` or `, revised:`, so a title that uses the word drops nothing.
 REVISED = re.compile(r"^[*_\s(,:;.\-\u2013\u2014]*revised\b", re.I)
 WITHDRAWN_HEADING = re.compile(r"^[*_\s(]*withdrawn\b", re.I)
+APPROVAL_WALK_ITEM_TAG_LINE = re.compile(r"^\s*#approval_walk_item_", re.I)
+RUNNING_COUNT_TOTAL = re.compile(rf"\b(items?\s+{NUMBER_LIST})\s+of\s+\d+\b", re.I)
 # A `##` heading that opens with an item label but no `of M`, as in `## Item 3: corrections` over `### Item 3.1 of
 # 16`, groups items and is not an item itself.
 ITEM_LABEL_WITHOUT_COUNT = re.compile(r"^[*_\s]*items?\s+\d", re.I)
@@ -606,11 +616,114 @@ def approval_walk_item_line_range_within_heading_shared_by_several_items(opening
     return starts[number], min(later + [end])
 
 
+def approval_walk_item_sub_step_units_right_after(all_units, unit):
+    """Return the units of all_units, as item_unit_spans gives them, right after unit that are sub-steps of any
+    item unit names, such as `### Item 3.1 of 9` and `### Item 3.1.1 of 9` after item 3, up to the first that is
+    not, so an older version's `3.1 of 9` elsewhere in the walk-document is not among them. An unnumbered item
+    among them is passed over, because the check program's close step shows it only after them. So is a numbered
+    item among them when a sub-step after it gives unit's M, as in 2.1 of 9, then item 4, then 2.2 of 9, because
+    the close step's hold-answer path numbers a new item where it stands, right after the answered sub-step."""
+    found, passed_over = [], False
+    for each in [each for each in all_units if each[3] > unit[3]]:
+        if approval_walk_unit_is_unnumbered_item(each):
+            continue
+        if not each[0] or not all(any(part.startswith(number + ".") for number in unit[0]) for part in each[0]):
+            if not found or not each[0]:
+                break
+            passed_over = True
+            continue
+        if passed_over and each[1] != unit[1]:
+            break
+        found.append(each)
+    return found
+
+
+def approval_walk_item_heading_and_item_page_body_lines(text, parser, all_units, unit, number):
+    """Return (the heading line of unit without its deferred note, the body lines) of item number of the walk-document
+    text, whose unit of all_units, as item_unit_spans gives them, is unit, as the item page builder puts them on the
+    item's page and its docstring says: a Withdrawn version left out, an item that shares a heading keeping only its
+    own lines, and the item's sub-steps after its own lines."""
+    numbers, total, _, first, end = unit
+    lines = text.split("\n")
+    heading = approval_walk_item_heading_with_deferred_note_removed(lines[first])
+    # The skill links a sub-step's closing line to its item's page, so the item's page carries its sub-steps.
+    sub_step = number + "."
+    if len(numbers) > 1:
+        openings = item_opening_lines(text, parser)
+        ranges = [approval_walk_item_line_range_within_heading_shared_by_several_items(
+            openings, first, end, each, numbers, total) for each in [number, *(n for n in numbers if n.startswith(sub_step))]]
+        # A sub-step with no opening of its own would bring in the unit's lines above the item's own opening.
+        ranges = ranges[:1] + [(start, stop) for start, stop in ranges[1:] if start != first]
+    else:
+        ranges = [(first, end)]
+    # An item with no opening of its own has a range that already holds its sub-steps' ranges.
+    body, covered = [], first + 1
+    for start, stop in sorted(ranges):
+        if max(start, covered) < stop:
+            body += ["", *lines[max(start, covered):stop]]
+        covered = max(covered, stop)
+    # A sub-step under its own heading is a unit of its own, which item_unit_spans ends at its first Withdrawn heading.
+    for sub_numbers, _, _, sub_first, sub_end in approval_walk_item_sub_step_units_right_after(all_units, unit):
+        if all(each.startswith(sub_step) for each in sub_numbers):
+            body += ["", approval_walk_item_heading_with_deferred_note_removed(lines[sub_first])]
+            body += lines[sub_first + 1:sub_end]
+    return heading, body
+
+
+def approval_walk_text_with_approval_walk_item_hashtag_lines_removed(text):
+    """text without its lines that open with `#approval_walk_item_`, which the walk check program writes for agents
+    and which are not shown to the user."""
+    return "\n".join(line for line in text.split("\n") if not APPROVAL_WALK_ITEM_TAG_LINE.match(line))
+
+
+def approval_walk_text_with_running_count_totals_removed(text):
+    """text with the `of M` after each running count taken out, as in `Item 4 of 9` read as `Item 4`, because adding
+    items to a walk changes M on items the user has already been shown."""
+    return RUNNING_COUNT_TOTAL.sub(r"\1", text)
+
+
+def approval_walk_item_text_as_shown_to_user(text, parser, all_units, unit, number):
+    """Return the Markdown the user must be shown for item number of the walk-document text, as the short-answer
+    hook compares it with the agent's message: approval_walk_item_heading_and_item_page_body_lines' heading and lines, without
+    the `#approval_walk_item_` lines and with the heading's running count without its `of M`."""
+    heading, body = approval_walk_item_heading_and_item_page_body_lines(text, parser, all_units, unit, number)
+    shown = approval_walk_text_with_running_count_totals_removed(heading) + "\n" + "\n".join(body)
+    # A tag line removed leaves the blank lines around it, so blank lines are squeezed to one.
+    return re.sub(r"\n\s*\n(?:\s*\n)+", "\n\n", approval_walk_text_with_approval_walk_item_hashtag_lines_removed(shown)).strip()
+
+
 def approval_walk_unit_is_unnumbered_item(unit):
     """Whether unit, one of item_unit_spans' units, is an unnumbered item: a waiting item the close step numbers
     when it is shown."""
     numbers, _, problem, _, _ = unit
     return not numbers and problem is None
+
+
+def approval_walk_document_unit_is_dotted_sub_step_of_whole_item_of_any_item_number(unit, numbers):
+    """Whether unit, one of item_unit_spans' units, is a sub-step of a whole item that one of numbers belongs to:
+    every number unit names is dotted, as in `4.2`, and its whole number is that of one of numbers, as 4 is of
+    `4` and of `4.1`."""
+    wholes = {number.split(".")[0] for number in numbers}
+    return bool(unit[0]) and all("." in number and number.split(".")[0] in wholes for number in unit[0])
+
+
+def approval_walk_document_new_item_insert_line_number_past_whole_item_sub_steps_and_withdrawn_versions(
+        units, unit, line_count):
+    """Return the 0-based line, of a walk-document of line_count lines whose item_unit_spans are units, where the
+    whole item that unit belongs to ends, and so where an item added after it goes: the first line of the first
+    later unit that is not a sub-step of that whole item, or line_count. For unit `### Item 50.1 of 96` that is
+    past sub-step 50.2 and every Withdrawn heading below either, since a unit ends at a Withdrawn heading and a
+    sub-step is a unit of its own. An unnumbered item with more of the whole item's sub-steps after it is passed
+    over, as approval_walk_item_sub_step_units_right_after passes over it."""
+    end = None
+    for later in [each for each in units if each[3] > unit[3]]:
+        if approval_walk_unit_is_unnumbered_item(later):
+            end = later[3] if end is None else end
+        elif approval_walk_document_unit_is_dotted_sub_step_of_whole_item_of_any_item_number(later, unit[0]):
+            end = None
+        else:
+            return later[3] if end is None else end
+    return line_count if end is None else end
 
 
 def approval_walk_item_total_shown_and_waiting_counted_from_walk_document(units):

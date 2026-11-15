@@ -384,6 +384,17 @@ check("gh failing: the next stop within five minutes reports the same failure fr
       "and does not ask gh again",
       reported(result, GH_FAILURE_103) and len(seat.gh_calls()) == 1, (result, seat.gh_calls()))
 
+# At the real 300 seconds, // 59 also gives 5, so only a longer interval tells the two apart.
+saved_interval = hook.CONDITION_RECHECK_INTERVAL_SECONDS
+hook.CONDITION_RECHECK_INTERVAL_SECONDS = 3600
+try:
+    failure_line = hook.gh_failure_line("pr_merged", 103, "gh failed")
+finally:
+    hook.CONDITION_RECHECK_INTERVAL_SECONDS = saved_interval
+check("gh failing: the line gives the recheck interval in whole minutes",
+      "at the first stop at least 60 minutes after the failed call" in failure_line,
+      failure_line)
+
 seat = Seat()
 seat.task("43", metadata={"prerequisites": [{"pr_merged": 103}]})
 seat.task("44", metadata={"prerequisites": [{"pr_merged": 103}]})
@@ -1050,6 +1061,39 @@ seat.minutes_say("item 2.1 of 3: moved on; the item asked for no decision. <move
                  "item 2.2 of 3: approved; every text the change adds has had a fast read. <accepted>")
 check("approval-walk item whose sub-steps are all decided: raised",
       (context_of(seat.run()) or "").startswith("Act on task 73 "))
+
+def hook_and_next_item_agree(seat, heading, number):
+    """True when the hook finds the item decided exactly when the answer program's next_item, given only that
+    item, names nothing, both reading the seat's walk-document and walk-minutes."""
+    walk_finder, answer_program = hook.walk_finder_and_answer_program()
+    met = hook.approval_walk_item_decided_or_problem({hook.WALK_MINUTES_FIELD: str(seat.minutes),
+                                                      hook.ITEM_HEADING_FIELD: heading})["met"]
+    named = answer_program.next_item(walk_finder, seat.minutes, walk_finder.markdown_parser(), [number], None, [], [])
+    return met == (named == [])
+
+
+seat = WalkSeat()
+seat.waiting_task("78", "Item 2 of 3: The `restore` task finds its commit")
+seat.minutes_say("item 2 of 3: answer held: item 2.1 of 3, raised by a fast-read finding, waits for the "
+                 "user's answer. <open>",
+                 "item 2.1 of 3: moved on; the item asked for no decision. <moved on, no decision>",
+                 "item 2.2 of 3: approved; every text the change adds has had a fast read. <accepted>")
+check("approval-walk item whose answer is held, its sub-steps all decided: not raised",
+      silent(seat.run()))
+check("approval-walk item whose answer is held: the hook and next_item agree",
+      hook_and_next_item_agree(seat, "Item 2 of 3: The `restore` task finds its commit", "2"))
+
+seat = WalkSeat(document="# Walk\n\n## Item 1 of 2: Parent\n\n## Item 1.1 of 2: Sub one\n\n"
+                         "## Item 1.2 of 2: Sub two\n\n## Item 1.2.1 of 2: Sub two A\n\n"
+                         "## Item 1.2.2 of 2: Sub two B\n\n## Item 2 of 2: Last\n")
+seat.waiting_task("79", "Parent")
+seat.minutes_say("item 1.1 of 2: approved; every text the change adds has had a fast read. <accepted>",
+                 "item 1.2.1 of 2: approved; every text the change adds has had a fast read. <accepted>",
+                 "item 1.2.2 of 2: approved; every text the change adds has had a fast read. <accepted>")
+check("approval-walk item decided through a sub-step itself decided through its sub-steps: raised",
+      (context_of(seat.run()) or "").startswith("Act on task 79 "))
+check("approval-walk item decided through a sub-step decided through its sub-steps: the hook and next_item agree",
+      hook_and_next_item_agree(seat, "Parent", "1"))
 
 # Items added before it while the walk runs: the walk-document's count and the item's number change.
 seat = WalkSeat(document="# Walk\n\n## Item 1 of 2: First\n\n## The fix\n")

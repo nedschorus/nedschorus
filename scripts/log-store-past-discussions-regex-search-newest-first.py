@@ -39,13 +39,15 @@ not written, and the search says what failed and exits 2.
 
 A user's message is usually found twice, once in his session's dialog and
 once among user-messages; the user-messages hit carries the time he sent it,
-and the session-dialogs hit the turns around it.
+and the session-dialogs hit the turns around it. A dialog's "## User" heading
+also heads messages he did not type, such as a `claude -p` prompt a program
+wrote; only a user-messages hit shows that he typed it.
 
 PATTERN is a regular expression, matched case-insensitively; one opening
 with a dash goes after --, as in `-- -foo`. ripgrep matches
-it in every kind; the user's messages are then read with the handoff
-extractor's reader (scripts/handoff-extract-conversation.py) and matched again
-with Python's re module, so the pattern must be one both read. ripgrep picks
+it in every kind; the user's messages are then told from the other records with
+search-user-messages-in-transcripts.py's speaker test and matched again with
+Python's re module, so the pattern must be one both read. ripgrep picks
 the transcripts to read from their raw JSON, with the pattern's anchors (^, $,
 \\A, \\z) removed, since there a message is one string inside a longer line.
 JSON writes a line break, a tab, a quote mark and a backslash as escapes, so a
@@ -55,7 +57,7 @@ a backslash and the like) skips that step and every transcript is read.
 WHAT EACH HIT SAYS. Its kind, date, machine and agent-seat where the record
 shows them, its file and line, and the matching line with --context lines
 either side (default 1); a user's message is shown as an excerpt around the
-match. The date is the one in the file's name for walk, cold-read-records and
+match, opening with the mark [user]. No other hit carries a mark of who wrote it. The date is the one in the file's name for walk, cold-read-records and
 analysis, or the file's modification date when the name has none; the time
 the user sent a message; and for a session dialog the time of the turn that
 holds the matching line: a dialog's turns carry no time, so the dialog is
@@ -75,10 +77,10 @@ again lacks its subagent turns, and when it failed as the dialog was
 written, the dialog lacks them; either way the two hold different turns, so
 no hit in it is dated by turn, and a FAILED line says why. A line the dialog built again does not hold as often, or one
 whose turn's record has no time, is dated by the session's last activity, the
-last timestamp in its transcript, and the hit says so. A walk file's agent-seat is
-the one its header says ran the approval-walk. A session's agent-seat is read
-from its project-key, the transcript folder Claude Code names after the
-session's directory.
+last timestamp in its transcript, and the hit says so. A walk file's hit names
+no agent-seat: walk-files-ship.py ships every walk's files flat into walk/ and
+records none. A session's agent-seat is read from its project-key, the
+transcript folder Claude Code names after the session's directory.
 
 FILTERS. --kind limits the search to the kinds named. --seat keeps sessions
 whose project-key contains SUBSTRING, and --machine those of one machine;
@@ -227,15 +229,14 @@ FILE_KIND_DIRECTORIES = {
 }
 SESSION_DIALOGS = "session-dialogs"
 USER_MESSAGES = "user-messages"
+USER_MARK = "[user]"
 KINDS = list(FILE_KIND_DIRECTORIES) + [SESSION_DIALOGS, USER_MESSAGES]
 MACHINES = ("ned-box", "mac")
 
 DEFAULT_LIMIT = 30
 EXCERPT_CHARACTERS = 300
 CONTEXT_CHARACTERS = 200
-WALK_HEADER_LINES = 10
 DATE_IN_NAME = re.compile(r"\d{4}-\d{2}-\d{2}")
-WALK_HEADER_SEAT = re.compile(r"\brun by ([A-Za-z0-9][A-Za-z0-9-]*) on\b")
 SEAT_IN_PROJECT_KEY = re.compile(r"-agents-(.+?)(?:--claude-worktrees-.*|-worktrees-.*)?$")
 MODIFICATION_TIME_MARGIN_SECONDS = 2
 TRANSCRIPT_TAIL_BYTES = 64 * 1024
@@ -382,17 +383,6 @@ def session_last_activity(transcript):
         return ""
 
 
-def walk_seat(path, failures):
-    try:
-        with path.open(errors="replace") as handle:
-            header = "".join(handle.readline() for _ in range(WALK_HEADER_LINES))
-    except OSError as error:
-        failures.append(f"could not read the header of {path} for its agent-seat: {error}")
-        return ""
-    match = WALK_HEADER_SEAT.search(header)
-    return match.group(1) if match else ""
-
-
 def excerpt(text, start):
     """About EXCERPT_CHARACTERS of one line of text around position `start`."""
     begin = max(0, start - EXCERPT_CHARACTERS // 3)
@@ -424,7 +414,7 @@ class RipgrepMissing(Exception):
     pass
 
 
-def file_facts(path, root, failures):
+def file_facts(path, root):
     """The kind, machine, agent-seat and, where its name holds one, the date of one file's hits.
 
     None for a file in session-dialogs/ that is not a session dialog.
@@ -442,8 +432,6 @@ def file_facts(path, root, failures):
     else:
         named = DATE_IN_NAME.search(str(path.relative_to(root / kind)))
         facts["date"] = named.group(0) if named else None
-        if kind == "walk":
-            facts["seat"] = walk_seat(path, failures)
     return facts
 
 
@@ -492,7 +480,7 @@ def file_hits(root, kinds, pattern, context, failures):
     facts_by_file = {}
     for path_text, number, shown, text in matches:
         if path_text not in facts_by_file:
-            facts_by_file[path_text] = file_facts(Path(path_text), root, failures)
+            facts_by_file[path_text] = file_facts(Path(path_text), root)
         if facts_by_file[path_text] is None:
             continue
         nearby = lines_by_file[path_text]
@@ -948,26 +936,56 @@ def transcript_candidates(root, pattern, seat, machine, since, failures, own_ses
 
 
 
+_speaker_test_in_this_process = None
+
+
+def speaker_test_in_this_process():
+    global _speaker_test_in_this_process
+    if _speaker_test_in_this_process is None:
+        _speaker_test_in_this_process = load_sibling_module("search_user_messages_in_transcripts",
+                                                            "search-user-messages-in-transcripts.py")
+    return _speaker_test_in_this_process
+
+
+def typed_user_messages(path):
+    """(timestamp, text) of each message the user typed in one transcript, as the shared speaker test,
+    search-user-messages-in-transcripts.py's TurnReader, tells them. Raises OSError when it cannot be read."""
+    reader = speaker_test_in_this_process().TurnReader()
+    messages = []
+    with path.open("r", errors="replace") as handle:
+        for line in handle:
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            # A subagent's records belong to its own transcript; its task, written by the agent, reads as typed.
+            if not isinstance(record, dict) or record.get("isSidechain"):
+                continue
+            turn = reader.turn(record)
+            if turn is not None and turn[0] == "user":
+                stamp = record.get("timestamp")
+                messages.append((stamp if isinstance(stamp, str) else "", turn[1]))
+    return messages
+
+
 def matching_user_messages(path_text, pattern, since, until):
     """Return (timestamp and excerpt of each matching user message, error or None) for one transcript.
 
     Runs in a worker process, so it takes and returns only plain values.
     """
     try:
-        turns, _ = extractor_in_this_process().read_dialog_turns(Path(path_text), drop_acknowledgements=False)
+        messages = typed_user_messages(Path(path_text))
     except OSError as error:
         return [], f"could not read the transcript {path_text}: {error}"
     regex = re.compile(pattern, re.IGNORECASE)
     found_messages = []
-    for turn in turns:
-        if turn.get("voice") != "user":
+    for stamp, text in messages:
+        found = regex.search(text)
+        if not found or not in_window(stamp, since, until):
             continue
-        found = regex.search(turn["text"])
-        if not found or not in_window(turn.get("timestamp", ""), since, until):
-            continue
-        flat = " ".join(turn["text"][:found.start()].split())
-        whole = " ".join(turn["text"].split())
-        found_messages.append((turn.get("timestamp", ""), "USER: " + excerpt(whole, len(flat))))
+        flat = " ".join(text[:found.start()].split())
+        whole = " ".join(text.split())
+        found_messages.append((stamp, USER_MARK + " " + excerpt(whole, len(flat))))
     return found_messages, None
 
 

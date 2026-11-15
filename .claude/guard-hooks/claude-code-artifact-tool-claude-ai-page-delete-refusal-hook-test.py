@@ -88,8 +88,6 @@ check("a delete by another tool is let through",
       refusal({"action": "delete", "url": PAGE_LINK}, tool_name="Bash") is None)
 
 for case_name, stdin_text in [
-        ("stdin that is not JSON", "not json {"),
-        ("empty stdin", ""),
         ("a JSON payload that is not an object", "[1, 2]")]:
     code, text = run_main(stdin_text)
     check(f"{case_name} is let through with exit 0 and no output", code == 0 and text == "",

@@ -214,7 +214,7 @@ SCHEDULED_FULL_TEST_RUN_RUNNER_PATH_IN_WORKTREE = Path("scripts") / "run-all-tes
 # Read at runtime so tests can shorten it.
 SCHEDULED_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS = 3600
 
-SCHEDULED_FULL_TEST_RUN_RECORD_WRITE_TIMEOUT_SECONDS = 30
+SCHEDULED_FULL_TEST_RUN_RECORD_WRITE_TIMEOUT_SECONDS = 30  # pragma: no mutate, a limit a second longer or shorter on writing one small record file changes nothing a test can see without a write that runs for thirty seconds
 
 RUNNER_SKIPPED_CASE_LINE = re.compile(r"^(?:\S+: )?SKIP\s")
 

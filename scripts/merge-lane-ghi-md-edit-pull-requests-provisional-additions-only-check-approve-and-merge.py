@@ -516,8 +516,8 @@ class Invocation:
                 f"{(merge.stdout.splitlines() or [''])[-1]}")
             return
         self.failed = True
-        outcome = ("merged, but a step after the merge was not done" if merge.returncode == 3
-                   else "not merged")
+        outcome = {3: "merged, but a step after the merge was not done",
+                   4: "whether it merged is unknown"}.get(merge.returncode, "not merged")
         self.report(pull_request, f"{MERGE_PROGRAM.name} exited {merge.returncode}: {outcome}",
                     f"The last lines it printed:\n{last_lines}")
 

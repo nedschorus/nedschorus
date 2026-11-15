@@ -525,7 +525,8 @@ def background_tasks_past_wait_limit_still_running(transcript_path: Path, deferr
         description, command = launches[task_id]
         kind, wait_limit_minutes = threshold_hook.background_task_kind_and_wait_limit_minutes_from_command(command)
         seconds_run = (now - flight.launched_at_by_id[task_id]).total_seconds()
-        if kind == threshold_hook.WAIT_LIMIT_TABLE_WAITING_TASK_KIND_NAME or threshold_hook.background_task_still_within_wait(
+        is_waiting_task = kind == threshold_hook.WAIT_LIMIT_TABLE_WAITING_TASK_KIND_NAME  # pragma: no mutate, `is` agrees with `==`: the kind returned is the table's own constant object
+        if is_waiting_task or threshold_hook.background_task_still_within_wait(
                 seconds_run, wait_limit_minutes * 60):
             continue
         past.append((task_id, description, command, kind, wait_limit_minutes, seconds_run / 60))
