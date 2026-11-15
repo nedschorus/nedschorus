@@ -315,7 +315,7 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
                 if event.kind == threshold_hook.SUBAGENT_RESUMED_BY_SEND_MESSAGE_TASK_EVENT:
                     stopped_ids.discard(event.task_id)
                     last_event = threshold_hook.SUBAGENT_RESUMED_BY_SEND_MESSAGE_TASK_EVENT
-                elif event.kind == threshold_hook.STOPPED_BY_TASK_STOP_EVENT:
+                elif event.kind == threshold_hook.STOPPED_BY_TASK_STOP_EVENT:  # pragma: no mutate, the kinds left here are "stopped", "task-notification" and "workflow-launched", and only "stopped" sorts at or before "stopped", so <= acts as ==
                     stopped_ids.add(event.task_id)
                     last_event = threshold_hook.STOPPED_BY_TASK_STOP_EVENT
                 else:
