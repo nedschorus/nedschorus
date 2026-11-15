@@ -7,8 +7,8 @@ Usage:
 Checks one design written with the /tool-design-write skill:
   - each heading in REQUIRED_SECTION_HEADINGS is present, at any level from ##
     down, outside fenced code blocks;
-  - the section "The judgment steps" holds at least one list item;
-  - each item of the section "Files" starts with a backticked repository path;
+  - the section "The judgment steps" holds at least one top-level list item;
+  - each top-level item of the section "Files" starts with a backticked repository path;
     an item carrying #file_not_yet_existing_that_this_design_creates names a file that does not exist yet, and an
     item without it names a file that does;
   - each backticked repository path in the design exists, or is the path of a
