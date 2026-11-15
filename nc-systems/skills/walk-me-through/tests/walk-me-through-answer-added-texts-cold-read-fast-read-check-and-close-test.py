@@ -1188,6 +1188,34 @@ def test_a_sub_step_heading_shared_by_two_items_is_a_sub_step_of_each():
           found == [[["3.1", "4.1"]], [["3.1", "4.1"]]], repr(found))
 
 
+def test_an_item_of_a_shared_heading_searched_alone_passes_over_its_sibling_s_sub_step_of_another_m():
+    walk_finder = load_program().load_walk_finder()
+    document = ("# A walk\n\n## Items 3 and 4 of 9: two items\n\n**Item 3 of 9:** three.\n\nA.\n\n"
+                "**Item 4 of 9:** four.\n\nB.\n\n### Item 4.1 of 10: four's first half\n\nC.\n\n"
+                "### Item 3.1 of 10: three's first half\n\nD.\n")
+    units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+    found = [each[0] for each in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(
+        units, units[0], ["3"])]
+    check("under `Items 3 and 4 of 9`, item 3 searched alone passes over its sibling's `4.1 of 10` and takes the "
+          "`3.1 of 10` right after it, as it would were 3.1 at the head", found == [["3.1"]], repr(found))
+
+
+def test_an_item_page_takes_only_its_own_lines_of_a_sub_step_heading_shared_with_another_item():
+    walk_finder = load_program().load_walk_finder()
+    parser = walk_finder.markdown_parser()
+    document = ("# A walk\n\n## Items 3 and 4 of 9: two items\n\n**Item 3 of 9:** three.\n\nA.\n\n"
+                "**Item 4 of 9:** four.\n\nB.\n\n### Items 3.1 and 4.1 of 9: both first halves\n\n"
+                "**Item 3.1 of 9:** three's half.\n\nC.\n\n**Item 4.1 of 9:** four's half.\n\nD.\n")
+    units = walk_finder.item_unit_spans(document, parser)
+    bodies = {number: "\n".join(walk_finder.approval_walk_item_heading_and_item_page_body_lines(
+        document, parser, units, units[0], number)[1]) for number in ("3", "4")}
+    check("item 3's page carries the shared `Items 3.1 and 4.1 of 9` heading with 3.1's lines and not 4.1's, and "
+          "item 4's page with 4.1's and not 3.1's",
+          all("### Items 3.1 and 4.1 of 9" in body for body in bodies.values())
+          and "C." in bodies["3"] and "D." not in bodies["3"] and "D." in bodies["4"] and "C." not in bodies["4"],
+          repr(bodies))
+
+
 def test_items_after_a_setext_withdrawn_heading_are_still_found():
     walk_finder = load_program().load_walk_finder()
     document = ("# A walk\n\n## Item 3 of 9: three\n\nA.\n\nWithdrawn: Item 3 of 9: the older three\n"
