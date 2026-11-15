@@ -1230,7 +1230,8 @@ with scratch() as directory:
     check("no rerun when the candidate list was cut, since the cut candidates "
           "may have other names",
           code == 1 and RERUN_LINE_OPENING not in stdout
-          and "were considered" in stdout, stdout + stderr)
+          and "were considered" in stdout and "Traceback" not in stderr,
+          stdout + stderr)
 
 # --- A query with directories is found only at its own path ---------------------
 # The log-store reuses generic names across records (40 dispositions.md on
