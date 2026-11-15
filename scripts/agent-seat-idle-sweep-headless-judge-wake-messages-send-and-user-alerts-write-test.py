@@ -924,6 +924,34 @@ machine.run(32)
 check("another cause the same day for the same agent-seat: a second user-alert",
       len(machine.events("headless_failed")) == 3 and len(machine.alerts()) == 2, machine.alerts())
 
+USAGE_LIMIT_KEY = f"headless-failed:{{seat}}:claude exited 1: usage_limit_reached:{START.date()}"
+
+
+def machine_with_one_seat(records):
+    machine = Machine()
+    machine.seat("alpha", records)
+    return machine
+
+
+def account_changed_machine():
+    machine = machine_with_one_seat(DONE_TURN)
+    machine.run(0)
+    machine.account("account-2")
+    return machine
+
+
+for path, machine, seat, start_minute in (
+        ("a sender of a rule 2 message",
+         machine_with_one_seat([user("go"), assistant(PROMISE), turn_end()]), "alpha", 0),
+        ("the rule 2 judge",
+         machine_with_one_seat([user("go"), assistant(ANNOUNCED), turn_end()]), "alpha", 0),
+        ("the sender of the account-change notice", account_changed_machine(), "alpha", 1)):
+    machine.script(usage_limit_exit("34551553-ce2f-4bed-88d6-09449375602d", 394))
+    code, _ = machine.run(start_minute)
+    keys = [event["key"] for event in machine.events("user_alert")]
+    check(f"{path} at a usage limit: the user-alert is keyed on the cause code names",
+          code == 1 and keys == [USAGE_LIMIT_KEY.format(seat=seat)], (code, keys))
+
 # --- delivery while the agent-seat is busy ----------------------------------------------------------
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
