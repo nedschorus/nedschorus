@@ -1785,6 +1785,19 @@ check("a failed remote store step with any other exit gives 'ssh exit N'",
       failure_reason("nedlern@ned-box", subprocess.CompletedProcess([], 1, "out", ""))
       == "ssh exit 1")
 
+# --- A failed rsync into the store's reason: the host unreachable, rsync exit --
+rsync_reason = (failing_shipper
+                .failed_log_store_rsync_step_reason_text_build_from_log_store_host_unreachable_or_rsync_exit)
+check("a failed remote rsync that exited 255 names its own host as unreachable",
+      rsync_reason("nedlern@the-mac", subprocess.CompletedProcess([], 255, "", ""))
+      == "nedlern@the-mac unreachable")
+check("a failed local rsync that exited 255 gives 'rsync exit 255', not 'None unreachable'",
+      rsync_reason(None, subprocess.CompletedProcess([], 255, "", ""))
+      == "rsync exit 255")
+check("a failed remote rsync with any other exit gives 'rsync exit N'",
+      rsync_reason("nedlern@ned-box", subprocess.CompletedProcess([], 23, "", ""))
+      == "rsync exit 23")
+
 # --- A store inventory whose ssh call runs past its time limit is unreachable --
 # A real sh in place of ssh evals every step but the inventory, which hangs.
 # `exec` makes sleep the child itself: a sleep left behind by a killed sh

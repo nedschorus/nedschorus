@@ -790,9 +790,8 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
                              staging_dir)
         if copied.returncode != 0:
             why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
-            reason = (f"{destination.copy_host} unreachable"
-                      if copied.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED
-                      else f"rsync exit {copied.returncode}")
+            reason = shipper.failed_log_store_rsync_step_reason_text_build_from_log_store_host_unreachable_or_rsync_exit(
+                destination.copy_host, copied)
             print(walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_builder(
                 destination.copy_host, name, directory, staging_dir,
                 f"{reason} during the copy", why))
