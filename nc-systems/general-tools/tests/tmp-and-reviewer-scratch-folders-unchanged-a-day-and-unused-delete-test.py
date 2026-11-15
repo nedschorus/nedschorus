@@ -181,6 +181,13 @@ def run_tmp_place_cases():
 
     s = Scene()
     folder = s.folder("pymp-a1b2c3d4")
+    s.sockets(folder / "checkout-1" / "socket with spaces")
+    result = s.run()
+    check("a folder holding a unix socket bound under a path with a space in it is kept",
+          folder.is_dir() and result.returncode == 0, result.stdout + result.stderr)
+
+    s = Scene()
+    folder = s.folder("pymp-a1b2c3d4")
     result = s.run("--dry-run")
     check("--dry-run deletes nothing and writes nothing to the log",
           folder.is_dir() and f"would delete {folder}" in result.stdout and not s.log.exists()
