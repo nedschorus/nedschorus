@@ -397,6 +397,10 @@ def schema_driven_cases(scratch):
     with_summary["properties"]["summary"] = {"type": "string"}
     check("a field the schema adds as required is required of the answer, with no code change",
           lambda: program.answer_problems(answer, with_summary) == ["the answer has no summary"])
+    extra_keys_allowed = json.loads(SCHEMA.read_text())
+    del extra_keys_allowed["additionalProperties"]
+    check("a schema object without additionalProperties accepts a key it does not list, with no code change",
+          lambda: program.answer_problems({**answer, "summary": "Fine."}, extra_keys_allowed) == [])
 
     not_enforced = program.review_schema_keywords_and_types_the_answer_check_does_not_enforce
     check("the schema file uses only keywords and types the answer check enforces",
@@ -709,11 +713,38 @@ def main():
                 ("missing", None, "could not read"),
                 ("not JSON", "{", "is not JSON ("),
                 ("not a JSON object", "[]", "is JSON but not a JSON object"),
+                ("not JSON, with its next step", "{",
+                 "main's settings file.\nFix .claude/settings.json through a pull request to main, "
+                 "then review pull request 7 again; until that fix merges, every Claude review is "
+                 "refused this way.\nIf the cause above"),
+                ("not a JSON object, with its next step", "[]",
+                 "main's settings file.\nFix .claude/settings.json through a pull request to main, "
+                 "then review pull request 7 again; until that fix merges, every Claude review is "
+                 "refused this way.\nIf the cause above"),
                 ("naming the project directory in a form this program does not rewrite",
                  json.dumps({"hooks": {"Stop": [{"hooks": [
                      {"type": "command",
                       "command": 'python3 "${CLAUDE_PROJECT_DIR%/}"/scripts/stop-hook.py'}]}]}}),
-                 "still names CLAUDE_PROJECT_DIR")):
+                 "still names CLAUDE_PROJECT_DIR after each $CLAUDE_PROJECT_DIR"),
+                ("naming the project directory in a form this program does not rewrite, by the "
+                 "string's JSON path",
+                 json.dumps({"hooks": {"Stop": [{"hooks": [
+                     {"type": "command",
+                      "command": 'python3 "${CLAUDE_PROJECT_DIR%/}"/scripts/stop-hook.py'}]}]}}),
+                 "by its JSON path:\n  $.hooks.Stop[0].hooks[0].command: python3 "
+                 "\"${CLAUDE_PROJECT_DIR%/}\"/scripts/stop-hook.py\n"),
+                ("naming the project directory in a key, beside a rewritten command",
+                 json.dumps({"env": {"CLAUDE_PROJECT_DIR_COPY": "x"}, "hooks": {"Stop": [{"hooks": [
+                     {"type": "command",
+                      "command": 'python3 "$CLAUDE_PROJECT_DIR"/scripts/stop-hook.py'}]}]}}),
+                 "Each string that still names it, by its JSON path:\n  $.env: key "
+                 "CLAUDE_PROJECT_DIR_COPY\nThrough a pull request to main, either change each one listed"),
+                ("naming the project directory in a form this program does not rewrite, with its "
+                 "next step",
+                 json.dumps({"hooks": {"Stop": [{"hooks": [
+                     {"type": "command",
+                      "command": 'python3 "${CLAUDE_PROJECT_DIR%/}"/scripts/stop-hook.py'}]}]}}),
+                 "; once that pull request merges, review pull request 7 again.\nIf the cause above")):
             case = Case(scratch)
             if settings_text is None:
                 case.main_settings_file.unlink()
@@ -727,8 +758,20 @@ def main():
                   and str(case.main_settings_file) in case.stdout
                   and expected in case.stdout, case.detail)
 
+        case = Case(scratch)
+        case.main_settings_file.write_text(json.dumps(
+            {**MAIN_PROJECT_SETTINGS, "env": {"${CLAUDE_PROJECT_DIR}_COPY": "x"}}))
+        case.run("valid")
+        settings_given = (case.claude_calls[0]["argv"][case.claude_calls[0]["argv"].index("--settings") + 1]
+                          if case.claude_calls else "")
+        check("a key naming the project directory in a form this program rewrites is rewritten "
+              "like a value, so the reviewer runs",
+              lambda: case.code == 0
+              and json.loads(settings_given)["env"] == {f"{case.main_worktree}_COPY": "x"},
+              case.detail)
+
         repository_settings = load_program().claude_code_project_settings_read_from_review_tools_worktree_at_main_with_claude_project_dir_replaced_by_its_path(
-            PROGRAM.resolve().parents[1])
+            PROGRAM.resolve().parents[1], 7)
         check("this repository's own .claude/settings.json is rewritten whole, so no command in "
               "it runs a head worktree's script",
               lambda: "CLAUDE_PROJECT_DIR" not in json.dumps(repository_settings)

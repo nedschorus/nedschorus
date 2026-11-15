@@ -28,6 +28,12 @@ _git_environment_fixture_spec = importlib.util.spec_from_file_location(
 _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
+_attendance_check_spec = importlib.util.spec_from_file_location(
+    "agent_session_unattended_by_user_check_common",
+    Path(__file__).resolve().parents[4] / "nc-systems" / "general-tools"
+    / "agent-session-unattended-by-user-check-common.py")
+attendance_check = importlib.util.module_from_spec(_attendance_check_spec)
+_attendance_check_spec.loader.exec_module(attendance_check)
 
 HOOK_SCRIPT = (Path(__file__).resolve().parents[1]
                / "walk-me-through-agent-reply-to-user-not-ending-with-waiting-item-closing-line-refusal-stop-hook.py")
@@ -178,9 +184,9 @@ class Case:
                    "stop_hook_active": stop_hook_active}
         if last_assistant_message is not None:
             payload["last_assistant_message"] = last_assistant_message
-        environment = {name: value for name, value in os.environ.items()
-                       if name not in ("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
-                                       "CLAUDE_CODE_SESSION_ATTENDED")}
+        environment = attendance_check.environment_without_agent_session_attendance_variables(os.environ)
+        # The machine's real emergency-stop folder must not decide a case.
+        environment["NEDSCHORUS_EMERGENCY_STOP_FOLDER"] = str(self.checkout / "no-emergency-stop")
         environment.update(environment_extra or {})
         return subprocess.run(
             [sys.executable, str(HOOK_SCRIPT)],
@@ -1300,6 +1306,24 @@ def test_faults_are_reported():
     check("with no open walk, the transcript is not read, so a transcript that cannot be read is no fault",
           result.returncode == 0 and result.stdout == "" and result.stderr == "",
           f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
+
+
+def test_silent_during_an_emergency_stop():
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.")
+    case.reply("The background job finished.")
+    stop_folder = case.checkout / "emergency-stop"
+    stop_folder.mkdir()
+    stop_file = stop_folder / "2026-10-30T01-00-00Z.md"
+    stop_file.write_text("# Emergency stop\ncoordinating agent-seat: reboot-test\n")
+    check_silent("a reply leaving out the waiting item passes while an emergency stop is in force",
+                 case.run(environment_extra={"NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(stop_folder)}))
+    stop_file.write_bytes(b"\xff\xfe")
+    check_silent("an unreadable emergency-stop file counts as a stop in force",
+                 case.run(environment_extra={"NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(stop_folder)}))
+    stop_file.write_text("started\n#emergency_stop_lifted all clear\n")
+    check_reminded("after the lift the waiting item is checked again",
+                   case.run(environment_extra={"NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(stop_folder)}), "`Item 2 of 9`")
 
 
 def main():

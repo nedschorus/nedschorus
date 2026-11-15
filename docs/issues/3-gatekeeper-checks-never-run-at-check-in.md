@@ -10,7 +10,7 @@ Surfaced by the attack-split validation experiment of 2026-08-12 (`md-review-rec
 
 > In v1 the check set *is* construction itself, so guarantee 2 binds the checks that exist — construction — to the exact pushed bytes; it gains content as checks are added. That is the growth point, not a hole: **when a test suite exists, the tests run here**; when the user gates an artifact class, its review-evidence check runs here.
 
-The condition is now met and the consequent is not built. 83 test suites exist (`git ls-files '*-test.py'`; seven when this note was written on 2026-08-13). `scripts/run-all-test-suites.py` runs them, and two programs call it: `scripts/daily-full-test-run-of-main.py` and `scripts/pull-request-head-test-run.py`. The gatekeeper calls neither, and no suite is wired into the check-in path.
+The condition is now met and the consequent is not built. 83 test suites exist (`git ls-files '*-test.py'`; seven when this note was written on 2026-08-13). `scripts/run-all-test-suites.py` runs them, and two programs call it: `scripts/scheduled-full-test-run-of-main.py` and `scripts/pull-request-head-test-run.py`. The gatekeeper calls neither, and no suite is wired into the check-in path.
 
 The program says so itself. `nc-systems/main-gatekeeper/main-gatekeeper.py:868-870`, inside `integrate_and_push`, at the exact place the spec designates:
 

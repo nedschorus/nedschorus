@@ -9,7 +9,9 @@ Run: python3 nc-systems/general-tools/tests/claude-code-temp-folders-of-exited-a
 Prints one line per case and exits non-zero if any case fails.
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -384,6 +386,56 @@ def run_per_folder_failure_cases():
           result.stderr)
 
 
+def run_tmp_and_reviewer_scratch_folders_step_cases():
+    # The second step itself is never run here: unlike the first, it has no fixture override passed
+    # on to it and would sweep the real /tmp. Its own test runs it on fixture places.
+    s = scene()
+    flag = "--then-tmp-and-reviewer-scratch-folders-unchanged-a-day-and-unused-delete"
+    calls = []
+
+    def second_step(exit_status=0, error=None):
+        def run(command, **keywords):
+            calls.append(command)
+            if error is not None:
+                raise error
+            print("second step ran", flush=True)
+            return subprocess.CompletedProcess(command, exit_status)
+        return run
+
+    def run_main(fake, *extra):
+        run_subprocess = program.subprocess.run
+        program.subprocess.run = fake
+        output = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                status = program.main(["--session-records-directory", str(s.sessions),
+                                       "--proc-filesystem-directory", str(s.proc),
+                                       "--projects-directory", str(s.projects),
+                                       "--claude-code-temp-folder-parent", str(s.parents[0]), *extra])
+        finally:
+            program.subprocess.run = run_subprocess
+        return status, output.getvalue()
+    status, output = run_main(second_step())
+    check("without the second step's flag, the second step is not run", calls == [] and status == 0, output)
+    status, output = run_main(second_step(), flag)
+    check("the second step runs after the first, with the process table given and no --dry-run",
+          len(calls) == 1 and calls[0][1] == str(program.TMP_AND_REVIEWER_SCRATCH_FOLDERS_UNCHANGED_A_DAY_AND_UNUSED_DELETE_PROGRAM_PATH)
+          and calls[0][2:] == ["--proc-filesystem-directory", str(s.proc)]
+          and output.index("folders of exited agent-sessions deleted") < output.index("second step ran")
+          and status == 0, f"{calls} {output}")
+    calls.clear()
+    status, output = run_main(second_step(), flag, "--dry-run")
+    check("the second step is given --dry-run when the program is",
+          len(calls) == 1 and calls[0][-1] == "--dry-run" and status == 0, str(calls))
+    check("the second step's program is beside this program",
+          program.TMP_AND_REVIEWER_SCRATCH_FOLDERS_UNCHANGED_A_DAY_AND_UNUSED_DELETE_PROGRAM_PATH.is_file())
+    status, output = run_main(second_step(exit_status=1), flag)
+    check("a second step that fails makes the program exit 1", status == 1, output)
+    status, output = run_main(second_step(error=FileNotFoundError(2, "No such file or directory", "python3")), flag)
+    check("a second step that cannot be started makes the program exit 1 and says so",
+          status == 1 and "could not be started" in output, output)
+
+
 def run_recheck_cases():
     s = scene()
     s.session(LIVE_PID, LIVE)
@@ -430,6 +482,7 @@ try:
     run_live_set_failure_cases()
     run_per_folder_failure_cases()
     run_recheck_cases()
+    run_tmp_and_reviewer_scratch_folders_step_cases()
 finally:
     for directory, subdirectories, _ in os.walk(WORKSPACE):
         for name in subdirectories:

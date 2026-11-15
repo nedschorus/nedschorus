@@ -342,6 +342,26 @@ for command, expected in [("zzq >f\\\t;", [(["zzq"], [(">", "f\t")])]),
     check(f"escaped blanks that touch a word's end stay in that word, as bash reads it: {command!r}",
           [(list(words), words.redirects) for words in found] == expected,
           [(list(words), words.redirects) for words in found])
+# tree-sitter-bash starts the redirect after an escaped tab at its backslash and puts the text between
+# the tab and the operator inside the redirect; bash reads that text as the end of the word the tab
+# continues, whether that word is the command's, one after a redirection, or a redirection's target.
+for command, expected in [("zzq a\\\t2>f b", [(["zzq", "a\t2", "b"], [(">", "f")])]),
+                          ("zzq a\\\t-3>f", [(["zzq", "a\t-3"], [(">", "f")])]),
+                          ("zzq a\\\t12>&1 b", [(["zzq", "a\t12", "b"], [(">&", "1")])]),
+                          ("2>g zzq a\\\t2>f", [(["zzq", "a\t2"], [("2>", "g"), (">", "f")])]),
+                          ("zzq >g a\\\t2>f b", [(["zzq", "a\t2", "b"], [(">", "g"), (">", "f")])]),
+                          ("zzq >h x >g\\\t2>f", [(["zzq", "x"], [(">", "h"), (">", "g\t2"), (">", "f")])]),
+                          ("zzq >&-\\\t2>f b", [(["zzq", "\t2", "b"], [(">&-", ""), (">", "f")])])]:
+    found = [(list(words), words.redirects) for words in reader.simple_commands(command)]
+    check(f"text between an escaped tab and a redirection's operator ends the word the tab continues, "
+          f"as bash reads it: {command!r}", found == expected, found)
+# tree-sitter-bash reads the here-document after these escaped blanks as an error, so only the
+# words of the command the escaped blanks end are checked.
+for command, expected in [("zzq \\ <<E\nbody\nE\n", ["zzq", " "]),
+                          ("zzq a \\\t<<-E\n\tb\nE\n", ["zzq", "a", "\t"])]:
+    found = words_of(command)
+    check(f"escaped blanks before a here-document's operator are a word, as bash passes them: {command!r}",
+          found[:1] == [expected], found)
 found = reader.simple_commands("ls ~\\\t ~/x\\\t")
 check("an escaped blank added to a word before its first / quotes its ~, so bash does not expand it",
       list(found[0]) == ["ls", "~\t", "~/x\t"]
@@ -519,10 +539,10 @@ for command, expected in [
     found = [(list(words), words.redirects) for words in reader.simple_commands(command)]
     check(f"a closing redirection has no target, so the words after it are arguments, as bash "
           f"passes them: {command!r}", found == expected, found)
-# tree-sitter-bash puts the 2 here before the closing operator; bash's target is f<tab>2, which this
-# reader does not yet read, so only the words are checked.
-check("what tree-sitter-bash puts before a closing operator is not a word after it",
-      words_of("zzp >f\\\t2>&- a") == [["zzp", "a"]], words_of("zzp >f\\\t2>&- a"))
+# tree-sitter-bash puts the 2 here before the closing operator; bash's target is f<tab>2.
+found = [(list(words), words.redirects) for words in reader.simple_commands("zzp >f\\\t2>&- a")]
+check("what tree-sitter-bash puts before a closing operator is not a word after it, but ends the target "
+      "before it", found == [(["zzp", "a"], [(">", "f\t2"), (">&-", "")])], found)
 # After a word that escaped blanks continue, tree-sitter-bash starts the redirect at the backslash
 # and puts the text touching the operator inside it, before the operator. After a blank, bash reads
 # that text as the descriptor when it is decimal digits, and as a word otherwise.
@@ -1051,6 +1071,15 @@ check("a command in a while or until loop's condition, a substitution there incl
       == [("pgrep", True), ("kill", True), ("sleep", False), ("pgrep", True), ("`pgrep -af y`", True),
           (":", False), ("pgrep", False)],
       [(list(f), f.in_while_or_until_loop_condition) for f in found])
+for name, text in [("an unquoted heredoc's $( )", "cat <<EOF\n$(while pgrep -f t; do sleep 5; done)\nEOF"),
+                   ("an unquoted heredoc's backticks", "cat <<EOF\n`while pgrep -f t; do sleep 5; done`\nEOF"),
+                   ("backticks holding \\`", 'echo `while pgrep -f t; do echo \\`date\\`; done`'),
+                   ("backticks in a ${ :- } default", 'echo ${x:-`while pgrep -f t; do sleep 5; done`}')]:
+    found = reader.simple_commands(text)
+    check(f"a loop inside {name}, read by a second parse, keeps its condition's mark",
+          [(f[0], f.in_while_or_until_loop_condition) for f in found if f[0] in ("pgrep", "sleep", "date")]
+          == [("pgrep", True), ("sleep" if "sleep" in text else "date", False)],
+          [(list(f), f.in_while_or_until_loop_condition) for f in found])
 found = reader.simple_commands("x | cd /a && ls >o | head")
 check("each stage of both pipelines in `x | cd /a && ls >o | head` runs in a child shell",
       all(f.child_shell != () for f in found) and found[2].redirects == [(">", "o")],
@@ -1134,6 +1163,35 @@ found = reader.simple_commands("cat ${output:-<(tmux send-keys -t a b)} ${x:-`da
 check("a process substitution or backtick in a ${name:-...} default is read",
       [list(f) for f in found][:2] == [["tmux", "send-keys", "-t", "a", "b"], ["date"]]
       and all(f.child_shell for f in found[:2]), [(list(f), f.child_shell) for f in found])
+# Each expected list is what bash ran, logged by a command_not_found_handle, minus the echo.
+for command, expected in [
+    ("echo ${v:-`xb $(xc)`}", [["xc"], ["xb", "$(xc)"]]),
+    ("echo ${v:=`xb $(xc)`}", [["xc"], ["xb", "$(xc)"]]),
+    ("echo ${v:+`xb $(xc)`}", [["xc"], ["xb", "$(xc)"]]),
+    ("echo ${v#`xb $(xc)`}", [["xc"], ["xb", "$(xc)"]]),
+    ("echo ${v/x/`xb $(xc)`}", [["xc"], ["xb", "$(xc)"]]),
+    ("echo ${v:-${w:-`xb $(xc)`}}", [["xc"], ["xb", "$(xc)"]]),
+    ("echo ${v:-<(xb $(xc))}", [["xc"], ["xb", "$(xc)"]]),
+    # Inside double quotes the single quotes are text, so the backticks run.
+    ("echo \"${v:-'`xb $(xc)`'}\"", [["xc"], ["xb", "$(xc)"]]),
+    ("echo ${v:-'`xb`'}", []),
+    ("echo \"${v:-<(xb)}\"", []),
+    # Inside ${ } a # after a blank starts no comment.
+    ("echo ${v:-a #$(xc) `xb`}", [["xc"], ["xb"]]),
+    # tree-sitter-bash reads this ${ } as an ERROR node.
+    ("echo ${v:-`xa \\`xb $(xc)\\``}; xe", [["xc"], ["xb", "$(xc)"], ["xa", "`xb $(xc)`"], ["xe"]]),
+    # A heredoc body is read as if double-quoted.
+    ("cat <<E\n${v:-'`xb`'} ${v:-<(xc)} ${v:-a #`xd`}\nE", [["xb"], ["xd"], ["cat"]]),
+    ("cat <<E\n${v:-`xb $(xc)`} ${w:-`xd`}\nE", [["xc"], ["xb", "$(xc)"], ["xd"], ["cat"]]),
+]:
+    found = [list(f) for f in reader.simple_commands(command) if f[:1] != ["echo"]]
+    check(f"{command!r} runs the commands bash runs inside its ${{ }}", found == expected, found)
+found = [list(f) for f in reader.simple_commands("echo ${v:-`xb $(xc)`}")]
+check("the echo that the text inside ${ } is read again with is not a command",
+      found == [["xc"], ["xb", "$(xc)"], ["echo", "${v:-`xb $(xc)`}"]], found)
+found = reader.simple_commands("echo ${v:-`xa`} ${w:-`xb`}")
+check("commands read again inside two ${ } run in different child shells",
+      found[0].child_shell != found[1].child_shell, [(list(f), f.child_shell) for f in found])
 
 # --- what bash rejects, and depth ---
 check("a line bash rejects for an unclosed quote yields no command after the quote",
@@ -1915,6 +1973,16 @@ except r.ShellParserUnavailable as error:
               own_lines in context and "undo what the command did" not in context, context)
 
     unreadable = reader.ShellCommandUnreadable("ValueError: injected")
+    for label, failure, cause_words in (
+            ("the parser is missing", error, "tree-sitter-bash is missing"),
+            ("the reader failed", unreadable, "the shell command reader failed on it")):
+        user_notice = json.loads(reader.parser_unavailable_hook_output(
+            "The force-push guard", failure, NEXT_STEPS, {})).get("systemMessage", "")
+        check(f"when {label}, the user is told which guard let a command through unchecked, why, "
+              f"and that the agent was told",
+              user_notice.startswith("The force-push guard let a command through unchecked on ")
+              and cause_words in user_notice and failure.install_output in user_notice
+              and "The agent has been told" in user_notice, user_notice)
     attended = context_of(reader.parser_unavailable_hook_output(
         "The force-push guard", unreadable, NEXT_STEPS, {}))
     unattended = context_of(reader.parser_unavailable_hook_output(

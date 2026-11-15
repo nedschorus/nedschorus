@@ -83,8 +83,9 @@ workspace-write the reviewer read all three canaries; under the profile it
 read none, still read README.md, and wrote its report. Codex expands a deny
 pattern with ripgrep before it starts on Linux, and aborts when any
 directory under the pattern's prefix is unreadable (ned-box's home holds
-one), so on Linux the profile lists the files credential_files_found_now()
-finds; on macOS it takes the patterns. Only credential directories that
+one), so on Linux the profile denies only the credential directories and
+login files, and a file named like a credential outside them is not covered;
+on macOS it takes the patterns too. Only credential directories that
 exist are listed: Codex on Linux turns a missing one into an empty file on
 the real disk. The reviewer programs' login files that exist are denied
 too, Codex's own `~/.codex/auth.json` included: the Codex CLI reads its login

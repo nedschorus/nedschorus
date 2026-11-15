@@ -13,13 +13,14 @@ The hook finds its owner by walking up its parent processes to one named
 claude. The cases run the hook's main() in this process, with that walk
 reading a fake /proc, so no binary named claude is needed; see
 FakeProcessTreeClaude. A real claude runs the hook once a week on each machine
-in nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py.
+in nc-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py.
 No case sends a signal.
 
 Run: python3 nc-systems/handoff/tests/uncommitted-work-snapshots-test.py
 """
 
 import atexit
+import contextlib
 import importlib.util
 import io
 import json
@@ -49,6 +50,8 @@ OWNER_FILE_MODULE_RELATIVE = Path("scripts/worktree-owner-file-read-and-write.py
 CLEANER_RELATIVE = Path("scripts/clean-worktrees.py")
 GIT_OUTPUT_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
+TASK_WRITE_MODULE_RELATIVE = Path(
+    "nc-systems/general-tools/agent-seat-task-list-new-pending-task-write-common.py")
 NEXT_STEP_LINES_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 LOG_STORE_WRITER_MODULE_RELATIVE = Path(
@@ -56,12 +59,14 @@ LOG_STORE_WRITER_MODULE_RELATIVE = Path(
 NED_BOX_HOME_CONSTANTS_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
 # The cleaner reads the review checkouts directory from the merge-lane helpers' common module,
-# which loads the test runner, which loads the git-redirecting variables module.
+# which loads the test runner, which loads the git-redirecting variables module and the attendance check.
 MERGE_LANE_COMMON_MODULE_RELATIVE = Path(
     "scripts/merge-lane-pull-request-helpers-common-options-paths-and-token.py")
 TEST_RUNNER_RELATIVE = Path("scripts/run-all-test-suites.py")
 GIT_REDIRECTING_REMOVAL_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py")
+ATTENDANCE_CHECK_MODULE_RELATIVE = Path(
+    "nc-systems/general-tools/agent-session-unattended-by-user-check-common.py")
 
 # The cleaner's --remove run below would otherwise append to the real log-store's log of removals.
 _removals_log_directory = tempfile.mkdtemp(prefix="uncommitted-work-snapshots-test-removals-log-")
@@ -78,6 +83,9 @@ def load(path, name):
 
 
 snapshots = load(REPOSITORY_ROOT / MODULE_RELATIVE, "uncommitted_work_snapshots")
+first_prompt_list = load(
+    SYSTEM_DIRECTORY / "agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py",
+    "agent_seat_worktrees_and_branches_with_no_pull_request_first_prompt_list")
 
 failures = []
 SKIPPED = []
@@ -148,10 +156,11 @@ def new_clone():
     main = base / "main"
     git(SCRATCH, "clone", "-q", str(origin), str(main))
     for relative in (MODULE_RELATIVE, HOOK_RELATIVE, CLEANER_RELATIVE, OWNER_FILE_MODULE_RELATIVE,
-                     GIT_OUTPUT_MODULE_RELATIVE, NEXT_STEP_LINES_MODULE_RELATIVE,
+                     GIT_OUTPUT_MODULE_RELATIVE, TASK_WRITE_MODULE_RELATIVE,
+                     NEXT_STEP_LINES_MODULE_RELATIVE,
                      LOG_STORE_WRITER_MODULE_RELATIVE, NED_BOX_HOME_CONSTANTS_MODULE_RELATIVE,
                      MERGE_LANE_COMMON_MODULE_RELATIVE, TEST_RUNNER_RELATIVE,
-                     GIT_REDIRECTING_REMOVAL_MODULE_RELATIVE):
+                     GIT_REDIRECTING_REMOVAL_MODULE_RELATIVE, ATTENDANCE_CHECK_MODULE_RELATIVE):
         (main / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPOSITORY_ROOT / relative, main / relative)
     (main / "tracked.txt").write_text("one\n")
@@ -182,7 +191,7 @@ class FakeProcessTreeClaude:
     a real helper process's, so the owner key and the owner's liveness are the
     real platform's. The walk is the module's own function, given the fake
     /proc. A real claude runs the hook once a week in
-    nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py.
+    nc-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py.
     """
 
     started = 0
@@ -1026,6 +1035,11 @@ def test_restore_a_subset():
               and f"\nRestore commit: {restore_commit}\n" in task.get("description", "")
               and ref in task.get("description", "") and str(target) in task.get("description", ""),
               f"restore opens the restored branch's task, naming its restore commit, {where}", task)
+        holding = first_prompt_list.tasks_holding("seat-five", restore_task_list())
+        check(holding.holders(branch) and holding.holders(target)
+              and not holding.unreadable,
+              f"the first prompt's list reads the task restore opens as holding its branch and "
+              f"worktree, so it does not list them, {where}", task)
         check((restore_task_list() / ".highwatermark").read_text() == next(iter(new_tasks), ""),
               "restore raises the task list's .highwatermark to the new task's id")
         check(f"branch: {branch}" in lines and f"worktree: {target}" in lines
@@ -1073,35 +1087,6 @@ def unchanged_after_refusal(main, ref, code, lines, name, text):
     check(code == snapshots.EXIT_REFUSED and lines[:1] and lines[0].startswith("REFUSED: ")
           and any(text in line for line in lines),
           f"restore refuses {name}", lines)
-
-
-def test_task_written_beside_one_claude_code_writes_at_the_same_moment():
-    list_directory = SCRATCH / "task-list-race"
-    list_directory.mkdir()
-    (list_directory / "1.json").write_text("{}")
-    real_link = snapshots.os.link
-    links_tried = []
-
-    def link_racing_claude_code(source, target):
-        links_tried.append(target)
-        if len(links_tried) > 5:
-            raise RuntimeError("the task writer kept retrying one id")
-        if Path(target).name == "2.json" and not Path(target).exists():
-            Path(target).write_text('{"id": "2", "by": "claude code"}')
-        return real_link(source, target)
-
-    snapshots.os.link = link_racing_claude_code
-    try:
-        task_id = snapshots.agent_seat_task_list_new_pending_task_write(list_directory, "subject",
-                                                                         "description")
-    finally:
-        snapshots.os.link = real_link
-    check(task_id == 3 and json.loads((list_directory / "2.json").read_text())["by"] == "claude code"
-          and json.loads((list_directory / "3.json").read_text())["subject"] == "subject"
-          and (list_directory / ".highwatermark").read_text() == "3"
-          and not list(list_directory.glob("*.partial")),
-          "a task id Claude Code takes at the same moment is skipped and its file kept",
-          sorted(path.name for path in list_directory.iterdir()))
 
 
 def test_restore_refusals_change_nothing():
@@ -1185,7 +1170,9 @@ def git_client_side_hooks_installed_for_agent_seat(main, agent_seat):
     record.write_text("# session-handoff\n")
     identity = {"GIT_AUTHOR_NAME": agent_seat, "GIT_COMMITTER_NAME": agent_seat,
                 "GIT_AUTHOR_EMAIL": f"{agent_seat}@nedschorus.invalid",
-                "GIT_COMMITTER_EMAIL": f"{agent_seat}@nedschorus.invalid"}
+                "GIT_COMMITTER_EMAIL": f"{agent_seat}@nedschorus.invalid",
+                # The Mac's own NEDSCHORUS_AGENTS_ROOT would point the hook past HOME's agents.
+                "NEDSCHORUS_AGENTS_ROOT": str(home / "agents")}
     real = {name: os.environ.get(name) for name in identity}
     os.environ.update(identity)
 
@@ -1293,9 +1280,15 @@ def test_restore_step_failures():
 
     failing_case("whose git worktree add wrote an owner file naming another agent-seat",
                  worktree_add_writes_another_seats_owner_file,
-                 '{"owner_kind": "agent-seat", "agent_seat": "seat-six"}, where restore names '
+                 '{"owner_kind": "agent-seat", "agent_seat": "seat-six"}, where '
+                 'uncommitted-work-snapshots.py restore names '
                  '{"owner_kind": "agent-seat", "agent_seat": "seat-five"}. '
                  'scripts/git-client-side-hooks/post-checkout writes that file')
+    failing_case("whose git worktree add wrote another agent-seat's owner file, naming the "
+                 "core.hooksPath setting and the config file that sets it",
+                 worktree_add_writes_another_seats_owner_file,
+                 f"/main is {REPOSITORY_ROOT / 'scripts' / 'git-client-side-hooks'}, and the config "
+                 f"file that sets it is ")
 
     real_run_git = snapshots.run_git
 
@@ -1326,6 +1319,125 @@ def test_restore_step_failures():
           lines)
 
 
+def test_restore_failures_say_what_restore_made():
+    real_run_git = snapshots.run_git
+
+    def run_git_failing(failing):
+        def run_git(directory, *arguments, **keywords):
+            if failing(directory, arguments):
+                return subprocess.CompletedProcess(arguments, 128, "", "refused by the test")
+            return real_run_git(directory, *arguments, **keywords)
+        return run_git
+
+    empty_restore_task_list()
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "head-fails", {"new.txt": "work\n"}, "9-7")
+    target = restored_worktree_of(main, ref)
+    branch = snapshots.restored_branch_name(ref)
+    snapshots.run_git = run_git_failing(
+        lambda directory, arguments: arguments == ("rev-parse", "HEAD") and Path(directory) == target)
+    try:
+        code, lines = run_restore(main, ref, ["new.txt"])
+    finally:
+        snapshots.run_git = real_run_git
+    check(code == snapshots.EXIT_STEP_FAILED and target.is_dir()
+          and snapshots.current_ref_value(main, ref) is not None and not restored_branch_tasks()
+          and git(target, "log", "-1", "--format=%s") == f"Restore work from {ref}"
+          and any(f"the restored work is on the branch {branch}" in line for line in lines),
+          "a restore whose commit cannot be read back says the worktree, the branch and the commit "
+          "are made, no task is opened and the ref is kept", lines)
+
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "files-fail", {"new.txt": "work\n"}, "9-8")
+    real_changed_files = snapshots.changed_files
+    snapshot_commit = git(main, "rev-parse", ref)
+
+    def changed_files(repo, commit):
+        if commit == snapshot_commit:
+            raise snapshots.WorkSnapshotError("git diff-tree refused by the test")
+        return real_changed_files(repo, commit)
+    snapshots.changed_files = changed_files
+    printed = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(printed):
+            code = snapshots.command_exit_code(
+                lambda: snapshots.restore_work_snapshot(main, ref, ["new.txt"], RESTORE_ENVIRONMENT,
+                                                        out=lambda text: None),
+                f"uncommitted-work-snapshots.py restore {ref}")
+    finally:
+        snapshots.changed_files = real_changed_files
+    branch = snapshots.restored_branch_name(ref)
+    check(code == snapshots.EXIT_STEP_FAILED and not restored_worktree_of(main, ref).exists()
+          and snapshots.current_ref_value(main, f"refs/heads/{branch}") is None
+          and printed.getvalue().startswith(
+              f"FAILED: git diff-tree refused by the test. uncommitted-work-snapshots.py restore {ref} "
+              f"changed nothing."),
+          "a git failure that ends restore early comes before restore changes anything, as its "
+          "message says", printed.getvalue())
+
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "branch-check-fails", {"new.txt": "trailing space \n"},
+                                       "9-10")
+    git(main, "config", "apply.whitespace", "error")
+    worktree_added = []
+
+    def branch_check_after_worktree_add(directory, arguments):
+        if arguments[:2] == ("worktree", "add"):
+            worktree_added.append(True)
+        return bool(worktree_added) and arguments[:3] == ("rev-parse", "--verify", "-q")
+    snapshots.run_git = run_git_failing(branch_check_after_worktree_add)
+    try:
+        code, lines = run_restore(main, ref, ["new.txt"])
+    finally:
+        snapshots.run_git = real_run_git
+    branch = snapshots.restored_branch_name(ref)
+    check(code == snapshots.EXIT_STEP_FAILED
+          and snapshots.current_ref_value(main, f"refs/heads/{branch}") is None
+          and not any(line.startswith("Neither the worktree") for line in lines),
+          "when git cannot say whether restore's branch is left, restore deletes it and does not "
+          "say that neither is left", lines)
+
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "hooks-unset", {"new.txt": "work\n"}, "9-11")
+    undo = git_client_side_hooks_installed_for_agent_seat(main, "seat-six")
+    def config_lookup_exits(exit_code):
+        def run_git(directory, *arguments, **keywords):
+            if arguments[:2] == ("config", "--show-origin"):
+                return subprocess.CompletedProcess(arguments, exit_code, "", "refused by the test")
+            return real_run_git(directory, *arguments, **keywords)
+        return run_git
+
+    snapshots.run_git = config_lookup_exits(1)
+    try:
+        code, lines = run_restore(main, ref, ["new.txt"])
+    finally:
+        snapshots.run_git = real_run_git
+        undo()
+    hooks = Path(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir")) / "hooks"
+    check(code == snapshots.EXIT_STEP_FAILED
+          and any(f"core.hooksPath setting for {main} is not set, so the post-checkout hook that "
+                  f"ran is the copy in {hooks}; a likely cause is that this copy is older than "
+                  "scripts/git-client-side-hooks/post-checkout" in line for line in lines)
+          and not any("core.hooksPath naming another clone" in line for line in lines),
+          "the owner-file failure says where the hook ran from when core.hooksPath is not set", lines)
+
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "hooks-lookup-fails", {"new.txt": "work\n"}, "9-12")
+    undo = git_client_side_hooks_installed_for_agent_seat(main, "seat-six")
+    snapshots.run_git = config_lookup_exits(128)
+    try:
+        code, lines = run_restore(main, ref, ["new.txt"])
+    finally:
+        snapshots.run_git = real_run_git
+        undo()
+    check(code == snapshots.EXIT_STEP_FAILED
+          and any("where the hook ran from is not known, because git config --show-origin --get "
+                  f"core.hooksPath in {main} exited 128: refused by the test" in line for line in lines)
+          and not any("is not set" in line for line in lines),
+          "the owner-file failure says the core.hooksPath lookup failed when git config exits with an "
+          "error other than 1, not that the setting is unset", lines)
+
+
 def test_restore_task_and_ref_deletion_failures():
     empty_restore_task_list()
     main = new_clone()
@@ -1341,9 +1453,10 @@ def test_restore_task_and_ref_deletion_failures():
     check(code == 1 and target.is_dir() and snapshots.current_ref_value(main, ref) is None
           and any(line.startswith("FAILED: the task could not be opened") for line in lines)
           and f"subject: Restored branch {branch}: open its pull request or delete it" in lines
-          and any(line.startswith("Restore commit: ") for line in lines),
+          and any(line.startswith("Restore commit: ") for line in lines)
+          and f"metadata: {json.dumps({'branches': [branch, str(target)]})}" in lines,
           "a task restore cannot open keeps the branch, still deletes the ref, and prints the "
-          "task's subject and description for TaskCreate", lines)
+          "task's subject, description and metadata for TaskCreate", lines)
     main = new_clone()
     ref, _worktree = leftover_snapshot(main, "ref-deletion-fails", {"new.txt": "work\n"}, "9-6")
     lock = Path(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir")) / f"{ref}.lock"
@@ -1407,8 +1520,15 @@ def test_command_line_of_restore_and_discard():
     not_a_repository.mkdir()
     failed = subprocess.run([sys.executable, module, "discard", ref, "--repo", str(not_a_repository)],
                             capture_output=True, text=True)
-    check(failed.returncode == 1 and failed.stdout.startswith("FAILED: git for-each-ref"),
-          "a git failure outside restore's and discard's own steps is printed, exit 1",
+    check(failed.returncode == 1 and failed.stdout.startswith("FAILED: git for-each-ref")
+          and f"uncommitted-work-snapshots.py discard {ref} changed nothing" in failed.stdout,
+          "a git failure outside restore's and discard's own steps is printed, exit 1, naming "
+          "discard", failed.stdout + failed.stderr)
+    failed = subprocess.run([sys.executable, module, "restore", ref, "--keep", "new.txt", "--repo",
+                             str(not_a_repository)], capture_output=True, text=True)
+    check(failed.returncode == 1 and failed.stdout.startswith("FAILED: ")
+          and f"uncommitted-work-snapshots.py restore {ref} changed nothing" in failed.stdout,
+          "a git failure outside restore's own steps is printed, exit 1, naming restore",
           failed.stdout + failed.stderr)
 
 
@@ -1576,7 +1696,22 @@ def test_the_cleaner_reports_each_task_it_cannot_judge():
     check(failures_seen == 1 and any("could not be rewritten as completed" in line for line in lines)
           and json.loads(task_file.read_text())["status"] == "pending",
           "a task file that cannot be rewritten is left as it was and reported", lines)
-    later_list = restore_task_list().with_name("nedschorus-seat-six-tasks")
+    # The partial file is written, then the replace fails: only removing the partial cleans up.
+    real_replace = cleaner.os.replace
+
+    def failing_replace(source, target):
+        raise OSError(28, "No space left on device")
+    cleaner.os.replace = failing_replace
+    try:
+        failures_seen, lines = close_tasks(main, remove=True)
+    finally:
+        cleaner.os.replace = real_replace
+    check(failures_seen == 1 and any("could not be rewritten as completed" in line for line in lines)
+          and json.loads(task_file.read_text())["status"] == "pending"
+          and not list(restore_task_list().glob("*.partial")),
+          "a task file whose rewrite fails after its partial file is written leaves no partial file",
+          lines + [str(path) for path in restore_task_list().iterdir()])
+    later_list =restore_task_list().with_name("nedschorus-seat-six-tasks")
     later_list.mkdir()
     unreferenced = git(main, "commit-tree", "HEAD^{tree}", "-m", "held by no ref")
     (later_list / "1.json").write_text(json.dumps({
@@ -2261,9 +2396,9 @@ def main():
                      test_live_and_dead_owners_listed, test_list_caps_and_failure,
                      test_supervisor_appends_the_list, test_restore_a_subset,
                      test_restore_reads_a_kept_name_as_a_literal_path,
-                     test_task_written_beside_one_claude_code_writes_at_the_same_moment,
                      test_restore_refusals_change_nothing, test_restore_step_failures,
                      test_restore_accepts_the_owner_file_git_worktree_add_wrote_naming_its_agent_seat,
+                     test_restore_failures_say_what_restore_made,
                      test_restore_task_and_ref_deletion_failures, test_discard,
                      test_command_line_of_restore_and_discard, test_entries_end_with_their_command,
                      test_the_cleaner_closes_a_restored_branch_task_by_its_commit,

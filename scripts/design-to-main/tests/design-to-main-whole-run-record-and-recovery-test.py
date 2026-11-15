@@ -3,7 +3,7 @@
 from initiate-design-to-main to ended with outcome passed, and one that
 ends failed at the redesigns ceiling; and section 9's record — the topic
 branch, one commit per state-exit with its trailer and only the files it
-names, run-state.json, the record's layout, the state-exit file, the
+names, design-to-main-run-state.json, the record's layout, the state-exit file, the
 user-rulings file, recovery from the last commit, the refusals before
 row 1 cuts the topic branch, no push, and a failing git command raised
 with git's error rather than read as an absent start point or file or
@@ -22,6 +22,7 @@ import pathlib
 import shutil
 import os
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -546,7 +547,7 @@ class RecoveryFromTheLastCommit(unittest.TestCase):
 
     def test_a_process_that_dies_during_an_investigation_recovers_the_commit_it_opened_at(self):
         # The commit at which the investigation opened (section 6.6) is in
-        # run-state.json on the branch for the whole pause, so a successor
+        # design-to-main-run-state.json on the branch for the whole pause, so a successor
         # that recovers from investigate-workflow still diffs the branch
         # on resume: the design edited resumes as a redesign, not at the
         # state that was paused in design version 1.
@@ -621,8 +622,8 @@ class TheRecordsLayout(unittest.TestCase):
     """Section 9 after the eighth walk (item 3, user-ruled 2026-09-08):
     the component's directory is created by the machine when it cuts the
     topic branch, holding only `design-to-main-record/` until code
-    exists; a reviewer's or a writer's notes are `notes.md` and its
-    state-exit `state-exit.json` in `evidence/<state or sub-state>-<n>/`,
+    exists; a reviewer's or a writer's notes are `design-to-main-writer-notes-or-reviewer-findings.md` and its
+    state-exit `design-to-main-state-exit-verdict-and-destination.json` in `evidence/<state or sub-state>-<n>/`,
     for the nth instance of that state or sub-state, counted from 1."""
 
     def setUp(self):
@@ -658,10 +659,10 @@ class TheRecordsLayout(unittest.TestCase):
             record.record_directory / "evidence" / "test-acceptance-by-agent-2")
         self.assertEqual(
             record.notes_path_for_instance(T.IMPLEMENTATION_WRITING, 1),
-            record.record_directory / "evidence" / "implementation-writing-1" / "notes.md")
+            record.record_directory / "evidence" / "implementation-writing-1" / "design-to-main-writer-notes-or-reviewer-findings.md")
         self.assertEqual(
             record.state_exit_path_for_instance(T.IMPLEMENTATION_WRITING, 1),
-            record.record_directory / "evidence" / "implementation-writing-1" / "state-exit.json")
+            record.record_directory / "evidence" / "implementation-writing-1" / "design-to-main-state-exit-verdict-and-destination.json")
 
     def test_the_next_instance_is_counted_from_the_branchs_state_trailers_and_named_in_the_package(self):
         script = fixture.prefix_to_design_approved() + [
@@ -715,7 +716,7 @@ class TheRecordsLayout(unittest.TestCase):
 
 
 class TheStateExitFile(unittest.TestCase):
-    """Section 2: the state-exit is a file, state-exit.json, in the
+    """Section 2: the state-exit is a file, design-to-main-state-exit-verdict-and-destination.json, in the
     instance's evidence directory, its fields spelled with hyphens —
     `state`, `verdict`, `package-commit`, `destination`, `input-named`,
     `investigation-focus`, `coverage-type`, `refusal-class`,
@@ -890,6 +891,64 @@ class TopicBranchRefusedAtRow1(unittest.TestCase):
         finally:
             repository.remove()
 
+    def detached_worktree_at_origin_main(self, repository, name, agent_home):
+        worktree = repository.root / name
+        fixture.git(repository.checkout, "worktree", "add", "-q", "--detach", str(worktree), "origin/main")
+        if agent_home:
+            git_directory = pathlib.Path(
+                fixture.git(worktree, "rev-parse", "--absolute-git-dir").strip())
+            (git_directory / G.AGENT_HOME_MARKER_FILE_NAME).touch()
+        return worktree
+
+    def test_an_agent_home_is_refused_before_anything_runs_and_stays_detached(self):
+        repository = fixture.ThrowawayRepository()
+        try:
+            agent_home = self.detached_worktree_at_origin_main(repository, "agent-home", agent_home=True)
+            head_before = fixture.git(agent_home, "rev-parse", "HEAD")
+            record = G.TopicBranchGitRecord(
+                agent_home, fixture.COMPONENT, fixture.COMPONENT_DIRECTORY, fixture.DESIGN_PATH)
+            machine = M.DesignToMainStateMachineFlow(
+                record, M.ScriptedStateExitLauncher([]), today=lambda: "2026-09-08")
+            with self.assertRaises(M.TopicBranchCutRefused) as refused:
+                machine.start(fixture.COMPONENT)
+            self.assertIn("agent-home", str(refused.exception))
+            self.assertIn("--detach %s origin/main\nThen, in Python code of your own, whether the program that "
+                          "called start(%r) and received this error or a new one" % (
+                              fixture.COMPONENT, fixture.COMPONENT), str(refused.exception))
+            self.assertIn("a new TopicBranchGitRecord (scripts/design-to-main/design-to-main-git-record.py) "
+                          "with the path the command prints as its repository_dir, and the component, "
+                          "component_directory, design_path and topic_branch_start_point of the refused record",
+                          str(refused.exception))
+            self.assertIn("a new DesignToMainStateMachineFlow (scripts/design-to-main/design-to-main-state-machine.py) "
+                          "over the new record, with the launcher the refused flow was given. "
+                          "Then call start(%r) on the new flow, which checks the worktree and returns the run's "
+                          "state record, and pass that record to the new flow's run_until_ended(), whose first step "
+                          "cuts the topic branch in that worktree." % fixture.COMPONENT,
+                          str(refused.exception))
+            self.assertEqual(machine.launcher.launched, [])
+            self.assertEqual(fixture.git(agent_home, "rev-parse", "--abbrev-ref", "HEAD").strip(), "HEAD")
+            self.assertEqual(fixture.git(agent_home, "rev-parse", "HEAD"), head_before)
+            self.assertEqual(fixture.git(agent_home, "branch", "--list", fixture.COMPONENT), "")
+            self.assertEqual(fixture.git(agent_home, "status", "--porcelain"), "")
+            self.assertFalse(record.absolute(record.record_directory).exists())
+        finally:
+            repository.remove()
+
+    def test_a_detached_worktree_that_is_not_an_agent_home_cuts_the_topic_branch_there(self):
+        # The remedy the agent-home refusal names: a worktree detached at origin/main, with no marker.
+        repository = fixture.ThrowawayRepository()
+        try:
+            worktree = self.detached_worktree_at_origin_main(repository, "run-worktree", agent_home=False)
+            machine, run, _, _ = fixture.make_machine(
+                [(T.INITIATE_DESIGN_TO_MAIN, T.V_INVOKED, {})],
+                types.SimpleNamespace(checkout=worktree))
+            fixture.drive(machine, run)
+            self.assertTrue(run.topic_branch_cut)
+            self.assertEqual(fixture.git(worktree, "rev-parse", "--abbrev-ref", "HEAD").strip(),
+                             fixture.COMPONENT)
+        finally:
+            repository.remove()
+
     def test_a_branch_that_already_exists_is_reported_as_a_refusal_and_the_run_does_not_start(self):
         repository = fixture.ThrowawayRepository()
         try:
@@ -1038,7 +1097,7 @@ class AReInvocationFromAFinishedRunsCheckout(unittest.TestCase):
     yet routed: the branch's name says nothing about it, and a stray
     verdict from initiate-design-to-main must be refused exactly as it is
     from `main` — the invoker's uncommitted work kept, the finished run's
-    branch head and its run-state.json untouched."""
+    branch head and its design-to-main-run-state.json untouched."""
 
     def setUp(self):
         self.repository = fixture.ThrowawayRepository()
@@ -1168,6 +1227,10 @@ class AGitFailureIsRaisedNotReadAsAnAnswer(unittest.TestCase):
         self.assertEqual(failed.exception.returncode, 128)
         self.assertIn(STAND_IN_GIT_ERROR, str(failed.exception))
         return failed.exception
+
+    def test_a_failing_look_for_the_agent_home_marker_is_raised_not_read_as_no_agent_home(self):
+        with self.git_failing("rev-parse"):
+            self.assert_raises_git_failure(self.record.require_checkout_is_not_an_agent_home)
 
     def test_a_failing_rev_parse_of_the_start_point_is_not_a_missing_start_point(self):
         with self.git_failing("rev-parse"):

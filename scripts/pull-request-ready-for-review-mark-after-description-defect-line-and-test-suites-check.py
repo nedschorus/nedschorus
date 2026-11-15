@@ -145,7 +145,8 @@ def head_mismatch_next_steps(pull_request, head, runner, git_failed):
         return (f"This checkout is on {on}, not the pull request's branch {branch}: run this "
                 f"again from the checkout that has {branch} checked out; git worktree list "
                 f"names each checkout of this clone with its branch. If no checkout has it, make "
-                f"one with git worktree add <a new directory> {quoted} and run this again there.")
+                f"one with python3 scripts/agent-seat-worktree-create-with-owner-file.py {quoted}, "
+                f"which prints its path, and run this again there.")
     # rev-parse --verify --quiet exits 1 silently only for a commit this clone lacks; an object
     # that is there but unreadable prints an error, with exit 128 or, for a hash mismatch, 1.
     pushed_is_here = git_answers_yes(
@@ -224,9 +225,10 @@ def check_and_mark_ready(number, runner, output):
             f"test files that are not in {name}'s pushed commits. {NOTHING_CHANGED_LINE}\n"
             "The changes, as git status --porcelain lists them:\n"
             + "".join(f"  {line.strip()}\n" for line in changed)
-            + "If the changes belong in the pull request: commit them, run the test suites and "
-            "the mutation pass that CLAUDE.md asks for before a push, push with git push origin "
-            f"HEAD:{shlex.quote(pull_request['headRefName'])}, then run this again.\n"
+            + "If the changes belong in the pull request: commit them, push with git push origin "
+            f"HEAD:{shlex.quote(pull_request['headRefName'])}, then run this again; it runs the test "
+            "suites on the pushed commits, keeps the pull request a draft while any fails, and marks "
+            "it ready for review when they pass.\n"
             "If they do not: set them aside with git stash push -u -m <a name no entry in git "
             "stash list has>, then run this again. Keep them stashed until this command has "
             "marked the pull request ready, even if it refuses again for another reason; then "
@@ -273,9 +275,9 @@ def check_and_mark_ready(number, runner, output):
         raise StepFailed(
             f"the test suites exited with status {status}, {stays_a_draft} The failing suites "
             "are named above.\n"
-            "Fix the cause of each suite's failure and commit the fix. Before you push it, run "
-            "the mutation pass that CLAUDE.md asks for before a push; then push, and run this "
-            "again, which runs the test suites again.\n"
+            "Fix the cause of each suite's failure and commit the fix; then push, and run this "
+            "again: it runs the test suites on the pushed fix, keeps the pull request a draft "
+            "while any fails, and marks it ready for review when they pass.\n"
             "If git or a pre-push hook refuses the push: do what its message says, push again, then "
             "run this again; if it names nothing to do, tell the user, or the agent that dispatched you, "
             "what it printed.")

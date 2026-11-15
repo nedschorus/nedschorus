@@ -44,9 +44,11 @@ when the read itself failed there is no suggestions file, so that line says so
 and the numbers are listed on stderr instead, each with its line
 (user-ruled 2026-09-17, item 5 of nedschorus#418: the walk-me-through skill
 forbids bare numbers, and walk files had carried 33 and 35 of them
-unchecked). Bare file names and the walk's 300-word item cap are deliberately
-not checked, by the same rulings. Every cold-read-cell's own progress -- the
-launcher's stderr, the runtime's stderr, the stray-write and recovery lines --
+unchecked). Bare file names are deliberately not checked, by the same rulings;
+the walk's 300-word item limit is checked by the walk check program,
+nc-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py,
+before it reads an item. Every cold-read-cell's own progress -- the
+launcher's stderr, the agent-binary's stderr, the stray-write and recovery lines --
 is re-emitted on this program's stderr, so a caller watching stdout gets the
 one line and a caller reading stderr gets the whole account.
 
@@ -149,7 +151,7 @@ reviews the copy the reviewer was given, and quotes each of its sentences, so
 the agent triages against those quoted sentences, since a walk draft's copy
 is removed on exit, and carries each fix to the document as it
 now stands, as the cold-read-grid asks for the same event. Since the
-Question 4 cell's claude launcher runs for the whole of the fast-clarify
+Question 4 cell's claude launcher can run for the whole of the fast-clarify
 cell's run, such an edit, like any change in the checkout while the read
 runs, is also printed on stderr as a stray write; it does not fail the read.
 
@@ -200,7 +202,8 @@ other runs: each writes its report into this program's temporary directory,
 and the claude launcher reports as a stray write any file in the checkout
 that changes while it runs. When the cell fails, or gives no answer within
 COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS of its
-start, after which its process group is killed, the section and a line on
+start, after which its process group is killed, even while Questions 1 to 3
+still run, the section and a line on
 stderr say so and why, and the read still delivers Questions 1 to 3 with the
 exit it would have had. When Questions 1 to 3 fail, or the read ends any
 other way without a report, the Question 4 cell's process group is killed if
@@ -224,7 +227,7 @@ import signal
 import subprocess
 import sys
 import tempfile
-import time
+import threading
 import typing
 
 # This file sits in nc-systems/cold-read/, two directories below the root.
@@ -376,7 +379,7 @@ COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 30 
 PROGRAM = "cold-read-fast-read"
 WALK_DRAFT_SUFFIX = "-draft.md"
 # Both endings are the walk-me-through skill's to name; this program only
-# follows them, and scripts/walk-file-endings-match-the-skill-test.py fails
+# follows them, and nc-systems/skills/walk-me-through/tests/walk-file-endings-match-the-skill-test.py fails
 # if these two drift from what .claude/skills/walk-me-through/SKILL.md says.
 WALK_SUGGESTIONS_SUFFIX = "-cold-read-fast-read.md"
 
@@ -1329,7 +1332,21 @@ class WhatShouldBeCodeQuestionCell(typing.NamedTuple):
     answer: pathlib.Path
     launcher_output: pathlib.Path
     target: pathlib.Path
-    deadline: float
+    # The read is busy with Questions 1 to 3 until it waits for this cell, so
+    # a timer, not that wait, stops the cell at its time limit.
+    time_limit_timer: threading.Timer
+    stopped_at_time_limit: threading.Event
+    # The cell's exit code cannot say this: the timer sets it too.
+    section_collected_output: threading.Event
+
+
+def what_should_be_code_cell_stop_at_time_limit(process: subprocess.Popen,
+                                                stopped_at_time_limit: threading.Event) -> None:
+    """Stop the Question 4 cell's process group if it is still running, and
+    mark that it was stopped at its time limit."""
+    if process.poll() is None:
+        stopped_at_time_limit.set()
+        cell_common.stop_process_tree(process)
 
 
 def what_should_be_code_cell_start(target: pathlib.Path, scratch: pathlib.Path) -> WhatShouldBeCodeQuestionCell:
@@ -1356,7 +1373,9 @@ def what_should_be_code_cell_start(target: pathlib.Path, scratch: pathlib.Path) 
           f"{COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS / 60:g} minutes, "
           f"while the fast-clarify cell answers Questions 1 to 3; if Questions 1 to 3 "
           f"finish first, the read waits for Question 4 up to that limit. "
-          f"If the Question 4 cell fails or runs past that time, the report still holds "
+          f"If the Question 4 cell fails, or is still running "
+          f"{COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS / 60:g} minutes "
+          f"from its start, the report still holds "
           f"Questions 1 to 3, and its Question 4 section says why Question 4 was not answered.",
           file=sys.stderr)
     # A file, not a pipe: the launcher's output is read only after it exits.
@@ -1364,22 +1383,35 @@ def what_should_be_code_cell_start(target: pathlib.Path, scratch: pathlib.Path) 
         process = subprocess.Popen(
             command, stdout=output, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
             cwd=REPO_ROOT, start_new_session=True)
+    stopped_at_time_limit = threading.Event()
+    time_limit_timer = threading.Timer(
+        COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS,
+        what_should_be_code_cell_stop_at_time_limit, args=(process, stopped_at_time_limit))
+    time_limit_timer.daemon = True
+    time_limit_timer.start()
     return WhatShouldBeCodeQuestionCell(
         process, answer, launcher_output, target,
-        time.monotonic() + COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS)
+        time_limit_timer, stopped_at_time_limit, threading.Event())
 
 
 def what_should_be_code_cell_abandon(cell: WhatShouldBeCodeQuestionCell) -> None:
     """Stop the Question 4 cell's process group, whether or not it is still
     running, re-emit its launcher's output on stderr, and say on stderr that
     its answer is not used."""
+    cell.time_limit_timer.cancel()
     was_running = cell.process.poll() is None
     cell_common.stop_process_tree(cell.process)
     print(cell.launcher_output.read_text(encoding="utf-8"), file=sys.stderr, end="")
-    print(f"{PROGRAM}: Question 4 was abandoned: the read ended with no report to hold "
-          f"its answer; "
-          + ("its cell was still running, and was stopped." if was_running
-             else "its cell had already exited."), file=sys.stderr)
+    if was_running:
+        how_it_ended = "its cell was still running, and was stopped."
+    elif cell.stopped_at_time_limit.is_set():
+        how_it_ended = "its cell was stopped at its time limit."
+    else:
+        how_it_ended = "its cell had already exited."
+    print(f"{PROGRAM}: Question 4 was abandoned: this fast read ended without writing its "
+          f"report, so no report holds Question 4's answer; {how_it_ended}\n"
+          f"The lines above say why the fast read ended; fix that, then run the fast read again.",
+          file=sys.stderr)
 
 
 def what_should_be_code_section(cell: WhatShouldBeCodeQuestionCell) -> str:
@@ -1388,13 +1420,17 @@ def what_should_be_code_section(cell: WhatShouldBeCodeQuestionCell) -> str:
     the heading, then the cell's provenance stamp and answer, or, when the
     cell failed, a paragraph saying so and why, also printed on stderr. A
     failed cell never fails the read."""
-    try:
-        exit_code = cell.process.wait(timeout=max(0.0, cell.deadline - time.monotonic()))
-    except subprocess.TimeoutExpired:
-        exit_code = None
-        cell_common.stop_process_tree(cell.process)
+    # The timer stops the cell at its time limit, so this wait ends by then.
+    cell.process.wait()
+    cell.time_limit_timer.cancel()
+    # Waiting for the timer's thread makes sure it has finished stopping the
+    # cell before its exit code and output are read.
+    if cell.time_limit_timer.is_alive():
+        cell.time_limit_timer.join()
+    exit_code = None if cell.stopped_at_time_limit.is_set() else cell.process.returncode
     output_text = cell.launcher_output.read_text(encoding="utf-8")
     print(output_text, file=sys.stderr, end="")
+    cell.section_collected_output.set()
     if exit_code == 0:
         return (f"\n{WHAT_SHOULD_BE_CODE_QUESTION_REPORT_SECTION_HEADING}\n\n"
                 f"{cell.answer.read_text(encoding='utf-8').strip()}\n")
@@ -1550,7 +1586,7 @@ def main() -> int:
             question_4_cell=question_4_cell)
         try:
             quota_error_line = ""
-            for attempt in range(1, FAST_READ_ATTEMPTS + 1):
+            for attempt in range(1, FAST_READ_ATTEMPTS + 1):  # pragma: no mutate, FAST_READ_ATTEMPTS is even, so | 1 gives + 1
                 exit_code, output = run_one_fast_clarify_cell(
                     AGY_CELL_LAUNCHER, marked_copy, cell_report, prompt_file)
                 if exit_code == 0:
@@ -1592,7 +1628,7 @@ def main() -> int:
                 CLAUDE_CELL_LAUNCHER, exit_code, output)
         finally:
             # Inside the temporary directory: the cell writes there until it stops.
-            if question_4_cell.process.returncode is None:
+            if not question_4_cell.section_collected_output.is_set():
                 what_should_be_code_cell_abandon(question_4_cell)
     if bare_references:
         print(f"{PROGRAM}: bare issue, pull request or task numbers in this walk "

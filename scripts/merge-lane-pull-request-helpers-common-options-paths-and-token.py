@@ -1,7 +1,7 @@
 """What the merge-lane pull request helpers share: their directory options, path resolution and the merge account's token.
 
-Loaded by path by the eight merge-lane-pull-request-* and
-merge-lane-code-review-* scripts beside it; not run on its own.
+Loaded by path by the merge-lane-pull-request-*, merge-lane-code-review-* and
+merge-lane-ghi-md-edit-* scripts beside it; not run on its own.
 
 Every path option is made absolute when the arguments are parsed, before any
 script changes directory or hands a path to git -C, so a relative path means

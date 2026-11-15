@@ -81,6 +81,9 @@ EXEMPT_PROGRAMS = {
     "scripts/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal.py":
         "run only by the git pre-push hook scripts/git-client-side-hooks/pre-push, "
         "which hands it git's arguments and the refs being pushed on stdin",
+    "scripts/run-all-test-suites-one-suite-child-subreaper-launcher.py":
+        "run only by scripts/run-all-test-suites.py, which hands it a suite's command line "
+        "as its arguments, so a first argument --help is a command for it to start",
 }
 
 failures = []
