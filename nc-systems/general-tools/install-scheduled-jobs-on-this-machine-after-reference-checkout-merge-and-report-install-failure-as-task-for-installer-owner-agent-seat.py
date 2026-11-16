@@ -237,11 +237,11 @@ def main(environment=None, argv=None):
                              f"{reference_checkout} && python3 {PROGRAM}` on ned-box, which runs "
                              f"the install again.\n"
                              f"If that install fails again, the program writes the failure as a "
-                             f"task and exits 0 with nothing printed; if it prints a FAILED "
-                             f"message naming the task list directory and exits 1, the write still "
-                             f"fails.\n"
-                             f"If that install exits 0, the program prints nothing and exits 0, "
-                             f"and the failure needs no task."),
+                             f"task on your task list and exits 0 with nothing printed; if it "
+                             f"prints a FAILED message naming the task list directory and exits 1, "
+                             f"the write still fails, so find what else stops it.\n"
+                             f"If that install exits 0, the program prints nothing, writes no task "
+                             f"and exits 0, and nothing needs a task."),
               file=sys.stderr)
         return EXIT_FAILED
     return EXIT_DONE
