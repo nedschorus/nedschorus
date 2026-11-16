@@ -3811,7 +3811,7 @@ def recorded_at_time_or_none(text):
 
 # Tool-messages-to-agent: docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md
 def suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
-        suites, kept_by_suite, directory, now, chosen=()):
+        suites, kept_by_suite, directory, now, chosen):
     """A line saying how many suites' files only strace saw are missing, too old to trust, or
     made only from runs that did not reach every case, with the command that runs each suite
     of the last kind this run did not choose."""
@@ -3854,8 +3854,9 @@ def suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
         which, whose = (("that suite", "whose list was") if len(unchosen) == 1
                         else ("those suites", "each with a list"))
         notice += (f" This run did not run {', '.join(unchosen)}, {whose} made only "
-                   f"from partial runs. Run {which} with the command that ends this line, fix "
-                   f"any failure as you would one in this run, then carry on with your work: "
+                   f"from partial runs. Run {which} with the command that ends this line. Fix a "
+                   f"suite that fails as you would a suite that failed in this run; once every "
+                   f"suite passes, carry on with your work: "
                    f"python3 scripts/run-all-test-suites.py --only-suites-named "
                    f"{' '.join(unchosen)}")
     else:
