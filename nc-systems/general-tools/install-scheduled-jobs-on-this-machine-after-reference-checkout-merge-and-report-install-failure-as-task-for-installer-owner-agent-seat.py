@@ -16,13 +16,25 @@ passed on when it succeeds.
 On ned-box, the program keeps one task on the task list of OWNING_AGENT_SEAT,
 the agent-seat that owns the installer, under the subject
 SCHEDULED_JOBS_INSTALLER_FAILURE_TASK_SUBJECT_FOR_OWNING_AGENT_SEAT_TASK_LIST.
-When the installer exits nonzero, the open task of that subject gets the
-latest exit code and output, or, when none is open, a new task is written with
-agent-seat-task-list-new-pending-task-write-common.py; nothing is printed.
-When the installer exits 0, each open task of that subject is marked
-completed. When the task cannot be written, or the installer failed on the
-Mac, where OWNING_AGENT_SEAT's task list is not, a FAILED message goes to
-standard error instead: git puts it on its own stderr, and
+An open task is one of that subject not marked completed.
+
+When the installer exits nonzero, each open task gets the latest exit code
+and output as its description, or, when none is open, a new task is written
+with agent-seat-task-list-new-pending-task-write-common.py; nothing is
+printed. Every open task is rewritten, not one of them, so none is left
+telling its reader an older failure. When a write fails, the tasks rewritten
+before it hold the new description and the rest keep the old one, and the
+program prints the FAILED message described below.
+
+When the installer exits 0, each open task is marked completed, and nothing
+is printed. When marking one completed fails, it and the open tasks after it
+stay open, the failure is not reported, and the exit is still 0: an open task
+tells its reader to rerun --install, which then shows the install works, and
+the next pull that installs successfully marks them completed.
+
+When the task cannot be written, or the installer failed on the Mac, where
+OWNING_AGENT_SEAT's task list is not, a FAILED message goes to standard error
+instead: git puts it on its own stderr, and
 scripts/checkout-freshness-catch-up.py, which fast-forwards the
 reference-checkout, shows the user any FAILED line there.
 
@@ -32,10 +44,19 @@ Exit codes: 0 not a reference-checkout, the install succeeded, or its failure
 was written as a task; 1 the install failed and no task was written, with the
 FAILED message on standard error.
 
-The environment variables that the three *_TEST_OVERRIDE_ENVIRONMENT_VARIABLE
-constants name replace a path for
+Three environment variables replace a path, for
 tests/install-scheduled-jobs-on-this-machine-after-reference-checkout-merge-and-report-install-failure-as-task-for-installer-owner-agent-seat-test.py,
-which runs no real install.
+which runs no real install:
+  - SCHEDULED_JOBS_INSTALLER_PATH_TEST_OVERRIDE_ENVIRONMENT_VARIABLE names the
+    installer to run, in place of install-scheduled-jobs-on-this-machine.py
+    beside this file;
+  - NED_BOX_REFERENCE_CHECKOUT_PATH_TEST_OVERRIDE_ENVIRONMENT_VARIABLE names
+    ned-box's reference-checkout, in place of ned-box's entry in
+    REFERENCE_CHECKOUT_PATH_BY_MACHINE_NAME; the Mac's entry has no override;
+  - AGENT_SEAT_TASK_LISTS_DIRECTORY_TEST_OVERRIDE_ENVIRONMENT_VARIABLE names the
+    directory that holds every agent-seat's task list, in place of
+    ~/.claude/tasks; OWNING_AGENT_SEAT's list is the directory
+    nedschorus-<OWNING_AGENT_SEAT>-tasks in it.
 """
 
 # Messages here follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
@@ -190,8 +211,6 @@ def main(environment=None, argv=None):
     subject = SCHEDULED_JOBS_INSTALLER_FAILURE_TASK_SUBJECT_FOR_OWNING_AGENT_SEAT_TASK_LIST
     if installed.returncode == 0:
         if list_directory.is_dir():
-            # A task left open still tells its reader to rerun --install, which then shows the
-            # install works; nothing is lost, so a failure to close it is not reported.
             with contextlib.suppress(OSError):
                 for path, task in open_tasks_with_subject(list_directory, subject):
                     agent_seat_task_file.agent_seat_task_list_task_file_rewrite(
@@ -201,17 +220,20 @@ def main(environment=None, argv=None):
     try:
         list_directory.mkdir(parents=True, exist_ok=True)
         open_tasks = open_tasks_with_subject(list_directory, subject)
-        if open_tasks:
-            path, task = open_tasks[0]
+        for path, task in open_tasks:
             agent_seat_task_file.agent_seat_task_list_task_file_rewrite(
                 path, {**task, "description": description})
-        else:
+        if not open_tasks:
             agent_seat_task_list.agent_seat_task_list_new_pending_task_write(
                 list_directory, subject, description)
     except OSError as error:
         print(failed_message(machine, reference_checkout, installed.returncode, output,
                              f"writing the task into the task list directory {list_directory} "
-                             f"failed: {type(error).__name__}: {error}"), file=sys.stderr)
+                             f"failed: {type(error).__name__}: {error}\n"
+                             f"If you are {OWNING_AGENT_SEAT}, put right, on ned-box, what "
+                             f"stopped that write, such as the permissions of {list_directory} "
+                             f"or a file where that directory should be, so that the next failed "
+                             f"install is written as a task again."), file=sys.stderr)
         return EXIT_FAILED
     return EXIT_DONE
 
