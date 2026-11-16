@@ -672,7 +672,7 @@ class Sweep:
                     task = json.loads(path.read_text(encoding="utf-8"))
                 except ValueError:
                     continue
-                if (task.get("status") != "completed"
+                if (task.get("status") != "completed"  # pragma: no mutate, Claude Code writes pending, in_progress or completed, and both others sort after completed, so > says the same
                         and task.get("subject") == SENT_TEXT_DIFFERS_TASK_SUBJECT):
                     return None
         return agent_seat_task_list.agent_seat_task_list_new_pending_task_write(
@@ -693,7 +693,7 @@ class Sweep:
         text = f"{text}\n\n{DO_NOT_REPLY_SENTENCE}"
         if len(seats) == 1:
             prompt = SENDER_PROMPT.format(seat=seats[0], text=text,
-                                          find_the_entry=FIND_THE_ENTRY.format(seat=seats[0]),
+                                          find_the_entry=FIND_THE_ENTRY.format(seat=seats[0]),  # pragma: no mutate, seats holds one agent-seat here, so [-1] is the same one
                                           keep_the_last_sentence=KEEP_THE_LAST_SENTENCE)
         else:
             prompt = NOTICE_SENDER_PROMPT.format(
