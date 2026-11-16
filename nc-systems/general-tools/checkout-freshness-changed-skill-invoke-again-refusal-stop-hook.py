@@ -74,8 +74,8 @@ REFUSAL_INSTRUCTIONS_TEMPLATE = (
     "once for each note that the main branch changed a skill.\n"
     "If you cannot tell whether you are still following it, invoke it again: that costs one tool call.")
 FROM_NOW_ON_LINE = (
-    "From now on, when a note holding `checkout-freshness: main changed` names a skill you are following, "
-    "invoke that skill again before its next step.")
+    "From now on, when a note holding `checkout-freshness: main changed` anywhere in its text names a skill you "
+    "are following, invoke that skill again before its next step.")
 
 # Only lines holding one of these are parsed: every record the checks read holds one.
 CANDIDATE_LINE_MARKERS = (b'"Skill"', b"<command-name>/", b"checkout-freshness", b"changed-skill check")
@@ -218,12 +218,13 @@ def main():
     try:
         output = run(sys.stdin.read())
     except Exception as error:
-        print(f"checkout-freshness-changed-skill-invoke-again-refusal-stop-hook: the hook failed, so it did not "
-              f"check whether the main branch changed a skill this agent-session invoked: {error!r}. Your turn can "
-              f"still end. If a note holding `checkout-freshness: main changed` named a "
-              f"skill you have not invoked again since that note, and whose steps you will still act on in this "
-              f"agent-session: invoke that skill again with the Skill tool before you act on the skill's next "
-              f"step.",
+        print(f"nc-systems/general-tools/checkout-freshness-changed-skill-invoke-again-refusal-stop-hook.py: the "
+              f"hook failed, so it did not check whether the main branch changed a skill this agent-session "
+              f"invoked: {error!r}. Claude Code still ends your turn. When you next act in this "
+              f"agent-session, first look back through your context: if text added to it earlier in this agent-session, holding `checkout-freshness: main "
+              f"changed` anywhere in it, named a skill you have not invoked again since, and whose steps you will "
+              f"still act on in this agent-session: invoke that skill again with the Skill tool, which loads its "
+              f"new text, before you act on the skill's next step.",
               file=sys.stderr)
         return 1
     if output is not None:

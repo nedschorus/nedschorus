@@ -44,8 +44,8 @@ NO_LONGER_FOLLOWING_LINE = (f"If you are no longer following the {SKILL} skill: 
                             "hook refuses only once for each note that the main branch changed a skill.")
 UNSURE_LINE = "If you cannot tell whether you are still following it, invoke it again: that costs one tool call."
 REASON_LINE_START = "This checkout already holds the new text"
-FROM_NOW_ON_LINE = ("From now on, when a note holding `checkout-freshness: main changed` names a skill you are "
-                    "following, invoke that skill again before its next step.")
+FROM_NOW_ON_LINE = ("From now on, when a note holding `checkout-freshness: main changed` anywhere in its text "
+                    "names a skill you are following, invoke that skill again before its next step.")
 
 FAILURES = []
 
@@ -240,7 +240,8 @@ def main():
         check("a transcript that cannot be read: exit 1, one stderr line saying the check did not run",
               code == 1 and stdout == "" and "the hook failed, so it did not check" in stderr
               and "invoke that skill again with the Skill tool" in stderr
-              and "named a skill you have not invoked again since that note" in stderr
+              and "holding `checkout-freshness: main changed` anywhere in it, named a skill you have not invoked "
+                  "again since" in stderr
               and len(stderr.strip().split("\n")) == 1, f"exit {code}, stdout {stdout!r}, stderr {stderr!r}")
         code, stdout, stderr = run_hook("not json")
         check("input that is not JSON: exit 1 with a stderr line", code == 1 and stdout == ""
