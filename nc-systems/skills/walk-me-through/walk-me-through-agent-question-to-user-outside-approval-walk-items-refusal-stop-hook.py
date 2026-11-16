@@ -319,7 +319,7 @@ REFUSAL_INSTRUCTIONS = (
     "If the flagged text asks the user to decide or answer something, do these three steps:",
     "1. Add it to the walk-document {document} as an interruption item headed `## <the point of the question>`, "
     "with no number. In the file, place it right after the whole of item {waiting_whole_item}: past that item's "
-    "sub-steps and `#### Withdrawn version` sections, and before the next item below those sub-steps and sections. Under the heading, "
+    "sub-steps and `#### Withdrawn version` sections, and before the next item below those sub-steps and sections, or at the end of the file when no item follows. Under the heading, "
     "give it a line of its own naming "
     "its category, the one for how soon its work must happen, one of {category_tags}, and a line "
     "`{waits_on_tag} <title>` for each item it must follow, as the walk-me-through skill's section "
