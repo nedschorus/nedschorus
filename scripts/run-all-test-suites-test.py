@@ -1387,7 +1387,7 @@ with tempfile.TemporaryDirectory() as scratch:
                   for line in lines(hook_alone.stdout)), hook_alone.stdout)
     check("a run that runs every suite says nothing of the suites' missing lists of files only "
           "strace saw, since only a selective run reads them",
-          not any("have no list of the files only strace saw" in line
+          not any("list of the files only strace saw them read" in line
                   for line in lines(hook_alone.stdout)), hook_alone.stdout)
 
     traced = run(root, "--record-inputs-with-strace", environment_extra=fake,
@@ -1436,8 +1436,8 @@ with tempfile.TemporaryDirectory() as scratch:
           (ran(root), selected.stdout))
     check("a selective run says, on Linux only, that suites have no list of files only strace "
           "saw",
-          any(line.startswith("scripts/run-all-test-suites.py: 2 of 2 suites have no list of the files "
-                              "only strace saw them read from the last 36 hours")
+          any(line.startswith("scripts/run-all-test-suites.py: 2 of 2 suites have no complete "
+                              "list of the files only strace saw them read from the last 36 hours")
               for line in lines(unlisted.stdout)) == sys.platform.startswith("linux"),
           unlisted.stdout)
 
@@ -1544,16 +1544,50 @@ with tempfile.TemporaryDirectory() as scratch:
                    str(root / "session-store"), "--suite-files-only-strace-saw-lists-directory",
                    str(store))
     check("a selective run whose recording carries no skip selects that suite when a file on "
-          "the list differs, and does not name the suite as having no list",
+          "the list differs, and names it apart as having a list made only from partial runs, "
+          "without sending the agent to the user",
           ran(root) == [STRACE_ONLY_SUITE]
-          and not any("have no list of the files only strace saw" in line
-                      for line in lines(selected.stdout)),
+          and any(("a list made only from runs that failed or skipped a case without the mark, "
+                   f"so missing what those cases read, for 1: {STRACE_ONLY_SUITE}") in line
+                  for line in lines(selected.stdout))
+          == sys.platform.startswith("linux")
+          and "tell him" not in selected.stdout,
           (ran(root), selected.stdout))
     run(root, "--record-inputs-with-strace", environment_extra={**fake, "FAKE_STRACE_SAW": "/"},
         driver=FAKE_STRACE_DRIVER)
     check("a traced run that passed and skipped nothing replaces the list, dropping a file it "
           "no longer saw",
           kept_files() == [], kept_files())
+    complete_at = json.loads(next(store.glob(
+        f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json")).read_text())
+    check("that run's list records it as the last run that reached every case",
+          complete_at["last_complete_run_at"] == complete_at["recorded_at"], complete_at)
+    run(root, "--record-inputs-with-strace",
+        environment_extra={**fake, "FAKE_STRACE_SUITE_SKIPS_ANOTHER_CASE": "1"},
+        driver=FAKE_STRACE_DRIVER)
+    after_partial = json.loads(next(store.glob(
+        f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json")).read_text())
+    check("a later partial run keeps the time of the last run that reached every case",
+          after_partial["last_complete_run_at"] == complete_at["recorded_at"]
+          and after_partial["recorded_at"] >= complete_at["recorded_at"], after_partial)
+
+# The kept list is read again just before saving, so a list another run saved while this
+# run's suites ran is joined, not overwritten with the one read when this run started.
+with tempfile.TemporaryDirectory() as scratch:
+    store = pathlib.Path(scratch)
+    partial_recording = {"suite": "a-test.py", "recorded_at": "2026-11-04T10:00:00Z",
+                         "commit": "c", "exit": 1, "skipped_cases": 0,
+                         "skipped_cases_this_machine_cannot_run": 0,
+                         "files_only_strace_saw": ["seen-now.txt"]}
+    module.files_only_strace_saw_file_for(store, "a-test.py").write_text(json.dumps(
+        {"suite": "a-test.py", "recorded_at": "2026-11-04T09:00:00Z", "commit": "b",
+         "last_complete_run_at": "2026-11-04T09:00:00Z",
+         "files_only_strace_saw": ["saved-meanwhile.txt"]}))
+    module.save_files_only_strace_saw(store, partial_recording)
+    saved = module.load_files_only_strace_saw(store, "a-test.py")
+    check("a partial run's save joins the list on disk at the time it saves",
+          saved["files_only_strace_saw"] == ["saved-meanwhile.txt", "seen-now.txt"]
+          and saved["last_complete_run_at"] == "2026-11-04T09:00:00Z", saved)
 
 # Only the scheduled full run records these lists, once a day; a list older than the limit, or
 # none, means the scheduled run has not run the suite, and the run says so.
@@ -1610,6 +1644,26 @@ check("when no suite has a list, the agent is told to tell the user, with the lo
           "run's lists are stale: tell him" in notice
       and "nedlern@ned-box:/home/nedlern/nedschorus-logs/scheduled-full-test-runs-of-main/ned-box/." in notice,
       notice)
+notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+    ["a-test.py", "b-test.py", "c-test.py"],
+    {"a-test.py": kept_hours_before_now(35),
+     "b-test.py": {**kept_hours_before_now(1), "last_complete_run_at": None},
+     "c-test.py": {**kept_hours_before_now(1),
+                   "last_complete_run_at": (NOW - datetime.timedelta(hours=40)).strftime(
+                       "%Y-%m-%dT%H:%M:%SZ")}},
+    pathlib.Path("/store"), NOW)
+check("a fresh list made only from partial runs in the last 36 hours is named apart, by "
+      "suite, and the agent is not sent to the user; a list kept before the field existed "
+      "counts as complete",
+      notice is not None and notice.startswith("scripts/run-all-test-suites.py: 2 of 3 suites")
+      and "(a list made only from runs that failed or skipped a case without the mark, so "
+          "missing what those cases read, for 2: b-test.py, c-test.py)" in notice
+      and "\n" not in notice and "tell him" not in notice,
+      notice)
+check("the passage on the notice's user sentence calls it the quoted text",
+      "A subagent passes the quoted text to the agent that dispatched it instead."
+      in module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+          ["a-test.py"], {}, pathlib.Path("/store"), NOW), None)
 with tempfile.TemporaryDirectory() as scratch:
     store = pathlib.Path(scratch)
     for name, body in (("not-json", "{"), ("no-list", '{"recorded_at": "2026-11-04T00:00:00Z"}'),
