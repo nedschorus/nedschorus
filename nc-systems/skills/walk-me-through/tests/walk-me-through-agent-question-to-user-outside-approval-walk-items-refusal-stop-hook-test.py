@@ -642,6 +642,16 @@ def test_a_failed_model_check_blocks():
         os.environ.pop("FAKE_CLAUDE_CALLS", None)
 
 
+def test_a_question_above_a_label_subheading_in_an_interruption_item_is_held():
+    stray = "merge-lane-2 asks: should I file one GHI listing the remaining seats' tests?"
+    item = INTERRUPTION_ITEM.replace("Recommendation: File it.", "#### Item 2.1: details\n\nMore.\n\nRecommendation: File it.")
+    case = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + item, minutes="#next_to_present item 2 of 11")
+    case.records(PEER_PROMPT, text_record(stray),
+                 text_record("I added it as Item 2.1 of 11.\n\nItem 2 of 11 is waiting for your answer."))
+    check_silent("a question above a `#### Item 2.1: details` subheading in interruption item 2.1 is still the item's, "
+                 "so it passes", case.run(model="yes"))
+
+
 def test_a_question_held_in_an_interruption_item_is_not_checked():
     stray = "merge-lane-2 asks: should I file one GHI listing the remaining seats' tests?"
     closing = "I added it as Item 2.1 of 11.\n\nItem 2 of 11 is waiting for your answer."

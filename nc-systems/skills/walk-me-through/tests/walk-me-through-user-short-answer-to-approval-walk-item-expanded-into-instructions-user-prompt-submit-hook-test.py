@@ -2162,6 +2162,15 @@ def test_a_label_heading_inside_a_shared_heading_keeps_the_shared_heading_items_
           shown.endswith("Recommendation: do item 1.") and "Item 2" not in shown, shown)
 
 
+def test_a_label_heading_in_a_withdrawn_version_opens_no_item():
+    document = ("# A walk\n\n## Items 1 and 2 of 3\n\n#### Withdrawn version 1 of item 1\n\n#### Item 1: old\n\n"
+                "Recommendation: old.\n\n**Item 1 of 3**\n\nRecommendation: new.\n\n**Item 2 of 3**\n\n"
+                "Recommendation: do item 2.\n")
+    shown, _ = finder_shown_text(document, "1")
+    check("a `#### Item 1: old` heading after a Withdrawn heading that names item 1 is the withdrawn version's own "
+          "and opens no item, so item 1's text holds none of the withdrawn version", "old" not in shown, shown)
+
+
 def test_a_heading_that_ends_a_shared_heading_unit_ends_its_group_too():
     finder = load_walk_finder_for_test()
     parser = finder.markdown_parser()
