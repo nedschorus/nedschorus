@@ -543,8 +543,9 @@ suite depends on. Two recorders, whose findings are added together:
   list differs. A run with the audit hook alone records the files on the
   list among the files read, with their blob hashes in its checkout. A
   strace run in which the suite failed or skipped a case without the mark
-  adds the files it saw to the last list, since it saw only part of what the
-  suite reads. A selective run on Linux names how many suites have no list
+  saw only part of what the suite reads, so it adds the files it saw to the
+  last list, or starts the list when there is none; a strace run that passed
+  and skipped only marked cases replaces the list. A selective run on Linux names how many suites have no list
   from a strace run in the last
   FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE hours, which a
   suite added since the last scheduled run, or a missed scheduled run,
@@ -3814,7 +3815,7 @@ def suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
               f"when the change edits a file the suite reads only through git or a shell script. "
               f"scripts/scheduled-full-test-run-of-main.py makes each suite's list once a day on "
               f"ned-box: a suite added since its last run has none yet, and a list older than "
-              f"{hours} hours means that run has not run the suite since. The verdicts of the suites this run ran "
+              f"{hours} hours means the scheduled run has not run the suite since. The verdicts of the suites this run ran "
               f"stand; carry on with your work.")
     # A missing list alone, beside fresh ones, is a suite newer than the last scheduled run.
     if not old and len(missing) < len(recorded):
