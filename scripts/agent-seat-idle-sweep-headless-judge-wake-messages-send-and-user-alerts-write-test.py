@@ -42,6 +42,15 @@ if answer.get("child"):
 time.sleep(answer.get("sleep", 0))
 def emit(event):
     print(json.dumps(event), flush=True)
+if "session_id" in answer:
+    emit({{"type": "system", "subtype": "init", "session_id": answer["session_id"]}})
+if "transcript" in answer:
+    import re
+    project = os.path.join(os.environ["FAKE_CLAUDE_PROJECTS"],
+                           re.sub(r"[^a-zA-Z0-9]", "-", os.path.realpath(os.getcwd())))
+    os.makedirs(project, exist_ok=True)
+    with open(os.path.join(project, answer["session_id"] + ".jsonl"), "w") as stream:
+        stream.write(answer["transcript"])
 text = prompt.split("----------\n", 1)[-1].rsplit("\n----------", 1)[0]
 for number, send in enumerate(answer.get("sends", [])):
     message = {{"@prompt-text": text, "@prompt-text-without-last-paragraph": text.rsplit("\n\n", 1)[0]
@@ -128,6 +137,8 @@ def usage_limit(resets_at, when=LONG_AGO):
 
 
 DONE_TURN = [user("go"), assistant("Done."), turn_end()]
+OWNER_TASKS = "nedschorus-reboot-test-tasks"
+DELIVERY_TASK_SUBJECT = "Idle sweep: a message it sent is missing from the agent-seat's transcript"
 
 
 def send_to(seat, message="@prompt-text", **extra):
@@ -160,6 +171,8 @@ class Machine:
         self.home = self.root / "home"
         for folder in (self.handoffs, self.agents, self.projects, self.tasks, self.home):
             folder.mkdir()
+        self.owner_task_list = self.tasks / OWNER_TASKS
+        self.owner_task_list.mkdir()
         self.claude_json = self.root / "claude.json"
         self.account("account-1")
         self.log = self.root / "log" / "sweep.jsonl"
@@ -218,6 +231,19 @@ class Machine:
         events = [json.loads(line) for line in self.log.read_text().splitlines() if line.strip()]
         return [event for event in events if kind is None or event["event"] == kind]
 
+    def owner_tasks(self):
+        """The tasks on the owning agent-seat's task list, past any file that is not JSON."""
+        tasks = []
+        for path in sorted(self.owner_task_list.glob("*.json")) if self.owner_task_list.is_dir() else []:
+            try:
+                tasks.append(json.loads(path.read_text()))
+            except ValueError:
+                pass
+        return tasks
+
+    def owner_task_subjects(self):
+        return [task["subject"] for task in self.owner_tasks()]
+
     def alerts(self):
         pending = self.home / ".local" / "state" / "nedschorus" / "user-alerts" / "pending"
         return ([json.loads(path.read_text()) for path in sorted(pending.glob("*.json"))]
@@ -236,6 +262,7 @@ class Machine:
                 if not (Path(part) / "claude").exists())
         environment["FAKE_CLAUDE_CALLS"] = str(self.calls)
         environment["FAKE_CLAUDE_ANSWERS"] = str(self.answers)
+        environment["FAKE_CLAUDE_PROJECTS"] = str(self.projects)
         completed = subprocess.run(
             [sys.executable, str(PROGRAM), "--now", at(minutes), "--handoff-directory",
              str(self.handoffs), "--agents-root", str(self.agents), "--projects-root",
@@ -277,10 +304,12 @@ check("a run inside the delivery check's minute and the wait's 15 minutes does n
       code == 0 and not machine.claude_calls() and not machine.events("delivery_checked"),
       machine.events())
 code, _ = machine.run(2)
-check("the message missing from the transcript of an idle agent-seat: a user-alert, exit 1",
+check("the message missing from the transcript of an idle agent-seat: a task for reboot-test, no "
+      "user-alert, exit 1",
       code == 1 and [event["found"] for event in machine.events("delivery_checked")] == [False]
-      and len(machine.alerts()) == 1 and "did not reach alpha" in machine.alerts()[0]["title"],
-      (machine.events("delivery_checked"), machine.alerts()))
+      and not machine.alerts() and machine.owner_task_subjects() == [DELIVERY_TASK_SUBJECT]
+      and "sent alpha its nudge message" in machine.owner_tasks()[0]["description"],
+      (machine.events("delivery_checked"), machine.alerts(), machine.owner_tasks()))
 machine.script(sent_ok())
 code, _ = machine.run(16)
 calls = machine.claude_calls()
@@ -299,20 +328,20 @@ machine.append("alpha", cross_session(escalation, at(16.2)), assistant("Still wa
                turn_end(at(16.4)))
 machine.script()
 code, _ = machine.run(18)
-check("the message found in the agent-seat's transcript: no user-alert",
+check("the message found in the agent-seat's transcript: no user-alert, no second task",
       [event["found"] for event in machine.events("delivery_checked")] == [False, True]
-      and len(machine.alerts()) == 1, machine.events("delivery_checked"))
+      and not machine.alerts() and len(machine.owner_tasks()) == 1, machine.events("delivery_checked"))
 code, _ = machine.run(31.5)
 check("idle again 15 minutes after the escalation: the user is told, and no message is sent",
-      not machine.claude_calls() and len(machine.alerts()) == 2
-      and "after a nudge and an escalation" in machine.alerts()[1]["title"], machine.alerts())
+      not machine.claude_calls() and len(machine.alerts()) == 1
+      and "after a nudge and an escalation" in machine.alerts()[0]["title"], machine.alerts())
 check("a text-only reply keeps the wait, and the user-alert counts the minutes from when the "
       "agent-seat first went idle, not from the reply",
-      len(machine.alerts()) == 2 and machine.alerts()[1]["title"].startswith(
+      len(machine.alerts()) == 1 and machine.alerts()[0]["title"].startswith(
           "alpha has been idle 41 minutes after"), machine.alerts())
 code, _ = machine.run(40)
 check("after telling the user, nothing more while the agent-seat spends no tokens",
-      not machine.claude_calls() and len(machine.alerts()) == 2, machine.alerts())
+      not machine.claude_calls() and len(machine.alerts()) == 1, machine.alerts())
 machine.append("alpha", user("more", at(41)), assistant("Back to it.", at(41.5)), turn_end(at(42)))
 machine.script(sent_ok())
 code, _ = machine.run(48)
@@ -848,9 +877,11 @@ for case, answer in (("an index missing", {"sentences": []}),
     machine.seat("alpha", [user("go"), assistant(ANNOUNCED), turn_end()])
     machine.script({"answer": answer})
     code, _ = machine.run(0)
-    check(f"rule 2, the judge's answer with {case}: a user-alert, exit 1, nothing sent",
-          code == 1 and len(machine.alerts()) == 1 and not machine.events("message_sent"),
-          (code, machine.alerts()))
+    check(f"rule 2, the judge's answer with {case}: a task for reboot-test, no user-alert, exit 1, "
+          "nothing sent",
+          code == 1 and not machine.alerts() and machine.owner_task_subjects()
+          == ["Idle sweep: a headless agent-session failed: the judge's answer could not be used"]
+          and not machine.events("message_sent"), (code, machine.alerts(), machine.owner_tasks()))
 
 # --- rule 1: a usage limit ------------------------------------------------------------------------
 RESET_PASSED = int(START.timestamp()) - 60
@@ -923,10 +954,14 @@ check("an unreadable ~/.claude.json is logged as a read failure, not a change",
       not machine.claude_calls() and machine.events("read_failure")
       and len(machine.events("account_seen")) == 1, machine.events())
 code, _ = machine.run(4)
-check("an unreadable ~/.claude.json still unreadable minutes later: one user-alert",
-      len(machine.alerts()) == 1 and "cannot read" in machine.alerts()[0]["title"], machine.alerts())
+check("an unreadable ~/.claude.json still unreadable minutes later: a task for reboot-test, no "
+      "user-alert",
+      not machine.alerts() and len(machine.owner_tasks()) == 1
+      and machine.owner_task_subjects()[0].startswith("Idle sweep: cannot read what it needs: "),
+      (machine.alerts(), machine.owner_tasks()))
 machine.run(5)
-check("a read failure is alerted once", len(machine.alerts()) == 1, machine.alerts())
+check("a read failure gets one task while it is open",
+      not machine.alerts() and len(machine.owner_tasks()) == 1, machine.owner_tasks())
 
 machine = Machine()
 machine.seat("alpha", [user("go"), usage_limit(RESET_PASSED + 86400)])
@@ -938,32 +973,24 @@ machine.run(1)
 check("a notice the headless agent-session did not send: no second wake at the limit",
       len(machine.claude_calls()) == 1 and len(machine.events("limit_wake")) == 1, machine.events())
 code, _ = machine.run(3)
-check("a notice missing from a listed agent-seat's transcript: a user-alert, exit 1",
-      code == 1 and len(machine.alerts()) == 1 and "account notice" in machine.alerts()[0]["title"],
-      machine.alerts())
+check("a notice missing from a listed agent-seat's transcript: a task for reboot-test, exit 1",
+      code == 1 and not machine.alerts() and machine.owner_task_subjects() == [DELIVERY_TASK_SUBJECT]
+      and "its account notice message" in machine.owner_tasks()[0]["description"],
+      (machine.alerts(), machine.owner_tasks()))
 
 # --- a sender that sends a text other than the one code wrote --------------------------------------
 # Every such case seen dropped the do-not-reply sentence and still reached the agent-seat.
-OWNER_TASKS = "nedschorus-ned-box-helper-tasks"
 SENT_TEXT_TASK_SUBJECT = "Idle sweep: a headless sender sent a text other than the one code wrote"
 DROPPED = send_to("alpha", "@prompt-text-without-last-paragraph")
 
 
 def owner_tasks(machine):
-    directory = machine.tasks / OWNER_TASKS
-    tasks = []
-    for path in sorted(directory.glob("*.json")) if directory.is_dir() else []:
-        try:
-            tasks.append(json.loads(path.read_text()))
-        except ValueError:
-            pass
-    return tasks
+    return machine.owner_tasks()
 
 
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
 machine.handoff_put_off()
-(machine.tasks / OWNER_TASKS).mkdir()
 (machine.tasks / OWNER_TASKS / "7.json").write_text("{not json")
 machine.script({"sends": [DROPPED], "answer": {"sent": True, "reason": "r"}})
 code, output = machine.run(0)
@@ -979,7 +1006,7 @@ check("a sender that drops the do-not-reply sentence: the text code wrote and th
 check("a sender that drops the do-not-reply sentence: the send is logged with the text sent, for the "
       "delivery check", len(sent) == 1 and sent[0]["text"] == differs[0]["sent_text"], sent)
 tasks = owner_tasks(machine)
-check("a sender that drops the do-not-reply sentence: ned-box-helper gets a pending task, past a task "
+check("a sender that drops the do-not-reply sentence: reboot-test gets a pending task, past a task "
       "file that is not JSON",
       len(tasks) == 1 and tasks[0]["subject"] == SENT_TEXT_TASK_SUBJECT
       and tasks[0]["status"] == "pending" and str(machine.log) in tasks[0]["description"]
@@ -1004,18 +1031,20 @@ machine.handoff_put_off("s-2")
 machine.seat("alpha", DONE_TURN, session="s-2")
 machine.run(40)
 check("a difference after the task is completed: a new task",
-      [event["task_id"] for event in machine.events("owning_agent_seat_task_opened")] == [8, 9],
+      [event["task_id"] for event in machine.events("owning_agent_seat_task_opened")
+       if event["subject"] == SENT_TEXT_TASK_SUBJECT] == [8, 10],
       machine.events("owning_agent_seat_task_opened"))
 
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
 machine.handoff_put_off()
+machine.owner_task_list.rmdir()
 machine.script({"sends": [DROPPED], "answer": {"sent": True, "reason": "r"}})
 code, _ = machine.run(0)
 alerts = machine.alerts()
 check("a difference whose task cannot be written: one user-alert naming the error, without the "
       "claude -p remedy, exit 1",
-      code == 1 and len(alerts) == 1 and "could not give ned-box-helper a task" in alerts[0]["title"]
+      code == 1 and len(alerts) == 1 and "could not give reboot-test a task" in alerts[0]["title"]
       and "FileNotFoundError" in json.dumps(alerts[0]) and "claude -p" not in json.dumps(alerts[0])
       and len(machine.events("sent_text_differs_from_code_text")) == 1
       and len(machine.events("message_sent")) == 1, (code, alerts))
@@ -1023,20 +1052,20 @@ check("a difference whose task cannot be written: one user-alert naming the erro
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
 machine.handoff_put_off()
-(machine.tasks / OWNER_TASKS).mkdir()
 machine.script({"sends": [DROPPED, send_to("beta")], "answer": {"sent": True, "reason": "r"}})
 code, _ = machine.run(0)
 failed = machine.events("headless_failed")
-check("a difference beside a send to another entry: the difference goes to the task, the other "
-      "entry to a user-alert",
-      code == 1 and len(machine.events("sent_text_differs_from_code_text")) == 1 and len(owner_tasks(machine)) == 1
+check("a difference beside a send to another entry: each goes to a task of its own, no user-alert",
+      code == 1 and len(machine.events("sent_text_differs_from_code_text")) == 1
+      and machine.owner_task_subjects() == [
+          SENT_TEXT_TASK_SUBJECT, "Idle sweep: a headless agent-session failed: the sender's "
+          "SendMessage calls were not the sends code asked for"]
       and len(failed) == 1 and failed[0]["problem"] == "sent to 'beta [abc123]', which is not alpha"
-      and len(machine.alerts()) == 1, (failed, machine.alerts()))
+      and not machine.alerts(), (failed, machine.alerts(), machine.owner_tasks()))
 
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
 machine.seat("beta", DONE_TURN)
-(machine.tasks / OWNER_TASKS).mkdir()
 machine.run(0)
 machine.account("account-2")
 machine.script({"sends": [DROPPED, send_to("beta")], "answer": {"sent": True, "reason": "r"}})
@@ -1053,7 +1082,6 @@ check("an account notice sent to one agent-seat with another text: logged, a tas
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
 machine.seat("beta", DONE_TURN)
-(machine.tasks / OWNER_TASKS).mkdir()
 machine.run(0)
 machine.account("account-2")
 machine.script({"sends": [send_to("beta"), DROPPED], "answer": {"sent": True, "reason": "r"}})
@@ -1070,7 +1098,6 @@ check("an account notice whose last send went to another agent-seat: each agent-
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
 machine.handoff_put_off()
-(machine.tasks / OWNER_TASKS).mkdir()
 machine.script({"sends": [send_to("alpha", "~ another text"), send_to("alpha")],
                 "answer": {"sent": True, "reason": "r"}})
 code, _ = machine.run(0)
@@ -1089,7 +1116,6 @@ def owner_task_file_write(machine, name, subject, status="pending"):
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
 machine.handoff_put_off()
-(machine.tasks / OWNER_TASKS).mkdir()
 owner_task_file_write(machine, "1.json", "A" + SENT_TEXT_TASK_SUBJECT)
 owner_task_file_write(machine, "2.json", SENT_TEXT_TASK_SUBJECT + " too")
 machine.script({"sends": [DROPPED], "answer": {"sent": True, "reason": "r"}})
@@ -1101,7 +1127,6 @@ check("open tasks whose subjects sort before and after the sent-text task's: a n
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
 machine.handoff_put_off()
-(machine.tasks / OWNER_TASKS).mkdir()
 for name in ("1.json", "2.json"):
     (machine.tasks / OWNER_TASKS / name).write_text("")
 # The program reads the task files in the order glob lists them, which the file system sets.
@@ -1168,16 +1193,21 @@ for case, answer, words in FAILURES + EXACT_FAILURES:
                                     if case == "runs past its time" else ()))
     failed = machine.events("headless_failed")
     exact = (case, answer, words) in EXACT_FAILURES
-    check(f"a sender that {case}: logged, a user-alert, exit 1, no delivery check pending",
+    tasks = machine.owner_tasks()
+    check(f"a sender that {case}: logged, a task for reboot-test, no user-alert, exit 1, no "
+          "delivery check pending",
           code == 1 and len(failed) == 1
           and (failed[0]["problem"] == words if exact else words in failed[0]["problem"])
-          and len(machine.alerts()) == 1 and not machine.events("message_sent"),
-          (code, output, failed, machine.alerts()))
+          and not machine.alerts() and len(tasks) == 1
+          and tasks[0]["subject"].startswith("Idle sweep: a headless agent-session failed: ")
+          and failed[0]["problem"] in tasks[0]["description"]
+          and not machine.events("message_sent"),
+          (code, output, failed, machine.alerts(), tasks))
     if case == "exits nonzero":
         machine.script({"exit": 1})
         machine.run(1)
         check("a failed send is not retried every minute: the wait goes on to its next step",
-              not machine.claude_calls() and len(machine.alerts()) == 1, machine.claude_calls())
+              not machine.claude_calls() and len(machine.owner_tasks()) == 1, machine.claude_calls())
 
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
@@ -1220,16 +1250,20 @@ machine.run(0)
 machine.script(usage_limit_exit("c28e3474-6909-42c5-a3e7-fc096dd93dfe", 402))
 code, _ = machine.run(16)
 problems = [event["problem"] for event in machine.events("headless_failed")]
-check("one usage limit failing the judge twice in a day, with different text from claude each "
-      "time: both failures logged, one user-alert",
-      code == 1 and len(problems) == 2 and problems[0] != problems[1]
-      and len(machine.alerts()) == 1, (code, problems, machine.alerts()))
+check("one usage limit with no transcript to read its reset time from, failing the judge twice, "
+      "with different text from claude each time: both failures logged, one task, no pause",
+      code == 1 and len(problems) == 2 and problems[0] != problems[1] and not machine.alerts()
+      and machine.owner_task_subjects()
+      == ["Idle sweep: a headless agent-session failed: claude exited 1: usage_limit_reached"]
+      and not machine.events("headless_usage_limit_pause"),
+      (code, problems, machine.alerts(), machine.owner_tasks()))
 machine.script({"exit": 1, "stderr": "Invalid API key · Please run /login"})
 machine.run(32)
-check("another cause the same day for the same agent-seat: a second user-alert",
-      len(machine.events("headless_failed")) == 3 and len(machine.alerts()) == 2, machine.alerts())
+check("another cause for the same agent-seat: a second task",
+      len(machine.events("headless_failed")) == 3 and len(machine.owner_tasks()) == 2
+      and not machine.alerts(), machine.owner_tasks())
 
-USAGE_LIMIT_KEY = f"headless-failed:{{seat}}:claude exited 1: usage_limit_reached:{START.date()}"
+USAGE_LIMIT_TASK_SUBJECT = "Idle sweep: a headless agent-session failed: claude exited 1: usage_limit_reached"
 
 
 def machine_with_one_seat(records):
@@ -1253,9 +1287,77 @@ for path, machine, seat, start_minute in (
         ("the sender of the account-change notice", account_changed_machine(), "alpha", 1)):
     machine.script(usage_limit_exit("34551553-ce2f-4bed-88d6-09449375602d", 394))
     code, _ = machine.run(start_minute)
-    keys = [event["key"] for event in machine.events("user_alert")]
-    check(f"{path} at a usage limit: the user-alert is keyed on the cause code names",
-          code == 1 and keys == [USAGE_LIMIT_KEY.format(seat=seat)], (code, keys))
+    tasks = machine.owner_tasks()
+    check(f"{path} at a usage limit: the task's subject is the cause code names",
+          code == 1 and [task["subject"] for task in tasks] == [USAGE_LIMIT_TASK_SUBJECT]
+          and f"for the agent-seat {seat}," in tasks[0]["description"], (code, tasks))
+
+# --- a headless agent-session at a usage limit whose reset time its transcript carries -------------
+RESET_IN_AN_HOUR = int(START.timestamp()) + 3600
+
+
+def usage_limit_exit_with_transcript(resets_at, session_id="headless-1"):
+    """claude at a usage limit, with the transcript Claude Code writes for the headless
+    agent-session: its usage-limit record carries the reset time, when given, in quotaLimits."""
+    record = usage_limit(resets_at)
+    if resets_at is None:
+        del record["quotaLimits"]
+    return dict(usage_limit_exit("34551553-ce2f-4bed-88d6-09449375602d", 394),
+                session_id=session_id, transcript=json.dumps(record) + "\n")
+
+
+def two_seats_with_open_tasks():
+    machine = Machine()
+    for seat in ("alpha", "beta"):
+        machine.seat(seat, DONE_TURN)
+        machine.task(seat, "1")
+    return machine
+
+
+machine = two_seats_with_open_tasks()
+machine.script(usage_limit_exit_with_transcript(RESET_IN_AN_HOUR))
+code, output = machine.run(0)
+pauses = machine.events("headless_usage_limit_pause")
+check("a judge at a usage limit whose reset time its transcript carries: the failure is logged, "
+      "a pause until the reset time, no task, no user-alert",
+      len(machine.events("headless_failed")) == 1 and [event["resets_at"] for event in pauses]
+      == [at(60)] and not machine.owner_tasks() and not machine.alerts(),
+      (code, output, machine.events(), machine.owner_tasks()))
+check("the pause holds in the same invocation: the next agent-seat's judge is not started",
+      len(machine.claude_calls()) == 1, machine.claude_calls())
+machine.script(judged(False), judged(False))
+code, _ = machine.run(30)
+check("the pause holds at the next invocations, before the reset time: no headless agent-session, "
+      "exit 0", code == 0 and not machine.claude_calls() and len(machine.events("headless_failed")) == 1,
+      (code, machine.claude_calls()))
+machine.script(judged(False), judged(False))
+code, _ = machine.run(60)
+check("the reset time passed: the judges run again",
+      code == 0 and len(machine.claude_calls()) == 2, (code, machine.claude_calls()))
+
+machine = two_seats_with_open_tasks()
+machine.script(usage_limit_exit_with_transcript(RESET_IN_AN_HOUR))
+machine.run(0)
+machine.account("account-2")
+machine.script({"sends": [send_to("alpha"), send_to("beta")], "answer": {"sent": True, "reason": "r"}},
+               judged(False))
+code, _ = machine.run(5)
+calls = machine.claude_calls()
+check("the account changed before the reset time: the pause ends, the notice is sent and the "
+      "agent-seat not judged since is judged",
+      code == 0 and len(calls) == 2 and "agent-seat beta has spent no tokens" in calls[1]["prompt"],
+      (code, calls))
+
+for case, resets_at in (("carries no reset time", None),
+                        ("carries a reset time already passed", int(START.timestamp()) - 60)):
+    machine = two_seats_with_open_tasks()
+    machine.script(usage_limit_exit_with_transcript(resets_at), judged(False))
+    code, _ = machine.run(0)
+    check(f"a judge at a usage limit whose transcript {case}: a task for reboot-test, no pause, the "
+          "next agent-seat judged",
+          code == 1 and machine.owner_task_subjects() == [USAGE_LIMIT_TASK_SUBJECT]
+          and not machine.events("headless_usage_limit_pause") and len(machine.claude_calls()) == 2,
+          (code, machine.owner_tasks(), machine.claude_calls()))
 
 # --- delivery while the agent-seat is busy ----------------------------------------------------------
 machine = Machine()
@@ -1328,8 +1430,9 @@ code, _ = machine.run(0)
 check("a read failure seen once: logged, no user-alert", len(machine.events("read_failure")) == 1
       and not machine.alerts(), machine.events())
 code, _ = machine.run(3)
-check("the same read failure minutes later: one user-alert, exit 1",
-      code == 1 and len(machine.alerts()) == 1, (code, machine.alerts()))
+check("the same read failure minutes later: a task for reboot-test, no user-alert, exit 1",
+      code == 1 and not machine.alerts() and len(machine.owner_tasks()) == 1,
+      (code, machine.alerts(), machine.owner_tasks()))
 
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
@@ -1347,10 +1450,23 @@ machine.seat("alpha", DONE_TURN)
 machine.log.parent.mkdir(parents=True)
 machine.log.write_text("{not json\n{}\n")
 code, output = machine.run(0)
-check("an unreadable log: a traceback, exit 1, and a user-alert",
-      code == 1 and "IdleSweepLogLineNotUtf8Json" in output and len(machine.alerts()) == 1, (code, output))
+check("an unreadable log: a traceback, exit 1, and a task for reboot-test, no user-alert",
+      code == 1 and "IdleSweepLogLineNotUtf8Json" in output and not machine.alerts()
+      and len(machine.owner_tasks()) == 1 and machine.owner_task_subjects()[0].startswith(
+          "Idle sweep: an invocation failed: IdleSweepLogLineNotUtf8Json"), (code, output))
 machine.run(1)
-check("the same failed invocation is alerted once", len(machine.alerts()) == 1, machine.alerts())
+check("the same failed invocation gets one task while it is open",
+      len(machine.owner_tasks()) == 1 and not machine.alerts(), machine.owner_tasks())
+for path in machine.owner_task_list.glob("*"):
+    path.unlink()
+machine.owner_task_list.rmdir()
+code, output = machine.run(2)
+check("a failed invocation whose task cannot be written: one user-alert naming both errors",
+      code == 1 and len(machine.alerts()) == 1
+      and "could not give reboot-test a task" in machine.alerts()[0]["alert_text"], machine.alerts())
+machine.run(3)
+check("the same failed invocation, its task still unwritable: alerted once",
+      len(machine.alerts()) == 1, machine.alerts())
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
 machine.log.parent.mkdir(parents=True)
@@ -1460,7 +1576,8 @@ for received, record_of in (
     kind = "a queued_command attachment" if received else "only Claude Code's enqueue record"
     check(f"the message in {kind}: delivery found {received}",
           [event["found"] for event in machine.events("delivery_checked")] == [received]
-          and len(machine.alerts()) == (0 if received else 1), machine.events("delivery_checked"))
+          and len(machine.owner_tasks()) == (0 if received else 1) and not machine.alerts(),
+          machine.events("delivery_checked"))
 
 # --- what a headless agent-session may use -------------------------------------------------------------
 machine = Machine()
@@ -1482,12 +1599,12 @@ machine.task("alpha", "1")
 machine.script(judged(True, "What's going on?"),
                {"sends": [send_to("alpha", is_error=True)], "answer": {"sent": False, "reason": "r"}})
 code, _ = machine.run(0)
-check("a rule 5 message whose send failed: a user-alert, exit 1, the wait started so that the send "
+check("a rule 5 message whose send failed: a task, exit 1, the wait started so that the send "
       "is not retried every minute",
       code == 1
       and any("no SendMessage to alpha" in event["problem"]
               for event in machine.events("headless_failed"))
-      and len(machine.alerts()) == 1 and len(machine.events("wait_step")) == 1
+      and len(machine.owner_tasks()) == 1 and len(machine.events("wait_step")) == 1
       and not machine.events("message_sent"), machine.events())
 
 # --- each event carries the time it was written, not the time the run started ---------------------
@@ -1514,8 +1631,8 @@ machine.script()
 code, _ = machine.run(2)
 check("a read failure logged after an earlier headless agent-session: alerted 2 minutes after the "
       "invocation that logged it",
-      code == 1 and any("for beta" in alert["title"] for alert in machine.alerts()),
-      (code, machine.alerts()))
+      code == 1 and any("the idle sweep skips beta" in task["description"]
+                        for task in machine.owner_tasks()), (code, machine.owner_tasks()))
 
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
@@ -1540,8 +1657,9 @@ machine.seat("alpha", DONE_TURN)
 machine.run(0)
 machine.run(3)
 code, _ = machine.run(5)
-check("a read failure still there after its user-alert: exit 1 again, no second user-alert",
-      code == 1 and len(machine.alerts()) == 1, (code, machine.alerts()))
+check("a read failure still there after its task: exit 1 again, no second task",
+      code == 1 and len(machine.owner_tasks()) == 1 and not machine.alerts(),
+      (code, machine.owner_tasks()))
 
 # --- a headless agent-session past its time is stopped with every process it started --------------
 machine = Machine()
@@ -1650,11 +1768,12 @@ check("a read failure already ended: a second clean run logs no second end",
       == ["read_failure", "read_failure_ended"], machine.events())
 state_file.write_text("{not json")
 code, _ = machine.run(10)
-check("the failure back days later: logged anew, no user-alert at once",
-      len(machine.events("read_failure")) == 2 and not machine.alerts(), machine.alerts())
+check("the failure back days later: logged anew, no task at once",
+      len(machine.events("read_failure")) == 2 and not machine.owner_tasks(), machine.owner_tasks())
 code, _ = machine.run(13)
-check("the failure back, minutes after its return: one user-alert",
-      code == 1 and len(machine.alerts()) == 1, (code, machine.alerts()))
+check("the failure back, minutes after its return: one task",
+      code == 1 and len(machine.owner_tasks()) == 1 and not machine.alerts(),
+      (code, machine.owner_tasks()))
 
 # --- the escalation quotes a nudge of several lines --------------------------------------------------
 machine = Machine()
