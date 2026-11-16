@@ -21,9 +21,10 @@ registered hook that declares no message constant.
 
 An ID belongs to one hook file: the suite fails an ID written in two registered
 hooks, an ID that opens no message constant of its hook, and a `[rule` that is
-not a well-formed ID. Within one hook file, telling one rule from another is
-the author's judgment and the reviewer's: one rule's ID opens each of its
-messages, and two rules there never share an ID.
+not a well-formed ID. Within one hook file, an ID that opens more than one
+message constant must be listed in MESSAGE_VARIANTS_OF_ONE_RULE with exactly
+the constants it opens, so that giving a second rule's message an existing ID
+fails here until an author lists it as a variant and a reviewer sees that.
 """
 import importlib.util
 import re
@@ -265,6 +266,34 @@ HOOKS_THAT_PRINT_NO_RULE_MESSAGE = {
     "scripts/uncommitted-work-snapshot-hook.py": "it speaks only when it could not keep a work-snapshot or write a worktree's owner file, which reports its own failure",
 }
 
+# (hook path, rule ID): every message constant of that hook the ID opens, when it opens
+# more than one; each is a variant of the one rule's message.
+MESSAGE_VARIANTS_OF_ONE_RULE = {
+    (".claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py", "bash-guard-tmux-kill-without-socket-option"): {"REFUSAL_WITHOUT_COMMAND_MESSAGE", "REFUSAL_WITH_COMMAND_TEMPLATE"},
+    (".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py", "bash-guard-git-push-force"): {"DENY_REASON_TEMPLATE", "UNRESOLVED_REASON_TEMPLATE"},
+    (".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py", "bash-guard-gh-issue-body-or-title-set-by-hand"): {"EDIT_BODY_REFUSAL", "EDIT_TITLE_REFUSAL"},
+    (".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py", "bash-guard-gh-issue-comment"): {"CLOSE_WITH_COMMENT_REFUSAL", "COMMENT_REFUSAL", "NO_COMMENTS_LINE", "REOPEN_WITH_COMMENT_REFUSAL"},
+    (".claude/guard-hooks/git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook.py", "bash-guard-git-worktree-remove-record-being-written"): {"RECORD_BEING_WRITTEN_IN_REMOVED_WORKTREE_REFUSAL_TEMPLATE", "REMOVED_WORKTREE_UNRESOLVED_REFUSAL_TEMPLATE"},
+    (".claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py", "guarded-file-changed-without-approval-ask-user-afterward"): {"ASK_HEADER_LINE", "UNAPPROVED_VERSION_REMINDER_MESSAGE"},
+    (".claude/guard-hooks/handoff-deferral-cold-read-full-run-launch-refusal-hook.py", "bash-guard-cold-read-full-run-during-handoff-deferral"): {"COLD_READ_FULL_RUN_REFUSED_AND_SAVED_REASON", "COLD_READ_FULL_RUN_REFUSED_NOT_SAVED_REASON"},
+    (".claude/guard-hooks/instruction-file-guard.py", "write-guard-claude-code-memory-directory-write"): {"MAIN_AGENT_MEMORY_WRITE_DENY_MESSAGE", "SUBAGENT_MEMORY_WRITE_DENY_MESSAGE"},
+    (".claude/guard-hooks/instruction-file-guard.py", "write-guard-guarded-file-edit-needs-approval-marker"): {"DENY_MESSAGE", "MISSING_SESSION_DIRECTORY_DENY_MESSAGE", "PRE_APPROVED_CHANGE_MARKER_WITHOUT_REASON_DENY_MESSAGE", "REUSABLE_PROMPT_DENY_MESSAGE", "REVIEWED_DOCUMENT_DENY_MESSAGE"},
+    (".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py", "bash-guard-search-file-name-read-as-option"): {"REFUSAL_OF_OPTION_VALUE_TEMPLATE", "REFUSAL_WITHOUT_COMMAND_TEMPLATE", "REFUSAL_WITH_COMMAND_TEMPLATE"},
+    (".claude/guard-hooks/session-location-write-guard.py", "write-guard-checkout-without-branch"): {"DETACHED_DENY_MESSAGE", "UNBORN_DENY_MESSAGE"},
+    (".claude/guard-hooks/session-location-write-guard.py", "write-guard-reference-checkout-write"): {"CROSS_REFERENCE_DENY_MESSAGE", "REFERENCE_DENY_MESSAGE"},
+    (".claude/guard-hooks/synthetic-keystroke-guard-hook.py", "bash-guard-tmux-keys-into-attached-session"): {"ATTACHED_REASON", "NESTED_SSH_REASON", "NO_TARGET_REASON", "UNRESOLVED_TARGET_REASON", "UNVERIFIED_REASON"},
+    ("nc-systems/general-tools/pull-request-follow-up-request-from-merge-lane-2-message-save-and-forked-subagent-brief-hand-over-user-prompt-submit-hook.py", "pull-request-follow-up-request-brief-handed-to-author"): {"FOLLOW_UP_BRIEF_OPENING_LINE", "UNREADABLE_BLOCK_LINES"},
+    ("nc-systems/skills/emergency-stop/emergency-stop-file-shown-and-push-and-merge-refusal-hook.py", "emergency-stop-state-shown-to-every-agent-session"): {"IN_FORCE_RULES_NOTICE", "LIFTED_NOTICE"},
+    ("nc-systems/skills/walk-me-through/walk-me-through-agent-reply-to-user-not-ending-with-waiting-item-closing-line-refusal-stop-hook.py", "walk-me-through-reply-ends-with-waiting-item-closing-line"): {"REPLY_LACKS_CLOSING_LINE_OPENING_TEMPLATE", "UNPUBLISHED_OPENING_TEMPLATE", "UNUSABLE_OPENING_TEMPLATE"},
+    ("nc-systems/skills/walk-me-through/walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-user-prompt-submit-hook.py", "walk-me-through-short-answer-expanded-into-instructions"): {"NO_WALK_OPENING_LINE", "OPEN_WALK_OPENING_LINE", "WALK_UNKNOWN_OPENING_LINE"},
+    ("scripts/absence-claim-locator-reminder-hook.py", "absence-claim-run-locator-before-saying-missing"): {"REMINDER_TEMPLATE", "SUBAGENT_REMINDER_TEMPLATE"},
+    ("scripts/bare-number-citation-in-markdown-and-agent-reply-warning-hook.py", "bare-number-pull-request-ghi-or-task-citation-in-markdown-and-reply-warning"): {"MARKDOWN_OPENING_LINES", "PREVIOUS_REPLY_OPENING_LINES", "PREVIOUS_REPLY_SHORT_OPENING_LINES"},
+    ("scripts/bare-number-citation-in-markdown-and-agent-reply-warning-hook.py", "github-link-text-not-matching-item-title-warning"): {"MARKDOWN_TITLE_OPENING_LINES", "PREVIOUS_REPLY_TITLE_OPENING_LINES"},
+    ("scripts/checkout-freshness-catch-up.py", "checkout-freshness-branch-behind-main-update"): {"BEHIND_MAIN_HEADING_TEMPLATE", "REBASED_ONTO_MAIN_TEMPLATE"},
+    ("scripts/checkout-freshness-catch-up.py", "checkout-freshness-changed-instructions-read-again"): {"CLAUDE_MD_CHANGED_NOTICE", "CLAUDE_MD_CHANGED_SHORT_NOTICE", "CLAUDE_MD_CHANGE_UNREADABLE_NOTICE", "INSTRUCTION_FILE_CHANGED_NOTICE", "MOVED_WITHOUT_LIST_NOTICE", "STANDING_INSTRUCTION_DELETED_NOTICE"},
+    ("scripts/handoff-context-threshold-hook.py", "handoff-context-threshold-deferred-while-work-runs"): {"HANDOFF_DEFERRED_NOTICE", "HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE"},
+}
+
 failures = []
 
 
@@ -289,6 +318,25 @@ def message_constants(module):
             texts[name] = "\n".join(value)
     return texts
 
+
+def unlisted_shared_rule_ids(relative_path, constants_of_each_opening_id, variants):
+    """[(rule ID, constants it opens, constants listed for it)] for each ID that opens more than
+    one message constant of the hook other than exactly as `variants` lists it."""
+    return [(rule_id, sorted(names), sorted(variants.get((relative_path, rule_id), set())))
+            for rule_id, names in sorted(constants_of_each_opening_id.items())
+            if len(names) > 1 and set(names) != variants.get((relative_path, rule_id))]
+
+
+check("an ID opening two constants as listed is one rule's variants",
+      unlisted_shared_rule_ids("h.py", {"r": ["A_MESSAGE", "B_MESSAGE"], "s": ["C_MESSAGE"]},
+                               {("h.py", "r"): {"A_MESSAGE", "B_MESSAGE"}}) == [])
+check("a second rule's message given an existing ID fails",
+      unlisted_shared_rule_ids("h.py", {"r": ["A_MESSAGE", "B_MESSAGE", "C_MESSAGE"]},
+                               {("h.py", "r"): {"A_MESSAGE", "B_MESSAGE"}})
+      == [("r", ["A_MESSAGE", "B_MESSAGE", "C_MESSAGE"], ["A_MESSAGE", "B_MESSAGE"])])
+check("an ID opening two unlisted constants fails",
+      unlisted_shared_rule_ids("h.py", {"r": ["A_MESSAGE", "B_MESSAGE"]}, {})
+      == [("r", ["A_MESSAGE", "B_MESSAGE"], [])])
 
 # The pattern, on texts whose answer is known.
 for text, expected in (("[rule bash-guard-git-push-force] Refused on purpose", "bash-guard-git-push-force"),
@@ -332,6 +380,7 @@ check(".claude/settings.json registers hooks for this suite to read", len(hook_p
 
 files_of_each_rule_id = {}
 constants_seen = set()
+variant_groups_seen = set()
 for relative_path in hook_paths:
     source = (REPOSITORY / relative_path).read_text(encoding="utf-8")
     try:
@@ -339,19 +388,28 @@ for relative_path in hook_paths:
     except Exception as error:
         check(f"{relative_path} loads", False, f"{type(error).__name__}: {error}")
         continue
-    opening_ids = set()
+    constants_of_each_opening_id = {}
     for name, text in sorted(message_constants(module).items()):
         constants_seen.add((relative_path, name))
         opening_id = rule_ids.rule_id_at_message_start(text)
         listed = (relative_path, name) in CONSTANTS_THAT_OPEN_NO_RULE_MESSAGE
         if opening_id:
-            opening_ids.add(opening_id)
+            constants_of_each_opening_id.setdefault(opening_id, []).append(name)
+            variant_groups_seen.add((relative_path, opening_id))
             check(f"{relative_path} {name} starts with a rule ID and is not also listed as opening none",
                   not listed, CONSTANTS_THAT_OPEN_NO_RULE_MESSAGE.get((relative_path, name)))
         else:
             check(f"{relative_path} {name} starts with a rule ID, or is listed as opening no rule's message",
                   listed, f"its text starts {text[:80]!r}; start it with `[rule <id>] `, or, when it opens "
                           f"no message for a rule, add it to CONSTANTS_THAT_OPEN_NO_RULE_MESSAGE with the reason")
+    opening_ids = set(constants_of_each_opening_id)
+    check(f"{relative_path}: two rules never share an ID; an ID opening several message constants is "
+          f"listed in MESSAGE_VARIANTS_OF_ONE_RULE with exactly those constants",
+          not unlisted_shared_rule_ids(relative_path, constants_of_each_opening_id, MESSAGE_VARIANTS_OF_ONE_RULE),
+          "(rule ID, constants it opens, constants listed): "
+          f"{unlisted_shared_rule_ids(relative_path, constants_of_each_opening_id, MESSAGE_VARIANTS_OF_ONE_RULE)}; "
+          "give a different rule its own ID, or, when the constants are variants of one rule's message, "
+          "list them for the ID in MESSAGE_VARIANTS_OF_ONE_RULE")
     check(f"{relative_path} writes every `[rule` as a well-formed rule ID",
           rule_ids.malformed_rule_ids_in_source(source) == [], rule_ids.malformed_rule_ids_in_source(source))
     source_ids = rule_ids.rule_ids_in_source(source)
@@ -372,6 +430,9 @@ for rule_id, paths in sorted(files_of_each_rule_id.items()):
 for relative_path, name in sorted(CONSTANTS_THAT_OPEN_NO_RULE_MESSAGE):
     check(f"listed constant {relative_path} {name} is a message constant of a registered hook",
           (relative_path, name) in constants_seen, "remove the stale entry")
+for relative_path, rule_id in sorted(MESSAGE_VARIANTS_OF_ONE_RULE):
+    check(f"listed variants of {rule_id} in {relative_path} are a rule ID of a registered hook",
+          (relative_path, rule_id) in variant_groups_seen, "remove the stale entry")
 for relative_path in sorted(HOOKS_THAT_PRINT_NO_RULE_MESSAGE):
     check(f"listed hook {relative_path} is registered", relative_path in hook_paths, "remove the stale entry")
 
