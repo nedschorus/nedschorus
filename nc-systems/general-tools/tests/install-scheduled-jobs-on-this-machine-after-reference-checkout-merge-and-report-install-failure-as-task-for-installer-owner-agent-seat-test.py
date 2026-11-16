@@ -166,6 +166,37 @@ with tempfile.TemporaryDirectory() as scratch:
           and "FAILED: a later failure" in written[0]["description"]
           and "did not hold" not in written[0]["description"], (code, errors, written))
 
+    for task_id in ("9", "10"):
+        (list_directory / f"{task_id}.json").write_text(json.dumps(
+            {"id": task_id, "subject": SUBJECT, "description": "an older failure",
+             "status": "pending", "blocks": [], "blockedBy": []}), encoding="utf-8")
+    code, calls, printed, errors = run(ned_box_reference=repository, installer_exit=1,
+                                       failed_line="FAILED: with several open", keep_tasks=True)
+    written = {task["id"]: task for task in tasks()}
+    check("a failure while several tasks of the subject are open opens no new task and rewrites "
+          "every open one, 9.json and 10.json alike, with the latest failure",
+          code == 0 and errors == "" and sorted(written) == ["1", "10", "9"]
+          and all("FAILED: with several open" in task["description"]
+                  for task in written.values()), (code, errors, written))
+    for task_id in ("9", "10"):
+        (list_directory / f"{task_id}.json").unlink()
+
+    list_directory.chmod(0o500)
+    try:
+        code, calls, printed, errors = run(ned_box_reference=repository, installer_exit=1,
+                                           failed_line="FAILED: cannot reach the task",
+                                           keep_tasks=True)
+    finally:
+        list_directory.chmod(0o700)
+    written = tasks()
+    check("when the open task cannot be rewritten, the FAILED message goes to stderr with exit "
+          "1, and the task keeps its earlier description",
+          code == 1 and "FAILED — after a merge into ned-box's reference-checkout" in errors
+          and "writing the task into the task list directory" in errors
+          and "PermissionError" in errors and "FAILED: cannot reach the task" in errors
+          and len(written) == 1 and "FAILED: with several open" in written[0]["description"],
+          (code, errors, written))
+
     code, calls, printed, errors = run(ned_box_reference=repository, keep_tasks=True)
     written = tasks()
     check("a successful install marks the open task completed, and prints nothing",
@@ -206,6 +237,13 @@ with tempfile.TemporaryDirectory() as scratch:
           code == 1 and "FAILED — after a merge into ned-box's reference-checkout" in errors
           and "writing the task into the task list directory" in errors
           and "NotADirectoryError" in errors
+          and "\nIf you are reboot-test, put right, on ned-box, what stopped that write, "
+              f"such as the permissions of {not_a_directory}/nedschorus-reboot-test-tasks" in errors
+          and f"Then run `cd {repository} && python3 {after_merge.PROGRAM}` on ned-box, which runs "
+              "the install again.\nIf that install fails again, the program writes the failure as a "
+              "task on your task list and exits 0 with nothing printed" in errors
+          and "\nIf that install exits 0, the program prints nothing, writes no task and exits 0"
+              in errors
           and "If you are any other agent, send this whole message to reboot-test with Claude Code's "
               "SendMessage tool, addressed to reboot-test" in errors
           and "If you are the user, paste this whole message into reboot-test's session." in errors
