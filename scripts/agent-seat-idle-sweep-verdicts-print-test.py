@@ -658,6 +658,27 @@ try:
                                             "workflows": []}
           and verdicts["alpha"]["rule"] == 4, verdicts["alpha"])
 
+    # A parent can instead stop one of the subagent's background commands with TaskStop; the stop is
+    # in the parent's transcript, and only the launch is in the subagent's own.
+    machine = Machine()
+    subagent_with_own_background_command(machine, last_spend_at="2026-11-02T09:19:59Z")
+    project, transcript = machine.seat("alpha", None)
+    with (project / "s-1" / "subagents" / "agent-a1b2.jsonl").open("a") as handle:
+        handle.write(json.dumps(user("", at="2026-11-02T09:06:00Z",
+                                     tool_result={"backgroundTaskId": "bash-10"})) + "\n")
+    stop_result = {"message": "Successfully stopped task: bash-9 (sleep 15 loop)", "task_id": "bash-9",
+                   "task_type": "local_bash", "command": "sleep 15 loop"}
+    with transcript.open("a") as handle:
+        for record in (user("", at="2026-11-02T09:30:00Z", tool_result=stop_result),
+                       assistant("Stopped it."), turn_end()):
+            handle.write(json.dumps(record) + "\n")
+    _, verdicts, _ = machine.run()
+    check("a background command of a subagent that the parent stopped with TaskStop is not among "
+          "the subagent's running commands; one it did not stop still is",
+          [entry.get(fields.SUBAGENT_OWN_RUNNING_BACKGROUND_COMMANDS)
+           for entry in verdicts["alpha"]["running"]["subagents"]]
+          == [[{"id": "bash-10", "started": "2026-11-02T09:06:00Z"}]], verdicts["alpha"])
+
     # Claude Code delivers a notification queued while the session was busy as a queued_command
     # attachment, not as a user record.
     machine = Machine()

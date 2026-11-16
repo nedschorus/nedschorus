@@ -436,7 +436,8 @@ def newest_token_spend_in(path):
     return newest
 
 
-def running_subagent_entry(agent_id, facts, transcript, newest_spend_by_subagent_transcript, now):
+def running_subagent_entry(agent_id, facts, transcript, newest_spend_by_subagent_transcript, now,
+                           task_ids_ended_in_session_transcript):
     """The entry for a subagent the session's records leave running. Claude Code marks a subagent's
     report interim while background commands it launched still run, its final report included, so
     a subagent whose last report is interim and that has spent no token since is reported as
@@ -449,7 +450,8 @@ def running_subagent_entry(agent_id, facts, transcript, newest_spend_by_subagent
         return entry
     own = threshold_hook.work_in_flight(str(own_transcript),
                                         background_task_wait_seconds=float("inf"), now=now,
-                                        should_raise_on_undecodable_bytes=True)
+                                        should_raise_on_undecodable_bytes=True,
+                                        task_ids_ended_in_session_transcript=task_ids_ended_in_session_transcript)
     entry[fields.SUBAGENT_STOPPED_AT] = iso(stopped_at)
     entry[fields.SUBAGENT_OWN_RUNNING_BACKGROUND_COMMANDS] = [
         {"id": task_id, "started": iso(own.launched_at_by_id.get(task_id))}
@@ -687,7 +689,8 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
                 str(transcript), background_task_wait_seconds=float("inf"), now=now)
             running_subagents = [
                 running_subagent_entry(agent_id, facts, transcript,
-                                       newest_spend_by_subagent_transcript, now)
+                                       newest_spend_by_subagent_transcript, now,
+                                       flight.ended_task_ids)
                 for agent_id in flight.subagent_ids]
         except threshold_hook.TranscriptCouldNotBeFullyRead as error:
             raise ReadFailure(f"{error}: it is the last line, still being written, which the next "

@@ -603,7 +603,7 @@ class WorkInFlight:
     """An empty scan must be falsy; a tuple of empty lists would still be truthy."""
 
     def __init__(self, subagent_ids, background_task_ids, workflow_ids=(), launched_at_by_id=None,
-                 launching_subagent_id_by_task_id=None):
+                 launching_subagent_id_by_task_id=None, ended_task_ids=()):
         self.subagent_ids = list(subagent_ids)
         self.background_task_ids = list(background_task_ids)
         self.workflow_ids = list(workflow_ids)
@@ -612,6 +612,9 @@ class WorkInFlight:
         # Claude Code's list drops a subagent while it waits on its own shell task, so the deferral
         # waits for that task in its place.
         self.launching_subagent_id_by_task_id = dict(launching_subagent_id_by_task_id or {})
+        # A subagent's background command can end in the session's transcript, by a TaskStop there,
+        # while only the subagent's own transcript records its launch.
+        self.ended_task_ids = frozenset(ended_task_ids)
 
     def __bool__(self):
         return bool(self.subagent_ids or self.background_task_ids or self.workflow_ids)
@@ -659,7 +662,8 @@ def spawned_subagent_ids_in_flight(transcript_path: str) -> list:
 
 def work_in_flight(transcript_path: str, background_task_wait_seconds=None,
                    now=None, should_read_subagent_own_transcripts=True,
-                   should_raise_on_undecodable_bytes=False) -> WorkInFlight:
+                   should_raise_on_undecodable_bytes=False,
+                   task_ids_ended_in_session_transcript=frozenset()) -> WorkInFlight:
     """Return running subagents, Workflow-tool runs and background tasks in launch order.
 
     A Workflow-tool run counts from its launch until a final task-notification or a TaskStop names
@@ -673,6 +677,8 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds=None,
     not UTF-8 anywhere in the file, instead of reading past them.
     background_task_wait_seconds=None gives each background task its kind's wait-limit, from the
     command of the Bash call that launched it; a number gives every task that wait instead.
+    When transcript_path is a subagent's own transcript, task_ids_ended_in_session_transcript is
+    the session transcript's WorkInFlight.ended_task_ids; those tasks count as ended here too.
     """
     # Scan the whole transcript: a running task may have launched hours before the tail.
     # Unreadable candidates raise; treating an incomplete scan as empty could kill running work.
@@ -742,7 +748,7 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds=None,
         raise TranscriptCouldNotBeFullyRead(f"{path}: {problem}") from problem
 
     finished_ids = {task_id for task_id, interim in last_notification_is_interim.items()
-                    if not interim}
+                    if not interim} | set(task_ids_ended_in_session_transcript)
 
     def still_within_wait(task_id):
         wait_limit_seconds = (
@@ -758,7 +764,8 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds=None,
         if agent_id not in last_notification_is_interim or not should_read_subagent_own_transcripts:
             return True
         return subagent_own_transcript_shows_work_in_flight(
-            subagent_transcript_path(path, agent_id), background_task_wait_seconds, now)
+            subagent_transcript_path(path, agent_id), background_task_wait_seconds, now,
+            finished_ids)
 
     return WorkInFlight(
         [agent_id for agent_id in spawned_ids if subagent_still_in_flight(agent_id)],
@@ -766,6 +773,7 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds=None,
          if task_id not in finished_ids and still_within_wait(task_id)],
         [task_id for task_id in workflow_ids if task_id not in finished_ids],
         launched_at_by_id=launched_at_by_id,
+        ended_task_ids=finished_ids,
     )
 
 
@@ -928,9 +936,10 @@ def subagent_transcript_path(session_transcript_path, agent_id) -> Path:
 
 def subagent_own_transcript_shows_work_in_flight(subagent_path: Path,
                                                  background_task_wait_seconds,
-                                                 now) -> bool:
+                                                 now, task_ids_ended_in_session_transcript) -> bool:
     """Return True while the subagent's own transcript was written within the recent-write
-    window, or shows a background task of its own still within its wait.
+    window, or shows a background task of its own still within its wait that the session
+    transcript, through task_ids_ended_in_session_transcript, does not show ended.
 
     A missing transcript shows neither, so the subagent counts as finished. One that cannot be
     looked up or read, or holds bytes that are not UTF-8, raises TranscriptCouldNotBeFullyRead.
@@ -952,8 +961,11 @@ def subagent_own_transcript_shows_work_in_flight(subagent_path: Path,
                 break
     except (OSError, UnicodeDecodeError) as problem:
         raise TranscriptCouldNotBeFullyRead(f"{subagent_path}: {problem}") from problem
-    return bool(work_in_flight(str(subagent_path), background_task_wait_seconds, now=now,
-                               should_raise_on_undecodable_bytes=True).background_task_ids)
+    return bool(work_in_flight(
+        str(subagent_path), background_task_wait_seconds, now=now,
+        should_raise_on_undecodable_bytes=True,
+        task_ids_ended_in_session_transcript=task_ids_ended_in_session_transcript,
+    ).background_task_ids)
 
 
 def awaited_work_still_in_flight(marker, flight: WorkInFlight) -> bool:
