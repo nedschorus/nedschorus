@@ -2267,7 +2267,8 @@ def remove_one_named_worktree(repo, main_checkout, path):
             continue
         if not removal_never_began(record, listed):
             branch = record.get("branch")
-            if branch and branch != MAIN_BRANCH and commit_of(repo, f"refs/heads/{branch}") != "unknown":
+            if (branch and branch != MAIN_BRANCH
+                    and commit_of(repo, f"refs/heads/{branch}") != "unknown"):  # pragma: no mutate, commit_of returns "unknown" or a hex commit name, and every hex digit sorts before "u", so < gives what != gives
                 failure = push_branch_unless_origin_holds_its_last_commit_failure(repo, branch)
                 if failure is not None:
                     print(f"{Path(path).name}: kept — an earlier run of scripts/clean-worktrees.py "
