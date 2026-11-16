@@ -1552,6 +1552,8 @@ with tempfile.TemporaryDirectory() as scratch:
           == sys.platform.startswith("linux")
           and "tell him" not in selected.stdout,
           (ran(root), selected.stdout))
+    check("a selective run that chose its partial-list suite gives no command to run it again",
+          "--only-suites-named" not in selected.stdout, selected.stdout)
     run(root, "--record-inputs-with-strace", environment_extra={**fake, "FAKE_STRACE_SAW": "/"},
         driver=FAKE_STRACE_DRIVER)
     check("a traced run that passed and skipped nothing replaces the list, dropping a file it "
@@ -1601,13 +1603,13 @@ def kept_hours_before_now(hours):
 notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
     ["a-test.py", "b-test.py", "c-test.sh"],
     {"a-test.py": kept_hours_before_now(35), "b-test.py": kept_hours_before_now(35)},
-    pathlib.Path("/store"), NOW)
+    pathlib.Path("/store"), NOW, ())
 check("no notice when every recorded suite's list is younger than the limit, a shell suite, "
       "which is never recorded, aside", notice is None, notice)
 notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
     ["a-test.py", "b-test.py"],
     {"a-test.py": kept_hours_before_now(35), "b-test.py": kept_hours_before_now(37)},
-    pathlib.Path("/store"), NOW)
+    pathlib.Path("/store"), NOW, ())
 check("a list older than the limit is named, with the time it was recorded, and the agent "
       "is told to tell the user",
       notice is not None and notice.startswith("scripts/run-all-test-suites.py: 1 of 2 suites")
@@ -1619,14 +1621,14 @@ check("a list older than the limit is named, with the time it was recorded, and 
 notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
     ["a-test.py", "b-test.py", "c-test.py"],
     {"a-test.py": kept_hours_before_now(35), "b-test.py": kept_hours_before_now(37)},
-    pathlib.Path("/store"), NOW)
+    pathlib.Path("/store"), NOW, ())
 check("missing and old lists are counted apart",
       notice is not None and notice.startswith("scripts/run-all-test-suites.py: 2 of 3 suites")
       and "(no list for 1; a list older than that for 1, the oldest from 2026-11-02T23:00:00Z)"
       in notice, notice)
 notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
     ["a-test.py", "b-test.py"], {"a-test.py": kept_hours_before_now(35)},
-    pathlib.Path("/store"), NOW)
+    pathlib.Path("/store"), NOW, ())
 check("a missing list beside fresh ones, as a suite added since the last scheduled run has, is "
       "named, with the directory it was looked for in, and the agent is not sent to the user",
       notice is not None and notice.startswith("scripts/run-all-test-suites.py: 1 of 2 suites")
@@ -1635,7 +1637,7 @@ check("a missing list beside fresh ones, as a suite added since the last schedul
       and "\n" not in notice and "tell him" not in notice,
       notice)
 notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
-    ["a-test.py"], {}, pathlib.Path("/store"), NOW)
+    ["a-test.py"], {}, pathlib.Path("/store"), NOW, ())
 check("when no suite has a list, the agent is told to tell the user, with the log-store "
       "directory of the scheduled run's records",
       notice is not None and notice.startswith("scripts/run-all-test-suites.py: 1 of 1 suites")
@@ -1650,7 +1652,7 @@ notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_o
      "c-test.py": {**kept_hours_before_now(1),
                    "last_complete_run_at": (NOW - datetime.timedelta(hours=40)).strftime(
                        "%Y-%m-%dT%H:%M:%SZ")}},
-    pathlib.Path("/store"), NOW)
+    pathlib.Path("/store"), NOW, ())
 check("a fresh list made only from partial runs in the last 36 hours is named apart, by "
       "suite, and the agent is not sent to the user; a list kept before the field existed "
       "counts as complete",
@@ -1660,9 +1662,11 @@ check("a fresh list made only from partial runs in the last 36 hours is named ap
       notice)
 check("a notice naming suites with a list made only from partial runs ends with the command "
       "that runs them, and says what a partial run is, naming the mark",
-      notice.endswith("then carry on with your work: python3 scripts/run-all-test-suites.py "
+      notice.endswith("once every suite passes, carry on with your work: python3 "
+                      "scripts/run-all-test-suites.py "
                       "--only-suites-named b-test.py c-test.py")
-      and "Run those suites with the command that ends this line" in notice
+      and "Run those suites with the command that ends this line. Fix a suite that fails as "
+          "you would a suite that failed in this run;" in notice
       and "a partial run is a strace run of the suite that failed or skipped a case without "
           "the mark [this machine cannot run it]" in notice,
       notice)
@@ -1685,11 +1689,11 @@ check("when this run chose every partial-list suite, the notice gives no run com
 check("a notice with no list made only from partial runs gives no run command",
       "--only-suites-named" not in
       module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
-          ["a-test.py"], {}, pathlib.Path("/store"), NOW), None)
+          ["a-test.py"], {}, pathlib.Path("/store"), NOW, ()), None)
 check("the passage on the notice's user sentence calls it the quoted text",
       "A subagent passes the quoted text to the agent that dispatched it instead."
       in module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
-          ["a-test.py"], {}, pathlib.Path("/store"), NOW), None)
+          ["a-test.py"], {}, pathlib.Path("/store"), NOW, ()), None)
 with tempfile.TemporaryDirectory() as scratch:
     store = pathlib.Path(scratch)
     for name, body in (("not-json", "{"), ("no-list", '{"recorded_at": "2026-11-04T00:00:00Z"}'),
