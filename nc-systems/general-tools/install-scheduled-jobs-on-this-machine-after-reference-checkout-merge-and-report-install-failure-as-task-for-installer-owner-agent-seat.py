@@ -40,6 +40,7 @@ which runs no real install.
 
 # Messages here follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 
+import argparse
 import contextlib
 import importlib.util
 import json
@@ -150,7 +151,11 @@ def open_tasks_with_subject(list_directory, subject):
     return found
 
 
-def main(environment=None):
+def main(environment=None, argv=None):
+    argparse.ArgumentParser(
+        description=__doc__.split("\n\n")[0],
+        epilog="Git runs this from scripts/git-client-side-hooks/post-merge after every merge; "
+               "it takes no options.").parse_args(argv)
     environment = os.environ if environment is None else environment
     reference_checkouts = dict(REFERENCE_CHECKOUT_PATH_BY_MACHINE_NAME)
     if environment.get(NED_BOX_REFERENCE_CHECKOUT_PATH_TEST_OVERRIDE_ENVIRONMENT_VARIABLE):
@@ -212,4 +217,4 @@ def main(environment=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(argv=sys.argv[1:]))

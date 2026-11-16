@@ -120,7 +120,7 @@ with tempfile.TemporaryDirectory() as scratch:
         os.chdir(repository)
         try:
             with redirect_stdout(printed), redirect_stderr(errors):
-                code = after_merge.main(environment)
+                code = after_merge.main(environment, argv=[])
         finally:
             os.chdir(before)
             after_merge.REFERENCE_CHECKOUT_PATH_BY_MACHINE_NAME[after_merge.MAC] = saved_mac
@@ -226,11 +226,22 @@ with tempfile.TemporaryDirectory() as scratch:
     before = os.getcwd()
     os.chdir(outside)
     try:
-        code = after_merge.main({**os.environ, **seams})
+        code = after_merge.main({**os.environ, **seams}, argv=[])
     finally:
         os.chdir(before)
     check("outside any git checkout nothing is done", code == 0 and not installer_log.exists(),
           code)
+
+    reset()
+    helped = subprocess.run(["python3", str(PROGRAM_PATH), "--help"], cwd=repository,
+                            capture_output=True, text=True,
+                            env={**os.environ, **seams, NED_BOX_OVERRIDE: str(repository),
+                                 "STAND_IN_INSTALLER_EXIT": "1"})
+    check("--help prints the usage and exits 0 without running the installer or writing a task, "
+          "even in a reference-checkout",
+          helped.returncode == 0 and helped.stdout.lower().startswith("usage")
+          and not installer_log.exists() and tasks() == [],
+          (helped.returncode, helped.stdout, helped.stderr))
 
     table = json.loads((GENERAL_TOOLS / "scheduled-jobs-on-each-machine.json").read_text())
     check("the reference-checkouts are the clones the scheduled-jobs table runs jobs from",
