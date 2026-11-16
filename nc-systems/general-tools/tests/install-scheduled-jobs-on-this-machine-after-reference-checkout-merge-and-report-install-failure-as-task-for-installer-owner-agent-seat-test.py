@@ -282,4 +282,36 @@ with tempfile.TemporaryDirectory() as scratch:
           merged.returncode == 0 and merged.stderr == "" and not installer_log.exists(),
           (merged.returncode, merged.stderr))
 
+with tempfile.TemporaryDirectory() as scratch_name:
+    # The real hook file, beside stand-ins at the two program paths it runs, so either program
+    # can be made to fail. `git hook run` sends the hook's output to stderr.
+    layout = Path(scratch_name)
+    hook_copy = layout / "scripts" / "git-client-side-hooks" / "post-merge"
+    hook_copy.parent.mkdir(parents=True)
+    hook_copy.write_bytes((HOOKS_DIRECTORY / "post-merge").read_bytes())
+    hook_copy.chmod(0o755)
+    restart_stand_in = (layout / "nc-systems" / "nc-shared-database"
+                        / "nc-shared-database-service-restart-after-merge.py")
+    install_stand_in = layout / "nc-systems" / "general-tools" / PROGRAM_PATH.name
+    for stand_in, variable in ((restart_stand_in, "RESTART_EXIT"), (install_stand_in, "INSTALL_EXIT")):
+        stand_in.parent.mkdir(parents=True, exist_ok=True)
+        stand_in.write_text(f"import os, sys\nprint('{stand_in.name} ran')\n"
+                            f"sys.exit(int(os.environ['{variable}']))\n", encoding="utf-8")
+    hook_repository = layout / "repository"
+    subprocess.run(["git", "init", "-q", str(hook_repository)], check=True)
+    subprocess.run(["git", "-C", str(hook_repository), "config", "core.hooksPath",
+                    str(hook_copy.parent)], check=True)
+    for restart_exit, install_exit, expected_nonzero in (("1", "0", True), ("0", "1", True),
+                                                         ("0", "0", False)):
+        ran = subprocess.run(["git", "-C", str(hook_repository), "hook", "run", "post-merge",
+                              "--", "0"], capture_output=True, text=True,
+                             env={**os.environ, "RESTART_EXIT": restart_exit,
+                                  "INSTALL_EXIT": install_exit})
+        check(f"the real post-merge hook with the restart exiting {restart_exit} and the install "
+              f"exiting {install_exit} runs both and exits "
+              f"{'nonzero' if expected_nonzero else '0'}",
+              (ran.returncode != 0) == expected_nonzero
+              and restart_stand_in.name in ran.stderr and install_stand_in.name in ran.stderr,
+              (ran.returncode, ran.stdout, ran.stderr))
+
 raise SystemExit(1 if failures else 0)

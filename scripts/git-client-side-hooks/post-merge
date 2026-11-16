@@ -3,9 +3,13 @@
 # the nc-shared-database service when a merge into ned-box's reference-checkout
 # changes the service; the second runs the scheduled-jobs installer with
 # --install in either machine's reference-checkout, and hands a failed install
-# to the agent-seat that owns the installer. Both run whatever the
-# other exits, and git ignores this hook's exit code. Git passes one argument,
-# whether the merge was a squash, which neither program needs.
+# to the agent-seat that owns the installer. Both run whatever the other
+# exits, and the hook exits 1 when either failed: git ignores the status, but
+# handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py
+# runs this hook and keeps it for a rerun only on a nonzero status. Git passes
+# one argument, whether the merge was a squash, which neither program needs.
 hooks="$(dirname "$0")"
-python3 "$hooks/../../nc-systems/nc-shared-database/nc-shared-database-service-restart-after-merge.py"
-python3 "$hooks/../../nc-systems/general-tools/install-scheduled-jobs-on-this-machine-after-reference-checkout-merge-and-report-install-failure-as-task-for-installer-owner-agent-seat.py"
+status=0
+python3 "$hooks/../../nc-systems/nc-shared-database/nc-shared-database-service-restart-after-merge.py" || status=1
+python3 "$hooks/../../nc-systems/general-tools/install-scheduled-jobs-on-this-machine-after-reference-checkout-merge-and-report-install-failure-as-task-for-installer-owner-agent-seat.py" || status=1
+exit $status
