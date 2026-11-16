@@ -1547,8 +1547,7 @@ with tempfile.TemporaryDirectory() as scratch:
           "the list differs, and names it apart as having a list made only from partial runs, "
           "without sending the agent to the user",
           ran(root) == [STRACE_ONLY_SUITE]
-          and any(("a list made only from runs that failed or skipped a case without the mark, "
-                   f"so missing what those cases read, for 1: {STRACE_ONLY_SUITE}") in line
+          and any(f"a list made only from partial runs, for 1: {STRACE_ONLY_SUITE}" in line
                   for line in lines(selected.stdout))
           == sys.platform.startswith("linux")
           and "tell him" not in selected.stdout,
@@ -1656,10 +1655,37 @@ check("a fresh list made only from partial runs in the last 36 hours is named ap
       "suite, and the agent is not sent to the user; a list kept before the field existed "
       "counts as complete",
       notice is not None and notice.startswith("scripts/run-all-test-suites.py: 2 of 3 suites")
-      and "(a list made only from runs that failed or skipped a case without the mark, so "
-          "missing what those cases read, for 2: b-test.py, c-test.py)" in notice
+      and "(a list made only from partial runs, for 2: b-test.py, c-test.py)" in notice
       and "\n" not in notice and "tell him" not in notice,
       notice)
+check("a notice naming suites with a list made only from partial runs ends with the command "
+      "that runs them, and says what a partial run is, naming the mark",
+      notice.endswith("then carry on with your work: python3 scripts/run-all-test-suites.py "
+                      "--only-suites-named b-test.py c-test.py")
+      and "Run those suites with the command that ends this line" in notice
+      and "a partial run is a strace run of the suite that failed or skipped a case without "
+          "the mark [this machine cannot run it]" in notice,
+      notice)
+partly_chosen = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+    ["b-test.py", "c-test.py"],
+    {"b-test.py": {**kept_hours_before_now(1), "last_complete_run_at": None},
+     "c-test.py": {**kept_hours_before_now(1), "last_complete_run_at": None}},
+    pathlib.Path("/store"), NOW, ["b-test.py"])
+check("the run command names only the partial-list suites this run did not choose",
+      partly_chosen.endswith("--only-suites-named c-test.py")
+      and "This run did not run c-test.py," in partly_chosen
+      and "Run that suite with the command that ends this line" in partly_chosen,
+      partly_chosen)
+all_chosen = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+    ["b-test.py"], {"b-test.py": {**kept_hours_before_now(1), "last_complete_run_at": None}},
+    pathlib.Path("/store"), NOW, ["b-test.py"])
+check("when this run chose every partial-list suite, the notice gives no run command",
+      "--only-suites-named" not in all_chosen and all_chosen.endswith("Carry on with your work."),
+      all_chosen)
+check("a notice with no list made only from partial runs gives no run command",
+      "--only-suites-named" not in
+      module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+          ["a-test.py"], {}, pathlib.Path("/store"), NOW), None)
 check("the passage on the notice's user sentence calls it the quoted text",
       "A subagent passes the quoted text to the agent that dispatched it instead."
       in module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(

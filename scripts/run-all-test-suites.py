@@ -551,7 +551,8 @@ suite depends on. Two recorders, whose findings are added together:
   FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE hours, which a
   suite added since the last scheduled run, or a missed scheduled run,
   causes, and, apart, each suite whose list in that time came only from
-  runs that failed or skipped a case without the mark.
+  runs that failed or skipped a case without the mark, with the
+  --only-suites-named command that runs those of them the run did not choose.
 
 A recording keeps, per suite: its exit code and seconds; each file read,
 with its git blob hash; each path it opened or checked for, and whether the
@@ -3783,7 +3784,7 @@ def last_complete_strace_run_at_or_none(kept):
     """When a run that reached every case last added to the kept list, or None if none did."""
     # A list kept before this field existed was replaced only by runs that reached every case.
     if "last_complete_run_at" not in kept:
-        return recorded_at_time_or_none(kept.get("recorded_at")) and kept["recorded_at"]
+        return kept["recorded_at"]
     return kept["last_complete_run_at"]
 
 
@@ -3810,9 +3811,10 @@ def recorded_at_time_or_none(text):
 
 # Tool-messages-to-agent: docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md
 def suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
-        suites, kept_by_suite, directory, now):
+        suites, kept_by_suite, directory, now, chosen=()):
     """A line saying how many suites' files only strace saw are missing, too old to trust, or
-    made only from runs that did not reach every case."""
+    made only from runs that did not reach every case, with the command that runs each suite
+    of the last kind this run did not choose."""
     hours = FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE
     limit = datetime.timedelta(hours=hours)
     recorded = [suite for suite in suites if not is_shell_test_suite(suite)]
@@ -3833,8 +3835,7 @@ def suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
         counts.append(f"a list older than that for {len(old)}, the oldest from "
                       f"{min(old).strftime('%Y-%m-%dT%H:%M:%SZ')}")
     if partial:
-        counts.append(f"a list made only from runs that failed or skipped a case without the "
-                      f"mark, so missing what those cases read, for {len(partial)}: "
+        counts.append(f"a list made only from partial runs, for {len(partial)}: "
                       f"{', '.join(partial)}")
     notice = (f"{PROGRAM}: {len(missing) + len(old) + len(partial)} of {len(recorded)} suites "
               f"have no complete list of the files only strace saw them read from the last "
@@ -3843,10 +3844,22 @@ def suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
               f"through git or a shell script. "
               f"scripts/scheduled-full-test-run-of-main.py makes each suite's list once a day on "
               f"ned-box: a suite added since its last run has none yet, a list older than "
-              f"{hours} hours means the scheduled run has not run the suite since, and a list "
-              f"made only from partial runs means the suite failed or skipped a case without "
-              f"the mark in each of them. The verdicts of the suites this run ran "
-              f"stand; carry on with your work.")
+              f"{hours} hours means the scheduled run has not run the suite since, and a "
+              f"partial run is a strace run of the suite that failed or skipped a case without "
+              f"the mark {SKIPPED_CASE_THIS_MACHINE_CANNOT_RUN_MARKER}, so its list misses what "
+              f"that case reads. The verdicts of the suites this run ran stand.")
+    unchosen = [suite for suite in partial if suite not in chosen]
+    if unchosen:
+        # The command ends the line, so no full stop after it is read as a suite.
+        which, whose = (("that suite", "whose list was") if len(unchosen) == 1
+                        else ("those suites", "each with a list"))
+        notice += (f" This run did not run {', '.join(unchosen)}, {whose} made only "
+                   f"from partial runs. Run {which} with the command that ends this line, fix "
+                   f"any failure as you would one in this run, then carry on with your work: "
+                   f"python3 scripts/run-all-test-suites.py --only-suites-named "
+                   f"{' '.join(unchosen)}")
+    else:
+        notice += " Carry on with your work."
     # A missing list alone, beside fresh ones, is a suite newer than the last scheduled run; a
     # partial list is the suite's own doing, which the scheduled run cannot fix.
     if not old and len(missing) < len(recorded):
@@ -4492,7 +4505,7 @@ def main(argv=None, platform=None):
         if changed_since is not None and platform.startswith("linux"):
             notice = suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
                 suites, files_only_strace_saw_by_suite, files_only_strace_saw_dir,
-                datetime.datetime.now(datetime.timezone.utc))
+                datetime.datetime.now(datetime.timezone.utc), chosen)
             if notice is not None:
                 report.line(notice)
         report.line(signal_sandbox_line(sandbox_prefix, unconfined_because))
