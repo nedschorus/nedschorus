@@ -690,8 +690,9 @@ def branch_refs_and_tips_with_no_worktree_not_fully_on_main(repo, freed_branches
                 for record in git_output.worktree_records(listing)} - set(freed_branches)
     unlanded = git_output.run_git(repo, ["for-each-ref", "--format=%(objectname) %(refname:lstrip=2)",
                                          "--no-merged", "origin/main", "refs/heads/"])
-    refs = [line.split() for line in os.fsdecode(unlanded).splitlines()]
-    return [(branch, tip) for tip, branch in refs if branch not in attached and branch != MAIN_BRANCH]
+    # Split on the ASCII space alone: a ref name can hold other whitespace, such as U+00A0.
+    refs = [line.partition(" ") for line in os.fsdecode(unlanded).splitlines()]
+    return [(branch, tip) for tip, _, branch in refs if branch not in attached and branch != MAIN_BRANCH]
 
 
 def first_prompt_list_module():
