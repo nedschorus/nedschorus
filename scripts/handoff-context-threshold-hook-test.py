@@ -1215,6 +1215,38 @@ with tempfile.TemporaryDirectory() as workspace:
           "background command never notified",
           flight.subagent_ids == [], str(flight.subagent_ids))
 
+    # The parent can stop the subagent's background command itself, not the subagent: the TaskStop
+    # and its task-notification are in the parent's transcript, and only the launch is in the
+    # subagent's own.
+    command_stopped_by_parent = transcript_of(workspace, "subagent-command-stopped-by-parent.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record("a7cc5a91bf9dc978d"),
+        *notification_records(
+            "<task-notification>\n<task-id>a7cc5a91bf9dc978d</task-id>\n<status>completed"
+            "</status>\n<note>This agent stopped with background work of its own still running; "
+            "the result below may be interim.</note>\n<result>Waiting on the suites.</result>\n"
+            "</task-notification>"),
+        task_stop_record("b9otyo6lx", "local_bash"),
+        {"type": "queue-operation", "operation": "enqueue", "timestamp": GRID_LAUNCHED_AT,
+         "content": "<task-notification>\n<task-id>b9otyo6lx</task-id>\n<status>stopped</status>\n"
+                    "<summary>Task \"Wait for both close-suite runs to finish\" was stopped by main "
+                    "session</summary>\n</task-notification>"},
+    ])
+    command_stopped_own = hook.subagent_transcript_path(command_stopped_by_parent,
+                                                        "a7cc5a91bf9dc978d")
+    command_stopped_own.parent.mkdir(parents=True, exist_ok=True)
+    transcript_of(command_stopped_own.parent, command_stopped_own.name,
+                  [background_task_launch_record("b9otyo6lx")])
+    flight = hook.work_in_flight(str(command_stopped_by_parent), float("inf"), now=grid_at_13_minutes)
+    check("a subagent whose only background command the parent stopped with TaskStop, after the "
+          "subagent's interim report, is not in flight",
+          flight.subagent_ids == [], str(flight.subagent_ids))
+    own_flight = hook.work_in_flight(str(command_stopped_own), float("inf"), now=grid_at_13_minutes,
+                                     task_ids_ended_in_session_transcript=flight.ended_task_ids)
+    check("a subagent's own transcript, read with the ids the session transcript ended, shows no "
+          "background command the parent stopped",
+          own_flight.background_task_ids == [], str(own_flight.background_task_ids))
+
     # An interim notification queued before the TaskStop can be delivered after it; the stop holds.
     interim_copy_after_stop = transcript_of(workspace, "subagent-stopped-interim-copy-after.jsonl", [
         usage_record(100_000, cache_read=450_000),
