@@ -441,7 +441,7 @@ MAIN_BRANCH = "main"
 # One listing of every pull request serves the whole invocation; gh pages through them all.
 PULL_REQUEST_LISTING_TIMEOUT_SECONDS = 300
 PULL_REQUEST_LISTING_LIMIT = 100000
-PULL_REQUEST_HEAD_REFS_LISTING_TIMEOUT_SECONDS = 120
+PULL_REQUEST_HEAD_REFS_LISTING_TIMEOUT_SECONDS = 120  # pragma: no mutate, a limit a second longer or shorter changes nothing a test can see without a git ls-remote that runs for two minutes
 PULL_REQUEST_HEAD_REF = re.compile(r"refs/pull/(\d+)/head")
 FINISHED_PULL_REQUEST_STATES = ("MERGED", "CLOSED")
 FORCE_DELETABLE_BRANCH_LINE_START = (
@@ -690,7 +690,7 @@ def branch_refs_and_tips_with_no_worktree_not_fully_on_main(repo, freed_branches
                 for record in git_output.worktree_records(listing)} - set(freed_branches)
     unlanded = git_output.run_git(repo, ["for-each-ref", "--format=%(objectname) %(refname:lstrip=2)",
                                          "--no-merged", "origin/main", "refs/heads/"])
-    refs = [line.split(" ", 1) for line in os.fsdecode(unlanded).splitlines()]
+    refs = [line.split() for line in os.fsdecode(unlanded).splitlines()]
     return [(branch, tip) for tip, branch in refs if branch not in attached and branch != MAIN_BRANCH]
 
 
