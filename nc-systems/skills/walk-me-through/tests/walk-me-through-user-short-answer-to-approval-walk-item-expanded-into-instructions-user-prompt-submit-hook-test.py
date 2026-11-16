@@ -2070,6 +2070,23 @@ def test_a_label_heading_inside_a_shared_heading_keeps_the_shared_heading_items_
     shown, _ = finder_shown_text(document, "2")
     check("item 2 under a shared `## Items 1 and 2 of 3` heading and a `## Item 2: details` heading is item 2's "
           "text, not item 1's", shown.endswith(item_2) and "do item 1" not in shown, shown)
+    check("the `## Item 2: details` heading is in item 2's text", "## Item 2: details" in shown, shown)
+    shown, _ = finder_shown_text(document, "1")
+    check("item 1's text under the shared heading ends before `## Item 2: details`, the heading that labels item 2",
+          shown.endswith("Recommendation: do item 1.") and "Item 2" not in shown, shown)
+
+
+def test_a_heading_that_ends_a_shared_heading_unit_ends_its_group_too():
+    finder = load_walk_finder_for_test()
+    parser = finder.markdown_parser()
+    item_2 = "**Item 2 of 3**\n\nRecommendation: do item 2."
+    document = ("# A walk\n\n# Items 1 and 2 of 3\n\n**Item 1 of 3**\n\nRecommendation: do item 1.\n\n"
+                f"# Part B\n\n{item_2}\n\n# Item 3 of 3: the last\n\nRecommendation: do item 3.\n")
+    units = finder.item_unit_spans(document, parser)
+    own = [unit for unit in units if unit[0] == ["2"]]
+    shown = finder.approval_walk_item_text_as_shown_to_user(document, parser, units, own[0], "2") if own else ""
+    check("a `**Item 2 of 3**` below `# Part B`, which ends the shared `# Items 1 and 2 of 3` unit, starts a unit of "
+          "its own whose text is item 2's", len(own) == 1 and shown == item_2, f"{units!r} {shown!r}")
 
 
 def test_a_setext_heading_has_its_own_level_not_its_underline_length():

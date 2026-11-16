@@ -299,7 +299,8 @@ def prose_lines(text, parser, tokens=None):
 def item_opening_lines(text, parser, tokens=None):
     """Return {line: (item numbers, M or None)} for each opening the module docstring lists: on the first line
     of a top-level paragraph, a label ITEM_LABEL reads or a running count `Item N of M` after any emphasis; on
-    the first line of an item of a top-level list, a label in bold. M is None when the label gives no `of M`.
+    the first line of an item of a top-level list, a label in bold; on a top-level heading, a label
+    ITEM_LABEL_WITHOUT_COUNT reads that names one item. M is None when the label gives no `of M`.
     A top-level heading WITHDRAWN_HEADING reads is an opening that names no item, ([], None): it ends the item
     it falls in. A label or count after it, before the next running count that starts a unit as
     item_unit_spans reads them, is the Withdrawn version's own, and no opening, when it names only items a
@@ -318,6 +319,12 @@ def item_opening_lines(text, parser, tokens=None):
                 openings[token.map[0]] = ([], None)
                 withdrawn_items |= withdrawn_heading_items(tokens[index + 1].content)
                 continue
+            # A heading that labels one item, such as `## Item 2: details` inside `## Items 1 and 2 of 3`, opens
+            # that item, so the heading goes with the item it names and not with the item above it.
+            labelled = label_numbers(tokens[index + 1].content) if index + 1 < len(tokens) else set()
+            if len(labelled) == 1 and not labelled <= withdrawn_items:
+                openings[token.map[0]] = (sorted(labelled), None)
+            continue
         if token.type != "paragraph_open" or token.map is None:
             continue
         # A paragraph at level 2 straight after an item's start is that item's first paragraph; an item of a
