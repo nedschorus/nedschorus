@@ -1073,6 +1073,22 @@ def test_close_resolves_a_reused_number_to_its_parent_s_shared_heading_after_an_
               described(closed) + case.minutes.read_text() + repr(case.gh_comments()))
 
 
+def test_the_decided_set_takes_the_shared_heading_presented_for_a_reused_sub_step_as_its_parent_s_unit_too():
+    program = load_program()
+    walk_finder = program.load_walk_finder()
+    directory = SUITE_ROOT / "decided-set-shared-heading-presented-for-a-reused-sub-step"
+    directory.mkdir(parents=True)
+    (directory / "a-walk.md").write_text(SHARED_PARENT_HEADING_REUSED_NUMBER_DOCUMENT)
+    minutes = directory / ("a-walk" + walk_finder.MINUTES_SUFFIX)
+    minutes.write_text("# Minutes\n\n#next_to_present item 3 of 9\n\n#next_to_present item 3.1 of 9\n\n"
+                       "#next_to_present item 3.1 of 12\n\n" + approved_line("item 3.1.1 of 12"))
+    decided = program.approval_walk_minutes_read_returning_decided_item_numbers(
+        walk_finder, minutes, walk_finder.markdown_parser())
+    check("presenting 3.1 of the shared heading `Items 3 and 3.1 of 12` presents 3 in that unit too, not the older "
+          "`3 of 9`, so approving 3.1.1 decides 3.1 but not 3 while 3.2 of 12 is unanswered",
+          decided == {"3.1.1", "3.1"}, repr(decided))
+
+
 def test_close_drops_a_reused_number_s_older_unit_once_its_parent_is_presented_again():
     pull_requests = held_pull_requests((501, [f"#held_on_ruling {WALK_NAME} item 3.1"]))
     document = ("# A walk\n\n## Item 3 of 9: three\n\nA.\n\n### Item 3.1 of 9: the first half\n\nB.\n\n"
