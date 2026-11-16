@@ -65,6 +65,7 @@ PYTHON_NON_SCRIPT_OPTIONS = {"-c", "-m", "-"}
 USAGE_OPTIONS = {"--help", "-h"}
 
 COLD_READ_FULL_RUN_REFUSED_AND_SAVED_REASON = (
+    "[rule bash-guard-cold-read-full-run-during-handoff-deferral] "
     "This cold-read-full-run would outlast the handoff-deferral, so this hook refused it and "
     "saved the command for your successor, who runs it after the session-handoff. The handoff "
     "writer script, nc-systems/handoff/handoff-write-and-check-supervisor.py, adds the command "
@@ -73,7 +74,7 @@ COLD_READ_FULL_RUN_REFUSED_AND_SAVED_REASON = (
 )
 
 COLD_READ_FULL_RUN_REFUSED_NOT_SAVED_REASON = (
-    "Refused on purpose: this cold-read-full-run would outlast the handoff-deferral, so this "
+    "[rule bash-guard-cold-read-full-run-during-handoff-deferral] Refused on purpose: this cold-read-full-run would outlast the handoff-deferral, so this "
     "hook refused the command, but could not save it for your successor ({problem}).\n"
     "Add a task to your task list (the TaskCreate tool) for your successor, holding the "
     "directory {working_directory} and the command between the two lines below.\n"

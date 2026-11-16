@@ -191,7 +191,7 @@ REOPEN_OUTCOME = "why the issue is reopening"
 COMMENT_OUTCOME = "what the comment would say"
 EDIT_BODY_OUTCOME = "the change"
 NO_COMMENTS_LINE = (
-    "Do not comment on this project's issues: what an issue says lives in its "
+    "[rule bash-guard-gh-issue-comment] Do not comment on this project's issues: what an issue says lives in its "
     "GHI-MD, and a comment would sit outside it."
 )
 # Ends the comment, body and title refusals, except where the lookup line only
@@ -236,7 +236,7 @@ REOPEN_WITH_COMMENT_REFUSAL = (
     "{record_line}"
 )
 CREATE_REFUSAL = (
-    "Do not file this project's issues with gh issue create.\n"
+    "[rule bash-guard-gh-issue-create-by-hand] Do not file this project's issues with gh issue create.\n"
     "Write the issue as a GHI-MD, a markdown file whose first heading is the "
     "issue's title, then file it with: python3 scripts/ghi-issue-write.py "
     "create <path>\n"
@@ -244,7 +244,7 @@ CREATE_REFUSAL = (
     "run, stop and tell the user."
 )
 EDIT_BODY_REFUSAL = (
-    "Do not set this project's issue bodies with gh issue edit: an issue's body is "
+    "[rule bash-guard-gh-issue-body-or-title-set-by-hand] Do not set this project's issue bodies with gh issue edit: an issue's body is "
     "the links to its files on main, and scripts/ghi-issue-write.py writes it from "
     "those files.\n"
     + LABELS_ONLY_LINE + "\n"
@@ -256,7 +256,7 @@ EDIT_BODY_REFUSAL = (
 # and the edit changes that file's first heading, so {title_line} stops the
 # agent wherever the tool could not retitle.
 EDIT_TITLE_REFUSAL = (
-    "Do not set this project's issue titles with gh issue edit: "
+    "[rule bash-guard-gh-issue-body-or-title-set-by-hand] Do not set this project's issue titles with gh issue edit: "
     "scripts/ghi-issue-write.py sets an issue's title from the first heading of the "
     "issue's GHI-MD, when the issue has one file on main and an edit changes that "
     "heading.\n"
@@ -283,11 +283,11 @@ TITLE_LINES_LOOKUP_FAILED = (
     "<path>"
 )
 DELETE_REFUSAL = (
-    "Do not delete this project's issues: a deleted issue cannot be restored.\n"
+    "[rule bash-guard-gh-issue-delete] Do not delete this project's issues: a deleted issue cannot be restored.\n"
     "{close_lines}"
 )
 DELETE_REFUSAL_NO_FILE = (
-    "Do not delete this project's issues: a deleted issue cannot be restored.\n"
+    "[rule bash-guard-gh-issue-delete] Do not delete this project's issues: a deleted issue cannot be restored.\n"
     "This issue has no file on main under docs/issues/<number>-* or a system's "
     "directory: if the issue was filed by mistake, close it with gh issue close "
     "<number> --reason \"not planned\"; otherwise stop and tell the user."

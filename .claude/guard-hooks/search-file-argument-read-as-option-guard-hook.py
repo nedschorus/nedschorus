@@ -76,12 +76,12 @@ SEARCH_PROGRAM_OPTIONS_TAKING_A_VALUE = {
 SAFE_UNQUOTED_CHARACTERS = re.compile(r"^[A-Za-z0-9_./~@%+=:,-]+$")
 
 REFUSAL_WITH_COMMAND_TEMPLATE = (
-    "Refused: {glob_word} expands to names beginning with -, such as {name}, "
+    "[rule bash-guard-search-file-name-read-as-option] Refused: {glob_word} expands to names beginning with -, such as {name}, "
     "which {program} reads as options, not as files. Put -- before the file "
     "names and run: {accepted_command}"
 )
 REFUSAL_OF_OPTION_VALUE_TEMPLATE = (
-    "Refused: {glob_word}, the value of {option}, expands to two or more names. The shell "
+    "[rule bash-guard-search-file-name-read-as-option] Refused: {glob_word}, the value of {option}, expands to two or more names. The shell "
     "passes only the first of them as {option}'s value, and {program} reads each of the "
     "others as one more word, and a name beginning with - as an option, such as {name}. "
     "-- cannot fix this.\n"
@@ -91,7 +91,7 @@ REFUSAL_OF_OPTION_VALUE_TEMPLATE = (
     "Then run the command again."
 )
 REFUSAL_WITHOUT_COMMAND_TEMPLATE = (
-    "Refused: {glob_word} expands to names beginning with -, such as {name}, "
+    "[rule bash-guard-search-file-name-read-as-option] Refused: {glob_word} expands to names beginning with -, such as {name}, "
     "which {program} reads as options, not as files.\n"
     "Write ./ in front of {glob_word}, as in ./{glob_word}, so that every name begins "
     "with ./ instead of -.\n"

@@ -214,8 +214,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           len(warning_lines) == 5, repr(warning))
     padded_warning_lines = warning_lines + ["", "", "", "", ""]
     check("line 1 is the fact, and it names both paths",
-          padded_warning_lines[0].startswith("file-name-collision-warning: "
-                                             "you wrote"),
+          padded_warning_lines[0].startswith(
+              "[rule file-name-collision-same-basename-warning] file-name-collision-warning: you wrote"),
           repr(padded_warning_lines[0]))
     check("line 2 tells a mover to delete the old path, naming it",
           padded_warning_lines[1] == "If you are moving the file, delete "

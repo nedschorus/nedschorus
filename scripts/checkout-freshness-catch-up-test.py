@@ -2320,7 +2320,7 @@ with tempfile.TemporaryDirectory() as notes_scratch:
             ("the did-not-fit line", catch_up_module.delivery_text(many)),
             ("the could-not-be-read line", catch_up_module.NOTES_UNREADABLE_LINE.format(
                 path="stamp.json", error="unreadable")),
-            ("the moved-without-a-list note", catch_up_module.MOVED_WITHOUT_LIST_NOTE.format(
+            ("the moved-without-a-list note", catch_up_module.MOVED_WITHOUT_LIST_NOTICE.format(
                 error="no list"))):
         check(f"{note_name} says to invoke the skill again, and to stop following a skill "
               f"main deleted, byte for byte", skill_reload_lines in rendered, rendered[:600])

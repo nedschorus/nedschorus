@@ -383,7 +383,7 @@ for event in ("reply", "write"):
             wrong_number_lines = [line for line in lines if hook.WRONG_NUMBER_LINE_OPENING_INSTRUCTION in line]
             no_correction_count = note.count("This note asks for no correction now.")
             check(f"title note combination: {name}: the summary line comes first",
-                  lines[0].startswith("bare-number-citation-in-markdown-and-agent-reply-warning-hook: "), lines[0])
+                  lines[0].startswith("[rule github-link-text-not-matching-item-title-warning] bare-number-citation-in-markdown-and-agent-reply-warning-hook: "), lines[0])
             check(f"title note combination: {name}: title lines shown only when a link has a plain wrong title",
                   all((line in lines) == title_lines_expected for line in opening[1:]), note)
             check(f"title note combination: {name}: one wrong-number line when a listed link has a wrong number",

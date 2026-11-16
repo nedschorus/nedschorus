@@ -32,7 +32,7 @@ LABELLED_REPLIES = Path(
 EXPECTED_PRECISION_LINE = "fires 103: correct 88, incorrect 15, unclear 0; precision 0.8544"
 B01_CLAIM = "The transcripts it points to are gone."
 REMINDER_FOR_B01 = (
-    "absence-claim reminder: your reply says a file or record is gone, missing "
+    "[rule absence-claim-run-locator-before-saying-missing] absence-claim reminder: your reply says a file or record is gone, missing "
     "or cannot be found (\"are gone\"), and you have not run the locator this "
     "turn. Files agents call missing are often in another checkout, the "
     "log-store, a transcript or a backup.\n"
@@ -48,7 +48,7 @@ REMINDER_FOR_B01 = (
     "reminder comes once per session."
 )
 SUBAGENT_REMINDER_FOR_B01 = (
-    "absence-claim reminder: your reply says a file or record is gone, missing "
+    "[rule absence-claim-run-locator-before-saying-missing] absence-claim reminder: your reply says a file or record is gone, missing "
     "or cannot be found (\"are gone\"), and you have not run the locator this "
     "turn. Files agents call missing are often in another checkout, the "
     "log-store, a transcript or a backup.\n"

@@ -60,7 +60,7 @@ from pathlib import Path
 MARKDOWN_SUFFIXES = (".md", ".markdown")
 
 REMINDER_MESSAGE = (
-    "markdown-edit-hard-wrapped-paragraph-reminder: the text you just wrote in {path} holds a "
+    "[rule markdown-edit-hard-wrapped-paragraph-reminder] markdown-edit-hard-wrapped-paragraph-reminder: the text you just wrote in {path} holds a "
     "paragraph or list item broken across lines. A line break inside a paragraph, list item "
     "or table row is extra whitespace to a reader whose editor wraps lines to the screen's "
     "width, and makes the text hard to edit.\n"

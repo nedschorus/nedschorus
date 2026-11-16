@@ -22,7 +22,7 @@ SKIPPED_DIRECTORY_PREFIXES = ("docs/walk/",)
 HIT_LINES_LISTED_AT_MOST = 20
 
 REPORT_OPENING_LINES = (
-    "style-guide-word-checker: the text just written to {path} uses {count} word(s) "
+    "[rule style-guide-word-in-markdown-edit-reminder] style-guide-word-checker: the text just written to {path} uses {count} word(s) "
     "from the project's list of words to avoid. Each listed word either carries more "
     "than one meaning in this project, so a reader cannot tell which meaning the writer "
     "intended, or is replaced in this project by another word.",

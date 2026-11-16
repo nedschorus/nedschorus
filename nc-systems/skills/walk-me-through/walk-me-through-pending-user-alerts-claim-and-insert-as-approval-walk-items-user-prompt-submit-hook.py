@@ -62,7 +62,7 @@ ATTENDANCE_CHECK_FILE = CHECKOUT / "nc-systems" / "general-tools" / "agent-sessi
 NOT_TYPED_PROMPT_OPENINGS = ("<task-notification>", "<cross-session-message", "<agent-message",
                              "Another Claude session sent a message", "A peer session sent a message")
 
-CLAIMED_OPENING = ("The user-alerts hook claimed {count} alert(s) that programs on ned-box wrote for the user, "
+CLAIMED_OPENING_LINE = ("[rule walk-me-through-pending-user-alerts-added-as-walk-items] The user-alerts hook claimed {count} alert(s) that programs on ned-box wrote for the user, "
                    "each a problem he has not yet seen:")
 ALERT_LINE = "- {title} (alert {id}, file {path})"
 INSERTED_LINES = (
@@ -156,7 +156,7 @@ def open_walk_name(cwd):
 
 
 def context_for(alerts, claimed_directory, cwd):
-    lines = [CLAIMED_OPENING.format(count=len(alerts))]
+    lines = [CLAIMED_OPENING_LINE.format(count=len(alerts))]
     lines += [ALERT_LINE.format(title=alert.get("title"), id=alert.get("id"),
                                 path=claimed_directory / f"{alert.get('id')}.json") for alert in alerts]
     ids = " ".join(str(alert.get("id")) for alert in alerts)

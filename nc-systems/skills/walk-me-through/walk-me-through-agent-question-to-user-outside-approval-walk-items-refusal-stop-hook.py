@@ -308,7 +308,7 @@ The numbered lines:
 {lines}"""
 
 REFUSAL_OPENING_TEMPLATE = (
-    "approval-walk question check: this hook refused to end your turn on purpose, because your reply seems to "
+    "[rule walk-me-through-agent-question-to-user-outside-walk-items-refused] approval-walk question check: this hook refused to end your turn on purpose, because your reply seems to "
     "ask the user something outside an item of the open approval-walk {walk} ({decided}). The flagged text: "
     "\"{sentence}\". While a walk is open the user's answer goes to the waiting item, item {waiting}, so a "
     "question asked in prose leaves him unable to tell which question his letter answers.")
@@ -354,7 +354,7 @@ NO_PAGE_TEMPLATE = (
     "none and add to {minutes} the line `#item_page item <N> of <M> <the page's link>`, which this hook reads back; "
     "then put the same link in place of `<page link>` in the item's closing line.")
 NO_WALK_REFUSAL_OPENING_TEMPLATE = (
-    "approval-walk closing-line check: this hook refused to end your turn on purpose, because your message ends "
+    "[rule walk-me-through-closing-line-without-open-walk-refused] approval-walk closing-line check: this hook refused to end your turn on purpose, because your message ends "
     "with an approval-walk item's closing line, \"{line}\", but the checkout you work in, {top}, has no open or "
     "paused approval-walk in {walk_directory}{missing}. Your message has already reached the user. The "
     "walk-me-through hooks read an approval-walk's walk-minutes and walk-document only in {walk_directory}, so the "

@@ -122,7 +122,7 @@ def tracked_paths_sharing_name(relative_path: PurePath, checkout: Path):
 
 
 COLLISION_WARNING_TEMPLATE = (
-    "file-name-collision-warning: you wrote {path}; the name {name} is already {already}. "
+    "[rule file-name-collision-same-basename-warning] file-name-collision-warning: you wrote {path}; the name {name} is already {already}. "
     "A basename, other than SKILL.md, README.md and .gitkeep, belongs to one tracked file, "
     "so the file can be cited by its basename.\n"
     "If you are moving the file, delete {moved_from} in this change.\n"

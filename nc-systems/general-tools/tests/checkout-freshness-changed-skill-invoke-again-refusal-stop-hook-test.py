@@ -31,10 +31,12 @@ PATH = f".claude/skills/{SKILL}/SKILL.md"
 OTHER_SKILL = "cold-read"
 OTHER_PATH = f".claude/skills/{OTHER_SKILL}/SKILL.md"
 
-OPENING = ("changed-skill check (nc-systems/general-tools/checkout-freshness-changed-skill-invoke-again-"
+RULE_ID_OPENING = "[rule checkout-freshness-changed-skill-not-invoked-again-stop-refused] "
+OPENING_WITHOUT_RULE_ID = ("changed-skill check (nc-systems/general-tools/checkout-freshness-changed-skill-invoke-again-"
            "refusal-stop-hook.py): this hook refused to end your turn on purpose, because a checkout-freshness note "
            f"told you that the main branch changed {PATH}, and this agent-session invoked the {SKILL} skill before "
            "that note and has not invoked it since.")
+OPENING = RULE_ID_OPENING + OPENING_WITHOUT_RULE_ID
 STILL_FOLLOWING_LINE = (f"If you are still following the {SKILL} skill, that is, you will act on another of its steps "
                         "in this agent-session, such as an approval-walk that is still open: invoke it again now with "
                         f"the Skill tool, with skill `{SKILL}`, then go on from where you were, following its new text.")
@@ -42,7 +44,7 @@ NO_LONGER_FOLLOWING_LINE = (f"If you are no longer following the {SKILL} skill: 
                             "hook refuses only once for each note that the main branch changed a skill.")
 UNSURE_LINE = "If you cannot tell whether you are still following it, invoke it again: that costs one tool call."
 REASON_LINE_START = "This checkout already holds the new text"
-FROM_NOW_ON_LINE = ("From now on, when a note beginning `checkout-freshness: main changed` names a skill you are "
+FROM_NOW_ON_LINE = ("From now on, when a note holding `checkout-freshness: main changed` names a skill you are "
                     "following, invoke that skill again before its next step.")
 
 FAILURES = []
@@ -55,6 +57,11 @@ def note(path=PATH, skill=SKILL):
     return {"type": "attachment", "isSidechain": False,
             "attachment": {"type": "hook_additional_context", "content": [text],
                            "hookName": "UserPromptSubmit", "hookEvent": "UserPromptSubmit"}}
+
+
+def freshness_rule_id_opening():
+    """The `[rule <id>] ` opening of the freshness hook's note."""
+    return freshness.SKILL_CHANGED_NOTE[:freshness.SKILL_CHANGED_NOTE.index("] ") + 2]
 
 
 def api_blob_holding_note():
@@ -168,6 +175,17 @@ def main():
         check_blocks("a refusal for another skill does not count as this skill's",
                      run_on([skill_call(), note(), refusal_attachment(OPENING.replace(SKILL, OTHER_SKILL))],
                             directory), OPENING)
+        old_note = note()
+        old_note["attachment"]["content"] = [
+            text.replace(freshness_rule_id_opening(), "", 1) for text in old_note["attachment"]["content"]]
+        check("an old note is a note without the instruction rule's ID",
+              old_note["attachment"]["content"] != note()["attachment"]["content"],
+              old_note["attachment"]["content"])
+        check_blocks("a note delivered before notes carried a rule ID still counts: blocks",
+                     run_on([skill_call(), old_note], directory), OPENING)
+        check_silent("a refusal recorded before refusals carried a rule ID still counts: silent",
+                     run_on([skill_call(), note(), refusal_attachment(OPENING_WITHOUT_RULE_ID), prompt()],
+                            directory))
         check_blocks("an invocation between two notes is before the newer note: blocks",
                      run_on([skill_call(), note(), skill_call(), note()], directory), OPENING)
         reason = check_blocks(

@@ -182,7 +182,7 @@ SURROUNDING_QUOTE_PAIRS = (('"', '"'), ("'", "'"), ("\u201c", "\u201d"), ("\u201
 MASK_BARRIER_CHARACTER = "\x00"
 
 MARKDOWN_OPENING_LINES = (
-    "bare-number-citation-in-markdown-and-agent-reply-warning-hook: the text just written to {path} cites {count} pull "
+    "[rule bare-number-pull-request-ghi-or-task-citation-in-markdown-and-reply-warning] bare-number-citation-in-markdown-and-agent-reply-warning-hook: the text just written to {path} cites {count} pull "
     "request(s), GitHub issue(s) or task(s) by a bare number. A number alone tells a "
     "reader almost nothing; a title and a link are what a reader can read and open.",
     "Cite each one by its ID-type and its name, as a clickable link where it can be "
@@ -195,7 +195,7 @@ MARKDOWN_OPENING_LINES = (
     "as 'not PR #<number>', leave it as written.",
 )
 PREVIOUS_REPLY_OPENING_LINES = (
-    "bare-number-citation-in-markdown-and-agent-reply-warning-hook: your previous reply to the user cited {count} pull "
+    "[rule bare-number-pull-request-ghi-or-task-citation-in-markdown-and-reply-warning] bare-number-citation-in-markdown-and-agent-reply-warning-hook: your previous reply to the user cited {count} pull "
     "request(s), GitHub issue(s) or task(s) by a bare number. A number alone tells a "
     "reader almost nothing; a title and a link are what a reader can read and open.",
     "From now on, cite each one by its ID-type and its name, as a clickable link where "
@@ -219,7 +219,7 @@ NOTE_RECORD_FAILED_LINE = (
     "has noted, {record}, could not be {action} ({reason}), so this note may be sent again for the "
     "same reply, and in full. Nothing needs doing about the record.")
 MARKDOWN_TITLE_OPENING_LINES = (
-    "bare-number-citation-in-markdown-and-agent-reply-warning-hook: the text just written to {path} links {count} pull "
+    "[rule github-link-text-not-matching-item-title-warning] bare-number-citation-in-markdown-and-agent-reply-warning-hook: the text just written to {path} links {count} pull "
     "request(s) or GitHub issue(s) under link text that is not the title GitHub reports, or "
     "whose number is not the link's. A reader "
     "takes link text written as a title to be the linked item's title, so a different title points "
@@ -229,7 +229,7 @@ MARKDOWN_TITLE_OPENING_LINES = (
     "For each link whose text describes the item in your own words instead, leave the text as written.",
 )
 PREVIOUS_REPLY_TITLE_OPENING_LINES = (
-    "bare-number-citation-in-markdown-and-agent-reply-warning-hook: your previous reply to the user linked {count} pull "
+    "[rule github-link-text-not-matching-item-title-warning] bare-number-citation-in-markdown-and-agent-reply-warning-hook: your previous reply to the user linked {count} pull "
     "request(s) or GitHub issue(s) under link text that is not the title GitHub reports, or "
     "whose number is not the link's. A reader "
     "takes link text written as a title to be the linked item's title, so a different title points "

@@ -32,6 +32,8 @@ HOOK_SCRIPT = (Path(__file__).resolve().parents[1]
                / "walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-user-prompt-submit-hook.py")
 SUITE_ROOT = Path(tempfile.mkdtemp(prefix="short-answer-expansion-hook-test-")).resolve()
 WALK_NAME = "reboot-test-older-open-items-2026-10-15"
+EXPANDED_RULE_ID_OPENING = "[rule walk-me-through-short-answer-expanded-into-instructions] "
+NOT_SHOWN_RULE_ID_OPENING = "[rule walk-me-through-short-answer-to-item-not-shown-discarded] "
 CHECKOUT = HOOK_SCRIPT.parents[3]
 CHECK = f"python3 {CHECKOUT}/nc-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check"
 ONE_ITEM_AT_A_TIME_LINE = (
@@ -205,7 +207,7 @@ def test_each_single_answer_in_either_case_with_or_without_a_period():
             lines = case.lines(prompt)
             check(f"{prompt!r} is expanded",
                   lines is not None
-                  and lines[0] == f"The user answered \"{prompt.strip().rstrip('.')}\"; no approval-walk is open."
+                  and lines[0] == EXPANDED_RULE_ID_OPENING + f"The user answered \"{prompt.strip().rstrip('.')}\"; no approval-walk is open."
                   and lines[1].startswith(meaning) and not any("which one" in line for line in lines),
                   f"lines {lines!r}")
 
@@ -219,7 +221,7 @@ def test_a_hyphen_between_the_letters_of_ao_o2_and_o3_is_read_as_that_letter():
         lines = case.lines(prompt)
         check(f"{prompt!r} is {code}",
               lines is not None
-              and lines[0] == f"The user answered \"{prompt.rstrip('.')}\" to item 4 of 9 of approval-walk {WALK_NAME}."
+              and lines[0] == EXPANDED_RULE_ID_OPENING + f"The user answered \"{prompt.rstrip('.')}\" to item 4 of 9 of approval-walk {WALK_NAME}."
               and lines[1].startswith(meaning), f"lines {lines!r}")
     lines = case.lines("A-O, keep the old name")
     check("'A-O, keep the old name' is a rider on AO",
@@ -267,7 +269,7 @@ def test_a_on_an_open_walk_names_the_item_its_recommendation_and_the_check_step(
     case = Case(next_to_present="item 4 of 9 (awaiting answer)")
     lines = case.lines("a")
     check("A names the waiting item and its recommendation as written, and sends every A to the check step and close",
-          lines == [f"The user answered \"a\" to item 4 of 9 of approval-walk {WALK_NAME}.",
+          lines == [EXPANDED_RULE_ID_OPENING + f"The user answered \"a\" to item 4 of 9 of approval-walk {WALK_NAME}.",
                     "A means approve: the user agrees with the recommendation of item 4 of 9 (leave the filter out). "
                     "Do what the recommendation says.",
                     f"Whether or not that makes a change, first run `{CHECK}`, {CLOSE_END}"], f"lines {lines!r}")
@@ -492,7 +494,7 @@ def test_walk_marker_read_as_the_stop_hook_reads_it():
     lines = case.lines("z")
     check("a colon and a code-span value are read as the Stop hook reads them",
           lines is not None
-          and lines[0] == f"The user answered \"z\" to items 5 and 6 of 9 of approval-walk {WALK_NAME}.",
+          and lines[0] == EXPANDED_RULE_ID_OPENING + f"The user answered \"z\" to items 5 and 6 of 9 of approval-walk {WALK_NAME}.",
           f"lines {lines!r}")
 
 
@@ -502,7 +504,7 @@ def test_no_open_walk():
     case.minutes("No marker line here.", name="older-walk-2026-09-01")
     lines = case.lines("d")
     check("a closed approval-walk and minutes without a marker are not open",
-          lines is not None and lines[0] == "The user answered \"d\"; no approval-walk is open.",
+          lines is not None and lines[0] == EXPANDED_RULE_ID_OPENING + "The user answered \"d\"; no approval-walk is open.",
           f"lines {lines!r}")
 
 
@@ -591,7 +593,7 @@ def test_r_on_an_open_walk_goes_to_the_agent_and_does_not_block():
         lines = case.lines(prompt)
         check(f"{prompt!r} gives the agent additionalContext telling it to show the waiting item, and no decision",
               not_blocked(result) and lines is not None
-              and lines[0] == f"The user answered \"{prompt.rstrip('.')}\" to item 4 of 9 of approval-walk {WALK_NAME}."
+              and lines[0] == EXPANDED_RULE_ID_OPENING + f"The user answered \"{prompt.rstrip('.')}\" to item 4 of 9 of approval-walk {WALK_NAME}."
               and lines[1:] == r_lines(word, "item 4 of 9", "a filter")
               and not any("leave the filter out" in line or "old rows" in line for line in lines),
               f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
@@ -605,7 +607,7 @@ def test_r_on_an_open_walk_goes_to_the_agent_and_does_not_block():
     case.minutes("#next_to_present item 3 of 9\n\n#next_to_present none, closed")
     lines = case.lines("r")
     check("R with only a closed approval-walk asks for the last question again",
-          lines is not None and lines[0] == "The user answered \"r\"; no approval-walk is open."
+          lines is not None and lines[0] == EXPANDED_RULE_ID_OPENING + "The user answered \"r\"; no approval-walk is open."
           and lines[1].startswith(NO_WALK_MEANINGS["R"]), f"lines {lines!r}")
     lines = Case(next_to_present="item 4 of 9").lines("r but shorter")
     check("R with more text after it goes to the agent as a rider",
@@ -1109,7 +1111,7 @@ def test_a_numbered_answer_within_the_waiting_items_parts_answers_the_parts():
         check(f"{prompt!r} on an item with parts 1 to 3 names each part's letter and gives the check command "
               "with one --part-answer flag per part, in part number order",
               lines is not None
-              and lines[0] == f"The user answered \"{prompt}\" to item 4 of 9 of approval-walk {WALK_NAME}."
+              and lines[0] == EXPANDED_RULE_ID_OPENING + f"The user answered \"{prompt}\" to item 4 of 9 of approval-walk {WALK_NAME}."
               and lines[1:] == [parts_read_line(pairs)] + parts_different_letters_lines(flags), f"lines {lines!r}")
     lines = case.lines("1 a 2 d")
     check("'1 a 2 d' on an item with parts 1 to 3 leaves part 3 unanswered, so nothing is recorded, though the "
@@ -1412,7 +1414,7 @@ def test_numbered_r_reads_the_walk_in_the_payloads_cwd_not_the_hooks_own():
                             capture_output=True, text=True, cwd=SUITE_ROOT)
     context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"] if not_blocked(result) else ""
     check("'37.4 r' run from outside the checkout still finds item 37.4 in the payload's cwd",
-          context.startswith(f"The user answered \"37.4 r\" to item 4 of 9 of approval-walk {WALK_NAME}.\n"
+          context.startswith(EXPANDED_RULE_ID_OPENING + f"The user answered \"37.4 r\" to item 4 of 9 of approval-walk {WALK_NAME}.\n"
                              + "\n".join(numbered_r_lines("37.4", "item 37.4 of 9", "R with a number",
                                                            f" {case.walk / (WALK_NAME + '-minutes.md')}"))),
           f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
@@ -1562,7 +1564,7 @@ def test_unreadable_minutes_still_expand_and_say_so():
     lines = case.lines("d")
     check("minutes that cannot be read still give both branches and name the failure",
           lines is not None
-          and lines[0].startswith("The user answered \"d\"; the hook could not tell whether an approval-walk "
+          and lines[0].startswith(EXPANDED_RULE_ID_OPENING + "The user answered \"d\"; the hook could not tell whether an approval-walk "
                                   "is open, because reading the approval-walk state failed: UnicodeDecodeError")
           and lines[1].startswith("Find out yourself: the last `#next_to_present` line in each of the checkout's")
           and "If an approval-walk is open:" in lines and "If no approval-walk is open:" in lines
@@ -1576,7 +1578,7 @@ def test_two_unclosed_approval_walks_are_reported_naming_both():
     lines = case.lines("a")
     check("with two unclosed approval-walks the hook takes neither and names both walk-minutes files",
           lines is not None
-          and lines[0].startswith("The user answered \"a\"; the hook could not tell whether an approval-walk "
+          and lines[0].startswith(EXPANDED_RULE_ID_OPENING + "The user answered \"a\"; the hook could not tell whether an approval-walk "
                                   "is open, because reading the approval-walk state failed: "
                                   "MoreThanOneUnclosedApprovalWalk")
           and re.search(rf"/docs/walk/{second.name}, (<minutes>|\S*/docs/walk/{WALK_NAME}-minutes\.md)'\)", lines[0])
@@ -1656,7 +1658,7 @@ ITEM_4_CLOSING_LINE = f"[Item 4 of 9, a filter](https://claude.ai/artifact/x) ·
 
 
 def not_shown_lines(answer, reason):
-    return [f"The user answered \"{answer}\" to item 4 of 9 of approval-walk {WALK_NAME}.",
+    return [NOT_SHOWN_RULE_ID_OPENING + f"The user answered \"{answer}\" to item 4 of 9 of approval-walk {WALK_NAME}.",
             f"{ANSWER_DISCARDED}, because the user may not have seen item 4 of 9 as the walk-document now has it.",
             reason,
             "Record nothing in the walk-minutes and act on none of the answer.",
@@ -2234,7 +2236,7 @@ def test_a_marker_value_naming_no_item_is_reported_for_a_and_d():
     lines = Case(next_to_present="paused until rewritten").lines("a")
     check("a `#next_to_present` value with no running count is quoted and reported before acting on A",
           lines is not None
-          and lines[0] == (f"The user answered \"a\" to the item its minutes' `#next_to_present` line names, "
+          and lines[0] == (EXPANDED_RULE_ID_OPENING + f"The user answered \"a\" to the item its minutes' `#next_to_present` line names, "
                            f"`paused until rewritten`, of approval-walk {WALK_NAME}.")
           and any(line.startswith("The hook could not read the recommendation of ") for line in lines),
           f"lines {lines!r}")

@@ -21,7 +21,7 @@ FIRST_PROMPT_LIST_SCRIPT = (Path(__file__).resolve().parents[1] / "nc-systems" /
                             / "agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py")
 
 EXPECTED_TEXT_WITH_ID_7 = (
-    'If this task (id 7) waits on a pull request merging or a GHI closing, record each one now with '
+    '[rule due-task-prerequisites-record-after-task-create] If this task (id 7) waits on a pull request merging or a GHI closing, record each one now with '
     'TaskUpdate in the task\'s metadata, as "prerequisites": [{"pr_merged": <number>}, {"issue_closed": <number>}].\n'
     'If it waits on the user\'s decision on an approval-walk item, add the item to the same prerequisites list, as '
     '{"approval_walk_item_decided": {"approval_walk_minutes_file_path": "<absolute path of the walk-minutes file>", '

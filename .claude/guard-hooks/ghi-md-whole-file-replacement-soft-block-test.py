@@ -90,7 +90,7 @@ def expected_refusal(checkout):
     ghi_md = checkout / "docs" / "issues" / "46-ghi-info-agent-design.md"
     marker = checkout / ".ghi-md-whole-file-replacement-reason"
     return (
-        f"Refused: this command replaces the whole GHI-MD {ghi_md}, which can undo changes "
+        f"[rule bash-guard-ghi-md-whole-file-replacement] Refused: this command replaces the whole GHI-MD {ghi_md}, which can undo changes "
         "merged into it on main after your copy was written.\n"
         "Change the GHI-MD with the Edit tool instead, one passage at a time, so main's other "
         "changes stay.\n"

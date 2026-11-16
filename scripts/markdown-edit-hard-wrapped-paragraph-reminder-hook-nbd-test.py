@@ -594,14 +594,14 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         check("a Write leaving a broken paragraph gets one PostToolUse reminder, exit 0",
               result.returncode == 0 and result.stderr == ""
               and reply.get("hookSpecificOutput", {}).get("hookEventName") == "PostToolUse"
-              and text.startswith("markdown-edit-hard-wrapped-paragraph-reminder: the text you just wrote in docs/broken.md holds")
+              and text.startswith("[rule markdown-edit-hard-wrapped-paragraph-reminder] markdown-edit-hard-wrapped-paragraph-reminder: the text you just wrote in docs/broken.md holds")
               and "every Markdown file you write from now on" in text,
               result.stdout + result.stderr)
         check("the reminder names no line number",
               ":3" not in text and "line 3" not in text, text)
 
         edited_file = checkout / "docs" / "edited.md"
-        reminded_prefix = "markdown-edit-hard-wrapped-paragraph-reminder: the text you just wrote in docs/edited.md"
+        reminded_prefix = "[rule markdown-edit-hard-wrapped-paragraph-reminder] markdown-edit-hard-wrapped-paragraph-reminder: the text you just wrote in docs/edited.md"
         broken_before = "# Notes\n\nThe first half of a sentence\nand the second part.\n"
         result = edit_then_run(checkout, edited_file, broken_before, "the second part", "the second half")
         check("an Edit that wrote into a broken paragraph gets the reminder",
@@ -724,7 +724,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     if PARSER_AVAILABLE:
         result = write_then_run(checkout, checkout / "notes.markdown", BROKEN_TEXT)
         check("a .markdown file is checked too",
-              agent_text(result).startswith("markdown-edit-hard-wrapped-paragraph-reminder: the text you just wrote in notes.markdown"),
+              agent_text(result).startswith("[rule markdown-edit-hard-wrapped-paragraph-reminder] markdown-edit-hard-wrapped-paragraph-reminder: the text you just wrote in notes.markdown"),
               result.stdout + result.stderr)
 
     # A machine without markdown-it-py: a package of that name that fails to

@@ -149,6 +149,12 @@ NED_BOX_CREDENTIAL_FILES_CHECK_LINE = (
     "cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write.py >> "
     "/home/nedlern/.claude/cold-read-cell-credential-files-outside-denied-directories-daily-check-"
     "user-alert-write.log 2>&1")
+# The weekly count of each hook rule ID in both machines' transcripts, on ned-box alone.
+NED_BOX_HOOK_RULE_IDS_WEEKLY_COUNT_LINE = (
+    "30 5 * * 1 /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/"
+    "claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report.py >> "
+    "/home/nedlern/.claude/claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-"
+    "never-seen-rules-report.log 2>&1")
 # The no-sandbox test suites' run on main in a quiet gap, on ned-box alone.
 NED_BOX_NO_SANDBOX_SUITES_LINE = (
     "*/10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
@@ -311,9 +317,12 @@ check("the table's jobs are the two typed by hand before this program, the workt
       "Mac, the deletion of exited agent-sessions' temp folders, the scheduled full "
       "mutation pass, the no-sandbox test suites' run on main, the GHI-MD edit pull "
       "requests' check, approval and merge, the daily search for credential files no "
-      "cold-read-cell is denied, and no other",
+      "cold-read-cell is denied, the weekly count of each hook rule ID in both machines' "
+      "transcripts, and no other",
       sorted(real_jobs) == ["agent-seat-idle-sweep-headless-judge-wake-messages-send-and-"
                             "user-alerts-write",
+                            "claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-"
+                            "and-never-seen-rules-report",
                             "claude-code-temp-folders-of-exited-agent-sessions-delete",
                             "clean-worktrees",
                             "cold-read-cell-credential-files-outside-denied-directories-daily-"
@@ -381,6 +390,18 @@ check("the daily search for credential files no cold-read-cell is denied runs on
       and "nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py"
       in (REPOSITORY_ROOT / credential_files_check["program"]).read_text(encoding="utf-8"),
       installer.cron_line(ned_box, credential_files_check, credential_files_check["on"]["ned-box"]))
+hook_rule_ids_weekly_count = real_jobs[
+    "claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report"]
+check("the weekly count of each hook rule ID runs on ned-box alone, Mondays at 05:30, and its program "
+      "documents the table's line and names this installer",
+      list(hook_rule_ids_weekly_count["on"]) == ["ned-box"]
+      and installer.cron_line(ned_box, hook_rule_ids_weekly_count, hook_rule_ids_weekly_count["on"]["ned-box"])
+      == NED_BOX_HOOK_RULE_IDS_WEEKLY_COUNT_LINE
+      and f"    {NED_BOX_HOOK_RULE_IDS_WEEKLY_COUNT_LINE}\n"
+      in (REPOSITORY_ROOT / hook_rule_ids_weekly_count["program"]).read_text(encoding="utf-8")
+      and "nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py"
+      in (REPOSITORY_ROOT / hook_rule_ids_weekly_count["program"]).read_text(encoding="utf-8"),
+      installer.cron_line(ned_box, hook_rule_ids_weekly_count, hook_rule_ids_weekly_count["on"]["ned-box"]))
 full_mutation_pass = real_jobs[
     "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open"]
 check("the scheduled full mutation pass runs on ned-box alone, at 00:30, and its program "
@@ -476,7 +497,9 @@ check("--print as ned-box prints ned-box's cron lines from the real table and ru
           "merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-"
           "merge — cron line:", NED_BOX_GHI_MD_EDIT_PULL_REQUESTS_MERGE_LINE,
           "cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write"
-          " — cron line:", NED_BOX_CREDENTIAL_FILES_CHECK_LINE],
+          " — cron line:", NED_BOX_CREDENTIAL_FILES_CHECK_LINE,
+          "claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-"
+          "report — cron line:", NED_BOX_HOOK_RULE_IDS_WEEKLY_COUNT_LINE],
       (exit_code, printed.getvalue(), errors.getvalue()))
 printed, errors = io.StringIO(), io.StringIO()
 with redirect_stdout(printed), redirect_stderr(errors):
