@@ -2860,7 +2860,8 @@ def approval_walk_minutes_unit_each_item_number_was_last_presented_in(walk_finde
     from the `#next_to_present` lines of minutes_text outside code, in order. A line presents, for each number it
     names, the one unit naming it, or, when several do, the one whose M is the line's, and with that unit each unit
     above it that holds it, because the read step descends from `3 of 12` to `3.1.1 of 12` and writes a line for the
-    leaf only; a number below a newly presented unit whose last unit is not below it is dropped."""
+    leaf only; a number below a newly presented unit whose last unit is neither below it nor that unit itself, as
+    3.1 in `Items 3 and 3.1 of 12`, is dropped."""
     presented = {}
     for line in walk_finder.prose_lines(minutes_text, parser):
         spans = [span.span() for span in walk_finder.CODE_SPAN.finditer(line)]
@@ -2882,8 +2883,8 @@ def approval_walk_minutes_unit_each_item_number_was_last_presented_in(walk_finde
                 for above, unit in newly.items():
                     below = walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(
                         units, unit, [above])
-                    for other in [other for other in presented
-                                  if other.startswith(above + ".") and presented[other] not in below]:
+                    for other in [other for other in presented if other.startswith(above + ".")
+                                  and presented[other] not in below and presented[other] != unit]:
                         del presented[other]
                 presented.update(newly)
     return presented

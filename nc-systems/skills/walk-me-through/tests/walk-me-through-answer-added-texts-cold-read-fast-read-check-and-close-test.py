@@ -1033,6 +1033,68 @@ def test_close_skips_a_next_to_present_line_in_a_code_span_when_it_picks_a_reuse
           described(closed) + case.minutes.read_text())
 
 
+SHARED_PARENT_HEADING_REUSED_NUMBER_DOCUMENT = (
+    "# A walk\n\n## Item 3 of 9: three\n\nA.\n\n"
+    "### Item 3.1 of 9: the first half\n\nB.\n\n#case_against weak: b.\n\nRecommendation: b.\n\n"
+    "## Items 3 and 3.1 of 12: a later item reusing 3, with its first half\n\nC.\n\n"
+    "### Item 3.1.1 of 12: the first half's part\n\nD.\n\n#case_against weak: d.\n\nRecommendation: d.\n\n"
+    "### Item 3.2 of 12: its second half\n\nE.\n\n#case_against weak: e.\n\nRecommendation: e.\n\n"
+    "## Item 4 of 12: four\n\nF.\n\n#case_against weak: f.\n\nRecommendation: f.\n")
+
+
+def test_close_decides_a_reused_number_that_shares_its_parent_s_heading_through_its_own_sub_steps():
+    pull_requests = held_pull_requests((501, [f"#held_on_ruling {WALK_NAME} item 3"]))
+    case = Case(next_to_present="item 3.2 of 12", document=SHARED_PARENT_HEADING_REUSED_NUMBER_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\n#next_to_present item 3.1 of 9\n\n#next_to_present item 3.1.1 of 12\n"
+                            + approved_line("item 3.1.1 of 12") + "#next_to_present item 3.2 of 12\n")
+    case.run("check")
+    closed = case.run("close", environment=gh_environment(pull_requests))
+    check("with 3.1 sharing the heading `Items 3 and 3.1 of 12` with its parent, presenting 3.2 of 12 keeps 3.1 in "
+          "that unit, so approving 3.2 after 3.1.1 decides 3.1 and 3, and close posts 3's ruling and names item 4",
+          closed.returncode == 0 and case.gh_comments() == [("501", f"#ruling_given {WALK_NAME} item 3 approved")]
+          and marker(case).rsplit(" of ", 1)[0] == "#next_to_present item 4",
+          described(closed) + case.minutes.read_text() + repr(case.gh_comments()))
+
+
+def test_close_drops_a_reused_number_s_older_unit_once_its_parent_is_presented_again():
+    pull_requests = held_pull_requests((501, [f"#held_on_ruling {WALK_NAME} item 3.1"]))
+    document = ("# A walk\n\n## Item 3 of 9: three\n\nA.\n\n### Item 3.1 of 9: the first half\n\nB.\n\n"
+                "#### Item 3.1.1 of 9: its only part\n\nB1.\n\n#case_against weak: b.\n\nRecommendation: b.\n\n"
+                "## Item 3 of 12: a later item reusing 3\n\nC.\n\n"
+                "### Item 3.1 of 12: its first half\n\nD.\n\n#case_against weak: d.\n\nRecommendation: d.\n\n"
+                "### Item 3.2 of 12: its second half\n\nE.\n\n#case_against weak: e.\n\nRecommendation: e.\n")
+    case = Case(next_to_present="item 3.2 of 12", document=document)
+    case.minutes.write_text("# Minutes\n\n#next_to_present item 3.1.1 of 9\n" + approved_line("item 3.1.1 of 9")
+                            + "#next_to_present item 3 of 12\n\n#next_to_present item 3.2 of 12\n")
+    case.run("check")
+    closed = case.run("close", environment=gh_environment(pull_requests))
+    read = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("once `3 of 12` is presented, the 3.1 last presented under `3 of 9` is dropped, so approving 3.2 of 12 does "
+          "not decide 3.1 through `3.1 of 9`'s approved 3.1.1, and the read step then presents the unanswered 3.1 of 12",
+          closed.returncode == 0 and read.returncode == 0 and case.gh_comments() == []
+          and marker(case) == "#next_to_present item 3.1 of 12",
+          described(closed) + described(read) + case.minutes.read_text() + repr(case.gh_comments()))
+
+
+def test_close_names_a_reused_number_never_presented_by_the_total_of_its_presented_parent():
+    document = ("# A walk\n\n## Item 3 of 9: three\n\nA.\n\n"
+                "### Item 3.1 of 9: the first half\n\nB.\n\n#case_against weak: b.\n\nRecommendation: b.\n\n"
+                "### Item 3.2 of 9: the second half\n\nC.\n\n#case_against weak: c.\n\nRecommendation: c.\n\n"
+                "## Item 3 of 12: a later item reusing 3\n\nD.\n\n"
+                "### Item 3.1 of 12: its first half\n\nE.\n\n#case_against weak: e.\n\nRecommendation: e.\n\n"
+                "### Item 3.2 of 12: its second half\n\nF.\n\n#case_against weak: f.\n\nRecommendation: f.\n")
+    case = Case(next_to_present="item 3.1 of 12", document=document)
+    case.minutes.write_text("# Minutes\n\n#next_to_present item 3.1 of 12\n")
+    case.run("check")
+    closed = case.run("close")
+    after_close = marker(case)
+    read = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("after 3.1 of 12 is approved, close names 3.2, never presented, by the total of its presented parent "
+          "`3 of 12`, not by the walk-document's count of 1, and the read step accepts it",
+          closed.returncode == 0 and read.returncode == 0 and after_close == "#next_to_present item 3.2 of 12",
+          described(closed) + described(read) + case.minutes.read_text())
+
+
 def test_the_decided_set_finds_an_item_s_sub_steps_wherever_they_sit_in_the_walk_document():
     alert_between = ("# A walk\n\n## Item 1 of 10: one\n\nA.\n\n## Item 3 of 10: three\n\nB.\n\n"
                      "### Item 3.1 of 10: the first half\n\nC.\n\n#### Item 3.1.1 of 10: its first part\n\nD.\n\n"
