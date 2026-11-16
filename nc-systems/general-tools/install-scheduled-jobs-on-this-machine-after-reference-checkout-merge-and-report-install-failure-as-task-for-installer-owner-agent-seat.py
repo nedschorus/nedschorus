@@ -49,8 +49,7 @@ import sys
 from pathlib import Path
 
 GENERAL_TOOLS = Path(__file__).resolve().parent
-PROGRAM = ("nc-systems/general-tools/install-scheduled-jobs-on-this-machine-after-reference-"
-           "checkout-merge-and-report-install-failure-as-task-for-installer-owner-agent-seat.py")
+PROGRAM = "nc-systems/general-tools/install-scheduled-jobs-on-this-machine-after-reference-checkout-merge-and-report-install-failure-as-task-for-installer-owner-agent-seat.py"
 SCHEDULED_JOBS_INSTALLER_PATH_RELATIVE_TO_CLONE_TOP_DIRECTORY = (
     "nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py")
 OWNING_AGENT_SEAT = "reboot-test"
@@ -126,11 +125,14 @@ def failed_message(machine, reference_checkout, exit_code, output, why_no_task):
         f"nc-systems/general-tools/scheduled-jobs-on-each-machine.json says. The agent-seat "
         f"{OWNING_AGENT_SEAT} on ned-box owns the installer and fixes its failures, and this "
         f"failure was not handed to it: {why_no_task}\n"
+        f"If you are {OWNING_AGENT_SEAT}, find the cause from the installer's lines below, fix "
+        f"it, and have `{install_command_text(reference_checkout)}` run on {machine} to confirm "
+        f"that it exits 0.\n"
         f"If you are a subagent, give this whole message to the agent that dispatched you.\n"
         f"If you are any other agent, send this whole message to {OWNING_AGENT_SEAT} with "
         f"Claude Code's SendMessage tool, addressed to {OWNING_AGENT_SEAT}; if "
         f"{OWNING_AGENT_SEAT} cannot be reached, tell the user that the scheduled-jobs install "
-        f"failed on {machine} and quote this message's first line.\n"
+        f"failed on {machine}, quoting this whole message.\n"
         f"If you are the user, paste this whole message into {OWNING_AGENT_SEAT}'s session.\n"
         f"The installer printed:\n{output}")
 

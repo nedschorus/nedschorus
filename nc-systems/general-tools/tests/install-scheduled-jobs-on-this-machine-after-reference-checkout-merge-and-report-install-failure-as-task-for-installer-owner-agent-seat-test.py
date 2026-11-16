@@ -23,9 +23,7 @@ from pathlib import Path
 
 GENERAL_TOOLS = Path(__file__).resolve().parent.parent
 REPOSITORY_ROOT = GENERAL_TOOLS.parent.parent
-PROGRAM_PATH = GENERAL_TOOLS / ("install-scheduled-jobs-on-this-machine-after-reference-checkout-"
-                                "merge-and-report-install-failure-as-task-for-installer-owner-"
-                                "agent-seat.py")
+PROGRAM_PATH = GENERAL_TOOLS / "install-scheduled-jobs-on-this-machine-after-reference-checkout-merge-and-report-install-failure-as-task-for-installer-owner-agent-seat.py"
 HOOKS_DIRECTORY = REPOSITORY_ROOT / "scripts" / "git-client-side-hooks"
 _spec = importlib.util.spec_from_file_location("scheduled_jobs_install_after_merge", PROGRAM_PATH)
 after_merge = importlib.util.module_from_spec(_spec)
