@@ -233,7 +233,9 @@ def main(environment=None, argv=None):
                              f"If you are {OWNING_AGENT_SEAT}, put right, on ned-box, what "
                              f"stopped that write, such as the permissions of {list_directory} "
                              f"or a file where that directory should be, so that the next failed "
-                             f"install is written as a task again."), file=sys.stderr)
+                             f"install is written as a task again, and keep this failure on your "
+                             f"own task list until the install command below exits 0."),
+              file=sys.stderr)
         return EXIT_FAILED
     return EXIT_DONE
 
