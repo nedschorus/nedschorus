@@ -2813,6 +2813,37 @@ except TypeError:
     caller_must_choose = True
 check("a caller of the reader must choose whether a line that does not parse raises",
       caller_must_choose)
+try:
+    read_line(spawn_line, "here", True)
+    choice_must_be_named = False
+except TypeError:
+    choice_must_be_named = True
+check("a caller of the reader names that choice rather than passing it by position",
+      choice_must_be_named)
+check("the reader marks no spawn, resume or TaskStop interim",
+      [event.is_interim for line in (spawn_line, json.dumps(subagent_resume_record()),
+                                     json.dumps(task_stop_record("b5x7", "local_bash")))
+       for event in read_line(line, "here", should_raise_on_unparseable_spawn_or_resume_line=True)]
+      == [False, False, False])
+# Trimmed from a real transcript: a synchronous Agent call's result carries an agentId with status
+# "completed"; this one's prompt quotes the spawn marker, so the line passes the reader's first filter.
+synchronous_agent_result = {"type": "user", "timestamp": GRID_LAUNCHED_AT, "toolUseResult": {
+    "status": "completed", "prompt": f'Explain why the hook reads "{SPAWNED_SUBAGENT_MARKER}"',
+    "agentId": "a67fd15aba990765f", "agentType": "general-purpose",
+    "content": [{"type": "text", "text": "It marks an Agent call run in the background."}]}}
+synchronous_agent_events = read_line(json.dumps(synchronous_agent_result), "here",
+                                     should_raise_on_unparseable_spawn_or_resume_line=True)
+check("the reader returns no spawn for a synchronous Agent call's completed result",
+      synchronous_agent_events == [], synchronous_agent_events)
+long_cut_spawn_line = half_written_spawn_line()
+try:
+    read_line(long_cut_spawn_line, "here", should_raise_on_unparseable_spawn_or_resume_line=True)
+    long_cut_spawn_refusal = ""
+except hook.TranscriptCouldNotBeFullyRead as problem:
+    long_cut_spawn_refusal = str(problem)
+check("the reader's refusal quotes exactly the first 200 characters of a longer spawn line",
+      len(long_cut_spawn_line) > 201 and not long_cut_spawn_line[200].isspace()
+      and repr(long_cut_spawn_line[:200]) in long_cut_spawn_refusal, long_cut_spawn_refusal[-260:])
 
 # --help prints each flag's default, so an agent reads it there and not from the source.
 help_result = subprocess.run([sys.executable, str(HOOK_SCRIPT), "--help"],

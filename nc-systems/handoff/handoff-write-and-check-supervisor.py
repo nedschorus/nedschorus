@@ -290,7 +290,7 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
     # final-notification echo does not lift the stop.
     stopped_ids = set()
     with transcript_path.open("r", encoding="utf-8", errors="replace") as handle:
-        for line_number, line in enumerate(handle, start=1):
+        for line_number, line in enumerate(handle, start=1):  # pragma: no mutate, the line number reaches only the reader's refusal, which should_raise_on_unparseable_spawn_or_resume_line=False below never raises
             # The roster never blocks a session-handoff, and the transcript writer may still be
             # appending a line that does not parse.
             for event in threshold_hook.task_events_from_claude_code_transcript_line(
@@ -298,7 +298,7 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
                     should_raise_on_unparseable_spawn_or_resume_line=False):
                 stamp = timestamp_to_whole_seconds(event.record.get("timestamp", ""))
                 entry = by_agent_id.get(event.task_id)
-                if event.kind == threshold_hook.SUBAGENT_SPAWNED_BY_AGENT_TOOL_TASK_EVENT:
+                if event.kind == threshold_hook.SUBAGENT_SPAWNED_BY_AGENT_TOOL_TASK_EVENT:  # pragma: no mutate, the reader sets kind to this very constant object, so `is` acts as ==
                     if entry is None:
                         entry = {
                             "agent_id": event.task_id,
@@ -313,10 +313,10 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
                     continue
                 if entry is None:
                     continue
-                if event.kind == threshold_hook.SUBAGENT_RESUMED_BY_SEND_MESSAGE_TASK_EVENT:
+                if event.kind == threshold_hook.SUBAGENT_RESUMED_BY_SEND_MESSAGE_TASK_EVENT:  # pragma: no mutate, the reader sets kind to this very constant object, so `is` acts as ==; the kinds left here are "resumed", "stopped", "task-notification" and "workflow-launched", and only "resumed" sorts at or before "resumed", so <= acts as ==
                     stopped_ids.discard(event.task_id)
                     last_event = threshold_hook.SUBAGENT_RESUMED_BY_SEND_MESSAGE_TASK_EVENT
-                elif event.kind == threshold_hook.STOPPED_BY_TASK_STOP_EVENT:  # pragma: no mutate, the kinds left here are "stopped", "task-notification" and "workflow-launched", and only "stopped" sorts at or before "stopped", so <= acts as ==
+                elif event.kind == threshold_hook.STOPPED_BY_TASK_STOP_EVENT:  # pragma: no mutate, the kinds left here are "stopped", "task-notification" and "workflow-launched", and only "stopped" sorts at or before "stopped", so <= acts as ==; the reader sets kind to this very constant object, so `is` acts as ==
                     stopped_ids.add(event.task_id)
                     last_event = threshold_hook.STOPPED_BY_TASK_STOP_EVENT
                 else:
