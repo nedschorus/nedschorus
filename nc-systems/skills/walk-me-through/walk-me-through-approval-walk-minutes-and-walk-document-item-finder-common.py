@@ -62,7 +62,7 @@ A heading that names several
 items is one unit, and so are the top-level paragraphs under it that open
 with the count of one of its items. Within the unit, an item's lines start at
 its opening, where N is one of the unit's items, read whole, and M, when
-given, is the heading's M. An opening is one of three shapes:
+given, is the heading's M. An opening is one of four shapes:
 - on the first line of a top-level paragraph or of an item of a top-level
   list, a bold label: `**` or `__`, then `Item N` or `Item N of M`, then `:`,
   `.` or `,`, or the bold's end followed by one of those, a dash or the line's
@@ -71,7 +71,10 @@ given, is the heading's M. An opening is one of three shapes:
 - on the first line of a top-level paragraph, a plain label: `Item N` then
   `:` or `.` and a space or the line's end, as in `Item 5: the label`;
 - on the first line of a top-level paragraph, the full count `Item N of M`
-  after any emphasis, as in `Item 5 of 9. Recommendation: ...`.
+  after any emphasis, as in `Item 5 of 9. Recommendation: ...`;
+- a top-level heading whose label names one item and gives no `of M`, as in
+  `## Item 5: details`, unless a Withdrawn heading since the unit's start
+  names that item.
 Any other line is not an opening: a mention such as `Item 6 depends on item
 5`, `Item 5.2 shows the rewrite` or `**Item 5.2** shows the rewrite`, whose
 number is read whole and so is not item 5's, a label whose bold ends before `of`, as in
@@ -672,10 +675,14 @@ def approval_walk_item_line_range_within_heading_shared_by_several_items(opening
     """Return (first, end) of the lines, of the unit from line first up to end that names several items, that
     belong to item number: from the first of item_opening_lines' openings that names that item alone, with
     the unit's total or none, up to the next that names another of the unit's items alone or the next
-    Withdrawn heading, an opening that names no item; or, when none names it, from the unit's first line up to
-    its first Withdrawn heading or its end."""
+    Withdrawn heading, an opening that names no item; or, when none names it, or the unit names only that
+    item, from the unit's first line up to its first Withdrawn heading or its end."""
     starts = {}
     withdrawn = [line for line in openings if first <= line < end and not openings[line][0]]
+    # A unit of one item is that item's whole; an opening inside it, such as a `#### Item 2.1: details`
+    # subheading, would drop the lines above it.
+    if len(numbers) == 1:
+        return first, min(withdrawn + [end])
     for line in sorted(openings):
         named, opening_total = openings[line]
         if first <= line < end and opening_total in (total, None) and len(named) == 1 and named[0] in numbers:
