@@ -85,6 +85,39 @@ def fixture_repository(base):
     return repository
 
 
+def renamed_fixture_repository(base):
+    """A repository whose hook gained a rule's message in PR 5 by seat-a under the constant REFUSAL in
+    hooks/old-hook.py; in PR 6 seat-b moved the file to hooks/new-hook.py, then renamed the constant
+    and gave the message its ID."""
+    repository = base / "renamed-repository"
+    (repository / ".claude").mkdir(parents=True)
+    (repository / "hooks").mkdir()
+    git(repository, "init", "-q", "-b", "main")
+    (repository / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"PreToolUse": [
+        {"matcher": "Bash", "hooks": [{"type": "command",
+                                       "command": 'python3 "$CLAUDE_PROJECT_DIR"/hooks/new-hook.py'}]}]}}))
+    padding = "".join(f"PADDING_{number} = {number}\n" for number in range(30))
+    (repository / "hooks" / "old-hook.py").write_text(padding, encoding="utf-8")
+    git(repository, "add", "-A")
+    git(repository, "commit", "-q", "-m", "start")
+    when = "2026-10-01T00:00:00+00:00"
+    git(repository, "checkout", "-q", "-b", "add-rule", author="seat-a", when=when)
+    (repository / "hooks" / "old-hook.py").write_text(
+        padding + 'REFUSAL = (\n    "Refused: the old rule holds."\n)\n', encoding="utf-8")
+    git(repository, "commit", "-q", "-am", "add the rule", author="seat-a", when=when)
+    merge_branch(repository, "add-rule", 5, "merge-lane-2", "2026-10-01T01:00:00+00:00")
+    when = "2026-11-10T00:00:00+00:00"
+    git(repository, "checkout", "-q", "-b", "add-ids", author="seat-b", when=when)
+    git(repository, "mv", "hooks/old-hook.py", "hooks/new-hook.py", author="seat-b", when=when)
+    git(repository, "commit", "-q", "-m", "move the hook", author="seat-b", when=when)
+    (repository / "hooks" / "new-hook.py").write_text(
+        padding + 'OLD_RULE_REFUSAL = (\n    "[rule fixture-old] "\n    "Refused: the old rule holds."\n)\n',
+        encoding="utf-8")
+    git(repository, "commit", "-q", "-am", "add the ID", author="seat-b", when="2026-11-10T00:30:00+00:00")
+    merge_branch(repository, "add-ids", 6, "merge-lane-2", "2026-11-10T01:00:00+00:00")
+    return repository
+
+
 def record(kind, when, **fields):
     return json.dumps({"type": kind, "timestamp": when, **fields})
 
@@ -124,6 +157,35 @@ check("the Stop hook feedback message, which repeats hook_blocking_error, does n
       program.counted_texts(json.loads(record("user", AFTER, message={
           "content": "Stop hook feedback:\n[rule a-b] stop"}))) == [])
 
+# Which IDs in a hook's text are firings: only one opening the text or a line.
+check("an ID opening the text, a line, or a refusal after its hook-error prefix is a firing",
+      program.firing_rule_ids_in_hook_text("[rule a-b] note\n  [rule c-d] more") == ["a-b", "c-d"]
+      and program.firing_rule_ids_in_hook_text("PreToolUse:Edit hook error: [command hook 3]: [rule e-f] Refused") == ["e-f"])
+check("an ID further into a line, as in a quoted diff of a hook's source, is not a firing",
+      program.firing_rule_ids_in_hook_text('[rule a-b] a changed hook:\n+    DENY = "[rule c-d] Refused"\nsee [rule e-f]')
+      == ["a-b"])
+
+# The words a rule's message opens with, by which the commit that wrote the message is found.
+check("the opening words are those after the ID on its line, up to a quote or brace",
+      program.rule_message_opening_words_from_hook_source_for_git_pickaxe(['X = "[rule a-b] Refused: no {thing} here"'], 0, "a-b") == "Refused: no")
+check("an ID alone in its string literal takes the opening words from the next string literal",
+      program.rule_message_opening_words_from_hook_source_for_git_pickaxe(['X = "[rule a-b] "', "Y = X + (", '    "Refused: the rule holds."'], 0, "a-b")
+      == "Refused: the rule holds.")
+check("too few opening words give none", program.rule_message_opening_words_from_hook_source_for_git_pickaxe(['X = "[rule a-b] Hi {x}"'], 0, "a-b") is None)
+
+with tempfile.TemporaryDirectory() as scratch:
+    base = Path(scratch)
+    renamed = renamed_fixture_repository(base)
+    renamed_rules = program.registered_rules(renamed)
+    failures = program.rule_origins(renamed, renamed_rules)
+    old_rule = renamed_rules[0] if renamed_rules else {}
+    check("in a hook renamed in its history, the ID's commit is still found", failures == []
+          and old_rule.get("added") == datetime.datetime(2026, 11, 10, 0, 30, tzinfo=datetime.timezone.utc)
+          and old_rule.get("origin_note") == "", (failures, renamed_rules))
+    check("a rule whose constant and hook file were renamed since is credited to the seat and pull request "
+          "that wrote its message", (old_rule.get("seat"), old_rule.get("pull_request")) == ("seat-a", "5"),
+          renamed_rules)
+
 with tempfile.TemporaryDirectory() as scratch:
     base = Path(scratch)
     repository = fixture_repository(base)
@@ -153,6 +215,8 @@ with tempfile.TemporaryDirectory() as scratch:
                                                 "content": ["[rule fixture-deny] before the ID was added"]}),
         record("attachment", AFTER, attachment={"type": "hook_additional_context",
                                                "content": ["[rule removed-rule] old"]}),
+        record("attachment", AFTER, attachment={"type": "hook_additional_context", "content": [
+            '[rule removed-rule] a changed hook:\n+    NOTE = "[rule fixture-inline-note] see"']}),
         "not json [rule fixture-deny]",
     ])
     write_transcript(transcripts / "-seat" / "sub" / "subagents" / "agent-x.jsonl", [
@@ -167,7 +231,8 @@ with tempfile.TemporaryDirectory() as scratch:
     counts, unknown, read, problems = program.count_firings([transcripts], rules)
     check("firings count once each, in subagents' transcripts too, and not before the ID was added",
           counts == {"fixture-deny": 2}, counts)
-    check("an ID no registered hook writes is counted apart", unknown == {"removed-rule": 1}, unknown)
+    check("an ID no registered hook writes is counted apart, and an ID quoted in a hook's text is not counted",
+          unknown == {"removed-rule": 2} and "fixture-inline-note" not in counts, (unknown, counts))
     check("a transcript last changed before the earliest ID was added is not read", read == 3, read)
     check("a clean scan reports no problem", problems == [], problems)
 
@@ -202,7 +267,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and "`fixture-deny`" not in unseen_section, text)
     check("the report calls the rules not seen candidates, not verdicts",
           program.CANDIDATES_NOT_VERDICTS_LINE in text, text)
-    check("the report lists the ID no registered hook writes", "| `removed-rule` | 1 |" in text, text)
+    check("the report lists the ID no registered hook writes", "| `removed-rule` | 2 |" in text, text)
 
     # The whole program, on the fixture repository.
     program.REPOSITORY = repository

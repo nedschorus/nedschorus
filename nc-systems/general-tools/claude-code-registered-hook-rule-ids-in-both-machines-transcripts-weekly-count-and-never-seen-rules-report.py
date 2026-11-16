@@ -13,7 +13,9 @@ agent-session-files-by-machine/mac/projects, the Mac's, and agent-session-files-
 ned-box's. Subagents' transcripts below them are read too.
 
 What counts as a firing: an ID in text a hook handed the agent, and nowhere else, so a transcript in
-which an agent reads, tests or quotes a hook's source counts nothing. That text is the content of an
+which an agent reads, tests or quotes a hook's source counts nothing. Within that text, only an ID that
+opens the text or one of its lines counts, as a rule's message starts with its ID; an ID further into a
+line, such as one in a diff of a hook's source that another hook's reminder carries, does not. That text is the content of an
 attachment record of type hook_additional_context, the blockingError of one of type
 hook_blocking_error, and a tool result whose text starts `<event>... hook error:`, which is how a
 PreToolUse refusal reaches the agent. The hook_success record and the `Stop hook feedback:` message
@@ -21,13 +23,15 @@ repeat that text and are not counted again. A firing counts when its record's ti
 than the commit that added its rule's ID, and only transcripts changed since the earliest such commit
 are read.
 
-When a rule was added, and by whom: the module-level constant whose assignment holds the ID is found,
-and the first commit whose change matches that constant's assignment is the commit that added the
-rule; the agent-seat is that commit's author name, as each agent-seat commits under its own name, and
+When a rule was added, and by whom: the oldest of two commits is the commit that added the rule. One
+is the first commit whose change holds the message's opening words, those after its `[rule <id>] `, so
+a constant renamed since does not move it; the other is the first commit whose change matches the
+assignment of the module-level constant that holds the ID, so a message reworded since does not move
+it. Both follow the hook file across renames. The agent-seat is that commit's author name, as each agent-seat commits under its own name, and
 the pull request is the one whose merge first brought the commit onto this checkout's first-parent
-history, read from the merge's subject `Merge pull request #<number> from ...`. When no constant holds
-the ID, or no commit matches it, the commit that added the ID stands in, and the report says so. A
-constant renamed since the rule was added gives the commit that renamed it.
+history, read from the merge's subject `Merge pull request #<number> from ...`. When neither commit is
+found, the commit that added the ID stands in, and the report says so. A rule whose message was both
+reworded and moved to a renamed constant since it was added gives the later of those two commits.
 
 The report goes to <report directory>/<job name>-<YYYY-MM-DD>-report.md, the job name being this
 file's name without .py and the date UTC, replacing a report written earlier the same day; the default
@@ -70,6 +74,12 @@ DEFAULT_REPORT_DIRECTORY = LOG_STORE / "maintenance-job-reports"
 GIT_TIMEOUT_SECONDS = 60
 RULE_ID_BYTES = b"[rule "
 HOOK_ERROR_TOOL_RESULT_PATTERN = re.compile(r"^[A-Za-z]+(?::\S*)? hook error: ")
+HOOK_ERROR_PREFIX_PATTERN = re.compile(r"^[A-Za-z]+(?::\S*)? hook error: (?:\[[^\]\n]*\]: )?")
+OPENING_WORDS_END_PATTERN = re.compile(r"[\"'{\\\n]")
+OPENING_WORDS_LONGEST = 40
+OPENING_WORDS_SHORTEST = 8
+OPENING_WORDS_LINES_AFTER_AN_ID_ALONE = 3
+STRING_LITERAL_START_PATTERN = re.compile(r"[\"']")
 MERGE_SUBJECT_PATTERN = re.compile(r"^Merge pull request #(\d+) ")
 CANDIDATES_NOT_VERDICTS_LINE = (
     "Each rule below is a candidate to question, not a verdict: a guard against a rare, permanent harm "
@@ -86,6 +96,7 @@ def _load(name, path):
 rule_ids = _load("claude_code_registered_hook_rule_id_pattern_hook_files_list_and_source_scan_common",
                  REPOSITORY / "nc-systems" / "general-tools"
                  / "claude-code-registered-hook-rule-id-pattern-hook-files-list-and-source-scan-common.py")
+RULE_ID_OPENING_A_LINE_PATTERN = re.compile(r"^[ \t]*" + rule_ids.RULE_ID_PATTERN.pattern, re.MULTILINE)
 
 
 class GitLookupFailed(Exception):
@@ -104,8 +115,28 @@ def git(repository, *arguments):
     return completed.stdout
 
 
+def rule_message_opening_words_from_hook_source_for_git_pickaxe(source_lines, line_index, rule_id):
+    """The literal words after `[rule <id>] ` on the source line, up to the first quote, brace or
+    backslash; or, when the ID ends its string literal, the start of the first string literal on the
+    next few lines, where the message goes on. None when too few to find the message by."""
+    line = source_lines[line_index]
+    start = line.find(f"[rule {rule_id}] ")
+    if start < 0:
+        return None
+    words = OPENING_WORDS_END_PATTERN.split(line[start + len(f"[rule {rule_id}] "):], 1)[0]
+    for following in source_lines[line_index + 1:line_index + 1 + OPENING_WORDS_LINES_AFTER_AN_ID_ALONE]:
+        if words.strip():
+            break
+        quote = STRING_LITERAL_START_PATTERN.search(following)
+        if quote:
+            words = OPENING_WORDS_END_PATTERN.split(following[quote.end():], 1)[0]
+    words = words[:OPENING_WORDS_LONGEST].rstrip()
+    return words if len(words) >= OPENING_WORDS_SHORTEST else None
+
+
 def registered_rules(repository):
-    """[{id, hook, line, constant}] for each rule ID the registered hooks write, first place only."""
+    """[{id, hook, line, constant, opening_words}] for each rule ID the registered hooks write, first
+    place only."""
     rules = []
     for hook in rule_ids.registered_hook_paths(repository / ".claude" / "settings.json"):
         try:
@@ -114,14 +145,16 @@ def registered_rules(repository):
             continue
         for rule_id, lines in sorted(rule_ids.rule_ids_in_source(source).items()):
             rules.append({"id": rule_id, "hook": hook, "line": lines[0],
-                          "constant": rule_ids.module_level_name_assigned_at_line(source, lines[0])})
+                          "constant": rule_ids.module_level_name_assigned_at_line(source, lines[0]),
+                          "opening_words": rule_message_opening_words_from_hook_source_for_git_pickaxe(source.splitlines(), lines[0] - 1, rule_id)})
     return rules
 
 
 def first_commit(repository, hook, *pickaxe):
     """(sha, committer time) of the oldest commit whose change to the hook matches the pickaxe, or None."""
-    output = git(repository, "log", "--follow", "--reverse", "--format=%H %cI", *pickaxe, "--", hook)
-    first = output.splitlines()[0] if output.strip() else None
+    # Not --reverse: with --follow and a pickaxe, git then prints nothing for a file renamed in its history.
+    output = git(repository, "log", "--follow", "--format=%H %cI", *pickaxe, "--", hook)
+    first = output.splitlines()[-1] if output.strip() else None
     if first is None:
         return None
     sha, when = first.split(" ", 1)
@@ -167,10 +200,14 @@ def rule_origins(repository, rules):
                 rule["origin_note"] = "its ID is not committed"
                 continue
             rule["added"] = id_commit[1]
-            rule_commit = None
+            found = []
+            if rule.get("opening_words"):
+                found.append(first_commit(repository, rule["hook"], "-S", rule["opening_words"]))
             if rule["constant"]:
-                rule_commit = first_commit(repository, rule["hook"], "-G",
-                                           rf"^\s*{re.escape(rule['constant'])}\s*[:=]")
+                found.append(first_commit(repository, rule["hook"], "-G",
+                                          rf"^\s*{re.escape(rule['constant'])}\s*[:=]"))
+            found = [commit for commit in found if commit is not None]
+            rule_commit = min(found, key=lambda commit: commit[1]) if found else None
             if rule_commit is None:
                 rule_commit = id_commit
                 rule["origin_note"] = "found from the commit that added its ID"
@@ -210,6 +247,11 @@ def counted_texts(record):
     return texts
 
 
+def firing_rule_ids_in_hook_text(text):
+    """The rule IDs that open the text, after any hook-error prefix, or open one of its lines."""
+    return RULE_ID_OPENING_A_LINE_PATTERN.findall(HOOK_ERROR_PREFIX_PATTERN.sub("", text, count=1))
+
+
 def record_time(record):
     try:
         return datetime.datetime.fromisoformat(str(record.get("timestamp")).replace("Z", "+00:00"))
@@ -237,7 +279,7 @@ def count_in_transcript(path, added_by_id, counts, unknown_counts):
             continue
         when = record_time(record)
         for text in counted_texts(record):
-            for rule_id in rule_ids.RULE_ID_PATTERN.findall(text):
+            for rule_id in firing_rule_ids_in_hook_text(text):
                 if rule_id not in added_by_id:
                     unknown_counts[rule_id] = unknown_counts.get(rule_id, 0) + 1
                 elif added_by_id[rule_id] is None or (when is not None and when >= added_by_id[rule_id]):
