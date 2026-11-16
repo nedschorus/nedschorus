@@ -4318,6 +4318,17 @@ with tempfile.TemporaryDirectory() as scratch:
           "judge for git branch -D",
           head_branch_module.branch_refs_and_tips_with_no_worktree_not_fully_on_main(detached_main) == [],
           repr(head_branch_module.branch_refs_and_tips_with_no_worktree_not_fully_on_main(detached_main)))
+    # git check-ref-format forbids only ASCII whitespace in a ref name, so U+00A0 is allowed.
+    nbsp_branch = "fix\u00a0nbsp"
+    git(detached_main, "branch", nbsp_branch)
+    try:
+        nbsp_listed = head_branch_module.branch_refs_and_tips_with_no_worktree_not_fully_on_main(
+            detached_main)
+    except ValueError as error:
+        nbsp_listed = error
+    check("a branch whose name holds Unicode whitespace, here U+00A0, is listed whole with its tip",
+          nbsp_listed == [(nbsp_branch, git(detached_main, "rev-parse", "HEAD").strip())],
+          repr(nbsp_listed))
     done_removal = run_head_branch_clean("--remove")
     check("--remove removes the done worktree, then deletes its branch with -D",
           not done_worktree.exists() and "done-worktree-head-branch" not in local_branches()
