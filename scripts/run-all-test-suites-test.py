@@ -1342,6 +1342,9 @@ stops_early = suite_traced and os.environ.get("FAKE_STRACE_SUITE_FAILS_BEFORE_RE
 skips_reading = suite_traced and os.environ.get("FAKE_STRACE_SUITE_SKIPS_THE_CASE_THAT_READS")
 if skips_reading:
     print("SKIP the case that reads data.txt", flush=True)
+# A suite that skips, without the mark, a case that reads nothing, and still reads data.txt.
+if suite_traced and os.environ.get("FAKE_STRACE_SUITE_SKIPS_ANOTHER_CASE"):
+    print("SKIP a case that reads nothing", flush=True)
 with open(trace + ".1", "w") as written:
     if suite_traced and not stops_early and not skips_reading:
         written.write(f'openat(AT_FDCWD</>, "{seen}", O_RDONLY) = 3<{seen}>\n')
@@ -1469,23 +1472,25 @@ with tempfile.TemporaryDirectory() as scratch:
     stopped = run(root, "--record-inputs-with-strace",
                   environment_extra={**fake, "FAKE_STRACE_SUITE_FAILS_BEFORE_READING": "1"},
                   driver=FAKE_STRACE_DRIVER)
-    check("a traced run in which the suite failed keeps the last complete list of files only "
-          "strace saw, since it saw only what the suite reached before it stopped",
+    check("a traced run in which the suite failed keeps the files on the last list of files "
+          "only strace saw, since it saw only what the suite reached before it stopped",
           stopped.returncode == 1
           and json.loads(next(store.glob(
-              f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json")).read_text())
-          == complete_list, stopped.stdout)
+              f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json")).read_text())[
+                  "files_only_strace_saw"] == complete_list["files_only_strace_saw"] == ["data.txt"],
+          stopped.stdout)
 
     skipped = run(root, "--record-inputs-with-strace",
                   environment_extra={**fake, "FAKE_STRACE_SUITE_SKIPS_THE_CASE_THAT_READS": "1"},
                   driver=FAKE_STRACE_DRIVER)
     check("a traced run that passed but skipped a case without the mark that says this machine "
-          "cannot run it keeps the last complete list of files only strace saw",
+          "cannot run it keeps the files on the last list of files only strace saw",
           skipped.returncode == 0
           and recording(root, STRACE_ONLY_SUITE).get("skipped_cases") == 1
           and json.loads(next(store.glob(
-              f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json")).read_text())
-          == complete_list, (skipped.stdout, recording(root, STRACE_ONLY_SUITE)))
+              f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json")).read_text())[
+                  "files_only_strace_saw"] == ["data.txt"],
+          (skipped.stdout, recording(root, STRACE_ONLY_SUITE)))
 
     git(repo, "checkout", "-q", "-b", "holds-another-data")
     commit_files(repo, {"data.txt": "b\n"}, "another data")
@@ -1504,8 +1509,54 @@ with tempfile.TemporaryDirectory() as scratch:
               f"the checkout holds, so what it reads here is unknown" in lines(selected.stdout),
           (ran(root), selected.stdout))
 
+# A suite that skips a case without the mark in every scheduled run, as one that runs a case
+# only inside a Claude Code session does, still gets a list, and a later complete run replaces it.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {STRACE_ONLY_SUITE: PASSES})
+    base = commit_files(repo, {"data.txt": "a\n"}, "data")
+    fake_strace = root / "fake-strace.py"
+    fake_strace.write_text(f"#!{sys.executable}\n" + FAKE_STRACE_SOURCE)
+    fake_strace.chmod(0o755)
+    fake = {"FAKE_STRACE_PROGRAM": str(fake_strace),
+            "FAKE_STRACE_CALLED_FILE": str(root / "fake-strace-called.txt"),
+            "FAKE_STRACE_SAW": os.path.realpath(repo / "data.txt"),
+            "FAKE_STRACE_SUITE": STRACE_ONLY_SUITE}
+    store = root / "recordings"
+
+    def kept_files():
+        found = list(store.glob(f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json"))
+        return json.loads(found[0].read_text())["files_only_strace_saw"] if found else None
+
+    skipping = run(root, "--record-inputs-with-strace",
+                   environment_extra={**fake, "FAKE_STRACE_SUITE_SKIPS_ANOTHER_CASE": "1"},
+                   driver=FAKE_STRACE_DRIVER)
+    check("a traced run that skipped a case without the mark, with no list kept before, keeps "
+          "the files only strace saw it read",
+          skipping.returncode == 0
+          and recording(root, STRACE_ONLY_SUITE).get("skipped_cases") == 1
+          and kept_files() == ["data.txt"], (skipping.stdout, kept_files()))
+    # Recorded with the audit hook alone and no skip, as a selective run inside a session records.
+    run(root, "--recorded-inputs-directory", str(root / "session-store"))
+    commit_files(repo, {"data.txt": "b\n"}, "change data")
+    (root / "ran.txt").unlink(missing_ok=True)
+    selected = run(root, CHANGED_SINCE, base, "--recorded-inputs-directory",
+                   str(root / "session-store"), "--suite-files-only-strace-saw-lists-directory",
+                   str(store))
+    check("a selective run whose recording carries no skip selects that suite when a file on "
+          "the list differs, and does not name the suite as having no list",
+          ran(root) == [STRACE_ONLY_SUITE]
+          and not any("have no list of the files only strace saw" in line
+                      for line in lines(selected.stdout)),
+          (ran(root), selected.stdout))
+    run(root, "--record-inputs-with-strace", environment_extra={**fake, "FAKE_STRACE_SAW": "/"},
+        driver=FAKE_STRACE_DRIVER)
+    check("a traced run that passed and skipped nothing replaces the list, dropping a file it "
+          "no longer saw",
+          kept_files() == [], kept_files())
+
 # Only the scheduled full run records these lists, once a day; a list older than the limit, or
-# none, means a scheduled run was missed, and the run says so.
+# none, means the scheduled run has not run the suite, and the run says so.
 NOW = datetime.datetime(2026, 11, 4, 12, 0, tzinfo=datetime.timezone.utc)
 
 
@@ -1524,19 +1575,39 @@ notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_o
     ["a-test.py", "b-test.py"],
     {"a-test.py": kept_hours_before_now(35), "b-test.py": kept_hours_before_now(37)},
     pathlib.Path("/store"), NOW)
-check("a list older than the limit is named, with the time it was recorded",
+check("a list older than the limit is named, with the time it was recorded, and the agent "
+      "is told to tell the user",
       notice is not None and notice.startswith("scripts/run-all-test-suites.py: 1 of 2 suites")
-      and "has not recorded every suite since 2026-11-02T23:00:00Z" in notice
+      and "(a list older than that for 1, the oldest from 2026-11-02T23:00:00Z)" in notice
+      and "has made no list in the last 36 hours for 1 of 2 suites" in notice
       and "If you have not yet told the user in this agent-session that the scheduled full test "
           "run's lists are stale: tell him" in notice,
       notice)
 notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+    ["a-test.py", "b-test.py", "c-test.py"],
+    {"a-test.py": kept_hours_before_now(35), "b-test.py": kept_hours_before_now(37)},
+    pathlib.Path("/store"), NOW)
+check("missing and old lists are counted apart",
+      notice is not None and notice.startswith("scripts/run-all-test-suites.py: 2 of 3 suites")
+      and "(no list for 1; a list older than that for 1, the oldest from 2026-11-02T23:00:00Z)"
+      in notice, notice)
+notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+    ["a-test.py", "b-test.py"], {"a-test.py": kept_hours_before_now(35)},
+    pathlib.Path("/store"), NOW)
+check("a missing list beside fresh ones, as a suite added since the last scheduled run has, is "
+      "named, with the directory it was looked for in, and the agent is not sent to the user",
+      notice is not None and notice.startswith("scripts/run-all-test-suites.py: 1 of 2 suites")
+      and "36 hours in /store (no list for 1)," in notice
+      and "a suite added since its last run has none yet" in notice
+      and "\n" not in notice and "tell him" not in notice,
+      notice)
+notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
     ["a-test.py"], {}, pathlib.Path("/store"), NOW)
-check("a missing list is named, with the directory it was looked for in and the log-store "
+check("when no suite has a list, the agent is told to tell the user, with the log-store "
       "directory of the scheduled run's records",
       notice is not None and notice.startswith("scripts/run-all-test-suites.py: 1 of 1 suites")
-      and "36 hours in /store," in notice
-      and "has not recorded every suite at all," in notice
+      and "If you have not yet told the user in this agent-session that the scheduled full test "
+          "run's lists are stale: tell him" in notice
       and "nedlern@ned-box:/home/nedlern/nedschorus-logs/scheduled-full-test-runs-of-main/ned-box/." in notice,
       notice)
 with tempfile.TemporaryDirectory() as scratch:
