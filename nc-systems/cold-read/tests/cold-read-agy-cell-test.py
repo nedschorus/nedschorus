@@ -704,7 +704,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and " model=gemini-3.8-flash-high " in stamp and " effort=high " in stamp,
           f"exit {result.returncode}; stamp={stamp!r}; stderr={result.stderr!r}")
 
-    print("SKIP  the credential-file cases: they need the real sandbox program, "
+    print("Not run here: the credential-file cases need the real sandbox program, "
           f"which cannot start in the nc-test-sandbox; {REAL_SANDBOX_CASES_SUITE} runs them")
 
     # --- The Google login, not a Gemini API key -------------------------------
