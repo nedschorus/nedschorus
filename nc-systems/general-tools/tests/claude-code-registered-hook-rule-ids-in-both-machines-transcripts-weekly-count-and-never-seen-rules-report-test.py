@@ -86,9 +86,10 @@ def fixture_repository(base):
 
 
 def renamed_fixture_repository(base):
-    """A repository whose hook gained a rule's message in PR 5 by seat-a under the constant REFUSAL in
-    hooks/old-hook.py; in PR 6 seat-b moved the file to hooks/new-hook.py, then renamed the constant
-    and gave the message its ID."""
+    """A repository whose hook gained rule fixture-first, written with its ID, in PR 5 by seat-a in
+    hooks/old-hook.py under the constant FIRST; in PR 6 seat-b moved the file to hooks/new-hook.py and
+    renamed the constant; in PR 7 seat-c added rule fixture-second, whose message opens with the same
+    words as fixture-first's."""
     repository = base / "renamed-repository"
     (repository / ".claude").mkdir(parents=True)
     (repository / "hooks").mkdir()
@@ -97,24 +98,29 @@ def renamed_fixture_repository(base):
         {"matcher": "Bash", "hooks": [{"type": "command",
                                        "command": 'python3 "$CLAUDE_PROJECT_DIR"/hooks/new-hook.py'}]}]}}))
     padding = "".join(f"PADDING_{number} = {number}\n" for number in range(30))
+    first = '"[rule fixture-first] Refused: {name} is the first rule."\n'
     (repository / "hooks" / "old-hook.py").write_text(padding, encoding="utf-8")
     git(repository, "add", "-A")
     git(repository, "commit", "-q", "-m", "start")
     when = "2026-10-01T00:00:00+00:00"
-    git(repository, "checkout", "-q", "-b", "add-rule", author="seat-a", when=when)
-    (repository / "hooks" / "old-hook.py").write_text(
-        padding + 'REFUSAL = (\n    "Refused: the old rule holds."\n)\n', encoding="utf-8")
-    git(repository, "commit", "-q", "-am", "add the rule", author="seat-a", when=when)
-    merge_branch(repository, "add-rule", 5, "merge-lane-2", "2026-10-01T01:00:00+00:00")
-    when = "2026-11-10T00:00:00+00:00"
-    git(repository, "checkout", "-q", "-b", "add-ids", author="seat-b", when=when)
+    git(repository, "checkout", "-q", "-b", "add-first", author="seat-a", when=when)
+    (repository / "hooks" / "old-hook.py").write_text(padding + "FIRST = " + first, encoding="utf-8")
+    git(repository, "commit", "-q", "-am", "add the first rule", author="seat-a", when=when)
+    merge_branch(repository, "add-first", 5, "merge-lane-2", "2026-10-01T01:00:00+00:00")
+    when = "2026-10-10T00:00:00+00:00"
+    git(repository, "checkout", "-q", "-b", "move", author="seat-b", when=when)
     git(repository, "mv", "hooks/old-hook.py", "hooks/new-hook.py", author="seat-b", when=when)
     git(repository, "commit", "-q", "-m", "move the hook", author="seat-b", when=when)
+    (repository / "hooks" / "new-hook.py").write_text(padding + "FIRST_REFUSAL = " + first, encoding="utf-8")
+    git(repository, "commit", "-q", "-am", "rename the constant", author="seat-b", when=when)
+    merge_branch(repository, "move", 6, "merge-lane-2", "2026-10-10T01:00:00+00:00")
+    when = "2026-11-10T00:00:00+00:00"
+    git(repository, "checkout", "-q", "-b", "add-second", author="seat-c", when=when)
     (repository / "hooks" / "new-hook.py").write_text(
-        padding + 'OLD_RULE_REFUSAL = (\n    "[rule fixture-old] "\n    "Refused: the old rule holds."\n)\n',
-        encoding="utf-8")
-    git(repository, "commit", "-q", "-am", "add the ID", author="seat-b", when="2026-11-10T00:30:00+00:00")
-    merge_branch(repository, "add-ids", 6, "merge-lane-2", "2026-11-10T01:00:00+00:00")
+        padding + "FIRST_REFUSAL = " + first
+        + 'SECOND_REFUSAL = "[rule fixture-second] Refused: {name} is the second rule."\n', encoding="utf-8")
+    git(repository, "commit", "-q", "-am", "add the second rule", author="seat-c", when=when)
+    merge_branch(repository, "add-second", 7, "merge-lane-2", "2026-11-10T01:00:00+00:00")
     return repository
 
 
@@ -165,46 +171,70 @@ check("an ID further into a line, as in a quoted diff of a hook's source, is not
       program.firing_rule_ids_in_hook_text('[rule a-b] a changed hook:\n+    DENY = "[rule c-d] Refused"\nsee [rule e-f]')
       == ["a-b"])
 
-# The words a rule's message opens with, by which the commit that wrote the message is found.
-check("the opening words are those after the ID on its line, up to a quote or brace",
-      program.rule_message_opening_words_from_hook_source_for_git_pickaxe(['X = "[rule a-b] Refused: no {thing} here"'], 0, "a-b") == "Refused: no")
-check("an ID alone in its string literal takes the opening words from the next string literal",
-      program.rule_message_opening_words_from_hook_source_for_git_pickaxe(['X = "[rule a-b] "', "Y = X + (", '    "Refused: the rule holds."'], 0, "a-b")
-      == "Refused: the rule holds.")
-check("too few opening words give none", program.rule_message_opening_words_from_hook_source_for_git_pickaxe(['X = "[rule a-b] Hi {x}"'], 0, "a-b") is None)
+# The recorded origins of the rules written before their IDs, checked against this checkout.
+REAL_REPOSITORY = PROGRAM.parents[2]
+recorded = program.hook_rule_id_to_origin_commit_pull_request_and_agent_seat_of_rules_whose_message_predates_its_id_json_load()
+registered_ids = {rule["id"] for rule in program.registered_rules(REAL_REPOSITORY)}
+check("every recorded rule's ID still opens a message of a registered hook",
+      set(recorded) <= registered_ids, sorted(set(recorded) - registered_ids))
+check("every recorded rule names its commit, its pull request or null, and its agent-seat",
+      all(set(row) == {"commit", "pull_request", "agent_seat"} and row["agent_seat"]
+          and (row["pull_request"] is None or row["pull_request"].isdigit()) for row in recorded.values()),
+      recorded)
+missing_commits = [rule_id for rule_id, row in recorded.items()
+                   if subprocess.run(["git", "-C", str(REAL_REPOSITORY), "cat-file", "-e", row["commit"] + "^{commit}"],
+                                     capture_output=True).returncode != 0]
+check("every recorded commit is in this checkout's history", missing_commits == [], missing_commits)
+check("rules whose message words or constant changed since are recorded with the commit that wrote them",
+      [(recorded[rule_id]["commit"][:9], recorded[rule_id]["agent_seat"], recorded[rule_id]["pull_request"])
+       for rule_id in ("bash-guard-git-push-and-pr-merge-during-emergency-stop",
+                       "checkout-freshness-changed-instructions-read-again",
+                       "github-link-text-not-matching-item-title-warning",
+                       "checkout-freshness-branch-behind-main-update")]
+      == [("a2062a926", "prime-intellect", "3605"), ("f45aaaae2", "cold-read-research", "1327"),
+          ("26486c5ad", "reboot-test", "1265"), ("b1ae51007", "new-vp", "87")], recorded)
 
 with tempfile.TemporaryDirectory() as scratch:
     base = Path(scratch)
     renamed = renamed_fixture_repository(base)
     renamed_rules = program.registered_rules(renamed)
-    failures = program.rule_origins(renamed, renamed_rules)
-    old_rule = renamed_rules[0] if renamed_rules else {}
-    check("in a hook renamed in its history, the ID's commit is still found", failures == []
-          and old_rule.get("added") == datetime.datetime(2026, 11, 10, 0, 30, tzinfo=datetime.timezone.utc)
-          and old_rule.get("origin_note") == "", (failures, renamed_rules))
-    check("a rule whose constant and hook file were renamed since is credited to the seat and pull request "
-          "that wrote its message", (old_rule.get("seat"), old_rule.get("pull_request")) == ("seat-a", "5"),
-          renamed_rules)
+    failures = program.rule_origins(renamed, renamed_rules, {})
+    by_id = {rule["id"]: rule for rule in renamed_rules}
+    first, second = by_id.get("fixture-first", {}), by_id.get("fixture-second", {})
+    check("in a hook renamed in its history, a rule written with its ID is dated and credited by the commit "
+          "that added the ID, though its constant was renamed since",
+          failures == [] and first.get("added") == datetime.datetime(2026, 10, 1, tzinfo=datetime.timezone.utc)
+          and (first.get("seat"), first.get("pull_request"), first.get("origin_note")) == ("seat-a", "5", ""),
+          (failures, renamed_rules))
+    check("a later rule whose message opens with an earlier rule's words is credited to its own commit",
+          (second.get("seat"), second.get("pull_request")) == ("seat-c", "7"), renamed_rules)
 
 with tempfile.TemporaryDirectory() as scratch:
     base = Path(scratch)
     repository = fixture_repository(base)
     rules = program.registered_rules(repository)
-    check("the registered hook's two rule IDs are found, with the constant holding each",
-          [(rule["id"], rule["constant"]) for rule in rules]
-          == [("fixture-deny", "DENY_MESSAGE"), ("fixture-inline-note", None)], rules)
-    failures = program.rule_origins(repository, rules)
+    check("the registered hook's two rule IDs are found",
+          [rule["id"] for rule in rules] == ["fixture-deny", "fixture-inline-note"], rules)
+    message_commit = git(repository, "log", "--format=%H", "--author=seat-a", "-1", "add-rule").strip()
+    failures = program.rule_origins(repository, rules, {
+        "fixture-deny": {"commit": message_commit, "pull_request": "5", "agent_seat": "seat-a"}})
     by_id = {rule["id"]: rule for rule in rules}
     deny = by_id["fixture-deny"]
     check("no git lookup fails on the fixture", failures == [], failures)
-    check("a rule's agent-seat and pull request come from the commit that added its constant, not its ID",
+    check("a recorded rule's agent-seat and pull request come from its recorded origin, not its ID's commit",
           (deny["seat"], deny["pull_request"], deny["origin_note"]) == ("seat-a", "5", ""), deny)
     check("a rule's ID is dated by the commit that added the ID",
           deny["added"] == datetime.datetime(2026, 11, 10, tzinfo=datetime.timezone.utc), deny["added"])
     inline = by_id["fixture-inline-note"]
-    check("an ID outside any constant falls back to the commit that added the ID, and says so",
-          (inline["seat"], inline["pull_request"], inline["origin_note"])
-          == ("seat-b", "6", "found from the commit that added its ID"), inline)
+    check("a rule not recorded is credited to the commit that added its ID",
+          (inline["seat"], inline["pull_request"], inline["origin_note"]) == ("seat-b", "6", ""), inline)
+    no_pull_request_rules = program.registered_rules(repository)
+    program.rule_origins(repository, no_pull_request_rules, {
+        "fixture-deny": {"commit": message_commit, "pull_request": None, "agent_seat": "seat-a"}})
+    check("a recorded rule committed to main without a pull request says so",
+          no_pull_request_rules[0]["origin_note"] == "committed to main without a pull request"
+          and "seat-a | committed to main without a pull request"
+          in program.report_text("2026-11-16", no_pull_request_rules, {}, {}, [], 0, []), no_pull_request_rules)
 
     transcripts = base / "transcripts"
     write_transcript(transcripts / "-seat" / "one.jsonl", [
@@ -255,8 +285,8 @@ with tempfile.TemporaryDirectory() as scratch:
 
     not_a_repository = base / "plain"
     not_a_repository.mkdir()
-    plain_rules = [{"id": "x-y", "hook": "hooks/h.py", "line": 1, "constant": None}]
-    failures = program.rule_origins(not_a_repository, plain_rules)
+    plain_rules = [{"id": "x-y", "hook": "hooks/h.py", "line": 1}]
+    failures = program.rule_origins(not_a_repository, plain_rules, {})
     check("a git lookup that fails is returned, and the rule's origin says it could not be read",
           failures and plain_rules[0]["origin_note"] == "its origin could not be read", (failures, plain_rules))
 
@@ -287,6 +317,17 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a run that cannot read a transcript directory still writes the report, says so in it, and exits 1",
           status == 1 and str(missing) in report.read_text(encoding="utf-8")
           and str(missing) in errors.getvalue(), (status, errors.getvalue()))
+
+    hook_file = repository / "hooks" / "guard-hook.py"
+    committed_hook = hook_file.read_text(encoding="utf-8")
+    hook_file.write_text(committed_hook + 'LATER = "[rule fixture-uncommitted] later"\n', encoding="utf-8")
+    output, errors = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+        status = program.main(["--transcript-directory", str(transcripts), "--report-directory", str(reports)], now=now)
+    hook_file.write_text(committed_hook, encoding="utf-8")
+    check("a rule whose ID is in no commit and not recorded fails the run loudly, and the report says so",
+          status == 1 and "FAILED: hooks/guard-hook.py writes `[rule fixture-uncommitted]`" in errors.getvalue()
+          and program.REPORT_NOTE_AUTHOR_UNKNOWN_FOR_HOOK_RULE_WHOSE_ID_IS_IN_NO_GIT_COMMIT in report.read_text(encoding="utf-8"), (status, errors.getvalue()))
 
     blocked = base / "blocked"
     blocked.write_text("a file where the report directory should be", encoding="utf-8")

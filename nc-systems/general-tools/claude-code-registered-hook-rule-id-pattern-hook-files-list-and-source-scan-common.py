@@ -16,7 +16,6 @@ load this file with importlib.util.spec_from_file_location, because Python
 cannot import a hyphenated file name by name.
 """
 
-import ast
 import json
 import re
 from pathlib import Path
@@ -69,21 +68,3 @@ def malformed_rule_ids_in_source(source):
                 malformed.append((line_number, match.group(0)))
     return malformed
 
-
-def module_level_name_assigned_at_line(source, line_number):
-    """The name a module-level assignment covering the line assigns, or None.
-
-    Used to find the constant that holds a rule's message, whose history says when the rule was added."""
-    try:
-        tree = ast.parse(source)
-    except (SyntaxError, ValueError):
-        return None
-    for statement in tree.body:
-        if not (statement.lineno <= line_number <= (statement.end_lineno or statement.lineno)):
-            continue
-        targets = (statement.targets if isinstance(statement, ast.Assign)
-                   else [statement.target] if isinstance(statement, ast.AnnAssign) else [])
-        for target in targets:
-            if isinstance(target, ast.Name):
-                return target.id
-    return None

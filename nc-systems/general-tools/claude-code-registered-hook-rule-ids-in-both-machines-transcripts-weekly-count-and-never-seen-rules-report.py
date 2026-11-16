@@ -14,24 +14,28 @@ ned-box's. Subagents' transcripts below them are read too.
 
 What counts as a firing: an ID in text a hook handed the agent, and nowhere else, so a transcript in
 which an agent reads, tests or quotes a hook's source counts nothing. Within that text, only an ID that
-opens the text or one of its lines counts, as a rule's message starts with its ID; an ID further into a
-line, such as one in a diff of a hook's source that another hook's reminder carries, does not. That text is the content of an
-attachment record of type hook_additional_context, the blockingError of one of type
+opens the text or one of its lines counts, as a rule's message starts with its ID; a refusal's leading
+`<event>... hook error: ` and any `[command hook <n>]: ` after it are stripped first, so the ID after
+them opens the text. An ID further into a line, such as one in a diff of a hook's source that another
+hook's reminder carries, does not count. That text is the content of an attachment record of type hook_additional_context, the blockingError of one of type
 hook_blocking_error, and a tool result whose text starts `<event>... hook error:`, which is how a
 PreToolUse refusal reaches the agent. The hook_success record and the `Stop hook feedback:` message
 repeat that text and are not counted again. A firing counts when its record's timestamp is no earlier
 than the commit that added its rule's ID, and only transcripts changed since the earliest such commit
 are read.
 
-When a rule was added, and by whom: the oldest of two commits is the commit that added the rule. One
-is the first commit whose change holds the message's opening words, those after its `[rule <id>] `, so
-a constant renamed since does not move it; the other is the first commit whose change matches the
-assignment of the module-level constant that holds the ID, so a message reworded since does not move
-it. Both follow the hook file across renames. The agent-seat is that commit's author name, as each agent-seat commits under its own name, and
-the pull request is the one whose merge first brought the commit onto this checkout's first-parent
-history, read from the merge's subject `Merge pull request #<number> from ...`. When neither commit is
-found, the commit that added the ID stands in, and the report says so. A rule whose message was both
-reworded and moved to a renamed constant since it was added gives the later of those two commits.
+When a rule's ID was added: the oldest commit in this checkout's history whose added lines hold
+`[rule <id>]`, searched across every file, so a hook renamed since does not hide it.
+
+Who wrote the rule: the rules whose messages were written before the IDs existed, those the pull request
+that added the IDs gave one, are listed in RULES_WRITTEN_BEFORE_THEIR_IDS_PATH beside this file, each
+with the commit that first wrote its message, the pull request that brought that commit, or null when
+the commit went onto main without one, and its author's name. Git cannot find that commit by itself,
+because a message's words and its constant's name were both changed since in many hooks. Any other
+rule was written with its ID, so the commit that added the ID wrote the rule: the agent-seat is that
+commit's author name, as each agent-seat commits under its own name, and the pull request is the one
+whose merge first brought the commit onto this checkout's first-parent history, read from the merge's
+subject `Merge pull request #<number> from ...`.
 
 The report goes to <report directory>/<job name>-<YYYY-MM-DD>-report.md, the job name being this
 file's name without .py and the date UTC, replacing a report written earlier the same day; the default
@@ -51,8 +55,10 @@ outside a message constant.
 
 Exit status: 0 when the report was written and every transcript directory, transcript and git lookup
 was read. 1 when a transcript directory, a transcript or a git lookup could not be read: the report is
-still written, and says which, since its never-seen list may then be wrong; or when the report could
-not be written, which is printed only, to the cron log above. 2 for a bad command line.
+still written, and says which, since its never-seen list may then be wrong; when a registered hook
+writes an ID that is in no commit and not in RULES_WRITTEN_BEFORE_THEIR_IDS_PATH, so who wrote the rule
+cannot be found: the report is still written, and a FAILED line names each such ID; or when the report
+could not be written, which is printed only, to the cron log above. 2 for a bad command line.
 """
 import argparse
 import datetime
@@ -75,12 +81,12 @@ GIT_TIMEOUT_SECONDS = 60
 RULE_ID_BYTES = b"[rule "
 HOOK_ERROR_TOOL_RESULT_PATTERN = re.compile(r"^[A-Za-z]+(?::\S*)? hook error: ")
 HOOK_ERROR_PREFIX_PATTERN = re.compile(r"^[A-Za-z]+(?::\S*)? hook error: (?:\[[^\]\n]*\]: )?")
-OPENING_WORDS_END_PATTERN = re.compile(r"[\"'{\\\n]")
-OPENING_WORDS_LONGEST = 40
-OPENING_WORDS_SHORTEST = 8
-OPENING_WORDS_LINES_AFTER_AN_ID_ALONE = 3
-STRING_LITERAL_START_PATTERN = re.compile(r"[\"']")
+RULES_WRITTEN_BEFORE_THEIR_IDS_PATH = Path(__file__).with_name(
+    "claude-code-registered-hook-rule-id-to-origin-commit-pr-and-agent-seat-of-rules-whose-message-predates-its-id.json")
+# What --format=%x00 puts before each commit line, as no diff line starts with it.
+COMMIT_LINE_START = "\x00"
 MERGE_SUBJECT_PATTERN = re.compile(r"^Merge pull request #(\d+) ")
+REPORT_NOTE_AUTHOR_UNKNOWN_FOR_HOOK_RULE_WHOSE_ID_IS_IN_NO_GIT_COMMIT = "its ID is in no commit, so who wrote it is not known"
 CANDIDATES_NOT_VERDICTS_LINE = (
     "Each rule below is a candidate to question, not a verdict: a guard against a rare, permanent harm "
     "may rightly never fire.")
@@ -115,28 +121,8 @@ def git(repository, *arguments):
     return completed.stdout
 
 
-def rule_message_opening_words_from_hook_source_for_git_pickaxe(source_lines, line_index, rule_id):
-    """The literal words after `[rule <id>] ` on the source line, up to the first quote, brace or
-    backslash; or, when the ID ends its string literal, the start of the first string literal on the
-    next few lines, where the message goes on. None when too few to find the message by."""
-    line = source_lines[line_index]
-    start = line.find(f"[rule {rule_id}] ")
-    if start < 0:
-        return None
-    words = OPENING_WORDS_END_PATTERN.split(line[start + len(f"[rule {rule_id}] "):], 1)[0]
-    for following in source_lines[line_index + 1:line_index + 1 + OPENING_WORDS_LINES_AFTER_AN_ID_ALONE]:
-        if words.strip():
-            break
-        quote = STRING_LITERAL_START_PATTERN.search(following)
-        if quote:
-            words = OPENING_WORDS_END_PATTERN.split(following[quote.end():], 1)[0]
-    words = words[:OPENING_WORDS_LONGEST].rstrip()
-    return words if len(words) >= OPENING_WORDS_SHORTEST else None
-
-
 def registered_rules(repository):
-    """[{id, hook, line, constant, opening_words}] for each rule ID the registered hooks write, first
-    place only."""
+    """[{id, hook, line}] for each rule ID the registered hooks write, first place only."""
     rules = []
     for hook in rule_ids.registered_hook_paths(repository / ".claude" / "settings.json"):
         try:
@@ -144,21 +130,28 @@ def registered_rules(repository):
         except OSError:
             continue
         for rule_id, lines in sorted(rule_ids.rule_ids_in_source(source).items()):
-            rules.append({"id": rule_id, "hook": hook, "line": lines[0],
-                          "constant": rule_ids.module_level_name_assigned_at_line(source, lines[0]),
-                          "opening_words": rule_message_opening_words_from_hook_source_for_git_pickaxe(source.splitlines(), lines[0] - 1, rule_id)})
+            rules.append({"id": rule_id, "hook": hook, "line": lines[0]})
     return rules
 
 
-def first_commit(repository, hook, *pickaxe):
-    """(sha, committer time) of the oldest commit whose change to the hook matches the pickaxe, or None."""
-    # Not --reverse: with --follow and a pickaxe, git then prints nothing for a file renamed in its history.
-    output = git(repository, "log", "--follow", "--format=%H %cI", *pickaxe, "--", hook)
-    first = output.splitlines()[-1] if output.strip() else None
-    if first is None:
-        return None
-    sha, when = first.split(" ", 1)
-    return sha, datetime.datetime.fromisoformat(when)
+def commits_adding_each_rule_id(repository):
+    """{rule ID: (sha, committer time)} of the oldest commit whose added lines hold the ID, in any file."""
+    output = git(repository, "log", "--reverse", "--format=%x00%H %cI", "--unified=0",
+                 "-G", r"\[rule ", "-p", "HEAD")
+    commits, current = {}, None
+    for line in output.splitlines():
+        if line.startswith(COMMIT_LINE_START):
+            sha, when = line[1:].split(" ", 1)
+            current = sha, datetime.datetime.fromisoformat(when)
+        elif current and line.startswith("+") and not line.startswith("+++"):
+            for rule_id in rule_ids.RULE_ID_PATTERN.findall(line):
+                commits.setdefault(rule_id, current)
+    return commits
+
+
+def hook_rule_id_to_origin_commit_pull_request_and_agent_seat_of_rules_whose_message_predates_its_id_json_load(path=None):
+    """{rule ID: {commit, pull_request, agent_seat}} from RULES_WRITTEN_BEFORE_THEIR_IDS_PATH."""
+    return json.loads((path or RULES_WRITTEN_BEFORE_THEIR_IDS_PATH).read_text(encoding="utf-8"))
 
 
 def first_parent_merges_oldest_first(repository):
@@ -183,36 +176,36 @@ def pull_request_bringing(repository, sha, merges):
     return match.group(1) if match else None
 
 
-def rule_origins(repository, rules):
+def rule_origins(repository, rules, recorded_origins):
     """Fill each rule's added (time its ID was committed), seat, pull_request and origin_note; return
-    the git lookups that failed."""
+    the git lookups that failed. A rule whose ID is in no commit and not in recorded_origins gets the
+    origin_note REPORT_NOTE_AUTHOR_UNKNOWN_FOR_HOOK_RULE_WHOSE_ID_IS_IN_NO_GIT_COMMIT."""
     failures = []
     try:
         merges = first_parent_merges_oldest_first(repository)
+        id_commits = commits_adding_each_rule_id(repository)
     except GitLookupFailed as error:
         failures.append(str(error))
-        merges = []
+        merges, id_commits = [], None
     for rule in rules:
         rule.update(added=None, seat=None, pull_request=None, origin_note="")
+        if id_commits is None:
+            rule["origin_note"] = "its origin could not be read"
+            continue
+        id_commit = id_commits.get(rule["id"])
+        rule["added"] = id_commit[1] if id_commit else None
+        recorded = recorded_origins.get(rule["id"])
+        if recorded:
+            rule["seat"], rule["pull_request"] = recorded["agent_seat"], recorded["pull_request"]
+            if not recorded["pull_request"]:
+                rule["origin_note"] = "committed to main without a pull request"
+            continue
+        if id_commit is None:
+            rule["origin_note"] = REPORT_NOTE_AUTHOR_UNKNOWN_FOR_HOOK_RULE_WHOSE_ID_IS_IN_NO_GIT_COMMIT
+            continue
         try:
-            id_commit = first_commit(repository, rule["hook"], "-S", f"[rule {rule['id']}]")
-            if id_commit is None:
-                rule["origin_note"] = "its ID is not committed"
-                continue
-            rule["added"] = id_commit[1]
-            found = []
-            if rule.get("opening_words"):
-                found.append(first_commit(repository, rule["hook"], "-S", rule["opening_words"]))
-            if rule["constant"]:
-                found.append(first_commit(repository, rule["hook"], "-G",
-                                          rf"^\s*{re.escape(rule['constant'])}\s*[:=]"))
-            found = [commit for commit in found if commit is not None]
-            rule_commit = min(found, key=lambda commit: commit[1]) if found else None
-            if rule_commit is None:
-                rule_commit = id_commit
-                rule["origin_note"] = "found from the commit that added its ID"
-            rule["seat"] = git(repository, "log", "-1", "--format=%an", rule_commit[0]).strip()
-            rule["pull_request"] = pull_request_bringing(repository, rule_commit[0], merges)
+            rule["seat"] = git(repository, "log", "-1", "--format=%an", id_commit[0]).strip()
+            rule["pull_request"] = pull_request_bringing(repository, id_commit[0], merges)
         except (GitLookupFailed, subprocess.TimeoutExpired, OSError) as error:
             failures.append(f"{rule['id']}: {error}")
             rule["origin_note"] = "its origin could not be read"
@@ -314,9 +307,11 @@ def count_firings(directories, rules):
 
 def report_text(today, rules, counts, unknown_counts, directories, read, problems):
     def origin(rule):
-        pull_request = f"PR {rule['pull_request']}" if rule["pull_request"] else "no pull request found"
-        note = f" ({rule['origin_note']})" if rule["origin_note"] else ""
-        return f"{rule['seat'] or 'unknown'} | {pull_request}{note}"
+        if rule["pull_request"]:
+            pull_request = f"PR {rule['pull_request']}"
+        else:
+            pull_request = rule["origin_note"] or "no pull request found"
+        return f"{rule['seat'] or 'unknown'} | {pull_request}"
 
     def added(rule):
         return rule["added"].date().isoformat() if rule["added"] else "not committed"
@@ -368,7 +363,7 @@ def main(argv=None, now=None):
     today = (now or datetime.datetime.now(datetime.timezone.utc)).date().isoformat()
 
     rules = registered_rules(REPOSITORY)
-    git_failures = rule_origins(REPOSITORY, rules)
+    git_failures = rule_origins(REPOSITORY, rules, hook_rule_id_to_origin_commit_pull_request_and_agent_seat_of_rules_whose_message_predates_its_id_json_load())
     counts, unknown_counts, read, problems = count_firings(directories, rules)
     problems = [f"git lookup: {failure}" for failure in git_failures] + problems
     text = report_text(today, rules, counts, unknown_counts, directories, read, problems)
@@ -381,7 +376,12 @@ def main(argv=None, now=None):
     print(path)
     for problem in problems:
         print(f"{JOB_NAME}: not read: {problem}", file=sys.stderr)
-    return 1 if problems else 0
+    unknown_origins = [rule for rule in rules if rule["origin_note"] == REPORT_NOTE_AUTHOR_UNKNOWN_FOR_HOOK_RULE_WHOSE_ID_IS_IN_NO_GIT_COMMIT]
+    for rule in unknown_origins:
+        print(f"{JOB_NAME}: FAILED: {rule['hook']} writes `[rule {rule['id']}]`, which no commit on this checkout's "
+              f"history adds and {RULES_WRITTEN_BEFORE_THEIR_IDS_PATH.name} does not list, so the report cannot "
+              f"say who wrote the rule. Commit the hook, then run this program again.", file=sys.stderr)
+    return 1 if problems or unknown_origins else 0
 
 
 if __name__ == "__main__":

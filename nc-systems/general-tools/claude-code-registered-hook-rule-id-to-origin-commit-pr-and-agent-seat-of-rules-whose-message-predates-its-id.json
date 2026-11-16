@@ -1,0 +1,282 @@
+{
+  "absence-claim-run-locator-before-saying-missing": {
+    "commit": "bbdc361758b9e67304ba51ff80361444cbf42786",
+    "pull_request": "1071",
+    "agent_seat": "ned-box-helper"
+  },
+  "artifact-guard-claude-ai-page-delete": {
+    "commit": "78e80efc33a3ffacc44a7511cc5b68824774c2b5",
+    "pull_request": "2402",
+    "agent_seat": "cold-read-research"
+  },
+  "bare-number-pull-request-ghi-or-task-citation-in-markdown-and-reply-warning": {
+    "commit": "1fd931a28112d59ab4cdb81f7294e74ce749344e",
+    "pull_request": "1107",
+    "agent_seat": "fleet-restart-at-login"
+  },
+  "bash-guard-applescript-synthetic-typing": {
+    "commit": "89e692abdd69037fca69dd2eab2504073f7499ec",
+    "pull_request": "82",
+    "agent_seat": "new-vp"
+  },
+  "bash-guard-codex-exec-typed-by-hand": {
+    "commit": "a9f12459e1768e38abb921dc962550ea05d1db55",
+    "pull_request": "1246",
+    "agent_seat": "cold-read-research"
+  },
+  "bash-guard-cold-read-full-run-during-handoff-deferral": {
+    "commit": "da9b5196be626f3aa8f0ebeace1fae7b9b3849a5",
+    "pull_request": "2446",
+    "agent_seat": "ned-box-helper"
+  },
+  "bash-guard-gh-issue-body-or-title-set-by-hand": {
+    "commit": "ac2ac932ce53964dfbde83ef9b127bef1bbd0083",
+    "pull_request": "708",
+    "agent_seat": "mac-claude"
+  },
+  "bash-guard-gh-issue-comment": {
+    "commit": "ac2ac932ce53964dfbde83ef9b127bef1bbd0083",
+    "pull_request": "708",
+    "agent_seat": "mac-claude"
+  },
+  "bash-guard-gh-issue-create-by-hand": {
+    "commit": "ac2ac932ce53964dfbde83ef9b127bef1bbd0083",
+    "pull_request": "708",
+    "agent_seat": "mac-claude"
+  },
+  "bash-guard-gh-issue-delete": {
+    "commit": "ac2ac932ce53964dfbde83ef9b127bef1bbd0083",
+    "pull_request": "708",
+    "agent_seat": "mac-claude"
+  },
+  "bash-guard-ghi-md-whole-file-replacement": {
+    "commit": "40656fc72499f5b8cbe771493517e9a3b9d0ef43",
+    "pull_request": "2196",
+    "agent_seat": "prime-intellect"
+  },
+  "bash-guard-git-push-and-pr-merge-during-emergency-stop": {
+    "commit": "a2062a926b04874f4810457c4ed7864863e6cc31",
+    "pull_request": "3605",
+    "agent_seat": "prime-intellect"
+  },
+  "bash-guard-git-push-force": {
+    "commit": "01a20a3032ee0160f4c1cc3293fa403ab372e469",
+    "pull_request": "487",
+    "agent_seat": "identity-probe"
+  },
+  "bash-guard-git-worktree-remove-cold-read-and-sanity-check-records-not-shipped": {
+    "commit": "642ae25470c03684c762fc11751a2ae080f5c571",
+    "pull_request": "2587",
+    "agent_seat": "prime-intellect"
+  },
+  "bash-guard-git-worktree-remove-record-being-written": {
+    "commit": "5d47523f9738f02e61409c0d4c0abb749f28c6da",
+    "pull_request": "2681",
+    "agent_seat": "cold-read-improvement"
+  },
+  "bash-guard-kill-processes-by-name-pattern": {
+    "commit": "0df1338712876b1f6b0edb0fb7d8a21169dfaf4f",
+    "pull_request": "2723",
+    "agent_seat": "reboot-test"
+  },
+  "bash-guard-pgrep-full-command-line-loop-condition": {
+    "commit": "7c9c28aaf2d03601434835a9e7e5955cdafb6fea",
+    "pull_request": "2916",
+    "agent_seat": "MD-skills"
+  },
+  "bash-guard-search-file-name-read-as-option": {
+    "commit": "487a20820db5b1ecadba712041a976806fa8f995",
+    "pull_request": "881",
+    "agent_seat": "fleet-restart-at-login"
+  },
+  "bash-guard-tmux-keys-into-attached-session": {
+    "commit": "68dfdf67482fcb166c8025e64037174510a12a55",
+    "pull_request": "82",
+    "agent_seat": "new-vp"
+  },
+  "bash-guard-tmux-kill-without-socket-option": {
+    "commit": "2174593b0754e5e026e0316f7018f4e5a1dc2099",
+    "pull_request": "1191",
+    "agent_seat": "fleet-restart-at-login"
+  },
+  "checkout-freshness-branch-behind-main-update": {
+    "commit": "b1ae51007dc8ebf54a30610f8bfd2e9b70fa17c3",
+    "pull_request": "87",
+    "agent_seat": "new-vp"
+  },
+  "checkout-freshness-branch-merges-from-main-warning": {
+    "commit": "a8c9fab8702a8c6eff11e80200cdbf70d871ea80",
+    "pull_request": "1352",
+    "agent_seat": "fleet-restart-at-login"
+  },
+  "checkout-freshness-changed-instructions-read-again": {
+    "commit": "f45aaaae2ef5d063a7a9d5987527abd4e11c0361",
+    "pull_request": "1327",
+    "agent_seat": "cold-read-research"
+  },
+  "checkout-freshness-changed-skill-not-invoked-again-stop-refused": {
+    "commit": "80fd08d18b7227ab664b9fe54473c7ac936bd16a",
+    "pull_request": "1992",
+    "agent_seat": "MD-skills"
+  },
+  "checkout-freshness-head-rewrote-pushed-commits-warning": {
+    "commit": "a8c9fab8702a8c6eff11e80200cdbf70d871ea80",
+    "pull_request": "1352",
+    "agent_seat": "fleet-restart-at-login"
+  },
+  "cold-read-fast-read-due-for-linked-document": {
+    "commit": "0e2384f129701fa87344b1ddf84ef6cc9933ce1f",
+    "pull_request": "1109",
+    "agent_seat": "fleet-restart-at-login"
+  },
+  "due-task-idle-agent-seat-start-ready-tasks-and-next-approval-walk": {
+    "commit": "d1b94698ef111442b9f7a57a25846eecec67e0d7",
+    "pull_request": "2389",
+    "agent_seat": "reboot-test"
+  },
+  "due-task-prerequisites-record-after-task-create": {
+    "commit": "99a52abb60643d2114d0439531883be34d3acce6",
+    "pull_request": "1914",
+    "agent_seat": "prime-intellect"
+  },
+  "due-task-prerequisites-unusable-correct-them": {
+    "commit": "17af03c7ff402a3774e36121c783a8b77bd91a7e",
+    "pull_request": "3336",
+    "agent_seat": "reboot-test"
+  },
+  "due-task-raise-when-prerequisites-met": {
+    "commit": "bddcc3d4281abce3bb8406c022a42041b5060715",
+    "pull_request": "947",
+    "agent_seat": "merge-lane-backlog"
+  },
+  "emergency-stop-state-shown-to-every-agent-session": {
+    "commit": "a2062a926b04874f4810457c4ed7864863e6cc31",
+    "pull_request": "3605",
+    "agent_seat": "prime-intellect"
+  },
+  "file-name-collision-same-basename-warning": {
+    "commit": "94e110967156d7792d4dcc4160515d200e13aae3",
+    "pull_request": "641",
+    "agent_seat": "identity-probe"
+  },
+  "git-push-of-markdown-change-citation-checks-reminder": {
+    "commit": "8ef02cb823fd3c42ab0436570f14229c4f999f61",
+    "pull_request": "1354",
+    "agent_seat": "cold-read-research"
+  },
+  "github-link-text-not-matching-item-title-warning": {
+    "commit": "26486c5ad0cfa7e6e2202f5b9c8c64b26edfbd0c",
+    "pull_request": "1265",
+    "agent_seat": "reboot-test"
+  },
+  "guarded-file-changed-without-approval-ask-user-afterward": {
+    "commit": "bf8632510f5c9efc989ceb249ff9cc5f20e334a4",
+    "pull_request": "1483",
+    "agent_seat": "reboot-test"
+  },
+  "handoff-context-threshold-deferred-while-work-runs": {
+    "commit": "1c56e1663f84665fedf7576c6dd2e64826dd9c1c",
+    "pull_request": "183",
+    "agent_seat": "Edward Lerner"
+  },
+  "handoff-context-threshold-reached-run-handoff": {
+    "commit": "af25812c21d0e4cab10c1c23309dea7abad5659b",
+    "pull_request": null,
+    "agent_seat": "new-vp"
+  },
+  "markdown-edit-hard-wrapped-paragraph-reminder": {
+    "commit": "d769711c6208b5724b1ec84af177ccbaaf42042d",
+    "pull_request": "1106",
+    "agent_seat": "fleet-restart-at-login"
+  },
+  "ned-box-path-in-agent-reply-unclickable-on-mac-warning": {
+    "commit": "e9ecf8486629e0e03bcf560749e92b3479189571",
+    "pull_request": "1358",
+    "agent_seat": "cold-read-research"
+  },
+  "new-shared-names-naming-check-reminder": {
+    "commit": "6c30a0c02b74b82c26a7d42d38658950f413ac41",
+    "pull_request": "1099",
+    "agent_seat": "cold-read-research"
+  },
+  "obsolete-file-edit-on-old-copy-warning": {
+    "commit": "62cb61fa9a70770a16cdf70815edb178695b77b4",
+    "pull_request": "463",
+    "agent_seat": "identity-probe"
+  },
+  "post-compaction-session-continue-work": {
+    "commit": "da61fb98f96b4d7bde163801bfa57adda4f1f146",
+    "pull_request": "576",
+    "agent_seat": "identity-probe"
+  },
+  "pull-request-follow-up-request-brief-handed-to-author": {
+    "commit": "43f2183e827e36047d2c3cc2553719a6cfe0552e",
+    "pull_request": "2349",
+    "agent_seat": "cold-read-research"
+  },
+  "python-edit-changed-tool-message-to-agent-check-reminder": {
+    "commit": "7d34be90e21ec621d4f66921fce666a7ac6228da",
+    "pull_request": "1520",
+    "agent_seat": "reboot-test"
+  },
+  "style-guide-word-in-markdown-edit-reminder": {
+    "commit": "f2397e93d857acc3551279a294dab62d0378133c",
+    "pull_request": "934",
+    "agent_seat": "merge-lane-backlog"
+  },
+  "walk-me-through-agent-question-to-user-outside-walk-items-refused": {
+    "commit": "d8b3619cefa07185890b261148233559c31dca5a",
+    "pull_request": "1931",
+    "agent_seat": "reboot-test"
+  },
+  "walk-me-through-closing-line-without-open-walk-refused": {
+    "commit": "c05068aabbe57b6b7ae50f75c4453ff3e0c3c183",
+    "pull_request": "2459",
+    "agent_seat": "fleet-restart-at-login"
+  },
+  "walk-me-through-pending-user-alerts-added-as-walk-items": {
+    "commit": "13d0a0e40e787940fb4bc001a60cae815abce78d",
+    "pull_request": "2084",
+    "agent_seat": "fleet-restart-at-login"
+  },
+  "walk-me-through-reply-ends-with-waiting-item-closing-line": {
+    "commit": "ca3bb3406d5186b326d9eda81ab9a7e52c502c53",
+    "pull_request": "1220",
+    "agent_seat": "agent-instructions-editor"
+  },
+  "walk-me-through-short-answer-expanded-into-instructions": {
+    "commit": "3d7d859b03e3d35d6470675f435e3212a27cac9b",
+    "pull_request": "1867",
+    "agent_seat": "reboot-test"
+  },
+  "walk-me-through-short-answer-to-item-not-shown-discarded": {
+    "commit": "42197a9aff1056be8ee3c55871fb9dba5b260735",
+    "pull_request": "3702",
+    "agent_seat": "agent-instructions-editor"
+  },
+  "write-guard-backup-and-snapshot-state": {
+    "commit": "9d8373d275d5575b9e9dc58195d307e6385287a1",
+    "pull_request": "58",
+    "agent_seat": "ubuntu-claude"
+  },
+  "write-guard-checkout-without-branch": {
+    "commit": "10686b37a9da111c07883d6ba9d3b515ef3affaf",
+    "pull_request": "88",
+    "agent_seat": "new-vp"
+  },
+  "write-guard-claude-code-memory-directory-write": {
+    "commit": "bc13e97fd31360b0dcff0f00b5501eca1d1d549e",
+    "pull_request": "1087",
+    "agent_seat": "merge-lane-backlog"
+  },
+  "write-guard-guarded-file-edit-needs-approval-marker": {
+    "commit": "6bda176848639a9e5f20258da54b245c1e0aa8c6",
+    "pull_request": "103",
+    "agent_seat": "identity-probe"
+  },
+  "write-guard-reference-checkout-write": {
+    "commit": "10686b37a9da111c07883d6ba9d3b515ef3affaf",
+    "pull_request": "88",
+    "agent_seat": "new-vp"
+  }
+}
