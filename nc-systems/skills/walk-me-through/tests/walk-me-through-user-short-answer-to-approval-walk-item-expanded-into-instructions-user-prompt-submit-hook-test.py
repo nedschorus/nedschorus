@@ -1725,7 +1725,7 @@ def test_an_answer_to_an_item_revised_after_it_was_shown_is_not_counted_and_the_
                   f"exit {result.returncode}, context {context!r}, stderr {result.stderr!r}")
 
 
-# Item 47.2 of merge-lane-2's approval-walk of 2026-11-08, as its walk-document held it when the user answered "Ao".
+# Item 47.2 of merge-lane-2's approval-walk, as its walk-document held it when the user answered "Ao".
 ITEM_47_2 = """### Item 47.2 of 68: The change
 
 Each message a hook prints for a rule, a refusal, warning or reminder, starts with that rule's ID, such as `[rule bash-guard-git-push-force]`; a test fails when a hook prints a message without one, or when two rules share one. A scheduled program, added as a job to [GHI 1058, "Regular maintenance"](https://github.com/nedschorus/nedschorus/issues/1058), counts each ID once a week in the transcripts of both machines, the Mac's through its mirror on ned-box. Its one weekly report lists the rules not seen since their IDs were added, each beside the agent-seat that wrote it, found from the pull request that added the rule, as candidates to question, not verdicts: a guard against a rare, permanent harm may rightly never fire. A rule written only in prose, such as in `CLAUDE.md`, is not covered.
@@ -1753,7 +1753,7 @@ The user asked for rule IDs.
 
 Recommendation: do the next thing.
 """
-# The message merge-lane-2 showed item 47.2 in, at 2026-11-16T03:05:19Z. Against ITEM_47_2 it changes "`; a test"
+# The message merge-lane-2 showed item 47.2 in. Against ITEM_47_2 it changes "`; a test"
 # to "`. A test", and "the rule, as candidates" to "the rule. These are candidates": "as" dropped, "These are" added.
 ITEM_47_2_REAL_SHOWING = """Session handed off after you moved on from 47.1 (no decision there); resuming at 47.2.
 
