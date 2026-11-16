@@ -1066,6 +1066,54 @@ check("an account notice whose last send went to another agent-seat: each agent-
       and sent["alpha"] == differs[0]["sent_text"] and sent["beta"] == differs[0]["text"],
       (code, differs, sent))
 
+# "~" sorts after every letter, so the first message sorts after the text code wrote.
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+(machine.tasks / OWNER_TASKS).mkdir()
+machine.script({"sends": [send_to("alpha", "~ another text"), send_to("alpha")],
+                "answer": {"sent": True, "reason": "r"}})
+code, _ = machine.run(0)
+differs = machine.events("sent_text_differs_from_code_text")
+sent = machine.events("message_sent")
+check("two sends to one agent-seat, the first with a text that sorts after code's: the first is "
+      "logged as a difference, and the send is logged with the last send's text",
+      code == 0 and [event["sent_text"] for event in differs] == ["~ another text"]
+      and len(sent) == 1 and sent[0]["text"] == differs[0]["text"], (code, differs, sent))
+
+
+def owner_task_file_write(machine, name, subject, status="pending"):
+    (machine.tasks / OWNER_TASKS / name).write_text(json.dumps({"subject": subject, "status": status}))
+
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+(machine.tasks / OWNER_TASKS).mkdir()
+owner_task_file_write(machine, "1.json", "A" + SENT_TEXT_TASK_SUBJECT)
+owner_task_file_write(machine, "2.json", SENT_TEXT_TASK_SUBJECT + " too")
+machine.script({"sends": [DROPPED], "answer": {"sent": True, "reason": "r"}})
+machine.run(0)
+check("open tasks whose subjects sort before and after the sent-text task's: a new task",
+      [event["task_id"] for event in machine.events("owning_agent_seat_task_opened")] == [3],
+      (owner_tasks(machine), machine.events("owning_agent_seat_task_opened")))
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+(machine.tasks / OWNER_TASKS).mkdir()
+for name in ("1.json", "2.json"):
+    (machine.tasks / OWNER_TASKS / name).write_text("")
+# The program reads the task files in the order glob lists them, which the file system sets.
+first, second = (machine.tasks / OWNER_TASKS).glob("*.json")
+first.write_text("{not json")
+owner_task_file_write(machine, second.name, SENT_TEXT_TASK_SUBJECT)
+machine.script({"sends": [DROPPED], "answer": {"sent": True, "reason": "r"}})
+machine.run(0)
+check("a task file that is not JSON listed before the open sent-text task: no second task",
+      not machine.events("owning_agent_seat_task_opened") and len(owner_tasks(machine)) == 1,
+      (owner_tasks(machine), machine.events("owning_agent_seat_task_opened")))
+
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
 machine.handoff_put_off()
