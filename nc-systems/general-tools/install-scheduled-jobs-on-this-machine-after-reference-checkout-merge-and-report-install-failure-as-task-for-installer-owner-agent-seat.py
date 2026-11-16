@@ -41,8 +41,8 @@ reference-checkout, shows the user any FAILED line there.
 Git ignores a post-merge hook's exit code; the merge stands either way.
 
 Exit codes: 0 not a reference-checkout, the install succeeded, or its failure
-was written as a task; 1 the install failed and no task was written, with the
-FAILED message on standard error.
+was written as a task; 1 the install failed and writing it as a task failed,
+or, on the Mac, was not tried, with the FAILED message on standard error.
 
 Each *_TEST_OVERRIDE_ENVIRONMENT_VARIABLE constant names an environment
 variable whose value, when set, replaces a path, for
@@ -234,10 +234,14 @@ def main(environment=None, argv=None):
                              f"If you are {OWNING_AGENT_SEAT}, put right, on ned-box, what "
                              f"stopped that write, such as the permissions of {list_directory} "
                              f"or a file where that directory should be. Then run `cd "
-                             f"{reference_checkout} && python3 {PROGRAM}` on ned-box: it runs the "
-                             f"install again and, while the install still fails, writes this "
-                             f"failure as a task; when it prints this message again, the write "
-                             f"still fails."),
+                             f"{reference_checkout} && python3 {PROGRAM}` on ned-box, which runs "
+                             f"the install again.\n"
+                             f"If that install fails again, the program writes the failure as a "
+                             f"task and exits 0 with nothing printed; if it prints a FAILED "
+                             f"message naming the task list directory and exits 1, the write still "
+                             f"fails.\n"
+                             f"If that install exits 0, the program prints nothing and exits 0, "
+                             f"and the failure needs no task."),
               file=sys.stderr)
         return EXIT_FAILED
     return EXIT_DONE
