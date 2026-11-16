@@ -352,7 +352,8 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr[-2000:]!r}")
     check("the one line on stdout is the combined result's path, in a record "
           "directory under cold-read-records named for the day the run was made",
-          combined_path.is_file()
+          result.stdout.strip() == str(combined_path)
+          and combined_path.is_file()
           and record_dir.parent == repository / "cold-read-records"
           and record_dir.name in {
               f"{day:%Y-%m-%d}-restater-judge-{RESTATER_CLASS}"
