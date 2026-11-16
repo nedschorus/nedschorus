@@ -8,13 +8,13 @@ checkout's top directory, after every merge, a fast-forward included):
 Every checkout of the clone runs the same post-merge hook, because
 core.hooksPath names the reference-checkout's hook directory. In any checkout
 but one of REFERENCE_CHECKOUT_PATH_BY_MACHINE_NAME this program does nothing.
-In one, it runs the installer beside this file with --install, so a change
+In a reference-checkout, it runs the installer beside this file with --install, so a change
 merged into the table, scheduled-jobs-on-each-machine.json, or an install that
 failed before, is put right at the next pull. The installer's output is not
 passed on when it succeeds.
 
-On ned-box, the program keeps one task on the task list of OWNING_AGENT_SEAT,
-the agent-seat that owns the installer, under the subject
+On ned-box, the program keeps a failed install as a task on the task list of
+OWNING_AGENT_SEAT, the agent-seat that owns the installer, under the subject
 SCHEDULED_JOBS_INSTALLER_FAILURE_TASK_SUBJECT_FOR_OWNING_AGENT_SEAT_TASK_LIST.
 An open task is one of that subject not marked completed.
 
@@ -24,7 +24,7 @@ with agent-seat-task-list-new-pending-task-write-common.py; nothing is
 printed. Every open task is rewritten, not one of them, so none is left
 telling its reader an older failure. When a write fails, the tasks rewritten
 before it hold the new description and the rest keep the old one, and the
-program prints the FAILED message described below.
+program prints a FAILED message, as the paragraph after next says.
 
 When the installer exits 0, each open task is marked completed, and nothing
 is printed. When marking one completed fails, it and the open tasks after it
@@ -33,8 +33,8 @@ tells its reader to rerun --install, which then shows the install works, and
 the next pull that installs successfully marks them completed.
 
 When the task cannot be written, or the installer failed on the Mac, where
-OWNING_AGENT_SEAT's task list is not, a FAILED message goes to standard error
-instead: git puts it on its own stderr, and
+OWNING_AGENT_SEAT's task list is not, a FAILED message holding the
+installer's output goes to standard error instead: git puts it on its own stderr, and
 scripts/checkout-freshness-catch-up.py, which fast-forwards the
 reference-checkout, shows the user any FAILED line there.
 
@@ -46,7 +46,7 @@ FAILED message on standard error.
 
 Each *_TEST_OVERRIDE_ENVIRONMENT_VARIABLE constant names an environment
 variable whose value, when set, replaces a path, for
-tests/install-scheduled-jobs-on-this-machine-after-reference-checkout-merge-and-report-install-failure-as-task-for-installer-owner-agent-seat-test.py,
+nc-systems/general-tools/tests/install-scheduled-jobs-on-this-machine-after-reference-checkout-merge-and-report-install-failure-as-task-for-installer-owner-agent-seat-test.py,
 which runs no real install:
   - SCHEDULED_JOBS_INSTALLER_PATH_TEST_OVERRIDE_ENVIRONMENT_VARIABLE: the
     installer to run, in place of install-scheduled-jobs-on-this-machine.py
@@ -233,9 +233,11 @@ def main(environment=None, argv=None):
                              f"failed: {type(error).__name__}: {error}\n"
                              f"If you are {OWNING_AGENT_SEAT}, put right, on ned-box, what "
                              f"stopped that write, such as the permissions of {list_directory} "
-                             f"or a file where that directory should be, so that the next failed "
-                             f"install is written as a task again, and keep this failure on your "
-                             f"own task list until the install command below exits 0."),
+                             f"or a file where that directory should be. Then run `cd "
+                             f"{reference_checkout} && python3 {PROGRAM}` on ned-box: it runs the "
+                             f"install again and, while the install still fails, writes this "
+                             f"failure as a task; when it prints this message again, the write "
+                             f"still fails."),
               file=sys.stderr)
         return EXIT_FAILED
     return EXIT_DONE

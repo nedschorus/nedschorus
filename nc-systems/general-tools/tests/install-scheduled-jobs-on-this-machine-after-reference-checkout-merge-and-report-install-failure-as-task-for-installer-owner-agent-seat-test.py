@@ -239,7 +239,8 @@ with tempfile.TemporaryDirectory() as scratch:
           and "NotADirectoryError" in errors
           and "\nIf you are reboot-test, put right, on ned-box, what stopped that write, "
               f"such as the permissions of {not_a_directory}/nedschorus-reboot-test-tasks" in errors
-          and "keep this failure on your own task list until the install command below exits 0." in errors
+          and f"Then run `cd {repository} && python3 {after_merge.PROGRAM}` on ned-box: it runs the "
+              "install again and, while the install still fails, writes this failure as a task" in errors
           and "If you are any other agent, send this whole message to reboot-test with Claude Code's "
               "SendMessage tool, addressed to reboot-test" in errors
           and "If you are the user, paste this whole message into reboot-test's session." in errors
