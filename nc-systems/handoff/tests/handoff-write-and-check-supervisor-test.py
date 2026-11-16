@@ -1196,6 +1196,53 @@ def run_spawned_subagent_roster_cases(workspace: Path):
           == [incident_agent],
           str(resumed_final_then_interim_roster))
 
+    # One delivered record can name several subagents; skipping the first must not skip the rest.
+    other_agent = "a68d25248370ee862"
+
+    def stop_record(stamp):
+        return {"type": "user", "timestamp": stamp,
+                "message": {"role": "user", "content": [{
+                    "tool_use_id": "toolu_stop", "type": "tool_result",
+                    "content": json.dumps(stop_result)}]},
+                "toolUseResult": stop_result, "sessionId": FIXTURE_SESSION_ID}
+
+    def last_events(records, name):
+        path = workspace / name
+        path.write_text("\n".join(json.dumps(record) for record in records) + "\n",
+                        encoding="utf-8")
+        return {entry["agent_id"]: entry["last_event"]
+                for entry in writer.spawned_subagent_roster(path)}
+
+    both_spawned = [incident_spawn,
+                    spawn_record(other_agent, "Fix-round for PR 2046", "2026-10-27T21:20:00.000Z")]
+    two_ids = f"<task-id>{incident_agent}</task-id>\n<task-id>{other_agent}</task-id>\n"
+    stopped_report = notification_body(incident_agent, "stopped", "No completion record was found")
+    stopped_report = stopped_report.replace(f"<task-id>{incident_agent}</task-id>\n", two_ids)
+    echo_first = last_events([*both_spawned, stop_record("2026-10-27T21:50:00.000Z"),
+                              *delivered(stopped_report, "2026-10-27T21:52:00.000Z")],
+                             "roster-two-id-notification-echo-for-the-first.jsonl")
+    check("a notification that only echoes the first subagent it names still ends the second",
+          echo_first == {incident_agent: "stopped", other_agent: "stopped"}, str(echo_first))
+    two_id_interim = interim_body.replace(f"<task-id>{incident_agent}</task-id>\n", two_ids)
+    interim_first_stopped = last_events(
+        [*both_spawned, stop_record("2026-10-27T21:50:00.000Z"),
+         *delivered(two_id_interim, "2026-10-27T21:52:00.000Z")],
+        "roster-two-id-interim-notification-first-stopped.jsonl")
+    check("an interim notification that names a stopped subagent first still reaches the second",
+          interim_first_stopped == {incident_agent: "stopped",
+                                    other_agent: writer.WAITING_ON_ITS_OWN_BACKGROUND_WORK_EVENT},
+          str(interim_first_stopped))
+    # Synthetic: no transcript holds two notifications in one delivered string.
+    statusless_then_final = (
+        notification_body(incident_agent, "completed", "").replace("<status>completed</status>\n", "")
+        + notification_body(other_agent, "completed", 'Agent "Fix-round for PR 2046" finished'))
+    statusless_first = last_events([*both_spawned, *delivered(statusless_then_final,
+                                                             "2026-10-27T21:52:00.000Z")],
+                                   "roster-statusless-notification-then-final-in-one-record.jsonl")
+    check("a notification with no status does not hide a final one later in the same record",
+          statusless_first == {incident_agent: "spawned", other_agent: "completed"},
+          str(statusless_first))
+
     # An empty transcript is not an error: a session may spawn nothing.
     empty_path = workspace / "roster-empty.jsonl"
     empty_path.write_text("", encoding="utf-8")

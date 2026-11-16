@@ -701,7 +701,7 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds=None,
                 where = f"{path}, line {line_number}"
                 for event in task_events_from_claude_code_transcript_line(
                         line, where, should_raise_on_unparseable_spawn_or_resume_line=True):
-                    if event.kind == SUBAGENT_SPAWNED_BY_AGENT_TOOL_TASK_EVENT:
+                    if event.kind == SUBAGENT_SPAWNED_BY_AGENT_TOOL_TASK_EVENT:  # pragma: no mutate, the reader sets kind to this very constant object, so `is` acts as ==
                         if event.task_id not in spawned_ids:
                             spawned_ids.append(event.task_id)
                             launched_at_by_id[event.task_id] = record_time(event.record)
@@ -709,10 +709,10 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds=None,
                         if event.task_id not in workflow_ids:
                             workflow_ids.append(event.task_id)
                             launched_at_by_id[event.task_id] = record_time(event.record)
-                    elif event.kind == SUBAGENT_RESUMED_BY_SEND_MESSAGE_TASK_EVENT:  # pragma: no mutate, the kinds left here are "resumed", "stopped" and "task-notification", and only "resumed" sorts at or before "resumed", so <= acts as ==
+                    elif event.kind == SUBAGENT_RESUMED_BY_SEND_MESSAGE_TASK_EVENT:  # pragma: no mutate, the kinds left here are "resumed", "stopped" and "task-notification", and only "resumed" sorts at or before "resumed", so <= acts as ==; the reader sets kind to this very constant object, so `is` acts as ==
                         last_notification_is_interim.pop(event.task_id, None)
                         stopped_ids.discard(event.task_id)
-                    elif event.kind == STOPPED_BY_TASK_STOP_EVENT:
+                    elif event.kind == STOPPED_BY_TASK_STOP_EVENT:  # pragma: no mutate, the reader sets kind to this very constant object, so `is` acts as ==; the kinds left here are "stopped" and "task-notification", and only "stopped" sorts at or before "stopped", so <= acts as ==
                         last_notification_is_interim[event.task_id] = False
                         stopped_ids.add(event.task_id)
                     # An interim notice queued before a TaskStop can arrive after it.
