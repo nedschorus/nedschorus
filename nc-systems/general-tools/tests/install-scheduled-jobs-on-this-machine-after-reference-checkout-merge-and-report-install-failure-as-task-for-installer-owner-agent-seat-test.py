@@ -208,7 +208,7 @@ with tempfile.TemporaryDirectory() as scratch:
           code == 1 and "FAILED — after a merge into ned-box's reference-checkout" in errors
           and "writing the task into the task list directory" in errors
           and "NotADirectoryError" in errors
-          and "If you are an agent, send this whole message to reboot-test with Claude Code's "
+          and "If you are any other agent, send this whole message to reboot-test with Claude Code's "
               "SendMessage tool, addressed to reboot-test" in errors
           and "If you are the user, paste this whole message into reboot-test's session." in errors
           and "FAILED: the crontab write did not hold" in errors, (code, errors))

@@ -126,12 +126,11 @@ def failed_message(machine, reference_checkout, exit_code, output, why_no_task):
         f"nc-systems/general-tools/scheduled-jobs-on-each-machine.json says. The agent-seat "
         f"{OWNING_AGENT_SEAT} on ned-box owns the installer and fixes its failures, and this "
         f"failure was not handed to it: {why_no_task}\n"
-        f"If you are an agent, send this whole message to {OWNING_AGENT_SEAT} with Claude "
-        f"Code's SendMessage tool, addressed to {OWNING_AGENT_SEAT}; if {OWNING_AGENT_SEAT} "
-        f"cannot be reached, tell the user that the scheduled-jobs install failed on {machine} "
-        f"and quote this message's first line.\n"
-        f"If you are a subagent, give this whole message to the agent that dispatched you "
-        f"instead.\n"
+        f"If you are a subagent, give this whole message to the agent that dispatched you.\n"
+        f"If you are any other agent, send this whole message to {OWNING_AGENT_SEAT} with "
+        f"Claude Code's SendMessage tool, addressed to {OWNING_AGENT_SEAT}; if "
+        f"{OWNING_AGENT_SEAT} cannot be reached, tell the user that the scheduled-jobs install "
+        f"failed on {machine} and quote this message's first line.\n"
         f"If you are the user, paste this whole message into {OWNING_AGENT_SEAT}'s session.\n"
         f"The installer printed:\n{output}")
 
