@@ -12,6 +12,7 @@ import datetime
 import importlib.util
 import io
 import json
+import re
 import os
 import subprocess
 import sys
@@ -124,6 +125,35 @@ def renamed_fixture_repository(base):
     return repository
 
 
+def squash_and_direct_fixture_repository(base):
+    """A repository whose hook gained rule fixture-squashed in a commit on main that GitHub squash-merged
+    from PR 8, committed under the merging user's two-word name; then a direct commit by seat-d on main
+    added rule fixture-direct; then PR 9 merged an unrelated change."""
+    repository = base / "squash-repository"
+    (repository / ".claude").mkdir(parents=True)
+    (repository / "hooks").mkdir()
+    git(repository, "init", "-q", "-b", "main")
+    (repository / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"PreToolUse": [
+        {"matcher": "Bash", "hooks": [{"type": "command",
+                                       "command": 'python3 "$CLAUDE_PROJECT_DIR"/hooks/guard-hook.py'}]}]}}))
+    hook = repository / "hooks" / "guard-hook.py"
+    hook.write_text("X = 1\n", encoding="utf-8")
+    git(repository, "add", "-A")
+    git(repository, "commit", "-q", "-m", "start")
+    squashed = 'SQUASHED_REFUSAL = "[rule fixture-squashed] Refused: squashed."\n'
+    hook.write_text("X = 1\n" + squashed, encoding="utf-8")
+    git(repository, "commit", "-q", "-am", "Add the squashed rule (#8)", author="Merging User",
+        when="2026-10-01T00:00:00+00:00")
+    hook.write_text("X = 1\n" + squashed + 'DIRECT_NOTE = "[rule fixture-direct] see."\n', encoding="utf-8")
+    git(repository, "commit", "-q", "-am", "Add the direct rule", author="seat-d", when="2026-10-02T00:00:00+00:00")
+    git(repository, "checkout", "-q", "-b", "unrelated", author="seat-e", when="2026-10-03T00:00:00+00:00")
+    (repository / "other.txt").write_text("other\n", encoding="utf-8")
+    git(repository, "add", "-A", author="seat-e", when="2026-10-03T00:00:00+00:00")
+    git(repository, "commit", "-q", "-m", "unrelated", author="seat-e", when="2026-10-03T00:00:00+00:00")
+    merge_branch(repository, "unrelated", 9, "merge-lane-2", "2026-10-03T01:00:00+00:00")
+    return repository
+
+
 def record(kind, when, **fields):
     return json.dumps({"type": kind, "timestamp": when, **fields})
 
@@ -182,9 +212,24 @@ check("every recorded rule names its commit, its pull request or null, and its a
           and (row["pull_request"] is None or row["pull_request"].isdigit()) for row in recorded.values()),
       recorded)
 missing_commits = [rule_id for rule_id, row in recorded.items()
-                   if subprocess.run(["git", "-C", str(REAL_REPOSITORY), "cat-file", "-e", row["commit"] + "^{commit}"],
+                   if subprocess.run(["git", "-C", str(REAL_REPOSITORY), "merge-base", "--is-ancestor", row["commit"], "HEAD"],
                                      capture_output=True).returncode != 0]
 check("every recorded commit is in this checkout's history", missing_commits == [], missing_commits)
+real_first_parent = subprocess.run(["git", "-C", str(REAL_REPOSITORY), "log", "--first-parent", "--format=%H %s", "HEAD"],
+                                   capture_output=True, text=True, check=True).stdout
+real_first_parent_subjects = dict(line.split(" ", 1) for line in real_first_parent.splitlines() if " " in line)
+wrong_squash_rows = {}
+for rule_id, row in recorded.items():
+    if row["commit"] in real_first_parent_subjects:
+        subject_number = re.search(r"\(#(\d+)\)\s*$", real_first_parent_subjects[row["commit"]])
+        if row["pull_request"] != (subject_number.group(1) if subject_number else None):
+            wrong_squash_rows[rule_id] = (row, real_first_parent_subjects[row["commit"]])
+check("a recorded commit on main's first-parent history names the pull request its subject's (#<number>) "
+      "names, or null when the subject names none", wrong_squash_rows == {}, wrong_squash_rows)
+# docs/nedschorus-wiki/nedschorus-agent-seat-model.md: an agent-seat name is one word; a person's git name is not.
+not_one_word_seats = {rule_id: row["agent_seat"] for rule_id, row in recorded.items() if not row["agent_seat"]
+                      or any(character.isspace() for character in row["agent_seat"])}
+check("every recorded agent-seat is one word, as an agent-seat name is", not_one_word_seats == {}, not_one_word_seats)
 check("rules whose message words or constant changed since are recorded with the commit that wrote them",
       [(recorded[rule_id]["commit"][:9], recorded[rule_id]["agent_seat"], recorded[rule_id]["pull_request"])
        for rule_id in ("bash-guard-git-push-and-pr-merge-during-emergency-stop",
@@ -193,6 +238,22 @@ check("rules whose message words or constant changed since are recorded with the
                        "checkout-freshness-branch-behind-main-update")]
       == [("a2062a926", "prime-intellect", "3605"), ("f45aaaae2", "cold-read-research", "1327"),
           ("26486c5ad", "reboot-test", "1265"), ("b1ae51007", "new-vp", "87")], recorded)
+
+SQUASH_NOTE = "squash-merged, so its agent-seat is in the pull request's description"
+with tempfile.TemporaryDirectory() as scratch:
+    squash_repository = squash_and_direct_fixture_repository(Path(scratch))
+    squash_rules = program.registered_rules(squash_repository)
+    squash_failures = program.rule_origins(squash_repository, squash_rules, {})
+    squash_by_id = {rule["id"]: rule for rule in squash_rules}
+    squashed, direct = squash_by_id.get("fixture-squashed", {}), squash_by_id.get("fixture-direct", {})
+    check("a rule added by a squash merge on main is credited to the pull request its subject names, not to "
+          "the next merge, and its agent-seat is not taken from the merging user's name",
+          squash_failures == [] and (squashed.get("pull_request"), squashed.get("seat")) == ("8", None)
+          and squashed.get("origin_note") == SQUASH_NOTE and "unknown: " + SQUASH_NOTE + " | PR 8"
+          in program.report_text("2026-11-16", [squashed], {}, {}, [], 0, []), (squash_failures, squash_rules))
+    check("a rule added by a commit straight to main has no pull request, and its author as agent-seat",
+          (direct.get("pull_request"), direct.get("seat"), direct.get("origin_note"))
+          == (None, "seat-d", "committed to main without a pull request"), squash_rules)
 
 with tempfile.TemporaryDirectory() as scratch:
     base = Path(scratch)

@@ -176,8 +176,8 @@
   },
   "handoff-context-threshold-deferred-while-work-runs": {
     "commit": "1c56e1663f84665fedf7576c6dd2e64826dd9c1c",
-    "pull_request": "183",
-    "agent_seat": "Edward Lerner"
+    "pull_request": "180",
+    "agent_seat": "MD-skills"
   },
   "handoff-context-threshold-reached-run-handoff": {
     "commit": "af25812c21d0e4cab10c1c23309dea7abad5659b",

@@ -27,15 +27,22 @@ are read.
 When a rule's ID was added: the oldest commit in this checkout's history whose added lines hold
 `[rule <id>]`, searched across every file, so a hook renamed since does not hide it.
 
-Who wrote the rule: the rules whose messages were written before the IDs existed, those the pull request
-that added the IDs gave one, are listed in RULES_WRITTEN_BEFORE_THEIR_IDS_PATH beside this file, each
-with the commit that first wrote its message, the pull request that brought that commit, or null when
-the commit went onto main without one, and its author's name. Git cannot find that commit by itself,
-because a message's words and its constant's name were both changed since in many hooks. Any other
-rule was written with its ID, so the commit that added the ID wrote the rule: the agent-seat is that
-commit's author name, as each agent-seat commits under its own name, and the pull request is the one
-whose merge first brought the commit onto this checkout's first-parent history, read from the merge's
-subject `Merge pull request #<number> from ...`.
+Who wrote the rule: the rules whose messages were written before their IDs existed, which got their IDs
+all at once in the pull request that added the IDs, are listed in
+nc-systems/general-tools/claude-code-registered-hook-rule-id-to-origin-commit-pr-and-agent-seat-of-rules-whose-message-predates-its-id.json,
+each with the commit that first wrote its message, the pull request that brought that commit, or null
+when the commit went onto main without one, and the agent-seat that wrote it. Git cannot find that
+commit by itself, because a message's words and its constant's name were both changed since in many
+hooks. Any other rule was written with its ID, so the commit that added the ID wrote the rule, and the
+pull request and agent-seat come from that commit:
+- A commit on this checkout's first-parent history was not brought by a merge. When its subject ends
+  `(#<number>)`, it is a pull request squash-merged on GitHub: the pull request is that number, and the
+  agent-seat is not known, as the commit carries the name of whoever merged it; the report says to read
+  the pull request's description. Otherwise it was committed straight to main: no pull request, and the
+  agent-seat is the commit's author name.
+- Any other commit was brought by the first first-parent merge that holds it: the pull request is read
+  from that merge's subject `Merge pull request #<number> from ...`, and the agent-seat is the commit's
+  author name, the name that agent-seat commits under.
 
 The report goes to <report directory>/<job name>-<YYYY-MM-DD>-report.md, the job name being this
 file's name without .py and the date UTC, replacing a report written earlier the same day; the default
@@ -56,7 +63,7 @@ outside a message constant.
 Exit status: 0 when the report was written and every transcript directory, transcript and git lookup
 was read. 1 when a transcript directory, a transcript or a git lookup could not be read: the report is
 still written, and says which, since its never-seen list may then be wrong; when a registered hook
-writes an ID that is in no commit and not in RULES_WRITTEN_BEFORE_THEIR_IDS_PATH, so who wrote the rule
+writes an ID that is in no commit and not in the table above, so who wrote the rule
 cannot be found: the report is still written, and a FAILED line names each such ID; or when the report
 could not be written, which is printed only, to the cron log above. 2 for a bad command line.
 """
@@ -86,6 +93,8 @@ RULES_WRITTEN_BEFORE_THEIR_IDS_PATH = Path(__file__).with_name(
 # What --format=%x00 puts before each commit line, as no diff line starts with it.
 COMMIT_LINE_START = "\x00"
 MERGE_SUBJECT_PATTERN = re.compile(r"^Merge pull request #(\d+) ")
+SQUASH_MERGE_SUBJECT_PATTERN = re.compile(r"\(#(\d+)\)\s*$")
+SQUASH_MERGED_AGENT_SEAT_NOTE = "squash-merged, so its agent-seat is in the pull request's description"
 REPORT_NOTE_AUTHOR_UNKNOWN_FOR_HOOK_RULE_WHOSE_ID_IS_IN_NO_GIT_COMMIT = "its ID is in no commit, so who wrote it is not known"
 CANDIDATES_NOT_VERDICTS_LINE = (
     "Each rule below is a candidate to question, not a verdict: a guard against a rare, permanent harm "
@@ -159,8 +168,19 @@ def first_parent_merges_oldest_first(repository):
     return [line.split(" ", 1) for line in output.splitlines() if line]
 
 
-def pull_request_bringing(repository, sha, merges):
-    """The number of the first first-parent merge holding the commit, or None when none holds it."""
+def first_parent_commit_subjects(repository):
+    """{sha: subject} of every commit on HEAD's first-parent history."""
+    output = git(repository, "log", "--first-parent", "--format=%H %s", "HEAD")
+    return dict(line.split(" ", 1) if " " in line else (line, "") for line in output.splitlines() if line)
+
+
+def pull_request_bringing(repository, sha, merges, first_parent_subjects):
+    """The number of the pull request that brought the commit, or None when none did: for a commit on
+    the first-parent history, the `(#<number>)` its subject ends with, as GitHub's squash merge writes
+    it; for any other, the first first-parent merge holding it."""
+    if sha in first_parent_subjects:
+        match = SQUASH_MERGE_SUBJECT_PATTERN.search(first_parent_subjects[sha])
+        return match.group(1) if match else None
     low, high = 0, len(merges)
     while low < high:
         middle = (low + high) // 2
@@ -183,10 +203,11 @@ def rule_origins(repository, rules, recorded_origins):
     failures = []
     try:
         merges = first_parent_merges_oldest_first(repository)
+        first_parent_subjects = first_parent_commit_subjects(repository)
         id_commits = commits_adding_each_rule_id(repository)
     except GitLookupFailed as error:
         failures.append(str(error))
-        merges, id_commits = [], None
+        merges, first_parent_subjects, id_commits = [], {}, None
     for rule in rules:
         rule.update(added=None, seat=None, pull_request=None, origin_note="")
         if id_commits is None:
@@ -204,8 +225,13 @@ def rule_origins(repository, rules, recorded_origins):
             rule["origin_note"] = REPORT_NOTE_AUTHOR_UNKNOWN_FOR_HOOK_RULE_WHOSE_ID_IS_IN_NO_GIT_COMMIT
             continue
         try:
-            rule["seat"] = git(repository, "log", "-1", "--format=%an", id_commit[0]).strip()
-            rule["pull_request"] = pull_request_bringing(repository, id_commit[0], merges)
+            rule["pull_request"] = pull_request_bringing(repository, id_commit[0], merges, first_parent_subjects)
+            if id_commit[0] in first_parent_subjects and rule["pull_request"]:
+                rule["origin_note"] = SQUASH_MERGED_AGENT_SEAT_NOTE
+            else:
+                rule["seat"] = git(repository, "log", "-1", "--format=%an", id_commit[0]).strip()
+                if not rule["pull_request"] and id_commit[0] in first_parent_subjects:
+                    rule["origin_note"] = "committed to main without a pull request"
         except (GitLookupFailed, subprocess.TimeoutExpired, OSError) as error:
             failures.append(f"{rule['id']}: {error}")
             rule["origin_note"] = "its origin could not be read"
@@ -311,7 +337,13 @@ def report_text(today, rules, counts, unknown_counts, directories, read, problem
             pull_request = f"PR {rule['pull_request']}"
         else:
             pull_request = rule["origin_note"] or "no pull request found"
-        return f"{rule['seat'] or 'unknown'} | {pull_request}"
+        if rule["seat"]:
+            seat = rule["seat"]
+        elif rule["pull_request"] and rule["origin_note"]:
+            seat = f"unknown: {rule['origin_note']}"
+        else:
+            seat = "unknown"
+        return f"{seat} | {pull_request}"
 
     def added(rule):
         return rule["added"].date().isoformat() if rule["added"] else "not committed"
@@ -379,8 +411,10 @@ def main(argv=None, now=None):
     unknown_origins = [rule for rule in rules if rule["origin_note"] == REPORT_NOTE_AUTHOR_UNKNOWN_FOR_HOOK_RULE_WHOSE_ID_IS_IN_NO_GIT_COMMIT]
     for rule in unknown_origins:
         print(f"{JOB_NAME}: FAILED: {rule['hook']} writes `[rule {rule['id']}]`, which no commit on this checkout's "
-              f"history adds and {RULES_WRITTEN_BEFORE_THEIR_IDS_PATH.name} does not list, so the report cannot "
-              f"say who wrote the rule. Commit the hook, then run this program again.", file=sys.stderr)
+              f"history adds and nc-systems/general-tools/{RULES_WRITTEN_BEFORE_THEIR_IDS_PATH.name} does not list, "
+              f"so the report cannot say who wrote the rule. Check whether this checkout, {REPOSITORY}, is on "
+              f"main and up to date, and whether the hook's change is committed and merged; once a commit on "
+              f"main adds the ID, run this program again.", file=sys.stderr)
     return 1 if problems or unknown_origins else 0
 
 
