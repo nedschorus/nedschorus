@@ -475,9 +475,8 @@ def shown_item_lines(reply_lines, document_lines, units, openings):
     shown = set()
     for numbers, total, _, first, end in units:
         unit_shown = normalized(document_lines[first]) in reply_set
-        spans = [(number, *(walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
-            openings, first, end, number, numbers, total) if len(numbers) > 1 else (first, end)))
-                 for number in numbers or [None]]
+        spans = [(number, *walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
+            openings, first, end, number, numbers, total)) for number in numbers or [None]]
         if unit_shown:
             # A Withdrawn heading, an opening that names no item, ends the lead-in as it ends an item's lines.
             withdrawn = [line for line in openings if first < line < end and not openings[line][0]]

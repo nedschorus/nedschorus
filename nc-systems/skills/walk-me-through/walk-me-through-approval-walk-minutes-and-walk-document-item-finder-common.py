@@ -675,14 +675,14 @@ def approval_walk_item_line_range_within_heading_shared_by_several_items(opening
     """Return (first, end) of the lines, of the unit from line first up to end that names several items, that
     belong to item number: from the first of item_opening_lines' openings that names that item alone, with
     the unit's total or none, up to the next that names another of the unit's items alone or the next
-    Withdrawn heading, an opening that names no item; or, when none names it, or the unit names only that
-    item, from the unit's first line up to its first Withdrawn heading or its end."""
+    Withdrawn heading, an opening that names no item; or, when none names it, from the unit's first line up to
+    its first Withdrawn heading or its end; or, when the unit names at most one item, the whole unit, which
+    item_unit_spans already ends at its first Withdrawn heading."""
+    # An opening inside a one-item unit, such as a `#### Item 2.1: details` subheading, would drop the lines above it.
+    if len(numbers) <= 1:
+        return first, end
     starts = {}
     withdrawn = [line for line in openings if first <= line < end and not openings[line][0]]
-    # A unit of one item is that item's whole; an opening inside it, such as a `#### Item 2.1: details`
-    # subheading, would drop the lines above it.
-    if len(numbers) == 1:
-        return first, min(withdrawn + [end])
     for line in sorted(openings):
         named, opening_total = openings[line]
         if first <= line < end and opening_total in (total, None) and len(named) == 1 and named[0] in numbers:
