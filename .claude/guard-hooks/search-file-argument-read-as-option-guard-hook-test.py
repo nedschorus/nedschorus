@@ -275,15 +275,17 @@ try:
     for listing in (["b", "-n", "a"], ["-n", "a", "b"], ["a", "b", "-n"]):
         listed = listed_names(listing)
         check(f"listed as {listing}, the refusal lists -n, a, b", listed == "-n, a, b", listed)
-    listed = listed_names(["A", "-z", "-b", "0"])
+    # # and + sort before - in byte order, so only the dash-first sort puts -b and -z first.
+    listed = listed_names(["A", "-z", "#00", "-b", "+a", "0"])
     check("names beginning with - come first though others sort before them in byte order",
-          listed == "-b, -z, 0, A", listed)
+          listed == "-b, -z, #00, +a, 0, A", listed)
     ten = ["-n"] + [f"f{number}" for number in range(9)]
     listed = listed_names(ten)
     check("ten matched names are all listed", listed == ", ".join(ten), listed)
-    listed = listed_names([f"f{number:02}" for number in range(20)] + ["-x", "-y"])
-    check("of 22 matched names, ten are listed, the names beginning with - among them",
-          listed == ", ".join(["-x", "-y"] + [f"f{number:02}" for number in range(8)]), listed)
+    listed = listed_names([f"#{number:02}" for number in range(20)] + ["-x", "-y"])
+    check("of 22 matched names, ten are listed, the names beginning with - first, though "
+          "the others sort before them in byte order",
+          listed == ", ".join(["-x", "-y"] + [f"#{number:02}" for number in range(8)]), listed)
     # A later search that -- cannot fix leaves no command to suggest for the earlier one.
     refusal = run_main("grep needle *; grep -f -? notes.txt", option_values) or ""
     check("refused with no command: grep needle *; grep -f -? notes.txt, whose second "
