@@ -23,10 +23,11 @@ from pathlib import Path
 
 GENERAL_TOOLS = Path(__file__).resolve().parent.parent
 REPOSITORY_ROOT = GENERAL_TOOLS.parent.parent
-PROGRAM_PATH = GENERAL_TOOLS / "install-scheduled-jobs-on-this-machine-after-reference-checkout-merge-and-report-install-failure-as-task-for-installer-owner-agent-seat.py"
+PROGRAM_PATH = GENERAL_TOOLS / ("install-scheduled-jobs-on-this-machine-after-reference-checkout-"
+                                "merge-and-report-install-failure-as-task-for-installer-owner-"
+                                "agent-seat.py")
 HOOKS_DIRECTORY = REPOSITORY_ROOT / "scripts" / "git-client-side-hooks"
-_spec = importlib.util.spec_from_file_location(
-    "install_scheduled_jobs_on_this_machine_after_reference_checkout_merge_and_report_install_failure_as_task_for_installer_owner_agent_seat", PROGRAM_PATH)
+_spec = importlib.util.spec_from_file_location("scheduled_jobs_install_after_merge", PROGRAM_PATH)
 after_merge = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(after_merge)
 
@@ -37,6 +38,8 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
+SUBJECT = after_merge.SCHEDULED_JOBS_INSTALLER_FAILURE_TASK_SUBJECT_FOR_OWNING_AGENT_SEAT_TASK_LIST
+NED_BOX_OVERRIDE = after_merge.NED_BOX_REFERENCE_CHECKOUT_PATH_TEST_OVERRIDE_ENVIRONMENT_VARIABLE
 failures = 0
 
 
@@ -59,7 +62,8 @@ elif code == 2:
     print("install-scheduled-jobs-on-this-machine: not run — job `x` runs /nowhere/x.py, "
           "which is not a file on this machine.", file=sys.stderr)
 else:
-    print("FAILED: the crontab write did not hold", file=sys.stderr)
+    print(os.environ.get("STAND_IN_INSTALLER_FAILED_LINE", "FAILED: the crontab write did not hold"),
+          file=sys.stderr)
 sys.exit(code)
 """
 
@@ -77,9 +81,8 @@ with tempfile.TemporaryDirectory() as scratch:
                       GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1",
                       STAND_IN_INSTALLER_LOG=str(installer_log))
     seams = {
-        after_merge.SCHEDULED_JOBS_INSTALL_AFTER_MERGE_INSTALLER_ENVIRONMENT_VARIABLE: str(stand_in),
-        after_merge.SCHEDULED_JOBS_INSTALL_AFTER_MERGE_TASK_LISTS_DIRECTORY_ENVIRONMENT_VARIABLE:
-            str(task_lists),
+        after_merge.SCHEDULED_JOBS_INSTALLER_PATH_TEST_OVERRIDE_ENVIRONMENT_VARIABLE: str(stand_in),
+        after_merge.AGENT_SEAT_TASK_LISTS_DIRECTORY_TEST_OVERRIDE_ENVIRONMENT_VARIABLE: str(task_lists),
     }
 
     def git(*arguments, hooks="/dev/null", environment=None):
@@ -93,26 +96,27 @@ with tempfile.TemporaryDirectory() as scratch:
         return [json.loads(path.read_text(encoding="utf-8"))
                 for path in sorted(list_directory.glob("*.json"))]
 
-    def reset():
+    def reset(keep_tasks=False):
         installer_log.unlink(missing_ok=True)
-        if list_directory.is_dir():
+        if list_directory.is_dir() and not keep_tasks:
             for path in list_directory.iterdir():
                 path.unlink()
 
     def run(ned_box_reference=None, installer_exit=0, task_lists_directory=None,
-            mac_reference=None):
-        reset()
+            mac_reference=None, failed_line=None, keep_tasks=False):
+        reset(keep_tasks)
         os.environ["STAND_IN_INSTALLER_EXIT"] = str(installer_exit)
-        environment = {
-            **os.environ, **seams,
-            after_merge.SCHEDULED_JOBS_INSTALL_AFTER_MERGE_NED_BOX_REFERENCE_CHECKOUT_ENVIRONMENT_VARIABLE:
-                str(ned_box_reference or elsewhere)}
+        environment = {**os.environ, **seams, NED_BOX_OVERRIDE: str(ned_box_reference or elsewhere)}
+        # The installer inherits this process's environment, not the one main() reads.
+        os.environ.pop("STAND_IN_INSTALLER_FAILED_LINE", None)
+        if failed_line is not None:
+            os.environ["STAND_IN_INSTALLER_FAILED_LINE"] = failed_line
         if task_lists_directory is not None:
-            environment[after_merge.SCHEDULED_JOBS_INSTALL_AFTER_MERGE_TASK_LISTS_DIRECTORY_ENVIRONMENT_VARIABLE] = \
+            environment[after_merge.AGENT_SEAT_TASK_LISTS_DIRECTORY_TEST_OVERRIDE_ENVIRONMENT_VARIABLE] = \
                 str(task_lists_directory)
-        saved_mac = after_merge.REFERENCE_CHECKOUT_OF_MACHINE[after_merge.MAC]
+        saved_mac = after_merge.REFERENCE_CHECKOUT_PATH_BY_MACHINE_NAME[after_merge.MAC]
         if mac_reference is not None:
-            after_merge.REFERENCE_CHECKOUT_OF_MACHINE[after_merge.MAC] = str(mac_reference)
+            after_merge.REFERENCE_CHECKOUT_PATH_BY_MACHINE_NAME[after_merge.MAC] = str(mac_reference)
         printed, errors = io.StringIO(), io.StringIO()
         before = os.getcwd()
         os.chdir(repository)
@@ -121,7 +125,7 @@ with tempfile.TemporaryDirectory() as scratch:
                 code = after_merge.main(environment)
         finally:
             os.chdir(before)
-            after_merge.REFERENCE_CHECKOUT_OF_MACHINE[after_merge.MAC] = saved_mac
+            after_merge.REFERENCE_CHECKOUT_PATH_BY_MACHINE_NAME[after_merge.MAC] = saved_mac
         calls = installer_log.read_text().splitlines() if installer_log.exists() else []
         return code, calls, printed.getvalue(), errors.getvalue()
 
@@ -146,36 +150,47 @@ with tempfile.TemporaryDirectory() as scratch:
           "code and the installer's output, and nothing on stderr for the user's display",
           code == 0 and calls == ["--install"] and errors == "" and printed == ""
           and len(written) == 1 and written[0]["status"] == "pending"
-          and written[0]["subject"] == after_merge.INSTALL_FAILED_TASK_SUBJECT
+          and written[0]["subject"] == SUBJECT
           and "exited 1" in written[0]["description"]
           and "FAILED: the crontab write did not hold" in written[0]["description"]
-          and f"Run `python3 {repository}/nc-systems/general-tools/"
+          and f"then run `python3 {repository}/nc-systems/general-tools/"
               "install-scheduled-jobs-on-this-machine.py --install` on ned-box"
               in written[0]["description"]
-          and "Mark this task completed once --install exits 0" in written[0]["description"],
+          and "once it exits 0 it marks this task completed" in written[0]["description"],
           (code, errors, written))
 
-    os.environ["STAND_IN_INSTALLER_EXIT"] = "1"
-    environment = {**os.environ, **seams,
-                   after_merge.SCHEDULED_JOBS_INSTALL_AFTER_MERGE_NED_BOX_REFERENCE_CHECKOUT_ENVIRONMENT_VARIABLE:
-                       str(repository)}
-    before = os.getcwd()
-    os.chdir(repository)
+    code, calls, printed, errors = run(ned_box_reference=repository, installer_exit=1,
+                                       failed_line="FAILED: a later failure", keep_tasks=True)
+    written = tasks()
+    check("a later failure while the task is open opens no second task, and replaces the open "
+          "task's description with the later failure's output",
+          code == 0 and errors == "" and len(written) == 1 and written[0]["status"] == "pending"
+          and "FAILED: a later failure" in written[0]["description"]
+          and "did not hold" not in written[0]["description"], (code, errors, written))
+
+    code, calls, printed, errors = run(ned_box_reference=repository, keep_tasks=True)
+    written = tasks()
+    check("a successful install marks the open task completed, and prints nothing",
+          code == 0 and errors == printed == "" and len(written) == 1
+          and written[0]["status"] == "completed", (code, errors, written))
+
+    code, calls, printed, errors = run(ned_box_reference=repository, installer_exit=1,
+                                       keep_tasks=True)
+    written = tasks()
+    check("once the task is completed, the next failure opens a new one",
+          code == 0 and [task["status"] for task in written] == ["completed", "pending"],
+          written)
+
+    list_directory.chmod(0o500)
     try:
-        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as errors_again:
-            again = after_merge.main(environment)
-            still_open = len(tasks())
-            first = list_directory / "1.json"
-            task = json.loads(first.read_text(encoding="utf-8"))
-            first.write_text(json.dumps({**task, "status": "completed"}), encoding="utf-8")
-            after_completed = after_merge.main(environment)
+        code, calls, printed, errors = run(ned_box_reference=repository, keep_tasks=True)
     finally:
-        os.chdir(before)
-    check("a second failure while the task is open opens no second task; once it is completed, "
-          "the next failure opens a new one",
-          again == 0 and still_open == 1 and after_completed == 0 and len(tasks()) == 2
-          and errors_again.getvalue() == "",
-          (again, still_open, after_completed, tasks()))
+        list_directory.chmod(0o700)
+    written = tasks()
+    check("a successful install whose open task cannot be marked completed still exits 0 with "
+          "nothing printed, and leaves the task open",
+          code == 0 and errors == printed == "" and written[-1]["status"] == "pending",
+          (code, errors, written))
 
     code, calls, printed, errors = run(ned_box_reference=repository, installer_exit=2)
     written = tasks()
@@ -191,8 +206,11 @@ with tempfile.TemporaryDirectory() as scratch:
     check("when the task cannot be written, a FAILED message with the installer's output goes "
           "to stderr, which checkout-freshness-catch-up.py shows the user, and the exit is 1",
           code == 1 and "FAILED — after a merge into ned-box's reference-checkout" in errors
-          and "writing the task to" in errors and "NotADirectoryError" in errors
-          and "Give this whole message to reboot-test, which finds the cause and fixes it; an agent sends it with SendMessage addressed to reboot-test." in errors
+          and "writing the task into the task list directory" in errors
+          and "NotADirectoryError" in errors
+          and "If you are an agent, send this whole message to reboot-test with Claude Code's "
+              "SendMessage tool, addressed to reboot-test" in errors
+          and "If you are the user, paste this whole message into reboot-test's session." in errors
           and "FAILED: the crontab write did not hold" in errors, (code, errors))
 
     code, calls, printed, errors = run(mac_reference=repository)
@@ -218,12 +236,13 @@ with tempfile.TemporaryDirectory() as scratch:
 
     table = json.loads((GENERAL_TOOLS / "scheduled-jobs-on-each-machine.json").read_text())
     check("the reference-checkouts are the clones the scheduled-jobs table runs jobs from",
-          sorted(after_merge.REFERENCE_CHECKOUT_OF_MACHINE.values())
+          sorted(after_merge.REFERENCE_CHECKOUT_PATH_BY_MACHINE_NAME.values())
           == sorted(machine["clone"] for machine in table["machines"].values()),
-          after_merge.REFERENCE_CHECKOUT_OF_MACHINE)
+          after_merge.REFERENCE_CHECKOUT_PATH_BY_MACHINE_NAME)
+    installer_relative = after_merge.SCHEDULED_JOBS_INSTALLER_PATH_RELATIVE_TO_CLONE_TOP_DIRECTORY
     check("the installer the program runs by default is a file beside it",
-          (GENERAL_TOOLS / Path(after_merge.INSTALLER_IN_CLONE).name).is_file()
-          and (REPOSITORY_ROOT / after_merge.INSTALLER_IN_CLONE).is_file())
+          (GENERAL_TOOLS / Path(installer_relative).name).is_file()
+          and (REPOSITORY_ROOT / installer_relative).is_file())
 
     git("checkout", "-q", "-b", "change")
     (repository / "README.md").write_text("words", encoding="utf-8")
@@ -231,10 +250,8 @@ with tempfile.TemporaryDirectory() as scratch:
     git("commit", "-q", "-m", "change")
     git("checkout", "-q", "main")
     reset()
-    hook_environment = {
-        **os.environ, **seams, "STAND_IN_INSTALLER_EXIT": "1",
-        after_merge.SCHEDULED_JOBS_INSTALL_AFTER_MERGE_NED_BOX_REFERENCE_CHECKOUT_ENVIRONMENT_VARIABLE:
-            str(repository)}
+    hook_environment = {**os.environ, **seams, "STAND_IN_INSTALLER_EXIT": "1",
+                        NED_BOX_OVERRIDE: str(repository)}
     merged = git("merge", "--ff-only", "change", hooks=str(HOOKS_DIRECTORY),
                  environment=hook_environment)
     check("through the real post-merge hook in ned-box's reference-checkout, a failed install "
@@ -250,9 +267,7 @@ with tempfile.TemporaryDirectory() as scratch:
     git("checkout", "-q", "main")
     reset()
     merged = git("merge", "--ff-only", "change-again", hooks=str(HOOKS_DIRECTORY),
-                 environment={**hook_environment,
-                              after_merge.SCHEDULED_JOBS_INSTALL_AFTER_MERGE_NED_BOX_REFERENCE_CHECKOUT_ENVIRONMENT_VARIABLE:
-                                  str(elsewhere)})
+                 environment={**hook_environment, NED_BOX_OVERRIDE: str(elsewhere)})
     check("through the real post-merge hook in a checkout that is not a reference-checkout, "
           "the installer is not run and git's stderr is empty",
           merged.returncode == 0 and merged.stderr == "" and not installer_log.exists(),
