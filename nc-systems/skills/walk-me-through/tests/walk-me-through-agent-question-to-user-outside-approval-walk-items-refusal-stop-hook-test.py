@@ -388,7 +388,7 @@ def test_the_block_message_says_what_to_do():
              "step chooses when it is shown and numbers it",
              "headed `## <the point of the question>`, with no number. In the file, place it right after the whole "
              "of item 2: past that item's sub-steps and `#### Withdrawn version` sections, and before the next item "
-             "below those sub-steps and sections, or at the end of the file when no item follows. Under the heading, give it a line of its own naming its category, the one for how soon its work must happen, one of "
+             "below those sub-steps and sections, or, when no item follows, at the end of the file, below any text after those sub-steps and sections. Under the heading, give it a line of its own naming its category, the one for how soon its work must happen, one of "
              "`#approval_walk_item_in_category_must_fix_now`, "
              "`#approval_walk_item_in_category_fix_next`, `#approval_walk_item_in_category_fix_during_maintenance`, "
              "`#approval_walk_item_in_category_file_an_improvement_feature_or_change`, and a line "

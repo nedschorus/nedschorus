@@ -814,14 +814,16 @@ def approval_walk_document_new_item_insert_line_number_past_whole_item_sub_steps
     Withdrawn heading below either, since a unit ends at a Withdrawn heading and a sub-step is a unit of its own.
     The finder is asked twice: for the nearest unit at or above unit that names unit's whole number, and for unit
     read as naming its whole numbers, so that a waiting `5.2 of 10` the finder leaves out of item 5 of 9 still
-    keeps the `5.3 of 10` right after it. Of the sub-steps the finder gives a unit that names several items, as in
-    `Items 4 and 5 of 9`, only those of unit's whole items count, so while 4.1 waits a `5.1` below it is not
-    passed over."""
+    keeps the `5.3 of 10` right after it. The finder searches only unit's whole numbers, so of a unit that names
+    several items, as in `Items 4 and 5 of 9`, item 5's search does not carry the end past a later `Item 4 of 12`
+    that ends item 4's; and of the sub-steps it gives, only those of unit's whole items count, so while 4.1 waits
+    a `5.1` below it is not passed over."""
     wholes = sorted({number.split(".")[0] for number in unit[0]})
     whole_items = [(wholes, *unit[1:])] + [each for each in units
                                            if each[3] <= unit[3] and set(each[0]) & set(wholes)][-1:]
     last = max([unit[3]] + [each[3] for whole_item in whole_items
-                            for each in approval_walk_item_sub_step_units_below_item_in_walk_document(units, whole_item)
+                            for each in approval_walk_item_sub_step_units_below_item_in_walk_document(
+                                units, whole_item, [number for number in whole_item[0] if number in wholes])
                             if approval_walk_document_unit_is_dotted_sub_step_of_whole_item_of_any_item_number(each, wholes)])
     return next((each[3] for each in units if each[3] > last), line_count)
 
