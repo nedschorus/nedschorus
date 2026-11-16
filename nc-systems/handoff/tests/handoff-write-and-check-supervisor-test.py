@@ -2340,7 +2340,7 @@ def run_background_task_past_wait_limit_cases(workspace: Path):
     prompt = writer.supervisor.build_ignition_prompt(Path("/x/dialog.md"), fields)
     check("the successor's first prompt carries the task's five fields and asks for a speed-up "
           "before a raised wait-limit",
-          expected_field in prompt and "Run each again, then look first for a way to make it faster"
+          expected_field in prompt and "Run again any you still need, looking first for a way to make it faster"
           in prompt and "raise its kind's wait-limit in the wait-limit table only when you find no such way"
           in prompt, prompt[:1200])
 
@@ -2353,11 +2353,59 @@ def run_background_task_past_wait_limit_cases(workspace: Path):
           in lost.stdout and "run this script again" in lost.stdout, lost.stdout)
 
     with mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": ""}):
-        no_session_lines, no_session_status = writer.background_task_past_wait_limit_fields_for_this_session(
+        no_session_lines, no_session_task_ids, no_session_status = writer.background_task_past_wait_limit_fields_for_this_session(
             handoffs, workspace)
     check("with no session id, nothing is listed and the status says to name the tasks in the next step",
-          no_session_lines == [] and "CLAUDE_CODE_SESSION_ID is unset" in no_session_status
+          no_session_lines == [] and no_session_task_ids == frozenset()
+          and "CLAUDE_CODE_SESSION_ID is unset" in no_session_status
           and "Find in your own conversation each background task" in no_session_status, no_session_status)
+
+
+def run_background_task_past_wait_limit_listed_once_cases(workspace: Path):
+    """A background task past its wait-limit is listed only in its background-task-past-wait-limit
+    field, and the background-task fields left are numbered from 1 without a gap."""
+    from datetime import datetime, timedelta, timezone
+    home = workspace / "listed-once-home"
+    projects = home / ".claude" / "projects" / "-fixture-project"
+    projects.mkdir(parents=True, exist_ok=True)
+    handoffs = workspace / "listed-once-handoffs"
+    handoffs.mkdir(parents=True, exist_ok=True)
+    session_id = "00000000-0000-4000-8000-0000000a1ce0"
+    real_now = datetime.now(timezone.utc)
+
+    def ago(minutes):
+        return (real_now - timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    # The task past its wait-limit is launched first, so a gap it left would show at background-task-1.
+    records = [
+        *background_bash_launch_records("bpastlimit", "Test suites",
+                                        "python3 scripts/run-all-test-suites.py", ago(97)),
+        *background_bash_launch_records("bunderlim1", "Under its limit", "pytest -q", ago(10)),
+        *background_bash_launch_records("bwaiting01", "Waiting", "sleep 600", ago(200)),
+    ]
+    (projects / f"{session_id}.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+    written = run_writer(handoffs, "carry on\n", "--agent", "listedoncecase",
+                         environment_overrides={"HOME": str(home), "CLAUDE_CODE_SESSION_ID": session_id})
+    body = handoff_text(handoffs, "listedoncecase")
+    fields = writer.supervisor.parse_handoff_file(handoffs / "listedoncecase-handoff.md")
+
+    def task_ids_in(prefix):
+        return [value.split()[0] for value in writer.supervisor.numbered_field_values_from(fields, prefix)]
+
+    past_ids = task_ids_in(writer.BACKGROUND_TASK_PAST_WAIT_LIMIT_FIELD_PREFIX)
+    still_running_ids = task_ids_in(writer.SESSION_HANDOFF_BACKGROUND_TASK_STILL_RUNNING_FIELD_PREFIX)
+    check("a task past its wait-limit is listed in exactly one field, its past-wait-limit field",
+          past_ids == ["bpastlimit"] and body.count("bpastlimit") == 1, body)
+    check("no task id is in both a background-task field and a background-task-past-wait-limit field",
+          not set(past_ids) & set(still_running_ids), body)
+    check("the background-task fields left are numbered from 1 without a gap",
+          fields.get("background-task-1", "").startswith("bunderlim1 ")
+          and fields.get("background-task-2", "").startswith("bwaiting01 ")
+          and "background-task-3" not in fields, body)
+    check("the writer counts only the background tasks it listed in background-task fields",
+          "background tasks: 2 still running and not past their wait-limit" in written.stdout
+          and "background tasks past their wait-limit: 1 recorded" in written.stdout, written.stdout)
 
 
 THRESHOLD_HOOK_SCRIPT = SYSTEM_DIRECTORY.parent.parent / "scripts" / "handoff-context-threshold-hook.py"
@@ -2443,13 +2491,19 @@ def run_background_task_fields_cases(workspace: Path):
     handoffs = workspace / "background-task-handoffs"
     handoffs.mkdir(parents=True, exist_ok=True)
     session_id = "00000000-0000-4000-8000-0000000b9a50"
+    from datetime import datetime, timedelta, timezone
+    # Launched minutes ago, inside its wait-limit, so it is not instead listed as past its wait-limit;
+    # written with a +01:00 offset, so the field must convert it to UTC.
+    running_launched_at = (datetime.now(timezone.utc) - timedelta(minutes=5)).replace(microsecond=0)
+    running_launched_at_text = running_launched_at.astimezone(timezone(timedelta(hours=1))).strftime(
+        "%Y-%m-%dT%H:%M:%S.000+01:00")
     undated_launch = background_bash_launch_records("bundated01", "", "tail -f x.log", "unused")
     for record in undated_launch:
         del record["timestamp"]
     records = [
         *background_bash_launch_records("brunning01", "Six-reviewer grid",
                                         "python3 nc-systems/cold-read/cold-read-grid.py --target a.md",
-                                        "2026-10-28T22:00:00.000+01:00"),
+                                        running_launched_at_text),
         *background_bash_launch_records("bfinished1", "Finished earlier", "python3 done.py",
                                         "2026-10-28T21:05:00.000Z"),
         background_bash_completion_record("bfinished1", "2026-10-28T21:06:00.000Z"),
@@ -2467,7 +2521,8 @@ def run_background_task_fields_cases(workspace: Path):
     check("a background task still running is listed with its description, its start time in UTC "
           "and its command",
           fields.get("background-task-1")
-          == 'brunning01 "Six-reviewer grid" started at 2026-10-28T21:00:00Z command: '
+          == 'brunning01 "Six-reviewer grid" started at '
+             + running_launched_at.strftime("%Y-%m-%dT%H:%M:%SZ") + ' command: '
              + json.dumps("python3 nc-systems/cold-read/cold-read-grid.py --target a.md"),
           body)
     check("a background task whose launch record has no time is listed as started at an "
@@ -2479,7 +2534,8 @@ def run_background_task_fields_cases(workspace: Path):
           "bfinished1" not in body and "bmonitor01" not in body
           and "background-task-3" not in fields, body)
     check("the writer reports how many background tasks it recorded",
-          "background tasks: 2 still running, recorded for the successor" in written.stdout,
+          "background tasks: 2 still running and not past their wait-limit, recorded for the "
+          "successor" in written.stdout,
           written.stdout)
     prompt = writer.supervisor.build_ignition_prompt(Path("/x/dialog.md"), fields)
     check("the successor's first prompt lists each background task and says to restart any still "
@@ -2558,6 +2614,7 @@ with tempfile.TemporaryDirectory() as temporary_directory_name:
     run_completed_task_prune_remote_store_cases(temporary_directory)
     run_handoff_deferral_fields_cases(temporary_directory)
     run_background_task_past_wait_limit_cases(temporary_directory)
+    run_background_task_past_wait_limit_listed_once_cases(temporary_directory)
     run_background_task_fields_cases(temporary_directory)
 
 print()

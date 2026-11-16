@@ -590,9 +590,9 @@ BACKGROUND_TASKS_STOPPED_AT_SESSION_HANDOFF_SUCCESSOR_RESTART_SENTENCE_TEMPLATE 
 BACKGROUND_TASKS_PAST_WAIT_LIMIT_SENTENCE_TEMPLATE = (
     "When the session you are replacing ended, it had {task_count} background Bash task(s), none "
     "of them a waiting-task, each still running past its kind's wait-limit, so they were stopped: "
-    "{joined_tasks}. Run each again, then look first for a way to make it faster, such as removing "
-    "repeated work or running its steps in parallel, and raise its kind's wait-limit in the "
-    "wait-limit table only when you find no such way."
+    "{joined_tasks}. Run again any you still need, looking first for a way to make it faster, such "
+    "as removing repeated work or running its steps in parallel, and raise its kind's wait-limit in "
+    "the wait-limit table only when you find no such way."
 )
 
 COLD_READ_FULL_RUN_COMMANDS_REFUSED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE = (
