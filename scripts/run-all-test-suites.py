@@ -542,11 +542,16 @@ suite depends on. Two recorders, whose findings are added together:
   scheduled full run keeps its recordings: a suite also runs when a file on its
   list differs. A run with the audit hook alone records the files on the
   list among the files read, with their blob hashes in its checkout. A
-  strace run in which the suite failed or skipped cases leaves the last list
-  as it is. A selective run on Linux names how many suites have no list
-  from a strace run in the last
+  strace run in which the suite failed or skipped a case without the mark
+  saw only part of what the suite reads, so it adds the files it saw to the
+  last list, or starts the list when there is none; a strace run that passed
+  and skipped only marked cases replaces the list. Each list records when
+  such a run last added to it. A selective run on Linux names how many
+  suites have no list from a strace run in the last
   FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE hours, which a
-  missed scheduled run causes.
+  suite added since the last scheduled run, or a missed scheduled run,
+  causes, and, apart, each suite whose list in that time came only from
+  runs that failed or skipped a case without the mark.
 
 A recording keeps, per suite: its exit code and seconds; each file read,
 with its git blob hash; each path it opened or checked for, and whether the
@@ -3745,20 +3750,41 @@ def save_files_only_strace_saw(directory, recording):
     audit hook alone, which replace the recording, and runs that keep their recordings in
     another directory, still select the suite when one of them changes.
 
-    A run that failed or skipped cases saw only part of what the suite reads, so it leaves the
-    last kept list as it is; that list ages, and the stale-list notice names it."""
-    if not recorded_run_passed_and_skipped_only_cases_this_machine_cannot_run(recording):
-        return
+    A run that failed or skipped a case without the mark saw only part of what the suite
+    reads, so its files join the kept list's instead of replacing them. Some suites skip a
+    case in every scheduled run, such as one that runs only inside a Claude Code session; a
+    list only adds suites to a selection, so a partial one beats none. The kept list records
+    when a run last reached every case, so the notice can name a list made only from partial
+    runs."""
+    # Read now, not when this run started, so a list another run saved meanwhile is kept.
+    last_kept = load_files_only_strace_saw(directory, recording["suite"])
+    files = set(recording["files_only_strace_saw"])
+    if recorded_run_passed_and_skipped_only_cases_this_machine_cannot_run(recording):
+        last_complete_run_at = recording["recorded_at"]
+    else:
+        last_complete_run_at = None
+        if last_kept is not None:
+            files.update(last_kept["files_only_strace_saw"])
+            last_complete_run_at = last_complete_strace_run_at_or_none(last_kept)
     directory.mkdir(parents=True, exist_ok=True)
     target = files_only_strace_saw_file_for(directory, recording["suite"])
-    kept = {key: recording[key] for key in ("suite", "recorded_at", "commit",
-                                            "files_only_strace_saw")}
+    kept = {key: recording[key] for key in ("suite", "recorded_at", "commit")}
+    kept["last_complete_run_at"] = last_complete_run_at
+    kept["files_only_strace_saw"] = sorted(files)
     # Renamed into place, so a selective run reading it meanwhile never sees half a list.
     descriptor, temporary = tempfile.mkstemp(dir=directory, prefix=target.name + ".",
                                              suffix=".tmp")
     with os.fdopen(descriptor, "w") as written:
         written.write(json.dumps(kept) + "\n")
     os.replace(temporary, target)
+
+
+def last_complete_strace_run_at_or_none(kept):
+    """When a run that reached every case last added to the kept list, or None if none did."""
+    # A list kept before this field existed was replaced only by runs that reached every case.
+    if "last_complete_run_at" not in kept:
+        return recorded_at_time_or_none(kept.get("recorded_at")) and kept["recorded_at"]
+    return kept["last_complete_run_at"]
 
 
 def load_files_only_strace_saw(directory, suite):
@@ -3785,30 +3811,59 @@ def recorded_at_time_or_none(text):
 # Tool-messages-to-agent: docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md
 def suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
         suites, kept_by_suite, directory, now):
-    """A line saying how many suites' files only strace saw are missing or too old to trust."""
-    limit = datetime.timedelta(hours=FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE)
+    """A line saying how many suites' files only strace saw are missing, too old to trust, or
+    made only from runs that did not reach every case."""
+    hours = FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE
+    limit = datetime.timedelta(hours=hours)
     recorded = [suite for suite in suites if not is_shell_test_suite(suite)]
     times = {suite: recorded_at_time_or_none((kept_by_suite.get(suite) or {}).get("recorded_at"))
              for suite in recorded}
-    stale = [suite for suite in recorded if times[suite] is None or now - times[suite] > limit]
-    if not stale:
+    missing = [suite for suite in recorded if times[suite] is None]
+    old = [times[suite] for suite in recorded
+           if times[suite] is not None and now - times[suite] > limit]
+    partial = [suite for suite in recorded
+               if times[suite] is not None and now - times[suite] <= limit
+               and not complete_time_within(kept_by_suite[suite], now, limit)]
+    if not missing and not old and not partial:
         return None
-    known = [times[suite] for suite in stale if times[suite] is not None]
-    since = (f"since {min(known).strftime('%Y-%m-%dT%H:%M:%SZ')}" if known else "at all")
-    return (f"{PROGRAM}: {len(stale)} of {len(recorded)} suites have no list of the files only "
-            f"strace saw them read from the last "
-            f"{FILES_ONLY_STRACE_SAW_LIST_MAXIMUM_AGE_HOURS_BEFORE_NOTICE} hours in {directory}, "
-            f"so this selective run does not select such a suite when the "
-            f"change edits a file the suite reads only through git or a shell script. "
-            f"scripts/scheduled-full-test-run-of-main.py makes those lists once a day on ned-box, so "
-            f"it has not recorded every suite {since}. The verdicts of the suites this run ran "
-            f"stand; carry on with your work.\n"
+    counts = []
+    if missing:
+        counts.append(f"no list for {len(missing)}")
+    if old:
+        counts.append(f"a list older than that for {len(old)}, the oldest from "
+                      f"{min(old).strftime('%Y-%m-%dT%H:%M:%SZ')}")
+    if partial:
+        counts.append(f"a list made only from runs that failed or skipped a case without the "
+                      f"mark, so missing what those cases read, for {len(partial)}: "
+                      f"{', '.join(partial)}")
+    notice = (f"{PROGRAM}: {len(missing) + len(old) + len(partial)} of {len(recorded)} suites "
+              f"have no complete list of the files only strace saw them read from the last "
+              f"{hours} hours in {directory} ({'; '.join(counts)}), so this selective run may "
+              f"not select such a suite when the change edits a file the suite reads only "
+              f"through git or a shell script. "
+              f"scripts/scheduled-full-test-run-of-main.py makes each suite's list once a day on "
+              f"ned-box: a suite added since its last run has none yet, a list older than "
+              f"{hours} hours means the scheduled run has not run the suite since, and a list "
+              f"made only from partial runs means the suite failed or skipped a case without "
+              f"the mark in each of them. The verdicts of the suites this run ran "
+              f"stand; carry on with your work.")
+    # A missing list alone, beside fresh ones, is a suite newer than the last scheduled run; a
+    # partial list is the suite's own doing, which the scheduled run cannot fix.
+    if not old and len(missing) < len(recorded):
+        return notice
+    return (notice + "\n"
             f"If you have not yet told the user in this agent-session that the scheduled full test "
-            f"run's lists are stale: tell him \"The scheduled full test run on ned-box has not "
-            f"recorded every suite {since}, so selective test runs there can miss a suite whose "
-            f"git or shell reads changed. The scheduled run's records are in "
+            f"run's lists are stale: tell him \"The scheduled full test run on ned-box has made no "
+            f"list in the last {hours} hours for {len(missing) + len(old)} of {len(recorded)} "
+            f"suites, so selective test runs there can miss a suite whose git or shell reads "
+            f"changed. The scheduled run's records are in "
             f"nedlern@ned-box:/home/nedlern/nedschorus-logs/scheduled-full-test-runs-of-main/ned-box/.\" "
-            f"A subagent passes that sentence to the agent that dispatched it instead.")
+            f"A subagent passes the quoted text to the agent that dispatched it instead.")
+
+
+def complete_time_within(kept, now, limit):
+    complete = recorded_at_time_or_none(last_complete_strace_run_at_or_none(kept))
+    return complete is not None and now - complete <= limit
 
 
 def remove_recording_if_unchanged(recordings_dir, suite, identity_read):
