@@ -200,14 +200,15 @@ CHANGE_MAKING_ANSWERS = ("A", "AO", "AA", "D")
 # How an answer code is written to the agent: Aa's second letter is lower case.
 CODE_NAMES = {"AA": "Aa"}
 
-OPEN_WALK_OPENING = "The user answered \"{answer}\" to {item} of approval-walk {walk}."
-NO_WALK_OPENING = "The user answered \"{answer}\"; no approval-walk is open."
-WALK_UNKNOWN_OPENING = (
-    "The user answered \"{answer}\"; the hook could not tell whether an approval-walk is open, because "
+OPEN_WALK_OPENING_LINE = "[rule walk-me-through-short-answer-expanded-into-instructions] The user answered \"{answer}\" to {item} of approval-walk {walk}."
+NO_WALK_OPENING_LINE = "[rule walk-me-through-short-answer-expanded-into-instructions] The user answered \"{answer}\"; no approval-walk is open."
+WALK_UNKNOWN_OPENING_LINE = (
+    "[rule walk-me-through-short-answer-expanded-into-instructions] The user answered \"{answer}\"; the hook could not tell whether an approval-walk is open, because "
     "reading the approval-walk state failed: {error}")
 WALK_UNKNOWN_FIND = (
     "Find out yourself: the last `#next_to_present` line in each of the checkout's docs/walk/*-minutes.md names its "
     "waiting item, and a value other than `none` or `closed` marks the approval-walk open.")
+ITEM_NOT_SHOWN_OPENING_LINE = "[rule walk-me-through-short-answer-to-item-not-shown-discarded] The user answered \"{answer}\" to {item} of approval-walk {walk}."
 IF_WALK_OPEN = "If an approval-walk is open:"
 IF_NO_WALK = "If no approval-walk is open:"
 USER_REPLY_LINE = (
@@ -1007,7 +1008,7 @@ def output_for(payload):
         return None
     refusal = unseen_item_lines(answer, walk, payload.get("transcript_path"))
     if refusal:
-        context = "\n".join([OPEN_WALK_OPENING.format(answer=answer["answer"], item=walk.item, walk=walk.name),
+        context = "\n".join([ITEM_NOT_SHOWN_OPENING_LINE.format(answer=answer["answer"], item=walk.item, walk=walk.name),
                              *refusal])
         return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}}
     context = context_for(answer, walk, walk_error)
@@ -1036,15 +1037,15 @@ def context_for(answer, walk, walk_error):
     elif answer["form"] == "rider":
         prefix = [line.format(rest=answer["rest"]) for line in RIDER_LINES]
     if walk_error is not None:
-        lines = [WALK_UNKNOWN_OPENING.format(answer=answer["answer"], error=repr(walk_error)), WALK_UNKNOWN_FIND]
+        lines = [WALK_UNKNOWN_OPENING_LINE.format(answer=answer["answer"], error=repr(walk_error)), WALK_UNKNOWN_FIND]
         lines += prefix + [IF_WALK_OPEN]
         lines += meaning_lines(answer, WalkState("", "the waiting item", [], None, {}, None), True)
         lines += [IF_NO_WALK] + meaning_lines(answer, None, False)
     else:
         if walk is None:
-            lines = [NO_WALK_OPENING.format(answer=answer["answer"])] + prefix + meaning_lines(answer, None, False)
+            lines = [NO_WALK_OPENING_LINE.format(answer=answer["answer"])] + prefix + meaning_lines(answer, None, False)
         else:
-            lines = ([OPEN_WALK_OPENING.format(answer=answer["answer"], item=walk.item, walk=walk.name)]
+            lines = ([OPEN_WALK_OPENING_LINE.format(answer=answer["answer"], item=walk.item, walk=walk.name)]
                      + prefix + meaning_lines(answer, walk, True))
     return "\n".join(lines)
 

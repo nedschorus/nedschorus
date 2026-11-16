@@ -497,7 +497,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("the real stdin-to-stdout path: one PostToolUse JSON object, exit 0, nothing on stderr",
           result.returncode == 0 and result.stderr == ""
           and reply.get("hookSpecificOutput", {}).get("hookEventName") == "PostToolUse"
-          and agent_text(result).startswith("style-guide-word-checker: the text just written "
+          and agent_text(result).startswith("[rule style-guide-word-in-markdown-edit-reminder] style-guide-word-checker: the text just written "
                                             "to docs/committed.md uses 1 word(s)")
           and 'docs/committed.md, in "here before the drain.": "drain": queue-drain for the '
               'procedure' in agent_text(result)

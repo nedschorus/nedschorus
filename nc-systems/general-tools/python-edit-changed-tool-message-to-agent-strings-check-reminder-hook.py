@@ -88,7 +88,7 @@ REASON_CHARACTER_LIMIT = 300
 GIT_TIMEOUT_SECONDS = 10
 
 REMINDER_MESSAGE_TEMPLATE = (
-    HOOK_NAME + ": your {tool} of {path} added or changed {count} tool-message(s)-to-agent, "
+    "[rule python-edit-changed-tool-message-to-agent-check-reminder] " + HOOK_NAME + ": your {tool} of {path} added or changed {count} tool-message(s)-to-agent, "
     "text that a program hands an agent to act on:\n"
     "{listing}\n"
     "An agent that meets one of these messages has only the message to go on, so each "

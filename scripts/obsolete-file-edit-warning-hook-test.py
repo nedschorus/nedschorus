@@ -706,7 +706,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("the command a failed diff's report names reruns the hook on the edited file, "
           "which then warns that origin/main has changed the file",
           rerun.returncode == 0 and agent_text(rerun).startswith(
-              f"obsolete-file-edit-warning: you just changed {edited_file.relative_to(checkout)}, "),
+              f"[rule obsolete-file-edit-on-old-copy-warning] obsolete-file-edit-warning: you just changed {edited_file.relative_to(checkout)}, "),
           rerun.stdout + rerun.stderr)
     if cache_path.exists():
         cache_path.unlink()

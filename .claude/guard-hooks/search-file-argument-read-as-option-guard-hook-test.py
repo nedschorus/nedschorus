@@ -130,7 +130,7 @@ try:
     refusal = run_main("grep -l needle */*.jsonl", scratch)
     check("the 22 September shape is refused with the exact accepted command",
           refusal == (
-              "Refused: */*.jsonl expands to names beginning with -, such as "
+              "[rule bash-guard-search-file-name-read-as-option] Refused: */*.jsonl expands to names beginning with -, such as "
               f"{DASH_FILE}, which grep reads as options, not as files. Put -- "
               "before the file names and run: grep -l needle -- */*.jsonl"),
           repr(refusal))
@@ -250,7 +250,7 @@ try:
     check("refused: grep -f -? notes.txt, whose value expands to -a and -n, naming -n, "
           "the one grep reads as an option",
           refusal == (
-              "Refused: -?, the value of -f, expands to two or more names. The shell passes "
+              "[rule bash-guard-search-file-name-read-as-option] Refused: -?, the value of -f, expands to two or more names. The shell passes "
               "only the first of them as -f's value, and grep reads each of the others as one "
               "more word, and a name beginning with - as an option, such as -n. "
               "-- cannot fix this.\n"
@@ -282,7 +282,7 @@ try:
     refusal = run_main("grep needle *; grep -f -? notes.txt", option_values) or ""
     check("refused with no command: grep needle *; grep -f -? notes.txt, whose second "
           "search -- cannot fix",
-          refusal.startswith("Refused: * expands to names beginning with -")
+          refusal.startswith("[rule bash-guard-search-file-name-read-as-option] Refused: * expands to names beginning with -")
           and "run:" not in refusal, repr(refusal))
     for command in ["grep -lf -? notes.txt", "grep --file -? notes.txt",
                     "rg -g -? needle notes.txt"]:
@@ -369,7 +369,7 @@ try:
     refusal = run_main("grep -l needle */*.jsonl -n", scratch)
     check("an option after the glob gets the instruction without a rebuilt command",
           refusal == (
-              "Refused: */*.jsonl expands to names beginning with -, such as "
+              "[rule bash-guard-search-file-name-read-as-option] Refused: */*.jsonl expands to names beginning with -, such as "
               f"{DASH_FILE}, which grep reads as options, not as files.\n"
               "Write ./ in front of */*.jsonl, as in ./*/*.jsonl, so that every name "
               "begins with ./ instead of -.\n"

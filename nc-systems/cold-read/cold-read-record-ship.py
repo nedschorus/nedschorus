@@ -367,6 +367,10 @@ in the nedschorus repository, which this machine also clones:
   -- one log per run of the waiter that removes a worktree once no record in
   it is being written, written by
   `nc-systems/general-tools/git-worktree-remove-deferred-until-cold-read-record-and-sanity-check-record-being-written-locks-release-then-ship-to-log-store-waiter.py`
+- `maintenance-job-reports/` -- one report per maintenance-job per run, each
+  written by the program the job runs; today the weekly count of each hook
+  rule ID,
+  `nc-systems/general-tools/claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report.py`
 
 To change this file, edit STORE_README in
 nc-systems/cold-read/cold-read-record-ship.py. The next shipment rewrites this file

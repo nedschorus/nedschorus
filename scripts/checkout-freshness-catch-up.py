@@ -465,29 +465,29 @@ def standing_instruction_paths(paths):
 CLAUDE_MD_DIFF_CHARACTER_LIMIT = 6000
 DELIVERY_CHARACTER_LIMIT = 9000
 
-CLAUDE_MD_CHANGED_NOTE = (
-    "checkout-freshness: main changed {path}, which this agent-session read at its start. "
+CLAUDE_MD_CHANGED_NOTICE = (
+    "[rule checkout-freshness-changed-instructions-read-again] checkout-freshness: main changed {path}, which this agent-session read at its start. "
     "Its changed lines follow, old lines marked - and new lines marked +; from now on, "
     "follow the new lines.\n{diff}"
 )
-CLAUDE_MD_CHANGED_SHORT_NOTE = (
-    "checkout-freshness: main changed {path}, which this agent-session read at its start, "
+CLAUDE_MD_CHANGED_SHORT_NOTICE = (
+    "[rule checkout-freshness-changed-instructions-read-again] checkout-freshness: main changed {path}, which this agent-session read at its start, "
     "at {places}. Read {path} again before your next action."
 )
-CLAUDE_MD_CHANGE_UNREADABLE_NOTE = (
-    "checkout-freshness: main changed {path}, which this agent-session read at its start, "
+CLAUDE_MD_CHANGE_UNREADABLE_NOTICE = (
+    "[rule checkout-freshness-changed-instructions-read-again] checkout-freshness: main changed {path}, which this agent-session read at its start, "
     "but git could not show the change ({error}). Read {path} again before your next action."
 )
 SKILL_CHANGED_NOTE = (
-    "checkout-freshness: main changed {path}. If you are following the {skill} skill, "
+    "[rule checkout-freshness-changed-instructions-read-again] checkout-freshness: main changed {path}. If you are following the {skill} skill, "
     "invoke it again before its next step, so that its new text loads."
 )
-INSTRUCTION_FILE_CHANGED_NOTE = (
-    "checkout-freshness: main changed {path}, a file of standing instructions. If you are "
+INSTRUCTION_FILE_CHANGED_NOTICE = (
+    "[rule checkout-freshness-changed-instructions-read-again] checkout-freshness: main changed {path}, a file of standing instructions. If you are "
     "following it, read it again before you next act on it."
 )
-STANDING_INSTRUCTION_DELETED_NOTE = (
-    "checkout-freshness: main deleted {path}. If you are following it, stop: it is no "
+STANDING_INSTRUCTION_DELETED_NOTICE = (
+    "[rule checkout-freshness-changed-instructions-read-again] checkout-freshness: main deleted {path}. If you are following it, stop: it is no "
     "longer on main."
 )
 SKILL_RELOAD_LINES = (
@@ -495,8 +495,8 @@ SKILL_RELOAD_LINES = (
     "If that skill's .claude/skills/<name>/SKILL.md is no longer in this checkout, main "
     "deleted the skill: stop following it."
 )
-MOVED_WITHOUT_LIST_NOTE = (
-    "checkout-freshness: this checkout was moved forward to origin/main, but git could not "
+MOVED_WITHOUT_LIST_NOTICE = (
+    "[rule checkout-freshness-changed-instructions-read-again] checkout-freshness: this checkout was moved forward to origin/main, but git could not "
     "list what main changed ({error}).\n"
     "Read CLAUDE.md again before your next action.\n"
     f"{SKILL_RELOAD_LINES}"
@@ -526,6 +526,28 @@ COUNT_FAILED_NOTE = (
 NOTES_NOT_CLEARED_LINE = (
     "checkout-freshness: these notes could not be cleared from {path} ({error}), so they "
     "may come again with your next prompt."
+)
+MERGES_FROM_MAIN_TEMPLATE = (
+    "[rule checkout-freshness-branch-merges-from-main-warning] checkout-freshness: {branch} "
+    "carries {count} merge commit(s) from main ({commits}). This project brings a branch up to "
+    "date by rebasing it onto main, not by merging main into it. If the branch was never pushed, "
+    "rebase it onto origin/main. If it was pushed, leave its history and tell the agent-seat "
+    "merge-lane-2, with SendMessage, which merge commits it carries."
+)
+REWRITTEN_HEAD_TEMPLATE = (
+    "[rule checkout-freshness-head-rewrote-pushed-commits-warning] checkout-freshness: {branch}'s HEAD "
+    "({head}) no longer contains its pushed head origin/{branch} ({remote}): an amend or a rebase "
+    "rewrote pushed commits, which moves the code under its reviewer. Do not push this HEAD. Put "
+    "your change back as one commit on top of origin/{branch}, then push."
+)
+BEHIND_MAIN_HEADING_TEMPLATE = (
+    "[rule checkout-freshness-branch-behind-main-update] checkout-freshness: {branch} is {behind} "
+    "behind origin/main ({own_text}; {state_text})."
+)
+REBASED_ONTO_MAIN_TEMPLATE = (
+    "[rule checkout-freshness-branch-behind-main-update] checkout-freshness: {branch} was rebased "
+    "onto origin/main ({behind} commit(s) moved under your {own_text}; never pushed, so nothing "
+    "was under review)."
 )
 PENDING_AGENT_NOTES_KEY = "pending_agent_notes"
 
@@ -1362,15 +1384,15 @@ def claude_md_change_note(checkout: Path, old_head: str, path: str):
     if shown.returncode != 0:
         detail = ("; ".join(line.strip() for line in shown.stderr.splitlines() if line.strip())
                   or f"git diff exited {shown.returncode}")
-        text = CLAUDE_MD_CHANGE_UNREADABLE_NOTE.format(path=path, error=detail)
+        text = CLAUDE_MD_CHANGE_UNREADABLE_NOTICE.format(path=path, error=detail)
         return text, text
     body = [line for line in shown.stdout.splitlines()
             if line[:1] in "+-@" and not line.startswith(("+++", "---"))]
     diff = "\n".join(body)
-    short = CLAUDE_MD_CHANGED_SHORT_NOTE.format(path=path, places=changed_line_places(diff))
+    short = CLAUDE_MD_CHANGED_SHORT_NOTICE.format(path=path, places=changed_line_places(diff))
     if len(diff) > CLAUDE_MD_DIFF_CHARACTER_LIMIT:
         return short, short
-    return CLAUDE_MD_CHANGED_NOTE.format(path=path, diff=diff), short
+    return CLAUDE_MD_CHANGED_NOTICE.format(path=path, diff=diff), short
 
 
 def tell_standing_instructions_moved(checkout: Path, old_head: str, paths, diff_error) -> None:
@@ -1378,20 +1400,20 @@ def tell_standing_instructions_moved(checkout: Path, old_head: str, paths, diff_
     naming each standing instruction main changed, or nothing when main changed
     none; and, when git could not list the changes, a note saying so."""
     if diff_error is not None:
-        tell(MOVED_WITHOUT_LIST_NOTE.format(error=diff_error))
+        tell(MOVED_WITHOUT_LIST_NOTICE.format(error=diff_error))
         return
     texts, shorts = [], []
     for path in standing_instruction_paths(paths):
         # The checkout is at origin/main now, so a listed path it lacks is one
         # main deleted; --name-only does not say which paths those are.
         if not (checkout / path).exists():
-            text = short = STANDING_INSTRUCTION_DELETED_NOTE.format(path=path)
+            text = short = STANDING_INSTRUCTION_DELETED_NOTICE.format(path=path)
         elif is_claude_md(path):
             text, short = claude_md_change_note(checkout, old_head, path)
         elif skill_of(path):
             text = short = SKILL_CHANGED_NOTE.format(path=path, skill=skill_of(path))
         else:
-            text = short = INSTRUCTION_FILE_CHANGED_NOTE.format(path=path)
+            text = short = INSTRUCTION_FILE_CHANGED_NOTICE.format(path=path)
         texts.append(text)
         shorts.append(short)
     if texts:
@@ -1459,19 +1481,13 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
     if "merges_from_main" in found and found["merges_from_main"] != last_found.get(
             "merges_from_main"):
         merged = found["merges_from_main"]
-        tell(f"checkout-freshness: {branch} carries {len(merged)} merge commit(s) from "
-             f"main ({', '.join(merged)}). This project brings a branch up to date by "
-             f"rebasing it onto main, not by merging main into it. If the branch was "
-             f"never pushed, rebase it onto origin/main. If it was pushed, leave its "
-             f"history and tell the agent-seat merge-lane-2, with SendMessage, which "
-             f"merge commits it carries.", kind=NOTE_KIND_MERGES_FROM_MAIN)
+        tell(MERGES_FROM_MAIN_TEMPLATE.format(branch=branch, count=len(merged),
+                                              commits=', '.join(merged)),
+             kind=NOTE_KIND_MERGES_FROM_MAIN)
     if "rewritten_head" in found and found["rewritten_head"] != last_found.get(
             "rewritten_head"):
         head, remote = found["rewritten_head"]
-        tell(f"checkout-freshness: {branch}'s HEAD ({head}) no longer contains its pushed "
-             f"head origin/{branch} ({remote}): an amend or a rebase rewrote pushed "
-             f"commits, which moves the code under its reviewer. Do not push this HEAD. "
-             f"Put your change back as one commit on top of origin/{branch}, then push.",
+        tell(REWRITTEN_HEAD_TEMPLATE.format(branch=branch, head=head, remote=remote),
              kind=NOTE_KIND_REWRITTEN_HEAD)
     if found:
         stamp["last_misbehaviour"] = found
@@ -1491,8 +1507,9 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
     told = {"branch": parts["branch"], "main_tip": facts["main_tip"],
             "pushed": state_key != "unpushed"}
     already_told = stamp.get("last_told") == told
-    heading = (f"checkout-freshness: {parts['branch']} is {parts['behind']} behind "
-               f"origin/main ({parts['own_text']}; {parts['state_text']}).")
+    heading = BEHIND_MAIN_HEADING_TEMPLATE.format(
+        branch=parts['branch'], behind=parts['behind'], own_text=parts['own_text'],
+        state_text=parts['state_text'])
     # Computed BEFORE any rebase: afterwards it is empty, and it is the list of
     # what moved under the agent. old_head names the pre-move commit, so the
     # diff can still be shown after the move.
@@ -1530,10 +1547,9 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
             if nothing_of_its_own:
                 tell_standing_instructions_moved(checkout, old_head, changed_paths, diff_error)
             else:
-                tell(f"checkout-freshness: {parts['branch']} was rebased onto origin/main "
-                     f"({parts['behind']} commit(s) moved under your {parts['own_text']}; "
-                     f"never pushed, so nothing was under review).{changed_on_main_clause}\n"
-                     f"{AFTER_REBASE_ADVICE}")
+                tell(REBASED_ONTO_MAIN_TEMPLATE.format(
+                    branch=parts['branch'], behind=parts['behind'], own_text=parts['own_text'])
+                     + f"{changed_on_main_clause}\n{AFTER_REBASE_ADVICE}")
         elif outcome == "abort-failed":
             # No repeat key needed: this fires at most once per real
             # occurrence, and NOT because merge_blockers sees the rebase

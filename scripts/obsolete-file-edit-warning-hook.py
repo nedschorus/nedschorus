@@ -660,6 +660,11 @@ def head_advice(freshness, checkout: Path, git_directory: Path, repository_path:
     return BRANCH_STATE_UNKNOWN_LINE.format(text=state_text), True, True
 
 
+WARNING_OPENING_TEMPLATE = (
+    "[rule obsolete-file-edit-on-old-copy-warning] obsolete-file-edit-warning: you just changed {path}, "
+    "{moved} and this checkout does not have, so your edit is built on an old copy of the file.")
+
+
 def obsolete_file_warning_line(repository_path: str, commit_count, advice: str,
                                advice_on_own_lines: bool = False,
                                count_failure=None) -> str:
@@ -670,9 +675,7 @@ def obsolete_file_warning_line(repository_path: str, commit_count, advice: str,
     else:
         moved = (f"which {commit_count} commit(s) on origin/main have changed "
                  f"since this checkout's merge base with origin/main")
-    line = (f"obsolete-file-edit-warning: you just changed {repository_path}, "
-            f"{moved} and this checkout does not have, so your edit is built on an "
-            f"old copy of the file.")
+    line = WARNING_OPENING_TEMPLATE.format(path=repository_path, moved=moved)
     if count_failure is not None:
         line += " " + COMMIT_COUNT_FAILED_LINE.format(failure=count_failure)
     if not advice:

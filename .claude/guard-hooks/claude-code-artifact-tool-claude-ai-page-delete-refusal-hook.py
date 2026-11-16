@@ -29,6 +29,7 @@ _crash_notice_spec.loader.exec_module(_crash_notice)
 NO_LINK_TEXT = "(no link in the call)"
 
 REFUSAL_TEMPLATE = (
+    '[rule artifact-guard-claude-ai-page-delete] '
     'REFUSED: Artifact tool call with action "delete", blocked by a PreToolUse hook. Claude '
     "Code shows the confirmation prompt for this action only in its terminal UI, so in the "
     "desktop app or over Remote Control the user never sees it and the turn blocks "

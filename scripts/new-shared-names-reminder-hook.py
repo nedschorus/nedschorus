@@ -48,7 +48,7 @@ NAMING_FRESH_AGENT_NAME = "new-name-propose-and-check-fresh-agent"
 REPORTED_NAMES_FILE_NAME = "new-shared-names-reported.json"
 
 REMINDER_TEMPLATE = (
-    "new-shared-names-reminder: your branch now adds these shared names, which other files "
+    "[rule new-shared-names-naming-check-reminder] new-shared-names-reminder: your branch now adds these shared names, which other files "
     "or agents will meet:\n{names}\n"
     "Send them, with one sentence on what each names, to the {agent} subagent, run in the "
     "background, and keep working.\n"
