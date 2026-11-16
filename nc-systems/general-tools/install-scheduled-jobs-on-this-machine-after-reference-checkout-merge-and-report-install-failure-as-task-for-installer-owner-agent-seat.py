@@ -44,16 +44,17 @@ Exit codes: 0 not a reference-checkout, the install succeeded, or its failure
 was written as a task; 1 the install failed and no task was written, with the
 FAILED message on standard error.
 
-Three environment variables replace a path, for
+Each *_TEST_OVERRIDE_ENVIRONMENT_VARIABLE constant names an environment
+variable whose value, when set, replaces a path, for
 tests/install-scheduled-jobs-on-this-machine-after-reference-checkout-merge-and-report-install-failure-as-task-for-installer-owner-agent-seat-test.py,
 which runs no real install:
-  - SCHEDULED_JOBS_INSTALLER_PATH_TEST_OVERRIDE_ENVIRONMENT_VARIABLE names the
+  - SCHEDULED_JOBS_INSTALLER_PATH_TEST_OVERRIDE_ENVIRONMENT_VARIABLE: the
     installer to run, in place of install-scheduled-jobs-on-this-machine.py
     beside this file;
-  - NED_BOX_REFERENCE_CHECKOUT_PATH_TEST_OVERRIDE_ENVIRONMENT_VARIABLE names
+  - NED_BOX_REFERENCE_CHECKOUT_PATH_TEST_OVERRIDE_ENVIRONMENT_VARIABLE:
     ned-box's reference-checkout, in place of ned-box's entry in
     REFERENCE_CHECKOUT_PATH_BY_MACHINE_NAME; the Mac's entry has no override;
-  - AGENT_SEAT_TASK_LISTS_DIRECTORY_TEST_OVERRIDE_ENVIRONMENT_VARIABLE names the
+  - AGENT_SEAT_TASK_LISTS_DIRECTORY_TEST_OVERRIDE_ENVIRONMENT_VARIABLE: the
     directory that holds every agent-seat's task list, in place of
     ~/.claude/tasks; OWNING_AGENT_SEAT's list is the directory
     nedschorus-<OWNING_AGENT_SEAT>-tasks in it.
