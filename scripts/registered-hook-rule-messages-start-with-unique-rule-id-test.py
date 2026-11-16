@@ -23,7 +23,8 @@ An ID belongs to one hook file: the suite fails an ID written in two registered
 hooks, an ID that opens no message constant of its hook, and a `[rule` that is
 not a well-formed ID. Within one hook file, an ID that opens more than one
 message constant must be listed in MESSAGE_VARIANTS_OF_ONE_RULE with exactly
-the constants it opens, so that giving a second rule's message an existing ID
+the constants it opens, and a listed ID must still open exactly its listed
+constants, so that giving a second rule's message an existing ID
 fails here until an author lists it as a variant and a reviewer sees that.
 """
 import importlib.util
@@ -321,10 +322,12 @@ def message_constants(module):
 
 def unlisted_shared_rule_ids(relative_path, constants_of_each_opening_id, variants):
     """[(rule ID, constants it opens, constants listed for it)] for each ID that opens more than
-    one message constant of the hook other than exactly as `variants` lists it."""
+    one message constant of the hook, or is listed in `variants`, other than exactly as `variants`
+    lists it."""
     return [(rule_id, sorted(names), sorted(variants.get((relative_path, rule_id), set())))
             for rule_id, names in sorted(constants_of_each_opening_id.items())
-            if len(names) > 1 and set(names) != variants.get((relative_path, rule_id))]
+            if (len(names) > 1 or (relative_path, rule_id) in variants)
+            and set(names) != variants.get((relative_path, rule_id))]
 
 
 check("an ID opening two constants as listed is one rule's variants",
@@ -337,6 +340,10 @@ check("a second rule's message given an existing ID fails",
 check("an ID opening two unlisted constants fails",
       unlisted_shared_rule_ids("h.py", {"r": ["A_MESSAGE", "B_MESSAGE"]}, {})
       == [("r", ["A_MESSAGE", "B_MESSAGE"], [])])
+check("a listed group whose ID now opens one constant fails",
+      unlisted_shared_rule_ids("h.py", {"r": ["A_MESSAGE"], "s": ["B_MESSAGE"]},
+                               {("h.py", "r"): {"A_MESSAGE", "B_MESSAGE"}})
+      == [("r", ["A_MESSAGE"], ["A_MESSAGE", "B_MESSAGE"])])
 
 # The pattern, on texts whose answer is known.
 for text, expected in (("[rule bash-guard-git-push-force] Refused on purpose", "bash-guard-git-push-force"),
@@ -409,7 +416,8 @@ for relative_path in hook_paths:
           "(rule ID, constants it opens, constants listed): "
           f"{unlisted_shared_rule_ids(relative_path, constants_of_each_opening_id, MESSAGE_VARIANTS_OF_ONE_RULE)}; "
           "give a different rule its own ID, or, when the constants are variants of one rule's message, "
-          "list them for the ID in MESSAGE_VARIANTS_OF_ONE_RULE")
+          "list them for the ID in MESSAGE_VARIANTS_OF_ONE_RULE; when the ID's listed constants "
+          "changed, list the ones it opens now, or remove its entry when it opens one")
     check(f"{relative_path} writes every `[rule` as a well-formed rule ID",
           rule_ids.malformed_rule_ids_in_source(source) == [], rule_ids.malformed_rule_ids_in_source(source))
     source_ids = rule_ids.rule_ids_in_source(source)
