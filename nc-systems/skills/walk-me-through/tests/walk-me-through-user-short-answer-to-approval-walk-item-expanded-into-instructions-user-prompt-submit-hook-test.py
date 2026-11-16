@@ -1666,15 +1666,16 @@ def not_shown_lines(answer, reason):
             "BEGIN", *SHOWN_ITEM_TEXT.split("\n"), "END"]
 
 
-def shown_different_reason(minute):
-    return (f"The words after the heading of item 4 of 9 in your last message that showed it, written at "
+def shown_different_reason(minute, item="item 4 of 9"):
+    return (f"The words after the heading of {item} in your last message that showed it, written at "
             f"2026-11-13T20:{minute:02}:00Z, do not hold the item's current walk-document text after its heading as "
             "one unbroken run of words. Other words before or after that run are allowed and are not the fault. Either "
-            "that message misquoted the item, or the walk-document changed after that message. Only these count as "
-            "words: the text the user reads rendered, punctuation included, code, an image's alt text, HTML, tags included, and `<!-- -->` "
-            "comments. Whitespace, line breaks, "
-            "Markdown markup, a link's target (its text counts), `#approval_walk_item_` lines and the `of M` in a "
-            "running count do not.")
+            "that message misquoted the item, or the walk-document changed after that message. Only words, runs of "
+            "letters, digits and underscores, count, wherever they stand: in the text the user reads rendered, in code, in an image's alt text, in HTML, tags "
+            "included, and in `<!-- -->` comments. Punctuation, code's operators and HTML's angle brackets included, "
+            "letter case, whitespace, line breaks, Markdown markup, a link's target (its text counts), "
+            "`#approval_walk_item_` lines and the `of M` in a running count do not count, so a word changed, added or "
+            "dropped is a fault, but a comma made a full stop is not.")
 
 
 def never_shown_reason(item="item 4 of 9"):
@@ -1722,6 +1723,91 @@ def test_an_answer_to_an_item_revised_after_it_was_shown_is_not_counted_and_the_
                   "the item's current text, with no check command and no reply line",
                   context.split("\n") == not_shown_lines(prompt, shown_different_reason(0)),
                   f"exit {result.returncode}, context {context!r}, stderr {result.stderr!r}")
+
+
+# Item 47.2 of merge-lane-2's approval-walk, as its walk-document held it when the user answered "Ao".
+ITEM_47_2 = """### Item 47.2 of 68: The change
+
+Each message a hook prints for a rule, a refusal, warning or reminder, starts with that rule's ID, such as `[rule bash-guard-git-push-force]`; a test fails when a hook prints a message without one, or when two rules share one. A scheduled program, added as a job to [GHI 1058, "Regular maintenance"](https://github.com/nedschorus/nedschorus/issues/1058), counts each ID once a week in the transcripts of both machines, the Mac's through its mirror on ned-box. Its one weekly report lists the rules not seen since their IDs were added, each beside the agent-seat that wrote it, found from the pull request that added the rule, as candidates to question, not verdicts: a guard against a rare, permanent harm may rightly never fire. A rule written only in prose, such as in `CLAUDE.md`, is not covered.
+
+[advisor] The advisor was called on this item; it changed the recommendation from a new shared log file to rule IDs counted in the transcripts.
+
+#case_against medium: every hook's messages change in one sweep, counts start only at the merge, and a rule that only ever lets actions through is never seen.
+
+The alternative: every hook also writes a log line with the rule ID, agent-seat and time into one file in the log-store, and a weekly report reads that file.
+
+Recommendation: ask the agent-seat reboot-test, which owns the Bash guards, to add rule IDs to every hook's messages, other agent-seats' hooks included, and to build the weekly count as a GHI 1058 job, in one pull request."""
+ITEM_47_2_DOCUMENT = f"""# A walk
+
+## Item 47 of 68: Rule IDs
+
+### Item 47.1 of 68: What you asked for
+
+The user asked for rule IDs.
+
+[No decision here; type N or next to continue.](https://claude.ai/artifact/x)
+
+{ITEM_47_2}
+
+## Item 48 of 68: The next item
+
+Recommendation: do the next thing.
+"""
+# The message merge-lane-2 showed item 47.2 in. Against ITEM_47_2 it changes "`; a test"
+# to "`. A test", and "the rule, as candidates" to "the rule. These are candidates": "as" dropped, "These are" added.
+ITEM_47_2_REAL_SHOWING = """Session handed off after you moved on from 47.1 (no decision there); resuming at 47.2.
+
+### Item 47.2 of 68: The change
+
+Each message a hook prints for a rule, a refusal, warning or reminder, starts with that rule's ID, such as `[rule bash-guard-git-push-force]`. A test fails when a hook prints a message without one, or when two rules share one. A scheduled program, added as a job to [GHI 1058, "Regular maintenance"](https://github.com/nedschorus/nedschorus/issues/1058), counts each ID once a week in the transcripts of both machines, the Mac's through its mirror on ned-box. Its one weekly report lists the rules not seen since their IDs were added, each beside the agent-seat that wrote it, found from the pull request that added the rule. These are candidates to question, not verdicts: a guard against a rare, permanent harm may rightly never fire. A rule written only in prose, such as in `CLAUDE.md`, is not covered.
+
+[advisor] The advisor was called on this item; it changed the recommendation from a new shared log file to rule IDs counted in the transcripts.
+
+#case_against medium: every hook's messages change in one sweep, counts start only at the merge, and a rule that only ever lets actions through is never seen.
+
+The alternative: every hook also writes a log line with the rule ID, agent-seat and time into one file in the log-store, and a weekly report reads that file.
+
+Recommendation: ask the agent-seat reboot-test, which owns the Bash guards, to add rule IDs to every hook's messages, other agent-seats' hooks included, and to build the weekly count as a GHI 1058 job, in one pull request.
+
+[Item 47.2 of 68, The change](https://claude.ai/artifact/SXzwJaGtf7sXGpYVsH1eDr) · A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · Z defer · E explain · O other options"""
+ITEM_47_2_CLOSING_LINE = """[Item 47.2 of 68, The change](https://claude.ai/artifact/SXzwJaGtf7sXGpYVsH1eDr) · A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · Z defer · E explain · O other options"""
+
+
+def item_47_2_lines(prompt, shown_item):
+    case = Case(next_to_present="item 47.2 of 68", document=ITEM_47_2_DOCUMENT)
+    return case.lines(prompt, case.transcript(f"{shown_item}\n\n{ITEM_47_2_CLOSING_LINE}"))
+
+
+def test_an_answer_counts_when_the_item_was_shown_with_only_its_punctuation_or_letter_case_changed():
+    lines = item_47_2_lines("Ao", ITEM_47_2)
+    check("'Ao' to item 47.2 counts when its text was shown as the walk-document has it", counted(lines),
+          f"lines {lines!r}")
+    semicolon_to_full_stop = ITEM_47_2.replace("`; a test fails", "`. A test fails")
+    comma_to_full_stop = ITEM_47_2.replace("added the rule, as candidates", "added the rule. As candidates")
+    for name, shown in (("the semicolon made a full stop and the next word capitalised", semicolon_to_full_stop),
+                        ("a comma made a full stop and the next word capitalised", comma_to_full_stop),
+                        ("both of 47.2's re-punctuations", comma_to_full_stop.replace("`; a test", "`. A test")),
+                        ("only a comma dropped", ITEM_47_2.replace("rare, permanent", "rare permanent")),
+                        ("only a word's letter case changed", ITEM_47_2.replace("verdicts", "Verdicts"))):
+        lines = item_47_2_lines("Ao", shown)
+        check(f"'Ao' to item 47.2 counts when it was shown with {name}", shown != ITEM_47_2 and counted(lines),
+              f"lines {lines!r}")
+
+
+def test_an_answer_is_refused_when_the_item_was_shown_with_a_word_changed_added_dropped_split_or_joined():
+    for name, shown in (
+            ("the real showing, which adds \"These are\" and drops \"as\"", ITEM_47_2_REAL_SHOWING),
+            ("a word added", ITEM_47_2.replace("as candidates", "as good candidates")),
+            ("a word dropped", ITEM_47_2.replace("rare, permanent harm", "rare harm")),
+            ("a word changed", ITEM_47_2.replace("once a week", "twice a week")),
+            ("two words swapped", ITEM_47_2.replace("question, not verdicts", "verdicts, not question")),
+            ("two words joined where only punctuation parted them", ITEM_47_2.replace("ned-box", "nedbox")),
+            ("one word split in two", ITEM_47_2.replace("weekly report", "week ly report"))):
+        lines = item_47_2_lines("Ao", shown)
+        check(f"'Ao' to item 47.2 is refused when it was shown with {name}", shown != ITEM_47_2
+              and lines is not None and lines[1:3] == [
+                  f"{ANSWER_DISCARDED}, because the user may not have seen item 47.2 of 68 as the walk-document now "
+                  "has it.", shown_different_reason(0, "item 47.2 of 68")], f"lines {lines!r}")
 
 
 def test_closing_lines_alone_after_the_item_was_shown_do_not_hide_the_message_that_showed_it():

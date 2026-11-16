@@ -126,7 +126,9 @@ letters, never counts as that line. Both texts are compared as the Markdown
 parser renders them, link targets and other markup left out, reference links
 resolved by the definitions of their own text, whitespace squeezed, each
 running count's `of M` and each deferred note dropped; the item's other text
-must appear in one run after the heading's line. When the message does not hold the text, or
+must appear in one run after the heading's line, its words compared without
+their punctuation or letter case, so that `rule; a` and `rule. A` match.
+When the message does not hold the text, or
 no message showed the item, the answer is not counted, and the text hands the
 agent the item's text to show unchanged before the user answers again. When
 the transcript or the item's text cannot be read, the answer is not counted
@@ -456,10 +458,11 @@ SHOWN_DIFFERENT_REASON = (
     "The words after the heading of {item} in your last message that showed it, written at {timestamp}, do not "
     "hold the item's current walk-document text after its heading as one unbroken run of words. Other words before "
     "or after that run are allowed and are not the fault. Either that message misquoted the item, or the "
-    "walk-document changed after that message. Only these count as words: the text the user reads rendered, "
-    "punctuation included, code, "
-    "an image's alt text, HTML, tags included, and `<!-- -->` comments. Whitespace, line breaks, Markdown markup, a link's target (its text "
-    "counts), `#approval_walk_item_` lines and the `of M` in a running count do not.")
+    "walk-document changed after that message. Only words, runs of letters, digits and underscores, count, wherever "
+    "they stand: in the text the user reads rendered, in code, in an image's alt text, in HTML, tags included, and in `<!-- -->` comments. Punctuation, "
+    "code's operators and HTML's angle brackets included, letter case, whitespace, line breaks, Markdown markup, a "
+    "link's target (its text counts), `#approval_walk_item_` lines and the `of M` in a running count do not count, "
+    "so a word changed, added or dropped is a fault, but a comma made a full stop is not.")
 TRANSCRIPT_UNREADABLE_LINES = (
     ANSWER_DISCARDED + ": it could not read this agent-session's transcript, {path}, which it reads to check that "
     "the user was last shown {item} as the walk-document now has it. The error: {error}.",
@@ -900,6 +903,12 @@ def shown_words(markdown, parser, env=None):
     return re.sub(r"\s*" + re.escape(walk_finder.APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT), "", words)
 
 
+def words_without_punctuation_or_case(words):
+    """words as its runs of letters, digits and underscores, casefolded, one space apart. Punctuation parts words
+    rather than vanishing, so that `ned-box` shown as `nedbox` still differs."""
+    return " ".join(re.findall(r"\w+", words.casefold()))
+
+
 def shown_text_parser(walk_finder):
     """The walk finder's Markdown parser, accepting every link target: by default markdown-it reads a file: link,
     which walks use, as text, so its target would count as words, and drops a reference definition with one."""
@@ -987,7 +996,8 @@ def unseen_item_lines(answer, walk, transcript_path):
             reason = NEVER_SHOWN_REASON.format(item=item)
         else:
             after_heading, timestamp = shown
-            if not body or f" {body} " in f" {after_heading} ":
+            body = words_without_punctuation_or_case(body)
+            if not body or f" {body} " in f" {words_without_punctuation_or_case(after_heading)} ":
                 continue
             reason = SHOWN_DIFFERENT_REASON.format(item=item, timestamp=timestamp)
         lines += [line.format(item=item, reason=reason, text=text) for line in ITEM_NOT_SHOWN_LINES]
