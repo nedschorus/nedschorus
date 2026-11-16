@@ -50,7 +50,8 @@ later worktree listing names counts as held by no worktree; gh failing,
 origin unreachable, git ls-remote running past its timeout or killed by a
 signal, a task list not read in full, a task
 lists' directory that cannot be listed or whose parent cannot be entered, and
-a refused git branch -D each delete nothing with -D; and the report modes
+a refused or killed git branch -D each delete nothing with -D; local main and
+a branch with only an open pull request are not judged; and the report modes
 name the branch of a done worktree, which --remove deletes with -D after
 removing that worktree.
 
@@ -2226,6 +2227,30 @@ with tempfile.TemporaryDirectory() as scratch:
           kept_and_failed(unasked, "unpushable-wt") and unpushable_wt.exists()
           and git(checkout, "branch", "--list", "unpushable-wt-branch") != ""
           and "git ls-remote origin exited 1" in unasked.stdout, unasked.stdout + unasked.stderr)
+    unasked_killed = run_one_named(REMOVE_WORKTREE_FLAG, str(unpushable_wt), git_refuses=" ls-remote ",
+                                   git_refusal="kill -9 $$")
+    check(f"{REMOVE_WORKTREE_FLAG} keeps the worktree and its branch, and fails, when the git that "
+          "asks origin for its refs is killed by a signal",
+          kept_and_failed(unasked_killed, "unpushable-wt") and unpushable_wt.exists()
+          and origin_tip("unpushable-wt-branch") == ""
+          and f"git ls-remote origin exited {-signal.SIGKILL}" in unasked_killed.stdout,
+          unasked_killed.stdout + unasked_killed.stderr)
+    unasked_silent = run_one_named(REMOVE_WORKTREE_FLAG, str(unpushable_wt), git_refuses=" ls-remote ",
+                                   git_refusal="exit 1")
+    check(f"{REMOVE_WORKTREE_FLAG} says there is no error text when a failed git ls-remote origin "
+          "printed none",
+          kept_and_failed(unasked_silent, "unpushable-wt")
+          and "is unknown: no error text" in unasked_silent.stdout,
+          unasked_silent.stdout + unasked_silent.stderr)
+    # Upper-case markers, which no scratch path holds: the error text shown ends at the Y.
+    ls_remote_error = "X" * 159 + "Y" + "Z" * 40
+    unasked_long = run_one_named(REMOVE_WORKTREE_FLAG, str(unpushable_wt), git_refuses=" ls-remote ",
+                                 git_refusal=f"echo {ls_remote_error} >&2; exit 1")
+    check(f"{REMOVE_WORKTREE_FLAG} shows the first 160 characters of git ls-remote origin's error text",
+          kept_and_failed(unasked_long, "unpushable-wt")
+          and f"is unknown: {ls_remote_error[:160]}" in unasked_long.stdout
+          and "YZ" not in unasked_long.stdout,
+          unasked_long.stdout + unasked_long.stderr)
     check(f"{REMOVE_WORKTREE_FLAG} first copies the untracked file to a work-snapshot",
           any("untracked.txt" in git(checkout, "ls-tree", "-r", "--name-only", ref)
               for ref in git(checkout, "for-each-ref", "--format=%(refname)",
@@ -2530,6 +2555,39 @@ with tempfile.TemporaryDirectory() as scratch:
           and f"is unknown: {fetch_error[:160]}" in fetch_long_error.stdout
           and "YZ" not in fetch_long_error.stdout,
           fetch_long_error.stdout + fetch_long_error.stderr)
+    # Every fetch above was refused, so the clone still lacks origin's unfetched-elsewhere tip: a
+    # needless fetch of it here meets the refusal, or brings its commit into the clone.
+    unfetched_elsewhere_tip = origin_tip("unfetched-elsewhere")
+
+    def clone_holds(commit):
+        return subprocess.run(["git", "-C", str(checkout), "cat-file", "-e", commit],
+                              capture_output=True, check=False).returncode == 0
+
+    lacks_unfetched_tip = not clone_holds(unfetched_elsewhere_tip)
+    held_on_origin_tip = branch_with_a_commit("held-on-origin-branch")
+    git(checkout, "push", "--quiet", "origin", "held-on-origin-branch")
+    held_on_origin = run_one_named(FORCE_DELETE_BRANCH_FLAG, "held-on-origin-branch",
+                                   git_refuses=" --no-write-fetch-head ")
+    check(f"{FORCE_DELETE_BRANCH_FLAG} deletes a branch origin holds without fetching the origin tips "
+          "the clone lacks",
+          lacks_unfetched_tip and held_on_origin.returncode == 0
+          and git(checkout, "branch", "--list", "held-on-origin-branch") == ""
+          and origin_tip("held-on-origin-branch") == held_on_origin_tip,
+          held_on_origin.stdout + held_on_origin.stderr)
+    rev_list_failed_printing = run_one_named(
+        FORCE_DELETE_BRANCH_FLAG, "fetch-refused-branch", git_refuses=" --max-count=1 ",
+        git_refusal=f"echo {fetch_refused_tip}; exit 1")
+    rev_list_killed_printing = run_one_named(
+        FORCE_DELETE_BRANCH_FLAG, "fetch-refused-branch", git_refuses=" --max-count=1 ",
+        git_refusal=f"echo {fetch_refused_tip}; kill -9 $$")
+    check(f"{FORCE_DELETE_BRANCH_FLAG} fetches nothing when the git rev-list that checks whether "
+          "origin's refs hold the last commit fails or is killed, whatever it printed",
+          kept_and_failed(rev_list_failed_printing, "branch fetch-refused-branch")
+          and "git rev-list exited 1" in rev_list_failed_printing.stdout
+          and kept_and_failed(rev_list_killed_printing, "branch fetch-refused-branch")
+          and f"git rev-list exited {-signal.SIGKILL}" in rev_list_killed_printing.stdout
+          and not clone_holds(unfetched_elsewhere_tip),
+          rev_list_failed_printing.stdout + rev_list_killed_printing.stdout)
     git(other_machine, "commit", "--quiet", "--allow-empty", "-m", "commit only a tag names")
     git(other_machine, "tag", "-a", "-m", "annotated", "only-tagged")
     git(other_machine, "push", "--quiet", "origin", "refs/tags/only-tagged")
@@ -2541,6 +2599,27 @@ with tempfile.TemporaryDirectory() as scratch:
           and git(checkout, "branch", "--list", "beside-peeled-tag-branch") == ""
           and origin_tip("beside-peeled-tag-branch") == beside_peeled_tag_tip,
           beside_peeled_tag.stdout + beside_peeled_tag.stderr)
+    git(checkout, "fetch", "--quiet", "origin", "+refs/*:refs/every-origin-ref/*")
+    every_tip_held_tip = branch_with_a_commit("every-tip-held-branch")
+    every_tip_held = run_one_named(FORCE_DELETE_BRANCH_FLAG, "every-tip-held-branch",
+                                   git_refuses=" --no-write-fetch-head ")
+    check(f"{FORCE_DELETE_BRANCH_FLAG} pushes and deletes a branch origin lacks without a fetch when "
+          "the clone holds every origin tip",
+          every_tip_held.returncode == 0
+          and git(checkout, "branch", "--list", "every-tip-held-branch") == ""
+          and origin_tip("every-tip-held-branch") == every_tip_held_tip,
+          every_tip_held.stdout + every_tip_held.stderr)
+    # A failed object lookup reads as the clone holding none of origin's tips, so the branch is
+    # pushed, the one answer that cannot lose its commits.
+    lookup_failed_tip = branch_with_a_commit("object-lookup-failed-branch")
+    lookup_failed = run_one_named(FORCE_DELETE_BRANCH_FLAG, "object-lookup-failed-branch",
+                                  git_refuses=" --batch-check=", git_refusal="exit 128")
+    check(f"{FORCE_DELETE_BRANCH_FLAG} pushes and deletes a branch when git cannot say which of "
+          "origin's tips the clone holds",
+          lookup_failed.returncode == 0
+          and git(checkout, "branch", "--list", "object-lookup-failed-branch") == ""
+          and origin_tip("object-lookup-failed-branch") == lookup_failed_tip,
+          lookup_failed.stdout + lookup_failed.stderr)
     conflicting_holder = scratch / "conflicting-branch-holder"
     git(checkout, "worktree", "add", "-b", "conflicting-branch", str(conflicting_holder), "origin/main")
     (conflicting_holder / "README.md").write_text("# the branch's line\n", encoding="utf-8")
@@ -2596,6 +2675,14 @@ with tempfile.TemporaryDirectory() as scratch:
           and git(checkout, "rev-parse", "unpushable-branch").strip() == unpushable_tip
           and push_error[:200] in push_long_error.stdout and "YZ" not in push_long_error.stdout,
           push_long_error.stdout + push_long_error.stderr)
+    push_killed = run_one_named(FORCE_DELETE_BRANCH_FLAG, "unpushable-branch", git_refuses=" push ",
+                                git_refusal="kill -9 $$")
+    check(f"{FORCE_DELETE_BRANCH_FLAG} keeps the branch and fails when the git push of a last commit "
+          "origin lacks is killed by a signal",
+          kept_and_failed(push_killed, "branch unpushable-branch")
+          and git(checkout, "rev-parse", "unpushable-branch").strip() == unpushable_tip
+          and f"git push origin exited {-signal.SIGKILL}" in push_killed.stdout,
+          push_killed.stdout + push_killed.stderr)
     main_named = run_one_named(FORCE_DELETE_BRANCH_FLAG, "main")
     check(f"{FORCE_DELETE_BRANCH_FLAG} never deletes main", kept_and_failed(main_named, "branch main")
           and git(checkout, "branch", "--list", "main") != "", main_named.stdout)
@@ -3420,6 +3507,23 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a registration whose gitdir file is gone is deleted as the worktree's",
           module.registration_points_to_worktree_or_has_no_gitdir_file(scratch / "no-such-registration", reused), "")
 
+    # A record naming main, with a commit on main that origin lacks: finishing it must not push main.
+    main_record_wt, _ = stopped_partway("stopped-partway-main-record-wt")
+    main_record_file = module.unfinished_worktree_removal_record_file(checkout, main_record_wt)
+    main_record = json.loads(main_record_file.read_text(encoding="utf-8"))
+    main_record["branch"] = "main"
+    main_record_file.write_text(json.dumps(main_record), encoding="utf-8")
+    git(checkout, "commit", "--allow-empty", "-m", "on main, not pushed")
+    origin_main_before = git(checkout, "ls-remote", "origin", "refs/heads/main").split("\t")[0]
+    main_record_run = run_clean(checkout, "--remove-worktree-and-force-delete-its-branch",
+                                str(main_record_wt))
+    check("--remove-worktree-and-force-delete-its-branch, finishing a removal stopped partway whose "
+          "record names main, does not push main",
+          "branch main: pushed" not in main_record_run.stdout
+          and git(checkout, "ls-remote", "origin", "refs/heads/main").split("\t")[0] == origin_main_before
+          and git(checkout, "branch", "--list", "main") != "",
+          main_record_run.stdout + main_record_run.stderr)
+
     unwritable = managed / "removal-file-unwritable-wt"
     git(checkout, "worktree", "add", "-b", "removal-file-unwritable-wt-branch", str(unwritable),
         "origin/main")
@@ -3829,9 +3933,10 @@ with tempfile.TemporaryDirectory() as scratch:
 
     report = run_head_branch_clean()
     check("the report names the merged and closed pull requests' head branches at their pull "
-          "request's head, and only those, and deletes nothing",
+          "request's head, and only those, deletes nothing, and says no branch went unjudged",
           force_deletable_named(report.stdout) == {"closed-head-branch", "merged-head-branch"}
-          and every_head_branch <= local_branches(),
+          and every_head_branch <= local_branches()
+          and "branches: none deleted" not in report.stdout,
           report.stdout + report.stderr)
 
     gh_down = run_head_branch_clean("--remove", gh_exit=1)
@@ -4009,6 +4114,60 @@ with tempfile.TemporaryDirectory() as scratch:
               f"`git ls-remote origin 'refs/pull/*/head'` exited {-signal.SIGKILL}: "),
           f"{killed_heads} {killed_failure}")
 
+    # Upper-case markers, which no scratch path holds: the error text shown ends at the Y.
+    heads_listing_error = "X" * 199 + "Y" + "Z" * 40
+    failures_of_failing_ls_remote = []
+    for refusal in (f"echo {heads_listing_error} >&2; exit 1", "exit 1"):
+        failing_ls_remote = scratch / f"failing-ls-remote-stubs-{len(failures_of_failing_ls_remote)}"
+        failing_ls_remote.mkdir()
+        (failing_ls_remote / "git").write_text(
+            f'#!/bin/sh\ncase " $* " in *" ls-remote "*) {refusal} ;; esac\n'
+            f'exec {shlex.quote(shutil.which("git"))} "$@"\n', encoding="utf-8")
+        (failing_ls_remote / "git").chmod(0o755)
+        os.environ["PATH"] = f"{failing_ls_remote}{os.pathsep}{saved_path}"
+        try:
+            failures_of_failing_ls_remote.append(
+                head_branch_module.pull_request_head_commits_or_failure(checkout)[1] or "")
+        finally:
+            os.environ["PATH"] = saved_path
+    long_failure, silent_failure = failures_of_failing_ls_remote
+    check("a failed git ls-remote of the pull request heads shows the first 200 characters of its "
+          "error text",
+          long_failure.endswith(f"exited 1: {heads_listing_error[:200]}"), long_failure)
+    check("a failed git ls-remote of the pull request heads that printed nothing says there is no "
+          "error text", silent_failure.endswith("exited 1: no error text"), silent_failure)
+
+    task_lists_override_saved = os.environ.get(TASK_LISTS_DIRECTORY_OVERRIDE_VARIABLE)
+    os.environ[TASK_LISTS_DIRECTORY_OVERRIDE_VARIABLE] = str(task_lists)
+    open_pull_request = next(pull_request for pull_request in pull_requests if pull_request["number"] == 4)
+    closed_pull_request = next(pull_request for pull_request in pull_requests if pull_request["number"] == 1)
+    # A second finished pull request whose head is the closed one's branch at the same commit.
+    closed_again_pull_request = dict(closed_pull_request, number=8)
+    git(checkout, "push", "-q", "origin", f"{closed_tip}:refs/pull/8/head")
+    os.environ["PATH"] = f"{killed_ls_remote}{os.pathsep}{saved_path}"
+    try:
+        only_open_judged = head_branch_module.finished_pull_request_head_branches_to_force_delete(
+            checkout, types.SimpleNamespace(by_head_branch=lambda: {"open-head-branch": [open_pull_request]}))
+        os.environ["PATH"] = saved_path
+        # The one-second limit set above was for a stub that never answers; this listing is real.
+        head_branch_module.PULL_REQUEST_HEAD_REFS_LISTING_TIMEOUT_SECONDS = 60
+        twice_closed_judged =head_branch_module.finished_pull_request_head_branches_to_force_delete(
+            checkout, types.SimpleNamespace(by_head_branch=lambda: {
+                "closed-head-branch": [closed_pull_request, closed_again_pull_request]}))
+    finally:
+        os.environ["PATH"] = saved_path
+        if task_lists_override_saved is None:
+            os.environ.pop(TASK_LISTS_DIRECTORY_OVERRIDE_VARIABLE)
+        else:
+            os.environ[TASK_LISTS_DIRECTORY_OVERRIDE_VARIABLE] = task_lists_override_saved
+        git(checkout, "push", "-q", "origin", ":refs/pull/8/head")
+    check("when no branch has a merged or closed pull request, origin's pull request heads are not "
+          "asked for, so a git ls-remote that would fail leaves nothing unjudged",
+          only_open_judged == ([], None, None), repr(only_open_judged))
+    check("a branch at the head of two finished pull requests is deleted for the first one gh lists",
+          twice_closed_judged == ([("closed-head-branch", closed_tip, closed_pull_request)], None, None),
+          repr(twice_closed_judged))
+
     # A done worktree another agent removed between the cleaner's two worktree listings.
     freed_but_unlisted = {branch for branch, _ in
                           head_branch_module.branch_refs_and_tips_with_no_worktree_not_fully_on_main(
@@ -4025,8 +4184,23 @@ with tempfile.TemporaryDirectory() as scratch:
     ref_lock.write_text("", encoding="utf-8")
     try:
         locked = run_head_branch_clean("--remove")
+        # In process, so the count is seen alone: the program's exit status sums it into 1 or 0.
+        git(checkout, "branch", "merged-head-branch", merged_tip)
+        saved_environment = dict(os.environ)
+        os.environ.update({TASK_LISTS_DIRECTORY_OVERRIDE_VARIABLE: str(task_lists),
+                           REMOVALS_LOG_OVERRIDE_VARIABLE: str(removals_log),
+                           "FAKE_GH_PULL_REQUESTS": json.dumps(pull_requests)})
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                locked_failures = head_branch_module.clean_worktrees_and_branch_refs(
+                    checkout, head_branch_module.main_checkout_of(checkout), True, False)
+        finally:
+            os.environ.clear()
+            os.environ.update(saved_environment)
     finally:
         ref_lock.unlink()
+    check("a git branch -D that fails counts as exactly one failure", locked_failures == 1,
+          repr(locked_failures))
     check("a git branch -D that fails is named FAILED, keeps its branch, and exits 1",
           "closed-head-branch" in local_branches()
           and "branch closed-head-branch: deletion FAILED — git branch -D exited " in locked.stdout
@@ -4069,6 +4243,32 @@ with tempfile.TemporaryDirectory() as scratch:
           f"{silent.returncode}\n{silent.stdout}{silent.stderr}")
     git(checkout, "branch", "closed-head-branch", closed_tip)
     git(checkout, "branch", "merged-head-branch", merged_tip)
+
+    # Upper-case markers, which no scratch path holds: the error text shown ends at the Y.
+    deletion_error = "X" * 119 + "Y" + "Z" * 40
+    refused_deletions = []
+    for refusal in (f"echo {deletion_error} >&2; exit 1", "exit 1", "kill -9 $$"):
+        refused_deletions.append(run_head_branch_clean("--remove", git_stub_body=(
+            f'case " $* " in *" branch -D closed-head-branch "*) {refusal} ;; esac\n'
+            f'exec {real_git} "$@"\n')))
+        git(checkout, "branch", "merged-head-branch", merged_tip)
+    long_refusal, silent_refusal, killed_deletion = refused_deletions
+    check("a failed git branch -D shows the first 120 characters of its error text",
+          "closed-head-branch" in local_branches()
+          and f"branch closed-head-branch: deletion FAILED — git branch -D exited 1: "
+              f"{deletion_error[:120]}\n" in long_refusal.stdout
+          and long_refusal.returncode == 1,
+          f"{long_refusal.returncode}\n{long_refusal.stdout}{long_refusal.stderr}")
+    check("a failed git branch -D that printed nothing says there is no error text",
+          "branch closed-head-branch: deletion FAILED — git branch -D exited 1: no error text"
+          in silent_refusal.stdout and silent_refusal.returncode == 1,
+          f"{silent_refusal.returncode}\n{silent_refusal.stdout}{silent_refusal.stderr}")
+    check("a git branch -D killed by a signal is named FAILED with its exit, and keeps its branch",
+          "closed-head-branch" in local_branches()
+          and f"branch closed-head-branch: deletion FAILED — git branch -D exited {-signal.SIGKILL}: "
+              in killed_deletion.stdout
+          and killed_deletion.returncode == 1,
+          f"{killed_deletion.returncode}\n{killed_deletion.stdout}{killed_deletion.stderr}")
     removals_log.unlink()
 
     removal = run_head_branch_clean("--remove")
@@ -4107,6 +4307,17 @@ with tempfile.TemporaryDirectory() as scratch:
           and "done-worktree-head-branch" in force_deletable_named(done_only_report.stdout)
           and "checked-out-head-branch" not in force_deletable_named(done_report.stdout),
           done_report.stdout + done_report.stderr + done_only_report.stdout)
+
+    # Local main, held by no worktree and carrying a commit origin/main lacks, is still not judged.
+    detached_main = scratch / "detached-main-clone"
+    git(scratch, "clone", "-q", str(origin), str(detached_main))
+    git(detached_main, "-c", "user.email=test@test.invalid", "-c", "user.name=clean-worktrees test",
+        "commit", "-q", "--allow-empty", "-m", "on main, not pushed")
+    git(detached_main, "checkout", "-q", "--detach")
+    check("local main held by no worktree, with a commit origin/main lacks, is never a branch to "
+          "judge for git branch -D",
+          head_branch_module.branch_refs_and_tips_with_no_worktree_not_fully_on_main(detached_main) == [],
+          repr(head_branch_module.branch_refs_and_tips_with_no_worktree_not_fully_on_main(detached_main)))
     done_removal = run_head_branch_clean("--remove")
     check("--remove removes the done worktree, then deletes its branch with -D",
           not done_worktree.exists() and "done-worktree-head-branch" not in local_branches()
