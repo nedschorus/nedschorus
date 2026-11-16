@@ -3785,6 +3785,19 @@ def test_a_weak_ground_value_for_an_item_of_no_kind_rated_none_writes_nothing_an
               and case.minutes.read_text() == before and case.calls.read_text() == "", described(result))
 
 
+def test_a_weak_ground_value_for_an_item_of_no_kind_rated_medium_is_refused_for_its_rating_not_sent_to_none():
+    # "medium" sorts before "none", so this tells an equality test on the rating from an ordering test.
+    case = rated_none_case(rating="medium: the option adds a check.")
+    before = case.minutes.read_text()
+    result = case.run("check", "--not-asked", "weak-cost-only")
+    check("`--not-asked weak-cost-only` on an item rated medium is refused for its rating, not told to use none",
+          result.returncode == 1
+          and "cannot be settled without asking the user as case against weak, cost only, because:" in result.stderr
+          and "rates the case against medium" in result.stderr
+          and "rates the case against none" not in result.stderr
+          and case.minutes.read_text() == before and case.calls.read_text() == "", described(result))
+
+
 # Lines as the walk check program wrote them for an item of no kind rated weak before the agent named the ground,
 # when `--not-asked none` settled it and the minutes always said cost only.
 WALK_MINUTES_CHECK_LINE_BEFORE_THE_GROUND_WAS_NAMED = (
