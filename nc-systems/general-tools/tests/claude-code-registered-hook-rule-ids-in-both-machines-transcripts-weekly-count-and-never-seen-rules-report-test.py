@@ -13,6 +13,7 @@ import importlib.util
 import io
 import json
 import re
+import socket
 import os
 import subprocess
 import sys
@@ -350,6 +351,9 @@ with tempfile.TemporaryDirectory() as scratch:
     failures = program.rule_origins(not_a_repository, plain_rules, {})
     check("a git lookup that fails is returned, and the rule's origin says it could not be read",
           failures and plain_rules[0]["origin_note"] == "its origin could not be read", (failures, plain_rules))
+    check("a git lookup that fails quotes the whole git command, so it can be run again by hand",
+          failures and failures[0].startswith(f"`git -C {not_a_repository} log --first-parent --merges --reverse "),
+          failures)
 
     text = program.report_text("2026-11-16", rules, counts, unknown, [transcripts], read, [])
     unseen_section = text.split("## Each rule's count")[0]
@@ -378,6 +382,13 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a run that cannot read a transcript directory still writes the report, says so in it, and exits 1",
           status == 1 and str(missing) in report.read_text(encoding="utf-8")
           and str(missing) in errors.getvalue(), (status, errors.getvalue()))
+    rerun = (f"python3 {Path(program.__file__).resolve()} --transcript-directory {transcripts} "
+             f"--transcript-directory {missing} --report-directory {reports}")
+    check("a run that cannot read a transcript directory gives a next step for each kind of line and the exact "
+          "command to run again",
+          "For each `not read:` line above that names a transcript or a directory: run `ls -ld <that path>`" in errors.getvalue()
+          and "For each `not read: git lookup:` line above: run the git command it quotes" in errors.getvalue()
+          and f"Then run, on {socket.gethostname()}:\n    {rerun}" in errors.getvalue(), errors.getvalue())
 
     hook_file = repository / "hooks" / "guard-hook.py"
     committed_hook = hook_file.read_text(encoding="utf-8")
@@ -389,6 +400,15 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a rule whose ID is in no commit and not recorded fails the run loudly, and the report says so",
           status == 1 and "FAILED: hooks/guard-hook.py writes `[rule fixture-uncommitted]`" in errors.getvalue()
           and program.REPORT_NOTE_AUTHOR_UNKNOWN_FOR_HOOK_RULE_WHOSE_ID_IS_IN_NO_GIT_COMMIT in report.read_text(encoding="utf-8"), (status, errors.getvalue()))
+    rerun = f"python3 {Path(program.__file__).resolve()} --transcript-directory {transcripts} --report-directory {reports}"
+    check("a rule whose ID is in no commit gets a next step for a change not yet merged into main, for a branch, and "
+          "for a checkout lacking the commit, with the exact command to run again",
+          "If the hook shows as changed and the branch is main:" in errors.getvalue()
+          and "Nothing needs doing now" in errors.getvalue()
+          and "If the hook shows as changed and the branch is another branch: commit the change" in errors.getvalue()
+          and "If the hook does not show as changed:" in errors.getvalue()
+          and f"git -C {repository} merge --ff-only origin/main" in errors.getvalue()
+          and f"Then run, on {socket.gethostname()}:\n    {rerun}" in errors.getvalue(), errors.getvalue())
 
     blocked = base / "blocked"
     blocked.write_text("a file where the report directory should be", encoding="utf-8")
@@ -398,6 +418,11 @@ with tempfile.TemporaryDirectory() as scratch:
                               now=now)
     check("a report that cannot be written is printed as FAILED and exits 1",
           status == 1 and "FAILED: the report could not be written" in errors.getvalue(), errors.getvalue())
+    rerun = f"python3 {Path(program.__file__).resolve()} --transcript-directory {transcripts} --report-directory {blocked}"
+    check("a report that cannot be written gives the next step and the exact command to run again",
+          f"Make {blocked} a directory that user" in errors.getvalue()
+          and "if a file that is not a directory is there, find out what wrote it" in errors.getvalue()
+          and f"Then run, on {socket.gethostname()}:\n    {rerun}" in errors.getvalue(), errors.getvalue())
 
 print()
 if FAILURES:

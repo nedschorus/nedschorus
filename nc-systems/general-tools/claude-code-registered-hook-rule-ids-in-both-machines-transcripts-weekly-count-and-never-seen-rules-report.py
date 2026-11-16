@@ -9,44 +9,49 @@ source, in this program's own checkout, as
 nc-systems/general-tools/claude-code-registered-hook-rule-id-pattern-hook-files-list-and-source-scan-common.py
 finds them. Each is counted in the transcripts under each --transcript-directory, by default the two
 copies scripts/transcript-mirror-to-log-store.py keeps in the log-store on ned-box:
-agent-session-files-by-machine/mac/projects, the Mac's, and agent-session-files-by-machine/ned-box/projects,
-ned-box's. Subagents' transcripts below them are read too.
+/home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/projects, the Mac's, and
+/home/nedlern/nedschorus-logs/agent-session-files-by-machine/ned-box/projects, ned-box's. Subagents' transcripts below them are read too.
 
 What counts as a firing: an ID in text a hook handed the agent, and nowhere else, so a transcript in
 which an agent reads, tests or quotes a hook's source counts nothing. Within that text, only an ID that
 opens the text or one of its lines counts, as a rule's message starts with its ID; a refusal's leading
-`<event>... hook error: ` and any `[command hook <n>]: ` after it are stripped first, so the ID after
-them opens the text. An ID further into a line, such as one in a diff of a hook's source that another
-hook's reminder carries, does not count. That text is the content of an attachment record of type hook_additional_context, the blockingError of one of type
+`<event>... hook error: `, such as `PreToolUse:Bash hook error: `, and any `[command hook <n>]: `
+after it are stripped first, so the ID after them opens the text. An ID further into a line, such as
+one in a diff of a hook's source that another hook's reminder carries, does not count. That text is the content of an attachment record of type hook_additional_context, the blockingError of one of type
 hook_blocking_error, and a tool result whose text starts `<event>... hook error:`, which is how a
-PreToolUse refusal reaches the agent. The hook_success record and the `Stop hook feedback:` message
-repeat that text and are not counted again. A firing counts when its record's timestamp is no earlier
-than the commit that added its rule's ID, and only transcripts changed since the earliest such commit
-are read.
+PreToolUse refusal reaches the agent. hook_success records and `Stop hook feedback:` messages are not
+read at all, since they repeat that text. A firing counts when its record's timestamp is no earlier
+than the commit that added its rule's ID, and only transcripts whose file modification time (mtime) is
+no earlier than the earliest of all the rules' ID commits are read.
 
 When a rule's ID was added: the oldest commit in this checkout's history whose added lines hold
-`[rule <id>]`, searched across every file, so a hook renamed since does not hide it.
+`[rule <id>]`, searched across every file. A hook file renamed, a constant renamed or a message reworded
+after that commit changes nothing here: the later commit is not the oldest, so the ID keeps its date and
+its author. git log shows no added lines for a merge commit, so a merge commit is never the commit that
+adds an ID; the commit that adds it is the one on the branch the merge brought in.
 
 Who wrote the rule: the rules whose messages were written before their IDs existed, which got their IDs
 all at once in the pull request that added the IDs, are listed in
 nc-systems/general-tools/claude-code-registered-hook-rule-id-to-origin-commit-pr-and-agent-seat-of-rules-whose-message-predates-its-id.json,
 each with the commit that first wrote its message, the pull request that brought that commit, or null
 when the commit went onto main without one, and the agent-seat that wrote it. Git cannot find that
-commit by itself, because a message's words and its constant's name were both changed since in many
-hooks. Any other rule was written with its ID, so the commit that added the ID wrote the rule, and the
-pull request and agent-seat come from that commit:
+commit from the ID, which came after the message, nor from the message's words or its constant's name,
+which in many hooks were changed after the message was first written. Any other rule was written with
+its ID, so the commit that added the ID wrote the rule, and the pull request and agent-seat come from
+that commit:
 - A commit on this checkout's first-parent history was not brought by a merge. When its subject ends
   `(#<number>)`, it is a pull request squash-merged on GitHub: the pull request is that number, and the
   agent-seat is not known, as the commit carries the name of whoever merged it; the report says to read
   the pull request's description. Otherwise it was committed straight to main: no pull request, and the
   agent-seat is the commit's author name.
-- Any other commit was brought by the first first-parent merge that holds it: the pull request is read
+- Any other commit was brought by the oldest merge on the first-parent history that holds it, the merge
+  that first brought it onto that history: the pull request is read
   from that merge's subject `Merge pull request #<number> from ...`, and the agent-seat is the commit's
   author name, the name that agent-seat commits under.
 
 The report goes to <report directory>/<job name>-<YYYY-MM-DD>-report.md, the job name being this
 file's name without .py and the date UTC, replacing a report written earlier the same day; the default
-report directory is the log-store's maintenance-job-reports. The report lists the rules not seen, each
+report directory is the log-store's /home/nedlern/nedschorus-logs/maintenance-job-reports. The report lists the rules not seen, each
 with its hook, the date its ID was added, the agent-seat that wrote it and its pull request, as
 candidates to question, not verdicts: a guard against a rare, permanent harm may rightly never fire.
 It then gives every rule's count, and the IDs found in transcripts that no registered hook writes. It
@@ -63,17 +68,21 @@ outside a message constant.
 Exit status: 0 when the report was written and every transcript directory, transcript and git lookup
 was read. 1 when a transcript directory, a transcript or a git lookup could not be read: the report is
 still written, and says which, since its never-seen list may then be wrong; when a registered hook
-writes an ID that is in no commit and not in the table above, so who wrote the rule
-cannot be found: the report is still written, and a FAILED line names each such ID; or when the report
-could not be written, which is printed only, to the cron log above. 2 for a bad command line.
+writes an ID that is in no commit and not in the .json file named under "Who wrote the rule", so who
+wrote the rule cannot be found: the report is still written, and a FAILED line on stderr names each such ID; or when
+the report could not be written, which is printed only, on stderr, to the cron log above. Each stderr
+line that reports a problem is followed by what to do about it. 2 for a bad command line.
 """
 import argparse
 import datetime
+import getpass
 import importlib.util
 import json
 import mmap
 import os
 import re
+import shlex
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -123,9 +132,9 @@ def git(repository, *arguments):
         completed = subprocess.run(["git", "-C", str(repository), *arguments], capture_output=True, text=True,
                                    timeout=GIT_TIMEOUT_SECONDS, check=False)
     except (OSError, subprocess.TimeoutExpired) as error:
-        raise GitLookupFailed(f"git {' '.join(arguments[:2])} failed: {error}") from error
+        raise GitLookupFailed(f"`{shlex.join(['git', '-C', str(repository), *arguments])}` failed: {error}") from error
     if completed.returncode != 0:
-        raise GitLookupFailed(f"git {' '.join(arguments[:2])} exited {completed.returncode}: "
+        raise GitLookupFailed(f"`{shlex.join(['git', '-C', str(repository), *arguments])}` exited {completed.returncode}: "
                               f"{completed.stderr.strip()[:300]}")
     return completed.stdout
 
@@ -177,7 +186,7 @@ def first_parent_commit_subjects(repository):
 def pull_request_bringing(repository, sha, merges, first_parent_subjects):
     """The number of the pull request that brought the commit, or None when none did: for a commit on
     the first-parent history, the `(#<number>)` its subject ends with, as GitHub's squash merge writes
-    it; for any other, the first first-parent merge holding it."""
+    it; for any other, the oldest merge on the first-parent history that holds it."""
     if sha in first_parent_subjects:
         match = SQUASH_MERGE_SUBJECT_PATTERN.search(first_parent_subjects[sha])
         return match.group(1) if match else None
@@ -390,7 +399,10 @@ def main(argv=None, now=None):
                              "copies in the log-store")
     parser.add_argument("--report-directory", type=Path, default=DEFAULT_REPORT_DIRECTORY,
                         help=f"where the report goes; default: {DEFAULT_REPORT_DIRECTORY}")
+    argv = sys.argv[1:] if argv is None else argv
     arguments = parser.parse_args(argv)
+    rerun_command = "python3 " + shlex.join([str(Path(__file__).resolve()), *argv])
+    machine = socket.gethostname()
     directories = arguments.transcript_directory or list(DEFAULT_TRANSCRIPT_DIRECTORIES)
     today = (now or datetime.datetime.now(datetime.timezone.utc)).date().isoformat()
 
@@ -402,19 +414,47 @@ def main(argv=None, now=None):
     try:
         path = write_report(arguments.report_directory, today, text)
     except OSError as error:
-        print(f"{JOB_NAME}: FAILED: the report could not be written to {arguments.report_directory}: {error}",
-              file=sys.stderr)
+        print(f"{JOB_NAME}: FAILED: the report could not be written to {arguments.report_directory}: {error}. "
+              f"No report was written, so no list of the rules not seen since their IDs were added was made.\n"
+              f"Make {arguments.report_directory} a directory that user {getpass.getuser()}, who ran this program, "
+              f"can write to on {machine}: if nothing is at that path, create it with "
+              f"`mkdir -p {arguments.report_directory}`; if a file that is not a directory is there, find out "
+              f"what wrote it before you move it; if the directory exists, give that user write permission to it.\n"
+              f"Then run, on {machine}:\n    {rerun_command}", file=sys.stderr)
         return 1
     print(path)
     for problem in problems:
         print(f"{JOB_NAME}: not read: {problem}", file=sys.stderr)
+    if problems:
+        print(f"{JOB_NAME}: the report at {path} was still written, but a rule it lists as not seen may have "
+              f"fired in what was not read.\n"
+              f"For each `not read:` line above that names a transcript or a directory: run `ls -ld <that path>` "
+              f"on {machine}, to see whether it exists and user {getpass.getuser()}, who "
+              f"ran this program, can read it, and fix what stops the read. A machine's directory that "
+              f"scripts/transcript-mirror-to-log-store.py has not made yet needs no fix.\n"
+              f"For each `not read: git lookup:` line above: run the git command it quotes, as it is written there, "
+              f"to see why it failed, and fix that.\n"
+              f"Then run, on {machine}:\n    {rerun_command}", file=sys.stderr)
     unknown_origins = [rule for rule in rules if rule["origin_note"] == REPORT_NOTE_AUTHOR_UNKNOWN_FOR_HOOK_RULE_WHOSE_ID_IS_IN_NO_GIT_COMMIT]
     for rule in unknown_origins:
-        print(f"{JOB_NAME}: FAILED: {rule['hook']} writes `[rule {rule['id']}]`, which no commit on this checkout's "
-              f"history adds and nc-systems/general-tools/{RULES_WRITTEN_BEFORE_THEIR_IDS_PATH.name} does not list, "
-              f"so the report cannot say who wrote the rule. Check whether this checkout, {REPOSITORY}, is on "
-              f"main and up to date, and whether the hook's change is committed and merged; once a commit on "
-              f"main adds the ID, run this program again.", file=sys.stderr)
+        print(f"{JOB_NAME}: FAILED: {rule['hook']} writes `[rule {rule['id']}]`, which no commit in the history of "
+              f"this checkout, {REPOSITORY}, adds and nc-systems/general-tools/{RULES_WRITTEN_BEFORE_THEIR_IDS_PATH.name} "
+              f"does not list, so the report cannot say who wrote the rule; the report was still written, with "
+              f"that rule's agent-seat unknown, to {path}. The lines after the last FAILED line say what to do.",
+              file=sys.stderr)
+    if unknown_origins:
+        print(f"For each hook a FAILED line above names, run `git -C {REPOSITORY} status --short -- <the hook's path as the FAILED line gives it>` and "
+              f"`git -C {REPOSITORY} branch --show-current`, on {machine}.\n"
+              f"If the hook shows as changed and the branch is main: the ID is in an edit to this checkout that "
+              f"has not been committed and merged yet. Nothing needs doing now; the first run of this program after that change "
+              f"merges into main and reaches this checkout says who wrote the rule.\n"
+              f"If the hook shows as changed and the branch is another branch: commit the change, then run, on "
+              f"{machine}:\n    {rerun_command}\n"
+              f"If the hook does not show as changed: this checkout's history lacks the commit that added the ID. "
+              f"Run `git -C {REPOSITORY} fetch origin`, then, when the branch is main, "
+              f"`git -C {REPOSITORY} merge --ff-only origin/main`, or, when it is another branch, "
+              f"`git -C {REPOSITORY} rebase origin/main`. Then run, on {machine}:\n    {rerun_command}",
+              file=sys.stderr)
     return 1 if problems or unknown_origins else 0
 
 
