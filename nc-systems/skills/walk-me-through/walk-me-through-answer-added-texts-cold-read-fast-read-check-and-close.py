@@ -2841,15 +2841,24 @@ def approval_walk_map_each_item_number_to_direct_sub_steps_found_by_walk_documen
     return sub_steps_of
 
 
+def approval_walk_unit_is_presented_unit_or_one_of_its_sub_steps(walk_finder, units, presented_unit, number, unit):
+    """Return whether unit, of units as item_unit_spans gives them, is presented_unit or one of the sub-steps of its
+    item number that approval_walk_item_sub_step_units_below_item_in_walk_document finds, such as `Item 3.1.1 of 12`
+    below `Items 3 and 3.1 of 12` for number 3, or that shared unit itself for 3.1."""
+    return unit == presented_unit or unit in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(
+        units, presented_unit, [number])
+
+
 def approval_walk_item_units_above_holding_sub_step_unit(walk_finder, units, unit, number):
-    """Return {each number above number, such as 3.1 and 3 for 3.1.1: the last unit of units before unit that names
-    it and has unit among its sub-steps}, leaving out a number that has no such unit."""
+    """Return {each number above number, such as 3.1 and 3 for 3.1.1: the last unit of units up to unit that names
+    it and is unit or has unit among its sub-steps, as 3 for 3.1 of `Items 3 and 3.1 of 12`}, leaving out a number
+    that has no such unit."""
     found, parts = {}, number.split(".")
     for depth in range(len(parts) - 1, 0, -1):
         above = ".".join(parts[:depth])
-        holding = [each for each in units if above in each[0] and each[3] < unit[3]
-                   and unit in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(
-                       units, each, [above])]
+        holding = [each for each in units if above in each[0] and each[3] <= unit[3]
+                   and approval_walk_unit_is_presented_unit_or_one_of_its_sub_steps(walk_finder, units, each, above,
+                                                                                     unit)]
         if holding:
             found[above] = holding[-1]
     return found
@@ -2860,8 +2869,8 @@ def approval_walk_minutes_unit_each_item_number_was_last_presented_in(walk_finde
     from the `#next_to_present` lines of minutes_text outside code, in order. A line presents, for each number it
     names, the one unit naming it, or, when several do, the one whose M is the line's, and with that unit each unit
     above it that holds it, because the read step descends from `3 of 12` to `3.1.1 of 12` and writes a line for the
-    leaf only; a number below a newly presented unit whose last unit is neither below it nor that unit itself, as
-    3.1 in `Items 3 and 3.1 of 12`, is dropped."""
+    leaf only; a number below a newly presented unit whose last unit is not
+    approval_walk_unit_is_presented_unit_or_one_of_its_sub_steps of it is dropped."""
     presented = {}
     for line in walk_finder.prose_lines(minutes_text, parser):
         spans = [span.span() for span in walk_finder.CODE_SPAN.finditer(line)]
@@ -2881,10 +2890,9 @@ def approval_walk_minutes_unit_each_item_number_was_last_presented_in(walk_finde
                 newly = {number: naming[0],
                          **approval_walk_item_units_above_holding_sub_step_unit(walk_finder, units, naming[0], number)}
                 for above, unit in newly.items():
-                    below = walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(
-                        units, unit, [above])
                     for other in [other for other in presented if other.startswith(above + ".")
-                                  and presented[other] not in below and presented[other] != unit]:
+                                  and not approval_walk_unit_is_presented_unit_or_one_of_its_sub_steps(
+                                      walk_finder, units, unit, above, presented[other])]:
                         del presented[other]
                 presented.update(newly)
     return presented
@@ -2893,8 +2901,9 @@ def approval_walk_minutes_unit_each_item_number_was_last_presented_in(walk_finde
 def approval_walk_item_number_unit_within_presented_hierarchy(walk_finder, units, presented, number):
     """Return the unit of units, as item_unit_spans gives them, that number names: the one unit naming it; else the
     unit presented gives it, as approval_walk_minutes_unit_each_item_number_was_last_presented_in reads them; else
-    the one unit naming it among the sub-steps of the unit presented gives the nearest number above it, as
-    `3.1 of 12` below a presented `3 of 12`; else None."""
+    the one unit naming it that approval_walk_unit_is_presented_unit_or_one_of_its_sub_steps finds in the unit
+    presented gives the nearest number above it, as `3.1 of 12` below a presented `3 of 12`, or the presented
+    `Items 3 and 3.1 of 12` itself; else None."""
     naming = [unit for unit in units if number in unit[0]]
     if len(naming) == 1:
         return naming[0]
@@ -2904,9 +2913,8 @@ def approval_walk_item_number_unit_within_presented_hierarchy(walk_finder, units
     for depth in range(len(parts) - 1, 0, -1):
         above = ".".join(parts[:depth])
         if above in presented:
-            below = walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(
-                units, presented[above], [above])
-            within = [unit for unit in naming if unit in below]
+            within = [unit for unit in naming if approval_walk_unit_is_presented_unit_or_one_of_its_sub_steps(
+                walk_finder, units, presented[above], above, unit)]
             return within[0] if len(within) == 1 else None
     return None
 

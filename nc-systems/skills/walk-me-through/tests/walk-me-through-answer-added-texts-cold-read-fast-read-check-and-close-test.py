@@ -1056,6 +1056,23 @@ def test_close_decides_a_reused_number_that_shares_its_parent_s_heading_through_
           described(closed) + case.minutes.read_text() + repr(case.gh_comments()))
 
 
+def test_close_resolves_a_reused_number_to_its_parent_s_shared_heading_after_an_older_version_was_presented():
+    for minutes, presented in [
+            ("#next_to_present item 3.1.1 of 12\n" + approved_line("item 3.1.1 of 12")
+             + "#next_to_present item 3.1 of 9\n\n#next_to_present item 3.2 of 12\n", "3.1.1 of 12, 3.1 of 9, 3.2 of 12"),
+            (approved_line("item 3.1.1 of 12") + "#next_to_present item 3.2 of 12\n", "only 3.2 of 12")]:
+        pull_requests = held_pull_requests((501, [f"#held_on_ruling {WALK_NAME} item 3"]))
+        case = Case(next_to_present="item 3.2 of 12", document=SHARED_PARENT_HEADING_REUSED_NUMBER_DOCUMENT)
+        case.minutes.write_text("# Minutes\n\n" + minutes)
+        case.run("check")
+        closed = case.run("close", environment=gh_environment(pull_requests))
+        check(f"with minutes presenting {presented}, 3.1 resolves to the presented `Items 3 and 3.1 of 12` itself, so "
+              "approving 3.2 after 3.1.1 decides 3.1 and 3, and close posts 3's ruling and names item 4",
+              closed.returncode == 0 and case.gh_comments() == [("501", f"#ruling_given {WALK_NAME} item 3 approved")]
+              and marker(case).rsplit(" of ", 1)[0] == "#next_to_present item 4",
+              described(closed) + case.minutes.read_text() + repr(case.gh_comments()))
+
+
 def test_close_drops_a_reused_number_s_older_unit_once_its_parent_is_presented_again():
     pull_requests = held_pull_requests((501, [f"#held_on_ruling {WALK_NAME} item 3.1"]))
     document = ("# A walk\n\n## Item 3 of 9: three\n\nA.\n\n### Item 3.1 of 9: the first half\n\nB.\n\n"
