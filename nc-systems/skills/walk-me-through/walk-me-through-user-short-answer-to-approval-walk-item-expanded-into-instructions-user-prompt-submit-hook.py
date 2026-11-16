@@ -698,10 +698,9 @@ def recommendations_in(lines, openings, spans, walk_finder, starts):
     item's opening, since an opening missed leaves the part before it running on into the next item's text."""
     found, problems, parts = {}, {}, {}
     for numbers, unit_total, _, first, end in spans:
-        ranges = {number: (first, end) for number in numbers}
+        ranges = {number: walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
+            openings, first, end, number, numbers, unit_total) for number in numbers}
         if len(numbers) > 1:
-            ranges = {number: walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
-                openings, first, end, number, numbers, unit_total) for number in numbers}
             # Only an item with no opening of its own has a range that starts at the unit's heading.
             missing = [number for number in numbers if ranges[number][0] == first]
             # Only the items' own lines, so a Withdrawn version's recommendation is not counted.
