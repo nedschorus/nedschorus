@@ -247,37 +247,43 @@ try:
               two_names.stdout.startswith("1:"),
               f"stdout {two_names.stdout!r}, stderr {two_names.stderr!r}")
     refusal = run_main("grep -f -? notes.txt", option_values)
-    check("refused: grep -f -? notes.txt, whose value expands to -a and -n, naming -n, "
-          "the one grep reads as an option",
+    check("refused: grep -f -? notes.txt, whose value expands to -a and -n, listing both",
           refusal == (
-              "[rule bash-guard-search-file-name-read-as-option] Refused: -?, the value of -f, expands to two or more names. The shell passes "
-              "only the first of them as -f's value, and grep reads each of the others as one "
-              "more word, and a name beginning with - as an option, such as -n. "
+              "[rule bash-guard-search-file-name-read-as-option] Refused: -?, the value of -f, "
+              "expands to two or more names, among them -a, -n. The shell passes only the "
+              "first of the names, in its sort order, as -f's value, and grep reads each of "
+              "the others as one more word, and any of them that begins with - as an option. "
               "-- cannot fix this.\n"
               "If you meant one of the names, write that name in place of -?.\n"
               "If you meant every name -? matches, give -f once before each name.\n"
               "If you meant a file named -? itself, quote -?.\n"
               "Then run the command again."),
           repr(refusal))
-    # The name reported does not depend on the order the directory lists its entries in.
     real_iglob = guard.glob.iglob
-    for listing in (["/d/-a", "/d/-n"], ["/d/-n", "/d/-a"]):
-        guard.glob.iglob = lambda pattern, recursive=False, listing=listing: iter(listing)
+
+    def listed_names(listing):
+        """Return the names the refusal of grep -f * x lists when the directory lists these."""
+        guard.glob.iglob = lambda pattern, recursive=False: iter("/d/" + n for n in listing)
         try:
-            name = guard.dash_name_among_two_or_more_expansions(
-                guard.GLOB_CHARACTER_MARKERS["*"], "/d", float("inf"), lambda: 0.0)
+            refusal = guard.analyze_command_text("grep -f * x", "/d") or ""
         finally:
             guard.glob.iglob = real_iglob
-        check(f"listed as {listing}, the name reported is -n, not the first in byte order",
-              name == "-n", repr(name))
-    guard.glob.iglob = lambda pattern, recursive=False: iter(["/d/a", "/d/-z"])
-    try:
-        name = guard.dash_name_among_two_or_more_expansions(
-            guard.GLOB_CHARACTER_MARKERS["*"], "/d", float("inf"), lambda: 0.0)
-    finally:
-        guard.glob.iglob = real_iglob
-    check("with -z and a, the one dash name -z is reported though it is first in byte order",
-          name == "-z", repr(name))
+        match = re.search(r"among them (.*?)\. The shell", refusal)
+        return match.group(1) if match else repr(refusal)
+
+    # The list does not depend on the order the directory lists its entries in.
+    for listing in (["b", "-n", "a"], ["-n", "a", "b"], ["a", "b", "-n"]):
+        listed = listed_names(listing)
+        check(f"listed as {listing}, the refusal lists -n, a, b", listed == "-n, a, b", listed)
+    listed = listed_names(["A", "-z", "-b", "0"])
+    check("names beginning with - come first though others sort before them in byte order",
+          listed == "-b, -z, 0, A", listed)
+    ten = ["-n"] + [f"f{number}" for number in range(9)]
+    listed = listed_names(ten)
+    check("ten matched names are all listed", listed == ", ".join(ten), listed)
+    listed = listed_names([f"f{number:02}" for number in range(20)] + ["-x", "-y"])
+    check("of 22 matched names, ten are listed, the names beginning with - among them",
+          listed == ", ".join(["-x", "-y"] + [f"f{number:02}" for number in range(8)]), listed)
     # A later search that -- cannot fix leaves no command to suggest for the earlier one.
     refusal = run_main("grep needle *; grep -f -? notes.txt", option_values) or ""
     check("refused with no command: grep needle *; grep -f -? notes.txt, whose second "
@@ -564,6 +570,17 @@ try:
                    clock=clock_past_the_budget_on_its_third_reading) is None)
     check("the budget is read during that walk, after the 256th name",
           len(readings_taken) == 3, str(len(readings_taken)))
+    readings_taken.clear()
+    real_iglob = guard.glob.iglob
+    guard.glob.iglob = lambda pattern, recursive=False: iter(
+        ["/d/-a", "/d/-n"] + [f"/d/file-{number:03}" for number in range(300)])
+    try:
+        refusal = run_main("grep -f * x", "/d",
+                           clock=clock_past_the_budget_on_its_third_reading)
+    finally:
+        guard.glob.iglob = real_iglob
+    check("passes when the budget is spent walking an option's value after -a and -n are found",
+          refusal is None and len(readings_taken) == 3, repr(refusal))
 
     for raw in [json.dumps({"tool_name": "Edit"}),
                 json.dumps({"tool_name": "Bash", "tool_input": {}}),
