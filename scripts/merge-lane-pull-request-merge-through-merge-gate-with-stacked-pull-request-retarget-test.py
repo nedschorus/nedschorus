@@ -12,7 +12,8 @@ from a routes file the case writes, keyed by its first two arguments, or, for
 `gh api`, by whether it reads or deletes the branch; it does not filter `gh pr list` by base
 branch, so the program's own filter is what each stacked case tests; a route
 may remove a directory, such as origin, when it is called, or move origin's main
-to a commit. A case may give the clone an upload-pack for origin that, once the
+to a commit. A case may make the merge commit a new commit the clone lacks,
+and may give the clone an upload-pack for origin that, once the
 merge has run, runs another fetch into the clone while the program's fetch
 waits, as another agent-seat's fetch into the same clone does. The
 waits between gate runs go to a list instead of sleeping. A case may make the
@@ -219,6 +220,7 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
              git_fails_after_merge_on=None, git_killed_before_the_merge_on=None,
              runner_answer=None, head_test_run_test_logs=(),
              origin_files=None, before_the_program_runs=None,
+             merge_commit_new_to_the_clone=False,
              another_fetch_races_the_after_merge_fetch=False):
     """Run main() once; return (exit code, output, gh calls, gate calls, waits).
 
@@ -241,9 +243,10 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
     origin_files: path -> body, added to origin's one commit.
     before_the_program_runs: None, or a function given the case's directory, called last
     before main() runs.
-    another_fetch_races_the_after_merge_fetch: the merge commit is a new commit the clone
-    lacks, which the merge command makes origin's main, and the clone's upload-pack is
-    COMPETING_FETCH_UPLOAD_PACK.
+    merge_commit_new_to_the_clone: the merge commit is a new commit the clone lacks, which
+    a "pr merge" route with origin_main_to can make origin's main.
+    another_fetch_races_the_after_merge_fetch: as merge_commit_new_to_the_clone, and the
+    clone's upload-pack is COMPETING_FETCH_UPLOAD_PACK.
 
     review_tools_state: "at-main", "behind-main" (origin/main moved on after the
     clone), "no-origin" (the clone's origin is gone) or "no-gate".
@@ -284,11 +287,12 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
     review_tools = directory / "review-tools"
     git("clone", "-q", str(origin), str(review_tools))
     git("checkout", "-q", "--detach", "origin/main", cwd=review_tools)
-    if another_fetch_races_the_after_merge_fetch:
+    if merge_commit_new_to_the_clone or another_fetch_races_the_after_merge_fetch:
         seed = directory / "origin-seed"
         git("commit", "-q", "--allow-empty", "-m", "Merge pull request #10", cwd=seed)
         # Not under refs/heads, so the fetch before the gate does not bring it into the clone.
         git("push", "-q", str(origin), "HEAD:refs/merge-test/merge-commit", cwd=seed)
+    if another_fetch_races_the_after_merge_fetch:
         upload_pack = directory / "competing-fetch-upload-pack"
         upload_pack.write_text(COMPETING_FETCH_UPLOAD_PACK)
         upload_pack.chmod(0o755)
@@ -1235,6 +1239,27 @@ def main():
               and len(calls) == 1 and calls[0]["cwd"].endswith(
                   "pr10-merge-commit-on-main-worktree"),
               f"exit {exit_code}\n{output}")
+
+        routes = default_routes(STACKED_AND_NOT)
+        routes["pr merge"] = {"origin_main_to": "MERGE_COMMIT", "origin": "ORIGIN"}
+        exit_code, output, _, _, _ = run_case(
+            scratch, "fetch-head-kept-after-merge", [(GATE_PASSED, 0)], routes,
+            merge_commit_new_to_the_clone=True)
+        kept = scratch / "fetch-head-kept-after-merge"
+        merge_commit = subprocess.run(
+            ["git", "-C", str(kept / "origin-seed"), "rev-parse", "HEAD"], capture_output=True,
+            text=True, env=GIT_ENVIRONMENT, check=True).stdout.strip()
+        fetch_head = subprocess.run(
+            ["git", "-C", str(kept / "review-tools"), "rev-parse", "--git-path", "FETCH_HEAD"],
+            capture_output=True, text=True, env=GIT_ENVIRONMENT, check=True).stdout.strip()
+        fetch_head_text = (kept / "review-tools" / fetch_head).read_text()
+        # The review program reads FETCH_HEAD after its own fetch in the same worktree, so an
+        # after-merge fetch that wrote it could hand that program the merge commit.
+        check("the after-merge fetch leaves the review tools worktree's FETCH_HEAD as the fetch "
+              "before the gate wrote it",
+              exit_code == 0 and RUNNER_PASSED_SUMMARY in output
+              and merge_commit not in fetch_head_text and "branch 'main'" in fetch_head_text,
+              f"exit {exit_code}\nFETCH_HEAD: {fetch_head_text}\n{output}")
 
         routes = default_routes(STACKED_AND_NOT)
         routes["pr merge"] = {"remove_directory": "ORIGIN"}
