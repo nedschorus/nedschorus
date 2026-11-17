@@ -338,8 +338,11 @@ def recordings_matching_the_merge_commit_adopted(worktree, source, which_source,
     try:
         adopted = runner.adopt_passing_recordings_that_match_the_checkout(worktree, into, [source])
     except (runner.CouldNotRun, OSError) as error:
+        # A refusal's lines after its first tell the agent to rerun the runner, which is not
+        # what failed here; the lines below say what to do instead.
+        what_failed = str(error).partition("\n")[0]
         print(f"STOP: merged, but the recordings in {source}, {which_source}, were not adopted "
-              f"into {into}: {error}\n"
+              f"into {into}: {what_failed}\n"
               f"{without_them} Nothing else waits on this adoption: the program goes on and "
               f"exits 3, and the next merge adopts its own recordings.\n"
               f"If the error names a cause you can fix, fix it; nothing needs to be run again. "

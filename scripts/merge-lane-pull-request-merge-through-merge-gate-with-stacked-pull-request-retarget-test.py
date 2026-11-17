@@ -825,6 +825,23 @@ def main():
                                    "testing main at the merge commit", RUNNER_PASSED_SUMMARY)
               and len(runner_calls(scratch, name)) == 1, f"exit {exit_code}\n{output}")
 
+        name = "recordings-not-adopted-git-killed"
+        exit_code, output, _, _, _ = run_case(
+            scratch, name, [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+            origin_files={RECORDED_SUITE: "print('ok')\n"},
+            git_fails_after_merge_on=(" ls-tree ", "kill"))
+        stop_lines = [line for line in output.splitlines() if line.startswith("STOP:")]
+        check("an adoption whose git ls-tree is killed by a signal exits 3 with STOP lines that "
+              "carry the runner's first line, saying git printed no error, and none of the "
+              "runner's own next steps",
+              exit_code == 3 and len(stop_lines) == 3
+              and all("were not adopted into" in line
+                      and line.endswith("failed in "
+                                        f"{scratch / name / 'review-worktrees' / 'pr10-merge-commit-on-main-worktree'}"
+                                        ": git printed no error")
+                      for line in stop_lines)
+              and "run-all-test-suites.py command" not in output, f"exit {exit_code}\n{output}")
+
         def only_the_after_run_adoption_can_fail(directory):
             after_merge_test_run_recording(directory)
             (directory / "outputs" / "hr" / "store").mkdir(parents=True)
