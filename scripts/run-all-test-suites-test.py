@@ -1129,6 +1129,45 @@ try:
         refused = str(refusal)
     check("recordings_directory_for refuses when git cannot resolve HEAD",
           refused is not None and "fatal: injected" in refused, refused)
+
+    # A git killed by a signal prints nothing; a git that fails may print several lines.
+    for how, status, stderr, error in (
+            ("exits 128 printing two lines", 128, "fatal: injected\nmore\n", "fatal: injected"),
+            ("is killed by a signal printing nothing", -9, "", "git printed no error")):
+        for label, answers, call in [
+                ("git ls-files of the suites", [(("ls-files", module.TEST_SUITE_PATHSPEC),)],
+                 lambda: module.suites_listed_by_git(pathlib.Path("/nowhere"))),
+                ("git ls-files of the checkout", [(("ls-files", "--cached"),)],
+                 lambda: module.checkout_files(pathlib.Path("/nowhere"))),
+                ("git ls-tree", [(("ls-tree",),)],
+                 lambda: module.files_at_commit(pathlib.Path("/nowhere"), "abc123")),
+                ("git diff", [(("diff",),)],
+                 lambda: module.files_that_differ_since(pathlib.Path("/nowhere"), "abc123")),
+                ("git ls-files --others", [(("diff",), 0, "", ""), (("ls-files", "--others"),)],
+                 lambda: module.files_that_differ_since(pathlib.Path("/nowhere"), "abc123"))]:
+            module.git = git_answering([answer if len(answer) == 4 else
+                                        (answer[0], status, "", stderr) for answer in answers])
+            try:
+                call()
+                refused = None
+            except module.CouldNotRun as refusal:
+                refused = str(refusal)
+            check(f"a {label} that {how} is refused with git's first error line, or with "
+                  f"words saying git printed none, ending the refusal's first line",
+                  refused is not None
+                  and refused.splitlines()[0].endswith(f" failed in /nowhere: {error}")
+                  and "\nmore\n" not in refused, refused)
+        for label, answers, call, expected in [
+                ("commit_and_state", [(("rev-parse",), status, "", stderr),
+                                      (("status",), 0, "", "")],
+                 lambda: module.commit_and_state(pathlib.Path("/nowhere"))[0],
+                 f"commit unknown (git rev-parse HEAD exited {status}: {error})"),
+                ("branch_of_checkout", [(("symbolic-ref",), status, "", stderr)],
+                 lambda: module.branch_of_checkout(pathlib.Path("/nowhere")),
+                 f"branch unknown (git symbolic-ref HEAD exited {status}: {error})")]:
+            module.git = git_answering(answers)
+            check(f"{label} records git's first error line, or words saying git printed "
+                  f"none, when git {how}: {expected}", call() == expected, call())
 finally:
     module.git = real_program_git
 

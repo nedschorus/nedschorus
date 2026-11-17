@@ -186,7 +186,8 @@ STACKED_AND_NOT = [{"number": 20, "baseRefName": BRANCH},
 
 def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_state="at-main",
              review_worktrees_state="none", git_killed_on_worktree_remove=None,
-             git_fails_after_merge_on=None, runner_answer=None, head_test_run_test_logs=(),
+             git_fails_after_merge_on=None, git_killed_before_the_merge_on=None,
+             runner_answer=None, head_test_run_test_logs=(),
              origin_files=None, before_the_program_runs=None):
     """Run main() once; return (exit code, output, gh calls, gate calls, waits).
 
@@ -196,6 +197,8 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
     command must hold for the fake git to kill itself; "" kills on every one.
     git_fails_after_merge_on: None, or (text, "kill" or "exit 1"): once the
     merge has run, a git command holding text is killed by SIGKILL or exits 1.
+    git_killed_before_the_merge_on: None, or the text a git command run before
+    the merge must hold for the fake git to kill itself.
     runner_answer: None, for a fake runner that passes, or (output, exit code);
     a negative exit code -N makes the fake runner kill itself with signal N.
     head_test_run_test_logs: (file name, contents) pairs, each written as a head
@@ -234,6 +237,13 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
             f'if [ -e "{directory}/merge-ran" ]; then case " $* " in *"{text}"*) '
             f'{"kill -9 $$" if failure == "kill" else "echo fake git failed >&2; exit 1"};; '
             'esac; fi\n'
+            f'exec {shutil.which("git")} "$@"\n')
+        (bin_directory / "git").chmod(0o755)
+    if git_killed_before_the_merge_on is not None:
+        (bin_directory / "git").write_text(
+            '#!/bin/bash\n'
+            f'if [ ! -e "{directory}/merge-ran" ]; then case " $* " in '
+            f'*"{git_killed_before_the_merge_on}"*) kill -9 $$;; esac; fi\n'
             f'exec {shutil.which("git")} "$@"\n')
         (bin_directory / "git").chmod(0o755)
     origin = origin_with_one_commit(directory, origin_files)
@@ -494,7 +504,7 @@ def main():
             review_worktrees_state="both", git_killed_on_worktree_remove="")
         check("a git worktree remove killed by a signal exits 3 after the merge",
               exit_code == 3 and "STOP: merged, but the review worktree" in output
-              and "exited -9" in output, f"exit {exit_code}\n{output}")
+              and "exited -9: git printed no error\n" in output, f"exit {exit_code}\n{output}")
 
         exit_code, output, gh_calls, _, _ = run_case(
             scratch, "none-stacked", [(GATE_PASSED, 0)],
@@ -632,6 +642,17 @@ def main():
         check("a review tools worktree that cannot fetch origin stops before the gate, exit 2",
               exit_code == 2 and gate_calls == [] and gh_calls == []
               and "could not fetch origin" in output, f"exit {exit_code}\n{output}")
+
+        for failing, words in ((" fetch ", "main's cannot be told"),
+                               (" rev-parse ", "could not read HEAD and origin/main in")):
+            exit_code, output, gh_calls, gate_calls, _ = run_case(
+                scratch, f"review-tools{failing.replace(' ', '-')}killed", [(GATE_PASSED, 0)],
+                default_routes(STACKED_AND_NOT), git_killed_before_the_merge_on=failing)
+            check(f"a git{failing}in the review tools worktree killed by a signal stops before "
+                  f"the gate, exit 2, saying git printed no error",
+                  exit_code == 2 and gate_calls == [] and gh_calls == []
+                  and words in output and ": git printed no error\n" in output,
+                  f"exit {exit_code}\n{output}")
 
         exit_code, output, gh_calls, gate_calls, _ = run_case(
             scratch, "no-gate", [(GATE_PASSED, 0)],
@@ -803,6 +824,23 @@ def main():
                                    f"recordings in {default} do not match the merge commit",
                                    "testing main at the merge commit", RUNNER_PASSED_SUMMARY)
               and len(runner_calls(scratch, name)) == 1, f"exit {exit_code}\n{output}")
+
+        name = "recordings-not-adopted-git-killed"
+        exit_code, output, _, _, _ = run_case(
+            scratch, name, [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+            origin_files={RECORDED_SUITE: "print('ok')\n"},
+            git_fails_after_merge_on=(" ls-tree ", "kill"))
+        stop_lines = [line for line in output.splitlines() if line.startswith("STOP:")]
+        check("an adoption whose git ls-tree is killed by a signal exits 3 with STOP lines that "
+              "carry the runner's first line, saying git printed no error, and none of the "
+              "runner's own next steps",
+              exit_code == 3 and len(stop_lines) == 3
+              and all("were not adopted into" in line
+                      and line.endswith("failed in "
+                                        f"{scratch / name / 'review-worktrees' / 'pr10-merge-commit-on-main-worktree'}"
+                                        ": git printed no error")
+                      for line in stop_lines)
+              and "run-all-test-suites.py command" not in output, f"exit {exit_code}\n{output}")
 
         def only_the_after_run_adoption_can_fail(directory):
             after_merge_test_run_recording(directory)
@@ -1157,7 +1195,8 @@ def main():
               "naming it and the command to remove it",
               exit_code == 3 and RUNNER_PASSED_SUMMARY in output
               and f"STOP: merged, but the worktree {merge_commit_worktree} was not removed" in output
-              and f"worktree remove --force {merge_commit_worktree}" in output,
+              and f"worktree remove --force {merge_commit_worktree}" in output
+              and "remove exited -9: git printed no error\n" in output,
               f"exit {exit_code}\n{output}")
 
         exit_code, output, _, _, _ = run_case(
@@ -1165,7 +1204,8 @@ def main():
             default_routes(STACKED_AND_NOT), git_fails_after_merge_on=(" fetch ", "kill"))
         check("a fetch killed by a signal after the merge exits 3 without a test run",
               exit_code == 3 and runner_calls(scratch, "fetch-killed-after-merge") == []
-              and "could not make a worktree at the merge commit" in output,
+              and "could not make a worktree at the merge commit" in output
+              and "/review-tools: git printed no error\n" in output,
               f"exit {exit_code}\n{output}")
 
         exit_code, output, _, _, _ = run_case(
@@ -1173,7 +1213,8 @@ def main():
             default_routes(STACKED_AND_NOT), git_fails_after_merge_on=(" worktree add ", "kill"))
         check("a git worktree add killed by a signal exits 3 without a test run",
               exit_code == 3 and runner_calls(scratch, "worktree-add-killed") == []
-              and "could not make a worktree at the merge commit" in output,
+              and "could not make a worktree at the merge commit" in output
+              and "/review-tools: git printed no error\n" in output,
               f"exit {exit_code}\n{output}")
 
         exit_code, output, _, _, _ = run_case(

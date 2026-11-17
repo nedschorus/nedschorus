@@ -144,6 +144,11 @@ def run(command, environment):
                           stdin=subprocess.DEVNULL)
 
 
+def git_error(completed):
+    return (common.run_all_test_suites.first_line_of_error(completed)
+            or "git printed no error")
+
+
 def gh_error(completed):
     return completed.stderr.strip() or f"gh exited {completed.returncode} and printed no error"
 
@@ -175,13 +180,13 @@ def review_tools_worktree_not_at_main_message(worktree):
     fetch = git("fetch", "--quiet", "origin")
     if fetch.returncode != 0:
         return (f"could not fetch origin in {worktree}, so whether its merge-gate.sh is "
-                f"main's cannot be told: {fetch.stderr.strip()}\n"
+                f"main's cannot be told: {git_error(fetch)}\n"
                 f"Run this again once; if it fails the same way, tell the user this message.")
     head = git("rev-parse", "HEAD")
     main = git("rev-parse", "origin/main")
     if head.returncode != 0 or main.returncode != 0:
         return (f"could not read HEAD and origin/main in {worktree}: "
-                f"{(head.stderr or main.stderr).strip()}\n"
+                f"{git_error(head if head.returncode != 0 else main)}\n"
                 f"Tell the user this message.")
     if head.stdout.strip() != main.stdout.strip():
         return (f"{worktree} is at {head.stdout.strip()[:8]}, not at origin/main "
@@ -286,7 +291,7 @@ def review_worktrees_remove(arguments):
             env=common.run_all_test_suites.environment_without_git_redirecting_variables())
         if removal.returncode != 0:
             print(f"STOP: merged, but the review worktree {worktree} was not removed: git "
-                  f"worktree remove exited {removal.returncode}: {removal.stderr.strip()}\n"
+                  f"worktree remove exited {removal.returncode}: {git_error(removal)}\n"
                   f"If git names a cause you can fix, fix it and remove the worktree: "
                   f"git -C {checkout} worktree remove --force {worktree}\n"
                   f"Otherwise, tell the user this message.")
@@ -333,8 +338,11 @@ def recordings_matching_the_merge_commit_adopted(worktree, source, which_source,
     try:
         adopted = runner.adopt_passing_recordings_that_match_the_checkout(worktree, into, [source])
     except (runner.CouldNotRun, OSError) as error:
+        # A refusal's lines after its first tell the agent to rerun the runner, which is not
+        # what failed here; the lines below say what to do instead.
+        what_failed = str(error).partition("\n")[0]
         print(f"STOP: merged, but the recordings in {source}, {which_source}, were not adopted "
-              f"into {into}: {error}\n"
+              f"into {into}: {what_failed}\n"
               f"{without_them} Nothing else waits on this adoption: the program goes on and "
               f"exits 3, and the next merge adopts its own recordings.\n"
               f"If the error names a cause you can fix, fix it; nothing needs to be run again. "
@@ -384,7 +392,7 @@ def after_merge_test_run(arguments, merge_commit):
            if fetch.returncode == 0 else fetch)
     if add.returncode != 0:
         print(f"STOP: merged, but main was not tested: could not make a worktree at the "
-              f"merge commit {merge_commit} from {checkout}: {add.stderr.strip()}\n"
+              f"merge commit {merge_commit} from {checkout}: {git_error(add)}\n"
               f"If git names a cause you can fix, fix it; then, in a detached worktree at "
               f"{merge_commit}, run: {by_hand}\n"
               f"Otherwise, tell the user this message.")
@@ -460,7 +468,7 @@ def after_merge_test_run(arguments, merge_commit):
     removal = git("worktree", "remove", "--force", str(worktree))
     if removal.returncode != 0:
         print(f"STOP: merged, but the worktree {worktree} was not removed: git worktree "
-              f"remove exited {removal.returncode}: {removal.stderr.strip()}\n"
+              f"remove exited {removal.returncode}: {git_error(removal)}\n"
               f"If git names a cause you can fix, fix it and remove the worktree: "
               f"git -C {checkout} worktree remove --force {worktree}\n"
               f"Otherwise, tell the user this message.")
