@@ -50,7 +50,8 @@ whose recording there is stale, but whose recording in hr/store matches the
 merge commit, such as one the head test run passed on the same files, is then
 not selected again. After the run, it adopts from the runner's default
 directory, where the after-merge test run saved its recordings, into hr/store.
-It prints how many it adopted each time.
+It prints how many it adopted each time. A failed adoption or removal does not
+stop what follows: the program goes on, and exits 3.
 
 The merge command deletes the pull request's branch, and GitHub closes every
 open pull request whose base branch is deleted. The retarget is here, not in
@@ -334,8 +335,9 @@ def recordings_matching_the_merge_commit_adopted(worktree, source, which_source,
     except (runner.CouldNotRun, OSError) as error:
         print(f"STOP: merged, but the recordings in {source}, {which_source}, were not adopted "
               f"into {into}: {error}\n"
-              f"{without_them} Nothing else waits on this adoption.\n"
-              f"If the error names a cause you can fix, fix it. "
+              f"{without_them} Nothing else waits on this adoption: the program goes on and "
+              f"exits 3, and the next merge adopts again.\n"
+              f"If the error names a cause you can fix, fix it; nothing needs to be run again. "
               f"Otherwise, tell the user this message.")
         return False
     print(f"adopted {len(adopted)} recordings into {into} from {source}, {which_source}; a "
@@ -413,7 +415,7 @@ def after_merge_test_run(arguments, merge_commit):
         done_before_the_run = False
     # The run selects by the runner's default directory, which no head test run writes.
     done_before_the_run = recordings_matching_the_merge_commit_adopted(
-        worktree, store, "where merge-lane head test runs find the recordings they select by",
+        worktree, store, "the store merge-lane head test runs select by",
         runner.DEFAULT_RECORDED_INPUTS_DIRECTORY,
         f"So this after-merge test run selects the suites whose recordings in "
         f"{runner.DEFAULT_RECORDED_INPUTS_DIRECTORY} do not match the merge commit, and so may "

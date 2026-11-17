@@ -718,9 +718,8 @@ def main():
               "the runner's default recorded-inputs directory, which the run selects by",
               in_default == [RECORDED_SUITE.replace("/", "__") + ".json"]
               and printed_in_order(output, adopted_line,
-                                   f"adopted 1 recordings into {default} from {store}, where "
-                                   f"merge-lane head test runs find the recordings they select "
-                                   f"by; a recording is adopted only when",
+                                   f"adopted 1 recordings into {default} from {store}, the "
+                                   f"store merge-lane head test runs select by; a recording is adopted only when",
                                    "testing main at the merge commit"),
               f"{output}\n{in_default}")
         check("after the after-merge test run, recordings are adopted from the runner's "
@@ -797,8 +796,8 @@ def main():
               "still runs",
               exit_code == 3 and output.count("STOP:") == 1
               and printed_in_order(output,
-                                   f"STOP: merged, but the recordings in {store}, where merge-lane "
-                                   f"head test runs find the recordings they select by, were not "
+                                   f"STOP: merged, but the recordings in {store}, the store "
+                                   f"merge-lane head test runs select by, were not "
                                    f"adopted into {default}: ",
                                    f"So this after-merge test run selects the suites whose "
                                    f"recordings in {default} do not match the merge commit",
@@ -853,8 +852,10 @@ def main():
               and f"STOP: merged, but the recordings in {saved}, where this pull request's "
                   f"head test runs saved their recordings, were not adopted into "
                   f"{scratch / name / 'outputs' / 'hr' / 'store'}" in output
-              and ("Nothing else waits on this adoption.\nIf the error names a cause you can "
-                   "fix, fix it. Otherwise, tell the user this message.") in output
+              and ("Nothing else waits on this adoption: the program goes on and exits 3, and "
+                   "the next merge adopts again.\nIf the error names a cause you can fix, fix "
+                   "it; nothing needs to be run again. Otherwise, tell the user this message.")
+              in output
               and f"remove {saved}" not in output
               and not saved.exists() and len(runner_calls(scratch, name)) == 1
               and not merge_commit_worktree.exists(), f"exit {exit_code}\n{output}")
