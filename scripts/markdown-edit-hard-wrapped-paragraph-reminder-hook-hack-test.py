@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for markdown-edit-hard-wrapped-paragraph-reminder-hook-nbd.py.
+"""Tests for markdown-edit-hard-wrapped-paragraph-reminder-hook-hack.py.
 
-Run: python3 scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook-nbd-test.py
+Run: python3 scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook-hack-test.py
 Prints one line per case and exits non-zero if any case fails.
 
 The detector's cases call markdown_has_hard_wrapped_paragraph directly. The
@@ -36,7 +36,7 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
-HOOK_PATH = Path(__file__).with_name("markdown-edit-hard-wrapped-paragraph-reminder-hook-nbd.py")
+HOOK_PATH = Path(__file__).with_name("markdown-edit-hard-wrapped-paragraph-reminder-hook-hack.py")
 
 CLEAN_ENVIRONMENT = {name: value for name, value in os.environ.items()
                      if name not in _git_environment_fixture.GIT_REDIRECTING_ENVIRONMENT_VARIABLES}
@@ -53,7 +53,7 @@ def check(case_name, condition, detail=""):
 
 
 specification = importlib.util.spec_from_file_location(
-    "markdown_edit_hard_wrapped_paragraph_reminder_hook_nbd", str(HOOK_PATH))
+    "markdown_edit_hard_wrapped_paragraph_reminder_hook_hack", str(HOOK_PATH))
 hook = importlib.util.module_from_spec(specification)
 specification.loader.exec_module(hook)
 parser_common = hook.markdown_commonmark_parser_with_tables_common()

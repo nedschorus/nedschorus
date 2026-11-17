@@ -3,7 +3,7 @@
 
 Run from the top level of a clean checkout:
 
-    python3 scripts/glossary-term-agent-facing-message-replaced-by-tool-message-to-agent-in-repository-nbd.py
+    python3 scripts/glossary-term-agent-facing-message-replaced-by-tool-message-to-agent-in-repository-hack.py
 
 What it does: moves each file listed in MOVED_FILES_NEW_PATHS with `git mv`, then rewrites every
 spelling of the term in every file git tracks: kebab-case in prose and file names, snake_case and
@@ -34,7 +34,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-THIS_SCRIPT = "scripts/glossary-term-agent-facing-message-replaced-by-tool-message-to-agent-in-repository-nbd.py"
+THIS_SCRIPT = "scripts/glossary-term-agent-facing-message-replaced-by-tool-message-to-agent-in-repository-hack.py"
 
 # Each moved file's new path. Its old path is derived by OLD_NAME_PARTS, so no line of this
 # script cites a path the rename removes: branch-leaves-no-citations-of-removed-paths-test.py

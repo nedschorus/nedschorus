@@ -235,7 +235,7 @@ _COMMAND_PREFIX = r"\s*(?:(?:(?:cd|export)[ \t]+" + _WORD + r"|[A-Za-z_]\w*=(?:"
 _TO_THE_END = _REDIRECTIONS + r"[ \t]*;?\s*"
 _WATCHER = (r"(?:bash[ \t]+|python3(?:[ \t]+-u)?[ \t]+)?(?:" + _WORD + r"/)?"
             r"(?:watch-and-merge-provisional[\w.-]*|wait-review-runs[\w.-]*"
-            r"|wait-for-next-pull-request-event[\w.-]*|watch-open-pull-requests-nbd\.py)"
+            r"|wait-for-next-pull-request-event[\w.-]*|watch-open-pull-requests-hack\.py)"
             + _ARGUMENTS + _REDIRECTIONS
             + r"""(?:[ \t]*\|[ \t]*(?:grep[ \t]+-v[ \t]+(?:'[^']*'|"[^"`$\\]*")|tail[ \t]+-n?[ \t]*\d+))*""")
 _LOOP_CONDITION_CHECK = r"(?:![ \t]+)?(?:grep|pgrep|kill[ \t]+-0|test|\[|true|:)" + _ARGUMENTS + _REDIRECTIONS
