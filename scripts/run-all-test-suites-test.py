@@ -2331,6 +2331,66 @@ with tempfile.TemporaryDirectory() as scratch:
           "of cases, so it recorded only what the cases that ran read" in lines(result.stdout),
           result.stdout)
 
+# A suite a cause outside this repository stopped, such as claude's usage limit, is NOT RUN,
+# not FAIL, and names the cause; a failing case in the same run still fails the run.
+OUTSIDE_CAUSE_EXIT = module.NC_TEST_SUITE_EXIT_CODE_FOR_NOT_RUN_BECAUSE_A_CAUSE_OUTSIDE_THIS_REPOSITORY_STOPPED_ITS_CASES
+STOPPED_BY_WEEKLY_LIMIT = ("print('PASS  a case that needs no claude')\n"
+                           "print(\"NOT RUN: the trial; claude stopped: account-limit — weekly limit · "
+                           "resets Nov 16, 8pm (America/Los_Angeles)\")\n"
+                           f"sys.exit({OUTSIDE_CAUSE_EXIT})\n")
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"claude-limit-test.py": STOPPED_BY_WEEKLY_LIMIT, "passes-test.py": PASSES})
+    base = head(repo)
+    result = run(root)
+    not_run_lines = [line for line in lines(result.stdout)
+                     if line.startswith(module.NOT_RUN_SUITE_LINE_PREFIX + "claude-limit-test.py ")]
+    check("a suite that exits the outside-cause exit code is NOT RUN, not FAIL, with its last line "
+          "as the cause, and the run exits 2 with no suite failed",
+          result.returncode == module.EXIT_COULD_NOT_RUN
+          and len(not_run_lines) == 2
+          and all("stopped by an outside cause: NOT RUN: the trial; claude stopped: account-limit — "
+                  "weekly limit · resets Nov 16, 8pm (America/Los_Angeles)" in line for line in not_run_lines)
+          and not any(line.startswith(module.FAILED_SUITE_LINE_PREFIX) for line in lines(result.stdout))
+          and any(line.startswith(module.SUMMARY_LINE_PREFIX) and " 1 passed, 0 failed, 1 not run, " in line
+                  for line in lines(result.stdout)), (result.returncode, result.stdout))
+    commit_files(repo, {"other.txt": "x\n"}, "unrelated")
+    result = select_since(root, base)
+    check("a suite NOT RUN for an outside cause is selected again by the next selective run",
+          "claude-limit-test.py" in ran(root) and "passes-test.py" not in ran(root),
+          (ran(root), result.stdout))
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"claude-limit-test.py": STOPPED_BY_WEEKLY_LIMIT, "fails-test.py": "sys.exit(1)\n"})
+    result = run(root)
+    check("beside a suite NOT RUN for an outside cause, a failing suite still makes the run exit 1",
+          result.returncode == module.EXIT_SOME_FAILED
+          and any(line.startswith(module.NOT_RUN_SUITE_LINE_PREFIX + "claude-limit-test.py ")
+                  for line in lines(result.stdout)), (result.returncode, result.stdout))
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"silent-test.py": f"sys.exit({OUTSIDE_CAUSE_EXIT})\n",
+                     "long-cause-test.py": f"print('x' * 1000)\nsys.exit({OUTSIDE_CAUSE_EXIT})\n",
+                     "passes-test.py": PASSES})
+    result = run(root, "--stop-at-first-failing-suite", "-j", "1")
+    long_line = next((line for line in lines(result.stdout)
+                      if line.startswith(module.NOT_RUN_SUITE_LINE_PREFIX + "long-cause-test.py ")), "")
+    check("a suite that exits the outside-cause exit code with no output is NOT RUN with "
+          "\"its output names no cause\", a long last line is cut to "
+          "SUITE_STOPPED_BY_AN_OUTSIDE_CAUSE_REASON_MAX_CHARACTERS, and neither stops a run "
+          "given --stop-at-first-failing-suite",
+          result.returncode == module.EXIT_COULD_NOT_RUN
+          and any(line.startswith(module.NOT_RUN_SUITE_LINE_PREFIX + "silent-test.py stopped by an "
+                                  "outside cause: its output names no cause")
+                  for line in lines(result.stdout))
+          and "x" * module.SUITE_STOPPED_BY_AN_OUTSIDE_CAUSE_REASON_MAX_CHARACTERS + " (" in long_line
+          and "x" * (module.SUITE_STOPPED_BY_AN_OUTSIDE_CAUSE_REASON_MAX_CHARACTERS + 1) not in long_line
+          and "passes-test.py" in ran(root) and "stopped at" not in result.stdout,
+          (result.returncode, result.stdout))
+    check("the last output line of a log that cannot be read is empty",
+          module.last_output_line(root / "no-such.log") == "")
+
 # A run killed by SIGKILL leaves its suites' strace directories behind. On
 # Linux a later run removes them only when the killed run's record shows that
 # nothing of it still runs.

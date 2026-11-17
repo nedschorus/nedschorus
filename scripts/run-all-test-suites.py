@@ -78,7 +78,7 @@ Usage:
                 once a suite fails, kill the suites running beside it, as a
                 stop signal does, and start no other; the run exits 1, and
                 each suite killed is reported as stopped, not as failed. A
-                suite whose nc-test-sandbox did not start does not stop the run
+                suite NOT RUN, as HOW EACH SUITE IS JUDGED says, does not stop the run
   --only-suites-named SUITE [SUITE ...]
                 run only these suites, each named by its path from the
                 checkout's top directory, as git lists it; a name git does
@@ -122,9 +122,14 @@ refused.
 
 HOW EACH SUITE IS JUDGED. By its exit code, and nothing else: 0 is PASS,
 anything else is FAIL, and a suite killed by a signal is FAIL naming the
-signal. The one exception is a suite whose nc-test-sandbox bwrap could not
-build: no test ran, so it is NOT RUN, not FAIL, and its recording keeps
-bwrap's exit, so the next selective run selects it again. The suites print
+signal. Two exceptions are NOT RUN, not FAIL, and each one's recording keeps
+its nonzero exit, so the next selective run selects it again. One is a suite
+whose nc-test-sandbox bwrap could not build: no test ran. The other is a suite
+that exits NC_TEST_SUITE_EXIT_CODE_FOR_NOT_RUN_BECAUSE_A_CAUSE_OUTSIDE_THIS_REPOSITORY_STOPPED_ITS_CASES, 75: a
+cause outside this repository, such as claude's usage limit or claude being
+logged out, kept its cases from running, and its last line of output, which
+the NOT RUN line repeats, names that cause. A suite exits 1, not 75, when any
+of its cases failed, so a failure is never hidden behind the cause. The suites print
 at least four different success wordings, so no text can be trusted to mean pass or fail. Each suite runs as
 `<interpreter> -u <path>`, or `sh <path>` for a `*-test.sh` suite, from the
 checkout's top directory, stdin closed,
@@ -473,7 +478,8 @@ OUTPUT. A first line naming the checkout, its commit, whether tracked files
 differ from that commit, the suite count, the interpreter's own --version
 answer and path, -j, and the log directory. Then one line per suite as it
 finishes: `PASS <path> (<seconds>s)`, `FAIL <path> exit <code>
-(<seconds>s)` or `NOT RUN <path> did not start: ...`, with `, <n> skipped`
+(<seconds>s)`, `NOT RUN <path> did not start: ...` or `NOT RUN <path>
+stopped by an outside cause: <the suite's last line>`, with `, <n> skipped`
 when it printed SKIP lines. Then the failed suites again, each with its log,
 the suites not run, each with its log, and every SKIP line, each with its
 suite, so the end of the output holds everything needed. The last line
@@ -809,8 +815,8 @@ these.
 
 EXIT. 0 when every suite exited 0; 1 when any suite failed, even in a run
 that was then stopped or not run to the end; 2 when no suite
-failed but the run gave no full verdict: a suite was not run because its
-nc-test-sandbox did not start, the run was not run to the end, its records
+failed but the run gave no full verdict: a suite was NOT RUN, as HOW EACH
+SUITE IS JUDGED says, the run was not run to the end, its records
 could not be written, or the run could not start (not a checkout's top
 directory, no suites listed, git or the interpreter unusable, a COMMIT git
 cannot resolve, a suite --only-suites-named names that git does not list, a
@@ -1084,6 +1090,9 @@ ADMISSION_WAITED_LINE_PREFIX = "seconds suites waited for admission: "
 # Readers of the runner's output pick its lines apart by these.
 FAILED_SUITE_LINE_PREFIX = "FAIL "
 NOT_RUN_SUITE_LINE_PREFIX = "NOT RUN "
+# EX_TEMPFAIL of sysexits.h: no suite exits 75 for any other reason.
+NC_TEST_SUITE_EXIT_CODE_FOR_NOT_RUN_BECAUSE_A_CAUSE_OUTSIDE_THIS_REPOSITORY_STOPPED_ITS_CASES = 75
+SUITE_STOPPED_BY_AN_OUTSIDE_CAUSE_REASON_MAX_CHARACTERS = 300
 NO_SANDBOX_SUITE_LEFT_OUT_OF_SELECTIVE_TEST_RUN_LINE_PREFIX = "NO-SANDBOX SUITE LEFT OUT OF SELECTIVE TEST RUN "
 SUITE_THAT_RUNS_THE_REAL_CLAUDE_CLI_LEFT_OUT_OF_TEST_RUN_LINE_PREFIX = "SUITE THAT RUNS THE REAL CLAUDE CLI LEFT OUT OF TEST RUN "
 SUITE_LINE_LOG_MARK = " — log "
@@ -3000,6 +3009,15 @@ def skipped_case_lines(log_file):
     return [line for line in text.splitlines() if SKIPPED_CASE_LINE.match(line)]
 
 
+def last_output_line(log_file):
+    """The log's last line that is not blank, stripped, or "" when there is none."""
+    try:
+        text = read_text_without_following_symlinks(log_file, errors="replace")
+    except OSError:
+        return ""
+    return next((line.strip() for line in reversed(text.splitlines()) if line.strip()), "")
+
+
 def environment_without_git_redirecting_variables():
     # A fresh dict each call, because suites launch concurrently.
     return git_redirecting_removal.environment_without_git_redirecting_variables()
@@ -3781,6 +3799,10 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         result["stopped by"] = stopped_by
     if sandbox_started is False and exit_code != 0:
         result["test sandbox did not start"] = True
+    elif exit_code == NC_TEST_SUITE_EXIT_CODE_FOR_NOT_RUN_BECAUSE_A_CAUSE_OUTSIDE_THIS_REPOSITORY_STOPPED_ITS_CASES:
+        result["stopped by an outside cause"] = (
+            last_output_line(log_file)[:SUITE_STOPPED_BY_AN_OUTSIDE_CAUSE_REASON_MAX_CHARACTERS]
+            or "its output names no cause")
     if killed_at_memory_ceiling:
         result["out of memory"] = {"processes killed": killed_at_memory_ceiling,
                                    "ceiling": memory_ceiling_bytes}
@@ -4761,11 +4783,16 @@ def describe_exit(code):
         return f"killed by signal {-code}"
 
 
+def suite_not_run(result):
+    """Whether the suite is NOT RUN, as HOW EACH SUITE IS JUDGED in the docstring says."""
+    return bool(result.get("test sandbox did not start")
+                or result.get("stopped by an outside cause"))
+
+
 def suite_failed(result):
-    """Whether the suite failed: it exited nonzero, and neither a stop nor its nc-test-sandbox
-    failing to start ended it."""
-    return (result["exit"] != 0 and not result.get("stopped by")
-            and not result.get("test sandbox did not start"))
+    """Whether the suite failed: it exited nonzero, was not stopped by the run, and is not
+    NOT RUN."""
+    return result["exit"] != 0 and not result.get("stopped by") and not suite_not_run(result)
 
 
 def why_suite_failed(result):
@@ -4775,6 +4802,8 @@ def why_suite_failed(result):
     if result.get("test sandbox did not start"):
         return (f"did not start: bwrap could not build its nc-test-sandbox "
                 f"({describe_exit(result['exit'])})")
+    if result.get("stopped by an outside cause"):
+        return f"stopped by an outside cause: {result['stopped by an outside cause']}"
     timeout = result.get("timeout")
     out_of_memory = result.get("out of memory")
     if timeout is None and out_of_memory:
@@ -4847,8 +4876,7 @@ def suite_line(result):
                        f"{result['peak_memory_bytes'] / 10**6:.0f} MB")
     if result["exit"] == 0:
         return f"PASS {result['suite']} ({detail})"
-    prefix = (NOT_RUN_SUITE_LINE_PREFIX if result.get("test sandbox did not start")
-              else FAILED_SUITE_LINE_PREFIX)
+    prefix = NOT_RUN_SUITE_LINE_PREFIX if suite_not_run(result) else FAILED_SUITE_LINE_PREFIX
     return f"{prefix}{result['suite']} {why_suite_failed(result)} ({detail})"
 
 
@@ -5247,7 +5275,7 @@ def main(argv=None, platform=None):
             # In the suite's own thread, so the next suite this thread takes sees the stop
             # before it starts.
             if (arguments.stop_at_first_failing_suite and result["exit"] != 0
-                    and not result.get("test sandbox did not start") and not run_stops):
+                    and not suite_not_run(result) and not run_stops):
                 run_stops.append(f"the first failing suite, {suite}")
             return result
 
@@ -5360,7 +5388,7 @@ def main(argv=None, platform=None):
         # Here only --stop-at-first-failing-suite or the run time limit stops a suite: a stop
         # signal returned above.
         stopped = [result for result in results if result.get("stopped by")]
-        not_run = [result for result in results if result.get("test sandbox did not start")]
+        not_run = [result for result in results if suite_not_run(result)]
         failed = [result for result in results if suite_failed(result)]
         skipping = [result for result in results if result["skips"]]
         if failed:
@@ -5371,8 +5399,7 @@ def main(argv=None, platform=None):
                             f"{SUITE_LINE_LOG_MARK}{result['log']}")
         if not_run:
             report.line("")
-            report.line(f"{len(not_run)} not run, because bwrap could not build the "
-                        f"nc-test-sandbox; each log says why and what to do:")
+            report.line(f"{len(not_run)} not run; each line says why, and each log what to do:")
             for result in not_run:
                 report.line(f"{NOT_RUN_SUITE_LINE_PREFIX}{result['suite']} {why_suite_failed(result)}"
                             f"{SUITE_LINE_LOG_MARK}{result['log']}")
