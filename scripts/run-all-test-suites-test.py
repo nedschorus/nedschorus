@@ -2444,6 +2444,68 @@ for call in (None, {"arguments": None}, {}, {"arguments": [b"log"]}):
     check(f"an unrecognised git call {call!r} reads the checkout",
           answer == module.GIT_CALL_READS_THE_CHECKOUT, answer)
 
+# --- Git calls tied to the checkout's list of files ---------------------------
+# A call is untied only when no file added or deleted, other than the paths it
+# consults, can change its answer; anything not shown to be so stays tied.
+TOP = pathlib.Path("/checkout-top")
+for arguments, consulted in (
+        (["rev-parse", "--short", "HEAD"], ["HEAD"]),
+        (["rev-parse", "--verify", "--quiet", "08ddce3^{commit}"], ["08ddce3^{commit}"]),
+        (["-C", "/checkout-top/sub", "rev-parse", "HEAD"], ["sub/HEAD"]),
+        (["log", "--first-parent", "--format=%H %s", "HEAD"], [".mailmap", "HEAD"]),
+        (["-C", "sub", "log", "-1", "--format=%s", "0e12f5f"], [".mailmap", "sub/0e12f5f"]),
+        (["log", "--first-parent", "--merges", "--format=%s%x09%b", "aaaa..bbbb"],
+         [".mailmap", "aaaa..bbbb"]),
+        (["merge-base", "--is-ancestor", "01a20a3", "HEAD"], []),
+        (["merge-base", "origin/main", "HEAD"], []),
+        (["ls-remote", "--heads", "/tmp/elsewhere/remote.git", "ghi-570-edit-*"], []),
+        (["check-ignore", "-q", ".ghi-guide-agent-state.json"],
+         [".ghi-guide-agent-state.json", ".gitignore"]),
+        (["-C", "sub", "check-ignore", "-q", "a/b.json"],
+         [".gitignore", "sub/.gitignore", "sub/a/.gitignore", "sub/a/b.json"])):
+    call = {"arguments": arguments, "directory": "/checkout-top",
+            "GIT_DIR": None, "GIT_WORK_TREE": None}
+    answer = module.work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(call, TOP)
+    check(f"git {' '.join(arguments)} is not tied to the list of files, and consults "
+          f"{consulted}", answer == consulted, answer)
+
+for arguments in (
+        ["ls-files", "-z"], ["ls-files", "-z", "--", "*.py"], ["ls-tree", "-r", "HEAD"],
+        ["status", "--porcelain"], ["add", "-A"], ["diff", "HEAD"], ["stash"],
+        ["commit", "-a", "-m", "x"], ["grep", "word"], ["archive", "HEAD"],
+        ["worktree", "add", "--detach", "/tmp/x", "HEAD"], ["show", "HEAD:README.md"],
+        ["rev-parse", "HEAD:README.md"], ["rev-parse", ":/message"], ["rev-parse"],
+        ["rev-parse", "--all"], ["rev-parse", "HEAD", "--", "README.md"],
+        ["log", "--name-only", "HEAD"], ["log", "-p", "HEAD"], ["log", "--stat"],
+        ["log", "HEAD", "--", "README.md"], ["log", "-n", "1", "HEAD"], ["log"],
+        ["merge-base", "--fork-point", "main"], ["merge-base", "HEAD:x", "HEAD"],
+        ["ls-remote", "origin"], ["ls-remote", "--heads"],
+        ["ls-remote", "/checkout-top/sub/remote.git"], ["ls-remote", "relative/remote.git"],
+        ["check-ignore", "--stdin"], ["check-ignore", "-q"],
+        ["check-ignore", "-q", "../outside.json"], ["check-ignore", "-q", "."],
+        ["check-ignore", "-q", "--", "a.json"],
+        ["-c", "core.hooksPath=/dev/null", "rev-parse", "HEAD"],
+        ["--no-pager", "log", "HEAD"], ["-C", "/elsewhere", "rev-parse", "HEAD"]):
+    call = {"arguments": arguments, "directory": "/checkout-top",
+            "GIT_DIR": None, "GIT_WORK_TREE": None}
+    answer = module.work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(call, TOP)
+    check(f"git {' '.join(arguments)} stays tied to the list of files", answer is None, answer)
+
+for environment in ({"GIT_DIR": "/checkout-top/.git", "GIT_WORK_TREE": None},
+                    {"GIT_DIR": None, "GIT_WORK_TREE": "/checkout-top"}):
+    call = dict({"arguments": ["rev-parse", "HEAD"], "directory": "/checkout-top"},
+                **environment)
+    answer = module.work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(call, TOP)
+    check(f"git rev-parse HEAD with environment {environment} stays tied to the list of files",
+          answer is None, answer)
+
+for call in ({"arguments": None, "directory": "/checkout-top"},
+             {"arguments": ["log", "HEAD"]}, {"arguments": [b"log", "HEAD"],
+                                              "directory": "/checkout-top"}):
+    answer = module.work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(call, TOP)
+    check(f"an unrecognised git call {call!r} stays tied to the list of files",
+          answer is None, answer)
+
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
     # Scratch setup runs with -C outside the checkout, so only the calls
@@ -2490,7 +2552,7 @@ finally:
 ''',
         "git-rev-parse-unknown-option-test.py": (
             "import subprocess\n"
-            "subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], "
+            "subprocess.run(['git', 'rev-parse', 'HEAD:input.txt'], "
             "check=True, capture_output=True)\n"),
         "git-config-write-test.py": (
             "import subprocess\n"
@@ -2599,11 +2661,134 @@ finally:
           (ran(root), result.stdout, result.stderr))
     commit_files(repo, {"notes/added.txt": "new\n"}, "add a file")
     result = select_since(root, changed)
-    check("an added file still selects a suite running git ls-remote on the checkout",
-          result.returncode == 0 and ran(root) == [suite]
-          and f"SELECTED {suite}: it runs git ls-remote on the checkout, and "
-              "notes/added.txt was added" in lines(result.stdout),
+    check("an added file leaves a suite running only git ls-remote of another repository "
+          "on the checkout NOT SELECTED, saying its git answers whichever files are added",
+          result.returncode == 0 and ran(root) == []
+          and any(line.startswith(f"NOT SELECTED {suite}: ")
+                  and line.endswith(", and adding or deleting other files cannot change the "
+                                    "answers of its git calls on the checkout: git ls-remote")
+                  for line in lines(result.stdout)),
           (ran(root), result.stdout, result.stderr))
+
+# A git call not tied to the list of files still selects its suite through the paths it consults.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    log_suite, ignore_suite, tied_suite = (
+        "git-log-test.py", "git-check-ignore-test.py", "git-ls-files-test.py")
+    repo = make_repo(root, {
+        log_suite: ("import subprocess\n"
+                    "subprocess.run(['git', 'log', '-1', '--format=%s', 'HEAD~0'], "
+                    "check=True, capture_output=True)\n"
+                    "subprocess.run(['git', 'merge-base', '--is-ancestor', 'HEAD', 'HEAD'], "
+                    "check=True, capture_output=True)\n"),
+        ignore_suite: ("import subprocess\n"
+                       "subprocess.run(['git', '-C', 'sub', 'check-ignore', '-q', "
+                       "'state.json'], capture_output=True)\n"),
+        tied_suite: ("import subprocess\n"
+                     "subprocess.run(['git', 'ls-files', '-z', '--', '*.py'], "
+                     "check=True, capture_output=True)\n")})
+    base = commit_files(repo, {".gitignore": "state.json\n", "sub/kept.txt": "kept\n"},
+                        "inputs")
+    result = run(root)
+    check("the untied git call fixture's full run passes", result.returncode == 0,
+          (result.stdout, result.stderr))
+    for suite, tied, read, looked_for in (
+            (log_suite, [], [], {".mailmap": False, "HEAD~0": False}),
+            (ignore_suite, [], [".gitignore"],
+             {"sub/.gitignore": False, "sub/state.json": False}),
+            (tied_suite, ["ls-files"], [], {})):
+        recorded = recording(root, suite)
+        check(f"{suite} records {tied or 'no command'} as tied to the list of files, "
+              f"{read} as read and {looked_for} as looked for",
+              recorded.get("git_commands_tied_to_the_file_list") == tied
+              and all(path in recorded.get("reads", {}) for path in read)
+              and all(recorded.get("looked_for", {}).get(path) == there
+                      for path, there in looked_for.items()), recorded)
+
+    added = commit_files(repo, {"notes/added.txt": "new\n"}, "add a file no suite consults")
+    result = select_since(root, base)
+    out = lines(result.stdout)
+    check("an added file selects only the suite whose git call is tied to the list of files",
+          result.returncode == 0 and ran(root) == [tied_suite]
+          and f"SELECTED {tied_suite}: it runs git ls-files on the checkout, and "
+              "notes/added.txt was added" in out, (ran(root), result.stdout, result.stderr))
+    check("the NOT SELECTED line of the untied log suite names its git commands",
+          any(line.startswith(f"NOT SELECTED {log_suite}: ")
+              and line.endswith(", and adding or deleting other files cannot change the "
+                                "answers of its git calls on the checkout: git log, "
+                                "git merge-base") for line in out), out)
+
+    # A file named like the revision makes the suite's git log fail as ambiguous.
+    for files, selected, why, exit_code in (
+            ({"HEAD~0": "a file named like a revision\n"}, log_suite,
+             "it looks for HEAD~0, which was added", 1),
+            ({".gitignore": "state.json\nother.json\n"}, ignore_suite,
+             "it reads .gitignore, which differs", 0),
+            ({"sub/.gitignore": "\n"}, ignore_suite,
+             "it looks for sub/.gitignore, which was added", 0)):
+        since = head(repo)
+        commit_files(repo, files, f"change {sorted(files)}")
+        result = select_since(root, since)
+        if "HEAD~0" in files:
+            git(repo, "rm", "-q", "HEAD~0")
+            git(repo, "commit", "-q", "-m", "remove the file named like a revision")
+        check(f"adding or changing {sorted(files)} selects {selected}, which consults it",
+              result.returncode == exit_code and selected in ran(root)
+              and f"SELECTED {selected}: {why}" in lines(result.stdout),
+              (ran(root), [line for line in lines(result.stdout) if selected in line],
+               result.stderr))
+        run(root)
+
+    since = head(repo)
+    (repo / "sub" / "state.json").write_text("ignored, then tracked\n")
+    git(repo, "add", "-f", "sub/state.json")
+    git(repo, "commit", "-q", "-m", "track an ignored path check-ignore was given")
+    result = select_since(root, since)
+    check("tracking a path check-ignore was given, which was ignored when recorded, selects "
+          "the suite",
+          result.returncode == 0 and ignore_suite in ran(root)
+          and f"SELECTED {ignore_suite}: it looks for sub/state.json, which was added"
+          in lines(result.stdout),
+          (ran(root), [line for line in lines(result.stdout) if ignore_suite in line]))
+
+    recorded_file = next((root / "recordings").glob(f"*/{log_suite}.json"))
+    recorded = json.loads(recorded_file.read_text())
+    recorded.pop("git_commands_tied_to_the_file_list")
+    recorded_file.write_text(json.dumps(recorded))
+    since = head(repo)
+    commit_files(repo, {"notes/another.txt": "new\n"}, "add another file")
+    result = select_since(root, since)
+    check("a recording saved before recordings named the tied git commands ties every git "
+          "command it ran on the checkout",
+          result.returncode == 0 and log_suite in ran(root)
+          and f"SELECTED {log_suite}: it runs git log, merge-base on the checkout, and "
+              "notes/another.txt was added" in lines(result.stdout),
+          (ran(root), [line for line in lines(result.stdout) if log_suite in line]))
+
+# The recorder resolves a git operand from the last -C, as git does.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    suite = "git-dash-c-operand-test.py"
+    repo = make_repo(root, {suite: '''import subprocess, tempfile, shutil, pathlib
+scratch = tempfile.mkdtemp()
+try:
+    subprocess.run(['git', 'init', '-q', scratch], check=True, capture_output=True)
+    pathlib.Path(scratch, 'README.md').write_text('scratch\\n')
+    subprocess.run(['git', '-C', scratch, 'add', 'README.md'], check=True, capture_output=True)
+finally:
+    shutil.rmtree(scratch)
+subprocess.run(['git', '-C', 'sub', 'ls-files', 'tracked.txt'], check=True, capture_output=True)
+'''})
+    commit_files(repo, {"README.md": "the checkout's\n", "tracked.txt": "top\n",
+                        "sub/tracked.txt": "sub\n"}, "inputs")
+    result = run(root)
+    reads = recording(root, suite).get("reads", {})
+    check("the -C operand fixture's full run passes", result.returncode == 0,
+          (result.stdout, result.stderr))
+    check("a file operand of git -C <scratch> add is not recorded as the checkout's file of "
+          "that name", "README.md" not in reads, reads)
+    check("a file operand of git -C sub is recorded as read from sub, not from the top",
+          "sub/tracked.txt" in reads and "tracked.txt" not in reads, reads)
 
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)

@@ -559,7 +559,8 @@ with its git blob hash; each path it opened or checked for, and whether the
 path was there; each directory it listed, with the entries the directory
 held; the git calls run from the checkout, with their arguments, starting
 directory, GIT_DIR, GIT_WORK_TREE and what each call reads; the command
-names of only the calls that read the checkout, with a fingerprint of the
+names of only the calls that read the checkout, and of those whose answer
+can change when a file is added or deleted, with a fingerprint of the
 checkout's list of files; which recorders made it; and, in a strace run,
 the files only strace saw. A starting directory
 inside the checkout is kept relative to its top directory, with '.' for the
@@ -624,6 +625,23 @@ checkout. Every call is checked against its full arguments:
   --git-dir without a work tree use the current directory as their work
   tree, so still read the checkout.
 
+A call that reads the checkout is still not tied to the checkout's list of
+files when its answer comes from commits, refs, another repository or the
+paths it names, so that adding or deleting any other file cannot change it.
+The command and every option must be on an explicit list, and its global
+options only -C pairs, with no GIT_DIR or GIT_WORK_TREE: rev-parse, log and
+merge-base given revisions with no ':' (a revision with ':' names a path in a
+tree); ls-remote given an absolute repository path outside the checkout's
+top directory; check-ignore given paths inside it. The paths git consults in
+the work tree for such a call are recorded as read or looked for: for
+rev-parse and log, a file named like each revision, which makes the argument
+ambiguous or, for one that does not resolve, gives rev-parse its answer; for
+log, .mailmap; for check-ignore, each path given, since a tracked path is
+never ignored, and the .gitignore of every directory above it. Every other
+call reading the checkout, such as ls-files, ls-tree, status, diff, add,
+stash, commit, grep or worktree, stays tied, and so does an option not on the
+list.
+
 Anything else stays git on the checkout and follows the rules below,
 including calls with no parseable command, a clone whose source is inside
 the checkout, and an init naming a directory inside it. A call set aside
@@ -645,10 +663,10 @@ another (a marked case never runs on this machine, so what it would read
 does not matter here); the suite file itself
 differs; a file it read differs; a path it looked for was added or deleted;
 an entry was added to or deleted from a directory it listed, a new
-subdirectory's name included; a file was added or deleted and it ran git on
-the checkout; or it ran a git command on the checkout that reads file
-contents (anything but the listing commands in GIT_COMMANDS_THAT_ONLY_LIST),
-and any file differs — strace or not, because git reads a committed file's
+subdirectory's name included; a file was added or deleted and it ran a git
+command on the checkout that is tied to the list of files; or it ran a git
+command on the checkout that reads file contents (anything but the listing
+commands in GIT_COMMANDS_THAT_ONLY_LIST), and any file differs — strace or not, because git reads a committed file's
 content from the object store, where no recorder sees a working file.
 
 Then, because every clone and worktree on a machine shares the store, the
@@ -656,7 +674,9 @@ recording may have been made on another branch, where the suite read other
 files. A suite also runs when its recording does not match the checkout: a
 file it read has another blob hash, a path it looked for is there or absent
 where it was not, a directory it listed holds other entries, or it ran git
-on the checkout and the checkout's list of files has another fingerprint.
+on the checkout tied to the list of files, and the checkout's list of files
+has another fingerprint. A recording saved before recordings named the tied
+commands counts every git command it ran on the checkout as tied.
 So a suite is NOT SELECTED only when everything its recording saw is the
 same at COMMIT, in the recording, and in the checkout. Each suite gets a
 line saying SELECTED or NOT SELECTED and why, before any runs.
@@ -702,8 +722,9 @@ selection, runs them as before.
 WHAT A RECORDING CANNOT SEE: a path a program other than Python checks for
 or fails to open, on either machine, because strace's -z drops failed calls
 (a suite that runs git on the checkout is selected whenever any file is
-added or deleted, so git's own lookups are covered); a path Python checks
-with os.stat or os.access directly; a directory a program other than Python
+added or deleted, unless none of its git calls on the checkout is tied to the
+list of files, and then the lookups measured for them are recorded); a path
+Python checks with os.stat or os.access directly; a directory a program other than Python
 lists (strace's view of a directory opened is left out, because the import
 system opens every directory on the path); outside a strace run, what a
 shell script or a git command a suite runs reads, unless the last strace
@@ -1096,6 +1117,25 @@ GIT_CONFIG_OPTIONS_THAT_READ_ONE_KEY = ("--get", "--get-all")
 # These commands do not treat the current directory as a work tree.
 GIT_COMMANDS_THAT_READ_NO_WORK_TREE = frozenset((
     "rev-parse", "log", "show", "cat-file", "for-each-ref", "config"))
+# Calls of these commands with only these options answer the same whatever files are added or
+# deleted, apart from the work-tree paths work_tree_paths_a_git_call_not_tied_to_the_file_list_consults
+# names. A call with any other option, or of any other command, stays tied to the list of files.
+GIT_OPTIONS_NOT_TYING_A_CALL_TO_THE_FILE_LIST = {
+    "rev-parse": frozenset(("--verify", "--quiet", "-q", "--short", "--abbrev-ref",
+                            "--symbolic-full-name")),
+    "log": frozenset(("--first-parent", "--merges", "--no-merges", "--oneline", "--reverse",
+                      "--no-color", "-z", "--topo-order", "--date-order", "--no-decorate")),
+    "merge-base": frozenset(("--is-ancestor", "--all", "--octopus")),
+    "ls-remote": frozenset(("--heads", "--tags", "--refs", "--quiet", "-q", "--exit-code",
+                            "-h", "-t", "--branches", "--symref")),
+    "check-ignore": frozenset(("-q", "--quiet", "-v", "--verbose", "-n", "--non-matching",
+                               "--no-index")),
+}
+GIT_OPTION_PREFIXES_NOT_TYING_A_CALL_TO_THE_FILE_LIST = {
+    "rev-parse": ("--short=",),
+    "log": ("--format=", "--pretty=", "--max-count=", "--date="),
+}
+GIT_LOG_COUNT_OPTION = re.compile(r"^-\d+$")
 GIT_CALL_SEES_NO_FILE = "sees no file"
 GIT_CALL_RUNS_ON_ANOTHER_REPOSITORY = "runs on another repository"
 GIT_CALL_READS_THE_CHECKOUT = "reads the checkout"
@@ -1165,15 +1205,10 @@ def _run_all_test_suites_install_input_recorder():
         if isinstance(arguments, (str, bytes, _os.PathLike)):
             arguments = [arguments]
         arguments = list(arguments or [])
-        for argument in ([program] if program is not None else []) + arguments:
-            path = absolute(argument, working_directory)
-            if inside(path) and is_file(path):
-                write("read", path)
-        if not arguments or _os.path.basename(_os.fsdecode(arguments[0])) != "git":
-            return
+        is_git = bool(arguments) and _os.path.basename(_os.fsdecode(arguments[0])) == "git"
         directory = absolute(working_directory) if working_directory is not None else _os.getcwd()
         target = directory
-        git_arguments = [_os.fsdecode(argument) for argument in arguments[1:]]
+        git_arguments = [_os.fsdecode(argument) for argument in arguments[1:]] if is_git else []
         rest = git_arguments
         index = 0
         while index < len(rest) and rest[index].startswith("-"):
@@ -1185,7 +1220,16 @@ def _run_all_test_suites_install_input_recorder():
                 index += 2
             else:
                 index += 1
-        if index >= len(rest):
+        if program is not None:
+            path = absolute(program, working_directory)
+            if inside(path) and is_file(path):
+                write("read", path)
+        for position, argument in enumerate(arguments):
+            # git takes the paths after its global options from its last -C, not from where it started.
+            path = absolute(argument, target if is_git and position > index else working_directory)
+            if inside(path) and is_file(path):
+                write("read", path)
+        if not is_git or index >= len(rest):
             return
         command, rest = rest[index], rest[index + 1:]
         operands, index = [], 0
@@ -1399,6 +1443,68 @@ def what_a_git_call_run_from_the_checkout_reads(call, top, git_common_directory)
             or (command == "worktree" and command_arguments[:1] == ["list"]):
         return GIT_CALL_RUNS_ON_ANOTHER_REPOSITORY
     return GIT_CALL_READS_THE_CHECKOUT
+
+
+def work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(call, top):
+    """Return the work-tree paths, relative to the top, that a call reading the checkout reads
+    or looks for, when no other file added or deleted can change its answer; else None.
+
+    The paths were measured with strace on git 2.53.0: log and rev-parse look for a file named
+    like each revision, since such a file makes the argument ambiguous or, for a revision that
+    does not resolve, its answer; log reads .mailmap; check-ignore looks at the path it is given,
+    since a tracked path is never ignored, and at the .gitignore of each directory above it."""
+    arguments, directory = call.get("arguments"), call.get("directory")
+    if call.get("GIT_DIR") is not None or call.get("GIT_WORK_TREE") is not None \
+            or not isinstance(directory, str) or not isinstance(arguments, list) \
+            or not all(isinstance(argument, str) for argument in arguments):
+        return None
+    parsed = git_call_global_options_command_and_arguments(arguments)
+    if parsed is None:
+        return None
+    global_options, command, command_arguments = parsed
+    if command not in GIT_OPTIONS_NOT_TYING_A_CALL_TO_THE_FILE_LIST:
+        return None
+    for option, value in global_options:
+        if option != "-C" or value is None:
+            return None
+        directory = os.path.join(directory, value)
+    operands = []
+    for argument in command_arguments:
+        if not argument.startswith("-"):
+            operands.append(argument)
+        elif not (argument in GIT_OPTIONS_NOT_TYING_A_CALL_TO_THE_FILE_LIST[command]
+                  or argument.startswith(
+                      GIT_OPTION_PREFIXES_NOT_TYING_A_CALL_TO_THE_FILE_LIST.get(command, ()))
+                  or (command == "log" and GIT_LOG_COUNT_OPTION.match(argument))):
+            return None
+    if not operands:
+        return None
+
+    def inside_top(operand):
+        relative = relative_inside(top, os.path.normpath(os.path.join(directory, operand)))
+        return None if relative == "." else relative
+
+    if command == "ls-remote":
+        repository = operands[0]
+        if not os.path.isabs(repository) or relative_inside(top, repository) is not None:
+            return None
+        return []
+    if command in ("rev-parse", "log", "merge-base") and any(
+            ":" in operand or not operand for operand in operands):
+        return None
+    if command == "merge-base":
+        return []
+    consulted = [inside_top(operand) for operand in operands]
+    if None in consulted:
+        return None
+    if command == "log":
+        consulted.append(".mailmap")
+    if command == "check-ignore":
+        for path in list(consulted):
+            parts = path.split("/")
+            consulted.extend("/".join(parts[:depth] + [".gitignore"])
+                             for depth in range(len(parts)))
+    return sorted(set(consulted))
 
 
 def checkout_top_directory(given):
@@ -3582,6 +3688,7 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used,
     them and selection compares those hashes when the recording is used in another checkout."""
     hook_log, strace_dir = recording_paths_for(recording_dir, suite)
     touched, probed, listed, git_commands = {suite}, set(), set(), set()
+    git_commands_tied_to_the_file_list, consulted_by_git = set(), set()
     git_calls = {}
     try:
         hook_lines = read_text_without_following_symlinks(hook_log).splitlines()
@@ -3606,6 +3713,14 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used,
                           if isinstance(arguments, list)
                           and all(isinstance(argument, str) for argument in arguments) else None)
                 git_commands.add(parsed[1] if parsed is not None else "(unparsed)")
+                consulted = work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(
+                    call, top)
+                if consulted is None:
+                    git_commands_tied_to_the_file_list.add(
+                        parsed[1] if parsed is not None else "(unparsed)")
+                else:
+                    consulted_by_git.update(consulted)
+                    touched.update(consulted)
             if isinstance(call["directory"], str):
                 relative = relative_inside(top, call["directory"])
                 if relative is not None:
@@ -3640,6 +3755,9 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used,
         elif (not inside_git_directory(path) and "__pycache__" not in path.split("/")
               and not os.path.lexists(top / path)):
             looked_for[path] = False
+    # git sees an ignored file as absent too, and its becoming tracked can change git's answer.
+    for path in consulted_by_git - files:
+        looked_for[path] = path in entries
     recording = {
         "format": RECORDED_INPUTS_FORMAT_VERSION,
         "suite": suite,
@@ -3657,6 +3775,7 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used,
         "looked_for": looked_for,
         "lists": {directory: sorted(entries.get(directory, ())) for directory in sorted(listed)},
         "git_commands_on_the_checkout": sorted(git_commands),
+        "git_commands_tied_to_the_file_list": sorted(git_commands_tied_to_the_file_list),
         "git_calls_run_from_the_checkout": [git_calls[key] for key in sorted(git_calls)],
         "files_fingerprint": file_list_fingerprint(files),
     }
@@ -4024,6 +4143,8 @@ def selection_reason(suite, recording, checkout, commit, files_only_strace_saw=N
         return True, "the suite itself differs"
     reads, looked_for = recording["reads"], recording["looked_for"]
     lists, git_commands = recording["lists"], recording["git_commands_on_the_checkout"]
+    # A recording saved before this key existed ties every git command it ran on the checkout.
+    tied = recording.get("git_commands_tied_to_the_file_list", git_commands)
 
     changed_reads = [path for path in reads if path in differ]
     if changed_reads:
@@ -4046,10 +4167,10 @@ def selection_reason(suite, recording, checkout, commit, files_only_strace_saw=N
             path = f"{directory}/{name}" if directory else name
             return True, f"it lists {directory or '.'}/, where {path} was {verb}"
     added_or_deleted = sorted(path for path, status in differ.items() if status in "AD")
-    if git_commands and added_or_deleted:
+    if tied and added_or_deleted:
         path = added_or_deleted[0]
         verb = "added" if differ[path] == "A" else "deleted"
-        return True, (f"it runs git {', '.join(git_commands)} on the checkout, "
+        return True, (f"it runs git {', '.join(tied)} on the checkout, "
                       f"and {path} was {verb}")
     reading = sorted(set(git_commands) - GIT_COMMANDS_THAT_ONLY_LIST)
     if reading and differ:
@@ -4071,10 +4192,14 @@ def selection_reason(suite, recording, checkout, commit, files_only_strace_saw=N
             name, _ = added_or_deleted_name(set(recorded), after)
             return True, (f"its recording listed {directory or '.'}/ with other entries "
                           f"than the checkout's, {name} among them")
-    if git_commands and recording.get("files_fingerprint") != checkout.fingerprint_now:
-        return True, (f"it runs git {', '.join(git_commands)} on the checkout, and its "
+    if tied and recording.get("files_fingerprint") != checkout.fingerprint_now:
+        return True, (f"it runs git {', '.join(tied)} on the checkout, and its "
                       f"recording was made on another set of files")
     reason = f"none of the {len(reads)} files it read differs since {short}"
+    if git_commands and not tied:
+        reason += (", and adding or deleting other files cannot change the answers of its git "
+                   "calls on the checkout: "
+                   + ", ".join(f"git {command}" for command in git_commands))
     calls = recording.get("git_calls_run_from_the_checkout", [])
     if calls and all(call["reads"] != GIT_CALL_READS_THE_CHECKOUT for call in calls):
         sees_no_file, another_repository = set(), set()
