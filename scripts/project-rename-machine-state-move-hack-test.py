@@ -3,7 +3,9 @@
 
 Every case builds a fake home under a temporary directory, with a real git reference-checkout and worktrees, and passes every path root to the program by flag, with the process list, crontab and systemctl replaced by fakes through the program's environment variables. --machine is always passed, since this suite runs on both machines. Nothing here reads or writes the real home, ~/.claude, a reference-checkout or the log-store."""
 
+import contextlib
 import fcntl
+import io
 import hashlib
 import importlib.util
 import json
@@ -319,7 +321,7 @@ def run_apply_check_rollback_on_ned_box():
                calls.count("daemon-reload") == 1 and "start" not in calls, calls)
         code, output = fixture.run("--check")
         expect("--check after --apply: refuses a second --apply, and every worktree works",
-               code == 0 and "a journal already exists" in output and "works in 5 of 5" in output
+               code == 0 and "a journal already exists" in output and "git lists 5; `git status` works in 5, fails in 0, and 0 have no directory" in output
                and "step 1: 0" in output and "step 4: 0" in output, output)
         code, output = fixture.run("--rollback")
         expect("--rollback succeeds", code == 0 and "rolled back" in output, output)
@@ -415,19 +417,22 @@ def run_refusal_cases():
     refusal_case("the crontab cannot be read", failing_crontab, "the crontab could not be read: crontab: permission denied")
     refusal_case("a com.nedschorus LaunchAgent is installed",
                  lambda f: (f.launch_agents / "com.nedschorus.clean-worktrees.plist").write_text("<plist/>"),
-                 "1 LaunchAgent(s) of this project installed")
+                 "the LaunchAgent com.nedschorus.clean-worktrees of this project is installed")
     refusal_case("the mount LaunchAgent is not counted; any other com.nedschorus one is",
                  lambda f: (f.launch_agents / "com.nedschorus.mount-ned-box-home-share-x.plist").write_text("<plist/>"),
-                 "1 LaunchAgent(s) of this project installed", machine="mac")
+                 "the LaunchAgent com.nedschorus.mount-ned-box-home-share-x of this project", machine="mac")
     refusal_case("a com.nedsnodes LaunchAgent is installed",
                  lambda f: (f.launch_agents / "com.nedsnodes.clean-worktrees.plist").write_text("<plist/>"),
-                 "1 LaunchAgent(s) of this project installed")
+                 "--remove --job clean-worktrees`")
     refusal_case("a systemd user unit names the checkout",
                  lambda f: (f.units / "restart-live-seats-at-login.service").write_text(f"ExecStart={f.checkout}/scripts/r.py\n"),
-                 "systemd user unit names a moving path")
+                 "install-restart-live-seats-at-login-systemd-unit.py --remove`")
     refusal_case("a systemd user unit links into the checkout",
                  lambda f: (f.units / "other.timer").symlink_to(f.checkout / "x.timer"),
-                 "systemd user unit names a moving path")
+                 "the systemd user unit other.timer names a moving path")
+    refusal_case("a systemd user unit other than restart-live-seats is told to be disabled by name",
+                 lambda f: (f.units / "other.timer").symlink_to(f.checkout / "x.timer"),
+                 "`systemctl --user disable --now other.timer`")
     refusal_case("the transcript mirror lock is held", hold_mirror_lock, "is held: a transcript mirror run is copying")
     refusal_case("a Claude Code process runs",
                  lambda f: append(f.fakes / "processes.txt", "claude\n/Users/x/.local/bin/claude\n"),
@@ -445,11 +450,11 @@ def run_refusal_cases():
                  lambda f: (f.store / str(f.checkout).lstrip("/") / "docs" / "nedsnodes-wiki").mkdir(),
                  "already exists, and step 3 would create it")
     refusal_case("the checkout is on a branch named after main",
-                 lambda f: git("-C", str(f.checkout), "switch", "-q", "-c", "topic"), "is not on main (topic)")
+                 lambda f: git("-C", str(f.checkout), "switch", "-q", "-c", "topic"), "is not on main: it is on branch topic")
     refusal_case("the checkout is on a branch named before main",
-                 lambda f: git("-C", str(f.checkout), "switch", "-q", "-c", "elsewhere"), "is not on main (elsewhere)")
+                 lambda f: git("-C", str(f.checkout), "switch", "-q", "-c", "elsewhere"), "is not on main: it is on branch elsewhere")
     refusal_case("the checkout has a detached HEAD",
-                 lambda f: git("-C", str(f.checkout), "switch", "-q", "--detach"), "is not on main (fatal")
+                 lambda f: git("-C", str(f.checkout), "switch", "-q", "--detach"), "is not on main: its HEAD is detached (fatal")
     refusal_case("the checkout has an uncommitted change to a tracked file",
                  lambda f: (f.checkout / "README.md").write_text("changed\n"), "has uncommitted changes to tracked files")
     refusal_case("git status fails in the checkout",
@@ -460,6 +465,18 @@ def run_refusal_cases():
                  lambda f: f.claude_json.write_text("{not json"), "could not be read as JSON")
     refusal_case("the reference-checkout is not a git repository",
                  lambda f: shutil.rmtree(f.checkout / ".git"), "worktree list --porcelain` failed")
+    refusal_case("a LaunchAgent's remedy names its own label in the launchctl command",
+                 lambda f: (f.launch_agents / "com.nedschorus.clean-worktrees.plist").write_text("<plist/>"),
+                 "`launchctl bootout gui/$(id -u)/com.nedschorus.clean-worktrees`")
+    refusal_case("the held mirror lock's remedy gives the installer command",
+                 hold_mirror_lock, "--remove --job transcript-mirror-to-log-store`")
+    refusal_case("an active step-8 unit's remedy says how to tell the nightly backup is in",
+                 lambda f: (f.fakes / "active-units.txt").write_text("nc-shared-database-service.service\n"),
+                 "nc-shared-database-<today's UTC date>T<time>Z.sqlite3 with no .partial ending")
+    refusal_case("a journal's remedy says to move aside one no --apply ran with",
+                 lambda f: f.journal.write_text(""), f"move it aside, for example to ")
+    refusal_case("a failed process list with no error output gives its exit code",
+                 failing_process_list, "it printed no error, exit code 1")
     refusal_case("on the Mac, the log-store is not yet renamed",
                  lambda f: (f.log_store_parent / "nedschorus-logs").unlink() or os.rename(f.log_store, f.log_store_parent / "nedschorus-logs"),
                  "the log-store is not at", machine="mac")
@@ -552,7 +569,7 @@ def run_rollback_conflict_case():
         (fixture.home / "Projects" / "nedsnodes-worktrees").rename(fixture.home / "Projects" / "nedschorus-worktrees-moved")
         code, output = fixture.run("--rollback")
         expect("--rollback stops at a rename whose paths are in neither state",
-               code == 1 and "both or neither exist" in output, output)
+               code == 1 and "cannot reverse the rename" in output and ": neither exists." in output, output)
         (fixture.home / "Projects" / "nedschorus-worktrees-moved").rename(fixture.home / "Projects" / "nedsnodes-worktrees")
         code, output = fixture.run("--rollback")
         after = fixture.snapshot()
@@ -676,6 +693,64 @@ def run_unreadable_store_directory_case():
         fixture.cleanup()
 
 
+def run_missing_worktree_directory_case():
+    fixture = Fixture("ned-box")
+    try:
+        missing = fixture.worktrees["outside"]
+        shutil.rmtree(missing)
+        code, output = fixture.run("--check")
+        expect("--check names a worktree git lists whose directory is missing",
+               code == 0 and f"MISSING: {missing}" in output and "and 1 have no directory" in output, output)
+        before = fixture.snapshot()
+        code, output = fixture.run("--apply")
+        expect("--apply refuses while a listed worktree's directory is missing, naming the prune command",
+               code == 1 and "REFUSED, nothing changed" in output and f"git lists the worktree {missing}" in output
+               and f"`git -C {fixture.checkout} worktree prune`" in output and fixture.snapshot() == before, output)
+        git("-C", str(fixture.checkout), "worktree", "prune")
+        code, output = fixture.run("--apply")
+        expect("--apply proceeds once the missing worktree is pruned", code == 0 and "applied" in output, output)
+    finally:
+        fixture.cleanup()
+
+
+def load_program():
+    spec = importlib.util.spec_from_file_location("project_rename_machine_state_move_hack", PROGRAM)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def run_backup_that_differs_stops_apply_case():
+    fixture = Fixture("ned-box")
+    program = load_program()
+    real_copy = shutil.copy2
+    saved_environment = dict(os.environ)
+
+    def copy_that_corrupts(source, target, **keywords):
+        real_copy(source, target, **keywords)
+        with open(target, "ab") as handle:
+            handle.write(b" ")
+
+    try:
+        original = fixture.claude_json.read_bytes()
+        os.environ.update(fixture.environment())
+        program.shutil.copy2 = copy_that_corrupts
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = program.main(["--apply", "--machine", fixture.machine, "--home", str(fixture.home),
+                                 "--log-store-parent", str(fixture.log_store_parent),
+                                 "--launch-agents-dir", str(fixture.launch_agents), "--journal", str(fixture.journal)])
+        text = output.getvalue()
+        expect("a backup that differs from its file stops --apply at step 7 before the file is rewritten",
+               code == 1 and "differs from" in text and "--apply stopped here" in text
+               and fixture.claude_json.read_bytes() == original, text)
+    finally:
+        program.shutil.copy2 = real_copy
+        os.environ.clear()
+        os.environ.update(saved_environment)
+        fixture.cleanup()
+
+
 def run_dangling_unit_warning_case():
     fixture = Fixture("ned-box")
     try:
@@ -700,6 +775,8 @@ if __name__ == "__main__":
     run_rollback_git_failure_case()
     run_partial_backup_case()
     run_unreadable_store_directory_case()
+    run_missing_worktree_directory_case()
+    run_backup_that_differs_stops_apply_case()
     print()
     if failures:
         print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
