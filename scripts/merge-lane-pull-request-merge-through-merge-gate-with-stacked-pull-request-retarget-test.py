@@ -9,7 +9,9 @@ merge account's token file. The fake
 gate answers each run from a numbered output file and exit code the case
 writes. The fake `gh` logs every call with the GH_TOKEN it saw and answers
 from a routes file the case writes, keyed by its first two arguments, or, for
-`gh api`, by whether it reads or deletes the branch; it does not filter `gh pr list` by base
+`gh api`, by whether it reads or deletes the branch; a route that is a list
+answers its nth call with its nth entry, and every later call with its last;
+it does not filter `gh pr list` by base
 branch, so the program's own filter is what each stacked case tests; a route
 may remove a directory, such as origin, when it is called, or move origin's main
 to a commit. A case may make the merge commit a new commit the clone lacks,
@@ -100,6 +102,11 @@ elif argv[:1] == ["api"]:
 else:
     key = " ".join(argv[:2])
 route = routes.get(key)
+if isinstance(route, list):
+    calls_so_far = os.path.join(directory, "gh-calls-so-far-" + key.replace(" ", "-"))
+    count = int(open(calls_so_far).read()) if os.path.exists(calls_so_far) else 0
+    open(calls_so_far, "w").write(str(count + 1))
+    route = route[min(count, len(route) - 1)]
 if route is None:
     sys.stderr.write("fake gh: unarranged call %r\n" % (argv,))
     sys.exit(97)
@@ -206,6 +213,20 @@ def origin_with_one_commit(scratch, extra_files=None):
     return origin
 
 
+def git_output(checkout, *arguments, check=True):
+    """Return what git prints in checkout, stripped; "" when it fails and check is False."""
+    completed = subprocess.run(["git", "-C", str(checkout), *arguments], capture_output=True,
+                               text=True, env=GIT_ENVIRONMENT, stdin=subprocess.DEVNULL)
+    if completed.returncode != 0 and check:
+        raise RuntimeError(f"git {arguments} failed: {completed.stderr}")
+    return completed.stdout.strip() if completed.returncode == 0 else ""
+
+
+def git_path(checkout, name):
+    """Return the path of name in checkout's git directory."""
+    return checkout / git_output(checkout, "rev-parse", "--git-path", name)
+
+
 def check(name, condition, detail=""):
     print(("PASS  " if condition else "FAIL  ") + name)
     if not condition:
@@ -263,7 +284,8 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
     clone's upload-pack is COMPETING_FETCH_UPLOAD_PACK.
 
     review_tools_state: "at-main", "behind-main" (origin/main moved on after the
-    clone), "no-origin" (the clone's origin is gone) or "no-gate".
+    clone, by a commit that adds new-on-main.txt), "no-origin" (the clone's
+    origin is gone) or "no-gate".
     review_worktrees_state: "none", "both" (pr10-head and pr10-merged are
     worktrees, pr10-merged with an untracked file), "merged-only" (pr10-merged
     is a worktree, pr10-head is not there) or "head-not-a-worktree" (pr10-head
@@ -317,7 +339,9 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
     if review_tools_state == "behind-main":
         seed = directory / "origin-seed"
         (seed / "README").write_text("moved on\n")
-        git("commit", "-q", "-am", "main moves on", cwd=seed)
+        (seed / "new-on-main.txt").write_text("new\n")
+        git("add", "README", "new-on-main.txt", cwd=seed)
+        git("commit", "-q", "-m", "main moves on", cwd=seed)
         git("push", "-q", str(origin), "main", cwd=seed)
     review_worktrees = directory / "review-worktrees"
     if review_worktrees_state == "both":
@@ -687,23 +711,103 @@ def main():
         exit_code, output, gh_calls, gate_calls, _ = run_case(
             scratch, "review-tools-behind-main", [(GATE_PASSED, 0)],
             default_routes(STACKED_AND_NOT), review_tools_state="behind-main")
-        check("a review tools worktree behind origin/main stops before the gate, exit 2",
-              exit_code == 2 and gate_calls == [] and gh_calls == []
-              and "not at origin/main" in output and "checkout --detach origin/main" in output,
-              f"exit {exit_code}\n{output}")
         review_tools = scratch / "review-tools-behind-main" / "review-tools"
-        printed = [line.split("Move it to main:", 1)[1].strip() for line in output.splitlines()
-                   if "Move it to main:" in line]
-        moved = (subprocess.run(["bash", "-c", printed[0]], capture_output=True, text=True,
-                                env=GIT_ENVIRONMENT) if len(printed) == 1 else None)
-        head_and_main = subprocess.run(
-            ["git", "-C", str(review_tools), "rev-parse", "HEAD", "origin/main"],
-            capture_output=True, text=True, env=GIT_ENVIRONMENT).stdout.split()
-        at_main = (moved is not None and moved.returncode == 0 and len(head_and_main) == 2
-                   and head_and_main[0] == head_and_main[1])
-        check("the printed command to move the worktree, run as printed, puts it at origin/main",
-              at_main, "no single printed command" if moved is None
-              else f"exit {moved.returncode}\n{moved.stderr}")
+        main_now = origin_commit(scratch, "review-tools-behind-main")
+        check("a review tools worktree behind origin/main that holds nothing of its own is "
+              "moved, detached, to origin/main before the gate, and the merge goes on",
+              exit_code == 0 and git_output(review_tools, "rev-parse", "HEAD") == main_now
+              and git_output(review_tools, "symbolic-ref", "-q", "HEAD", check=False) == ""
+              and (review_tools / "new-on-main.txt").is_file()
+              and (review_tools / "scripts" / "merge-gate.sh").is_file()
+              and gate_calls == [f"{PULL_REQUEST} {HEAD} {SINCE}"]
+              and index_of(argvs(gh_calls), ["pr", "merge"]) is not None
+              and printed_in_order(output, f"moved {review_tools} from ", " to origin/main\n",
+                                   "gate passed (#10)"),
+              f"exit {exit_code}\n{output}")
+
+        leave_it_alone = ("Leave {worktree} as it is: do not move, remove, discard, stash or "
+                          "overwrite anything in it unless the user tells you to, because it may "
+                          "be someone's unsaved work.")
+        subagent = "If you are a subagent, ask the agent that dispatched you instead."
+        own_work_to_the_user = (
+            leave_it_alone + "\nTell the user that merges stop until that work is kept elsewhere "
+            "and {worktree} is detached at origin/main or an older commit of main, with no "
+            "change to a tracked file and no operation in progress; name the work, and ask how the user wants it kept and who "
+            "does it. Once {worktree} is in that state, run this program again, which then moves "
+            "it to origin/main itself. " + subagent)
+        files_in_the_way_to_the_user = (
+            leave_it_alone + " Do not move or remove the files git lists, whatever git suggests "
+            "above.\nTell the user that merges stop until the files git lists are gone from "
+            "{worktree}; name them, and ask how the user wants them kept and who moves them. Once "
+            "they are gone, run this program again. " + subagent)
+        for name, arrange, own_work in (
+                ("tracked change", lambda tools: (tools / "README").write_text("edited\n"),
+                 "a tracked file is changed, such as README"),
+                ("branch", lambda tools: git("checkout", "-q", "-b", "local-work", cwd=tools),
+                 "the branch local-work is checked out"),
+                ("commit of its own",
+                 lambda tools: git("commit", "-q", "--allow-empty", "-m", "own", cwd=tools),
+                 "is not an ancestor of origin/main, so it may hold commits main lacks"),
+                ("cherry-pick in progress",
+                 lambda tools: git_path(tools, "CHERRY_PICK_HEAD").write_text(
+                     git_output(tools, "rev-parse", "HEAD") + "\n"),
+                 "a cherry-pick is in progress")):
+            case = "review-tools-behind-main-" + name.replace(" ", "-")
+            head_before = []
+
+            def arrange_and_remember(directory, arrange=arrange, head_before=head_before):
+                tools = directory / "review-tools"
+                arrange(tools)
+                head_before.append(git_output(tools, "rev-parse", "HEAD"))
+
+            exit_code, output, gh_calls, gate_calls, _ = run_case(
+                scratch, case, [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+                review_tools_state="behind-main", before_the_program_runs=arrange_and_remember)
+            review_tools = scratch / case / "review-tools"
+            check(f"a review tools worktree behind origin/main that holds a {name} is left "
+                  f"where it is, and the program stops before the gate, exit 2, saying what "
+                  f"work it holds, to leave it alone and to tell the user",
+                  exit_code == 2 and gate_calls == [] and gh_calls == []
+                  and git_output(review_tools, "rev-parse", "HEAD") == head_before[0]
+                  and "and holds work of its own, so this program does not move it: " in output
+                  and own_work in output
+                  and output.rstrip().endswith(
+                      own_work_to_the_user.format(worktree=review_tools)),
+                  f"exit {exit_code}\n{output}")
+
+        case = "review-tools-behind-main-checkout-fails"
+        exit_code, output, gh_calls, gate_calls, _ = run_case(
+            scratch, case, [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+            review_tools_state="behind-main",
+            before_the_program_runs=lambda directory: (
+                directory / "review-tools" / "new-on-main.txt").write_text("untracked\n"))
+        review_tools = scratch / case / "review-tools"
+        check("a review tools worktree whose checkout at origin/main git refuses over an "
+              "untracked file main adds stops before the gate, exit 2, with git's whole error, "
+              "which names the file, saying to leave the worktree alone and tell the user, the "
+              "untracked file kept",
+              exit_code == 2 and gate_calls == [] and gh_calls == []
+              and f"could not check {review_tools} out at origin/main" in output
+              and "would be overwritten by checkout:\n\tnew-on-main.txt" in output
+              and (review_tools / "new-on-main.txt").read_text() == "untracked\n"
+              and output.rstrip().endswith(
+                  files_in_the_way_to_the_user.format(worktree=review_tools)),
+              f"exit {exit_code}\n{output}")
+
+        case = "review-tools-behind-main-checkout-killed"
+        exit_code, output, gh_calls, gate_calls, _ = run_case(
+            scratch, case, [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+            review_tools_state="behind-main", git_killed_before_the_merge_on=" checkout ")
+        review_tools = scratch / case / "review-tools"
+        check("a review tools worktree whose checkout at origin/main fails otherwise, here "
+              "killed by a signal, stops before the gate, exit 2, saying to run the program "
+              "again once and then tell the user",
+              exit_code == 2 and gate_calls == [] and gh_calls == []
+              and f"could not check {review_tools} out at origin/main" in output
+              and output.rstrip().endswith(
+                  ": git printed no error\nRun this program again once; if it fails the same "
+                  "way, " + TELL_THE_USER_WITH_THE_GIT_ERROR),
+              f"exit {exit_code}\n{output}")
 
         exit_code, output, gh_calls, gate_calls, _ = run_case(
             scratch, "review-tools-fetch-fails", [(GATE_PASSED, 0)],
@@ -727,6 +831,23 @@ def main():
                   f"message with the git error it quotes",
                   exit_code == 2 and gate_calls == [] and gh_calls == []
                   and words in output and f": git printed no error\n{instruction}" in output,
+                  f"exit {exit_code}\n{output}")
+
+        for failing, words in ((" merge-base ", "could not read whether HEAD "),
+                               (" status ", "could not read the changes to tracked files in "),
+                               (" --git-path ", "could not read where git keeps its operation "
+                                                "state in ")):
+            exit_code, output, gh_calls, gate_calls, _ = run_case(
+                scratch, f"review-tools-behind-main{failing.replace(' ', '-')}killed",
+                [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+                review_tools_state="behind-main", git_killed_before_the_merge_on=failing)
+            check(f"a git{failing}that reads whether a review tools worktree behind origin/main "
+                  f"holds work of its own, killed by a signal, stops before the gate, exit 2, "
+                  f"saying git printed no error and to tell the user the message",
+                  exit_code == 2 and gate_calls == [] and gh_calls == []
+                  and words in output
+                  and output.rstrip().endswith(
+                      ": git printed no error\nT" + TELL_THE_USER_WITH_THE_GIT_ERROR[1:]),
                   f"exit {exit_code}\n{output}")
 
         exit_code, output, gh_calls, gate_calls, _ = run_case(
@@ -1363,6 +1484,49 @@ def main():
         check("an after-merge worktree whose removal exits 1 exits 3, with git's error",
               exit_code == 3 and "was not removed: git worktree remove exited 1: fake git failed"
               in output, f"exit {exit_code}\n{output}")
+        base_modified = {"exit": 1, "stderr": "GraphQL: Base branch was modified. Review and "
+                                              "try the merge again. (mergePullRequest)\n"}
+        routes = default_routes(STACKED_AND_NOT)
+        routes["pr merge"] = [base_modified, {}]
+        exit_code, output, gh_calls, _, waits = run_case(
+            scratch, "merge-base-branch-modified-once", [(GATE_PASSED, 0)], routes)
+        merges = [argv for argv in argvs(gh_calls) if argv[:2] == ["pr", "merge"]]
+        check("a merge GitHub refuses once with \"Base branch was modified\" is run again 5 "
+              "seconds later, the same command, and merges, exit 0",
+              exit_code == 0 and merges == [EXPECTED_MERGE, EXPECTED_MERGE] and waits == [5]
+              and "merge try 1 of 3: GitHub refused the merge because main moved during it; "
+                  "running the merge command again in 5 seconds\n" in output
+              and "merge exit 0" in output,
+              f"exit {exit_code}\n{output}")
+
+        routes = default_routes(STACKED_AND_NOT)
+        routes["pr merge"] = base_modified
+        routes["view-state"] = {"stdout": '{"state":"OPEN","mc":null}\n'}
+        exit_code, output, gh_calls, _, waits = run_case(
+            scratch, "merge-base-branch-modified-every-time", [(GATE_PASSED, 0)], routes)
+        merges = [argv for argv in argvs(gh_calls) if argv[:2] == ["pr", "merge"]]
+        check("a merge GitHub refuses with \"Base branch was modified\" every time is run 3 "
+              "times, then reported as not merged with GitHub's error, exit 1",
+              exit_code == 1 and len(merges) == 3 and waits == [5, 5]
+              and "STOP: not merged: pull request 10 is OPEN after the merge command ran; the "
+                  "merge command exited 1: GraphQL: Base branch was modified." in output
+              and output.rstrip().endswith(
+                  "GitHub refused the merge 3 times because main moved during it, as when other "
+                  "merges run at the same time; GitHub's \"Review and try the merge again\" asks "
+                  "for no new review.\nRun this program again in a few minutes. If it is refused "
+                  "this way again, tell the user that merges keep failing because main moves "
+                  "during each one. If you are a subagent, report it to the agent that dispatched "
+                  "you instead."),
+              f"exit {exit_code}\n{output}")
+
+        routes = default_routes(STACKED_AND_NOT)
+        routes["pr merge"] = {"exit": 1, "stderr": "GraphQL: Pull request is not mergeable\n"}
+        routes["view-state"] = {"stdout": '{"state":"OPEN","mc":null}\n'}
+        exit_code, output, gh_calls, _, waits = run_case(
+            scratch, "merge-refused-otherwise", [(GATE_PASSED, 0)], routes)
+        merges = [argv for argv in argvs(gh_calls) if argv[:2] == ["pr", "merge"]]
+        check("a merge GitHub refuses for any other reason is not run again, exit 1",
+              exit_code == 1 and len(merges) == 1 and waits == [], f"exit {exit_code}\n{output}")
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
