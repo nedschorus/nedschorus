@@ -352,6 +352,39 @@ try:
                   and verdicts["alpha"]["sentences"][0]["code_reading"] == "judge",
                   (code, verdicts, error))
 
+    # --- an "as" clause and an "if you" clause: the first three sentences are from the sweep's log --
+    expected_kinds = [
+        ("I'll review each pull request as it opens.", "promise_after_event"),
+        ("It has two small cleanup pull requests coming first, and I'll review all three as they open.",
+         "promise_after_event"),
+        ("If you'd rather not, I'll close it, and the fetch keeps failing now and then, leaving main "
+         "untested after those merges.", "conditional_on_user"),
+        ("I'll remove the worktree if you say so.", "conditional_on_user"),
+        ("As each check finishes, I'll merge whatever comes back clean.", "promise_after_event"),
+        ("I'll review them as they come in.", "promise_after_event"),
+        ("If you don't want it, I'll close it.", "conditional_on_user"),
+        ("I'll start by reading the glossary, as the task requires, then the document under review.",
+         "announced_action"),
+        ("I'll make a fresh branch that fits your approved paragraph to the page as it is now.",
+         "announced_action"),
+        ("I'm checking item 11 of the merged walk against the design as it now stands.",
+         "announced_action"),
+        ("I'll write it up as the next item.", "announced_action"),
+        ("I'll fix the cases such as those listed below.", "announced_action"),
+        ("I'll add them as those two items.", "announced_action"),
+        ("I'll merge it as it currently stands.", "announced_action"),
+        ("If you don't, I'll check back in about 30 minutes.", "promise_after_event"),
+        ("Unless you object, I'll add that as one clause to the item's new text.",
+         "promise_after_event"),
+        ("If you haven't, I'll hold it.", "hold"),
+    ]
+    machine = Machine()
+    machine.seat("alpha", [user("go"), assistant("\n".join(s for s, _ in expected_kinds)), turn_end()])
+    _, verdicts, _ = machine.run()
+    found_kinds = {s["sentence"]: s["kind"] for s in verdicts["alpha"].get("sentences", [])}
+    for sentence, kind in expected_kinds:
+        check(f"{sentence!r} is {kind}", found_kinds.get(sentence) == kind, found_kinds.get(sentence))
+
     # --- sentences that are not raised; rules 3 to 5 then decide --------------------------------
     for sentence, kind in (("Say the word and I'll merge it.", "conditional_on_user"),
                            ("I'll push it once you approve, your call.", "conditional_on_user")):
