@@ -212,7 +212,7 @@ class Harness:
         watcher.run(list(seats))
 
     def decisions(self):
-        path = self.log_directory / "decisions.jsonl"
+        path = self.log_directory / watcher_module.AGENT_CRASH_WATCHER_DECISIONS_FILE_NAME
         if not path.is_file():
             return []
         return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
@@ -358,7 +358,7 @@ def run_decision_cases(root: Path):
           and "If the fix needs a change to a guarded-file, tell the user" in text
           and "If you cannot find the cause, or cannot fix it, tell the user" in text, text)
     check("a task cites the record as a path on ned-box, which works from either machine",
-          f"Record: nedlern@ned-box:{root / 'second-crash' / 'decisions.jsonl'}\n" in text, text)
+          f"Record: nedlern@ned-box:{root / 'second-crash' / watcher_module.AGENT_CRASH_WATCHER_DECISIONS_FILE_NAME}\n" in text, text)
     check("the task written is logged with its id and task list",
           any(entry["decision"] == "task written for the agent-seat to find the cause and fix it"
               and entry["kind"] == "second-crash" and entry["task"] == 1
@@ -891,6 +891,57 @@ def run_refused_cases(root: Path):
           "sightings of its own", restarted_at_once == []
           and harness.recoveries == ["merge-lane-2"], repr((restarted_at_once, harness.recoveries)))
 
+    # A nonzero recorded exit whose seat directory a passing process occupies on and off.
+    for seat in ("merge-lane-2", watcher_module.AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME):
+        harness = Harness(root / f"recorded-exit-alternating-with-occupancy-{seat}")
+        harness.verdicts[seat] = ("seat-already-running", "")
+        harness.run(SEEN_RUNNING, seats=(seat,))
+        for minute in range(5, 44):
+            harness.verdicts[seat] = (
+                ("refuse", f"a live process is rooted in /home/nedlern/agents/{seat}")
+                if (minute // 2) % 2 else
+                ("offer-after-recorded-exit", (1, "2026-10-12T03:04:00+00:00", "session")))
+            harness.run(SEEN_RUNNING + timedelta(minutes=minute), seats=(seat,))
+        check(f"a nonzero recorded exit of {seat} whose verdict flickers with an occupancy "
+              "refusal is reported once", len(harness.reports()) == 1
+              and len(harness.notices()) == (seat != "merge-lane-2") and harness.recoveries == [],
+              repr(harness.reports()))
+
+    # Recovery fails on the crash beneath a noticed refusal: that death is then handled.
+    for recent_attempt, kind in ((False, "recovery-failed"), (True, "second-crash")):
+        harness = Harness(root / f"crash-beneath-a-noticed-refusal-{kind}",
+                          recovery_result=(1, "merge-lane-2: FAILED to relaunch"))
+        if recent_attempt:
+            harness.state["seats"]["merge-lane-2"] = {"recovery_attempts": [
+                {"attempted_at": watcher_module.timestamp(SEEN_RUNNING + timedelta(minutes=1)),
+                 "died_at_about": watcher_module.timestamp(SEEN_RUNNING),
+                 "outcome": "restarted"}]}
+        refused_after_running(harness, "refuse", "a live process is rooted in /x")
+        harness.verdicts["merge-lane-2"] = ("resume", ("session-id", "found"))
+        for minute in range(12, 25):
+            harness.run(SEEN_RUNNING + timedelta(minutes=minute))
+        failure_reports = [subject for subject in harness.reports()
+                           if not str(subject).startswith("agent-crash-watcher, recovery-refuses:")]
+        check(f"a crash beneath a noticed refusal, when it ends in {kind}, is reported once "
+              "and not acted on again", len(failure_reports) == 1
+              and kind in failure_reports[0]
+              and harness.recoveries == ([] if recent_attempt else ["merge-lane-2"]),
+              repr((harness.reports(), harness.recoveries)))
+
+    harness = Harness(root / "leftover-shell-closed-by-hand-over-a-recorded-exit")
+    harness.assess_as_though_leftover_shell_closed = (
+        lambda seat, pane_process_ids: ("offer-after-recorded-exit",
+                                        (1, "2026-10-12T03:04:00+00:00", "session")))
+    refused_after_running(harness, "ask-to-close-the-leftover-idle-shell", LEFTOVER_SHELL_DETAIL)
+    harness.verdicts["merge-lane-2"] = ("offer-after-recorded-exit",
+                                        (1, "2026-10-12T03:04:00+00:00", "session"))
+    for minute in range(12, 20):
+        harness.run(SEEN_RUNNING + timedelta(minutes=minute))
+    check("a nonzero recorded exit whose leftover shell the user closed by hand is reported "
+          "once, by the leftover-shell task", len(harness.reports()) == 1
+          and harness.tasks("leftover-shell", "merge-lane-2") and harness.recoveries == [],
+          repr(harness.reports()))
+
     # Restarted by the watcher, then down again before any run sees it running, then refused.
     harness = Harness(root / "refused-again-after-a-restart")
     refused_after_running(harness, "refuse", "the first refusal")
@@ -1280,7 +1331,7 @@ def run_report_run_failure_state_cases(root: Path):
             raised = error
         finally:
             watcher_module.write_state = real_write_state
-        decisions = (root / "unsavable-log" / "decisions.jsonl").read_text(encoding="utf-8")
+        decisions = (root / "unsavable-log" / watcher_module.AGENT_CRASH_WATCHER_DECISIONS_FILE_NAME).read_text(encoding="utf-8")
         reported = locked / f"{watcher_module.PROGRAM}-reported-run-failures.txt"
         check("a state that cannot be saved is logged, not raised, and the error is still marked "
               "as reported",
@@ -1321,7 +1372,7 @@ def run_report_run_failure_state_cases(root: Path):
               and len(saved_state.get("pending_notices", [])) == 1 and saved_stderr.getvalue() == "",
               repr((saved_state, saved_stderr.getvalue())))
         nowhere_reported = nowhere / f"{watcher_module.PROGRAM}-reported-run-failures.txt"
-        nowhere_decisions = (root / "nowhere-log" / "decisions.jsonl").read_text(encoding="utf-8")
+        nowhere_decisions = (root / "nowhere-log" / watcher_module.AGENT_CRASH_WATCHER_DECISIONS_FILE_NAME).read_text(encoding="utf-8")
         check("a run failure whose task, user-alert, window and saved state all fail is not marked "
               "as reported, says so on stderr and in the record, and the next failing run reports "
               "it again",

@@ -65,9 +65,8 @@ with the design:
   4. THE TRIAGE FILE IS REPLACED, AND EACH DISPLACED COPY'S sha256 IS ANNOUNCED
      (user-ruled 2026-09-20, item 4 of the walk
      md-skills-seat-open-decisions-2026-09-20). The triage file is
-     cold-read-triage.md; an older record, and a sanity-check record, names
-     it triage.md. The shipper replaces whichever of the two the record
-     holds; when it holds both, it replaces cold-read-triage.md and leaves
+     cold-read-triage.md; an older record names it triage.md. The shipper
+     replaces whichever of the two the record holds; when it holds both, it replaces cold-read-triage.md and leaves
      triage.md as it is. The store treats the two names as two separate
      files. When the store holds the triage file under one name and the
      record holds it only under the other, rule 2's check for a store file
@@ -264,7 +263,7 @@ SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
 # Seconds the store inventory's ssh call may take: the 10-second connect and
 # a sha256sum of one cold-read-record, well inside the 240 seconds the
 # git-worktree-remove guard waits for the whole shipment.
-STORE_INVENTORY_SSH_TIMEOUT_SECONDS = 60
+COLD_READ_RECORD_LOG_STORE_FILE_HASH_LISTING_SSH_CALL_TIMEOUT_SECONDS = 60
 # Seconds rsync waits on a silent connection before giving up.
 RSYNC_IO_TIMEOUT_SECONDS = "120"
 # ssh's exit code when it could not connect, which rsync passes through.
@@ -332,7 +331,7 @@ in the nedschorus repository, which this machine also clones:
   task lists, seat-briefs and global CLAUDE.md, mirrored by
   `scripts/transcript-mirror-to-log-store.py`
 - `session-dialogs/` -- each mirrored session's complete filtered dialog,
-  kept current by `scripts/log-store-session-dialogs-refresh-nbd.py`
+  kept current by `scripts/log-store-session-dialogs-refresh-hack.py`
 - `seats/` -- a seat's shared files, shipped by
   `scripts/seat-shared-file-ship.py`
 - `analysis/` -- analyses, placed by hand
@@ -368,6 +367,10 @@ in the nedschorus repository, which this machine also clones:
   -- one log per run of the waiter that removes a worktree once no record in
   it is being written, written by
   `nc-systems/general-tools/git-worktree-remove-deferred-until-cold-read-record-and-sanity-check-record-being-written-locks-release-then-ship-to-log-store-waiter.py`
+- `maintenance-job-reports/` -- one report per maintenance-job per run, each
+  written by the program the job runs; today the weekly count of each hook
+  rule ID,
+  `nc-systems/general-tools/claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report.py`
 
 To change this file, edit STORE_README in
 nc-systems/cold-read/cold-read-record-ship.py. The next shipment rewrites this file
@@ -575,7 +578,7 @@ def local_store_step_wrapper_returning_completed_process_and_value_or_os_error_a
                                            f"{failed}\n"), None
 
 
-def failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+def failed_log_store_step_reason_text_build_from_local_stdout_or_log_store_host_unreachable_or_ssh_exit(
         host, completed: subprocess.CompletedProcess) -> str:
     """The reason a FAILED line gives for a store step that returned the
     failed result. A local store's step carries the OS's reason in stdout
@@ -583,8 +586,17 @@ def failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh
     if host is None:
         return completed.stdout
     if completed.returncode == RSYNC_EXIT_CONNECTION_FAILED:
-        return "ned-box unreachable"
+        return f"{host} unreachable"
     return f"ssh exit {completed.returncode}"
+
+
+def failed_log_store_rsync_step_reason_text_build_from_log_store_host_unreachable_or_rsync_exit(
+        host, completed: subprocess.CompletedProcess) -> str:
+    """The reason a FAILED line gives for an rsync into the store that failed.
+    A local store's rsync runs no ssh, so its exit 255 is rsync's own."""
+    if host is not None and completed.returncode == RSYNC_EXIT_CONNECTION_FAILED:
+        return f"{host} unreachable"
+    return f"rsync exit {completed.returncode}"
 
 
 class FirstLineUnreadable(Exception):
@@ -788,8 +800,9 @@ def store_inventory(host, store_dir: pathlib.PurePosixPath):
     """{relative path: sha256} of the store's copy of this cold-read-record,
     and the process that produced it. An absent directory is an empty
     inventory with exit 0; an unreachable host, or an ssh call that runs past
-    STORE_INVENTORY_SSH_TIMEOUT_SECONDS, is ssh's exit 255 and an inventory of
-    None, and a local read that fails is exit 1 and None.
+    COLD_READ_RECORD_LOG_STORE_FILE_HASH_LISTING_SSH_CALL_TIMEOUT_SECONDS, is
+    ssh's exit 255 and an inventory of None, and a local read that fails is
+    exit 1 and None.
 
     sha256 on both sides -- Python's hashlib here, sha256sum on ned-box -- is
     the digest the cold-read-grid already records for the cold-read-target, so
@@ -807,11 +820,11 @@ def store_inventory(host, store_dir: pathlib.PurePosixPath):
     command = SSH_COMMAND + [host, script]
     try:
         completed = subprocess.run(command, capture_output=True, text=True, check=False,
-                                   timeout=STORE_INVENTORY_SSH_TIMEOUT_SECONDS)
+                                   timeout=COLD_READ_RECORD_LOG_STORE_FILE_HASH_LISTING_SSH_CALL_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(
             command, RSYNC_EXIT_CONNECTION_FAILED, "",
-            f"ssh {host} timed out after {STORE_INVENTORY_SSH_TIMEOUT_SECONDS} seconds\n"), None
+            f"ssh {host} timed out after {COLD_READ_RECORD_LOG_STORE_FILE_HASH_LISTING_SSH_CALL_TIMEOUT_SECONDS} seconds\n"), None
     if completed.returncode != 0:
         return completed, None
     inventory = {}
@@ -1329,7 +1342,7 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
     # placing step takes the inventory again.
     listed, in_store = store_inventory(host, store_dir)
     if in_store is None:
-        reason = failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+        reason = failed_log_store_step_reason_text_build_from_local_stdout_or_log_store_host_unreachable_or_ssh_exit(
             host, listed)
         print(f"FAILED: {name} — {reason}; the record stays on disk, unshipped.")
         sys.stderr.write(listed.stderr)
@@ -1430,8 +1443,8 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
         capture_output=True, text=True, check=False)
     if transferred.returncode != 0:
         left_behind = remove_staging_directory(host, staging_dir)
-        reason = ("ned-box unreachable" if transferred.returncode == RSYNC_EXIT_CONNECTION_FAILED
-                  else f"rsync exit {transferred.returncode}")
+        reason = failed_log_store_rsync_step_reason_text_build_from_log_store_host_unreachable_or_rsync_exit(
+            host, transferred)
         staging_note = (f"; removing the staging directory then failed "
                         f"({left_behind}). {deletion}" if left_behind else ".")
         print(f"FAILED: {name} — {reason} during the copy{staging_note} {rerun}")
@@ -1439,7 +1452,7 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
         return EXIT_FAILED
     placed, outcome = place_staged_files(host, staging_dir, store_dir, local, triage_name)
     if outcome is None:
-        reason = failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+        reason = failed_log_store_step_reason_text_build_from_local_stdout_or_log_store_host_unreachable_or_ssh_exit(
             host, placed)
         print(f"FAILED: {name} — {reason} while placing the copied files. "
               f"{deletion} {rerun}")
@@ -1509,9 +1522,10 @@ def ship_from_command_line(description: str, records_dir: pathlib.Path,
     holding a second copy, so the two cannot drift on what --all skips or what
     each exit code means.
 
-    RULE 4 REACHES THAT KIND ONLY THROUGH THE NAME triage.md, which a
-    sanity-check record does not use: its twice-written file is
-    finding-dispositions.md, written at the run's close and updated as the
+    RULE 4 REACHES THAT KIND ONLY THROUGH THE NAMES cold-read-triage.md AND
+    triage.md, which a sanity-check record written today does not use: its
+    twice-written file is
+    sanity-check-finding-dispositions.md, written at the run's close and updated as the
     findings' status moves, and it stays add-only and refused on difference.
     That is the same defect rule 4 fixes here, left open in that kind.
 

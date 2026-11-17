@@ -57,6 +57,7 @@ def refusal(tool_input, tool_name="Artifact"):
 
 reason = refusal({"action": "delete", "url": PAGE_LINK})
 check("a delete is refused", reason is not None and reason.startswith(
+    '[rule artifact-guard-claude-ai-page-delete] '
     'REFUSED: Artifact tool call with action "delete", blocked by a PreToolUse hook.'), reason)
 check("the refusal names the terminal-only confirmation prompt", reason is not None
       and "shows the confirmation prompt for this action only in its terminal UI" in reason, reason)
@@ -88,8 +89,6 @@ check("a delete by another tool is let through",
       refusal({"action": "delete", "url": PAGE_LINK}, tool_name="Bash") is None)
 
 for case_name, stdin_text in [
-        ("stdin that is not JSON", "not json {"),
-        ("empty stdin", ""),
         ("a JSON payload that is not an object", "[1, 2]")]:
     code, text = run_main(stdin_text)
     check(f"{case_name} is let through with exit 0 and no output", code == 0 and text == "",

@@ -12,7 +12,9 @@ verdict_for_seat itself, judges the cases marked "judge", sends, and runs on a s
 What it reads, for each agent-seat that has a handoff-supervisor state file
 (`<handoff directory>/<seat>-supervisor-state.json`):
 - the agent-session the supervisor launched last, and its transcript under the projects root,
-  with every transcript under that agent-session's `subagents/` folder;
+  with every subagent transcript under that agent-session's `subagents/` folder, including those
+  under `subagents/workflows/` of the agents a Workflow-tool run starts (Claude Code's Workflow
+  tool runs a script that starts several subagents in the background);
 - the walk-minutes in the agent-seat's `docs/walk/`, the handoff deferral marker file, the task
   list `<tasks root>/nedschorus-<seat>-tasks/`, and, for a usage limit, `oauthAccount.accountUuid`
   in `~/.claude.json`;
@@ -22,7 +24,7 @@ What it reads, for each agent-seat that has a handoff-supervisor state file
 
 It prints one JSON object per agent-seat, one per line. Each holds what the later slice needs
 without reading anything again: the session id, the transcript path, the last time a token was
-spent and the file that showed it, what is running and since when (a subagent that reported and
+spent and the file that showed it, what is running and since when, Workflow-tool runs included (a subagent that reported and
 stopped while background commands it launched still run gets the time of its report under
 `stopped_at` and a list of those commands under `own_running_background_commands`), the matched sentences with the code's reading of each, the agent-seat's last message, the tool calls a judge of the sentences
 looks through, the rule that applies and its decision.
@@ -93,6 +95,10 @@ AGENT_EXIT_CODE_KEY = "agent_exit_code"
 USAGE_LIMIT_API_ERROR = "usage_limit_reached"
 SYNTHETIC_MODEL = "<synthetic>"
 TASK_TOOL_NAMES = ("TaskCreate", "TaskUpdate")
+# The texts Claude Code's task tools return on success: "Task #<n> created successfully: <subject>"
+# and "Updated task #<n> <fields>".
+TASK_TOOL_SUCCESS_RESULT_PATTERN = re.compile(
+    r"Task #(?P<created>\d+) created successfully\b|Updated task #(?P<updated>\d+)\b")
 HANDOFF_PUT_OFF_TEXT = ("Your handoff was put off at {time} and nothing is running now. "
                         "Is now a good time to hand off?")
 
@@ -163,13 +169,21 @@ RX_GERUND_NARRATIVE = re.compile(
 RX_GERUND_NOUN = re.compile(r"^\W*\w+\s+(list|order|time|notes?|material|guide|room)\b", re.I)
 RX_NOW_NEXT = re.compile(r"^\W*(?:now|next|then)\b|\bnow\b|\bnext\b", re.I)
 # The user has the next move in these; an event-conditional sentence is a promise after the event.
+# "If you don't, I'll ..." and "unless you object, I'll ..." leave the move with the agent.
 RX_CONDITIONAL_ON_USER = re.compile(
-    r"\b(?:should you|want me|would you|shall I|say the word|say go|your call|if you'?d like|"
+    r"\b(?:should you|want me|would you|shall I|say the word|say go|your call|"
     r"can I|may I|on your (?:go|word|approval|ok|yes|y))\b"
+    r"|\bif you\b(?!\s+(?:don'?t|do not|haven'?t|have not|didn'?t|did not|won'?t|will not)\s*(?:[,;.]|$))"
     r"|^\W*(?:say|tell me|reply|answer|pick|choose)\b", re.I)
+# "as" is temporal only before "each" or before "it" or "they" and a verb that is not a form of be,
+# a modal or past tense: "as it opens", not "as it is", "as it currently stands", "as the task
+# requires" or "as those two items"; "these", "those" and "that" are left out, being determiners too.
 RX_CONDITIONAL_ON_EVENT = re.compile(
     r"\b(?:if|once|when|whenever|after|unless|until|tomorrow|later|next session|next time|"
-    r"as soon as|the moment|in a day|in an hour|by tomorrow)\b", re.I)
+    r"as soon as|the moment|in a day|in an hour|by tomorrow)\b"
+    r"|\bas\s+(?:each\b|(?:it|they)\s+(?!(?:(?:\w+ly|always|now|still|already|often|never)\s+)?"
+    r"(?:is|are|was|were|be|should|would|could|can|may|might|must|will|does|did|do|has|had|have|"
+    r"says?|said|stands?|seems?|looks?|goes|went|happens|turns|\w+ed)\b)[a-z])", re.I)
 RX_NEGATED_ACTION = re.compile(
     r"\b(?:without|instead of|rather than|not yet|never|no longer|don't|won't|can't)\s+"
     r"(?:\w+\s+){0,2}?(?:push|pushing|commit|committing|dispatch|dispatching|fork|forking|file|"
@@ -325,7 +339,7 @@ class TranscriptFacts:
         self.last_model_turn_record = None
         self.turn_ended_after_last_model_turn_record = False
         self.turn_ending_messages = []   # (record, time, time of the prompt that began its turn)
-        self.task_tool_calls = []        # (time, name, input)
+        self.task_tool_calls = []        # (time, name, input, task id), only calls whose result succeeded
         self.tool_calls = []             # (time, name, input), every tool call
         self.launch_times = {}           # subagent or background task id -> time
         self.last_task_notification = {} # task id -> (time, whether it is interim)
@@ -349,8 +363,11 @@ def read_main_transcript(path):
     newest_text_record = None
     turn_started_at = None
     awaiting_turn_start = True
+    task_tool_calls = []                 # (tool use id, (time, name, input))
+    task_id_by_succeeded_tool_use_id = {}
     for record in transcript_records(path):
         moment = parse_time(record.get("timestamp"))
+        task_id_by_succeeded_tool_use_id.update(succeeded_task_tool_result_task_ids(record))
         if awaiting_turn_start and record.get("type") == "user":
             turn_started_at = moment
             awaiting_turn_start = False
@@ -373,7 +390,8 @@ def read_main_transcript(path):
         for block in tool_uses(record):
             facts.tool_calls.append((moment, block.get("name"), block.get("input") or {}))
             if block.get("name") in TASK_TOOL_NAMES:
-                facts.task_tool_calls.append((moment, block.get("name"), block.get("input") or {}))
+                task_tool_calls.append(
+                    (block.get("id"), (moment, block.get("name"), block.get("input") or {})))
         if "<task-id>" in (text := task_notification_carrier_text(record)):
             for notification in threshold_hook.TASK_NOTIFICATION_PATTERN.findall(text):
                 interim = interim_recognizer.task_notification_is_interim(notification)
@@ -385,7 +403,38 @@ def read_main_transcript(path):
                 launched = result.get(key)
                 if isinstance(launched, str) and launched not in facts.launch_times:
                     facts.launch_times[launched] = moment
+    facts.task_tool_calls = [(*call, task_id_by_succeeded_tool_use_id[tool_use_id])
+                             for tool_use_id, call in task_tool_calls
+                             if tool_use_id in task_id_by_succeeded_tool_use_id]
     return facts
+
+
+def succeeded_task_tool_result_task_ids(record):
+    """{tool use id: task id} for each result in this record that shows a task call recorded
+    something, the task id read from the success text. A TaskUpdate on a task id that does not
+    exist returns "Task not found" with no is_error, and a call whose turn was interrupted has no
+    result, so only the success text counts; a TaskCreate's input names no id, so its id comes from
+    its result."""
+    content = (record.get("message") or {}).get("content")
+    if record.get("type") != "user" or not isinstance(content, list):
+        return {}
+    task_ids = {}
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "tool_result":
+            success = TASK_TOOL_SUCCESS_RESULT_PATTERN.match(tool_result_text(block))
+            if success:
+                task_ids[block.get("tool_use_id")] = success["created"] or success["updated"]
+    return task_ids
+
+
+def tool_result_text(block):
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(part.get("text", "") for part in content
+                       if isinstance(part, dict) and isinstance(part.get("text"), str))
+    return ""
 
 
 def newest_token_spend_in(path):
@@ -397,7 +446,8 @@ def newest_token_spend_in(path):
     return newest
 
 
-def running_subagent_entry(agent_id, facts, transcript, newest_spend_by_subagent_transcript, now):
+def running_subagent_entry(agent_id, facts, transcript, newest_spend_by_subagent_transcript, now,
+                           task_ids_ended_in_session_transcript):
     """The entry for a subagent the session's records leave running. Claude Code marks a subagent's
     report interim while background commands it launched still run, its final report included, so
     a subagent whose last report is interim and that has spent no token since is reported as
@@ -410,7 +460,8 @@ def running_subagent_entry(agent_id, facts, transcript, newest_spend_by_subagent
         return entry
     own = threshold_hook.work_in_flight(str(own_transcript),
                                         background_task_wait_seconds=float("inf"), now=now,
-                                        should_raise_on_undecodable_bytes=True)
+                                        should_raise_on_undecodable_bytes=True,
+                                        task_ids_ended_in_session_transcript=task_ids_ended_in_session_transcript)
     entry[fields.SUBAGENT_STOPPED_AT] = iso(stopped_at)
     entry[fields.SUBAGENT_OWN_RUNNING_BACKGROUND_COMMANDS] = [
         {"id": task_id, "started": iso(own.launched_at_by_id.get(task_id))}
@@ -452,24 +503,35 @@ def logged_in_account(claude_json):
     return account.get("accountUuid") if isinstance(account, dict) else None
 
 
+def tasks_of_task_list(task_directory, unknown_without_them):
+    """Every task in the agent-seat's task list, by id, as the due-task hook reads it; a missing
+    task list holds none. Raises ReadFailure, completed by unknown_without_them, such as "whether it
+    backs a promise of the agent-seat", when the list or one of its task files cannot be read."""
+    unreadable = []
+    try:
+        tasks = due_task_hook.read_tasks(task_directory, unreadable)
+    except OSError as error:
+        raise ReadFailure(f"the task list {task_directory} could not be listed ({error}), so "
+                          f"{unknown_without_them} is unknown. Repair the directory so that it "
+                          "can be listed, then run this program again.") from error
+    if unreadable:
+        raise ReadFailure(f"{unreadable[0]} could not be read as a task with an id, so "
+                          f"{unknown_without_them} is unknown. Repair the file so that it holds a "
+                          "task with an id, or remove it if it is not a task, then run this program "
+                          "again.")
+    return tasks
+
+
 def open_tasks_nothing_holds(task_directory, checker, due_task_raise_state_directory):
     """Open tasks nothing recorded holds back, as the due-task hook counts them for its idle check,
     from that hook's state file for the task list."""
-    if not task_directory.is_dir():
-        return []
-    unreadable = []
-    tasks = due_task_hook.read_tasks(task_directory, unreadable)
-    if unreadable:
-        raise ReadFailure(f"{unreadable[0]} could not be read as a task with an id, so whether it "
-                          "holds the agent-seat's work is unknown. Repair the file so that it holds "
-                          "a task with an id, or remove it if it is not a task, then run this "
-                          "program again.")
+    tasks = tasks_of_task_list(task_directory, "whether it holds the agent-seat's work")
     # The checker is shared by every agent-seat, so only the failures appended here are this one's.
     failures_before = len(checker.gh_failures)
     raised = due_task_hook.read_state(
         due_task_raise_state_directory / f"{task_directory.name}.json")["raised"]
     free, _ = due_task_hook.unheld_and_held_tasks(tasks, task_directory, checker, raised)
-    if len(checker.gh_failures) > failures_before:
+    if len(checker.gh_failures) > failures_before:  # pragma: no mutate, gh_failures is only appended to, so != gives what > gives; a test kills is not
         kind, number, cause = checker.gh_failures[failures_before]
         raise ReadFailure(f"GitHub could not say whether {kind} {number} holds: {cause}")
     return [{"id": task_id, "subject": tasks[task_id].get("subject")} for task_id in free]
@@ -478,15 +540,7 @@ def open_tasks_nothing_holds(task_directory, checker, due_task_raise_state_direc
 def open_tasks_with_prerequisites_or_blocked_by(task_directory):
     """Every open task that waits on something, whenever it was created: any of them may be the
     one that backs a promise or a hold."""
-    if not task_directory.is_dir():
-        return []
-    unreadable = []
-    tasks = due_task_hook.read_tasks(task_directory, unreadable)
-    if unreadable:
-        raise ReadFailure(f"{unreadable[0]} could not be read as a task with an id, so whether it "
-                          "backs a promise of the agent-seat is unknown. Repair the file so that "
-                          "it holds a task with an id, or remove it if it is not a task, then run "
-                          "this program again.")
+    tasks = tasks_of_task_list(task_directory, "whether it backs a promise of the agent-seat")
     waiting = []
     for task_id, task in tasks.items():
         prerequisites = (task.get("metadata") or {}).get("prerequisites")
@@ -500,6 +554,21 @@ def open_tasks_with_prerequisites_or_blocked_by(task_directory):
 
 # --- One agent-seat's verdict ---
 
+def sets_prerequisites_or_blocked_by(task_tool_input):
+    """Whether a TaskCreate or TaskUpdate call records what a task waits on: the only call that can
+    back a promise to act after an event or a hold."""
+    metadata = task_tool_input.get("metadata")
+    # The transcript keeps the input as the model wrote it, and TaskCreate accepts metadata
+    # written as a JSON string.
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except ValueError:
+            metadata = None
+    return bool((metadata.get("prerequisites") if isinstance(metadata, dict) else None)
+                or task_tool_input.get("addBlockedBy"))
+
+
 def code_reading_of_sentence(kind, turn_started_at, task_tool_calls, open_waiting_tasks):
     """What code settles about one matched sentence: not_raised, unbacked, or judge.
 
@@ -512,8 +581,7 @@ def code_reading_of_sentence(kind, turn_started_at, task_tool_calls, open_waitin
             return fields.JUDGE
         backing_candidates = [call for call in task_tool_calls
                               if call[0] and turn_started_at and call[0] >= turn_started_at
-                              and ((call[2].get("metadata") or {}).get("prerequisites")
-                                   or call[2].get("addBlockedBy"))]
+                              and sets_prerequisites_or_blocked_by(call[2])]
         return fields.JUDGE if backing_candidates else fields.UNBACKED
     return fields.JUDGE
 
@@ -561,7 +629,7 @@ def tool_calls_since_start_of_earliest_turn_with_sentence_to_judge(facts, judged
 
 def rules_three_to_five(verdict, put_off_at, checker, task_directory,
                         due_task_raise_state_directory):
-    running = verdict["running"]["subagents"] or verdict["running"]["background_commands"]
+    running = any(verdict["running"].values())
     if verdict["handoff_deferred_marker"] and not running:
         return {fields.RULE: 3, fields.DECISION: fields.WAKE_HANDOFF_PUT_OFF,
                 fields.TEXT: HANDOFF_PUT_OFF_TEXT.format(time=iso(put_off_at))}
@@ -607,17 +675,19 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
         facts = read_main_transcript(transcript)
         last_spend, source = facts.last_token_spend, transcript
         newest_spend_by_subagent_transcript = {}
-        subagent_directory = project_directory / session_id / "subagents"
-        if subagent_directory.is_dir():
-            for subagent_transcript in sorted(subagent_directory.glob("*.jsonl")):
-                spent = newest_token_spend_in(subagent_transcript)
-                newest_spend_by_subagent_transcript[subagent_transcript] = spent
-                if spent and (last_spend is None or spent > last_spend):
-                    last_spend, source = spent, subagent_transcript
+        for subagent_transcript in threshold_hook.session_subagent_transcript_paths(transcript):
+            spent = newest_token_spend_in(subagent_transcript)
+            newest_spend_by_subagent_transcript[subagent_transcript] = spent
+            if spent and (last_spend is None or spent > last_spend):
+                last_spend, source = spent, subagent_transcript
         verdict["last_activity"] = {"time": iso(last_spend),
                                     "source": str(source) if last_spend else None}
         verdict[fields.LAST_TOOL_CALL_AT] = iso(max(
             (moment for moment, _, _ in facts.tool_calls if moment), default=None))
+        verdict[fields.SUCCESSFUL_TASK_TOOL_CALLS_SETTING_PREREQUISITES_OR_BLOCKED_BY] = [
+            {"time": iso(moment), "name": name, "task": task_id}
+            for moment, name, tool_input, task_id in facts.task_tool_calls
+            if moment and sets_prerequisites_or_blocked_by(tool_input)]
 
         last = facts.last_model_turn_record or {}
         limit = is_usage_limit(last)
@@ -634,7 +704,8 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
                 str(transcript), background_task_wait_seconds=float("inf"), now=now)
             running_subagents = [
                 running_subagent_entry(agent_id, facts, transcript,
-                                       newest_spend_by_subagent_transcript, now)
+                                       newest_spend_by_subagent_transcript, now,
+                                       flight.ended_task_ids)
                 for agent_id in flight.subagent_ids]
         except threshold_hook.TranscriptCouldNotBeFullyRead as error:
             raise ReadFailure(f"{error}: it is the last line, still being written, which the next "
@@ -642,7 +713,9 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
         verdict["running"] = {
             "subagents": running_subagents,
             "background_commands": [{"id": task_id, "started": iso(facts.launch_times.get(task_id))}
-                                    for task_id in flight.background_task_ids]}
+                                    for task_id in flight.background_task_ids],
+            "workflows": [{"id": task_id, "started": iso(flight.launched_at_by_id.get(task_id))}
+                          for task_id in flight.workflow_ids]}
         marker = deferred_marker_files.handoff_deferred_marker_path(
             paths.handoff_directory, session_id)
         try:
@@ -673,25 +746,27 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
         task_directory = paths.tasks_root / f"nedschorus-{seat}-tasks"
         open_waiting_tasks = open_tasks_with_prerequisites_or_blocked_by(task_directory)
         verdict["sentences"] = matched_sentences(facts, since, open_waiting_tasks)
-        raised = [item for item in verdict["sentences"] if item["code_reading"] != fields.NOT_RAISED]
-        if not raised:
-            verdict.update(rules_three_to_five(verdict, put_off_at, checker, task_directory,
-                                               paths.due_task_raise_state_directory))
-        elif any(item["code_reading"] == fields.JUDGE for item in raised):  # pragma: no mutate, raised holds only the UNBACKED and JUDGE constants themselves, and "unbacked" sorts after "judge", so <= and is give what == gives
-            judged = [item for item in raised if item["code_reading"] == fields.JUDGE]
+        sentences_by_code_reading = fields.verdict_sentences_grouped_by_code_reading(
+            verdict["sentences"])
+        judged = sentences_by_code_reading.get(fields.JUDGE)
+        unbacked = sentences_by_code_reading.get(fields.UNBACKED)
+        if judged:
             verdict[fields.TOOL_CALLS_SINCE_START_OF_EARLIEST_TURN_WITH_SENTENCE_TO_JUDGE] = (
                 tool_calls_since_start_of_earliest_turn_with_sentence_to_judge(facts, judged))
             verdict[fields.OPEN_TASKS_WITH_PREREQUISITES_OR_BLOCKED_BY] = open_waiting_tasks
             # Only the judge can find every sentence backed, and then rules 3 to 5 decide; a
             # sentence code already found unbacked means that can never happen. Rule 2 is set
             # after those reads, so one that fails leaves the rule null.
-            if not any(item["code_reading"] == fields.UNBACKED for item in raised):
+            if not unbacked:
                 verdict[fields.IF_EVERY_SENTENCE_BACKED] = rules_three_to_five(
                     verdict, put_off_at, checker, task_directory,
                     paths.due_task_raise_state_directory)
             verdict.update({fields.RULE: 2, fields.DECISION: fields.JUDGE})
-        else:
+        elif unbacked:
             verdict.update({fields.RULE: 2, fields.DECISION: fields.SEND_UNBACKED})
+        else:
+            verdict.update(rules_three_to_five(verdict, put_off_at, checker, task_directory,
+                                               paths.due_task_raise_state_directory))
     except ReadFailure as error:
         verdict["errors"].append(str(error))
     return verdict

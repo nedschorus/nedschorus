@@ -25,8 +25,8 @@ Line numbers are on main at adb96dc59. The last column names the agent-seat whos
 |---|---|---|---|---|
 | `nc-systems/handoff/tests/handoff-supervisor-session-launch-and-seat-lock-test.py` | 985, 1005 | a held lock makes the update skip at once | 0.5 s | reboot-test |
 | same file | 925 | a hung update is killed at its timeout | 15 s | reboot-test |
-| `scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook-nbd-test.py` | 337 | judging a 1.6 MB Markdown file | 5 s | agent-instructions-editor |
-| `scripts/style-guide-word-checker-markdown-edit-hook-nbd-test.py` | 567 | a 60 KB run of text with no whitespace before a hit | 5 s | agent-instructions-editor |
+| `scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook-hack-test.py` | 337 | judging a 1.6 MB Markdown file | 5 s | agent-instructions-editor |
+| `scripts/style-guide-word-checker-markdown-edit-hook-hack-test.py` | 567 | a 60 KB run of text with no whitespace before a hit | 5 s | agent-instructions-editor |
 | `scripts/git-client-side-hooks-pre-push-test.py` | 975, 1257 | a hung test run does not hold the push (`HANGING_CASE_WALL_CLOCK_LIMIT_SECONDS`, line 91) | 15 s | reboot-test |
 | `scripts/launch-claude-mac-test.py` | 480, 1034, 1065 | a skipped launch finishes; a stopped terminal is stopped at its timeout; a command whose streams are closed is stopped at its timeout | 15 s | reboot-test |
 | `scripts/launch-claude-ubuntu-test.py` | 1068, 1100 | with another update holding the lock, the seat is still prepared without hanging; a command whose streams are closed is stopped at its timeout | 15 s | reboot-test |

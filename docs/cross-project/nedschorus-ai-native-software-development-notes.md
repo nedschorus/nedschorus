@@ -539,7 +539,7 @@ The following is a repository-and-GHI snapshot, not a statement that every propo
 | Persistent state machine | **Not built; declined 2026-08-13 and reopened 2026-09-04 in the [seat-model document](https://github.com/nedschorus/nedschorus/blob/main/docs/nedschorus-wiki/nedschorus-agent-seat-model.md), whose 2026-09-14 trim removed that section (see its git history)** | Reopen explicitly. Build the smallest durable router needed for one human conversation, work-item state, and recovery. Record why the earlier “no state machine” decision changed. |
 | Deployment and production-feedback loop | **Not a gatekeeper responsibility; largely missing** | Design and build separately: CI/CD evidence, deployment identity, rollback, observability contract, and incident intake. |
 
-The [README](https://github.com/nedschorus/nedschorus/blob/main/README.md) already expresses several principles this architecture should preserve: complexity must be earned, behavior belongs in code where possible, durable outputs must be readable with zero prior context, and there should be one gate to `main`.
+The [founding principles page](https://github.com/nedschorus/nedschorus/blob/main/docs/nedschorus-wiki/nedschorus-founding-principles-actors-and-repository-layout.md) already expresses several principles this architecture should preserve: complexity must be earned, behavior belongs in code where possible, durable outputs must be readable with zero prior context, and there should be one gate to `main`.
 
 ## 16. External components worth using
 

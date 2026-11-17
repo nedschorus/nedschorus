@@ -65,6 +65,7 @@ import datetime
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -320,9 +321,16 @@ def run_runner(repository, stub_directory, plan, *arguments,
         cwd=current_directory or repository)
 
 
-def expected_record_directory(repository, restater=RESTATER_CLASS):
-    today = datetime.date.today().strftime("%Y-%m-%d")
-    return repository / "cold-read-records" / f"{today}-restater-judge-{restater}"
+def record_directory_the_runner_reported(result):
+    # Read, never recomputed from the test's clock: a run that crosses local
+    # midnight is named for the day the runner read, not the day the test reads.
+    line = result.stdout.strip()
+    failed = re.fullmatch(r"FAILED \(.*; see (.+)\)", line, re.DOTALL)
+    return Path(failed.group(1)) if failed else Path(line).parent
+
+
+def restater_judge_record_directories(repository):
+    return sorted((repository / "cold-read-records").glob("*-restater-judge-*"))
 
 
 with tempfile.TemporaryDirectory() as scratch:
@@ -331,17 +339,26 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- Two runs that agree: the record, the counts, the composite -------
     repository = build_scratch_repository(scratch)
+    day_before_run = datetime.date.today()
     result = run_runner(
         repository, stubs,
         {"run1": {"*": {"report": RUN_REPORT_BASE}},
          "run2": {"*": {"report": RUN_REPORT_AGREEING}}},
     )
-    record_dir = expected_record_directory(repository)
+    day_after_run = datetime.date.today()
+    record_dir = record_directory_the_runner_reported(result)
     combined_path = record_dir / f"{record_dir.name}--restater-judge-combined.md"
     check("two judge runs that both land exit 0",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr[-2000:]!r}")
-    check("the combined result's path is the one line on stdout",
-          result.stdout.strip() == str(combined_path), repr(result.stdout))
+    check("the one line on stdout is the combined result's path, in a record "
+          "directory under cold-read-records named for the day the run was made",
+          result.stdout.strip() == str(combined_path)
+          and combined_path.is_file()
+          and record_dir.parent == repository / "cold-read-records"
+          and record_dir.name in {
+              f"{day:%Y-%m-%d}-restater-judge-{RESTATER_CLASS}"
+              for day in (day_before_run, day_after_run)},
+          repr(result.stdout))
     check("both runs' reports are in the restater's record directory, named for the run",
           (record_dir / f"{record_dir.name}--claude-restater-judge-run1.md").is_file()
           and (record_dir / f"{record_dir.name}--claude-restater-judge-run2.md").is_file(),
@@ -414,7 +431,7 @@ with tempfile.TemporaryDirectory() as scratch:
         {"run1": {"*": {"report": RUN_REPORT_BASE}},
          "run2": {"*": {"report": RUN_REPORT_DISAGREEING}}},
     )
-    record_dir = expected_record_directory(repository)
+    record_dir = record_directory_the_runner_reported(result)
     combined = (record_dir / f"{record_dir.name}--restater-judge-combined.md"
                 ).read_text(encoding="utf-8")
     check("two runs that disagree still exit 0 — a disagreement is a result",
@@ -437,7 +454,7 @@ with tempfile.TemporaryDirectory() as scratch:
                   "claude-opus-5": {"report": RUN_REPORT_BASE}},
          "run2": {"*": {"report": RUN_REPORT_AGREEING}}},
     )
-    record_dir = expected_record_directory(repository)
+    record_dir = record_directory_the_runner_reported(result)
     combined = (record_dir / f"{record_dir.name}--restater-judge-combined.md"
                 ).read_text(encoding="utf-8")
     check("a run whose Fable failed is still scored, and the pair exits 0",
@@ -465,7 +482,7 @@ with tempfile.TemporaryDirectory() as scratch:
         {"run1": {"*": {"exit": 1}},
          "run2": {"*": {"report": RUN_REPORT_AGREEING}}},
     )
-    record_dir = expected_record_directory(repository)
+    record_dir = record_directory_the_runner_reported(result)
     combined_path = record_dir / f"{record_dir.name}--restater-judge-combined.md"
     combined = combined_path.read_text(encoding="utf-8")
     check("one run failing exits 1 and still writes the combined result",
@@ -490,7 +507,7 @@ with tempfile.TemporaryDirectory() as scratch:
         {"run1": {"*": {"report": RUN_REPORT_BASE, "kill_cell": True}},
          "run2": {"*": {"report": RUN_REPORT_AGREEING}}},
     )
-    record_dir = expected_record_directory(repository)
+    record_dir = record_directory_the_runner_reported(result)
     combined = (record_dir / f"{record_dir.name}--restater-judge-combined.md"
                 ).read_text(encoding="utf-8")
     check("a run whose cell was killed after its report landed is not scored, and the pair exits 1",
@@ -507,7 +524,7 @@ with tempfile.TemporaryDirectory() as scratch:
         {"run1": {"*": {"report": RUN_REPORT_UNPARSEABLE}},
          "run2": {"*": {"report": RUN_REPORT_AGREEING}}},
     )
-    record_dir = expected_record_directory(repository)
+    record_dir = record_directory_the_runner_reported(result)
     combined = (record_dir / f"{record_dir.name}--restater-judge-combined.md"
                 ).read_text(encoding="utf-8")
     check("a report with no case heading makes the run unscored, and the pair exits 1",
@@ -526,7 +543,7 @@ with tempfile.TemporaryDirectory() as scratch:
         repository, stubs,
         {"run1": {"*": {"exit": 1}}, "run2": {"*": {"exit": 1}}},
     )
-    record_dir = expected_record_directory(repository)
+    record_dir = record_directory_the_runner_reported(result)
     combined_path = record_dir / f"{record_dir.name}--restater-judge-combined.md"
     check("both runs failing exits 1 and writes no combined result",
           result.returncode == 1 and not combined_path.exists(),
@@ -542,7 +559,7 @@ with tempfile.TemporaryDirectory() as scratch:
         {"run1": {"*": {"report": RUN_REPORT_HEADINGS_PAST_THE_CASES}},
          "run2": {"*": {"report": RUN_REPORT_AGREEING}}},
     )
-    record_dir = expected_record_directory(repository)
+    record_dir = record_directory_the_runner_reported(result)
     combined = (record_dir / f"{record_dir.name}--restater-judge-combined.md"
                 ).read_text(encoding="utf-8")
     check("a heading naming no case of this run is not a failure — the run is "
@@ -585,7 +602,7 @@ with tempfile.TemporaryDirectory() as scratch:
         {"run1": {"*": {"report": RUN_REPORT_ONLY_HEADING_PAST_THE_CASES}},
          "run2": {"*": {"report": RUN_REPORT_AGREEING}}},
     )
-    record_dir = expected_record_directory(repository)
+    record_dir = record_directory_the_runner_reported(result)
     combined = (record_dir / f"{record_dir.name}--restater-judge-combined.md"
                 ).read_text(encoding="utf-8")
     check("a report whose only heading names no case of this run is an unusable "
@@ -605,7 +622,7 @@ with tempfile.TemporaryDirectory() as scratch:
         {"run1": {"*": {"report": RUN_REPORT_BASE}},
          "run2": {"*": {"report": RUN_REPORT_AGREEING}}},
     )
-    first_dir = expected_record_directory(repository)
+    first_dir = record_directory_the_runner_reported(first)
     first_files = {
         path.name: path.read_bytes() for path in sorted(first_dir.glob("*.md"))}
     second = run_runner(
@@ -687,7 +704,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and result.stdout.startswith("FAILED ("),
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
     check("a refused invocation creates no record directory",
-          not expected_record_directory(repository).exists(),
+          not restater_judge_record_directories(repository),
           "the record directory was created before the invocation was checked")
 
     # --- A --prompt-file naming no file is refused before either launch ----
@@ -703,7 +720,7 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 64
           and "prompt file not found:" in result.stderr
           and result.stdout.startswith("FAILED (")
-          and not expected_record_directory(repository).exists(),
+          and not restater_judge_record_directories(repository),
           f"exit {result.returncode}; stdout={result.stdout!r}; "
           f"stderr={result.stderr!r}")
 

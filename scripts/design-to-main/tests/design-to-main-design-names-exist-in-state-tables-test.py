@@ -119,7 +119,7 @@ MACHINE_NAMES_DEFINED_OUTSIDE_THE_STATE_TABLES_MODULE = {
     "investigation-report": ("design-to-main-state-machine.py",
                              "the state-package's key for the investigation report's path "
                              "(sections 2 and 9)"),
-    "tests-begun": ("design-to-main-run-state.py", "a run-state.json field (section 9)"),
+    "tests-begun": ("design-to-main-run-state.py", "a design-to-main-run-state.json field (section 9)"),
 }
 
 # Backticked words that are not the machine's names, each with its reason.
