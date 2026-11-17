@@ -619,10 +619,22 @@ merge-lane-2's merge program, calls it in its worktree at each merge commit;
 that program's module docstring says from which directories into which.
 
 SELECTION, with --only-suites-whose-recorded-inputs-changed-since COMMIT.
+A call's -C is walked as written when the call has at most one -C, its path
+is made of directory names with no ., .. or empty name, and, where the path
+is in the checkout, no symbolic link is on it. git enters every directory on
+the way, and a recording names only the one a call ends in, by its real
+path, so each rule below that stands for a call by its directory needs its
+-C walked as written; a call whose -C is not is tied to the whole list of
+files. Whatever its kind, every git call records the checkout's directories
+its -C options enter as looked for, and the symbolic links they pass as
+read, so deleting such a directory, or deleting or retargeting such a link,
+selects its suite.
+
 Two explicit allowlists set aside git calls that read no file of the
 checkout. Every call is checked against its full arguments:
 
-  a call sees no file when its only global options are -C <dir> pairs, and
+  a call sees no file when its only global option is a -C walked as
+  written, or none, and
   its command is rev-parse followed by at least one argument, all from
   --show-toplevel, --git-dir, --absolute-git-dir, --git-common-dir,
   --is-inside-work-tree and --show-prefix; or its command is config followed
@@ -645,8 +657,8 @@ checkout. Every call is checked against its full arguments:
   its last --work-tree value, or otherwise its recorded GIT_WORK_TREE,
   resolves outside the top directory, or its command reads no work tree:
   rev-parse, log, show, cat-file, for-each-ref, config, or worktree whose
-  first argument is list. Relative paths resolve against the starting
-  directory after applying every -C in order, then through realpath.
+  first argument is list. Its -C must be walked as written. Relative paths
+  resolve against the directory it names, then through realpath.
   The common git directory is git rev-parse --git-common-dir, resolved
   against the top directory when relative, then through realpath; when
   unknown, only the top directory counts as the checkout. A linked
@@ -660,12 +672,13 @@ checkout. Every call is checked against its full arguments:
 A call that reads the checkout is still not tied to the checkout's list of
 files when its answer comes from commits, refs, another repository or the
 paths it names, so that adding or deleting any other file cannot change it.
-The command and every option must be on an explicit list, and its global
-options only -C pairs naming a directory that exists, with no GIT_DIR or
-GIT_WORK_TREE: rev-parse, log and merge-base given revisions with no ':' (a
-revision with ':' names a path in a tree), none starting with '^', holding a
-glob character or naming a directory, since git takes such an operand as a
-path whose files decide the answer; ls-remote given an absolute repository
+The command and every option must be on an explicit list, and its only
+global option a -C walked as written naming a directory that exists, or
+none, with no GIT_DIR or GIT_WORK_TREE: rev-parse, log and merge-base given
+revisions with no ':' (a revision with ':' names a path in a tree), none
+starting with '^', holding a glob character or naming a directory, since git
+takes such an operand as a path whose files decide the answer, and none
+whose path holds .. or a symbolic link, as for -C; ls-remote given an absolute repository
 path outside the checkout's top directory; check-ignore given paths in the
 top directory, since a path below a directory depends on what that directory
 is. The paths git consults in the work tree for such a call are recorded as
@@ -678,9 +691,8 @@ commit, grep or worktree, stays tied, and so does an option not on the list.
 
 A git ls-files call is tied to the list of files only through its
 pathspecs when what it lists is the files of that list its pathspecs match:
-its global options at most one -C, naming a directory inside the checkout
-without .., since git enters every directory on the way and the recording
-names only the last; no GIT_ variable set on it but those in
+its only global option a -C walked as written naming a directory inside the
+checkout, or none; no GIT_ variable set on it but those in
 GIT_VARIABLES_CHANGING_NO_FILE_A_LISTING_SEES, only the options in
 GIT_LS_FILES_OPTIONS_LISTING_THE_FILE_LIST, --others only with
 --exclude-standard, at least one pathspec, and no pathspec magic but glob,
@@ -1486,7 +1498,10 @@ def what_a_git_call_run_from_the_checkout_reads(call, top, git_common_directory)
     if parsed is None:
         return GIT_CALL_READS_THE_CHECKOUT
     global_options, command, command_arguments = parsed
-    if all(option == "-C" and value is not None for option, value in global_options):
+    if all(option == "-C" and value is not None for option, value in global_options) \
+            and isinstance(call.get("directory"), str) \
+            and git_call_directory_through_one_dash_c_path_git_walks_as_written_or_none(
+                call["directory"], [value for _, value in global_options], top) is not None:
         if command == "rev-parse" and command_arguments \
                 and all(argument in GIT_REV_PARSE_OPTIONS_THAT_SEE_NO_FILE
                         for argument in command_arguments):
@@ -1506,11 +1521,13 @@ def what_a_git_call_run_from_the_checkout_reads(call, top, git_common_directory)
     directory = call.get("directory")
     if not isinstance(directory, str):
         return GIT_CALL_READS_THE_CHECKOUT
+    directory = git_call_directory_through_one_dash_c_path_git_walks_as_written_or_none(
+        directory, [value for option, value in global_options if option == "-C"], top)
+    if directory is None:
+        return GIT_CALL_READS_THE_CHECKOUT
     git_directory, work_tree = call.get("GIT_DIR"), call.get("GIT_WORK_TREE")
     for option, value in global_options:
-        if option == "-C":
-            directory = os.path.join(directory, value)
-        elif option == "--git-dir":
+        if option == "--git-dir":
             git_directory = value
         elif option == "--work-tree":
             work_tree = value
@@ -1530,17 +1547,63 @@ def what_a_git_call_run_from_the_checkout_reads(call, top, git_common_directory)
     return GIT_CALL_READS_THE_CHECKOUT
 
 
-def git_call_directory_through_one_dash_c_or_none(directory, global_options):
-    """The directory a git call run from `directory` with `global_options` works in, when its
-    only global option is at most one -C without .. in it; else None. git enters every -C
-    directory on the way, and a recording names only where it ends up."""
-    if len(global_options) > 1:
+def git_call_directory_through_one_dash_c_path_git_walks_as_written_or_none(directory,
+                                                                         dash_c_paths, top):
+    """The directory a git call run from `directory` works in after its -C options
+    `dash_c_paths`, when git reaches it by walking exactly the path written: at most one -C, a
+    path of directory names with no ., .. or empty name, and, where the path is in the
+    checkout, no symbolic link on it. Else None, and the call stays tied to the whole list of
+    files: git enters each directory on the way, and a recording names only the one it ends
+    in, and that one by its real path."""
+    if len(dash_c_paths) > 1:
         return None
-    for option, value in global_options:
-        if option != "-C" or value is None or ".." in Path(value).parts:
+    for path in dash_c_paths:
+        names = path.strip("/").split("/")
+        if any(name in ("", ".", "..") for name in names):
             return None
-        directory = os.path.join(directory, value)
+        directory = os.path.join(directory, path.rstrip("/"))
+    real = os.path.realpath(directory)
+    # Outside the checkout a symbolic link changes no file of it, as macOS's /tmp is one.
+    if real != directory and (relative_inside(top, real) is not None
+                              or path_inside_lexically(top, directory)):
+        return None
     return directory
+
+
+def path_inside_lexically(top, path):
+    """Whether `path`, as written, names the top directory or a path under it."""
+    return os.path.commonpath([str(top), os.path.normpath(path)]) == str(top)
+
+
+def directories_and_symbolic_links_a_git_call_dash_c_walk_passes_in_the_checkout(call, top):
+    """(the directories, the symbolic links) of the checkout, relative to the top, that a git
+    call's -C options walk through or end in, in the order git enters them; each -C path is
+    taken name by name, as git's chdir takes it, so .. leaves the real directory a link
+    leads to."""
+    arguments, directory = call.get("arguments"), call.get("directory")
+    if not isinstance(arguments, list) or not isinstance(directory, str) \
+            or not all(isinstance(argument, str) for argument in arguments):
+        return [], []
+    parsed = git_call_global_options_command_and_arguments(arguments)
+    if parsed is None:
+        return [], []
+    directories, links = [], []
+    for option, path in parsed[0]:
+        if option != "-C" or path is None:
+            continue
+        if path.startswith("/"):
+            directory = "/"
+        for name in path.split("/"):
+            if name in ("", "."):
+                continue
+            entered = os.path.join(os.path.realpath(directory), name)
+            if os.path.islink(entered) and path_inside_lexically(top, entered):
+                links.append(os.path.relpath(entered, top))
+            directory = os.path.realpath(entered)
+            relative = relative_inside(top, directory)
+            if relative is not None and relative != ".":
+                directories.append(relative)
+    return directories, links
 
 
 def work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(call, top):
@@ -1563,9 +1626,11 @@ def work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(call, top):
     if parsed is None:
         return None
     global_options, command, command_arguments = parsed
-    if command not in GIT_OPTIONS_NOT_TYING_A_CALL_TO_THE_FILE_LIST:
+    if command not in GIT_OPTIONS_NOT_TYING_A_CALL_TO_THE_FILE_LIST \
+            or any(option != "-C" for option, _ in global_options):
         return None
-    directory = git_call_directory_through_one_dash_c_or_none(directory, global_options)
+    directory = git_call_directory_through_one_dash_c_path_git_walks_as_written_or_none(
+        directory, [value for _, value in global_options], top)
     if directory is None or not os.path.isdir(directory):
         return None
     operands = []
@@ -1581,7 +1646,11 @@ def work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(call, top):
         return None
 
     def inside_top(operand):
-        relative = relative_inside(top, os.path.normpath(os.path.join(directory, operand)))
+        # As for -C: the path git looks up, not where a symbolic link or .. on it leads.
+        path = os.path.normpath(os.path.join(directory, operand))
+        if ".." in operand.split("/") or os.path.realpath(path) != path:
+            return None
+        relative = relative_inside(top, path)
         return None if relative == "." else relative
 
     if command == "ls-remote":
@@ -1644,7 +1713,10 @@ def git_ls_files_call_whose_answer_can_change_only_when_a_file_its_pathspecs_mat
     if parsed is None or parsed[1] != "ls-files":
         return None
     global_options, _, command_arguments = parsed
-    directory = git_call_directory_through_one_dash_c_or_none(directory, global_options)
+    if any(option != "-C" for option, _ in global_options):
+        return None
+    directory = git_call_directory_through_one_dash_c_path_git_walks_as_written_or_none(
+        directory, [value for _, value in global_options], top)
     relative = (relative_inside(top, directory)
                 if directory is not None and os.path.isdir(directory) else None)
     if relative is None:
@@ -3846,17 +3918,31 @@ def source_of_cached_bytecode(relative):
 
 
 def blob_hashes(top, paths):
-    """Each path's git blob hash as the checkout has it now."""
+    """Each path's git blob hash as the checkout has it now; a symbolic link's is the hash of
+    the path it holds, as git stores a link."""
     if not paths:
         return {}
-    # A suite can write the checkout's .gitattributes; --no-filters runs no filter it names.
-    answer = subprocess.run(["git", "-C", str(top), "hash-object", "--no-filters", "--stdin-paths"],
-                            input="\n".join(paths) + "\n", capture_output=True, text=True,
-                            env=environment_without_git_redirecting_variables(), check=False)
-    hashes = answer.stdout.split()
-    if answer.returncode != 0 or len(hashes) != len(paths):
-        return {path: "unknown" for path in paths}
-    return dict(zip(paths, hashes))
+    hashed = {}
+    # git hash-object reads the file a link leads to, and fails on a directory.
+    links = [path for path in paths if os.path.islink(os.path.join(top, path))]
+    for link in links:
+        answer = subprocess.run(["git", "-C", str(top), "hash-object", "--stdin"],
+                                input=os.readlink(os.path.join(top, link)), capture_output=True,
+                                text=True, env=environment_without_git_redirecting_variables(),
+                                check=False)
+        hashed[link] = (answer.stdout.strip() if answer.returncode == 0 and answer.stdout.strip()
+                        else "unknown")
+    others = [path for path in paths if path not in hashed]
+    if others:
+        # A suite can write the checkout's .gitattributes; --no-filters runs no filter it names.
+        answer = subprocess.run(
+            ["git", "-C", str(top), "hash-object", "--no-filters", "--stdin-paths"],
+            input="\n".join(others) + "\n", capture_output=True, text=True,
+            env=environment_without_git_redirecting_variables(), check=False)
+        hashes = answer.stdout.split()
+        hashed.update(dict(zip(others, hashes)) if answer.returncode == 0
+                      and len(hashes) == len(others) else dict.fromkeys(others, "unknown"))
+    return {path: hashed[path] for path in paths}
 
 
 def inside_git_directory(relative):
@@ -3926,6 +4012,13 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used,
                 call = {}
             call = {key: call.get(key) for key in (
                 "arguments", "directory", "GIT_DIR", "GIT_WORK_TREE", "GIT_variables")}
+            # git fails once a directory it enters is gone, and a retargeted link sends it
+            # elsewhere, whatever the call's answer otherwise depends on.
+            entered, links = (
+                directories_and_symbolic_links_a_git_call_dash_c_walk_passes_in_the_checkout(
+                    call, top))
+            consulted_by_git.update(entered)
+            touched.update(links)
             call["reads"] = what_a_git_call_run_from_the_checkout_reads(
                 call, top, git_common_directory_of_checkout(str(top)))
             if call["reads"] == GIT_CALL_READS_THE_CHECKOUT:
