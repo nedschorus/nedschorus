@@ -1038,15 +1038,16 @@ def head(repo):
 
 
 # git failing is told apart from git's answer: no commit, detached HEAD, untracked files.
-def stand_in_git_failing_on(root, words):
-    """A PATH whose git fails, exit 128, when its arguments, joined by spaces, include words."""
+def stand_in_git_failing_on(root, words, printing_nothing=False):
+    """A PATH whose git fails, exit 128, when its arguments, joined by spaces, include words;
+    it prints "fatal: injected git failure", or nothing when printing_nothing."""
     bin_dir = root / "bin-git-failing-on"
     bin_dir.mkdir(exist_ok=True)
     (bin_dir / "git").write_text(
         "#!/bin/sh\n"
         f"case \"$*\" in *{shlex.quote(words)}*)\n"
-        "    echo \"fatal: injected git failure\" >&2\n"
-        "    exit 128 ;;\n"
+        + ("" if printing_nothing else "    echo \"fatal: injected git failure\" >&2\n")
+        + "    exit 128 ;;\n"
         "esac\n"
         f"exec {shlex.quote(shutil.which('git'))} \"$@\"\n")
     (bin_dir / "git").chmod(0o755)
@@ -2642,15 +2643,20 @@ with tempfile.TemporaryDirectory() as scratch:
             top, files, directory, ["*.py"] if directory == "missing" else ["../a.py"], set())
         check(f"git failing to match from {directory} is reported with its error",
               answer[0] is None and why in (answer[1] or ""), answer)
-    for words in ("hash-object", "update-index"):
+    for words, printing_nothing, error in (
+            ("hash-object", False, "fatal: injected git failure"),
+            ("update-index", False, "fatal: injected git failure"),
+            ("hash-object", True, "git hash-object printed no error"),
+            ("update-index", True, "git update-index printed no error"),
+            ("ls-files -z --cached", True, "git ls-files printed no error")):
         previous = os.environ["PATH"]
-        os.environ.update(stand_in_git_failing_on(top, words))
+        os.environ.update(stand_in_git_failing_on(top, words, printing_nothing))
         try:
             answer = module.files_git_ls_files_lists_of_these(top, {"a.py"}, ".", ["*.py"], set())
         finally:
             os.environ["PATH"] = previous
-        check(f"git {words} failing while matching is reported with its error",
-              answer == (None, "fatal: injected git failure"), answer)
+        check(f"git {words} failing{' printing nothing' if printing_nothing else ''} while "
+              f"matching is reported as {error!r}", answer == (None, error), answer)
     answer = module.files_git_ls_files_lists_of_these(top, {"a", "a/b"}, ".", ["*"], set())
     check("a list holding a path both as a file and as a directory is not matched, since "
           "update-index would drop one of them", answer == (None, "a is both a file and a "
@@ -2688,16 +2694,20 @@ with tempfile.TemporaryDirectory() as scratch:
           and submodules_of(top, without) == (set(), None),
           (submodules_of(top, with_submodule),
            submodules_of(top)))
-    for words in ("--stage", "ls-tree"):
+    for words, printing_nothing, error in (
+            ("--stage", False, "fatal: injected git failure"),
+            ("ls-tree", False, "fatal: injected git failure"),
+            ("--stage", True, "git ls-files printed no error"),
+            ("ls-tree", True, "git ls-tree printed no error")):
         previous = os.environ["PATH"]
-        os.environ.update(stand_in_git_failing_on(top, words))
+        os.environ.update(stand_in_git_failing_on(top, words, printing_nothing))
         try:
             answer = submodules_of(top, without)
         finally:
             os.environ["PATH"] = previous
-        check(f"git {words} failing while looking for submodules is reported with its error",
-              answer == (None, "git could not list the submodules: fatal: injected git "
-                               "failure"), answer)
+        check(f"git {words} failing{' printing nothing' if printing_nothing else ''} while "
+              f"looking for submodules is reported as {error!r}",
+              answer == (None, f"git could not list the submodules: {error}"), answer)
 
 # A git ls-files call that passes through a directory the recording does not name, or that a
 # submodule could answer, selects its suite when the file list changes.
