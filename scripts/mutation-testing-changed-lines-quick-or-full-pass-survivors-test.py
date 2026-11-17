@@ -554,7 +554,7 @@ def run_recorded_mutant_killed_check_root_commit_refusal_cases():
                   completed.returncode == survivors.EXIT_COULD_NOT_RUN
                   and completed.stderr.startswith(
                       f"{survivors.PROGRAM}: not run — git could not list the root commits of HEAD "
-                      f"in {repository} ({git_error})")
+                      f"in {repository.resolve()} ({git_error})")
                   and step in completed.stderr
                   and f"exactly {rerun}" in completed.stderr
                   and ("Git's error names the lock file" in completed.stderr) == lock_file_in_error,
