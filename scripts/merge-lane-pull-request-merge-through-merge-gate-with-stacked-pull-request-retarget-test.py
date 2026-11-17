@@ -1183,7 +1183,8 @@ def main():
             scratch, "fetch-fails-after-merge", [(GATE_PASSED, 0)], routes)
         check("a fetch that fails after the merge exits 3 without a test run",
               exit_code == 3 and runner_calls(scratch, "fetch-fails-after-merge") == []
-              and "could not make a worktree at the merge commit" in output,
+              and "could not fetch origin in " in output
+              and "could not make a worktree" not in output,
               f"exit {exit_code}\n{output}")
 
         exit_code, output, _, _, _ = run_case(
@@ -1204,8 +1205,9 @@ def main():
             default_routes(STACKED_AND_NOT), git_fails_after_merge_on=(" fetch ", "kill"))
         check("a fetch killed by a signal after the merge exits 3 without a test run",
               exit_code == 3 and runner_calls(scratch, "fetch-killed-after-merge") == []
-              and "could not make a worktree at the merge commit" in output
-              and "/review-tools: git printed no error\n" in output,
+              and "/review-tools to get the merge commit " in output
+              and "could not make a worktree" not in output
+              and ": git printed no error\n" in output,
               f"exit {exit_code}\n{output}")
 
         exit_code, output, _, _, _ = run_case(

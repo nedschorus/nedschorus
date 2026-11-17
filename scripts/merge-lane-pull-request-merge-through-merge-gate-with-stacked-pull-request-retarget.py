@@ -144,9 +144,7 @@ def run(command, environment):
                           stdin=subprocess.DEVNULL)
 
 
-def git_error(completed):
-    return (common.run_all_test_suites.first_line_of_error(completed)
-            or "git printed no error")
+git_error = common.run_all_test_suites.git_failure_stderr_first_line_or_printed_no_error_text
 
 
 def gh_error(completed):
@@ -387,15 +385,19 @@ def after_merge_test_run(arguments, merge_commit):
     worktree = arguments.merge_lane_review_worktrees_directory / f"pr{arguments.pull_request}-merge-commit-on-main-worktree"
     log_dir = (arguments.merge_lane_worktrees_and_outputs_directory
                / f"pr{arguments.pull_request}-after-merge-test-run-logs-{merge_commit[:12]}")
+    next_steps = (f"If git names a cause you can fix, fix it; then, in a detached worktree at "
+                  f"{merge_commit}, run: {by_hand}\n"
+                  f"Otherwise, tell the user this message.")
     fetch = git("fetch", "--quiet", "origin")
-    add = (git("worktree", "add", "--detach", str(worktree), merge_commit)
-           if fetch.returncode == 0 else fetch)
+    if fetch.returncode != 0:
+        print(f"STOP: merged, but main was not tested: could not fetch origin in {checkout} "
+              f"to get the merge commit {merge_commit}: "
+              f"{git_error(fetch)}\n{next_steps}")
+        return EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
+    add = git("worktree", "add", "--detach", str(worktree), merge_commit)
     if add.returncode != 0:
         print(f"STOP: merged, but main was not tested: could not make a worktree at the "
-              f"merge commit {merge_commit} from {checkout}: {git_error(add)}\n"
-              f"If git names a cause you can fix, fix it; then, in a detached worktree at "
-              f"{merge_commit}, run: {by_hand}\n"
-              f"Otherwise, tell the user this message.")
+              f"merge commit {merge_commit} from {checkout}: {git_error(add)}\n{next_steps}")
         return EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
 
     runner = common.run_all_test_suites

@@ -1502,7 +1502,7 @@ def what_a_git_call_run_from_the_checkout_reads(call, top, git_common_directory)
     global_options, command, command_arguments = parsed
     if all(option == "-C" and value is not None for option, value in global_options) \
             and isinstance(call.get("directory"), str) \
-            and git_call_directory_through_one_dash_c_path_git_walks_as_written_or_none(
+            and git_call_working_directory_or_none_unless_at_most_one_plain_dash_c(
                 call["directory"], [value for _, value in global_options], top) is not None:
         if command == "rev-parse" and command_arguments \
                 and all(argument in GIT_REV_PARSE_OPTIONS_THAT_SEE_NO_FILE
@@ -1523,7 +1523,7 @@ def what_a_git_call_run_from_the_checkout_reads(call, top, git_common_directory)
     directory = call.get("directory")
     if not isinstance(directory, str):
         return GIT_CALL_READS_THE_CHECKOUT
-    directory = git_call_directory_through_one_dash_c_path_git_walks_as_written_or_none(
+    directory = git_call_working_directory_or_none_unless_at_most_one_plain_dash_c(
         directory, [value for option, value in global_options if option == "-C"], top)
     if directory is None:
         return GIT_CALL_READS_THE_CHECKOUT
@@ -1549,8 +1549,8 @@ def what_a_git_call_run_from_the_checkout_reads(call, top, git_common_directory)
     return GIT_CALL_READS_THE_CHECKOUT
 
 
-def git_call_directory_through_one_dash_c_path_git_walks_as_written_or_none(directory,
-                                                                         dash_c_paths, top):
+def git_call_working_directory_or_none_unless_at_most_one_plain_dash_c(directory,
+                                                                       dash_c_paths, top):
     """The directory a git call run from `directory` works in after its -C options
     `dash_c_paths`, when git reaches it by walking exactly the path written: at most one -C, a
     path of directory names with no ., .. or empty name, and, where the path is in the
@@ -1577,7 +1577,7 @@ def path_inside_lexically(top, path):
     return os.path.commonpath([str(top), os.path.normpath(path)]) == str(top)
 
 
-def directories_and_symbolic_links_a_git_call_dash_c_walk_passes_in_the_checkout(call, top):
+def git_call_dash_c_walk_list_work_tree_directories_and_symbolic_links_entered(call, top):
     """(the directories, the symbolic links) of the checkout, relative to the top, that a git
     call's -C options walk through or end in, in the order git enters them; each -C path is
     taken name by name, as git's chdir takes it, so .. leaves the real directory a link
@@ -1631,7 +1631,7 @@ def work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(call, top):
     if command not in GIT_OPTIONS_NOT_TYING_A_CALL_TO_THE_FILE_LIST \
             or any(option != "-C" for option, _ in global_options):
         return None
-    directory = git_call_directory_through_one_dash_c_path_git_walks_as_written_or_none(
+    directory = git_call_working_directory_or_none_unless_at_most_one_plain_dash_c(
         directory, [value for _, value in global_options], top)
     if directory is None or not os.path.isdir(directory):
         return None
@@ -1717,7 +1717,7 @@ def git_ls_files_call_whose_answer_can_change_only_when_a_file_its_pathspecs_mat
     global_options, _, command_arguments = parsed
     if any(option != "-C" for option, _ in global_options):
         return None
-    directory = git_call_directory_through_one_dash_c_path_git_walks_as_written_or_none(
+    directory = git_call_working_directory_or_none_unless_at_most_one_plain_dash_c(
         directory, [value for _, value in global_options], top)
     relative = (relative_inside(top, directory)
                 if directory is not None and os.path.isdir(directory) else None)
@@ -1749,7 +1749,8 @@ def submodule_paths_in_the_git_index_plus_an_optional_commit_tree(top, commit=No
         answer = git(top, *command)
         if answer.returncode != 0:
             return None, ("git could not list the submodules: "
-                          + (first_line_of_error(answer) or f"git {command[0]} printed no error"))
+                          + git_failure_stderr_first_line_or_printed_no_error_text(
+                              answer, f"git {command[0]}"))
         for entry in answer.stdout.split("\0"):
             meta, _, path = entry.partition("\t")
             if path and meta.split(" ", 1)[0] == GIT_SUBMODULE_ENTRY_MODE:
@@ -1785,7 +1786,8 @@ def files_git_ls_files_lists_of_these(top, files, directory, pathspecs, submodul
     empty = subprocess.run(["git", "-C", str(top), "hash-object", "-t", "blob", "--stdin"],
                            input="", env=environment, **text)
     if empty.returncode != 0:
-        return None, first_line_of_error(empty) or "git hash-object printed no error"
+        return None, git_failure_stderr_first_line_or_printed_no_error_text(
+            empty, "git hash-object")
     with tempfile.TemporaryDirectory() as scratch:
         environment["GIT_INDEX_FILE"] = os.path.join(scratch, "index")
         entries = "".join(f"100644 {empty.stdout.strip()}\t{path}\0" for path in sorted(paths))
@@ -1796,7 +1798,8 @@ def files_git_ls_files_lists_of_these(top, files, directory, pathspecs, submodul
             answer = subprocess.run(["git", "-C", where, *command], input=given,
                                     env=environment, **text)
             if answer.returncode != 0:
-                return None, first_line_of_error(answer) or f"git {command[0]} printed no error"
+                return None, git_failure_stderr_first_line_or_printed_no_error_text(
+                    answer, f"git {command[0]}")
     return {path for path in answer.stdout.split("\0") if path}, None
 
 
@@ -1896,7 +1899,7 @@ def suites_listed_by_git(top):
     if listed.returncode != 0:
         raise CouldNotRun(
             f"{PROGRAM}: not run — git ls-files failed in {top}: "
-            f"{first_line_of_error(listed) or 'git printed no error'}\n"
+            f"{git_failure_stderr_first_line_or_printed_no_error_text(listed)}\n"
             + git_failure_next_step_lines(Path(__file__).name))
     suites = [path for path in listed.stdout.split("\0") if path]
     if not suites:
@@ -1949,8 +1952,10 @@ def git_failure_next_step_lines(program_file):
         text_the_failure_line_contains="not run — git")
 
 
-def first_line_of_error(completed):
-    return ((completed.stderr or "").strip().splitlines() or [""])[0]
+def git_failure_stderr_first_line_or_printed_no_error_text(completed, git_command="git"):
+    """The first line of a finished git process's stderr, or that it printed none."""
+    return ((completed.stderr or "").strip().splitlines()
+            or [f"{git_command} printed no error"])[0]
 
 
 def commit_and_state(top):
@@ -1962,7 +1967,7 @@ def commit_and_state(top):
         commit = "no commit"
     else:
         commit = (f"commit unknown (git rev-parse HEAD exited {head.returncode}: "
-                  f"{first_line_of_error(head) or 'git printed no error'})")
+                  f"{git_failure_stderr_first_line_or_printed_no_error_text(head)})")
     changed = git(top, "status", "--porcelain", "--untracked-files=no")
     if changed.returncode != 0:
         state = "tracked-file state unknown"
@@ -2933,7 +2938,7 @@ def branch_of_checkout(top):
     if named.returncode == 1:
         return "HEAD"
     return (f"branch unknown (git symbolic-ref HEAD exited {named.returncode}: "
-            f"{first_line_of_error(named) or 'git printed no error'})")
+            f"{git_failure_stderr_first_line_or_printed_no_error_text(named)})")
 
 
 def lock_explicit_log_directory(log_dir):
@@ -3957,7 +3962,7 @@ def checkout_files(top):
     if listed.returncode != 0:
         raise CouldNotRun(
             f"{PROGRAM}: not run — git ls-files failed in {top}: "
-            f"{first_line_of_error(listed) or 'git printed no error'}\n"
+            f"{git_failure_stderr_first_line_or_printed_no_error_text(listed)}\n"
             + git_failure_next_step_lines(Path(__file__).name))
     return {path for path in listed.stdout.split("\0")
             if path and os.path.lexists(top / path)}
@@ -3968,7 +3973,7 @@ def files_at_commit(top, commit):
     if listed.returncode != 0:
         raise CouldNotRun(
             f"{PROGRAM}: not run — git ls-tree {commit} failed in {top}: "
-            f"{first_line_of_error(listed) or 'git printed no error'}\n"
+            f"{git_failure_stderr_first_line_or_printed_no_error_text(listed)}\n"
             + git_failure_next_step_lines(Path(__file__).name))
     return {path for path in listed.stdout.split("\0") if path}
 
@@ -4019,7 +4024,7 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used,
             # git fails once a directory it enters is gone, and a retargeted link sends it
             # elsewhere, whatever the call's answer otherwise depends on.
             entered, links = (
-                directories_and_symbolic_links_a_git_call_dash_c_walk_passes_in_the_checkout(
+                git_call_dash_c_walk_list_work_tree_directories_and_symbolic_links_entered(
                     call, top))
             consulted_by_git.update(entered)
             touched.update(links)
@@ -4139,7 +4144,7 @@ def recordings_directory_for(given, top):
             f"{PROGRAM}: not run — git could not list the root commits of HEAD in {top}, so "
             f"this run cannot find its directory of recorded suite inputs, which is named "
             f"after a root commit of HEAD: "
-            f"{first_line_of_error(roots) or 'git printed no error'}\n"
+            f"{git_failure_stderr_first_line_or_printed_no_error_text(roots)}\n"
             + git_failure_next_step_lines(Path(__file__).name))
     return Path(given).expanduser() / min(roots.stdout.split())[:16]
 
@@ -4405,7 +4410,7 @@ def files_that_differ_since(top, commit):
     if diff.returncode != 0:
         raise CouldNotRun(
             f"{PROGRAM}: not run — git diff {commit} failed in {top}: "
-            f"{first_line_of_error(diff) or 'git printed no error'}\n"
+            f"{git_failure_stderr_first_line_or_printed_no_error_text(diff)}\n"
             + git_failure_next_step_lines(Path(__file__).name))
     fields = [field for field in diff.stdout.split("\0") if field]
     for status, path in zip(fields[0::2], fields[1::2]):
@@ -4414,7 +4419,7 @@ def files_that_differ_since(top, commit):
     if untracked.returncode != 0:
         raise CouldNotRun(
             f"{PROGRAM}: not run — git ls-files --others failed in {top}: "
-            f"{first_line_of_error(untracked) or 'git printed no error'}\n"
+            f"{git_failure_stderr_first_line_or_printed_no_error_text(untracked)}\n"
             + git_failure_next_step_lines(Path(__file__).name))
     for path in untracked.stdout.split("\0"):
         if path:
@@ -4645,7 +4650,7 @@ def adopt_passing_recordings_that_match_the_checkout(top, into_given, from_given
     listed = git(top, "ls-files", "-z", "--", TEST_SUITE_PATHSPEC, SHELL_TEST_SUITE_PATHSPEC)
     if listed.returncode != 0:
         raise CouldNotRun(f"git ls-files failed in {top}: "
-                          f"{first_line_of_error(listed) or 'git printed no error'}")
+                          f"{git_failure_stderr_first_line_or_printed_no_error_text(listed)}")
     suites = [path for path in listed.stdout.split("\0") if path]
     candidates = {suite: [(directory, load_recording(directory, suite))
                           for directory in [into, *sources]] for suite in suites}

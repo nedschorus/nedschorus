@@ -1038,15 +1038,16 @@ def head(repo):
 
 
 # git failing is told apart from git's answer: no commit, detached HEAD, untracked files.
-def stand_in_git_failing_on(root, words):
-    """A PATH whose git fails, exit 128, when its arguments, joined by spaces, include words."""
+def stand_in_git_failing_on(root, words, printing_nothing=False):
+    """A PATH whose git fails, exit 128, when its arguments, joined by spaces, include words;
+    it prints "fatal: injected git failure", or nothing when printing_nothing."""
     bin_dir = root / "bin-git-failing-on"
     bin_dir.mkdir(exist_ok=True)
     (bin_dir / "git").write_text(
         "#!/bin/sh\n"
         f"case \"$*\" in *{shlex.quote(words)}*)\n"
-        "    echo \"fatal: injected git failure\" >&2\n"
-        "    exit 128 ;;\n"
+        + ("" if printing_nothing else "    echo \"fatal: injected git failure\" >&2\n")
+        + "    exit 128 ;;\n"
         "esac\n"
         f"exec {shlex.quote(shutil.which('git'))} \"$@\"\n")
     (bin_dir / "git").chmod(0o755)
@@ -1129,6 +1130,16 @@ try:
         refused = str(refusal)
     check("recordings_directory_for refuses when git cannot resolve HEAD",
           refused is not None and "fatal: injected" in refused, refused)
+
+    for stderr, git_command, expected in (
+            ("fatal: injected\nmore\n", "git", "fatal: injected"),
+            ("", "git", "git printed no error"), (None, "git", "git printed no error"),
+            ("  \n", "git ls-files", "git ls-files printed no error")):
+        completed = subprocess.CompletedProcess(["git"], -9, "", stderr)
+        answer = module.git_failure_stderr_first_line_or_printed_no_error_text(
+            completed, git_command)
+        check(f"a {git_command} whose stderr is {stderr!r} is reported as {expected!r}",
+              answer == expected, answer)
 
     # A git killed by a signal prints nothing; a git that fails may print several lines.
     for how, status, stderr, error in (
@@ -2632,15 +2643,20 @@ with tempfile.TemporaryDirectory() as scratch:
             top, files, directory, ["*.py"] if directory == "missing" else ["../a.py"], set())
         check(f"git failing to match from {directory} is reported with its error",
               answer[0] is None and why in (answer[1] or ""), answer)
-    for words in ("hash-object", "update-index"):
+    for words, printing_nothing, error in (
+            ("hash-object", False, "fatal: injected git failure"),
+            ("update-index", False, "fatal: injected git failure"),
+            ("hash-object", True, "git hash-object printed no error"),
+            ("update-index", True, "git update-index printed no error"),
+            ("ls-files -z --cached", True, "git ls-files printed no error")):
         previous = os.environ["PATH"]
-        os.environ.update(stand_in_git_failing_on(top, words))
+        os.environ.update(stand_in_git_failing_on(top, words, printing_nothing))
         try:
             answer = module.files_git_ls_files_lists_of_these(top, {"a.py"}, ".", ["*.py"], set())
         finally:
             os.environ["PATH"] = previous
-        check(f"git {words} failing while matching is reported with its error",
-              answer == (None, "fatal: injected git failure"), answer)
+        check(f"git {words} failing{' printing nothing' if printing_nothing else ''} while "
+              f"matching is reported as {error!r}", answer == (None, error), answer)
     answer = module.files_git_ls_files_lists_of_these(top, {"a", "a/b"}, ".", ["*"], set())
     check("a list holding a path both as a file and as a directory is not matched, since "
           "update-index would drop one of them", answer == (None, "a is both a file and a "
@@ -2678,16 +2694,20 @@ with tempfile.TemporaryDirectory() as scratch:
           and submodules_of(top, without) == (set(), None),
           (submodules_of(top, with_submodule),
            submodules_of(top)))
-    for words in ("--stage", "ls-tree"):
+    for words, printing_nothing, error in (
+            ("--stage", False, "fatal: injected git failure"),
+            ("ls-tree", False, "fatal: injected git failure"),
+            ("--stage", True, "git ls-files printed no error"),
+            ("ls-tree", True, "git ls-tree printed no error")):
         previous = os.environ["PATH"]
-        os.environ.update(stand_in_git_failing_on(top, words))
+        os.environ.update(stand_in_git_failing_on(top, words, printing_nothing))
         try:
             answer = submodules_of(top, without)
         finally:
             os.environ["PATH"] = previous
-        check(f"git {words} failing while looking for submodules is reported with its error",
-              answer == (None, "git could not list the submodules: fatal: injected git "
-                               "failure"), answer)
+        check(f"git {words} failing{' printing nothing' if printing_nothing else ''} while "
+              f"looking for submodules is reported as {error!r}",
+              answer == (None, f"git could not list the submodules: {error}"), answer)
 
 # A git ls-files call that passes through a directory the recording does not name, or that a
 # submodule could answer, selects its suite when the file list changes.
@@ -2763,18 +2783,21 @@ OUTSIDE = pathlib.Path(os.path.realpath(tempfile.mkdtemp()))
 (TOP / "link").symlink_to("sub")
 (OUTSIDE / "real").mkdir()
 (OUTSIDE / "alias").symlink_to("real")
-walk_rule = module.git_call_directory_through_one_dash_c_path_git_walks_as_written_or_none
+walk_rule = module.git_call_working_directory_or_none_unless_at_most_one_plain_dash_c
 for paths, expected in (
         ([], str(TOP)), (["sub"], str(TOP / "sub")), (["sub/a/"], str(TOP / "sub" / "a")),
         ([str(TOP / "sub")], str(TOP / "sub")), (["missing"], str(TOP / "missing")),
         ([str(OUTSIDE / "alias")], str(OUTSIDE / "alias")),
         (["sub", str(TOP / "other")], None), (["sub", ".."], None), (["sub/.."], None),
         (["./sub"], None), (["sub//a"], None), (["link"], None), (["link/a"], None),
-        ([str(TOP / "link")], None), (["/"], None)):
+        ([str(TOP / "link")], None), (["/"], None),
+        # Outside the checkout only the name check decides: these end outside it.
+        ([".."], None), ([str(OUTSIDE / "real") + "/.."], None),
+        ([str(OUTSIDE) + "/./real"], None), ([str(OUTSIDE) + "//real"], None)):
     answer = walk_rule(str(TOP), paths, TOP)
     check(f"-C {paths} from the top is walked as written to {expected}", answer == expected,
           answer)
-walk = module.directories_and_symbolic_links_a_git_call_dash_c_walk_passes_in_the_checkout
+walk = module.git_call_dash_c_walk_list_work_tree_directories_and_symbolic_links_entered
 for arguments, expected in (
         (["rev-parse", "HEAD"], ([], [])),
         (["-C", "sub/a", "rev-parse", "HEAD"], (["sub", "sub/a"], [])),
