@@ -711,6 +711,18 @@ def main():
               and adopted == [RECORDED_SUITE.replace("/", "__") + ".json"]
               and printed_in_order(output, adopted_line, "testing main at the merge commit")
               and not saved.exists(), f"exit {exit_code}\n{output}\n{adopted}")
+        default = default_recorded_inputs_directory(scratch / name)
+        in_default = sorted(path.name for path in default.glob("*/*.json"))
+        check("before the after-merge test run starts, and after hr/pr10/recorded-inputs is "
+              "adopted, the recordings in hr/store that match the merge commit are adopted into "
+              "the runner's default recorded-inputs directory, which the run selects by",
+              in_default == [RECORDED_SUITE.replace("/", "__") + ".json"]
+              and printed_in_order(output, adopted_line,
+                                   f"adopted 1 recordings into {default} from {store}, where "
+                                   f"merge-lane head test runs find the recordings they select "
+                                   f"by; a recording is adopted only when",
+                                   "testing main at the merge commit"),
+              f"{output}\n{in_default}")
         check("after the after-merge test run, recordings are adopted from the runner's "
               "default recorded-inputs directory too",
               printed_in_order(output, "testing main at the merge commit",
@@ -737,6 +749,61 @@ def main():
                                    f"{default_recorded_inputs_directory(scratch / name)}, "
                                    f"where the after-merge test run saved its recordings"),
               f"exit {exit_code}\n{output}\n{adopted}")
+
+        def stale_default_and_matching_store(directory):
+            store = directory / "outputs" / "hr" / "store"
+            recording_in_store(store, directory, RECORDED_SUITE, blob_of(directory, RECORDED_SUITE))
+            recording_in_store(store, directory, STALE_SUITE, "0" * 40)
+            recording_in_store(default_recorded_inputs_directory(directory), directory,
+                               RECORDED_SUITE, "0" * 40)
+
+        name = "recordings-adopted-into-the-default-store"
+        exit_code, output, _, _, _ = run_case(
+            scratch, name, [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+            origin_files={RECORDED_SUITE: "print('ok')\n", STALE_SUITE: "print('ok')\n"},
+            before_the_program_runs=stale_default_and_matching_store)
+        default = default_recorded_inputs_directory(scratch / name)
+        found = {path.name: json.loads(path.read_text())["reads"]
+                 for path in default.glob("*/*.json")}
+        check("before the after-merge test run, a stale recording in the runner's default "
+              "recorded-inputs directory is replaced by the one in hr/store that matches the "
+              "merge commit, and a recording in hr/store that does not match is not adopted",
+              exit_code == 0
+              and found == {RECORDED_SUITE.replace("/", "__") + ".json": {
+                  RECORDED_SUITE: blob_of(scratch / name, RECORDED_SUITE)}}
+              and printed_in_order(output, f"adopted 1 recordings into {default} from ",
+                                   "testing main at the merge commit"),
+              f"exit {exit_code}\n{output}\n{found}")
+
+        def default_cannot_be_written(directory):
+            stale_default_and_matching_store(directory)
+            for held in default_recorded_inputs_directory(directory).glob("*"):
+                held.chmod(0o555)
+
+        name = "recordings-not-adopted-into-the-default-store"
+        try:
+            exit_code, output, _, _, _ = run_case(
+                scratch, name, [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+                origin_files={RECORDED_SUITE: "print('ok')\n", STALE_SUITE: "print('ok')\n"},
+                before_the_program_runs=default_cannot_be_written)
+        finally:
+            for held in default_recorded_inputs_directory(scratch / name).glob("*"):
+                held.chmod(0o755)
+        default = default_recorded_inputs_directory(scratch / name)
+        store = scratch / name / "outputs" / "hr" / "store"
+        check("a recording from hr/store that cannot be saved into the runner's default "
+              "recorded-inputs directory exits 3 with one STOP line, which names both "
+              "directories and says the after-merge test run may run suites again, and the run "
+              "still runs",
+              exit_code == 3 and output.count("STOP:") == 1
+              and printed_in_order(output,
+                                   f"STOP: merged, but the recordings in {store}, where merge-lane "
+                                   f"head test runs find the recordings they select by, were not "
+                                   f"adopted into {default}: ",
+                                   f"So this after-merge test run selects the suites whose "
+                                   f"recordings in {default} do not match the merge commit",
+                                   "testing main at the merge commit", RUNNER_PASSED_SUMMARY)
+              and len(runner_calls(scratch, name)) == 1, f"exit {exit_code}\n{output}")
 
         def only_the_after_run_adoption_can_fail(directory):
             after_merge_test_run_recording(directory)
