@@ -169,7 +169,7 @@ def start(folder, agent_seat, kind, words, jobs_file, moment, rerun=None):
         report, in_force_path = start_once(folder, agent_seat, kind, words, jobs_file, moment, rerun, created)
     except (StartRefused, ReadBackNotInForce) as failure:
         for path in created:
-            path.unlink(missing_ok=True)
+            path.unlink()
         if isinstance(failure, StartRefused):
             raise
         state = common.read_state(folder)
@@ -180,7 +180,7 @@ def start(folder, agent_seat, kind, words, jobs_file, moment, rerun=None):
     for path in created:
         # The second try can append to the first try's file, which is then the stop in force.
         if path != in_force_path:
-            path.unlink(missing_ok=True)
+            path.unlink()
     return report
 
 

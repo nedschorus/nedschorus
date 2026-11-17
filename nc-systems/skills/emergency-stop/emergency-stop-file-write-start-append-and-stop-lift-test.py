@@ -160,6 +160,11 @@ def main():
                     f"folder now finds that {holds}. {clause}\nTell the user this whole message.\n"
                     f"Run start again only if the user says to: {start_rerun}\n")
 
+        def failed_write(command, target, holds, clause, last_line, error="[Errno 28] No space left on device"):
+            return (f"FAILED: {command} could not finish writing to the emergency-stop folder {target}: {error}. "
+                    f"A read of the folder now finds that {holds}. {clause}\nTell the user this whole message.\n"
+                    f"{last_line}\n")
+
         not_refused = "So no emergency stop is in force, and pushes and merges are not refused."
         refused = "So an emergency stop counts as in force, and pushes and merges are refused."
 
@@ -197,6 +202,43 @@ def main():
               status == 1 and out == both_tries_failed(
                   f"the newest emergency-stop file, {old_lifted}, cannot be read: bad bytes", refused)
               and list(read_back_unreadable.iterdir()) == [], (out, list(read_back_unreadable.iterdir())))
+
+        second_try_unreadable = root / "second-try-unreadable" / "emergency-stop"
+        second_try_unreadable.parent.mkdir()
+        newer_unreadable = second_try_unreadable / "2099-01-01T00-00-00Z.md"
+        status, out = run_start_with_reads(second_try_unreadable, reads_in_order(
+            common.NoStop, lambda f: common.Lifted(newer_unreadable, "#emergency_stop_lifted x"),
+            lambda f: common.Unreadable(newer_unreadable, "bad bytes")))
+        check("start whose second try finds the newest file unreadable: deletes the first try's stop file, "
+              "and FAILED saying it wrote no emergency-stop file",
+              status == 1 and out == (
+                  f"FAILED: start wrote no emergency-stop file: the newest emergency-stop file, {newer_unreadable}, "
+                  "cannot be read: bad bytes. That unreadable file already counts as an emergency stop in force, so "
+                  "pushes and merges stay refused; writing a newer emergency-stop file would hide the unreadable "
+                  "one.\nTell the user the file's path and this error, and leave the file as it is: only the user "
+                  "repairs or moves it.\n")
+              and list(second_try_unreadable.iterdir()) == [], (out, list(second_try_unreadable.iterdir())))
+
+        mount = root / "mount-lost"
+        lost_folder = mount / "emergency-stop"
+        mount.mkdir()
+        moved_mount = root / "mount-lost-moved"
+
+        def mount_lost(f):
+            mount.rename(moved_mount)
+            return _real_read_state(f)
+
+        status, out = run_start_with_reads(lost_folder, reads_in_order(common.NoStop, mount_lost))
+        lost_file = lost_folder / "2026-11-14T12-00-00Z.md"
+        check("start whose folder becomes unreachable after its first write: the delete fails, so FAILED says "
+              "the write could not finish, not that the stop files were deleted",
+              status == 1 and out == failed_write(
+                  "start", lost_folder, f"the folder {lost_folder} cannot be reached: {mount} does not exist or "
+                  "cannot be reached", "So no one on this machine can tell whether an emergency stop is in force, "
+                  "and pushes and merges are not refused here.",
+                  f"Run this command again only if the user says to: {start_rerun}",
+                  error=f"[Errno 2] No such file or directory: '{lost_file}'")
+              and (moved_mount / "emergency-stop" / lost_file.name).exists(), out)
 
         same_second_other = root / "read-back-same-second" / "emergency-stop"
         same_second_other.mkdir(parents=True)
@@ -249,11 +291,6 @@ def main():
 
         def append_that_fails(_path, _line):
             raise OSError(28, "No space left on device")
-
-        def failed_write(command, target, holds, clause, last_line):
-            return (f"FAILED: {command} could not finish writing to the emergency-stop folder {target}: [Errno 28] "
-                    f"No space left on device. A read of the folder now finds that {holds}. {clause}\nTell the "
-                    f"user this whole message.\n{last_line}\n")
 
         program.append = append_that_fails
         try:
