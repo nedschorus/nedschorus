@@ -8,7 +8,7 @@ rather than a shell line in one seat's transcript, and so the pins that
 must not drift are pinned:
 
   - model and reasoning effort, explicit (the tier convention of
-    nc-systems/cold-read/cold-read-codex-cell.py: `deep` = gpt-6.1-sol at xhigh);
+    nc-systems/cold-read/cold-read-codex-cell.py: `deep` = gpt-6.2-sol at xhigh);
   - the sandbox, read-only and denying every credential file, placed AFTER
     `review`, because the review's commands drop a profile placed before it
     -- see WHERE THE PERMISSION PROFILE GOES below, which also says how to
@@ -456,8 +456,8 @@ _common_spec.loader.exec_module(common)
 CREDENTIAL_DENYING_PERMISSION_PROFILE = "code-review-no-credentials"
 
 # One place to update as models change, matching cold-read-codex-cell.py's
-# `deep` tier. gpt-6.1-sol needs codex-cli 0.159.1 or later.
-CODEX_MODEL = "gpt-6.1-sol"
+# `deep` tier. gpt-6.2-sol needs codex-cli 0.169.1 or later.
+CODEX_MODEL = "gpt-6.2-sol"
 REASONING_EFFORT = "xhigh"
 REVIEW_TIMEOUT_SECONDS = 1800
 

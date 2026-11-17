@@ -280,7 +280,7 @@ def test_one_miss_fails_its_candidate():
 
 def test_failed_readers():
     with tempfile.TemporaryDirectory() as folder:
-        code, out, _, run, _ = run_and_judge(pathlib.Path(folder), all_verdicts, reader=stub_reader({"gpt-6.1-sol"}))
+        code, out, _, run, _ = run_and_judge(pathlib.Path(folder), all_verdicts, reader=stub_reader({"gpt-6.2-sol"}))
         expect(code == 1 and run["outcome"]["passing"] == [] and "Build three new candidates" in out,
                "one failed reader fails its candidate, since all six must read it rightly; a first run says to build new ones")
 
@@ -418,10 +418,10 @@ def test_per_model_summary():
         summary = check.per_model_summary([json.loads(l) for l in log.read_text().splitlines()])
         expect(summary["claude-opus-5-5"]["answered"] == 3 and summary["claude-opus-5-5"]["matched"] == 2
                and summary["claude-opus-5-5"]["only_miss"] == 1, "summary counts the opus miss")
-        expect(summary["gpt-6.1-sol"]["matched"] == 3, "summary counts sol's matches")
+        expect(summary["gpt-6.2-sol"]["matched"] == 3, "summary counts sol's matches")
         summary = check.per_model_summary([json.loads(l) for l in log.read_text().splitlines()] + [
-            {"kind": "reader", "run_id": "extra", "reader_id": "x", "model": "gpt-6.1-sol", "error": None, "seconds": 5.0}])
-        expect(summary["gpt-6.1-sol"]["mean_seconds"] == 2.0,
+            {"kind": "reader", "run_id": "extra", "reader_id": "x", "model": "gpt-6.2-sol", "error": None, "seconds": 5.0}])
+        expect(summary["gpt-6.2-sol"]["mean_seconds"] == 2.0,
                "mean seconds is the answering readers' seconds summed and divided by their count: (1+1+1+5)/4 is 2.0")
 
 

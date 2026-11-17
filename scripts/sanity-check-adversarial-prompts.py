@@ -37,7 +37,7 @@ Operating rules:
 
 - Both agent-binaries on every audit — the claude CLI (claude-fable-5-1, falling
   back to claude-opus-5 when Fable produces no review) and
-  gpt-6.1-sol (the codex CLI), at xhigh reasoning effort. Each audit
+  gpt-6.2-sol (the codex CLI), at xhigh reasoning effort. Each audit
   therefore runs as two review agents, one per agent-binary, named
   `<audit>-adversarial-prompt-<runtime>`, such as `cut-adversarial-prompt-claude`
   (the `--adversarial-prompt` flag still takes the short `<audit>`, such as
@@ -501,9 +501,9 @@ IGNORED_PATH_STATUS_CODE = "!!"
 # That module is not imported here: it is built around the cold-read cell's
 # command line and report file, and this runner has neither.
 CLAUDE_MODEL_CHAIN = ("claude-fable-5-1", "claude-opus-5")
-# Matches cold-read-codex-cell.py's `deep` tier; the id needs codex-cli 0.159.1
+# Matches cold-read-codex-cell.py's `deep` tier; the id needs codex-cli 0.169.1
 # or later.
-CODEX_MODEL = "gpt-6.1-sol"
+CODEX_MODEL = "gpt-6.2-sol"
 # xhigh for both agent-binaries, by the user's calibration and a tier probe of both:
 # max earned neither slot.
 REASONING_EFFORT = "xhigh"
