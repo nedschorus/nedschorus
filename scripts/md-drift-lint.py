@@ -460,10 +460,12 @@ def check_overview_lock_and_environment_variable_sources(line: str, md_path: Pat
 
 
 GITHUB_REPOSITORY = "nedsnodes/nedsnodes"
+# GitHub redirects the repository's old name, and text written before the rename still holds it.
+OLD_REPOSITORY = "nedschorus/nedschorus"
 PLANNED_WORK_HEADING = "## Planned work"
 PLANNED_WORK_GHI_LINE = re.compile(
     r"\s*(?:[-*+]|\d+[.)]) GHI \[(?P<title>.+)\]\(https://github\.com/"
-    + re.escape(GITHUB_REPOSITORY) + r"/issues/(?P<number>\d+)\)")
+    + r"(?:" + re.escape(GITHUB_REPOSITORY) + "|" + re.escape(OLD_REPOSITORY) + r")/issues/(?P<number>\d+)\)")
 PLANNED_WORK_ENTRY = re.compile(r"\s*(?:[-*+]|\d+[.)])\s|.*github\.com/[^)\s]+/issues/\d+")
 GITHUB_QUERY_TIMEOUT_SECONDS = 60
 

@@ -246,14 +246,16 @@ AFTER UPDATE OF text, agent_message_answered ON entries BEGIN
 END;
 """
 
+# GitHub redirects the repository's old name, and text written before the rename still holds it.
+OLD_REPOSITORY = "nedschorus/nedschorus"
 GHI_REFERENCE = re.compile(
     r"(?<![\w/#-])(?:GHIs?|issues?)\s*#?(\d{1,5})\b"
     r"|\bnedschorus#(\d{1,5})\b"
-    r"|github\.com/nedsnodes/nedsnodes/issues/(\d{1,5})\b"
+    r"|github\.com/(?:nedsnodes/nedsnodes|" + re.escape(OLD_REPOSITORY) + r")/issues/(\d{1,5})\b"
     r"|\bdocs/issues/(\d{1,5})-", re.IGNORECASE)
 PULL_REQUEST_REFERENCE = re.compile(
     r"(?<![\w/#-])(?:PRs?|pull requests?)\s*#?(\d{1,5})\b"
-    r"|github\.com/nedsnodes/nedsnodes/pull/(\d{1,5})\b", re.IGNORECASE)
+    r"|github\.com/(?:nedsnodes/nedsnodes|" + re.escape(OLD_REPOSITORY) + r")/pull/(\d{1,5})\b", re.IGNORECASE)
 TASK_REFERENCE = re.compile(r"(?:\b([a-z][a-z0-9-]*[a-z0-9])(?:'s|’s)\s+)?\btasks?\s+#(\d{1,5})\b",
                             re.IGNORECASE)
 # Each part ends on a word character, @ or -, so a path at a sentence's end leaves its full stop out.

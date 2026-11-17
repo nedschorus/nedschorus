@@ -130,6 +130,9 @@ with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(
 is_program = shell_reader.is_program
 
 PROJECT_REPOSITORY = "nedsnodes/nedsnodes"
+# GitHub redirects the repository's old name, and text written before the rename still holds it.
+OLD_REPOSITORY = "nedschorus/nedschorus"
+PROJECT_REPOSITORY_NAMES = (PROJECT_REPOSITORY, OLD_REPOSITORY)
 
 ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 ISSUE_URL_PATTERN = re.compile(
@@ -411,7 +414,7 @@ def names_another_repository(flags, positionals, repository_from_environment):
     elif repository_from_environment is not None:
         named.append(repository_from_environment)
     named.extend(word for word in positionals if ISSUE_URL_PATTERN.match(word))
-    return any(normalized_repository(value) != PROJECT_REPOSITORY
+    return any(normalized_repository(value) not in PROJECT_REPOSITORY_NAMES
                for value in named if value)
 
 

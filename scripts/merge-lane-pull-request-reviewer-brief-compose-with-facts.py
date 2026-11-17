@@ -168,11 +168,16 @@ class MergedPullRequests:
         return self.listed
 
 
+# GitHub redirects the repository's old name, and text written before the rename still holds it.
+OLD_REPOSITORY = "nedschorus/nedschorus"
+
+
 def follow_up_pull_requests_text(number, closing_issues, merged_pull_requests):
     """The brief's fact naming each merged pull request whose not-fixed line links to
     an issue pull request `number` closes, or to `number` itself."""
     targets = linked_items(" ".join(issue["url"] for issue in closing_issues))
     targets.add((common.REPOSITORY.lower(), int(number)))
+    targets.add((OLD_REPOSITORY, int(number)))
     found = []
     for merged in merged_pull_requests.all():
         for defect_line in defect_line_reader.pull_request_description_defect_lines(merged["body"] or ""):

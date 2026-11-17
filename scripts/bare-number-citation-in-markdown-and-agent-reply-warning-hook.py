@@ -166,8 +166,10 @@ STRAIGHT_QUOTED_NAME_PATTERN = re.compile(r"\"[^\"\n]+\"")
 CURLY_QUOTED_NAME_PATTERN = re.compile(r"\u201c[^\u201d\n]+\u201d")
 LINK_TEXT_AND_TARGET_PATTERN = re.compile(
     r"\[(?P<text>(?:[^\[\]\n]|\[[^\[\]\n]*\])*)\]\((?P<target>(?:[^()\s]|\([^()\s]*\))*)")
+# GitHub redirects the repository's old name, and text written before the rename still holds it.
+OLD_REPOSITORY = "nedschorus/nedschorus"
 REPOSITORY_ITEM_URL_PATTERN = re.compile(
-    r"^<?https://github\.com/" + GITHUB_REPOSITORY_OWNER + "/" + GITHUB_REPOSITORY_NAME
+    r"^<?https://github\.com/(?:" + GITHUB_REPOSITORY_OWNER + "/" + GITHUB_REPOSITORY_NAME + "|" + OLD_REPOSITORY + ")"
     + r"/(?:pull|issues)/(?P<number>\d+)"
     # A link to a comment or a review, a review comment on the files tab
     # (#r<id>) included, cites that comment, not the item's title.
