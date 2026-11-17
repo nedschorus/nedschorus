@@ -2773,18 +2773,21 @@ OUTSIDE = pathlib.Path(os.path.realpath(tempfile.mkdtemp()))
 (TOP / "link").symlink_to("sub")
 (OUTSIDE / "real").mkdir()
 (OUTSIDE / "alias").symlink_to("real")
-walk_rule = module.git_call_directory_through_one_dash_c_path_git_walks_as_written_or_none
+walk_rule = module.git_call_working_directory_or_none_unless_at_most_one_plain_dash_c
 for paths, expected in (
         ([], str(TOP)), (["sub"], str(TOP / "sub")), (["sub/a/"], str(TOP / "sub" / "a")),
         ([str(TOP / "sub")], str(TOP / "sub")), (["missing"], str(TOP / "missing")),
         ([str(OUTSIDE / "alias")], str(OUTSIDE / "alias")),
         (["sub", str(TOP / "other")], None), (["sub", ".."], None), (["sub/.."], None),
         (["./sub"], None), (["sub//a"], None), (["link"], None), (["link/a"], None),
-        ([str(TOP / "link")], None), (["/"], None)):
+        ([str(TOP / "link")], None), (["/"], None),
+        # Outside the checkout only the name check decides: these end outside it.
+        ([".."], None), ([str(OUTSIDE / "real") + "/.."], None),
+        ([str(OUTSIDE) + "/./real"], None), ([str(OUTSIDE) + "//real"], None)):
     answer = walk_rule(str(TOP), paths, TOP)
     check(f"-C {paths} from the top is walked as written to {expected}", answer == expected,
           answer)
-walk = module.directories_and_symbolic_links_a_git_call_dash_c_walk_passes_in_the_checkout
+walk = module.git_call_dash_c_walk_list_work_tree_directories_and_symbolic_links_entered
 for arguments, expected in (
         (["rev-parse", "HEAD"], ([], [])),
         (["-C", "sub/a", "rev-parse", "HEAD"], (["sub", "sub/a"], [])),
