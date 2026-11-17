@@ -7,7 +7,7 @@ Assertions of the overview that the claim check against commit d08dc058fd63a331f
 Claim: `scripts/clean-worktrees.py`: before a removal it copies the worktree's review records to the log-store.
 Goes wrong when: a reader takes the assertion as exact.
 The claim check's evidence:
-> - What it ships is more than review records: clean-worktrees.py:45-50 `Before --remove removes one, it ships each walk in the worktree's docs/walk/, one for each <name>-minutes.md there, with scripts/walk-files-ship.py ... and each non-empty record directory under its cold-read-records/ and sanity-check-records/`.
+> - What it ships is more than review records: clean-worktrees.py:45-50 `Before --remove removes one, it ships each walk in the worktree's docs/walk/, one for each <name>-minutes.md there, with d08dc058:scripts/walk-files-ship.py ... and each non-empty record directory under its cold-read-records/ and sanity-check-records/`.
 > - It also keeps the worktree when a shipment fails (:51-52). "Review records" leaves out the approval-walk files. Loose wording; no agent would act wrongly.
 State: open
 

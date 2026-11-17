@@ -83,7 +83,7 @@ if mode == "fail":
     print("SUMMARY: 1 passed, 1 failed, 2 total")
     sys.exit(1)
 if mode == "refuse":
-    print("run-all-test-suites: not run — a refusal for the test", file=sys.stderr)
+    print("scripts/run-all-test-suites.py: not run — a refusal for the test", file=sys.stderr)
     sys.exit(2)
 print("SUMMARY: 2 passed, 0 failed, 2 total")
 '''
@@ -395,19 +395,76 @@ with tempfile.TemporaryDirectory() as directory:
 
     real_add = program.git
 
-    def worktree_add_fails(clone, *arguments, **options):
-        if arguments[:2] == ("worktree", "add"):
-            return subprocess.CompletedProcess(arguments, 128, "", "fatal: injected failure")
-        return real_add(clone, *arguments, **options)
-
-    with constants(git=worktree_add_fails):
-        code, printed, calls = s.run()
+    # git writes "Preparing worktree (...)" before the error of a worktree it cannot add.
+    worktree = s.temporary / program.PROGRAM / "worktree-of-main"
+    git(s.clone, "worktree", "add", "-q", "--detach", str(worktree))
+    subprocess.run(["rm", "-rf", str(worktree)], check=True)
+    code, printed, calls = s.run()
     state = s.state()
     head = git(s.origin, "rev-parse", "HEAD")
-    check("a worktree that cannot be made stops the run, exit 4, recorded with git's error",
+    reason = state["last_run"]["reason"]
+    check("a worktree that cannot be made stops the run, exit 4, recorded with git's fatal: "
+          "line, not the progress line before it",
           code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and calls == []
-          and f"the worktree of {head[:12]} could not be made: fatal: injected failure"
-          == state["last_run"]["reason"], (code, printed, state))
+          and reason.startswith(f"the worktree of {head[:12]} could not be made: fatal: ")
+          and "already registered worktree" in reason and "Preparing worktree" not in reason,
+          (code, printed, state))
+    git(s.clone, "worktree", "prune")
+
+    def worktree_add_hook_fails(clone, *arguments, **options):
+        if arguments[:2] == ("worktree", "add"):
+            return subprocess.CompletedProcess(
+                arguments, 1, "", "Preparing worktree (detached HEAD 0123456)\n"
+                "HEAD is now at 0123456 start\nthe post-checkout hook failed\n")
+        return real_add(clone, *arguments, **options)
+
+    with constants(git=worktree_add_hook_fails):
+        code, printed, calls = s.run()
+    check("a worktree add whose post-checkout hook fails is recorded with the hook's last line",
+          code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and s.state()["last_run"]["reason"]
+          == f"the worktree of {head[:12]} could not be made: the post-checkout hook failed",
+          (code, printed, s.state()))
+
+    def fetch_fails_after_progress(clone, *arguments, **options):
+        if arguments[:1] == ("fetch",):
+            return subprocess.CompletedProcess(
+                arguments, 1, "", "From https://github.com/nedschorus/nedschorus\n"
+                "error: cannot lock ref 'refs/remotes/origin/main': is at 1 but expected 2\n"
+                " ! 1..3  main -> origin/main  (unable to update local ref)\n"
+                "error: some local refs could not be updated\n")
+        return real_add(clone, *arguments, **options)
+
+    with constants(git=fetch_fails_after_progress):
+        code, printed, calls = s.run()
+    check("a fetch that fails after its From line is recorded with git's error: line and "
+          "the line that continues it",
+          code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and s.state()["last_run"]["reason"]
+          == "git fetch origin failed: error: cannot lock ref 'refs/remotes/origin/main': is at "
+          "1 but expected 2 ! 1..3  main -> origin/main  (unable to update local ref)",
+          (code, printed, s.state()))
+
+    def worktree_remove_fails_after_a_warning(clone, *arguments, **options):
+        if arguments[:2] == ("worktree", "remove"):
+            return subprocess.CompletedProcess(
+                arguments, 128, "", "warning: unable to unlink 'suite.log': Permission denied\n"
+                "fatal: failed to delete 'worktree-of-main': Directory not empty\n")
+        if arguments[:2] == ("worktree", "prune"):
+            return subprocess.CompletedProcess(arguments, 0, "", "")
+        return real_add(clone, *arguments, **options)
+
+    class RmtreeThatRemovesNothing:
+        @staticmethod
+        def rmtree(*arguments, **options):
+            pass
+
+    stuck = s.temporary / "a-worktree-that-cannot-be-removed"
+    stuck.mkdir()
+    with constants(git=worktree_remove_fails_after_a_warning, shutil=RmtreeThatRemovesNothing):
+        why = program.remove_worktree(s.clone, stuck)
+    stuck.rmdir()
+    check("a worktree remove that fails after a warning: line gives its fatal: line as the "
+          "reason, not the warning before it",
+          why == "fatal: failed to delete 'worktree-of-main': Directory not empty", why)
 
     def rev_parse_fails(clone, *arguments, **options):
         if arguments[:1] == ("rev-parse",):

@@ -1,17 +1,17 @@
-You are a named **agent-seat** — a long-lived agent identity with its own agent-home directory, its own git branch, and its own written brief — working on the **nedschorus** project. You are running on `ned-box`, an Ubuntu machine. The user works at a Mac on the same local network and is never sitting at this machine's terminal, so every command you hand him must say which machine it runs on: box-side commands take the form `ssh nedlern@ned-box '<command>'`.
+You are a named **agent-seat** — a long-lived agent identity with its own agent-home directory and its own written brief — working on the **nedschorus** project. You are running on `ned-box`, an Ubuntu machine. The user works at a Mac on the same local network and is never sitting at this machine's terminal, so every command you hand him must say which machine it runs on: box-side commands take the form `ssh nedlern@ned-box '<command>'`.
 
 This file gets you from a standing start to your brief. It is not your only context — `CLAUDE.md` at the repository root is loaded automatically and binds you throughout — but it is the only thing you can rely on before you have read anything.
 
 **Step 1 — which agent-seat are you?** Run `pwd`. Your agent-seat's name is the last component of that path: in `/home/nedlern/agents/prof` the agent-seat is `prof`. If your working directory is not directly under `/home/nedlern/agents/`, something is wrong with how you were launched — say so to the user and stop, rather than guessing a name from wherever you happen to be.
 
-**Step 2 — confirm your agent-home is a checkout on your own branch.** The launcher does this before your session starts. Verify both halves:
+**Step 2 — confirm your agent-home is a checkout on a detached HEAD.** The launcher does this before your session starts. Verify both halves:
 
 ```
 git rev-parse --show-toplevel      # expect your own directory
-git branch --show-current          # expect your agent-seat's name (empty output means detached HEAD)
+git branch --show-current          # expect empty output, which means a detached HEAD
 ```
 
-If either check fails — not a checkout, empty output, or a branch that is not your agent-seat's name — **stop and tell the user**, naming which check failed. Do not repair it yourself. Two reasons, and the second is the one that matters: a wrong branch means your commits would land somewhere unintended; and if the agent-home is not a checkout at all, then the project's settings — the status line, the `Stop` hook that asks you to hand off when context runs low (`scripts/handoff-context-threshold-hook.py`), and the guard on instruction files (`.claude/guard-hooks/instruction-file-guard.py`) — were never loaded, because settings are read at session start. Fixing the directory now cannot load them into the session you are already in. Only a relaunch can. Say that to the user plainly so he can decide whether to relaunch you or have you continue without them.
+If either check fails — not a checkout, or a branch name printed — **stop and tell the user**, naming which check failed. Do not repair it yourself. Two reasons, and the second is the one that matters: an agent-home on a branch is not as the launcher makes it; and if the agent-home is not a checkout at all, then the project's settings — the status line, the `Stop` hook that asks you to hand off when context runs low (`scripts/handoff-context-threshold-hook.py`), and the guard on instruction files (`.claude/guard-hooks/instruction-file-guard.py`) — were never loaded, because settings are read at session start. Fixing the directory now cannot load them into the session you are already in. Only a relaunch can. Say that to the user plainly so he can decide whether to relaunch you or have you continue without them.
 
 **Step 3 — read your instructions, in this order,** from inside your checkout:
 
@@ -25,7 +25,7 @@ Briefs are not uniform. Each states the agent-seat's work with its issues and pu
 
 **Two rules before you touch anything.**
 
-*Reaching main.* Commit to your own branch and push it; never push to `main` yourself. Open a pull request: the agent-seat merge-lane-2 on ned-box reviews and merges it, as `CLAUDE.md` describes. That is the interim path; the permanent path is the main-gatekeeper (`nc-systems/main-gatekeeper/main-gatekeeper.py check-in`), dormant until its credential work lands. If `CLAUDE.md` and this file ever disagree about how changes reach main, `CLAUDE.md` is right and this file is stale.
+*Reaching main.* Commit to an nc-topic-branch and push it; never push to `main` yourself. Open a pull request: the agent-seat merge-lane-2 on ned-box reviews and merges it, as `CLAUDE.md` describes. That is the interim path; the permanent path is the main-gatekeeper (`nc-systems/main-gatekeeper/main-gatekeeper.py check-in`), dormant until its credential work lands. If `CLAUDE.md` and this file ever disagree about how changes reach main, `CLAUDE.md` is right and this file is stale.
 
 *Agent-instructions files.* A change to `CLAUDE.md`, the per-agent identity file `~/agents/<seat>/CLAUDE.local.md`, or anything under `.claude/` that `docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md` lists and does not except is made only when **approved-by-walk** — approved by him item by item through an approval-walk, not by one yes to a bundle, recorded by quoting his words into `.walk-approved` at the repository root. Any other change to them is recorded by writing `#pre_approved_change` into `.walk-approved`, with the exception it falls under, or `on neither list`, on the next line. `.claude/guard-hooks/instruction-file-guard.py` enforces this on the Edit, Write, and NotebookEdit tools and will teach you the path if you forget. It cannot see a write made through a shell command, so the rule binds you whether or not the hook is watching.
 

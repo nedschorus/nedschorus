@@ -316,7 +316,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and any(line.startswith("FAIL killed-test.py killed by SIGTERM — log ")
                   for line in out), out)
     check("the first line names the checkout, its commit and the suite count",
-          out[0].startswith(f"run-all-test-suites: {repo.resolve()} at ")
+          out[0].startswith(f"scripts/run-all-test-suites.py: {repo.resolve()} at ")
           and "(tracked files match that commit); 6 suites listed by git;" in out[0],
           out[:1])
     check("the whole report is also written to test-run-report.txt in the log directory",
@@ -543,7 +543,7 @@ with tempfile.TemporaryDirectory() as scratch:
           (result.returncode, result.stdout[-500:], result.stderr))
     check("a run given a wait says on stderr that it is waiting for the lock, before "
           "anything else",
-          result.stderr.startswith(f"run-all-test-suites: waiting up to 1 s for "
+          result.stderr.startswith(f"scripts/run-all-test-suites.py: waiting up to 1 s for "
                                    f"{root / 'free.lock'}\n"), result.stderr)
 
 with tempfile.TemporaryDirectory() as scratch:
@@ -576,7 +576,7 @@ with tempfile.TemporaryDirectory() as scratch:
         run_stdout, run_stderr = waiting_run.communicate()
     check("a suite committed while the run waits for the lock is run: the run lists the "
           "suites after it takes the lock",
-          waiting_line.startswith("run-all-test-suites: waiting up to 60 s for ")
+          waiting_line.startswith("scripts/run-all-test-suites.py: waiting up to 60 s for ")
           and waiting_run.returncode == 0 and ran(root) == ["a-test.py", "b-test.py"],
           (waiting_line, waiting_run.returncode, ran(root), run_stderr))
 
@@ -606,7 +606,7 @@ with tempfile.TemporaryDirectory() as scratch:
         run_stdout, run_stderr = waiting_run.communicate()
     check("a checkout whose suites are all removed while the run waits is refused once the "
           "run holds the lock: exit 2, nothing run, and the refusal on stderr",
-          waiting_line.startswith("run-all-test-suites: waiting up to 60 s for ")
+          waiting_line.startswith("scripts/run-all-test-suites.py: waiting up to 60 s for ")
           and waiting_run.returncode == 2 and ran(root) == []
           and "git lists no" in run_stderr and run_stdout == "",
           (waiting_line, waiting_run.returncode, ran(root), run_stderr))
@@ -724,7 +724,7 @@ with tempfile.TemporaryDirectory() as scratch:
           (ran(root), result.stdout, result.stderr))
     check("with an ambient GIT_DIR, the first line names the checkout's own commit",
           bool(out) and out[0].startswith(
-              f"run-all-test-suites: {repo.resolve()} at {checkout_commit} "
+              f"scripts/run-all-test-suites.py: {repo.resolve()} at {checkout_commit} "
               f"(tracked files match that commit); 1 suites listed by git;"),
           (checkout_commit, out[:1]))
     check("with an ambient GIT_DIR, a checkout whose suites all pass exits 0",
@@ -738,6 +738,40 @@ with tempfile.TemporaryDirectory() as scratch:
 # deciding against them was a measured decision and widening the list later
 # should trip a case.
 module = load_program_module()
+
+# --- Output from a runner before the file-path opener is still read ----------
+# A frozen-head, or a saved result, can come from a runner whose lines open with the bare name.
+for opener in ("scripts/run-all-test-suites.py", "run-all-test-suites"):
+    check(f"a run whose output says '{opener}: not run to the end' is read as not ended, though a "
+          "suite's FAIL line precedes it",
+          not module.run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal(
+              f"FAIL a-test.py exit 1 (0.1s)\n{opener}: not run to the end — stopped by SIGTERM.\n"))
+
+# --- Files made in the temporary directory are named by the stem, not the path --
+# PROGRAM holds a "/", which would name a directory under TMPDIR that does not exist.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"a-test.py": PASSES})
+    temporary = root / "tmp"
+    temporary.mkdir()
+    environment = dict(os.environ, TMPDIR=str(temporary))
+    environment[RAN_FILE_VARIABLE] = str(root / "ran.txt")
+    result = subprocess.run(
+        [sys.executable, str(PROGRAM), "--checkout", str(root / "repo"), "--lock-file", str(root / "run.lock"),
+         "--recorded-inputs-directory", str(root / "recordings"),
+         "--suite-files-only-strace-saw-lists-directory", str(root / "recordings")],
+        capture_output=True, text=True, env=environment, stdin=subprocess.DEVNULL, check=False)
+    check("a run with no --log-dir makes its log directory in TMPDIR and passes",
+          result.returncode == 0 and ran(root) == ["a-test.py"], (result.returncode, result.stdout, result.stderr))
+    was_tempdir = tempfile.tempdir
+    try:
+        tempfile.tempdir = str(temporary)
+        covering = pathlib.Path(module.empty_file_bound_over_a_listening_socket_in_test_sandbox())
+    finally:
+        tempfile.tempdir = was_tempdir
+    check("the empty file covering a listening socket is made in the temporary directory, named by the stem",
+          covering.parent == temporary and covering.name.startswith("run-all-test-suites-empty-file-"), covering)
+
 check("the variable this file sets, so its fixture runs run as in a full run, is the one the "
       "program's signal sandbox sets",
       module.SIGNAL_SANDBOX_INSIDE_VARIABLE == "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX",
@@ -1292,7 +1326,7 @@ with tempfile.TemporaryDirectory() as scratch:
 # --- strace only where asked, and the files only it saw kept for later runs --
 # A stand-in strace runs each suite, and writes one trace line saying STRACE_ONLY_SUITE opened
 # data.txt, as a git command or a shell script would, unseen by the audit hook. Real strace
-# cannot attach inside the daily full run, which traces this suite, so it is not used here.
+# cannot attach inside the scheduled full run, which traces this suite, so it is not used here.
 FAKE_STRACE_SOURCE = r'''import os, subprocess, sys
 arguments = sys.argv[1:]
 trace = arguments[arguments.index("-o") + 1]
@@ -1302,12 +1336,15 @@ with open(os.environ["FAKE_STRACE_CALLED_FILE"], "a") as called:
 code = subprocess.call(command)
 seen = os.environ["FAKE_STRACE_SAW"]
 suite_traced = any(argument.endswith(os.environ["FAKE_STRACE_SUITE"]) for argument in command)
-# A suite that fails before reaching data.txt, as when the daily run times out.
+# A suite that fails before reaching data.txt, as when the scheduled run times out.
 stops_early = suite_traced and os.environ.get("FAKE_STRACE_SUITE_FAILS_BEFORE_READING")
 # A suite that skips, without the mark, the case that reads data.txt, and still passes.
 skips_reading = suite_traced and os.environ.get("FAKE_STRACE_SUITE_SKIPS_THE_CASE_THAT_READS")
 if skips_reading:
     print("SKIP the case that reads data.txt", flush=True)
+# A suite that skips, without the mark, a case that reads nothing, and still reads data.txt.
+if suite_traced and os.environ.get("FAKE_STRACE_SUITE_SKIPS_ANOTHER_CASE"):
+    print("SKIP a case that reads nothing", flush=True)
 with open(trace + ".1", "w") as written:
     if suite_traced and not stops_early and not skips_reading:
         written.write(f'openat(AT_FDCWD</>, "{seen}", O_RDONLY) = 3<{seen}>\n')
@@ -1347,6 +1384,10 @@ with tempfile.TemporaryDirectory() as scratch:
           and recording(root, STRACE_ONLY_SUITE).get("recorded_by") == ["python-audit-hook"]
           and kept_list(root / "recordings") is None
           and any(line.startswith("inputs recorded by python-audit-hook, kept in")
+                  for line in lines(hook_alone.stdout)), hook_alone.stdout)
+    check("a run that runs every suite says nothing of the suites' missing lists of files only "
+          "strace saw, since only a selective run reads them",
+          not any("list of the files only strace saw them read" in line
                   for line in lines(hook_alone.stdout)), hook_alone.stdout)
 
     traced = run(root, "--record-inputs-with-strace", environment_extra=fake,
@@ -1395,8 +1436,8 @@ with tempfile.TemporaryDirectory() as scratch:
           (ran(root), selected.stdout))
     check("a selective run says, on Linux only, that suites have no list of files only strace "
           "saw",
-          any(line.startswith("run-all-test-suites: 2 of 2 suites have no list of the files "
-                              "only strace saw them read from the last 36 hours")
+          any(line.startswith("scripts/run-all-test-suites.py: 2 of 2 suites have no complete "
+                              "list of the files only strace saw them read from the last 36 hours")
               for line in lines(unlisted.stdout)) == sys.platform.startswith("linux"),
           unlisted.stdout)
 
@@ -1431,23 +1472,25 @@ with tempfile.TemporaryDirectory() as scratch:
     stopped = run(root, "--record-inputs-with-strace",
                   environment_extra={**fake, "FAKE_STRACE_SUITE_FAILS_BEFORE_READING": "1"},
                   driver=FAKE_STRACE_DRIVER)
-    check("a traced run in which the suite failed keeps the last complete list of files only "
-          "strace saw, since it saw only what the suite reached before it stopped",
+    check("a traced run in which the suite failed keeps the files on the last list of files "
+          "only strace saw, since it saw only what the suite reached before it stopped",
           stopped.returncode == 1
           and json.loads(next(store.glob(
-              f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json")).read_text())
-          == complete_list, stopped.stdout)
+              f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json")).read_text())[
+                  "files_only_strace_saw"] == complete_list["files_only_strace_saw"] == ["data.txt"],
+          stopped.stdout)
 
     skipped = run(root, "--record-inputs-with-strace",
                   environment_extra={**fake, "FAKE_STRACE_SUITE_SKIPS_THE_CASE_THAT_READS": "1"},
                   driver=FAKE_STRACE_DRIVER)
     check("a traced run that passed but skipped a case without the mark that says this machine "
-          "cannot run it keeps the last complete list of files only strace saw",
+          "cannot run it keeps the files on the last list of files only strace saw",
           skipped.returncode == 0
           and recording(root, STRACE_ONLY_SUITE).get("skipped_cases") == 1
           and json.loads(next(store.glob(
-              f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json")).read_text())
-          == complete_list, (skipped.stdout, recording(root, STRACE_ONLY_SUITE)))
+              f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json")).read_text())[
+                  "files_only_strace_saw"] == ["data.txt"],
+          (skipped.stdout, recording(root, STRACE_ONLY_SUITE)))
 
     git(repo, "checkout", "-q", "-b", "holds-another-data")
     commit_files(repo, {"data.txt": "b\n"}, "another data")
@@ -1466,8 +1509,89 @@ with tempfile.TemporaryDirectory() as scratch:
               f"the checkout holds, so what it reads here is unknown" in lines(selected.stdout),
           (ran(root), selected.stdout))
 
-# Only the daily full run records these lists, once a day; a list older than the limit, or
-# none, means a daily run was missed, and the run says so.
+# A suite that skips a case without the mark in every scheduled run, as one that runs a case
+# only inside a Claude Code session does, still gets a list, and a later complete run replaces it.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {STRACE_ONLY_SUITE: PASSES})
+    base = commit_files(repo, {"data.txt": "a\n"}, "data")
+    fake_strace = root / "fake-strace.py"
+    fake_strace.write_text(f"#!{sys.executable}\n" + FAKE_STRACE_SOURCE)
+    fake_strace.chmod(0o755)
+    fake = {"FAKE_STRACE_PROGRAM": str(fake_strace),
+            "FAKE_STRACE_CALLED_FILE": str(root / "fake-strace-called.txt"),
+            "FAKE_STRACE_SAW": os.path.realpath(repo / "data.txt"),
+            "FAKE_STRACE_SUITE": STRACE_ONLY_SUITE}
+    store = root / "recordings"
+
+    def kept_files():
+        found = list(store.glob(f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json"))
+        return json.loads(found[0].read_text())["files_only_strace_saw"] if found else None
+
+    skipping = run(root, "--record-inputs-with-strace",
+                   environment_extra={**fake, "FAKE_STRACE_SUITE_SKIPS_ANOTHER_CASE": "1"},
+                   driver=FAKE_STRACE_DRIVER)
+    check("a traced run that skipped a case without the mark, with no list kept before, keeps "
+          "the files only strace saw it read",
+          skipping.returncode == 0
+          and recording(root, STRACE_ONLY_SUITE).get("skipped_cases") == 1
+          and kept_files() == ["data.txt"], (skipping.stdout, kept_files()))
+    # Recorded with the audit hook alone and no skip, as a selective run inside a session records.
+    run(root, "--recorded-inputs-directory", str(root / "session-store"))
+    commit_files(repo, {"data.txt": "b\n"}, "change data")
+    (root / "ran.txt").unlink(missing_ok=True)
+    selected = run(root, CHANGED_SINCE, base, "--recorded-inputs-directory",
+                   str(root / "session-store"), "--suite-files-only-strace-saw-lists-directory",
+                   str(store))
+    check("a selective run whose recording carries no skip selects that suite when a file on "
+          "the list differs, and names it apart as having a list made only from partial runs, "
+          "without sending the agent to the user",
+          ran(root) == [STRACE_ONLY_SUITE]
+          and any(f"a list made only from partial runs, for 1: {STRACE_ONLY_SUITE}" in line
+                  for line in lines(selected.stdout))
+          == sys.platform.startswith("linux")
+          and "tell him" not in selected.stdout,
+          (ran(root), selected.stdout))
+    check("a selective run that chose its partial-list suite gives no command to run it again",
+          "--only-suites-named" not in selected.stdout, selected.stdout)
+    run(root, "--record-inputs-with-strace", environment_extra={**fake, "FAKE_STRACE_SAW": "/"},
+        driver=FAKE_STRACE_DRIVER)
+    check("a traced run that passed and skipped nothing replaces the list, dropping a file it "
+          "no longer saw",
+          kept_files() == [], kept_files())
+    complete_at = json.loads(next(store.glob(
+        f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json")).read_text())
+    check("that run's list records it as the last run that reached every case",
+          complete_at["last_complete_run_at"] == complete_at["recorded_at"], complete_at)
+    run(root, "--record-inputs-with-strace",
+        environment_extra={**fake, "FAKE_STRACE_SUITE_SKIPS_ANOTHER_CASE": "1"},
+        driver=FAKE_STRACE_DRIVER)
+    after_partial = json.loads(next(store.glob(
+        f"*/{STRACE_ONLY_SUITE}.files-only-strace-saw.json")).read_text())
+    check("a later partial run keeps the time of the last run that reached every case",
+          after_partial["last_complete_run_at"] == complete_at["recorded_at"]
+          and after_partial["recorded_at"] >= complete_at["recorded_at"], after_partial)
+
+# The kept list is read again just before saving, so a list another run saved while this
+# run's suites ran is joined, not overwritten with the one read when this run started.
+with tempfile.TemporaryDirectory() as scratch:
+    store = pathlib.Path(scratch)
+    partial_recording = {"suite": "a-test.py", "recorded_at": "2026-11-04T10:00:00Z",
+                         "commit": "c", "exit": 1, "skipped_cases": 0,
+                         "skipped_cases_this_machine_cannot_run": 0,
+                         "files_only_strace_saw": ["seen-now.txt"]}
+    module.files_only_strace_saw_file_for(store, "a-test.py").write_text(json.dumps(
+        {"suite": "a-test.py", "recorded_at": "2026-11-04T09:00:00Z", "commit": "b",
+         "last_complete_run_at": "2026-11-04T09:00:00Z",
+         "files_only_strace_saw": ["saved-meanwhile.txt"]}))
+    module.save_files_only_strace_saw(store, partial_recording)
+    saved = module.load_files_only_strace_saw(store, "a-test.py")
+    check("a partial run's save joins the list on disk at the time it saves",
+          saved["files_only_strace_saw"] == ["saved-meanwhile.txt", "seen-now.txt"]
+          and saved["last_complete_run_at"] == "2026-11-04T09:00:00Z", saved)
+
+# Only the scheduled full run records these lists, once a day; a list older than the limit, or
+# none, means the scheduled run has not run the suite, and the run says so.
 NOW = datetime.datetime(2026, 11, 4, 12, 0, tzinfo=datetime.timezone.utc)
 
 
@@ -1479,25 +1603,97 @@ def kept_hours_before_now(hours):
 notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
     ["a-test.py", "b-test.py", "c-test.sh"],
     {"a-test.py": kept_hours_before_now(35), "b-test.py": kept_hours_before_now(35)},
-    pathlib.Path("/store"), NOW)
+    pathlib.Path("/store"), NOW, ())
 check("no notice when every recorded suite's list is younger than the limit, a shell suite, "
       "which is never recorded, aside", notice is None, notice)
 notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
     ["a-test.py", "b-test.py"],
     {"a-test.py": kept_hours_before_now(35), "b-test.py": kept_hours_before_now(37)},
-    pathlib.Path("/store"), NOW)
-check("a list older than the limit is named, with the time it was recorded",
-      notice is not None and notice.startswith("run-all-test-suites: 1 of 2 suites")
-      and "has not recorded every suite since 2026-11-02T23:00:00Z" in notice
-      and "If you have not yet told the user in this agent-session that the daily full test "
+    pathlib.Path("/store"), NOW, ())
+check("a list older than the limit is named, with the time it was recorded, and the agent "
+      "is told to tell the user",
+      notice is not None and notice.startswith("scripts/run-all-test-suites.py: 1 of 2 suites")
+      and "(a list older than that for 1, the oldest from 2026-11-02T23:00:00Z)" in notice
+      and "has made no list in the last 36 hours for 1 of 2 suites" in notice
+      and "If you have not yet told the user in this agent-session that the scheduled full test "
           "run's lists are stale: tell him" in notice,
       notice)
 notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
-    ["a-test.py"], {}, pathlib.Path("/store"), NOW)
-check("a missing list is named, with the directory it was looked for in",
-      notice is not None and notice.startswith("run-all-test-suites: 1 of 1 suites")
-      and "36 hours in /store," in notice
-      and "has not recorded every suite at all," in notice, notice)
+    ["a-test.py", "b-test.py", "c-test.py"],
+    {"a-test.py": kept_hours_before_now(35), "b-test.py": kept_hours_before_now(37)},
+    pathlib.Path("/store"), NOW, ())
+check("missing and old lists are counted apart",
+      notice is not None and notice.startswith("scripts/run-all-test-suites.py: 2 of 3 suites")
+      and "(no list for 1; a list older than that for 1, the oldest from 2026-11-02T23:00:00Z)"
+      in notice, notice)
+notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+    ["a-test.py", "b-test.py"], {"a-test.py": kept_hours_before_now(35)},
+    pathlib.Path("/store"), NOW, ())
+check("a missing list beside fresh ones, as a suite added since the last scheduled run has, is "
+      "named, with the directory it was looked for in, and the agent is not sent to the user",
+      notice is not None and notice.startswith("scripts/run-all-test-suites.py: 1 of 2 suites")
+      and "36 hours in /store (no list for 1)," in notice
+      and "a suite added since its last run has none yet" in notice
+      and "\n" not in notice and "tell him" not in notice,
+      notice)
+notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+    ["a-test.py"], {}, pathlib.Path("/store"), NOW, ())
+check("when no suite has a list, the agent is told to tell the user, with the log-store "
+      "directory of the scheduled run's records",
+      notice is not None and notice.startswith("scripts/run-all-test-suites.py: 1 of 1 suites")
+      and "If you have not yet told the user in this agent-session that the scheduled full test "
+          "run's lists are stale: tell him" in notice
+      and "nedlern@ned-box:/home/nedlern/nedschorus-logs/scheduled-full-test-runs-of-main/ned-box/." in notice,
+      notice)
+notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+    ["a-test.py", "b-test.py", "c-test.py"],
+    {"a-test.py": kept_hours_before_now(35),
+     "b-test.py": {**kept_hours_before_now(1), "last_complete_run_at": None},
+     "c-test.py": {**kept_hours_before_now(1),
+                   "last_complete_run_at": (NOW - datetime.timedelta(hours=40)).strftime(
+                       "%Y-%m-%dT%H:%M:%SZ")}},
+    pathlib.Path("/store"), NOW, ())
+check("a fresh list made only from partial runs in the last 36 hours is named apart, by "
+      "suite, and the agent is not sent to the user; a list kept before the field existed "
+      "counts as complete",
+      notice is not None and notice.startswith("scripts/run-all-test-suites.py: 2 of 3 suites")
+      and "(a list made only from partial runs, for 2: b-test.py, c-test.py)" in notice
+      and "\n" not in notice and "tell him" not in notice,
+      notice)
+check("a notice naming suites with a list made only from partial runs ends with the command "
+      "that runs them, and says what a partial run is, naming the mark",
+      notice.endswith("once every suite passes, carry on with your work: python3 "
+                      "scripts/run-all-test-suites.py "
+                      "--only-suites-named b-test.py c-test.py")
+      and "Run those suites with the command that ends this line. Fix a suite that fails as "
+          "you would a suite that failed in this run;" in notice
+      and "a partial run is a strace run of the suite that failed or skipped a case without "
+          "the mark [this machine cannot run it]" in notice,
+      notice)
+partly_chosen = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+    ["b-test.py", "c-test.py"],
+    {"b-test.py": {**kept_hours_before_now(1), "last_complete_run_at": None},
+     "c-test.py": {**kept_hours_before_now(1), "last_complete_run_at": None}},
+    pathlib.Path("/store"), NOW, ["b-test.py"])
+check("the run command names only the partial-list suites this run did not choose",
+      partly_chosen.endswith("--only-suites-named c-test.py")
+      and "This run did not run c-test.py," in partly_chosen
+      and "Run that suite with the command that ends this line" in partly_chosen,
+      partly_chosen)
+all_chosen = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+    ["b-test.py"], {"b-test.py": {**kept_hours_before_now(1), "last_complete_run_at": None}},
+    pathlib.Path("/store"), NOW, ["b-test.py"])
+check("when this run chose every partial-list suite, the notice gives no run command",
+      "--only-suites-named" not in all_chosen and all_chosen.endswith("Carry on with your work."),
+      all_chosen)
+check("a notice with no list made only from partial runs gives no run command",
+      "--only-suites-named" not in
+      module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+          ["a-test.py"], {}, pathlib.Path("/store"), NOW, ()), None)
+check("the passage on the notice's user sentence calls it the quoted text",
+      "A subagent passes the quoted text to the agent that dispatched it instead."
+      in module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
+          ["a-test.py"], {}, pathlib.Path("/store"), NOW, ()), None)
 with tempfile.TemporaryDirectory() as scratch:
     store = pathlib.Path(scratch)
     for name, body in (("not-json", "{"), ("no-list", '{"recorded_at": "2026-11-04T00:00:00Z"}'),
@@ -1505,6 +1701,62 @@ with tempfile.TemporaryDirectory() as scratch:
         (store / f"{name}-test.py.files-only-strace-saw.json").write_text(body)
         check(f"a list that is {name.replace('-', ' ')} is not used",
               module.load_files_only_strace_saw(store, f"{name}-test.py") is None, name)
+
+for exit_code, skipped, marked, kept in (
+        (0, 0, 0, True), (-signal.SIGKILL, 0, 0, False), (1, 0, 0, False), (0, 1, 0, False),
+        (0, 2, 2, True)):
+    check(f"a run that exited {exit_code} and skipped {skipped} case(s), {marked} of them marked "
+          f"as ones this machine cannot run, {'keeps' if kept else 'does not keep'} its list of "
+          f"files only strace saw",
+          module.recorded_run_passed_and_skipped_only_cases_this_machine_cannot_run(
+              {"exit": exit_code, "skipped_cases": skipped,
+               "skipped_cases_this_machine_cannot_run": marked}) is kept)
+
+
+class SelectionCheckout:
+    """The checkout selection_reason compares a recording against: differ maps each path that
+    differs to its status, and hashes_now each file to its blob hash."""
+
+    def __init__(self, differ, hashes_now):
+        self.differ = differ
+        self.hashes_now = hashes_now
+        self.entries_then = self.entries_now = {}
+        self.fingerprint_now = "fingerprint"
+
+    def there_then(self, path):
+        return False
+
+    def there_now(self, path):
+        return False
+
+
+def selection_reason_for(reads, differ, files_only_strace_saw=None, hashes_now=None):
+    recording = {"format": module.RECORDED_INPUTS_FORMAT_VERSION, "exit": 0, "skipped_cases": 0,
+                 "skipped_cases_this_machine_cannot_run": 0, "reads": reads, "looked_for": {},
+                 "lists": {}, "git_commands_on_the_checkout": []}
+    return module.selection_reason("a-test.py", recording,
+                                   SelectionCheckout(differ, hashes_now or {}), "0" * 40,
+                                   files_only_strace_saw)[1]
+
+
+THREE_DIFFER = {"one.txt": "M", "two.txt": "M", "three.txt": "M"}
+for paths, more in ((["one.txt", "two.txt"], " and 1 more"),
+                    (["one.txt", "two.txt", "three.txt"], " and 2 more")):
+    reason = selection_reason_for({path: "blob" for path in paths}, THREE_DIFFER)
+    check(f"a suite that reads {len(paths)} files that differ names the first and counts the rest",
+          reason == f"it reads one.txt, which differs{more}", reason)
+    reason = selection_reason_for(
+        {}, THREE_DIFFER, {"recorded_at": "2026-11-04T00:00:00Z", "files_only_strace_saw": paths})
+    check(f"a suite that reads {len(paths)} files that differ, seen only by strace, names the "
+          f"first on the list and counts the rest",
+          reason == f"it reads one.txt, which differs{more}, as only the strace run of "
+                    f"2026-11-04T00:00:00Z saw", reason)
+    reason = selection_reason_for({path: "recorded blob" for path in paths}, {},
+                                  hashes_now={path: "another blob" for path in paths})
+    check(f"a recording that read another copy of {len(paths)} files than the checkout holds "
+          f"names the first and counts the rest",
+          reason == f"its recording read another copy of one.txt{more} than the checkout holds, "
+                    f"so what it reads here is unknown", reason)
 
 # --- Saving recordings while runs in other checkouts save them too -----------
 # A sitecustomize.py on the program's PYTHONPATH holds each run at a barrier
@@ -2071,6 +2323,24 @@ if linux_only_cases_run_here("the removal of what a killed run left, decided fro
         check("a run refuses a --log-dir another run is writing to, with exit 3",
               result.returncode == 3 and "another run is writing to the log directory"
               in result.stderr, (result.returncode, result.stderr))
+        unwritable = root / "unwritable"
+        unwritable.mkdir()
+        unwritable.chmod(0o555)
+        for case, log_dir in (("it cannot create", unwritable / "logs"),
+                              ("it cannot write to", unwritable)):
+            result = run(root, "--log-dir", str(log_dir), lock_file=root / "another.lock")
+            check(f"a run given a --log-dir {case} says so and exits 2, with no traceback",
+                  result.returncode == 2 and result.stderr.startswith(
+                      f"scripts/run-all-test-suites.py: not run — could not write to the log "
+                      f"directory {log_dir.resolve()} (")
+                  and "\nRun this again with a --log-dir that this account can create and "
+                  "write to.\n" in result.stderr and "Traceback" not in result.stderr,
+                  (result.returncode, result.stderr))
+        nested = root / "missing-parent" / "missing-child" / "logs"
+        result = run(root, "--log-dir", str(nested), lock_file=root / "another.lock")
+        check("a run given a --log-dir whose parents do not exist yet creates them and passes",
+              result.returncode == 0 and nested.is_dir(),
+              (result.returncode, result.stderr, nested.is_dir()))
 
 # --- Git calls that read no file of the checkout -----------------------------
 # Full arguments distinguish location and config reads from calls whose
@@ -2174,6 +2444,162 @@ for call in (None, {"arguments": None}, {}, {"arguments": [b"log"]}):
     check(f"an unrecognised git call {call!r} reads the checkout",
           answer == module.GIT_CALL_READS_THE_CHECKOUT, answer)
 
+# --- Git calls tied to the checkout's list of files ---------------------------
+# A call is untied only when no file added or deleted, other than the paths it
+# consults, can change its answer; anything not shown to be so stays tied.
+# A real top directory, because a call whose -C directory does not exist stays tied.
+TOP = pathlib.Path(os.path.realpath(tempfile.mkdtemp()))
+(TOP / "sub" / "a").mkdir(parents=True)
+(TOP / "docs").mkdir()
+for arguments, consulted in (
+        (["rev-parse", "--short", "HEAD"], ["HEAD"]),
+        (["rev-parse", "--verify", "--quiet", "08ddce3^{commit}"], ["08ddce3^{commit}"]),
+        (["-C", str(TOP) + "/sub", "rev-parse", "HEAD"], ["sub/HEAD"]),
+        (["log", "--first-parent", "--format=%H %s", "HEAD"], [".mailmap", "HEAD"]),
+        (["-C", "sub", "log", "-1", "--format=%s", "0e12f5f"], [".mailmap", "sub/0e12f5f"]),
+        (["log", "--first-parent", "--merges", "--format=%s%x09%b", "aaaa..bbbb"],
+         [".mailmap", "aaaa..bbbb"]),
+        (["merge-base", "--is-ancestor", "01a20a3", "HEAD"], []),
+        (["merge-base", "origin/main", "HEAD"], []),
+        (["ls-remote", "--heads", "/tmp/elsewhere/remote.git", "ghi-570-edit-*"], []),
+        (["check-ignore", "-q", ".ghi-guide-agent-state.json"],
+         [".ghi-guide-agent-state.json", ".gitignore"])):
+    call = {"arguments": arguments, "directory": str(TOP) + "",
+            "GIT_DIR": None, "GIT_WORK_TREE": None}
+    answer = module.work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(call, TOP)
+    check(f"git {' '.join(arguments)} is not tied to the list of files, and consults "
+          f"{consulted}", answer == consulted, answer)
+
+for arguments in (
+        ["ls-files", "-z"], ["ls-files", "-z", "--", "*.py"], ["ls-tree", "-r", "HEAD"],
+        ["status", "--porcelain"], ["add", "-A"], ["diff", "HEAD"], ["stash"],
+        ["commit", "-a", "-m", "x"], ["grep", "word"], ["archive", "HEAD"],
+        ["worktree", "add", "--detach", "/tmp/x", "HEAD"], ["show", "HEAD:README.md"],
+        ["rev-parse", "HEAD:README.md"], ["rev-parse", ":/message"], ["rev-parse"],
+        ["rev-parse", "--all"], ["rev-parse", "HEAD", "--", "README.md"],
+        ["log", "--name-only", "HEAD"], ["log", "-p", "HEAD"], ["log", "--stat"],
+        ["log", "HEAD", "--", "README.md"], ["log", "-n", "1", "HEAD"], ["log"],
+        ["merge-base", "--fork-point", "main"], ["merge-base", "HEAD:x", "HEAD"],
+        ["ls-remote", "origin"], ["ls-remote", "--heads"],
+        ["ls-remote", str(TOP) + "/sub/remote.git"], ["ls-remote", "relative/remote.git"],
+        ["check-ignore", "--stdin"], ["check-ignore", "-q"],
+        ["check-ignore", "-q", "../outside.json"], ["check-ignore", "-q", "."],
+        ["check-ignore", "-q", "--", "a.json"],
+        ["-c", "core.hooksPath=/dev/null", "rev-parse", "HEAD"],
+        ["--no-pager", "log", "HEAD"], ["-C", "/elsewhere", "rev-parse", "HEAD"],
+        # git settles what these operands mean from more of the work tree than one path.
+        ["log", "HEAD", "docs"], ["log", "HEAD", "*.py"], ["rev-parse", "HEAD", "s[ub]"],
+        ["log", "HEAD", "^HEAD~1"], ["rev-parse", "^HEAD~1"],
+        ["-C", "sub", "check-ignore", "-q", "a/b.json"],
+        ["check-ignore", "-q", "sub/state.json"],
+        ["-C", "missing", "rev-parse", "HEAD"], ["-C", "missing", "merge-base", "HEAD", "HEAD"]):
+    call = {"arguments": arguments, "directory": str(TOP) + "",
+            "GIT_DIR": None, "GIT_WORK_TREE": None}
+    answer = module.work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(call, TOP)
+    check(f"git {' '.join(arguments)} stays tied to the list of files", answer is None, answer)
+
+for environment in ({"GIT_DIR": str(TOP) + "/.git", "GIT_WORK_TREE": None},
+                    {"GIT_DIR": None, "GIT_WORK_TREE": str(TOP) + ""}):
+    call = dict({"arguments": ["rev-parse", "HEAD"], "directory": str(TOP) + ""},
+                **environment)
+    answer = module.work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(call, TOP)
+    check(f"git rev-parse HEAD with environment {environment} stays tied to the list of files",
+          answer is None, answer)
+
+for call in ({"arguments": None, "directory": str(TOP) + ""},
+             {"arguments": ["log", "HEAD"]}, {"arguments": [b"log", "HEAD"],
+                                              "directory": str(TOP) + ""}):
+    answer = module.work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(call, TOP)
+    check(f"an unrecognised git call {call!r} stays tied to the list of files",
+          answer is None, answer)
+shutil.rmtree(TOP)
+
+# --- git ls-files calls tied to the list of files only through their pathspecs ----------
+through_pathspecs = getattr(
+    module, "git_ls_files_call_whose_answer_can_change_only_when_a_file_its_pathspecs_match_is_added_or_deleted")
+THROUGH_PATHSPECS = (
+    module.RECORDED_GIT_LS_FILES_CALLS_CHANGED_ONLY_BY_A_FILE_THEIR_PATHSPECS_MATCH_KEY)
+TOP = pathlib.Path(os.path.realpath(tempfile.mkdtemp()))
+(TOP / "sub").mkdir()
+for arguments, directory, variables, expected in (
+        (["ls-files", "-z", "--", "*.py"], str(TOP), [], (".", ["*.py"])),
+        (["-C", str(TOP), "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--",
+          "*.py"], "/elsewhere", ["GIT_AUTHOR_NAME", "GIT_EDITOR"], (".", ["*.py"])),
+        (["ls-files", "*-glossary.md"], str(TOP), [], (".", ["*-glossary.md"])),
+        (["-C", "sub", "ls-files", "--", "*.txt", ":(exclude)old/*", ":!x", ":/top.md",
+          ":(icase,glob)**/A.md"], str(TOP), [],
+         ("sub", ["*.txt", ":(exclude)old/*", ":!x", ":/top.md", ":(icase,glob)**/A.md"])),
+        (["ls-files", "--", "-starts-with-a-dash"], str(TOP), [],
+         (".", ["-starts-with-a-dash"]))):
+    call = {"arguments": arguments, "directory": directory, "GIT_DIR": None,
+            "GIT_WORK_TREE": None, "GIT_variables": variables}
+    answer = through_pathspecs(call, TOP)
+    check(f"git {' '.join(arguments)} is tied to the list of files only through its "
+          f"pathspecs {expected[1]}, from {expected[0]}",
+          answer == {"directory": expected[0], "pathspecs": expected[1]}, answer)
+
+for arguments, variables, why in (
+        (["ls-files", "-z"], [], "no pathspec"),
+        (["-C", "sub", "ls-files"], [], "no pathspec, from a subdirectory"),
+        (["ls-files", "-s", "--", "*.py"], [], "an option not on the list"),
+        (["ls-files", "--others", "--", "*.py"], [], "--others without --exclude-standard"),
+        (["ls-files", "-x", "*.pyc", "--others", "--exclude-standard", "--", "*.py"], [],
+         "an option not on the list"),
+        (["-c", "core.hooksPath=/dev/null", "ls-files", "--", "*.py"], [], "a -c option"),
+        (["-C", "missing", "ls-files", "--", "*.py"], [], "a -C directory that does not exist"),
+        (["-C", "/elsewhere", "ls-files", "--", "*.py"], [], "a -C directory outside the top"),
+        (["ls-files", "--", ":(attr:text)*.py"], [], "attr magic"),
+        (["ls-files", "--", ":(unknown)*.py"], [], "unknown magic"),
+        (["ls-files", "--", ":.py"], [], "an unknown short magic"),
+        (["ls-files", "--", ""], [], "an empty pathspec"),
+        (["ls-files", "--", "*.py"], ["GIT_LITERAL_PATHSPECS"], "GIT_LITERAL_PATHSPECS set"),
+        (["ls-files", "--", "*.py"], ["GIT_INDEX_FILE"], "GIT_INDEX_FILE set"),
+        (["ls-files", "--", "*.py"], None, "a recording made before GIT_ variables were kept"),
+        (["ls-tree", "-r", "HEAD", "--", "docs"], [], "not ls-files")):
+    call = {"arguments": arguments, "directory": str(TOP), "GIT_DIR": None,
+            "GIT_WORK_TREE": None, "GIT_variables": variables}
+    answer = through_pathspecs(call, TOP)
+    check(f"git {' '.join(arguments)} stays tied to the whole list of files: {why}",
+          answer is None, answer)
+shutil.rmtree(TOP)
+
+# git itself says which files a pathspec matches, with its glob, magic and directory prefix.
+with tempfile.TemporaryDirectory() as scratch:
+    top = pathlib.Path(os.path.realpath(scratch))
+    subprocess.run(["git", "init", "-q", str(top)], check=True)
+    (top / "sub").mkdir()
+    files = {"a.py", "sub/b.py", "sub/c.txt", "docs/issues/1-x.md", "CLAUDE.md", "x/CLAUDE.md"}
+    for directory, pathspecs, expected in (
+            (".", ["*.py"], {"a.py", "sub/b.py"}),
+            (".", ["*.py", ":(exclude)sub/*"], {"a.py"}),
+            ("sub", ["*"], {"sub/b.py", "sub/c.txt"}),
+            ("sub", [":/CLAUDE.md"], {"CLAUDE.md"}),
+            (".", ["*/CLAUDE.md"], {"x/CLAUDE.md"}),
+            (".", [":(literal)*.py"], set())):
+        answer = module.files_git_ls_files_lists_of_these(top, files, directory, pathspecs)
+        check(f"git ls-files -- {pathspecs} from {directory} lists {sorted(expected)}",
+              answer == (expected, None), answer)
+    for files, directory, why in (
+            ({"a.py"}, "missing", "cannot change to"),
+            ({"a.py"}, ".", "outside repository")):
+        answer = module.files_git_ls_files_lists_of_these(
+            top, files, directory, ["*.py"] if directory == "missing" else ["../a.py"])
+        check(f"git failing to match from {directory} is reported with its error",
+              answer[0] is None and why in (answer[1] or ""), answer)
+    for words in ("hash-object", "update-index"):
+        previous = os.environ["PATH"]
+        os.environ.update(stand_in_git_failing_on(top, words))
+        try:
+            answer = module.files_git_ls_files_lists_of_these(top, {"a.py"}, ".", ["*.py"])
+        finally:
+            os.environ["PATH"] = previous
+        check(f"git {words} failing while matching is reported with its error",
+              answer == (None, "fatal: injected git failure"), answer)
+    answer = module.files_git_ls_files_lists_of_these(top, {"a", "a/b"}, ".", ["*"])
+    check("a list holding a path both as a file and as a directory is not matched, since "
+          "update-index would drop one of them", answer == (None, "a is both a file and a "
+                                                             "directory"), answer)
+
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
     # Scratch setup runs with -C outside the checkout, so only the calls
@@ -2218,9 +2644,9 @@ finally:
 finally:
     shutil.rmtree(scratch)
 ''',
-        "git-rev-parse-unknown-option-test.py": (
+        "git-rev-parse-path-in-a-tree-test.py": (
             "import subprocess\n"
-            "subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], "
+            "subprocess.run(['git', 'rev-parse', 'HEAD:input.txt'], "
             "check=True, capture_output=True)\n"),
         "git-config-write-test.py": (
             "import subprocess\n"
@@ -2259,7 +2685,7 @@ finally:
               and call["arguments"] == ["rev-parse", "--show-toplevel"] for call in calls),
           calls)
     commands = {"git-status-with-git-dir-test.py": "status",
-                "git-rev-parse-unknown-option-test.py": "rev-parse",
+                "git-rev-parse-path-in-a-tree-test.py": "rev-parse",
                 "git-config-write-test.py": "config"}
     for suite, command in commands.items():
         recorded = recording(root, suite)
@@ -2300,6 +2726,292 @@ finally:
         check(f"{suite} keeps the existing added-file SELECTED reason",
               f"SELECTED {suite}: it runs git {command} on the checkout, and "
               "notes/added.txt was added" in out, out)
+
+# git ls-remote lists the refs of the repository it names and reads no file of the checkout.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    suite = "git-ls-remote-test.py"
+    repo = make_repo(root, {suite: '''import subprocess, tempfile, shutil
+scratch = tempfile.mkdtemp()
+try:
+    subprocess.run(['git', 'init', '-q', scratch], check=True, capture_output=True)
+    subprocess.run(['git', 'ls-remote', '--heads', scratch], check=True, capture_output=True)
+finally:
+    shutil.rmtree(scratch)
+'''})
+    base = commit_files(repo, {"notes/unread.txt": "one\n"}, "a file the suite does not read")
+    result = run(root)
+    check("the git ls-remote fixture's full run passes, recording ls-remote as git on the "
+          "checkout",
+          result.returncode == 0
+          and recording(root, suite).get("git_commands_on_the_checkout") == ["ls-remote"],
+          (result.stdout, result.stderr, recording(root, suite)))
+    changed = commit_files(repo, {"notes/unread.txt": "two\n"}, "change the unread file")
+    result = select_since(root, base)
+    check("a changed file a suite running only git ls-remote on the checkout does not read "
+          "leaves the suite NOT SELECTED",
+          result.returncode == 0 and ran(root) == []
+          and any(line.startswith(f"NOT SELECTED {suite}: ") for line in lines(result.stdout)),
+          (ran(root), result.stdout, result.stderr))
+    commit_files(repo, {"notes/added.txt": "new\n"}, "add a file")
+    result = select_since(root, changed)
+    check("an added file leaves a suite running only git ls-remote of another repository "
+          "on the checkout NOT SELECTED, saying its git answers whichever files are added",
+          result.returncode == 0 and ran(root) == []
+          and any(line.startswith(f"NOT SELECTED {suite}: ")
+                  and line.endswith(", and adding or deleting other files cannot change the "
+                                    "answers of its git calls on the checkout: git ls-remote")
+                  for line in lines(result.stdout)),
+          (ran(root), result.stdout, result.stderr))
+
+# A git call not tied to the list of files still selects its suite through the paths it consults.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    log_suite, ignore_suite, tied_suite = (
+        "git-log-test.py", "git-check-ignore-test.py", "git-ls-files-test.py")
+    repo = make_repo(root, {
+        log_suite: ("import subprocess\n"
+                    "subprocess.run(['git', 'log', '-1', '--format=%s', 'HEAD~0'], "
+                    "check=True, capture_output=True)\n"
+                    "subprocess.run(['git', 'merge-base', '--is-ancestor', 'HEAD', 'HEAD'], "
+                    "check=True, capture_output=True)\n"),
+        ignore_suite: ("import subprocess\n"
+                       "subprocess.run(['git', 'check-ignore', '-q', 'state.json'], "
+                       "capture_output=True)\n"),
+        tied_suite: ("import subprocess\n"
+                     "subprocess.run(['git', 'ls-files', '-z'], "
+                     "check=True, capture_output=True)\n")})
+    base = commit_files(repo, {".gitignore": "state.json\n", "sub/kept.txt": "kept\n"},
+                        "inputs")
+    # An ignored file on disk at the recording is absent to git, so it is recorded as absent.
+    (repo / "state.json").write_text("ignored, then tracked\n")
+    result = run(root)
+    check("the untied git call fixture's full run passes", result.returncode == 0,
+          (result.stdout, result.stderr))
+    for suite, tied, read, looked_for in (
+            (log_suite, [], [], {".mailmap": False, "HEAD~0": False}),
+            (ignore_suite, [], [".gitignore"], {"state.json": False}),
+            (tied_suite, ["ls-files"], [], {})):
+        recorded = recording(root, suite)
+        check(f"{suite} records {tied or 'no command'} as tied to the list of files, "
+              f"{read} as read and {looked_for} as looked for",
+              recorded.get("git_commands_tied_to_the_file_list") == tied
+              and all(path in recorded.get("reads", {}) for path in read)
+              and all(recorded.get("looked_for", {}).get(path) == there
+                      for path, there in looked_for.items()), recorded)
+
+    added = commit_files(repo, {"notes/added.txt": "new\n"}, "add a file no suite consults")
+    result = select_since(root, base)
+    out = lines(result.stdout)
+    check("an added file selects only the suite whose git call is tied to the list of files",
+          result.returncode == 0 and ran(root) == [tied_suite]
+          and f"SELECTED {tied_suite}: it runs git ls-files on the checkout, and "
+              "notes/added.txt was added" in out, (ran(root), result.stdout, result.stderr))
+    check("the NOT SELECTED line of the untied log suite names its git commands",
+          any(line.startswith(f"NOT SELECTED {log_suite}: ")
+              and line.endswith(", and adding or deleting other files cannot change the "
+                                "answers of its git calls on the checkout: git log, "
+                                "git merge-base") for line in out), out)
+
+    # A file named like the revision makes the suite's git log fail as ambiguous.
+    for files, selected, why, exit_code in (
+            ({"HEAD~0": "a file named like a revision\n"}, log_suite,
+             "it looks for HEAD~0, which was added", 1),
+            ({".gitignore": "state.json\nother.json\n"}, ignore_suite,
+             "it reads .gitignore, which differs", 0)):
+        since = head(repo)
+        commit_files(repo, files, f"change {sorted(files)}")
+        result = select_since(root, since)
+        if "HEAD~0" in files:
+            git(repo, "rm", "-q", "HEAD~0")
+            git(repo, "commit", "-q", "-m", "remove the file named like a revision")
+        check(f"adding or changing {sorted(files)} selects {selected}, which consults it",
+              result.returncode == exit_code and selected in ran(root)
+              and f"SELECTED {selected}: {why}" in lines(result.stdout),
+              (ran(root), [line for line in lines(result.stdout) if selected in line],
+               result.stderr))
+        run(root)
+
+    since = head(repo)
+    git(repo, "add", "-f", "state.json")
+    git(repo, "commit", "-q", "-m", "track an ignored path check-ignore was given")
+    result = select_since(root, since)
+    check("tracking a path check-ignore was given, which was on disk and ignored when "
+          "recorded, selects the suite",
+          result.returncode == 0 and ignore_suite in ran(root)
+          and f"SELECTED {ignore_suite}: it looks for state.json, which was added"
+          in lines(result.stdout),
+          (ran(root), [line for line in lines(result.stdout) if ignore_suite in line]))
+
+    recorded_file = next((root / "recordings").glob(f"*/{log_suite}.json"))
+    recorded = json.loads(recorded_file.read_text())
+    for key in ("git_commands_tied_to_the_file_list",
+                module.RECORDED_GIT_COMMANDS_CHANGED_BY_ANY_FILE_KEY,
+                THROUGH_PATHSPECS):
+        recorded.pop(key)
+    recorded_file.write_text(json.dumps(recorded))
+    since = head(repo)
+    commit_files(repo, {"notes/another.txt": "new\n"}, "add another file")
+    result = select_since(root, since)
+    check("a recording saved before recordings named the tied git commands ties every git "
+          "command it ran on the checkout",
+          result.returncode == 0 and log_suite in ran(root)
+          and f"SELECTED {log_suite}: it runs git log, merge-base on the checkout, and "
+              "notes/another.txt was added" in lines(result.stdout),
+          (ran(root), [line for line in lines(result.stdout) if log_suite in line]))
+
+# A git ls-files call with pathspecs selects its suite only for a file its pathspecs match.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+
+    def ls_files(*arguments, environment=None):
+        return ("import os, subprocess\n"
+                f"subprocess.run(['git', *{list(arguments)!r}], check=True, capture_output=True"
+                + (f", env=dict(os.environ, **{environment!r})" if environment else "")
+                + ")\n")
+
+    suites = {
+        "py-test.py": ls_files("ls-files", "-z", "--cached", "--others", "--exclude-standard",
+                               "--", "*.py"),
+        "exclude-test.py": ls_files("ls-files", "-z", "--", "*.txt", ":(exclude)notes/*"),
+        "sub-test.py": ls_files("-C", "sub", "ls-files", "-z", "--", "*.txt"),
+        "whole-test.py": ls_files("ls-files", "-z"),
+        "attr-test.py": ls_files("ls-files", "-z", "--", ":(attr:text)*.txt"),
+        "literal-test.py": ls_files("ls-files", "-z", "--", "*.py",
+                                    environment={"GIT_LITERAL_PATHSPECS": "1"}),
+        "outside-test.py": ("import subprocess\n"
+                            "subprocess.run(['git', 'ls-files', '--', '../outside.txt'], "
+                            "capture_output=True)\n")}
+    narrowed = ["exclude-test.py", "py-test.py", "sub-test.py"]
+    whole = ["attr-test.py", "literal-test.py", "outside-test.py", "whole-test.py"]
+    repo = make_repo(root, suites)
+    base = commit_files(repo, {"sub/kept.txt": "kept\n", "notes/one.txt": "one\n"}, "inputs")
+    result = run(root)
+    check("the git ls-files pathspec fixture's full run passes", result.returncode == 0,
+          (result.stdout, result.stderr))
+    for suite in narrowed + whole:
+        recorded = recording(root, suite)
+        expected = [] if suite in narrowed else ["ls-files"]
+        check(f"{suite} records {expected or 'no command'} as tied to the whole list of files",
+              recorded.get("git_commands_tied_to_the_file_list") == ["ls-files"]
+              and recorded.get(module.RECORDED_GIT_COMMANDS_CHANGED_BY_ANY_FILE_KEY) == expected
+              and bool(recorded.get(
+                  THROUGH_PATHSPECS))
+              == (suite in narrowed), recorded)
+    check("a git ls-files call from -C sub is recorded with its directory and pathspecs",
+          [{key: call[key] for key in ("directory", "pathspecs")} for call in recording(
+              root, "sub-test.py").get(THROUGH_PATHSPECS, [])]
+          == [{"directory": "sub", "pathspecs": ["*.txt"]}], recording(root, "sub-test.py"))
+
+    for files, deleted, selected, why in (
+            ({"notes/added.txt": "new\n"}, [], {}, None),
+            ({"docs/added.txt": "new\n"}, [],
+             {"exclude-test.py": "it runs git ls-files -- '*.txt' ':(exclude)notes/*' on the "
+                                 "checkout, which lists docs/added.txt, and docs/added.txt was "
+                                 "added"}, None),
+            ({"sub/added.txt": "new\n"}, [],
+             {"sub-test.py": "it runs git ls-files -- '*.txt' from sub/ on the checkout, which "
+                             "lists sub/added.txt, and sub/added.txt was added",
+              "exclude-test.py": None}, None),
+            ({"tool.py": "VALUE = 1\n"}, [],
+             {"py-test.py": "it runs git ls-files -- '*.py' on the checkout, which lists "
+                            "tool.py, and tool.py was added"}, None),
+            ({}, ["tool.py"],
+             {"py-test.py": "it runs git ls-files -- '*.py' on the checkout, which lists "
+                            "tool.py, and tool.py was deleted"}, None)):
+        since = head(repo)
+        for path in deleted:
+            git(repo, "rm", "-q", path)
+        commit_files(repo, files, f"change {sorted(files)} {deleted}")
+        result = select_since(root, since)
+        out = lines(result.stdout)
+        changed = sorted(files) + deleted
+        expected = sorted(set(selected) | set(whole))
+        check(f"adding or deleting {changed} selects only {expected}",
+              result.returncode == 0 and ran(root) == expected
+              and all(why is None or f"SELECTED {suite}: {why}" in out
+                      for suite, why in selected.items())
+              and f"SELECTED whole-test.py: it runs git ls-files on the checkout, and "
+                  f"{changed[0]} was {'deleted' if deleted else 'added'}" in out,
+              (ran(root), result.stdout, result.stderr))
+        run(root)
+
+    def edit_recording(suite, change):
+        recorded_file = next((root / "recordings").glob(f"*/{suite}.json"))
+        recorded = json.loads(recorded_file.read_text())
+        change(recorded)
+        recorded_file.write_text(json.dumps(recorded))
+
+    since = head(repo)
+    edit_recording("py-test.py", lambda recorded: recorded.update(
+        files_fingerprint="a recording made on another set of files"))
+    result = select_since(root, since)
+    check("a recording made on another set of files, where its pathspecs listed the same files, "
+          "leaves a suite running only git ls-files with pathspecs NOT SELECTED",
+          result.returncode == 0 and "py-test.py" not in ran(root),
+          (ran(root), result.stdout, result.stderr))
+    edit_recording("py-test.py", lambda recorded: recorded[
+        THROUGH_PATHSPECS][0].update(
+        files_fingerprint="its pathspecs listed other files"))
+    result = select_since(root, since)
+    check("a recording made where the pathspecs of its git ls-files call listed other files "
+          "selects the suite",
+          result.returncode == 0 and "py-test.py" in ran(root)
+          and "SELECTED py-test.py: it runs git ls-files -- '*.py' on the checkout, and its "
+              "recording was made where its pathspecs listed other files" in lines(result.stdout),
+          (ran(root), result.stdout, result.stderr))
+
+    edit_recording("py-test.py", lambda recorded: [recorded.pop(key) for key in (
+        module.RECORDED_GIT_COMMANDS_CHANGED_BY_ANY_FILE_KEY,
+        THROUGH_PATHSPECS)])
+    since = head(repo)
+    commit_files(repo, {"notes/another.txt": "new\n"}, "add a file no pathspec matches")
+    result = select_since(root, since)
+    check("a recording saved before recordings named the git ls-files calls tied only through "
+          "their pathspecs ties its git ls-files calls to the whole list of files",
+          result.returncode == 0 and "py-test.py" in ran(root)
+          and "SELECTED py-test.py: it runs git ls-files on the checkout, and "
+              "notes/another.txt was added" in lines(result.stdout),
+          (ran(root), result.stdout, result.stderr))
+    run(root)
+
+    since = head(repo)
+    git(repo, "rm", "-q", "-r", "sub")
+    git(repo, "commit", "-q", "-m", "remove the directory a suite runs git ls-files from")
+    result = select_since(root, since)
+    check("a git ls-files call from a directory the checkout no longer holds selects its "
+          "suite, with git's error",
+          "sub-test.py" in ran(root)
+          and any(line.startswith("SELECTED sub-test.py: it runs git ls-files -- '*.txt' from "
+                                  "sub/ on the checkout, and git could not say which files "
+                                  "that lists: fatal: cannot change to ")
+                  for line in lines(result.stdout)),
+          (ran(root), result.stdout, result.stderr))
+
+# The recorder resolves a git operand from the last -C, as git does.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    suite = "git-dash-c-operand-test.py"
+    repo = make_repo(root, {suite: '''import subprocess, tempfile, shutil, pathlib
+scratch = tempfile.mkdtemp()
+try:
+    subprocess.run(['git', 'init', '-q', scratch], check=True, capture_output=True)
+    pathlib.Path(scratch, 'README.md').write_text('scratch\\n')
+    subprocess.run(['git', '-C', scratch, 'add', 'README.md'], check=True, capture_output=True)
+finally:
+    shutil.rmtree(scratch)
+subprocess.run(['git', '-C', 'sub', 'ls-files', 'tracked.txt'], check=True, capture_output=True)
+'''})
+    commit_files(repo, {"README.md": "the checkout's\n", "tracked.txt": "top\n",
+                        "sub/tracked.txt": "sub\n"}, "inputs")
+    result = run(root)
+    reads = recording(root, suite).get("reads", {})
+    check("the -C operand fixture's full run passes", result.returncode == 0,
+          (result.stdout, result.stderr))
+    check("a file operand of git -C <scratch> add is not recorded as the checkout's file of "
+          "that name", "README.md" not in reads, reads)
+    check("a file operand of git -C sub is recorded as read from sub, not from the top",
+          "sub/tracked.txt" in reads and "tracked.txt" not in reads, reads)
 
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
@@ -2612,6 +3324,90 @@ with tempfile.TemporaryDirectory() as scratch:
           and "FAIL a-fails-test.py" in stopped_output
           and "not run to the end — stopped by SIGTERM" in stopped_output,
           (stub_pids, runner_process.returncode, stopped_output))
+
+# A suite outside an nc-test-sandbox whose grandchild starts a session of its own, which the
+# suite's process group does not hold. The grandchild writes outlived-its-tmpdir when it sees
+# the suite's TMPDIR removed while it still runs; it ends then, once this test no longer runs,
+# or after 60 s, so a kill that misses it leaves nothing running.
+TEST_PID_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_PID"
+TEST_START_TICKS_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_START_TICKS"
+GRANDCHILD_IN_A_SESSION_OF_ITS_OWN = r"""
+import pathlib, sys, time
+temporary_directory, record, test_pid, test_start_ticks = sys.argv[1:]
+
+
+def test_runs():
+    try:
+        stat = pathlib.Path(f"/proc/{test_pid}/stat").read_text()
+    except (FileNotFoundError, ProcessLookupError):
+        return False
+    fields = stat.rsplit(")", 1)[1].split()
+    return fields[0] != "Z" and fields[19] == test_start_ticks
+
+
+deadline = time.monotonic() + 60
+while time.monotonic() < deadline and test_runs():
+    if not pathlib.Path(temporary_directory).exists():
+        pathlib.Path(record).write_text("outlived its TMPDIR")
+        break
+    time.sleep(0.01)
+"""
+STARTS_A_GRANDCHILD_IN_A_SESSION_OF_ITS_OWN = (
+    "import subprocess\n"
+    "here = pathlib.Path(os.environ['" + RAN_FILE_VARIABLE + "']).parent\n"
+    "grandchild = subprocess.Popen(\n"
+    "    [sys.executable, '-c', " + repr(GRANDCHILD_IN_A_SESSION_OF_ITS_OWN) + ",\n"
+    "     os.environ['TMPDIR'], str(here / 'outlived-its-tmpdir'),\n"
+    "     os.environ['" + TEST_PID_VARIABLE + "'], os.environ['" + TEST_START_TICKS_VARIABLE
+    + "']],\n"
+    "    start_new_session=True)\n"
+    "(here / 'grandchild.pid').write_text(str(grandchild.pid))\n"
+    "time.sleep(60)\n")
+FAILS_ONCE_THE_GRANDCHILD_STARTED = (
+    "here = pathlib.Path(os.environ['" + RAN_FILE_VARIABLE + "']).parent\n"
+    "deadline = time.monotonic() + 60\n"
+    "while not (here / 'grandchild.pid').exists() and time.monotonic() < deadline:\n"
+    "    time.sleep(0.05)\n"
+    "sys.exit(1)\n")
+
+
+def grandchild_killed_before_its_tmpdir_was_removed(root):
+    """(whether it was, what the case saw); a grandchild still running is killed here."""
+    pid_file = root / "grandchild.pid"
+    pid = int(pid_file.read_text()) if pid_file.exists() and pid_file.read_text() else None
+    gone = pid is not None and process_gone_within(pid, 10)
+    if pid is not None and not gone:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+    outlived = (root / "outlived-its-tmpdir").exists()
+    return pid is not None and gone and not outlived, (pid, gone, outlived)
+
+
+if linux_only_cases_run_here("a kill that reaches a suite's grandchild in a session of its own"):
+    test_identity = {TEST_PID_VARIABLE: str(os.getpid()),
+                     TEST_START_TICKS_VARIABLE: str(module.process_start_ticks(os.getpid()))}
+    with tempfile.TemporaryDirectory() as scratch:
+        root = pathlib.Path(scratch)
+        make_repo(root, {"grandchild-test.py": STARTS_A_GRANDCHILD_IN_A_SESSION_OF_ITS_OWN})
+        timed_out = run(root, "-j", "1", driver=TIME_LIMITS_SHORTENED_DRIVER,
+                        environment_extra=test_identity)
+        killed_first, seen = grandchild_killed_before_its_tmpdir_was_removed(root)
+        check("a suite past its limit has its grandchild in a session of its own killed, and "
+              "ended, before the suite's TMPDIR is removed",
+              killed_first and "FAIL grandchild-test.py TIMEOUT" in timed_out.stdout,
+              (seen, timed_out.stdout))
+    with tempfile.TemporaryDirectory() as scratch:
+        root = pathlib.Path(scratch)
+        make_repo(root, {"a-grandchild-test.py": STARTS_A_GRANDCHILD_IN_A_SESSION_OF_ITS_OWN,
+                         "b-fails-test.py": FAILS_ONCE_THE_GRANDCHILD_STARTED})
+        stopped = run(root, "--stop-at-first-failing-suite", "-j", "2",
+                      environment_extra=test_identity)
+        killed_first, seen = grandchild_killed_before_its_tmpdir_was_removed(root)
+        check("a suite stopped by --stop-at-first-failing-suite has its grandchild in a session "
+              "of its own killed, and ended, before the suite's TMPDIR is removed",
+              killed_first and "FAIL a-grandchild-test.py killed when the run was stopped by "
+                               "the first failing suite" in stopped.stdout,
+              (seen, stopped.stdout))
 
 # A command put in the background in a subshell starts with SIGINT ignored, and an
 # ignored signal passes on to every process it starts; a suite that interrupts itself
@@ -3194,6 +3990,349 @@ check("a negative --wait-for-lock-seconds is a bad invocation, exit 2",
 check("--lock-file defaults to one file per machine under ~/.claude",
       pathlib.Path(defaults.lock_file) == pathlib.Path.home() / ".claude"
       / ".run-all-test-suites.lock", defaults.lock_file)
+
+# --- The kill reaches what the suite started in a session of its own -------------------
+def fake_proc(root, processes):
+    """A /proc holding only, for each pid, its stat and the children file of each of its
+    threads; processes maps pid -> (start ticks, {thread id: [child pids]})."""
+    for pid, (start_ticks, threads) in processes.items():
+        write_fake_stat(root, pid, start_ticks)
+        for thread, children in threads.items():
+            (root / str(pid) / "task" / str(thread)).mkdir(parents=True, exist_ok=True)
+            (root / str(pid) / "task" / str(thread) / "children").write_text(
+                " ".join(map(str, children)) + (" " if children else ""))
+    return root
+
+
+def write_fake_stat(root, pid, start_ticks, state="S", process_group=1):
+    (root / str(pid)).mkdir(parents=True, exist_ok=True)
+    (root / str(pid) / "stat").write_text(
+        f"{pid} (a (fake) suite) {state} 1 {process_group} " + "1 " * 16
+        + f"{start_ticks} 0\n")
+
+
+class ProcWhereOneThreadEndsAsItsChildrenAreRead(type(pathlib.Path())):
+    """The kernel answers ESRCH to a read of the children of a thread that has just ended."""
+
+    def read_text(self, *arguments, **keywords):
+        if self.name == "children" and self.parent.name == "120":
+            raise ProcessLookupError(3, "No such process")
+        return super().read_text(*arguments, **keywords)
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    proc = fake_proc(pathlib.Path(scratch), {
+        100: (10, {100: [101, 102], 120: [106], 150: [105]}),
+        101: (11, {101: [103]}),
+        103: (13, {103: []}),
+        105: (15, {105: []}),
+        106: (16, {106: []}),
+    })
+    # 102 has ended since it was listed, and 104's thread has no children file left to read.
+    (proc / "104" / "task" / "104").mkdir(parents=True)
+    (proc / "104" / "task" / "104" / "children").symlink_to(proc / "104" / "gone")
+    write_fake_stat(proc, 104, 14)
+    (proc / "101" / "task" / "101" / "children").write_text("103 104 ")
+    found = sorted(module.descendant_processes_and_ended_children(
+        100, ProcWhereOneThreadEndsAsItsChildrenAreRead(proc))[0])
+    check("the descendants read from /proc are every process below the suite, through every "
+          "thread, each with its start ticks, leaving out one that ended while the tree was "
+          "read and a thread that ended as its children were read",
+          found == [(101, 11), (103, 13), (104, 14), (105, 15)], found)
+    check("there is no descendant to read where there is no /proc",
+          module.descendant_processes_and_ended_children(100, pathlib.Path(scratch) / "none")
+          == ([], set()))
+
+
+class ProcWhereEveryStatReadFindsTheProcessEnding(type(pathlib.Path())):
+    """The kernel answers ESRCH to a read of the stat of a process that is ending."""
+
+    def read_text(self, *arguments, **keywords):
+        if self.name == "stat":
+            raise ProcessLookupError(3, "No such process")
+        return super().read_text(*arguments, **keywords)
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    proc = pathlib.Path(scratch)
+    write_fake_stat(proc, 300, 30, process_group=200)
+    check("a process's group id is read from its stat, and is None for a process that is "
+          "gone or ending as its stat is read",
+          (module.process_group_id(300, proc), module.process_group_id(301, proc),
+           module.process_group_id(300, ProcWhereEveryStatReadFindsTheProcessEnding(proc)))
+          == (200, None, None))
+
+
+class FakeSuiteProcess:
+    pid = 200
+
+
+def kill_with_fake_proc(proc, signalled, end_on_kill=True, kill_refused=(), sleeps=None,
+                        killpg_refused=False, pid_taken_after_read=None):
+    """Run the kill on the fake /proc; signalled records each signal sent, in order.
+
+    pid_taken_after_read: a pid whose process another process replaces as soon as the
+    first SIGKILL is sent, after the tree was read."""
+    now = [0.0]
+
+    def killpg(pid, number):
+        signalled.append(("killpg", pid, number))
+        if number == signal.SIGKILL:
+            # The kernel reparents a killed process's children away from it.
+            (proc / "200" / "task" / "200" / "children").write_text("")
+        if killpg_refused:
+            raise ProcessLookupError(3, "No such process")
+
+    def kill(pid, number):
+        signalled.append(("kill", pid, number))
+        if pid_taken_after_read is not None:
+            write_fake_stat(proc, pid_taken_after_read, 99)
+            # The process now at that pid is no child of the suite's.
+            (proc / "200" / "task" / "200" / "children").write_text("201 ")
+        if pid in kill_refused:
+            raise ProcessLookupError(3, "No such process")
+        if end_on_kill:
+            write_fake_stat(proc, pid, 0, state="Z")
+
+    def sleep(seconds):
+        now[0] += seconds
+        if sleeps is not None:
+            sleeps.append(seconds)
+            if len(sleeps) == 2 and not end_on_kill:
+                for pid in (201, 202, 203):
+                    write_fake_stat(proc, pid, 0, state="Z")
+
+    return module.kill_test_suite_process_group_and_descendants(
+        FakeSuiteProcess, proc=proc, kill=kill, killpg=killpg, clock=lambda: now[0], sleep=sleep)
+
+
+class ProcWhereAChildEndsAsItsChildrenAreRead(type(pathlib.Path())):
+    """The first read of 201's children finds 201 ended, and its child 205 already reparented
+    to the suite's process, whose children the read has passed."""
+
+    reads_of_201 = 0
+
+    def read_text(self, *arguments, **keywords):
+        if self.name == "children" and self.parent.name == "201":
+            type(self).reads_of_201 += 1
+            if type(self).reads_of_201 == 1:
+                root = self.parents[3]
+                write_fake_stat(root, 201, 0, state="Z")
+                (root / "200" / "task" / "200" / "children").write_text("201 205 ")
+                fake_proc(root, {205: (25, {205: []})})
+                raise ProcessLookupError(3, "No such process")
+        return super().read_text(*arguments, **keywords)
+
+
+def suite_tree(root):
+    return fake_proc(root, {200: (20, {200: [201, 203]}), 201: (21, {201: [202]}),
+                            202: (22, {202: []}), 203: (23, {203: []})})
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    signalled = []
+    still_running = kill_with_fake_proc(suite_tree(pathlib.Path(scratch)), signalled)
+    check("the kill stops the suite's process group, sends SIGKILL to each process it reads "
+          "below the suite, reads the tree again until it finds none new, then kills the "
+          "group, and returns none still running once they have ended",
+          signalled == [("killpg", 200, signal.SIGSTOP), ("kill", 201, signal.SIGKILL),
+                        ("kill", 203, signal.SIGKILL), ("kill", 202, signal.SIGKILL),
+                        ("killpg", 200, signal.SIGKILL)] and still_running == [],
+          (signalled, still_running))
+
+with tempfile.TemporaryDirectory() as scratch:
+    signalled = []
+    still_running = kill_with_fake_proc(suite_tree(pathlib.Path(scratch)), signalled,
+                                        pid_taken_after_read=203)
+    check("a process whose pid another process took after the tree was read is not sent "
+          "SIGKILL",
+          ("kill", 203, signal.SIGKILL) not in signalled
+          and ("kill", 202, signal.SIGKILL) in signalled, signalled)
+
+with tempfile.TemporaryDirectory() as scratch:
+    signalled = []
+    proc = fake_proc(pathlib.Path(scratch), {200: (20, {200: [201]}), 201: (21, {201: [205]})})
+    still_running = kill_with_fake_proc(ProcWhereAChildEndsAsItsChildrenAreRead(proc),
+                                        signalled)
+    check("a process reparented to the suite's process after the read passed it, because its "
+          "parent ended while the tree was read, is found by the next read and killed before "
+          "the group is",
+          signalled[-2:] == [("kill", 205, signal.SIGKILL), ("killpg", 200, signal.SIGKILL)]
+          and still_running == [], (signalled, still_running))
+
+with tempfile.TemporaryDirectory() as scratch:
+    signalled = []
+    still_running = kill_with_fake_proc(suite_tree(pathlib.Path(scratch)), signalled,
+                                        kill_refused=(201,), killpg_refused=True)
+    check("a process group or a process that has ended before its SIGKILL does not stop the "
+          "kill of the others",
+          [entry[1] for entry in signalled] == [200, 201, 203, 202, 200], signalled)
+
+with tempfile.TemporaryDirectory() as scratch:
+    signalled, sleeps = [], []
+    still_running = kill_with_fake_proc(suite_tree(pathlib.Path(scratch)), signalled,
+                                        end_on_kill=False, sleeps=sleeps)
+    check("the kill waits for the processes it killed to end before it returns",
+          still_running == [] and len(sleeps) == 2, (still_running, sleeps))
+
+with tempfile.TemporaryDirectory() as scratch:
+    signalled = []
+    still_running = kill_with_fake_proc(suite_tree(pathlib.Path(scratch)), signalled,
+                                        end_on_kill=False)
+    check("a killed process still running after TEST_SUITE_KILLED_DESCENDANTS_END_WAIT_SECONDS "
+          "is returned, and the kill does not wait longer",
+          still_running == [(201, 21), (203, 23), (202, 22)], still_running)
+
+class ProcWhereAnOrphanIsReparentedToTheSubreaperAfterItsChildrenWereRead(
+        type(pathlib.Path())):
+    """The cgroup-scope shape: 200 is the statistics wrapper, 201 the subreaper and 202 the
+    suite's command, all in group 200; 203 started a session of its own, and as its children
+    are first read it ends and its child 204 is reparented to 201, whose children the read
+    has passed."""
+
+    reads_of_203 = 0
+
+    def read_text(self, *arguments, **keywords):
+        if self.name == "children" and self.parent.name == "203":
+            type(self).reads_of_203 += 1
+            if type(self).reads_of_203 == 1:
+                root = self.parents[3]
+                write_fake_stat(root, 203, 0, state="Z", process_group=203)
+                (root / "201" / "task" / "201" / "children").write_text("202 204 ")
+                write_fake_stat(root, 204, 24, process_group=203)
+                (root / "204" / "task" / "204").mkdir(parents=True, exist_ok=True)
+                (root / "204" / "task" / "204" / "children").write_text("")
+                raise ProcessLookupError(3, "No such process")
+        return super().read_text(*arguments, **keywords)
+
+
+def kill_with_hooks(proc, signalled, on_kill=lambda pid: None, on_sleep=lambda: None,
+                    on_group_kill=lambda: None):
+    now = [0.0]
+
+    def killpg(pid, number):
+        signalled.append(("killpg", pid, number))
+        if number == signal.SIGKILL:
+            on_group_kill()
+
+    def kill(pid, number):
+        signalled.append(("kill", pid, number))
+        on_kill(pid)
+
+    def sleep(seconds):
+        now[0] += seconds
+        on_sleep()
+
+    return module.kill_test_suite_process_group_and_descendants(
+        FakeSuiteProcess, proc=proc, kill=kill, killpg=killpg, clock=lambda: now[0], sleep=sleep)
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    fake_proc(root, {200: (20, {200: [201]}), 201: (21, {201: [202]}), 202: (22, {202: [203]}),
+                     203: (23, {203: [204]})})
+    for pid, ticks in ((200, 20), (201, 21), (202, 22)):
+        write_fake_stat(root, pid, ticks, process_group=200)
+    write_fake_stat(root, 203, 23, process_group=203)
+    signalled = []
+    still_running = kill_with_hooks(
+        ProcWhereAnOrphanIsReparentedToTheSubreaperAfterItsChildrenWereRead(root), signalled,
+        on_kill=lambda pid: write_fake_stat(root, pid, 0, state="Z"),
+        on_group_kill=lambda: [write_fake_stat(root, pid, 0, state="Z") for pid in (201, 202)])
+    check("when the subreaper runs below the suite's process, in a cgroup scope, the kill "
+          "sends no SIGKILL of its own to a process in the suite's stopped group, so the "
+          "subreaper lives to adopt an orphan whose parent ended while the tree was read, and "
+          "the next read finds and kills it before the group is killed",
+          not any(entry[0] == "kill" and entry[1] in (201, 202) for entry in signalled)
+          and signalled[-2:] == [("kill", 204, signal.SIGKILL), ("killpg", 200, signal.SIGKILL)]
+          and still_running == [], (signalled, still_running))
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    fake_proc(root, {200: (20, {200: [201]}), 201: (21, {201: []})})
+    sleeps = []
+
+    def end_201_after_its_late_fork():
+        # 201 forked 206 after its children were last read; as 201 finishes ending, 206 is
+        # reparented to the suite's process.
+        sleeps.append(1)
+        if len(sleeps) == 1:
+            write_fake_stat(root, 201, 0, state="Z")
+            fake_proc(root, {206: (26, {206: []})})
+            (root / "200" / "task" / "200" / "children").write_text("201 206 ")
+
+    signalled = []
+    still_running = kill_with_hooks(root, signalled, on_sleep=end_201_after_its_late_fork)
+    check("a read that finds nothing new is not the last while a process sent SIGKILL is "
+          "still ending, so a child it forked after its children were read, reparented as it "
+          "ends, is found and killed before the group is",
+          ("kill", 206, signal.SIGKILL) in signalled
+          and signalled.index(("kill", 206, signal.SIGKILL))
+          < signalled.index(("killpg", 200, signal.SIGKILL)), (signalled, still_running))
+
+
+class ProcWhereAKilledProcessEndsDuringTheNextRead(type(pathlib.Path())):
+    """201, sent SIGKILL after the first read, forked 206 between that read of its children
+    and its kill; during the second read, after the read has passed the suite's process, 201
+    ends and 206 is reparented to the suite's process."""
+
+    reads_of_201 = 0
+
+    def read_text(self, *arguments, **keywords):
+        if self.name == "children" and self.parent.name == "201":
+            type(self).reads_of_201 += 1
+            if type(self).reads_of_201 == 2:
+                root = self.parents[3]
+                write_fake_stat(root, 201, 0, state="Z")
+                fake_proc(root, {206: (26, {206: []})})
+                (root / "200" / "task" / "200" / "children").write_text("201 206 ")
+                raise ProcessLookupError(3, "No such process")
+        return super().read_text(*arguments, **keywords)
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = fake_proc(pathlib.Path(scratch), {200: (20, {200: [201]}), 201: (21, {201: []})})
+    signalled = []
+    still_running = kill_with_hooks(
+        ProcWhereAKilledProcessEndsDuringTheNextRead(root), signalled,
+        on_kill=lambda pid: pid == 206 and write_fake_stat(root, 206, 0, state="Z"))
+    check("a read during which a process sent SIGKILL ends is not the last, even when it "
+          "finds nothing new, so a child the process forked after its children were read, "
+          "reparented after the read passed the suite's process, is found and killed before "
+          "the group is",
+          signalled[-2:] == [("kill", 206, signal.SIGKILL), ("killpg", 200, signal.SIGKILL)]
+          and still_running == [], (signalled, still_running))
+
+
+class ProcWhereAChildHasEndedBeforeItsStartTicksAreRead(type(pathlib.Path())):
+    """The first read of the suite's children lists 201, which ends before its start ticks
+    are read; its child 205 is reparented to the suite's process after that list was read."""
+
+    reads_of_200 = 0
+
+    def read_text(self, *arguments, **keywords):
+        text = super().read_text(*arguments, **keywords)
+        if self.name == "children" and self.parent.name == "200":
+            type(self).reads_of_200 += 1
+            if type(self).reads_of_200 == 1:
+                root = self.parents[3]
+                write_fake_stat(root, 201, 0, state="Z")
+                fake_proc(root, {205: (25, {205: []})})
+                (root / "200" / "task" / "200" / "children").write_text("201 205 ")
+        return text
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = fake_proc(pathlib.Path(scratch), {200: (20, {200: [201]}), 201: (21, {201: [205]})})
+    signalled = []
+    still_running = kill_with_hooks(
+        ProcWhereAChildHasEndedBeforeItsStartTicksAreRead(root), signalled,
+        on_kill=lambda pid: write_fake_stat(root, pid, 0, state="Z"))
+    check("a read that meets a child that ended before its start ticks were read is not the "
+          "last, so the ended child's own child, reparented after the read passed, is found "
+          "and killed before the group is",
+          signalled[-2:] == [("kill", 205, signal.SIGKILL), ("killpg", 200, signal.SIGKILL)]
+          and still_running == [], (signalled, still_running))
 
 print()
 # The count is printed so a short run is visible on sight: a run that ends

@@ -116,9 +116,14 @@ def main() -> int:
         check("the refusal names the agent-home and why",
               f"pre-commit: this commit is refused, because {agent_home.resolve()} is an "
               "agent-home" in refused.stderr, refused.stderr)
-        check("the refusal says where to commit instead, with the clone's worktrees directory",
-              f"worktree add -b <branch name> {clone.resolve()}/.claude/worktrees/"
-              "<directory name> HEAD" in refused.stderr, refused.stderr)
+        check("the refusal says where to commit instead: a worktree the creator makes from HEAD",
+              f"cd {agent_home.resolve()} && python3 "
+              f"{HOOK_DIRECTORY.parent / 'agent-seat-worktree-create-with-owner-file.py'} "
+              "<branch name> --base HEAD" in refused.stderr, refused.stderr)
+        check("the creator the refusal names exists, though the agent-home's commit has no such file",
+              (HOOK_DIRECTORY.parent / "agent-seat-worktree-create-with-owner-file.py").is_file()
+              and not (agent_home / "scripts" / "agent-seat-worktree-create-with-owner-file.py").exists(),
+              refused.stderr)
 
         refused_outside_session = attempt_commit(
             root, agent_home, {"GIT_AUTHOR_NAME": "Ned", "GIT_AUTHOR_EMAIL": "ned@example.invalid",

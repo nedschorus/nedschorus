@@ -15,11 +15,12 @@ The seams are flags the tests use; cron passes none, so each takes its default:
   --test-suite-runner-program   scripts/run-all-test-suites.py in the worktree of step 6
 
 The design is GHI "Test suites that run without a sandbox leave per-change test
-runs and run apart, when their own files change or in a quiet gap",
+runs unless the change edits a file they read, and run on main in a quiet gap",
 https://github.com/nedschorus/nedschorus/issues/2381, parts 2 and 4. A selective
-run of scripts/run-all-test-suites.py leaves out every suite listed in its
-SUITES_RUN_WITHOUT_ANY_SANDBOX, so this program is what runs them after a change
-reaches main. It runs on ned-box under cron every 10 minutes.
+run of scripts/run-all-test-suites.py leaves out each suite listed in its
+SUITES_RUN_WITHOUT_ANY_SANDBOX unless the change edits a file that suite reads,
+so this program is what runs every one of them after a change reaches main. It
+runs on ned-box under cron every 10 minutes.
 
 WHAT ONE RUN DOES, in order:
   1. Takes its own lock, the --state-file path with .lock added, without
@@ -161,6 +162,10 @@ git_redirecting_environment = module_loaded_by_path(
     "git_redirecting_environment_variables_removal_common",
     REPOSITORY_ROOT / "nc-systems" / "general-tools"
     / "git-redirecting-environment-variables-removal-common.py")
+git_output = module_loaded_by_path(
+    "git_machine_readable_output_runner_and_parser_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
 
 
 def runner_module():
@@ -275,7 +280,7 @@ def remove_worktree(clone, worktree):
         shutil.rmtree(worktree, ignore_errors=True)
     git(clone, "worktree", "prune")
     if worktree.exists():
-        return first_line(removed.stderr)
+        return git_output.git_stderr_first_error_message_else_last_line(removed.stderr)
     return None
 
 
@@ -400,11 +405,13 @@ def run_under_lock(arguments, state_file):
     fetched = git(clone, "fetch", "origin", time_limit=GIT_FETCH_TIMEOUT_SECONDS)
     if fetched.returncode != 0:
         return stopped(state_file, state, None, started,
-                       f"git fetch origin failed: {first_line(fetched.stderr)}")
+                       "git fetch origin failed: "
+                       f"{git_output.git_stderr_first_error_message_else_last_line(fetched.stderr)}")
     resolved = git(clone, "rev-parse", "--verify", "refs/remotes/origin/main^{commit}")
     if resolved.returncode != 0:
         return stopped(state_file, state, None, started,
-                       f"origin/main could not be resolved: {first_line(resolved.stderr)}")
+                       "origin/main could not be resolved: "
+                       f"{git_output.git_stderr_first_error_message_else_last_line(resolved.stderr)}")
     commit = resolved.stdout.strip()
     why_due = run_is_due(state, commit, started)
     if why_due is None:
@@ -435,7 +442,8 @@ def run_under_lock(arguments, state_file):
     if added.returncode != 0:
         return stopped(state_file, state, commit, started,
                        f"the worktree of {commit[:12]} could not be made: "
-                       f"{first_line(added.stderr)}", passing)
+                       f"{git_output.git_stderr_first_error_message_else_last_line(added.stderr)}",
+                       passing)
     try:
         try:
             lists, _ = runner.suite_sandbox_lists_read_from_checkout_under_test(worktree)
@@ -556,7 +564,8 @@ def pull_requests_merged_between(clone, older, newer):
     listed = git(clone, "log", "--first-parent", "--merges", "--format=%s%x09%b",
                  f"{older}..{newer}")
     if listed.returncode != 0:
-        return [f"the merged pull requests could not be read: {first_line(listed.stderr)}"]
+        return ["the merged pull requests could not be read: "
+                f"{git_output.git_stderr_first_error_message_else_last_line(listed.stderr)}"]
     found = []
     for entry in listed.stdout.split("\n"):
         subject = entry.split("\t", 1)[0]

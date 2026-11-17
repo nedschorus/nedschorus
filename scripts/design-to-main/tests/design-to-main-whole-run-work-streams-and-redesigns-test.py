@@ -112,7 +112,7 @@ class TheCoverageTypesOfASetOfTests(unittest.TestCase):
     6.4): test-writing's `emitted` carries every coverage-type present in
     the set — `script, prompt` for nine scripts and one prompt-based-test
     — as a tuple on the state-exit record and a comma-separated string
-    in state-exit.json; the machine records the set, and the tests go to
+    in design-to-main-state-exit-verdict-and-destination.json; the machine records the set, and the tests go to
     test-acceptance-by-user when prompt or script-and-prompt is among
     them. An implementation's coverage-type is one thing (section 2)."""
 
@@ -391,7 +391,7 @@ class TheInvestigationReportInTheStatePackage(unittest.TestCase):
     """Sections 2 and 9 (user-ruled 2026-09-14, the tenth walk, item 17;
     built as ruled, 2026-09-16, walk design-tables-checker-findings-from-pr-409,
     item 1): the state-package names the investigation report's path as
-    `investigation-report`, `reports/investigation-<n>.md` in the record,
+    `investigation-report`, `reports/design-to-main-investigation-report-<n>.md` in the record,
     `<n>` the count of the investigate-workflow instance — counted as the
     evidence directory counts a state's instances, since only the machine
     knows it. It rides in investigate-workflow's package, for the report
@@ -412,7 +412,7 @@ class TheInvestigationReportInTheStatePackage(unittest.TestCase):
         return [p for p in machine.launcher.launched if p["state"] == state]
 
     def report_path(self, record, instance_number):
-        return str(record.record_directory / "reports" / ("investigation-%d.md" % instance_number))
+        return str(record.record_directory / "reports" / ("design-to-main-investigation-report-%d.md" % instance_number))
 
     def test_the_first_investigations_package_names_investigation_1(self):
         script = fixture.prefix_to_tests_begun() + [
@@ -424,7 +424,7 @@ class TheInvestigationReportInTheStatePackage(unittest.TestCase):
         investigations = self.packages_for(machine, T.INVESTIGATE_WORKFLOW)
         self.assertEqual(len(investigations), 1)
         self.assertTrue(str(investigations[0]["investigation-report"]).endswith(
-            "design-to-main-record/reports/investigation-1.md"))
+            "design-to-main-record/reports/design-to-main-investigation-report-1.md"))
         self.assertEqual(str(investigations[0]["investigation-report"]), self.report_path(record, 1))
 
     def test_a_second_investigation_in_the_same_run_names_investigation_2(self):

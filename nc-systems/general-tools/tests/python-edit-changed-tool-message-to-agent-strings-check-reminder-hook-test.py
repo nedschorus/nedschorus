@@ -475,6 +475,17 @@ with tempfile.TemporaryDirectory() as temporary:
           "scripts/rendered.py:1" not in text and "scripts/rendered.py:2  Failed: {name}" in text
           and "changed 1 " in text, text)
 
+    result = write_then_run(repository, repository / "scripts" / "nested.py",
+                            'print(f"{msg}")\nprint(f"| {s[\'findings\']} |")\n'
+                            'print(f"  {\'came up\' if came_up else \'DID NOT COME BACK\'}: {report}")\n'
+                            'print(f"Error: {msg}")\n')
+    text = agent_text(result)
+    check("an f-string whose only words sit in a string nested in a field is listed, as is one with "
+          "words of its own, while one whose fields carry only a name or a subscript's key is not",
+          "scripts/nested.py:1" not in text and "scripts/nested.py:2" not in text
+          and "scripts/nested.py:3" in text and "scripts/nested.py:4" in text
+          and "changed 2 " in text, text)
+
     reset()
     not_a_directory = Path(temporary) / "tmp-whose-target-directory-is-a-file"
     not_a_directory.mkdir()
