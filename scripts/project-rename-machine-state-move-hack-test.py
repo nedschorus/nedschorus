@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import stat
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -191,10 +192,12 @@ class Fixture:
         (self.launch_agents / "com.example.other.plist").write_text("<plist/>\n")
         (self.launch_agents / "com.nedschorus.mount-ned-box-home-share.plist").write_text("<plist/>\n")
 
+    def flags(self):
+        return ["--machine", self.machine, "--home", str(self.home), "--log-store-parent", str(self.log_store_parent),
+                "--launch-agents-dir", str(self.launch_agents), "--journal", str(self.journal)]
+
     def run(self, *mode):
-        command = [sys.executable, str(PROGRAM)] + list(mode) + [
-            "--machine", self.machine, "--home", str(self.home), "--log-store-parent", str(self.log_store_parent),
-            "--launch-agents-dir", str(self.launch_agents), "--journal", str(self.journal)]
+        command = [sys.executable, str(PROGRAM)] + list(mode) + self.flags()
         result = subprocess.run(command, capture_output=True, text=True, env=self.environment())
         return result.returncode, result.stdout + result.stderr
 
@@ -842,6 +845,79 @@ def run_recorded_command_cases():
         fixture.cleanup()
 
 
+def failed_apply_from(fixture, program, cwd, flags):
+    """Runs --apply of the program at `program` from `cwd`, made to fail at step 5, after step 1 has moved the checkout."""
+    tasks = fixture.claude / "tasks"
+    tasks_mode = stat.S_IMODE(os.stat(tasks).st_mode)
+    os.chmod(tasks, 0o555)
+    result = subprocess.run([sys.executable, str(program), "--apply"] + flags, cwd=cwd, capture_output=True,
+                            text=True, env=fixture.environment())
+    os.chmod(tasks, tasks_mode)
+    return result.returncode, result.stdout + result.stderr
+
+
+def printed_rollback(output):
+    marker = "To reverse them, run: "
+    lines = [line for line in output.splitlines() if line.startswith(marker)]
+    return lines[-1][len(marker):] if lines else None
+
+
+def run_printed(command, cwd, fixture):
+    result = subprocess.run(shlex.split(command), cwd=cwd, capture_output=True, text=True, env=fixture.environment())
+    return result.returncode, result.stdout + result.stderr
+
+
+def run_printed_rollback_command_cases():
+    fixture = Fixture("ned-box")
+    try:
+        def relative(path):
+            return os.path.relpath(path, fixture.base)
+        flags = ["--machine", "ned-box", "--home", relative(fixture.home), "--log-store-parent",
+                 relative(fixture.log_store_parent), "--launch-agents-dir", relative(fixture.launch_agents),
+                 "--journal", relative(fixture.journal)]
+        code, output = failed_apply_from(fixture, PROGRAM, fixture.base, flags)
+        command = printed_rollback(output)
+        recorded = json.loads(fixture.journal.read_text().splitlines()[0]).get("arguments", [])
+        expect("relative path flags are journaled and printed as absolute paths",
+               code == 1 and command is not None and f"--journal {fixture.journal}" in command
+               and recorded[recorded.index("--home") + 1] == str(fixture.home), output)
+        code, output = run_printed(command, "/", fixture)
+        expect("the printed --rollback command, run from another directory, reverses the relative-flag --apply",
+               code == 0 and not fixture.journal.exists(), output)
+    finally:
+        fixture.cleanup()
+
+    fixture = Fixture("ned-box")
+    try:
+        started_at = fixture.checkout / "scripts" / PROGRAM.name
+        started_at.parent.mkdir(exist_ok=True)
+        shutil.copy2(PROGRAM, started_at)
+        code, output = failed_apply_from(fixture, started_at, fixture.base, fixture.flags())
+        command = printed_rollback(output)
+        moved_to = fixture.projects / "nedsnodes" / "scripts" / PROGRAM.name
+        expect("a program started from the checkout that step 1 moves prints its path under the renamed checkout",
+               code == 1 and command is not None and shlex.split(command)[1] == str(moved_to), output)
+        code, output = run_printed(command, fixture.base, fixture)
+        expect("that printed --rollback command runs and reverses the --apply",
+               code == 0 and started_at.exists() and not fixture.journal.exists(), output)
+    finally:
+        fixture.cleanup()
+
+    fixture = Fixture("ned-box")
+    try:
+        spaced = fixture.base / "dir with space" / PROGRAM.name
+        spaced.parent.mkdir()
+        shutil.copy2(PROGRAM, spaced)
+        code, output = failed_apply_from(fixture, spaced, fixture.base, fixture.flags())
+        command = printed_rollback(output)
+        expect("a program path with a space is quoted in the printed --rollback command",
+               code == 1 and command is not None and shlex.split(command)[1] == str(spaced), output)
+        code, output = run_printed(command, fixture.base, fixture)
+        expect("the quoted command runs and reverses the --apply", code == 0 and not fixture.journal.exists(), output)
+    finally:
+        fixture.cleanup()
+
+
 if __name__ == "__main__":
     run_apply_check_rollback_on_ned_box()
     run_apply_and_rollback_on_mac()
@@ -858,6 +934,7 @@ if __name__ == "__main__":
     run_missing_worktree_directory_case()
     run_backup_that_differs_stops_apply_case()
     run_recorded_command_cases()
+    run_printed_rollback_command_cases()
     print()
     if failures:
         print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
