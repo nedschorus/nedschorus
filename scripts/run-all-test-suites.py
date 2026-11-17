@@ -679,7 +679,8 @@ none, with no GIT_DIR or GIT_WORK_TREE: rev-parse, log and merge-base given
 revisions with no ':' (a revision with ':' names a path in a tree), none
 starting with '^', holding a glob character or naming a directory, since git
 takes such an operand as a path whose files decide the answer, and none
-whose path holds .. or a symbolic link, as for -C; ls-remote given an absolute repository
+that, taken as the path of the file git looks for under its name, holds ..
+or passes a symbolic link, as for -C; ls-remote given an absolute repository
 path outside the checkout's top directory; check-ignore given paths in the
 top directory, since a path below a directory depends on what that directory
 is. The paths git consults in the work tree for such a call are recorded as
