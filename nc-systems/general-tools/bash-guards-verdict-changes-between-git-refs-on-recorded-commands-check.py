@@ -1252,7 +1252,7 @@ def remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failur
     makes the replay exit 2, so its run log directory is kept."""
     could_not_remove = []
     shutil.rmtree(scratch, onexc=lambda _, path, error: could_not_remove.append(f"{path}: {error}"))
-    if status == 0 and not could_not_remove:
+    if status == 0 and not could_not_remove:  # pragma: no mutate, the replay passes its own exit status, which is 0, 1 or 2, so <= 0 picks the same statuses as == 0
         shutil.rmtree(run_log_directory, onexc=lambda _, path, error: could_not_remove.append(f"{path}: {error}"))
     return could_not_remove
 
