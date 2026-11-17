@@ -46,9 +46,10 @@ Wired as a Stop hook, so it runs at every turn boundary. Each run:
   5b. If HEAD is detached and behind, and the checkout is an agent-home, which
      the file agent-home-marker in its own git directory marks, and
      it holds no commits of its own, no uncommitted tracked change and no
-     operation in progress, fast-forwards it to origin/main: CLAUDE.md, the
-     skills and the hooks load from an agent-home. An agent-home that holds
-     any of those is not moved, and the agent is told why and what to do,
+     operation in progress, fast-forwards it to origin/main, because CLAUDE.md,
+     the skills and the hooks load from an agent-home. An agent-home with a
+     commit of its own, an uncommitted tracked change or an operation in
+     progress is not moved, and the agent is told why and what to do,
      once per update of main; a refusal git gives for anything but an
      untracked file is also a user line, once per distinct error. Any other
      detached checkout is left where it is and nothing is told, because it
