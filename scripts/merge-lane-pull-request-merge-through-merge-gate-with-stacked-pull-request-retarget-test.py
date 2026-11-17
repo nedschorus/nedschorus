@@ -11,7 +11,10 @@ writes. The fake `gh` logs every call with the GH_TOKEN it saw and answers
 from a routes file the case writes, keyed by its first two arguments, or, for
 `gh api`, by whether it reads or deletes the branch; it does not filter `gh pr list` by base
 branch, so the program's own filter is what each stacked case tests; a route
-may remove a directory, such as origin, when it is called. The
+may remove a directory, such as origin, when it is called, or move origin's main
+to a commit. A case may give the clone an upload-pack for origin that, once the
+merge has run, runs another fetch into the clone while the program's fetch
+waits, as another agent-seat's fetch into the same clone does. The
 waits between gate runs go to a list instead of sleeping. A case may make the
 pull request's review worktrees in a scratch review worktrees directory, as
 worktrees of the review tools clone; a pr10-head that is a plain directory
@@ -106,6 +109,10 @@ if key == "pr merge":
 if route.get("remove_directory"):
     import shutil
     shutil.rmtree(route["remove_directory"])
+if route.get("origin_main_to"):
+    import subprocess
+    subprocess.run(["git", "--git-dir", route["origin"], "update-ref", "refs/heads/main",
+                    route["origin_main_to"]], check=True)
 sys.stdout.write(route.get("stdout", ""))
 sys.stderr.write(route.get("stderr", ""))
 sys.exit(route.get("exit", 0))
@@ -126,6 +133,29 @@ if os.path.exists(answer + ".out"):
     sys.exit(code)
 print("PASS scripts/some-test.py (1s)")
 print("SUMMARY: 1 passed, 0 failed, 1 total; fake runner")
+'''
+# The clone's upload-pack for origin. Once the merge has run, at the first fetch that asks
+# origin for objects, it runs another fetch into the clone to its end before serving the
+# first: the first fetch has by then read origin/main's old value, as when another agent-seat
+# fetches into the same clone at the same moment.
+COMPETING_FETCH_UPLOAD_PACK = r'''#!/usr/bin/env python3
+import os, subprocess, sys
+directory = os.environ["MERGE_LANE_MERGE_TEST_DIRECTORY"]
+marker = os.path.join(directory, "competing-fetch-ran")
+child = subprocess.Popen(["git", "upload-pack", *sys.argv[1:]], stdin=subprocess.PIPE)
+while True:
+    chunk = os.read(0, 65536)
+    if not chunk:
+        break
+    if (b"want " in chunk and os.path.exists(os.path.join(directory, "merge-ran"))
+            and not os.path.exists(marker)):
+        open(marker, "w").close()
+        subprocess.run(["git", "-C", os.path.join(directory, "review-tools"), "fetch",
+                        "--quiet", "origin"], check=True, stdin=subprocess.DEVNULL)
+    child.stdin.write(chunk)
+    child.stdin.flush()
+child.stdin.close()
+sys.exit(child.wait())
 '''
 RUNNER_PASSED_SUMMARY = "SUMMARY: 1 passed, 0 failed, 1 total; fake runner"
 RUNNER_FAILED = ("PASS scripts/some-test.py (1s)\n"
@@ -188,7 +218,8 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
              review_worktrees_state="none", git_killed_on_worktree_remove=None,
              git_fails_after_merge_on=None, git_killed_before_the_merge_on=None,
              runner_answer=None, head_test_run_test_logs=(),
-             origin_files=None, before_the_program_runs=None):
+             origin_files=None, before_the_program_runs=None,
+             another_fetch_races_the_after_merge_fetch=False):
     """Run main() once; return (exit code, output, gh calls, gate calls, waits).
 
     Each "MERGE_COMMIT" in routes becomes origin's commit, and each "ORIGIN"
@@ -210,6 +241,9 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
     origin_files: path -> body, added to origin's one commit.
     before_the_program_runs: None, or a function given the case's directory, called last
     before main() runs.
+    another_fetch_races_the_after_merge_fetch: the merge commit is a new commit the clone
+    lacks, which the merge command makes origin's main, and the clone's upload-pack is
+    COMPETING_FETCH_UPLOAD_PACK.
 
     review_tools_state: "at-main", "behind-main" (origin/main moved on after the
     clone), "no-origin" (the clone's origin is gone) or "no-gate".
@@ -250,6 +284,15 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
     review_tools = directory / "review-tools"
     git("clone", "-q", str(origin), str(review_tools))
     git("checkout", "-q", "--detach", "origin/main", cwd=review_tools)
+    if another_fetch_races_the_after_merge_fetch:
+        seed = directory / "origin-seed"
+        git("commit", "-q", "--allow-empty", "-m", "Merge pull request #10", cwd=seed)
+        # Not under refs/heads, so the fetch before the gate does not bring it into the clone.
+        git("push", "-q", str(origin), "HEAD:refs/merge-test/merge-commit", cwd=seed)
+        upload_pack = directory / "competing-fetch-upload-pack"
+        upload_pack.write_text(COMPETING_FETCH_UPLOAD_PACK)
+        upload_pack.chmod(0o755)
+        git("config", "remote.origin.uploadpack", str(upload_pack), cwd=review_tools)
     if review_tools_state != "no-gate":
         (review_tools / "scripts").mkdir(parents=True, exist_ok=True)
         (review_tools / "scripts" / "merge-gate.sh").write_text(FAKE_GATE)
@@ -1171,11 +1214,27 @@ def main():
         routes["view-state"] = {"stdout": json.dumps({"state": "MERGED", "mc": "b" * 40})}
         exit_code, output, _, _, _ = run_case(
             scratch, "merge-commit-unknown", [(GATE_PASSED, 0)], routes)
-        check("a merge commit git cannot make a worktree at exits 3 without a test run, "
+        check("a merge commit origin does not have exits 3 at the fetch without a test run, "
               "naming git's error",
               exit_code == 3 and runner_calls(scratch, "merge-commit-unknown") == []
-              and "could not make a worktree at the merge commit " + "b" * 40 in output
+              and "to get the merge commit " + "b" * 40 in output
+              and "could not make a worktree" not in output
               and "fatal: " in output, f"exit {exit_code}\n{output}")
+
+        routes = default_routes(STACKED_AND_NOT)
+        routes["pr merge"] = {"origin_main_to": "MERGE_COMMIT", "origin": "ORIGIN"}
+        exit_code, output, _, _, _ = run_case(
+            scratch, "fetch-raced-after-merge", [(GATE_PASSED, 0)], routes,
+            another_fetch_races_the_after_merge_fetch=True)
+        raced = scratch / "fetch-raced-after-merge"
+        calls = runner_calls(scratch, "fetch-raced-after-merge")
+        check("another fetch into the clone that moves origin/main while the after-merge fetch "
+              "runs leaves the fetch, the worktree and the test run of the merge commit whole",
+              (raced / "competing-fetch-ran").exists() and exit_code == 0
+              and "could not fetch" not in output and RUNNER_PASSED_SUMMARY in output
+              and len(calls) == 1 and calls[0]["cwd"].endswith(
+                  "pr10-merge-commit-on-main-worktree"),
+              f"exit {exit_code}\n{output}")
 
         routes = default_routes(STACKED_AND_NOT)
         routes["pr merge"] = {"remove_directory": "ORIGIN"}
