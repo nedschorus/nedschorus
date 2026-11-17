@@ -187,6 +187,7 @@ class Fixture:
         (self.units / "localsearch-3.service").symlink_to("/dev/null")
         self.launch_agents.mkdir(parents=True)
         (self.launch_agents / "com.example.other.plist").write_text("<plist/>\n")
+        (self.launch_agents / "com.nedschorus.mount-ned-box-home-share.plist").write_text("<plist/>\n")
 
     def run(self, *mode):
         command = [sys.executable, str(PROGRAM)] + list(mode) + [
@@ -415,6 +416,9 @@ def run_refusal_cases():
     refusal_case("a com.nedschorus LaunchAgent is installed",
                  lambda f: (f.launch_agents / "com.nedschorus.clean-worktrees.plist").write_text("<plist/>"),
                  "1 LaunchAgent(s) of this project installed")
+    refusal_case("the mount LaunchAgent is not counted; any other com.nedschorus one is",
+                 lambda f: (f.launch_agents / "com.nedschorus.mount-ned-box-home-share-x.plist").write_text("<plist/>"),
+                 "1 LaunchAgent(s) of this project installed", machine="mac")
     refusal_case("a com.nedsnodes LaunchAgent is installed",
                  lambda f: (f.launch_agents / "com.nedsnodes.clean-worktrees.plist").write_text("<plist/>"),
                  "1 LaunchAgent(s) of this project installed")

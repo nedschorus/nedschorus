@@ -9,7 +9,7 @@ Usage:
 
 --check reports, without changing anything, whether --apply would refuse and why, how many changes each step has left to make, the journal's state, and whether `git status` works in every worktree of the reference-checkout.
 
---apply first refuses, changing nothing, unless all of these hold: no scheduled job of this project is installed (a crontab line naming the reference-checkout, the worktrees directory or the log-store, a `com.nedschorus.*` or `com.nedsnodes.*` LaunchAgent plist, a systemd user unit naming one of those paths, other than the units step 8 moves); `~/.claude/.transcript-mirror.lock` is not held; no process named `claude` runs on this machine; the step-8 units are not active; no path a step would create already exists; the reference-checkout is on main with no uncommitted change to a tracked file (untracked files are allowed and move with it); no journal exists yet; on the Mac, the log-store is already at its new name under the /Volumes/nedhome mount. It also refuses when it cannot find out: the crontab or the process list cannot be read, ~/.claude.json is not JSON, or the reference-checkout is missing or `git worktree list` fails in it. Then, in this order, journaling each change before making it:
+--apply first refuses, changing nothing, unless all of these hold: no scheduled job of this project is installed (a crontab line naming the reference-checkout, the worktrees directory or the log-store, a `com.nedschorus.*` or `com.nedsnodes.*` LaunchAgent plist other than com.nedschorus.mount-ned-box-home-share, whose mount the Mac step needs and whose plist this program leaves as it is, a systemd user unit naming one of those paths, other than the units step 8 moves); `~/.claude/.transcript-mirror.lock` is not held; no process named `claude` runs on this machine; the step-8 units are not active; no path a step would create already exists; the reference-checkout is on main with no uncommitted change to a tracked file (untracked files are allowed and move with it); no journal exists yet; on the Mac, the log-store is already at its new name under the /Volumes/nedhome mount. It also refuses when it cannot find out: the crontab or the process list cannot be read, ~/.claude.json is not JSON, or the reference-checkout is missing or `git worktree list` fails in it. Then, in this order, journaling each change before making it:
   1. renames ~/Projects/nedschorus to ~/Projects/nedsnodes and ~/Projects/nedschorus-worktrees to ~/Projects/nedsnodes-worktrees;
   2. on ned-box only, renames the log-store ~/nedschorus-logs to ~/nedsnodes-logs;
   then runs `git worktree repair` in the reference-checkout with the new path of every worktree it listed before step 1, runs `git status` in every worktree, stopping when one fails, and sets core.hooksPath to the new path when it named the old checkout path;
@@ -55,6 +55,8 @@ MACHINE_MAC = "mac"
 MACHINE_NED_BOX = "ned-box"
 MAC_LOG_STORE_PARENT = Path("/Volumes/nedhome")
 
+# The Mac reaches the log-store through this job's mount, which --apply needs.
+MOUNT_JOB_LABEL = f"com.{OLD_NAME}.mount-ned-box-home-share"
 MIRROR_DIRECTORY = "agent-session-files-by-machine"
 GUARDED_FILE_STORE_DIRECTORY = "guarded-file-versions-and-approvals"
 TRANSCRIPT_MIRROR_LOCK_NAME = ".transcript-mirror.lock"
@@ -419,7 +421,7 @@ def scheduled_job_refusals(layout):
                       f"Take each job off with `{layout.installer_command()} --remove --job <name>`, <name> being the "
                       "job whose cron line the installer's --print shows."))
     plists = sorted(plist for plist in layout.launch_agents_dir.glob("com.*.plist")
-                    if plist.name.startswith((f"com.{OLD_NAME}.", f"com.{NEW_NAME}."))) \
+                    if plist.name.startswith((f"com.{OLD_NAME}.", f"com.{NEW_NAME}.")) and plist.stem != MOUNT_JOB_LABEL) \
         if layout.launch_agents_dir.is_dir() else []
     if plists:
         found.append((f"{len(plists)} LaunchAgent(s) of this project installed:\n" + "\n".join(map(str, plists)),
