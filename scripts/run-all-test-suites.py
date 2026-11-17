@@ -616,7 +616,7 @@ suite out. A suite whose recording in the directory already matches, or for
 which no recording matches, keeps the one it has. It runs no suite.
 scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py,
 merge-lane-2's merge program, calls it in its worktree at each merge commit;
-its help text says from which directories into which.
+that program's module docstring says from which directories into which.
 
 SELECTION, with --only-suites-whose-recorded-inputs-changed-since COMMIT.
 Two explicit allowlists set aside git calls that read no file of the

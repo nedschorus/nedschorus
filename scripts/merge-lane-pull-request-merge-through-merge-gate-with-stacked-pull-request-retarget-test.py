@@ -853,8 +853,8 @@ def main():
                   f"head test runs saved their recordings, were not adopted into "
                   f"{scratch / name / 'outputs' / 'hr' / 'store'}" in output
               and ("Nothing else waits on this adoption: the program goes on and exits 3, and "
-                   "the next merge adopts again.\nIf the error names a cause you can fix, fix "
-                   "it; nothing needs to be run again. Otherwise, tell the user this message.")
+                   "the next merge adopts its own recordings.\nIf the error names a cause you can "
+                   "fix, fix it; nothing needs to be run again. Otherwise, tell the user this message.")
               in output
               and f"remove {saved}" not in output
               and not saved.exists() and len(runner_calls(scratch, name)) == 1

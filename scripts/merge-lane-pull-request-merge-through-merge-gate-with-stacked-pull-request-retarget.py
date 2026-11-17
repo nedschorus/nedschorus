@@ -336,7 +336,7 @@ def recordings_matching_the_merge_commit_adopted(worktree, source, which_source,
         print(f"STOP: merged, but the recordings in {source}, {which_source}, were not adopted "
               f"into {into}: {error}\n"
               f"{without_them} Nothing else waits on this adoption: the program goes on and "
-              f"exits 3, and the next merge adopts again.\n"
+              f"exits 3, and the next merge adopts its own recordings.\n"
               f"If the error names a cause you can fix, fix it; nothing needs to be run again. "
               f"Otherwise, tell the user this message.")
         return False
