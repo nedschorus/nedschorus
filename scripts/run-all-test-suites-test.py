@@ -2548,6 +2548,10 @@ for arguments, variables, why in (
         (["-c", "core.hooksPath=/dev/null", "ls-files", "--", "*.py"], [], "a -c option"),
         (["-C", "missing", "ls-files", "--", "*.py"], [], "a -C directory that does not exist"),
         (["-C", "/elsewhere", "ls-files", "--", "*.py"], [], "a -C directory outside the top"),
+        (["-C", "sub", "-C", "..", "ls-files", "--", "*.py"], [],
+         "more than one -C, so git needs sub, which the recording would not name"),
+        (["-C", "sub/..", "ls-files", "--", "*.py"], [],
+         "a -C directory reached through .., so git needs sub, which the recording would not name"),
         (["ls-files", "--", ":(attr:text)*.py"], [], "attr magic"),
         (["ls-files", "--", ":(unknown)*.py"], [], "unknown magic"),
         (["ls-files", "--", ":.py"], [], "an unknown short magic"),
@@ -2599,6 +2603,35 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a list holding a path both as a file and as a directory is not matched, since "
           "update-index would drop one of them", answer == (None, "a is both a file and a "
                                                              "directory"), answer)
+
+# A git ls-files call that passes through a directory the recording does not name selects its
+# suite when that directory is deleted.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+
+    def ls_files_call(*arguments):
+        return ("import subprocess\n"
+                f"subprocess.run(['git', *{list(arguments)!r}], capture_output=True)\n")
+
+    suites = {"two-dash-c-test.py": ls_files_call("-C", "sub", "-C", "..", "ls-files", "-z",
+                                                  "--", "*.py"),
+              "dot-dot-test.py": ls_files_call("-C", "sub/..", "ls-files", "-z", "--", "*.py")}
+    repo = make_repo(root, suites)
+    commit_files(repo, {"sub/kept.txt": "kept\n"}, "inputs")
+    result = run(root)
+    check("the fixture of git ls-files through another directory passes its full run",
+          result.returncode == 0, (result.stdout, result.stderr))
+    since = head(repo)
+    git(repo, "rm", "-q", "-r", "sub")
+    git(repo, "commit", "-q", "-m", "remove sub, which git -C sub needs")
+    result = select_since(root, since)
+    out = lines(result.stdout)
+    check("deleting sub, which git enters on the way to the directory it lists, selects the "
+          "suites whose git ls-files calls go through it",
+          result.returncode == 0 and {"two-dash-c-test.py", "dot-dot-test.py"} <= set(ran(root))
+          and all(f"SELECTED {suite}: it runs git ls-files on the checkout, and sub/kept.txt "
+                  f"was deleted" in out for suite in ("two-dash-c-test.py", "dot-dot-test.py")),
+          (ran(root), result.stdout, result.stderr))
 
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)

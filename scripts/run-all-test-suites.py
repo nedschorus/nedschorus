@@ -680,8 +680,9 @@ commit, grep or worktree, stays tied, and so does an option not on the list.
 
 A git ls-files call is tied to the list of files only through its
 pathspecs when what it lists is the files of that list its pathspecs match:
-its global options only -C pairs naming a directory inside the checkout, no
-GIT_ variable set on it but those in
+its global options at most one -C, naming a directory inside the checkout
+without .., since git enters every directory on the way and the recording
+names only the last; no GIT_ variable set on it but those in
 GIT_VARIABLES_CHANGING_NO_FILE_A_LISTING_SEES, only the options in
 GIT_LS_FILES_OPTIONS_LISTING_THE_FILE_LIST, --others only with
 --exclude-standard, at least one pathspec, and no pathspec magic but glob,
@@ -1628,8 +1629,11 @@ def git_ls_files_call_whose_answer_can_change_only_when_a_file_its_pathspecs_mat
     if parsed is None or parsed[1] != "ls-files":
         return None
     global_options, _, command_arguments = parsed
+    # git enters every directory on the way, and the recording names only where it ends up.
+    if len(global_options) > 1:
+        return None
     for option, value in global_options:
-        if option != "-C" or value is None:
+        if option != "-C" or value is None or ".." in Path(value).parts:
             return None
         directory = os.path.join(directory, value)
     relative = relative_inside(top, directory) if os.path.isdir(directory) else None
