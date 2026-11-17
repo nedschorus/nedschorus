@@ -624,11 +624,11 @@ is made of directory names with no ., .. or empty name, and, where the path
 is in the checkout, no symbolic link is on it. git enters every directory on
 the way, and a recording names only the one a call ends in, by its real
 path, so each rule below that stands for a call by its directory needs its
--C walked as written; a call whose -C is not is tied to the whole list of
-files. Whatever its kind, every git call records the checkout's directories
-its -C options enter as looked for, and the symbolic links they pass as
-read, so deleting such a directory, or deleting or retargeting such a link,
-selects its suite.
+-C walked as written; a call whose -C is not walked as written is tied to
+the whole list of files. Whatever its kind, every git call records the
+checkout's directories its -C options enter as looked for, and the symbolic
+links they pass as read, so deleting such a directory, or deleting or
+retargeting such a link, selects its suite.
 
 Two explicit allowlists set aside git calls that read no file of the
 checkout. Every call is checked against its full arguments:
