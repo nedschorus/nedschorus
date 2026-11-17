@@ -674,7 +674,7 @@ def main(argv=None, wait=time.sleep):
                   f"merge again\" asks for no new review.\n"
                   f"Run this program again in a few minutes. If it is refused this way again, "
                   f"tell the user that merges keep failing because main moves during each one. "
-                  f"If you are a subagent, tell the agent that dispatched you instead.")
+                  f"If you are a subagent, report it to the agent that dispatched you instead.")
         return EXIT_REFUSED
     branch_exit = EXIT_MERGED
     if merge.returncode != 0:

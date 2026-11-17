@@ -1515,8 +1515,8 @@ def main():
                   "merges run at the same time; GitHub's \"Review and try the merge again\" asks "
                   "for no new review.\nRun this program again in a few minutes. If it is refused "
                   "this way again, tell the user that merges keep failing because main moves "
-                  "during each one. If you are a subagent, tell the agent that dispatched you "
-                  "instead."),
+                  "during each one. If you are a subagent, report it to the agent that dispatched "
+                  "you instead."),
               f"exit {exit_code}\n{output}")
 
         routes = default_routes(STACKED_AND_NOT)
