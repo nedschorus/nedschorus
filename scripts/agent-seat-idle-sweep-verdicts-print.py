@@ -167,21 +167,21 @@ RX_GERUND_NARRATIVE = re.compile(
 RX_GERUND_NOUN = re.compile(r"^\W*\w+\s+(list|order|time|notes?|material|guide|room)\b", re.I)
 RX_NOW_NEXT = re.compile(r"^\W*(?:now|next|then)\b|\bnow\b|\bnext\b", re.I)
 # The user has the next move in these; an event-conditional sentence is a promise after the event.
-# "If you don't answer, I'll ..." and "unless you object, I'll ..." leave the move with the agent.
+# "If you don't, I'll ..." and "unless you object, I'll ..." leave the move with the agent.
 RX_CONDITIONAL_ON_USER = re.compile(
     r"\b(?:should you|want me|would you|shall I|say the word|say go|your call|"
     r"can I|may I|on your (?:go|word|approval|ok|yes|y))\b"
-    r"|\bif you\b(?!\s+(?:don'?t|do not|haven'?t|have not|didn'?t|did not|won'?t|will not)\b)"
+    r"|\bif you\b(?!\s+(?:don'?t|do not|haven'?t|have not|didn'?t|did not|won'?t|will not)\s*(?:[,;.]|$))"
     r"|^\W*(?:say|tell me|reply|answer|pick|choose)\b", re.I)
-# "as" is temporal only before a clause whose subject is a pronoun or "each" and whose verb is not
-# a form of be, a modal or past tense: "as it opens", not "as it is", "as the task requires" or
-# "as the next item".
+# "as" is temporal only before "each" or before "it" or "they" and a verb that is not a form of be,
+# a modal or past tense: "as it opens", not "as it is", "as it currently stands", "as the task
+# requires" or "as those two items"; "these", "those" and "that" are left out, being determiners too.
 RX_CONDITIONAL_ON_EVENT = re.compile(
     r"\b(?:if|once|when|whenever|after|unless|until|tomorrow|later|next session|next time|"
     r"as soon as|the moment|in a day|in an hour|by tomorrow)\b"
-    r"|(?<!such )\bas\s+(?:each\b|(?:it|they|these|those|that)\s+(?!(?:is|are|was|were|be|now|"
-    r"should|would|could|can|may|might|must|will|does|did|do|has|had|have|says?|said|stands?|"
-    r"seems?|looks?|goes|went|happens|turns|\w+ed)\b)[a-z])", re.I)
+    r"|\bas\s+(?:each\b|(?:it|they)\s+(?!(?:(?:\w+ly|always|now|still|already|often|never)\s+)?"
+    r"(?:is|are|was|were|be|should|would|could|can|may|might|must|will|does|did|do|has|had|have|"
+    r"says?|said|stands?|seems?|looks?|goes|went|happens|turns|\w+ed)\b)[a-z])", re.I)
 RX_NEGATED_ACTION = re.compile(
     r"\b(?:without|instead of|rather than|not yet|never|no longer|don't|won't|can't)\s+"
     r"(?:\w+\s+){0,2}?(?:push|pushing|commit|committing|dispatch|dispatching|fork|forking|file|"
