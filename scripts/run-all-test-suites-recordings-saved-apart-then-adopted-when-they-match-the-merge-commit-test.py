@@ -207,12 +207,15 @@ def main():
               no_suites, scratch.root / "store", [scratch.root / "pr-z-recordings"]) == [])
 
     real_git = runner.git
-    for exit_code, how in ((128, "exits 128"), (-9, "is killed by a signal")):
+    for exit_code, how, stderr, error in (
+            (128, "exits 128", "fatal: injected\nmore\n", ": fatal: injected"),
+            (-9, "is killed by a signal", "fatal: injected\n", ": fatal: injected"),
+            (-9, "is killed by a signal printing nothing", "", ": git printed no error")):
 
-        def git_whose_ls_files_fails(checkout, *arguments, exit_code=exit_code):
+        def git_whose_ls_files_fails(checkout, *arguments, exit_code=exit_code, stderr=stderr):
             # Only the listing of suites, so a later git ls-files cannot raise in its place.
             if arguments[:1] == ("ls-files",) and runner.TEST_SUITE_PATHSPEC in arguments:
-                return subprocess.CompletedProcess(arguments, exit_code, "", "fatal: injected\n")
+                return subprocess.CompletedProcess(arguments, exit_code, "", stderr)
             return real_git(checkout, *arguments)
 
         runner.git = git_whose_ls_files_fails
@@ -224,9 +227,10 @@ def main():
             refused = str(refusal)
         finally:
             runner.git = real_git
-        check(f"a git ls-files of the suites that {how} is refused with git's error",
-              refused is not None and "git ls-files failed" in refused
-              and "fatal: injected" in refused, refused)
+        check(f"a git ls-files of the suites that {how} is refused with git's first error line, "
+              f"or with words saying git printed none",
+              refused is not None and refused.startswith("git ls-files failed in ")
+              and refused.endswith(error), refused)
 
     not_a_repository = scratch.root / "not-a-repository"
     not_a_repository.mkdir()

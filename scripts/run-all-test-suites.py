@@ -4490,7 +4490,8 @@ def adopt_passing_recordings_that_match_the_checkout(top, into_given, from_given
     commit, _ = commit_and_state(top)
     listed = git(top, "ls-files", "-z", "--", TEST_SUITE_PATHSPEC, SHELL_TEST_SUITE_PATHSPEC)
     if listed.returncode != 0:
-        raise CouldNotRun(f"git ls-files failed in {top}: {listed.stderr.strip()}")
+        raise CouldNotRun(f"git ls-files failed in {top}: "
+                          f"{first_line_of_error(listed) or 'git printed no error'}")
     suites = [path for path in listed.stdout.split("\0") if path]
     candidates = {suite: [(directory, load_recording(directory, suite))
                           for directory in [into, *sources]] for suite in suites}
