@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import stat
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -191,10 +192,12 @@ class Fixture:
         (self.launch_agents / "com.example.other.plist").write_text("<plist/>\n")
         (self.launch_agents / "com.nedschorus.mount-ned-box-home-share.plist").write_text("<plist/>\n")
 
+    def flags(self):
+        return ["--machine", self.machine, "--home", str(self.home), "--log-store-parent", str(self.log_store_parent),
+                "--launch-agents-dir", str(self.launch_agents), "--journal", str(self.journal)]
+
     def run(self, *mode):
-        command = [sys.executable, str(PROGRAM)] + list(mode) + [
-            "--machine", self.machine, "--home", str(self.home), "--log-store-parent", str(self.log_store_parent),
-            "--launch-agents-dir", str(self.launch_agents), "--journal", str(self.journal)]
+        command = [sys.executable, str(PROGRAM)] + list(mode) + self.flags()
         result = subprocess.run(command, capture_output=True, text=True, env=self.environment())
         return result.returncode, result.stdout + result.stderr
 
@@ -549,7 +552,7 @@ def run_mid_run_failure_cases():
         before = fixture.snapshot()
         code, output = fixture.run("--apply")
         expect("a worktree whose git status fails after the repair stops --apply",
-               code == 1 and "FAILED at step 1 (worktree-repair)" in output and "nedsnodes-worktrees/wt2" in output, output)
+               code == 1 and "FAILED at step 2a (worktree-repair)" in output and "nedsnodes-worktrees/wt2" in output, output)
         code, output = fixture.run("--rollback")
         after = fixture.snapshot()
         expect("--rollback after the failed repair restores the original tree exactly",
@@ -588,8 +591,10 @@ def run_rollback_with_no_journal_ever_case():
     fixture = Fixture("ned-box")
     try:
         code, output = fixture.run("--rollback")
-        expect("--rollback with no journal and none rolled back says no --apply has run, and names the flags that must match",
-               code == 1 and "no --apply has run with these flags" in output and "--journal, --claude-dir or --home" in output, output)
+        expect("--rollback with no journal and none rolled back names the journal it looked for and the command for another one",
+               code == 1 and f"no journal at {fixture.journal}" in output and "--journal, --claude-dir or --home" in output
+               and f"python3 {PROGRAM} --rollback --journal <that journal>" in output
+               and "each of those must be given with the same value" not in output, output)
     finally:
         fixture.cleanup()
 
@@ -778,6 +783,211 @@ def run_dangling_unit_warning_case():
         fixture.cleanup()
 
 
+def rollback_command(fixture):
+    return f"python3 {PROGRAM} --rollback --journal {fixture.journal}"
+
+
+def run_recorded_command_cases():
+    fixture = Fixture("ned-box")
+    try:
+        tasks = fixture.claude / "tasks"
+        tasks_mode = stat.S_IMODE(os.stat(tasks).st_mode)
+        os.chmod(tasks, 0o555)
+        code, output = fixture.run("--apply")
+        os.chmod(tasks, tasks_mode)
+        expect("a failed --apply prints the exact --rollback command, with the journal it wrote",
+               code == 1 and f"To reverse them, run: {rollback_command(fixture)}" in output
+               and "the same flags" not in output, output)
+        entries = [json.loads(line) for line in fixture.journal.read_text().splitlines()]
+        recorded = entries[0].get("arguments", [])
+        expect("--apply records its path flags, each with its value, as the journal's first entry",
+               entries[0]["kind"] == "arguments" and "--journal" in recorded
+               and recorded[recorded.index("--journal") + 1] == str(fixture.journal)
+               and recorded[recorded.index("--home") + 1] == str(fixture.home)
+               and recorded[recorded.index("--machine") + 1] == "ned-box", str(entries[0]))
+        code, output = fixture.run("--check")
+        expect("--check with a journal shows the exact --rollback command and the command the --apply ran as",
+               rollback_command(fixture) in output
+               and f"python3 {PROGRAM} --apply " in output and f"--home {fixture.home}" in output, output)
+        code, output = fixture.run("--rollback")
+        expect("--rollback after the failed --apply succeeds", code == 0, output)
+    finally:
+        fixture.cleanup()
+
+    fixture = Fixture("ned-box")
+    try:
+        code, output = fixture.run("--apply")
+        expect("recorded-command conflict case: --apply succeeds", code == 0, output)
+        old_config = fixture.config / "nedschorus"
+        old_config.unlink()
+        old_config.mkdir()
+        (fixture.config / "nedsnodes" / "kept").write_text("x\n")
+        code, output = fixture.run("--rollback")
+        expect("--rollback that stops prints the exact command to run it again, not 'the same path flags'",
+               code == 1 and f"run: {rollback_command(fixture)}" in output and "same path flags" not in output, output)
+    finally:
+        fixture.cleanup()
+
+    fixture = Fixture("ned-box")
+    try:
+        code, output = fixture.run("--check")
+        expect("--check numbers the worktree repair as step 2a, as the docstring does",
+               "step 2a: " in output and "(--check counts these with step 1)" not in output, output)
+        code, output = fixture.run("--apply")
+        code, output = fixture.run("--rollback")
+        older = fixture.journal.with_name(fixture.journal.name + ".rolled-back-20000101T000000Z")
+        older.write_text("")
+        code, output = fixture.run("--rollback")
+        newest = sorted(fixture.journal.parent.glob(fixture.journal.name + ".rolled-back-*"))[-1]
+        expect("with several rolled-back journals, 'already finished' names the newest and says it is the newest",
+               code == 1 and str(newest) in output and "the newest of 2" in output, output)
+    finally:
+        fixture.cleanup()
+
+
+def failed_apply_from(fixture, program, cwd, flags):
+    """Runs --apply of the program at `program` from `cwd`, made to fail at step 5, after step 1 has moved the checkout."""
+    tasks = fixture.claude / "tasks"
+    tasks_mode = stat.S_IMODE(os.stat(tasks).st_mode)
+    os.chmod(tasks, 0o555)
+    result = subprocess.run([sys.executable, str(program), "--apply"] + flags, cwd=cwd, capture_output=True,
+                            text=True, env=fixture.environment())
+    os.chmod(tasks, tasks_mode)
+    return result.returncode, result.stdout + result.stderr
+
+
+def printed_rollback(output):
+    marker = "To reverse them, run: "
+    lines = [line for line in output.splitlines() if line.startswith(marker)]
+    return lines[-1][len(marker):] if lines else None
+
+
+def run_printed(command, cwd, fixture):
+    result = subprocess.run(shlex.split(command), cwd=cwd, capture_output=True, text=True, env=fixture.environment())
+    return result.returncode, result.stdout + result.stderr
+
+
+def run_printed_rollback_command_cases():
+    fixture = Fixture("ned-box")
+    try:
+        def relative(path):
+            return os.path.relpath(path, fixture.base)
+        flags = ["--machine", "ned-box", "--home", relative(fixture.home), "--log-store-parent",
+                 relative(fixture.log_store_parent), "--launch-agents-dir", relative(fixture.launch_agents),
+                 "--journal", relative(fixture.journal)]
+        code, output = failed_apply_from(fixture, PROGRAM, fixture.base, flags)
+        command = printed_rollback(output)
+        recorded = json.loads(fixture.journal.read_text().splitlines()[0]).get("arguments", [])
+        expect("relative path flags are journaled and printed as absolute paths",
+               code == 1 and command is not None and f"--journal {fixture.journal}" in command
+               and recorded[recorded.index("--home") + 1] == str(fixture.home), output)
+        code, output = run_printed(command, "/", fixture)
+        expect("the printed --rollback command, run from another directory, reverses the relative-flag --apply",
+               code == 0 and not fixture.journal.exists(), output)
+    finally:
+        fixture.cleanup()
+
+    fixture = Fixture("ned-box")
+    try:
+        started_at = fixture.checkout / "scripts" / PROGRAM.name
+        started_at.parent.mkdir(exist_ok=True)
+        shutil.copy2(PROGRAM, started_at)
+        code, output = failed_apply_from(fixture, started_at, fixture.base, fixture.flags())
+        command = printed_rollback(output)
+        moved_to = fixture.projects / "nedsnodes" / "scripts" / PROGRAM.name
+        expect("a program started from the checkout that step 1 moves prints its path under the renamed checkout",
+               code == 1 and command is not None and shlex.split(command)[1] == str(moved_to), output)
+        code, output = run_printed(command, fixture.base, fixture)
+        expect("that printed --rollback command runs and reverses the --apply",
+               code == 0 and started_at.exists() and not fixture.journal.exists(), output)
+    finally:
+        fixture.cleanup()
+
+    fixture = Fixture("ned-box")
+    try:
+        spaced = fixture.base / "dir with space" / PROGRAM.name
+        spaced.parent.mkdir()
+        shutil.copy2(PROGRAM, spaced)
+        code, output = failed_apply_from(fixture, spaced, fixture.base, fixture.flags())
+        command = printed_rollback(output)
+        expect("a program path with a space is quoted in the printed --rollback command",
+               code == 1 and command is not None and shlex.split(command)[1] == str(spaced), output)
+        code, output = run_printed(command, fixture.base, fixture)
+        expect("the quoted command runs and reverses the --apply", code == 0 and not fixture.journal.exists(), output)
+    finally:
+        fixture.cleanup()
+
+
+def run_journal_under_moved_root_and_journaled_rollback_flags_cases():
+    fixture = Fixture("ned-box")
+    try:
+        flags = fixture.flags()
+        flags[flags.index("--journal") + 1] = "move.jsonl"
+        result = subprocess.run([sys.executable, str(PROGRAM), "--check"] + flags, cwd=fixture.log_store,
+                                capture_output=True, text=True, env=fixture.environment())
+        expect("--check reports the journal under a moved root",
+               "--apply would REFUSE" in result.stdout and f"is under {fixture.log_store}, which step 2 renames" in result.stdout, result.stdout)
+        before = fixture.snapshot()
+        result = subprocess.run([sys.executable, str(PROGRAM), "--apply"] + flags, cwd=fixture.log_store,
+                                capture_output=True, text=True, env=fixture.environment())
+        output = result.stdout + result.stderr
+        expect("--apply refuses a relative --journal that resolves under the log-store it moves",
+               result.returncode == 1 and "REFUSED, nothing changed" in output
+               and f"is under {fixture.log_store}, which step 2 renames" in output, output)
+        expect("that refusal changes nothing", fixture.snapshot() == before,
+               snapshot_difference(before, fixture.snapshot()))
+    finally:
+        fixture.cleanup()
+
+    fixture = Fixture("ned-box")
+    try:
+        flags = fixture.flags()
+        journal = fixture.config / "nedschorus" / "move.jsonl"
+        flags[flags.index("--journal") + 1] = str(journal)
+        result = subprocess.run([sys.executable, str(PROGRAM), "--apply"] + flags, cwd=fixture.base,
+                                capture_output=True, text=True, env=fixture.environment())
+        output = result.stdout + result.stderr
+        expect("--apply refuses a --journal under ~/.config/nedschorus, which step 6 renames",
+               result.returncode == 1 and "REFUSED, nothing changed" in output
+               and (fixture.config / "nedschorus").is_dir() and not (fixture.config / "nedschorus").is_symlink()
+               and not journal.exists(), output)
+    finally:
+        fixture.cleanup()
+
+    fixture = Fixture("ned-box")
+    try:
+        started_at = fixture.checkout / "scripts" / PROGRAM.name
+        shutil.copy2(PROGRAM, started_at)
+        result = subprocess.run([sys.executable, str(started_at), "--apply"] + fixture.flags(), cwd=fixture.base,
+                                capture_output=True, text=True, env=fixture.environment())
+        expect("journaled-flags case: --apply with non-default --home succeeds", result.returncode == 0,
+               result.stdout + result.stderr)
+        moved_to = fixture.projects / "nedsnodes" / "scripts" / PROGRAM.name
+        before = fixture.snapshot()
+        other_home = fixture.base / "other-home"
+        code, output = run_printed(f"python3 {moved_to} --rollback --journal {fixture.journal} --home {other_home}",
+                                   fixture.base, fixture)
+        expect("--rollback refuses a path flag that differs from the one --apply journaled, naming both",
+               code == 1 and "REFUSED, nothing changed" in output
+               and f"--home: given {other_home}, recorded {fixture.home}" in output
+               and f"run: python3 {moved_to} --rollback --journal {fixture.journal}" in output, output)
+        expect("that refusal changes nothing", fixture.snapshot() == before and fixture.journal.exists(),
+               snapshot_difference(before, fixture.snapshot()))
+        (fixture.fakes / "daemon-reload-exit.txt").write_text("1")
+        code, output = run_printed(f"python3 {moved_to} --rollback --journal {fixture.journal}", fixture.base, fixture)
+        marker = "Once the cause is fixed, run: "
+        lines = [line[len(marker):] for line in output.splitlines() if line.startswith(marker)]
+        printed = shlex.split(lines[-1])[1] if lines else None
+        expect("a --rollback given only --journal, started under the new checkout and failing after it moved the "
+               "checkout back, prints the program's path under the old checkout, from the journaled --home",
+               code == 1 and printed == str(started_at) and started_at.exists(), output)
+        (fixture.fakes / "daemon-reload-exit.txt").write_text("0")
+        code, output = run_printed(lines[-1] if lines else "false", fixture.base, fixture)
+        expect("that printed command finishes the --rollback", code == 0 and not fixture.journal.exists(), output)
+    finally:
+        fixture.cleanup()
+
+
 if __name__ == "__main__":
     run_apply_check_rollback_on_ned_box()
     run_apply_and_rollback_on_mac()
@@ -793,6 +1003,9 @@ if __name__ == "__main__":
     run_unreadable_store_directory_case()
     run_missing_worktree_directory_case()
     run_backup_that_differs_stops_apply_case()
+    run_recorded_command_cases()
+    run_printed_rollback_command_cases()
+    run_journal_under_moved_root_and_journaled_rollback_flags_cases()
     print()
     if failures:
         print(f"{len(failures)} case(s) failed: {', '.join(failures)}")

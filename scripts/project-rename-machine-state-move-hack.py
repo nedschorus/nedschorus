@@ -11,10 +11,10 @@ Usage:
 
 --check reports, without changing anything, whether --apply would refuse and why, how many changes each step has left to make, whether a journal file exists and how many of its entries --rollback already reversed, whether `git status` works in every worktree of the reference-checkout, and each worktree git lists whose directory is missing, as after a move whose repair did not run.
 
---apply first refuses, changing nothing, unless all of these hold: no scheduled job of this project is installed (a crontab line naming the reference-checkout, the worktrees directory or the log-store, a `com.nedschorus.*` or `com.nedsnodes.*` LaunchAgent plist other than com.nedschorus.mount-ned-box-home-share, whose mount the Mac step (this program's --apply on the Mac) needs and whose plist this program leaves as it is, a systemd user unit naming one of those paths, other than the units step 8 moves); `~/.claude/.transcript-mirror.lock` is not held; no process named `claude` runs on this machine; none of the `nc-*` systemd user units step 8 renames is active; no path a step would create already exists; the reference-checkout is on main with no uncommitted change to a tracked file (untracked files are allowed and move with it); every worktree git lists for the reference-checkout has its directory, since `git worktree repair` cannot repair one that is missing; no journal exists yet; on the Mac, the log-store is already at its new name under the /Volumes/nedhome mount. It also refuses when it cannot find out: the crontab or the process list cannot be read, ~/.claude.json is not JSON, or the reference-checkout is missing or `git worktree list` fails in it. Then, in this order, journaling each change before making it:
+--apply first refuses, changing nothing, unless all of these hold: no scheduled job of this project is installed (a crontab line naming the reference-checkout, the worktrees directory or the log-store, a `com.nedschorus.*` or `com.nedsnodes.*` LaunchAgent plist other than com.nedschorus.mount-ned-box-home-share, whose mount the Mac step (this program's --apply on the Mac) needs and whose plist this program leaves as it is, a systemd user unit naming one of those paths, other than the units step 8 moves); `~/.claude/.transcript-mirror.lock` is not held; no process named `claude` runs on this machine; none of the `nc-*` systemd user units step 8 renames is active; no path a step would create already exists; the reference-checkout is on main with no uncommitted change to a tracked file (untracked files are allowed and move with it); every worktree git lists for the reference-checkout has its directory, since `git worktree repair` cannot repair one that is missing; no journal exists yet, and the journal's path is not at or under any directory a step renames, under its old or its new path; on the Mac, the log-store is already at its new name under the /Volumes/nedhome mount. It also refuses when it cannot find out: the crontab or the process list cannot be read, ~/.claude.json is not JSON, or the reference-checkout is missing or `git worktree list` fails in it. Then it journals the path flags it was given, each with its value, and, in this order, journals each change before making it:
   1. renames ~/Projects/nedschorus to ~/Projects/nedsnodes and ~/Projects/nedschorus-worktrees to ~/Projects/nedsnodes-worktrees;
   2. on ned-box only, renames the log-store ~/nedschorus-logs to ~/nedsnodes-logs;
-  2a. on the Mac as on ned-box, runs `git worktree repair` in this machine's reference-checkout with the new path of every worktree it listed before step 1, runs `git status` in every worktree, stopping when one fails, and sets core.hooksPath to the new path when it named the old checkout path (--check counts these with step 1);
+  2a. on the Mac as on ned-box, runs `git worktree repair` in this machine's reference-checkout with the new path of every worktree it listed before step 1, runs `git status` in every worktree, stopping when one fails, and sets core.hooksPath to the new path when it named the old checkout path;
   3. in this machine's tree of the log-store's guarded-file versions-and-approvals store, renames the directories of the old checkout, worktrees-directory and log-store paths to the new ones, and inside them every `nc-systems` to `nn-systems`, `nc-queue` to `nn-queue`, `docs/nedschorus-wiki` to `docs/nedsnodes-wiki` and each `nedschorus-*` directory directly in `docs/nedschorus-wiki` to `nedsnodes-*`;
   4. renames each ~/.claude/projects/<key> that Claude Code made for the reference-checkout or a worktree that still exists, replacing only the part of the key made from the moved directory, and its copy under <log-store>/agent-session-files-by-machine/<machine>/projects/ the same way;
   5. renames each ~/.claude/tasks/nedschorus-<seat>-tasks to nedsnodes-<seat>-tasks, and its copy under <log-store>/agent-session-files-by-machine/<machine>/tasks/;
@@ -22,13 +22,13 @@ Usage:
   7. copies ~/.claude.json to a backup beside it, then rewrites every key and string value in it that holds the old checkout, worktrees-directory or log-store path, to the new path, and `nedschorus/nedschorus` to `nedsnodes/nedsnodes`; and copies ~/.ssh/authorized_keys to a backup beside it, then rewrites the old checkout, worktrees-directory and log-store paths inside each `command="..."` option and nowhere else on the line, keeping the file's permissions;
   8. on ned-box only, renames each systemd user unit entry named `nc-*`, in the unit directory and its *.wants directories, to `nn-*`; a symlink is re-made pointing at the new checkout path with each `nc-` directory and file name in it changed to `nn-`; then runs `systemctl --user daemon-reload`; it starts nothing;
   9. leaves symlinks at the old reference-checkout path, the old ~/.config/nedschorus path and, on ned-box, the old log-store path, each pointing at its new sibling by a relative name.
---rollback reverses the journal's changes in reverse order: it removes the step-9 symlinks, re-makes the step-8 links under their old names, restores core.hooksPath to its old value, renames every directory back, and restores ~/.claude.json and ~/.ssh/authorized_keys from their backups and deletes the backups. A backup is restored only when its SHA-256 matches the one --apply journaled once the copy was complete; a file whose backup never got that record was never rewritten, so it is left as it is, and any partial backup is left in place and named; when a backup recorded complete is missing, --rollback stops, unless the file already holds the backed-up content. It then runs `git worktree repair` with the old paths and `systemctl --user daemon-reload` when --apply ran them, and renames the journal to <journal>.rolled-back-<time>. A change the journal records but that was never made, because --apply stopped first, is skipped.
+--rollback reverses the journal's changes in reverse order: it removes the step-9 symlinks, re-makes the step-8 links under their old names, restores core.hooksPath to its old value, renames every directory back, and restores ~/.claude.json and ~/.ssh/authorized_keys from their backups and deletes the backups. A backup is restored only when its SHA-256 matches the one --apply journaled once the copy was complete; a file whose backup never got that record was never rewritten, so it is left as it is, and any partial backup is left in place and named; when a backup recorded complete is missing, --rollback stops, unless the file already holds the backed-up content. It then runs `git worktree repair` with the old paths and `systemctl --user daemon-reload` when --apply ran them, and renames the journal to <journal>.rolled-back-<time>. Every path flag is made absolute when it is read, so every path the journal holds is absolute. --rollback needs only --journal: it takes every other path flag from those the --apply journaled, and refuses, changing nothing, a path flag on its command line whose value differs from the journaled one, printing the command that reverses that --apply; every message that says to run --rollback prints the exact command, with the journal's path and this program's path where the program is at that moment, which is under the renamed checkout once step 1 has moved the checkout it was started from, both quoted for the shell. A change the journal records but that was never made, because --apply stopped first, is skipped.
 
 HARM IT CAN CAUSE. --apply leaves symlinks at the old reference-checkout, ~/.config/nedschorus and (ned-box) log-store paths, so old code keeps working against the new directories until the symlinks are removed by hand. It rewrites ~/.ssh/authorized_keys, after copying it to ~/.ssh/authorized_keys.before-project-rename-<time>; a mistake there would refuse the forced command ned-box's key runs on the Mac, and the backup or --rollback restores it. It rewrites ~/.claude.json, after copying it to ~/.claude.json.before-project-rename-<time>; a Claude Code process that starts or exits during the rewrite can overwrite the rewrite, which is why --apply refuses while any process named `claude` runs. Every directory is moved by a rename on one filesystem, so no directory's contents are copied; the only copies made are the two backups, and the only files deleted are the step-8 links, which are re-made under their new names, and, by --rollback, the step-9 symlinks it removes and the backups it has restored from. Programs holding the old paths (a supervisor, a cron job installed later from the old path) fail until restarted from the new ones.
 
 WHAT IT DOES NOT DO OR HANDLE. It does not install, remove or edit cron lines, LaunchAgents or systemd units other than the step-8 renames, start or stop any service or agent-seat, touch GitHub, or edit any file's text other than ~/.claude.json and ~/.ssh/authorized_keys. It does not rewrite the text of a step-8 unit file. Claude Code shortens a project key longer than 200 characters with a hash, so such a key matches no worktree and stays under its old name. Keys of worktrees that no longer exist, and of sessions started in a subdirectory of the checkout, stay as history. The guarded-file store's entries for files in ~/agents/<seat> are not renamed. The -tasks lists of other names, handoff files, and the cwd fields in transcripts are not touched.
 
-HOW IT CAN FAIL. A refusal prints each condition that failed and what to do, and exits 1 with nothing changed. A failure during --apply prints the step and the error, and exits 1 with the journal holding every change made so far: run --rollback with the same flags, or fix the cause and finish by hand. --rollback stops with exit 1 at a journal entry whose paths are in neither the before nor the after state, saying which; --rollback journals each change it reverses, so a second --rollback, after the path is fixed by hand, continues where the first stopped. A `git status` that fails after the repair stops --apply the same way, after steps 1 and 2 have moved the directories, so --rollback is then needed; a worktree whose `git status` already fails before the move does this too, and --check lists such worktrees. --rollback also stops, keeping the journal, when `git config`, `git worktree repair` or `systemctl --user daemon-reload` fails.
+HOW IT CAN FAIL. A refusal prints each condition that failed and what to do, and exits 1 with nothing changed. A failure during --apply prints the step and the error, and exits 1 with the journal holding every change made so far: run the --rollback command it prints, or fix the cause and finish by hand. --rollback stops with exit 1 at a journal entry whose paths are in neither the before nor the after state, saying which; --rollback journals each change it reverses, so a second --rollback, after the path is fixed by hand, continues where the first stopped. A `git status` that fails after the repair, in step 2a, stops --apply the same way, after step 1, and on ned-box step 2, have moved the directories, so --rollback is then needed; a worktree whose `git status` already fails before the move does this too, and --check lists such worktrees. --rollback also stops, keeping the journal, when `git config`, `git worktree repair` or `systemctl --user daemon-reload` fails.
 
 Each path root is a flag, and the commands it runs to read processes, the crontab and systemd are taken from the environment variables PROJECT_RENAME_MOVE_PROCESS_LIST_COMMAND, PROJECT_RENAME_MOVE_CRONTAB_LIST_COMMAND and PROJECT_RENAME_MOVE_SYSTEMCTL_COMMAND when set, so a test can run it on a temporary tree."""
 
@@ -81,6 +81,11 @@ DEFAULT_SYSTEMCTL_COMMAND = "systemctl --user"
 EXIT_OK = 0
 EXIT_REFUSED_OR_FAILED = 1
 CHECK_EXAMPLES_SHOWN = 5
+REPAIR_STEP = "2a"
+STEPS = [1, 2, REPAIR_STEP, 3, 4, 5, 6, 7, 8, 9]
+ARGUMENTS = "arguments"
+PATH_FLAGS = ("--machine", "--home", "--claude-dir", "--claude-json", "--config-dir", "--projects-dir",
+              "--log-store-parent", "--systemd-user-dir", "--launch-agents-dir", "--authorized-keys", "--journal")
 
 
 class StepFailed(Exception):
@@ -100,6 +105,31 @@ def derived_project_key(path):
     return re.sub(r"[^A-Za-z0-9]", "-", str(path))
 
 
+PROGRAM_STARTED_AT = Path(__file__).resolve()
+
+
+def program_path(layout):
+    """Where this program's file is now. Step 1 may have moved the checkout it was started from, and --rollback may
+    have moved it back, so a path under a moved directory is looked for under that directory's other name."""
+    if PROGRAM_STARTED_AT.exists():
+        return PROGRAM_STARTED_AT
+    for old, new in layout.moved_roots():
+        for source, target in ((old, new), (new, old)):
+            if is_under(PROGRAM_STARTED_AT, source):
+                moved = Path(str(target) + str(PROGRAM_STARTED_AT)[len(str(source)):])
+                if moved.exists():
+                    return moved
+    return PROGRAM_STARTED_AT
+
+
+def rollback_command(layout):
+    return f"python3 {shlex.quote(str(program_path(layout)))} --rollback --journal {shlex.quote(str(layout.journal))}"
+
+
+def apply_command(layout, arguments):
+    return f"python3 {shlex.quote(str(program_path(layout)))} --apply {shlex.join(arguments)}"
+
+
 def is_real_directory(path):
     return path.is_dir() and not path.is_symlink()
 
@@ -111,8 +141,16 @@ def is_under(path, root):
 
 class Layout:
     def __init__(self, arguments):
+        arguments.machine = arguments.machine or detected_machine()
         self.machine = arguments.machine
-        home = Path(arguments.home)
+        # Made absolute here, so the journal and every printed command name the same paths from any directory.
+        for flag in PATH_FLAGS:
+            attribute = flag[2:].replace("-", "_")
+            if flag != "--machine" and getattr(arguments, attribute) is not None:
+                setattr(arguments, attribute, str(Path(getattr(arguments, attribute)).absolute()))
+        self.path_flags = [item for flag in PATH_FLAGS if getattr(arguments, flag[2:].replace("-", "_")) is not None
+                           for item in (flag, str(getattr(arguments, flag[2:].replace("-", "_"))))]
+        home = Path(arguments.home or Path.home())
         self.home = home
         self.claude_dir = Path(arguments.claude_dir or home / ".claude")
         self.claude_json = Path(arguments.claude_json or home / ".claude.json")
@@ -358,12 +396,12 @@ def plan(layout, stamp):
     if layout.machine == MACHINE_NED_BOX and is_real_directory(layout.old_log_store):
         ops.append(rename_op(2, layout.old_log_store, layout.new_log_store))
     if checkout == layout.old_checkout and checkout.is_dir():
-        ops.append({"kind": "worktree-repair", "step": 1, "checkout": str(layout.new_checkout),
+        ops.append({"kind": "worktree-repair", "step": REPAIR_STEP, "checkout": str(layout.new_checkout),
                     "old_checkout": str(layout.old_checkout), "worktrees": [str(layout.new_path_for(path)) for path in worktrees],
                     "old_worktrees": worktrees})
         hooks_path = run(["git", "-C", str(checkout), "config", "--local", "--get", "core.hooksPath"]).stdout.strip()
         if hooks_path and is_under(hooks_path, layout.old_checkout):
-            ops.append({"kind": "hooks-path", "step": 1, "checkout": str(layout.new_checkout),
+            ops.append({"kind": "hooks-path", "step": REPAIR_STEP, "checkout": str(layout.new_checkout),
                         "old_value": hooks_path, "new_value": str(layout.new_path_for(hooks_path))})
     current_log_store = layout.current_log_store()
     log_store_ops = guarded_store_ops(layout, current_log_store) + project_key_ops(layout, current_log_store, worktrees) \
@@ -407,9 +445,18 @@ def refusals(layout, ops):
     found = []
     if layout.journal.exists():
         found.append((f"a journal already exists at {layout.journal}",
-                      "If --apply ran before with this journal: run --check to see the state, or --rollback with the same flags to reverse what that --apply changed.\n"
+                      f"If --apply ran before with this journal: run --check to see the state, or `{rollback_command(layout)}` to reverse what that --apply changed.\n"
                       f"If no --apply ran with it, such as a journal copied from elsewhere: move it aside, for example to "
                       f"{layout.journal}.set-aside, then run --apply again."))
+    journal = os.path.realpath(layout.journal)
+    for op in ops:
+        if op["kind"] == "rename" and any(is_under(journal, os.path.realpath(op[end])) for end in ("from", "to")):
+            found.append((f"the journal {layout.journal} is under {op['from']}, which step {op['step']} renames to "
+                          f"{op['to']}, so the journal would move away from the path --apply writes to and "
+                          "--rollback reads",
+                          f"Leave out --journal, to use {layout.claude_dir / JOURNAL_NAME}, or name with --journal a "
+                          f"file under neither {op['from']} nor {op['to']}. Then run --apply again."))
+            break
     found += scheduled_job_refusals(layout)
     found += lock_refusals(layout)
     found += claude_process_refusals()
@@ -639,6 +686,7 @@ def apply(layout):
             for line in remedy.splitlines():
                 print(f"  {line}")
         return EXIT_REFUSED_OR_FAILED
+    journal_append(layout.journal, {"kind": ARGUMENTS, "arguments": layout.path_flags})
     for op in ops:
         try:
             journal_append(layout.journal, op)
@@ -646,7 +694,7 @@ def apply(layout):
         except (OSError, StepFailed, ValueError) as error:
             print(f"{PROGRAM}: FAILED at step {op['step']} ({op['kind']}): {error}")
             print(f"The journal {layout.journal} holds every change made before this one.")
-            print("To reverse them: run this program with --rollback and the same flags.")
+            print(f"To reverse them, run: {rollback_command(layout)}")
             return EXIT_REFUSED_OR_FAILED
     print(f"{PROGRAM}: applied {len(ops)} change(s); the journal is {layout.journal}.")
     for op in ops:
@@ -663,7 +711,7 @@ BACKUP_COMPLETE = "backup-complete"
 def read_journal(journal):
     """The journaled changes, the indexes of those a --rollback already reversed, and each complete backup's SHA-256."""
     lines = [json.loads(line) for line in journal.read_text().splitlines() if line.strip()]
-    changes = [line for line in lines if line["kind"] not in (UNDONE, BACKUP_COMPLETE)]
+    changes = [line for line in lines if line["kind"] not in (UNDONE, BACKUP_COMPLETE, ARGUMENTS)]
     undone = {line["index"] for line in lines if line["kind"] == UNDONE}
     complete_backups = {line["backup"]: line["sha256"] for line in lines if line["kind"] == BACKUP_COMPLETE}
     return changes, undone, complete_backups
@@ -680,11 +728,9 @@ def undo(op, deferred, complete_backups):
                 raise StepFailed(f"cannot reverse the rename {op['from']} -> {op['to']}: both exist, and --rollback "
                                  f"moves {op['to']} back to {op['from']}. Look at both: if {op['from']} holds work, move that work "
                                  f"into {op['to']} first. Then move {op['from']} aside by hand, for example to "
-                                 f"{op['from']}.aside, so that only {op['to']} exists. Then run --rollback again, "
-                                 f"with the same path flags as before.")
+                                 f"{op['from']}.aside, so that only {op['to']} exists. Then run --rollback again.")
             raise StepFailed(f"cannot reverse the rename {op['from']} -> {op['to']}: neither exists. Find where the "
-                             f"directory went and move it to {op['to']} by hand, then run --rollback again, with the same "
-                             f"path flags as before.")
+                             f"directory went and move it to {op['to']} by hand, then run --rollback again.")
     elif kind == "symlink":
         if os.path.islink(op["path"]) and os.readlink(op["path"]) == op["target"]:
             os.unlink(op["path"])
@@ -707,7 +753,7 @@ def undo(op, deferred, complete_backups):
                                  f"so it is not restored over {op['path']}. Put back into {op['path']} the content "
                                  f"--apply backed up, whose SHA-256 is {recorded}, from a copy of your own (check it "
                                  f"with `sha256sum` on ned-box or `shasum -a 256` on the Mac), delete {op['backup']}, "
-                                 f"then run --rollback again, with the same path flags as before: it skips this file once "
+                                 f"then run --rollback again: it skips this file once "
                                  f"{op['path']} has that SHA-256.")
             shutil.copy2(op["backup"], op["path"])
             os.unlink(op["backup"])
@@ -725,10 +771,21 @@ def undo(op, deferred, complete_backups):
 def no_journal_text(layout):
     """Why there is no journal: no --apply with these flags, or a finished --rollback renamed it."""
     rolled_back = sorted(layout.journal.parent.glob(f"{layout.journal.name}.rolled-back-*"))
+    if len(rolled_back) == 1:
+        return f"no journal at {layout.journal}: --rollback already finished and renamed it to {rolled_back[0]}"
     if rolled_back:
-        return (f"no journal at {layout.journal}: --rollback already finished and renamed it to {rolled_back[-1]}")
-    return (f"no journal at {layout.journal}, so no --apply has run with these flags. If --apply ran with "
-            f"--journal, --claude-dir or --home, each of those must be given with the same value")
+        return (f"no journal at {layout.journal}: --rollback already finished and renamed it to {rolled_back[-1]}, "
+                f"the newest of {len(rolled_back)} rolled-back journals there, by the time in its name")
+    return (f"no journal at {layout.journal}. If an --apply ran with another --journal, --claude-dir or --home, its "
+            f"journal is elsewhere, named {JOURNAL_NAME} unless --journal named another; reverse it with "
+            f"`python3 {shlex.quote(str(program_path(layout)))} --rollback --journal <that journal>`")
+
+
+def recorded_arguments(journal):
+    for line in journal.read_text().splitlines():
+        if line.strip() and json.loads(line)["kind"] == ARGUMENTS:
+            return json.loads(line)["arguments"]
+    return None
 
 
 def rollback(layout):
@@ -757,6 +814,7 @@ def rollback(layout):
     except (OSError, StepFailed) as error:
         print(f"{PROGRAM}: FAILED during --rollback: {error}")
         print(f"The journal {layout.journal} is kept; entries already reversed are skipped when --rollback runs again.")
+        print(f"Once the cause is fixed, run: {rollback_command(layout)}")
         return EXIT_REFUSED_OR_FAILED
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     done = layout.journal.with_name(f"{layout.journal.name}.rolled-back-{stamp}")
@@ -782,7 +840,7 @@ def check(layout):
         for line in remedy.splitlines():
             print(f"    {line}")
     print("\nChanges --apply would make, by step:")
-    for step in range(1, 10):
+    for step in STEPS:
         step_ops = [op for op in ops if op["step"] == step]
         print(f"  step {step}: {len(step_ops)}")
         for op in step_ops[:CHECK_EXAMPLES_SHOWN]:
@@ -792,6 +850,10 @@ def check(layout):
     if layout.journal.exists():
         entries, undone, _ = read_journal(layout.journal)
         print(f"\nJournal {layout.journal}: {len(entries)} entr(ies), {len(undone)} already reversed by --rollback.")
+        recorded = recorded_arguments(layout.journal)
+        if recorded is not None:
+            print(f"The --apply that wrote it ran as: {apply_command(layout, recorded)}")
+        print(f"To reverse it, run: {rollback_command(layout)}")
     else:
         print(f"\nJournal: {no_journal_text(layout)}.")
     checkout = layout.current_checkout()
@@ -833,9 +895,10 @@ def main(argv=None):
     mode.add_argument("--check", action="store_true", help="report each step's state; change nothing")
     mode.add_argument("--apply", action="store_true", help="make every change, journaling each first")
     mode.add_argument("--rollback", action="store_true", help="reverse the journal's changes")
-    parser.add_argument("--machine", choices=(MACHINE_MAC, MACHINE_NED_BOX), default=detected_machine(),
+    # No argparse default, so --rollback can tell a --machine given on its command line from none.
+    parser.add_argument("--machine", choices=(MACHINE_MAC, MACHINE_NED_BOX),
                         help="default: mac on macOS, ned-box otherwise")
-    parser.add_argument("--home", default=str(Path.home()), help="default: the home directory")
+    parser.add_argument("--home", help="default: the home directory")
     parser.add_argument("--claude-dir", help="default: <home>/.claude")
     parser.add_argument("--claude-json", help="default: <home>/.claude.json")
     parser.add_argument("--config-dir", help="default: <home>/.config")
@@ -846,11 +909,27 @@ def main(argv=None):
     parser.add_argument("--authorized-keys", help="default: <home>/.ssh/authorized_keys")
     parser.add_argument("--journal", help=f"default: <claude-dir>/{JOURNAL_NAME}")
     arguments = parser.parse_args(argv)
+    given = {flag: getattr(arguments, flag[2:].replace("-", "_")) for flag in PATH_FLAGS if flag != "--journal"}
     layout = Layout(arguments)
     if arguments.check:
         return check(layout)
     if arguments.apply:
         return apply(layout)
+    recorded = recorded_arguments(layout.journal) if layout.journal.exists() else None
+    if recorded is None:
+        return rollback(layout)
+    journaled = parser.parse_args(["--rollback"] + recorded + ["--journal", str(layout.journal)])
+    differing = [(flag, value, getattr(journaled, flag[2:].replace("-", "_"))) for flag, value in given.items()
+                 if value is not None and getattr(arguments, flag[2:].replace("-", "_"))
+                 != getattr(journaled, flag[2:].replace("-", "_"))]
+    layout = Layout(journaled)
+    if differing:
+        print(f"{PROGRAM}: REFUSED, nothing changed: --rollback takes its path flags from the journal "
+              f"{layout.journal}, as the --apply that wrote it recorded them, and this command gives different ones:")
+        for flag, value, recorded_value in differing:
+            print(f"- {flag}: given {value}, recorded {recorded_value if recorded_value is not None else 'none (the default)'}")
+        print(f"To reverse that --apply, run: {rollback_command(layout)}")
+        return EXIT_REFUSED_OR_FAILED
     return rollback(layout)
 
 
