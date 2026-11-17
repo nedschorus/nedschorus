@@ -180,13 +180,15 @@ def review_tools_worktree_not_at_main_message(worktree):
     if fetch.returncode != 0:
         return (f"could not fetch origin in {worktree}, so whether its merge-gate.sh is "
                 f"main's cannot be told: {git_error(fetch)}\n"
-                f"Run this again once; if it fails the same way, tell the user this message.")
+                f"Run this again once; if it fails the same way, tell the user this message as "
+                f"printed, from its STOP line, which quotes git's error, through this line.")
     head = git("rev-parse", "HEAD")
     main = git("rev-parse", "origin/main")
     if head.returncode != 0 or main.returncode != 0:
         return (f"could not read HEAD and origin/main in {worktree}: "
                 f"{git_error(head if head.returncode != 0 else main)}\n"
-                f"Tell the user this message.")
+                f"Tell the user this message as printed, from its STOP line, which quotes git's "
+                f"error, through this line.")
     if head.stdout.strip() != main.stdout.strip():
         return (f"{worktree} is at {head.stdout.strip()[:8]}, not at origin/main "
                 f"{main.stdout.strip()[:8]}, so its merge-gate.sh may not be main's.\n"
@@ -213,7 +215,8 @@ def stacked_pull_requests_retarget(pull_request, environment):
     if view.returncode != 0:
         print(f"STOP: not merged: could not read pull request {pull_request}'s branch, so the "
               f"pull requests based on it could not be found: {gh_error(view)}\n"
-              f"Run this again once; if it fails the same way, tell the user this message.")
+              f"Run this again once; if it fails the same way, tell the user this message as "
+              f"printed, from its STOP line, which quotes gh's error, through this line.")
         return EXIT_COULD_NOT_RUN, None
     branches = json.loads(view.stdout)
     branch, base = branches["headRefName"], branches["baseRefName"]
@@ -224,7 +227,8 @@ def stacked_pull_requests_retarget(pull_request, environment):
     if listing.returncode != 0:
         print(f"STOP: not merged: could not list the open pull requests, so those based on "
               f"{branch} could not be found: {gh_error(listing)}\n"
-              f"Run this again once; if it fails the same way, tell the user this message.")
+              f"Run this again once; if it fails the same way, tell the user this message as "
+              f"printed, from its STOP line, which quotes gh's error, through this line.")
         return EXIT_COULD_NOT_RUN, branch
     stacked = sorted(entry["number"] for entry in json.loads(listing.stdout)
                      if entry["baseRefName"] == branch)
@@ -262,7 +266,8 @@ def merged_branch_deleted(branch, environment):
         print(f"STOP: merged, but whether the branch {branch} is gone from GitHub could not "
               f"be read: {gh_error(read)}\n"
               f"If it is still there, delete it: {by_hand}\n"
-              f"If that fails, tell the user this message.")
+              f"If that fails, tell the user this message as printed, from its STOP line, which "
+              f"quotes gh's error, through this line, and the error the deletion command printed.")
         return EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
     deletion = run(["gh", "api", f"repos/{REPOSITORY}/git/refs/heads/{branch}",
                     "-X", "DELETE"], environment)
@@ -270,7 +275,8 @@ def merged_branch_deleted(branch, environment):
         print(f"STOP: merged, but the branch {branch} is still on GitHub and could not be "
               f"deleted: {gh_error(deletion)}\n"
               f"Delete it: {by_hand}\n"
-              f"If that fails, tell the user this message.")
+              f"If that fails, tell the user this message as printed, from its STOP line, which "
+              f"quotes gh's error, through this line, and the error the deletion command printed.")
         return EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
     print(f"deleted the branch {branch}, which the merge command left on GitHub")
     return EXIT_MERGED
@@ -293,7 +299,8 @@ def review_worktrees_remove(arguments):
                   f"worktree remove exited {removal.returncode}: {git_error(removal)}\n"
                   f"If git names a cause you can fix, fix it and remove the worktree: "
                   f"git -C {checkout} worktree remove --force {worktree}\n"
-                  f"Otherwise, tell the user this message.")
+                  f"Otherwise, tell the user this message as printed, from its STOP line, which "
+                  f"quotes git's error, through this line.")
             exit_code = EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
             continue
         print(f"removed the review worktree {worktree}")
@@ -345,7 +352,8 @@ def recordings_matching_the_merge_commit_adopted(worktree, source, which_source,
               f"{without_them} Nothing else waits on this adoption: the program goes on and "
               f"exits 3, and the next merge adopts its own recordings.\n"
               f"If the error names a cause you can fix, fix it; nothing needs to be run again. "
-              f"Otherwise, tell the user this message.")
+              f"Otherwise, tell the user this message as printed, from its STOP line, which "
+              f"quotes the error, through this line.")
         return False
     print(f"adopted {len(adopted)} recordings into {into} from {source}, {which_source}; a "
           f"recording is adopted only when its run passed and it matches the merge commit")
@@ -388,7 +396,8 @@ def after_merge_test_run(arguments, merge_commit):
                / f"pr{arguments.pull_request}-after-merge-test-run-logs-{merge_commit[:12]}")
     next_steps = (f"If git names a cause you can fix, fix it; then, in a detached worktree at "
                   f"{merge_commit}, run: {by_hand}\n"
-                  f"Otherwise, tell the user this message.")
+                  f"Otherwise, tell the user this message as printed, from its STOP line, which "
+                  f"quotes git's error, through this line.")
     # Not a fetch of every branch: that updates origin/main, which every agent-seat's
     # checkout of the same clone also fetches into, and git refuses the second of two
     # fetches that update it at once with "incorrect old value provided".
@@ -400,8 +409,9 @@ def after_merge_test_run(arguments, merge_commit):
         return EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
     add = git("worktree", "add", "--detach", str(worktree), merge_commit)
     if add.returncode != 0:
-        print(f"STOP: merged, but main was not tested: could not make a worktree at the "
-              f"merge commit {merge_commit} from {checkout}: {git_error(add)}\n{next_steps}")
+        print(f"STOP: merged, but main was not tested: git worktree add, run in {checkout}, "
+              f"could not make the worktree {worktree} at the merge commit {merge_commit}: "
+              f"{git_error(add)}\n{next_steps}")
         return EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
 
     runner = common.run_all_test_suites
@@ -425,7 +435,8 @@ def after_merge_test_run(arguments, merge_commit):
         print(f"STOP: merged, but {saved_apart}, which no run reads any more, was not "
               f"removed: {error}\n"
               f"If the error names a cause you can fix, fix it and remove {saved_apart}. "
-              f"Otherwise, tell the user this message.")
+              f"Otherwise, tell the user this message as printed, from its STOP line, which "
+              f"quotes the error, through this line.")
         done_before_the_run = False
     # The run selects by the runner's default directory, which no head test run writes.
     done_before_the_run = recordings_matching_the_merge_commit_adopted(
@@ -456,7 +467,9 @@ def after_merge_test_run(arguments, merge_commit):
         print(f"STOP: merged, but the test run of main at {merge_commit} exited "
               f"{run_all.returncode}, so main may be broken; the failed suites, if any, are "
               f"listed above, each with its log.\n"
-              f"Tell the pull request's author, and the user, this message.")
+              f"Tell the pull request's author, and the user, this message as printed, from its "
+              f"STOP line through this line, with the FAIL and NOT RUN suite lines printed above "
+              f"it, if any.")
         exit_code = EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
     elif not summaries:
         print(f"STOP: merged, but the test run of main at {merge_commit} exited 0 and printed "
@@ -477,7 +490,8 @@ def after_merge_test_run(arguments, merge_commit):
               f"remove exited {removal.returncode}: {git_error(removal)}\n"
               f"If git names a cause you can fix, fix it and remove the worktree: "
               f"git -C {checkout} worktree remove --force {worktree}\n"
-              f"Otherwise, tell the user this message.")
+              f"Otherwise, tell the user this message as printed, from its STOP line, which "
+              f"quotes git's error, through this line.")
         return EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
     print(f"removed the worktree {worktree}")
     return exit_code
@@ -489,7 +503,8 @@ def main(argv=None, wait=time.sleep):
         token = common.read_merge_account_token()
     except common.MergeAccountTokenUnusable as unusable:
         print(f"STOP: not merged: {unusable}.\n"
-              f"Tell the user this message: only the user can restore the token.")
+              f"Tell the user this message as printed, from its STOP line, which says why the "
+              f"token is unusable, through this line: only the user can restore the token.")
         return EXIT_COULD_NOT_RUN
     environment = {**os.environ, "GH_TOKEN": token}
 

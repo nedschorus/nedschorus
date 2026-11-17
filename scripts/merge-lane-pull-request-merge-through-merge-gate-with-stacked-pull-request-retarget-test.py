@@ -170,6 +170,20 @@ GIT_ENVIRONMENT = dict(os.environ)
 GIT_IDENTITY = ["-c", "user.name=merge-lane-test", "-c", "user.email=test@example.invalid"]
 
 
+# The merge program's instructions to tell the user a STOP message, written out whole here
+# so that a change to the program's wording fails a case.
+TELL_THE_USER_WITH_THE_GIT_ERROR = ("tell the user this message as printed, from its STOP "
+                                    "line, which quotes git's error, through this line.")
+TELL_THE_USER_WITH_THE_GH_ERROR = ("tell the user this message as printed, from its STOP line, "
+                                   "which quotes gh's error, through this line.")
+TELL_THE_USER_WITH_THE_ERROR = ("tell the user this message as printed, from its STOP line, "
+                                "which quotes the error, through this line.")
+TELL_THE_USER_WITH_BOTH_GH_ERRORS = ("tell the user this message as printed, from its STOP line, "
+                                     "which quotes gh's error, through this line, and the error "
+                                     "the deletion command printed.")
+RERUN_ONCE_THEN = "Run this again once; if it fails the same way, "
+
+
 def git(*arguments, cwd=None):
     subprocess.run(["git", *GIT_IDENTITY, *arguments], cwd=cwd, env=GIT_ENVIRONMENT,
                    check=True, capture_output=True, stdin=subprocess.DEVNULL)
@@ -537,7 +551,8 @@ def main():
               and '"state":"MERGED"' in output
               and f"STOP: merged, but the review worktree {not_removable} was not removed"
               in output and "exited 128: fatal: " in output and "is not a working tree" in output
-              and f"git -C {review_tools} worktree remove --force {not_removable}" in output,
+              and f"git -C {review_tools} worktree remove --force {not_removable}\n"
+                  f"Otherwise, {TELL_THE_USER_WITH_THE_GIT_ERROR}" in output,
               f"exit {exit_code}\n{output}")
         check("the other review worktree is still removed when one cannot be",
               not (not_removable.parent / "pr10-merged").exists(), output)
@@ -617,7 +632,9 @@ def main():
         calls = argvs(gh_calls)
         check("an open pull request list that fails stops before the merge, exit 2",
               exit_code == 2 and index_of(calls, ["pr", "merge"]) is None
-              and "HTTP 502" in output, f"exit {exit_code}\n{output}")
+              and f"could not be found: HTTP 502\n{RERUN_ONCE_THEN}"
+                  f"{TELL_THE_USER_WITH_THE_GH_ERROR}" in output,
+              f"exit {exit_code}\n{output}")
 
         routes = default_routes(STACKED_AND_NOT, merge_exit=1)
         routes["view-state"] = {"stdout": '{"state":"OPEN","mc":null}\n'}
@@ -646,8 +663,13 @@ def main():
         exit_code, output, gh_calls, gate_calls, _ = run_case(
             scratch, "no-token", [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
             token=None)
-        check("an unreadable token file exits 2 before the gate or gh runs",
-              exit_code == 2 and gate_calls == [] and gh_calls == [],
+        check("an unreadable token file exits 2 before the gate or gh runs, quoting the "
+              "operating system's error and saying to tell the user the message",
+              exit_code == 2 and gate_calls == [] and gh_calls == []
+              and "could not read the merge account's token at " in output
+              and ": No such file or directory.\nTell the user this message as printed, from its "
+                  "STOP line, which says why the token is unusable, through this line: only the "
+                  "user can restore the token." in output,
               f"exit {exit_code}\n{output}")
 
         exit_code, output, gh_calls, gate_calls, _ = run_case(
@@ -684,17 +706,23 @@ def main():
             default_routes(STACKED_AND_NOT), review_tools_state="no-origin")
         check("a review tools worktree that cannot fetch origin stops before the gate, exit 2",
               exit_code == 2 and gate_calls == [] and gh_calls == []
-              and "could not fetch origin" in output, f"exit {exit_code}\n{output}")
+              and "could not fetch origin" in output
+              and f"\n{RERUN_ONCE_THEN}{TELL_THE_USER_WITH_THE_GIT_ERROR}" in output,
+              f"exit {exit_code}\n{output}")
 
-        for failing, words in ((" fetch ", "main's cannot be told"),
-                               (" rev-parse ", "could not read HEAD and origin/main in")):
+        for failing, words, instruction in (
+                (" fetch ", "main's cannot be told",
+                 RERUN_ONCE_THEN + TELL_THE_USER_WITH_THE_GIT_ERROR),
+                (" rev-parse ", "could not read HEAD and origin/main in",
+                 "T" + TELL_THE_USER_WITH_THE_GIT_ERROR[1:])):
             exit_code, output, gh_calls, gate_calls, _ = run_case(
                 scratch, f"review-tools{failing.replace(' ', '-')}killed", [(GATE_PASSED, 0)],
                 default_routes(STACKED_AND_NOT), git_killed_before_the_merge_on=failing)
             check(f"a git{failing}in the review tools worktree killed by a signal stops before "
-                  f"the gate, exit 2, saying git printed no error",
+                  f"the gate, exit 2, saying git printed no error and to tell the user the "
+                  f"message with the git error it quotes",
                   exit_code == 2 and gate_calls == [] and gh_calls == []
-                  and words in output and ": git printed no error\n" in output,
+                  and words in output and f": git printed no error\n{instruction}" in output,
                   f"exit {exit_code}\n{output}")
 
         exit_code, output, gh_calls, gate_calls, _ = run_case(
@@ -720,7 +748,9 @@ def main():
               exit_code == 2 and index_of(calls, ["pr", "merge"]) is None
               and index_of(calls, ["pr", "edit"]) is None
               and "STOP: not merged: could not read pull request 10's branch" in output
-              and "HTTP 503" in output, f"exit {exit_code}\n{output}")
+              and f"could not be found: HTTP 503\n{RERUN_ONCE_THEN}"
+                  f"{TELL_THE_USER_WITH_THE_GH_ERROR}" in output,
+              f"exit {exit_code}\n{output}")
 
         exit_code, output, _, _, _ = run_case(
             scratch, "after-merge-passes", [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT))
@@ -935,7 +965,8 @@ def main():
                   f"{scratch / name / 'outputs' / 'hr' / 'store'}" in output
               and ("Nothing else waits on this adoption: the program goes on and exits 3, and "
                    "the next merge adopts its own recordings.\nIf the error names a cause you can "
-                   "fix, fix it; nothing needs to be run again. Otherwise, tell the user this message.")
+                   "fix, fix it; nothing needs to be run again. Otherwise, "
+                   + TELL_THE_USER_WITH_THE_ERROR)
               in output
               and f"remove {saved}" not in output
               and not saved.exists() and len(runner_calls(scratch, name)) == 1
@@ -983,7 +1014,9 @@ def main():
               "adopted exits 3, naming it",
               exit_code == 3
               and f"STOP: merged, but {saved}, which no run reads any more, was not removed"
-              in output and len(runner_calls(scratch, name)) == 1, f"exit {exit_code}\n{output}")
+              in output and f"fix it and remove {saved}. Otherwise, "
+                            f"{TELL_THE_USER_WITH_THE_ERROR}" in output
+              and len(runner_calls(scratch, name)) == 1, f"exit {exit_code}\n{output}")
 
         name = "since-merged-main-not-moved"
         exit_code, output, _, _, _ = run_case(
@@ -1061,6 +1094,10 @@ def main():
               and "FAIL scripts/broken-test.py exit 1 — log /logs/broken-test.py.log" in output
               and "SUMMARY: 1 passed, 1 failed" in output
               and "STOP: merged, but the test run of main at" in output and "exited 1" in output
+              and ("Tell the pull request's author, and the user, this message as printed, from "
+                   "its STOP line through this line, with the FAIL and NOT RUN suite lines "
+                   "printed above it, if any.")
+              in output
               and not merge_commit_worktree.exists(), f"exit {exit_code}\n{output}")
 
         exit_code, output, _, _, _ = run_case(
@@ -1132,7 +1169,8 @@ def main():
               "the command, and the review worktrees are still removed and main tested",
               exit_code == 3 and f"STOP: merged, but the branch {BRANCH} is still on GitHub "
                                  "and could not be deleted: HTTP 422" in output
-              and f"gh api -X DELETE {ref_path}" in output
+              and f"Delete it: gh api -X DELETE {ref_path}\nIf that fails, "
+                  f"{TELL_THE_USER_WITH_BOTH_GH_ERRORS}" in output
               and not (review_worktrees / "pr10-merged").exists()
               and len(runner_calls(scratch, "merged-branch-not-deleted")) == 1,
               f"exit {exit_code}\n{output}")
@@ -1146,6 +1184,7 @@ def main():
               "pull request exits 3, and main is still tested",
               exit_code == 3 and f"whether the branch {BRANCH} is gone from GitHub could not "
                                  "be read: HTTP 502" in output
+              and f"\nIf that fails, {TELL_THE_USER_WITH_BOTH_GH_ERRORS}" in output
               and len(runner_calls(scratch, "merged-branch-unread")) == 1,
               f"exit {exit_code}\n{output}")
 
@@ -1218,7 +1257,7 @@ def main():
               "naming git's error",
               exit_code == 3 and runner_calls(scratch, "merge-commit-unknown") == []
               and "to get the merge commit " + "b" * 40 in output
-              and "could not make a worktree" not in output
+              and "could not make the worktree" not in output
               and "fatal: " in output, f"exit {exit_code}\n{output}")
 
         routes = default_routes(STACKED_AND_NOT)
@@ -1243,7 +1282,8 @@ def main():
         check("a fetch that fails after the merge exits 3 without a test run",
               exit_code == 3 and runner_calls(scratch, "fetch-fails-after-merge") == []
               and "could not fetch origin in " in output
-              and "could not make a worktree" not in output,
+              and "could not make the worktree" not in output
+              and output.rstrip().endswith(f"Otherwise, {TELL_THE_USER_WITH_THE_GIT_ERROR}"),
               f"exit {exit_code}\n{output}")
 
         exit_code, output, _, _, _ = run_case(
@@ -1256,7 +1296,9 @@ def main():
               exit_code == 3 and RUNNER_PASSED_SUMMARY in output
               and f"STOP: merged, but the worktree {merge_commit_worktree} was not removed" in output
               and f"worktree remove --force {merge_commit_worktree}" in output
-              and "remove exited -9: git printed no error\n" in output,
+              and "remove exited -9: git printed no error\n" in output
+              and f"worktree remove --force {merge_commit_worktree}\nOtherwise, "
+                  f"{TELL_THE_USER_WITH_THE_GIT_ERROR}" in output,
               f"exit {exit_code}\n{output}")
 
         exit_code, output, _, _, _ = run_case(
@@ -1265,7 +1307,7 @@ def main():
         check("a fetch killed by a signal after the merge exits 3 without a test run",
               exit_code == 3 and runner_calls(scratch, "fetch-killed-after-merge") == []
               and "/review-tools to get the merge commit " in output
-              and "could not make a worktree" not in output
+              and "could not make the worktree" not in output
               and ": git printed no error\n" in output,
               f"exit {exit_code}\n{output}")
 
@@ -1274,8 +1316,12 @@ def main():
             default_routes(STACKED_AND_NOT), git_fails_after_merge_on=(" worktree add ", "kill"))
         check("a git worktree add killed by a signal exits 3 without a test run",
               exit_code == 3 and runner_calls(scratch, "worktree-add-killed") == []
-              and "could not make a worktree at the merge commit" in output
-              and "/review-tools: git printed no error\n" in output,
+              and "STOP: merged, but main was not tested: git worktree add, run in "
+                  f"{scratch / 'worktree-add-killed' / 'review-tools'}, could not make the "
+                  f"worktree {scratch / 'worktree-add-killed' / 'review-worktrees'}"
+                  "/pr10-merge-commit-on-main-worktree at the merge commit " in output
+              and ": git printed no error\n" in output
+              and output.rstrip().endswith(f"Otherwise, {TELL_THE_USER_WITH_THE_GIT_ERROR}"),
               f"exit {exit_code}\n{output}")
 
         exit_code, output, _, _, _ = run_case(
