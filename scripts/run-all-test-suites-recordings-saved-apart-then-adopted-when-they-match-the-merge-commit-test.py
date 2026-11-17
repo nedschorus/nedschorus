@@ -267,6 +267,43 @@ def main():
               refused is not None and refused.startswith("git ls-files failed in ")
               and refused.endswith(error), refused)
 
+    no_commit = scratch.root / "no-commit"
+    no_commit.mkdir()
+    git(no_commit, "init", "-q")
+    (no_commit / SUITE).write_text(SUITE_BODY)
+    git(no_commit, "add", SUITE)
+    for checkout, how, rev_parse_head_fails_from_call, expected in (
+            (no_commit, "a branch with no commit yet", None,
+             f"{no_commit} is at no commit, so no recording can be compared with its commit"),
+            (main_checkout, "a git rev-parse HEAD that fails after the recordings directory "
+             "was named", 2,
+             f"{main_checkout} is at commit unknown (git rev-parse HEAD exited 128: "
+             f"fatal: injected), so no recording can be compared with its commit")):
+        calls = []
+
+        def git_recording_calls(checkout, *arguments, fails_from=rev_parse_head_fails_from_call):
+            calls.append(arguments)
+            rev_parse_head_calls = sum(call[:1] == ("rev-parse",) and "HEAD" in call
+                                       for call in calls)
+            if (fails_from is not None and arguments[:1] == ("rev-parse",) and "HEAD" in arguments
+                    and rev_parse_head_calls >= fails_from):
+                return subprocess.CompletedProcess(arguments, 128, "", "fatal: injected\n")
+            return real_git(checkout, *arguments)
+
+        runner.git = git_recording_calls
+        try:
+            runner.adopt_passing_recordings_that_match_the_checkout(
+                checkout, scratch.root / "store", [])
+            refused = None
+        except runner.CouldNotRun as refusal:
+            refused = str(refusal)
+        finally:
+            runner.git = real_git
+        check(f"on {how}, adoption is refused with the words a report gives for the commit, "
+              f"before any git call is given those words as a commit",
+              refused == expected and not any(call[:1] == ("ls-tree",) for call in calls),
+              f"{refused}\n{calls}")
+
     not_a_repository = scratch.root / "not-a-repository"
     not_a_repository.mkdir()
     try:

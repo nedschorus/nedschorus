@@ -1964,16 +1964,23 @@ def git_failure_stderr_first_line_or_printed_no_error_text(completed, git_comman
             or [f"{git_command} printed no error"])[0]
 
 
-def commit_and_state(top):
+def head_commit_or_why_none(top):
+    """(HEAD's commit, None), or (None, words a report puts where the commit would go)."""
     # --verify --quiet exits 1 for a branch with no commit yet.
     head = git(top, "rev-parse", "--verify", "--quiet", "HEAD")
     if head.returncode == 0:
-        commit = head.stdout.strip()
-    elif head.returncode == 1:
-        commit = "no commit"
-    else:
-        commit = (f"commit unknown (git rev-parse HEAD exited {head.returncode}: "
+        return head.stdout.strip(), None
+    if head.returncode == 1:
+        return None, "no commit"
+    return None, (f"commit unknown (git rev-parse HEAD exited {head.returncode}: "
                   f"{git_failure_stderr_first_line_or_printed_no_error_text(head)})")
+
+
+def commit_and_state(top):
+    """(HEAD's commit, or words saying why there is none, for a report or record; the state of
+    the tracked files). The first is no revision git can read when HEAD gives no commit."""
+    commit, why_none = head_commit_or_why_none(top)
+    commit = commit or why_none
     changed = git(top, "status", "--porcelain", "--untracked-files=no")
     if changed.returncode != 0:
         state = "tracked-file state unknown"
@@ -4648,11 +4655,14 @@ def adopt_passing_recordings_that_match_the_checkout(top, into_given, from_given
     A suite whose recording under into_given already matches keeps it. Runs no suite, and
     trusts no source: a recording counts as matching only when selection_reason, with no file
     differing, would leave its suite out. A checkout with no suite adopts nothing. Raises
-    CouldNotRun when git cannot list the suites or files, and OSError when a recording cannot
-    be saved."""
+    CouldNotRun when HEAD gives no commit or git cannot list the suites or files, and OSError
+    when a recording cannot be saved."""
     into = recordings_directory_for(into_given, top)
     sources = [recordings_directory_for(given, top) for given in from_given]
-    commit, _ = commit_and_state(top)
+    commit, why_none = head_commit_or_why_none(top)
+    if commit is None:
+        raise CouldNotRun(f"{top} is at {why_none}, so no recording can be compared with "
+                          f"its commit")
     listed = git(top, "ls-files", "-z", "--", TEST_SUITE_PATHSPEC, SHELL_TEST_SUITE_PATHSPEC)
     if listed.returncode != 0:
         raise CouldNotRun(f"git ls-files failed in {top}: "
