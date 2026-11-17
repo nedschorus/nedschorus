@@ -188,7 +188,6 @@ CONSTANTS_THAT_OPEN_NO_RULE_MESSAGE = {
     ("scripts/checkout-freshness-catch-up.py", "DETACHED_WORK_OF_ITS_OWN_LINE"): LATER_PART,
     ("scripts/checkout-freshness-catch-up.py", "GIT_FAILED_CAUSE_LINE"): HOOK_FAILED,
     ("scripts/checkout-freshness-catch-up.py", "GIT_FAILED_NOTES_DELIVERY_AGENT_NEXT_STEP_LINES"): LATER_PART,
-    ("scripts/checkout-freshness-catch-up.py", "GIT_FAILED_RERUN_NEXT_STEP_LINES"): LATER_PART,
     ("scripts/checkout-freshness-catch-up.py", "GIT_FAILED_STOP_HOOK_USER_NEXT_STEP_LINES"): LATER_PART,
     ("scripts/checkout-freshness-catch-up.py", "IGNORED_FILES_IN_THE_WAY_ADVICE"): LATER_PART,
     ("scripts/checkout-freshness-catch-up.py", "LEAVE_IT_ADVICE"): LATER_PART,

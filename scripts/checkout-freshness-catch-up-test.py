@@ -2536,14 +2536,14 @@ with tempfile.TemporaryDirectory() as failing_git_scratch:
         git(["fetch", "-q", "origin"], seat_path)
         return origin_repo, seat_path
 
-    def failing_git_shim(name, shell_pattern):
-        """A git that exits 128 for argument lists matching shell_pattern and
+    def failing_git_shim(name, shell_pattern, stderr=INJECTED_STDERR):
+        """A git that exits 128, printing stderr, for argument lists matching shell_pattern and
         passes every other call to the real git."""
         directory = failing_tmp / name
         directory.mkdir()
         (directory / "git").write_text(
             "#!/bin/sh\n"
-            f'case " $* " in {shell_pattern}) echo "{INJECTED_STDERR}" >&2; exit 128;; esac\n'
+            f'case " $* " in {shell_pattern}) echo "{stderr}" >&2; exit 128;; esac\n'
             f'exec "{failing_real_git}" "$@"\n', encoding="utf-8")
         (directory / "git").chmod(0o755)
         return str(directory)
@@ -2756,10 +2756,23 @@ with tempfile.TemporaryDirectory() as failing_git_scratch:
           run.returncode == 0 and INJECTED_STDERR in run.stdout
           and "not a git checkout" not in run.stdout
           and catch_up_module.next_step_lines.git_failure_next_step_lines(
-              f"`python3 {SCRIPT_PATH.resolve()} --report --repo {level_seat.resolve()}`",
+              f"python3 {SCRIPT_PATH.resolve()} --report --repo {level_seat.resolve()}",
+              git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=INJECTED_STDERR,
               text_the_failure_line_contains="because a git command failed") in run.stdout
           and "you gave" not in run.stdout
           and "Nothing needs rerunning" not in run.stdout, run.stdout + run.stderr)
+    lock_file = level_seat.resolve() / ".git" / "index.lock"
+    run = run_catch_up_once(["--report", "--repo", str(level_seat)], failing_git_shim(
+        "git-dir-fails-on-a-lock-file", '*" --absolute-git-dir "*',
+        f"fatal: Unable to create '{lock_file}': File exists."))
+    check("--report given a git error that names a lock file gives the step that waits for that "
+          "lock file, then reruns the same --report command",
+          f"Git's error names the lock file {lock_file}: " in run.stdout
+          and catch_up_module.next_step_lines.git_error_names_a_lock_file_wait_then_rerun_line_or_none(
+              f"fatal: Unable to create '{lock_file}': File exists.",
+              f"exactly `python3 {SCRIPT_PATH.resolve()} --report --repo {level_seat.resolve()}`")
+          in run.stdout,
+          run.stdout + run.stderr)
     worktree_list_fails = failing_git_shim("worktree-list-fails-in-modes", '*" worktree list "*')
     run = run_catch_up_once(["--reference-pull", "--repo", str(level_seat)], worktree_list_fails)
     check("--reference-pull prints the git failure instead of saying nothing, "

@@ -421,14 +421,15 @@ CELL_GIT_CHECK_FAILED_AGAIN = "WARNING: the runner could not check"
 STOPPED_BEFORE_LAUNCH_AGAIN = "sanity-check stopped before any agent launched"
 
 
-def git_failure_next_step_lines(rerun: str, text_the_failure_line_contains: str) -> str:
+def git_failure_next_step_lines(rerun: str, text_the_failure_line_contains: str, failure) -> str:
     """What to do after a git command the runner ran has failed, each line ending its line.
 
     Printed after the line that names the command and quotes git's error.
     """
     program = str(pathlib.Path(__file__).resolve())
     return next_step_lines.git_failure_next_step_lines(
-        rerun, program, text_the_failure_line_contains=text_the_failure_line_contains) + "\n"
+        rerun, program, git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=str(failure),
+        text_the_failure_line_contains=text_the_failure_line_contains) + "\n"
 
 
 # The line a cell prints when its first launch produced no report and the
@@ -1644,7 +1645,7 @@ def git_check_failed_after_a_cell(cell: str, what: str, failure, rerun: str) -> 
                      f"{failure}. {cell}'s report is saved without that check. Follow the "
                      f"steps below; the rerun command in them runs {cell} alone again, "
                      f"in a new record whose report has the check.\n"
-                     + git_failure_next_step_lines(rerun, CELL_GIT_CHECK_FAILED_AGAIN))
+                     + git_failure_next_step_lines(rerun, CELL_GIT_CHECK_FAILED_AGAIN, failure))
     sys.stdout.flush()
 
 
@@ -1910,7 +1911,7 @@ def main() -> int:
     except git_output.GitCommandFailed as failure:
         rerun = shlex.join([str(pathlib.Path(__file__).resolve()), *sys.argv[1:]])
         sys.stderr.write(f"sanity-check stopped before any agent launched: {failure}.\n"
-                         + git_failure_next_step_lines(rerun, STOPPED_BEFORE_LAUNCH_AGAIN))
+                         + git_failure_next_step_lines(rerun, STOPPED_BEFORE_LAUNCH_AGAIN, failure))
         return 2
     except RunStoppedBySignal as stopped:
         stopped_by = stopped.signal_number

@@ -231,15 +231,21 @@ def run(root, *arguments, checkout=None, lock_file=None, rendezvous_seconds="20"
     environment[RAN_FILE_VARIABLE] = str(root / "ran.txt")
     environment[RENDEZVOUS_WAIT_VARIABLE] = rendezvous_seconds
     environment.update(environment_extra or {})
-    command = [sys.executable, *(("-c", driver) if driver else ()), str(PROGRAM),
-               "--checkout", str(checkout if checkout is not None else root / "repo"),
-               "--log-dir", str(root / "logs"),
-               "--lock-file", str(lock_file if lock_file is not None else root / "run.lock"),
-               "--recorded-inputs-directory", str(root / "recordings"),
-               "--suite-files-only-strace-saw-lists-directory", str(root / "recordings"),
-               *arguments]
+    command = [sys.executable, *(("-c", driver) if driver else ()),
+               *program_command_line(root, *arguments, checkout=checkout, lock_file=lock_file)]
     return subprocess.run(command, capture_output=True, text=True, env=environment,
                           stdin=subprocess.DEVNULL, check=False)
+
+
+def program_command_line(root, *arguments, checkout=None, lock_file=None):
+    """The program and the arguments run() gives it."""
+    return [str(PROGRAM),
+            "--checkout", str(checkout if checkout is not None else root / "repo"),
+            "--log-dir", str(root / "logs"),
+            "--lock-file", str(lock_file if lock_file is not None else root / "run.lock"),
+            "--recorded-inputs-directory", str(root / "recordings"),
+            "--suite-files-only-strace-saw-lists-directory", str(root / "recordings"),
+            *arguments]
 
 
 def ran(root):
@@ -1028,6 +1034,19 @@ def path_without_strace(root):
     return {"PATH": str(bin_dir)}
 
 
+def next_steps_for(error, command_line=None):
+    """The shared module's next steps for a run whose git printed error, naming as the rerun the
+    command_line the runner ran as, run from this test's directory by this interpreter; by
+    default, this test's own, the process a refusal raised in this test is printed by."""
+    command_line = sys.argv if command_line is None else command_line
+    rerun = (f"cd {shlex.quote(os.getcwd())} && "
+             f"{shlex.join([sys.executable, str(pathlib.Path(command_line[0]).resolve()), *command_line[1:]])}")
+    return module.next_step_lines.git_failure_next_step_lines(
+        rerun,
+        git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=error,
+        text_the_failure_line_contains="not run — git")
+
+
 def select_since(root, since, environment_extra=None):
     (root / "ran.txt").unlink(missing_ok=True)
     return run(root, CHANGED_SINCE, since, environment_extra=environment_extra)
@@ -1063,8 +1082,8 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 2 and ran(root) == []
           and "git could not list the root commits of HEAD" in result.stderr
           and result.stderr.endswith(
-              "\n" + module.git_failure_next_step_lines("run-all-test-suites.py",
-                                                      "fatal: injected git failure") + "\n")
+              "\n" + next_steps_for("fatal: injected git failure", program_command_line(root))
+              + "\n")
           and "fatal: injected git failure" in result.stderr
           and not (root / "recordings" / "no-commit").exists(),
           (result.returncode, ran(root), result.stderr))
@@ -1081,8 +1100,11 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 2 and ran(root) == []
           and "git ls-files --others failed" in result.stderr
           and result.stderr.endswith(
-              "\n" + module.git_failure_next_step_lines("run-all-test-suites.py",
-                                                      "fatal: injected git failure") + "\n")
+              "\n" + next_steps_for("fatal: injected git failure",
+                                     program_command_line(root, CHANGED_SINCE, since)) + "\n")
+          and f"Run exactly `cd {shlex.quote(os.getcwd())} && "
+              f"{shlex.join([sys.executable, *program_command_line(root, CHANGED_SINCE, since)])}` "
+              f"once more." in result.stderr
           and "fatal: injected git failure" in result.stderr,
           (result.returncode, ran(root), result.stderr))
 
@@ -1099,14 +1121,6 @@ def git_answering(answers):
 
 # git's own first line when another process holds the index lock.
 GIT_INDEX_LOCK_FILE_EXISTS_ERROR = "fatal: Unable to create '/nowhere/.git/index.lock': File exists."
-
-
-def next_steps_for(error):
-    """The shared module's next steps for a run of the runner whose git printed error."""
-    return module.next_step_lines.git_failure_next_step_lines(
-        "the same run-all-test-suites.py command",
-        git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=error,
-        text_the_failure_line_contains="not run — git")
 
 
 real_program_git = module.git

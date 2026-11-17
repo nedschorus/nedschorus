@@ -22,29 +22,26 @@ REPORT_RECIPIENT_PHRASE_USER_OR_DISPATCHING_AGENT = (
     "the user, or, if you are a subagent, the agent that dispatched you,")
 
 
-# Claude Code refuses a Bash call that starts with a long plain sleep, but runs this bounded poll.
-LOCK_FILE_PATH_PLACEHOLDER = "<lock file path>"
-WAIT_UP_TO_ONE_MINUTE_FOR_LOCK_FILE_TO_GO_COMMAND = (
-    f'i=0; while [ -e "{LOCK_FILE_PATH_PLACEHOLDER}" ] && [ $i -lt 30 ]; do sleep 2; i=$((i+1)); done')
-GIT_ERROR_NAMES_A_LOCK_FILE_LINE_OPENING_IF_CONDITION_CLAUSE_WITHOUT_ITS_INSTRUCTION_IN_TOOL_MESSAGE_TO_AGENT = "If git's error names a lock file"
+# git words a lock it cannot take, of the index or of a ref, "Unable to create '<path>.lock': <reason>",
+# and does not escape a quote inside the path.
+_GIT_ERROR_LOCK_FILE_PATH = re.compile(r"Unable to create '(.*\.lock)': ")
 
 
-def lock_file_named_by_git_error_wait_then_rerun_instruction(then_run, lock_file_path=None):
-    """The instruction, without its condition, for a git error that names a lock file.
+def git_error_names_a_lock_file_wait_then_rerun_line_or_none(git_error, then_run):
+    """The line for a git error that names a lock file, or None when git_error names none.
 
-    git fails at once on another process's index.lock instead of waiting for it.
-    Given lock_file_path, the wait command names it; otherwise the reader fills it in.
+    git fails at once on another process's lock file instead of waiting for it.
     """
-    if lock_file_path is None:
-        wait = (f"`{WAIT_UP_TO_ONE_MINUTE_FOR_LOCK_FILE_TO_GO_COMMAND}` with {LOCK_FILE_PATH_PLACEHOLDER} "
-                f"replaced by the path git's error names, without the quotes git puts around it")
-    else:
-        wait = "`" + WAIT_UP_TO_ONE_MINUTE_FOR_LOCK_FILE_TO_GO_COMMAND.replace(
-            f'"{LOCK_FILE_PATH_PLACEHOLDER}"', shlex.quote(lock_file_path)) + "`"
-    return (f"do not delete the lock file yourself, because a git command still running may hold it; "
-            f"wait up to one minute for git to remove it by running {wait} "
-            f"(Claude Code refuses a plain `sleep 60`), "
-            f"then run {then_run}, whether or not the lock file is gone")
+    lock_file = _GIT_ERROR_LOCK_FILE_PATH.search(git_error)
+    if lock_file is None:
+        return None
+    path = lock_file.group(1)
+    # Claude Code refuses a Bash call that starts with a long plain sleep, but runs this bounded poll.
+    wait = f"i=0; while [ -e {shlex.quote(path)} ] && [ $i -lt 30 ]; do sleep 2; i=$((i+1)); done"
+    return (f"Git's error names the lock file {path}: do not delete the lock file yourself, "
+            f"because a git command still running may hold it; wait up to one minute for git to "
+            f"remove it by running `{wait}` (Claude Code refuses a plain `sleep 60`), "
+            f"then run {then_run}, whether or not the lock file is gone.")
 
 
 def agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
@@ -82,50 +79,36 @@ def agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
             f"{which_lines_to_quote_in_the_report}.")
 
 
-# git words a lock it cannot take, of the index or of a ref, "Unable to create '<path>.lock': <reason>",
-# and does not escape a quote inside the path.
-_GIT_ERROR_LOCK_FILE_PATH = re.compile(r"Unable to create '(.*\.lock)': ")
-
-
 def git_failure_next_step_lines(rerun, program=None, *,
-                                git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=None,
+                                git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path,
                                 text_the_failure_line_contains=None,
                                 rerun_fails_when=None, which_lines_to_quote_in_the_report=None,
                                 read_by_a_subagent=True, next_step_to_skip_when_the_rerun_fails_too=None):
     """The lines for a git command that failed in a program the agent ran.
 
+    rerun is the command the agent runs again, written out in full; the lines put it between
+    backticks, so the words after it are not read as more arguments.
     Pass program, the name the misspelt-name line gives the program, only when
     the git command that failed ran on a branch, commit or path the agent gave
     on the command line and the program had not already checked it: the
     misspelt-name line is included exactly when program is given.
-    Pass git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path,
-    the line of git's error the message prints, to give the lock-file step only
-    when that line names a lock file; without it, the lines leave that check to
-    the reader.
+    git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path is
+    git's error as the message prints it; the lines give the lock-file step
+    exactly when it names a lock file.
     """
-    error_line = git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path
-    lock_file = None if error_line is None else _GIT_ERROR_LOCK_FILE_PATH.search(error_line)
+    lock_file_line = git_error_names_a_lock_file_wait_then_rerun_line_or_none(
+        git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path, f"exactly `{rerun}`")
     phrase_a_stop_message_uses_for_the_command_the_agent_reruns = "the rerun"
-    if lock_file is not None:
-        lines = [f"Git's error names the lock file {lock_file.group(1)}: "
-                 f"{lock_file_named_by_git_error_wait_then_rerun_instruction(f'exactly {rerun}', lock_file.group(1))}."]
+    if lock_file_line is not None:
+        lines = [lock_file_line]
+    elif program is not None:
+        lines = [f"If a branch, commit or path you gave {program} on its command line is "
+                 f"misspelt or does not exist, correct it in your command, then run the "
+                 f"corrected command.",
+                 f"Otherwise, run exactly `{rerun}` once more."]
+        phrase_a_stop_message_uses_for_the_command_the_agent_reruns = "the rerun, or the corrected command,"
     else:
-        lines = [] if error_line is not None else [
-            f"{GIT_ERROR_NAMES_A_LOCK_FILE_LINE_OPENING_IF_CONDITION_CLAUSE_WITHOUT_ITS_INSTRUCTION_IN_TOOL_MESSAGE_TO_AGENT}, "
-            f"such as .git/index.lock, "
-            f"{lock_file_named_by_git_error_wait_then_rerun_instruction(f'exactly {rerun}')}."]
-        if program is not None:
-            lines.append(f"If a branch, commit or path you gave {program} on its command line is "
-                         f"misspelt or does not exist, correct it in your command, then run the "
-                         f"corrected command.")
-            phrase_a_stop_message_uses_for_the_command_the_agent_reruns = "the rerun, or the corrected command,"
-        if error_line is not None:
-            lines.append(f"Otherwise, run exactly {rerun} once more." if program is not None
-                         else f"Run exactly {rerun} once more.")
-        elif program is not None:
-            lines.append(f"If none of the cases above applies, run exactly {rerun} once more.")
-        else:
-            lines.append(f"If git's error names no lock file, run exactly {rerun} once more.")
+        lines = [f"Run exactly `{rerun}` once more."]
     lines.append(agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
         text_the_failure_line_contains, rerun_fails_when=rerun_fails_when,
         which_lines_to_quote_in_the_report=which_lines_to_quote_in_the_report,
