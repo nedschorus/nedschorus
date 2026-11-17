@@ -27,7 +27,7 @@ Every message says points 1 to 3. Point 4 applies when the message gives more th
 4. **The condition for each instruction**, when the message gives more than one. Put each instruction on its own line with the condition it applies under. Every "or" between two instructions says when to take each.
 5. **What to do from now on**, when the agent can make the same mistake again. The fix for this one case teaches little about the next; one line on the behavior wanted next time does. Leave this point out for a fault the agent did not cause and cannot avoid, such as a network failure.
 
-When the program finds a problem after the agent has acted, as a PostToolUse or Stop hook does under detect-inform-correct, point 3 says what the agent does in each of these cases that applies. When the first case holds together with another, the agent confirms the problem first, and acts on the other case only when the problem is real. When the program cannot tell which case applies, point 3 gives each case with its condition.
+When the program finds a problem after the agent has acted, as a PostToolUse or Stop hook does under detect-instruct-correct, point 3 says what the agent does in each of these cases that applies. When the first case holds together with another, the agent confirms the problem first, and acts on the other case only when the problem is real. When the program cannot tell which case applies, point 3 gives each case with its condition.
 
 - The check can give a false positive, as a check that guesses from a pattern can: point 3 says how the agent confirms the problem, and that the agent leaves the work as it is when the check was wrong.
 - The program already undid what the agent did: point 3 says so, and how the agent redoes the work correctly.
