@@ -31,7 +31,7 @@ its author. The search runs `git log -p` without -m or --cc, which prints a merg
 so a merge commit is never the commit that adds an ID: a line a merge brings in is found in the commit on
 the merged branch that added it, and an ID that a merge commit's own change added, such as a conflict
 resolution, is found in no commit's diff, so its rule must be listed in the .json file named under
-"Who wrote the rule", and every firing of it is counted, as it has no date.
+"Who wrote the rule", and every firing of it is counted, whatever its date.
 
 Who wrote the rule: two kinds of rule are listed in
 nc-systems/general-tools/claude-code-registered-hook-rule-id-to-origin-commit-pr-and-agent-seat-of-rules-whose-message-predates-its-id.json,
@@ -44,14 +44,13 @@ after the message was first written. The second kind are rules whose ID a merge 
 added, as above, as the merge's author need not be who wrote the rule. Any other rule was written with
 its ID, so the commit that added the ID wrote the rule, and the pull request and agent-seat come from
 that commit:
-- A commit that is itself on this checkout's first-parent history, rather than one a merge commit
-  brought in from another branch: when its subject ends
-  `(#<number>)`, it is a pull request squash-merged on GitHub: the pull request is that number, and the
-  agent-seat is not known, as the commit carries the name of whoever merged it; the report says to read
-  the pull request's description. Otherwise it was committed straight to main: no pull request, and the
-  agent-seat is the commit's author name.
-- Any other commit was brought by the oldest merge on the first-parent history that holds it, the merge
-  that first brought it onto that history: the pull request is read
+- A commit on this checkout's first-parent history whose subject ends `(#<number>)` is a pull request
+  squash-merged on GitHub: the pull request is that number, and the agent-seat is not known, as the
+  commit carries the name of whoever merged it; the report says to read the pull request's description.
+- A commit on the first-parent history whose subject does not end so was committed straight to main: no
+  pull request, and the agent-seat is the commit's author name.
+- A commit a merge commit brought in from another branch was brought by the oldest merge on the
+  first-parent history that holds it: the pull request is read
   from that merge's subject `Merge pull request #<number> from ...`, and the agent-seat is the commit's
   author name, the name that agent-seat commits under.
 
@@ -79,7 +78,7 @@ still written, and says which, since its never-seen list may then be wrong; when
 writes an ID that no commit's diff in `git log -p` adds and whose rule the .json file named under "Who
 wrote the rule" does not list, so who wrote the rule cannot be found: the report is still written, and a
 FAILED line on stderr names each such ID; or when the report could not be written, which is printed
-only, on stderr, to the cron log above. 2 for a bad command line.
+on stderr. 2 for a bad command line.
 
 What to do about each problem is printed on stderr after the problem lines: one block after all the
 `not read:` lines, covering each kind of `not read:` line; and one block after all the FAILED lines that
@@ -415,7 +414,9 @@ def unknown_origin_case(repository, rule, branch):
         return "detached"
     if branch == "main":
         return "main"
-    if git(repository, "for-each-ref", "--format=%(refname)", f"refs/remotes/origin/{branch}").strip():
+    # for-each-ref matches whole path components, so origin/<branch>/<more> is listed too.
+    remote = f"refs/remotes/origin/{branch}"
+    if remote in git(repository, "for-each-ref", "--format=%(refname)", remote).splitlines():
         return "pushed"
     return "unpushed"
 
@@ -423,12 +424,23 @@ def unknown_origin_case(repository, rule, branch):
 SETTINGS_PATH = ".claude/settings.json"
 
 
-def files_of_uncommitted_rule_edit(repository, hook):
-    """The hook and, when it too differs from HEAD, .claude/settings.json: a new rule's registration is
-    part of the same edit, and a move that leaves it behind lands a rule nothing runs."""
-    status = git(repository, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", hook, SETTINGS_PATH)
-    changed = {entry[3:] for entry in status.split("\0") if entry}
-    return [path for path in (hook, SETTINGS_PATH) if path in changed]
+def uncommitted_rule_edit(repository, hook):
+    """(the paths among the hook and .claude/settings.json that differ from HEAD, the path the hook was
+    renamed from in the index or None). A new rule's registration in settings.json is part of the same
+    edit, and a move that leaves it behind merges a rule nothing runs."""
+    # Not limited to the two paths: a pathspec hides the source of a rename and shows its target as added.
+    fields = git(repository, "status", "--porcelain=v1", "-z", "--untracked-files=all").split("\0")
+    changed, renamed_from, index = set(), None, 0
+    while index < len(fields):
+        entry, index = fields[index], index + 1
+        if not entry:
+            continue
+        changed.add(entry[3:])
+        if entry[0] in "RC":
+            if entry[3:] == hook and entry[0] == "R":
+                renamed_from = fields[index]
+            index += 1
+    return [path for path in (hook, SETTINGS_PATH) if path in changed], renamed_from
 
 
 def undo_of_uncommitted_edit(repository, path):
@@ -452,13 +464,17 @@ def unknown_origin_next_steps(repository, rules, machine, rerun_command):
         cases = []
         for rule in rules:
             case = unknown_origin_case(repository, rule, branch)
-            files = [] if case == "merge" else files_of_uncommitted_rule_edit(repository, rule["hook"])
-            undo = " && ".join(undo_of_uncommitted_edit(repository, path) for path in files) if case == "main" else ""
-            cases.append((rule, case, files, undo))
+            files, renamed_from = (([], None) if case == "merge"
+                                   else uncommitted_rule_edit(repository, rule["hook"]))
+            # settings.json is left out: restoring it whole would drop other uncommitted edits to it.
+            undo = (" && ".join(undo_of_uncommitted_edit(repository, path)
+                                for path in [rule["hook"], *([renamed_from] if renamed_from else [])])
+                    if case == "main" else "")
+            cases.append((rule, case, files, renamed_from, undo))
     except GitLookupFailed as error:
         return (lines[0] + f"\nNot found: which case holds could not be read, because {error}. Run that git "
                 f"command, as it is written there, on {machine}, to see why it failed, and fix that; {rerun}")
-    for rule, case, files, undo in cases:
+    for rule, case, files, renamed_from, undo in cases:
         hook, rule_id = rule["hook"], rule["id"]
         named = " and ".join(files) if files else hook
         if case == "merge":
@@ -473,14 +489,23 @@ def unknown_origin_next_steps(repository, rules, machine, rerun_command):
                     f"first run of this program after that change merges into main and reaches this checkout says "
                     f"who wrote the rule.")
         elif case == "main":
+            registration = f"the changes that register {hook}" + (f" in place of {renamed_from}" if renamed_from else "")
             step = (f"the ID is in an edit to {named} not committed in this checkout, which is on main. If the edit "
                     f"is your work, move the edit to a topic branch: make a worktree for the branch with "
-                    f"`python3 {repository}/scripts/agent-seat-worktree-create-with-owner-file.py <topic branch "
-                    f"name>`, copy {' and '.join(f'{repository}/{path}' for path in files)} to the same path in "
-                    f"that worktree, commit them there and open a pull request, then undo the edit here with "
-                    f"`{undo}`. The first run of this program "
-                    f"after the pull request merges into main and main reaches this checkout says who wrote the "
-                    f"rule.\n  If the edit is not your work, leave it to whoever is making it.")
+                    f"`cd {repository} && python3 scripts/agent-seat-worktree-create-with-owner-file.py <topic "
+                    f"branch name>`, copy {repository}/{hook} to the same path in that worktree")
+            if renamed_from:
+                step += f", delete {renamed_from} there, as the edit renamed it to {hook}"
+            if SETTINGS_PATH in files:
+                step += (f", and make there, in {SETTINGS_PATH}, {registration}, which `git -C {repository} diff "
+                         f"HEAD -- {SETTINGS_PATH}` shows; commit there and open a pull request. Then undo the edit "
+                         f"here: run `{undo}`, and undo by hand those changes to {repository}/{SETTINGS_PATH}, "
+                         f"keeping its other uncommitted changes, which may be another edit's")
+            else:
+                step += f", commit there and open a pull request, then undo the edit here with `{undo}`"
+            step += (f". The first run of this program after the pull request merges into main and main reaches "
+                     f"this checkout says who wrote the rule.\n  If the edit is not your work, leave it to whoever "
+                     f"is making it.")
         elif case == "detached":
             step = (f"the ID is in an edit to {named} not committed in this checkout, whose HEAD is detached, so a "
                     f"commit made here would be on no branch. If the edit is your work, put it on a branch with "
@@ -516,11 +541,16 @@ def main(argv=None, now=None):
                              "copies in the log-store")
     parser.add_argument("--report-directory", type=Path, default=DEFAULT_REPORT_DIRECTORY,
                         help=f"where the report goes; default: {DEFAULT_REPORT_DIRECTORY}")
-    argv = sys.argv[1:] if argv is None else argv
-    arguments = parser.parse_args(argv)
-    rerun_command = "python3 " + shlex.join([str(Path(__file__).resolve()), *argv])
+    arguments = parser.parse_args(sys.argv[1:] if argv is None else argv)
+    # Absolute, so the commands printed below work from any directory.
+    arguments.report_directory = arguments.report_directory.absolute()
+    directories = [directory.absolute() for directory in arguments.transcript_directory or []]
+    rerun_arguments = [part for directory in directories for part in ("--transcript-directory", str(directory))]
+    if arguments.report_directory != DEFAULT_REPORT_DIRECTORY.absolute():
+        rerun_arguments += ["--report-directory", str(arguments.report_directory)]
+    rerun_command = "python3 " + shlex.join([str(Path(__file__).resolve()), *rerun_arguments])
     machine = socket.gethostname()
-    directories = arguments.transcript_directory or list(DEFAULT_TRANSCRIPT_DIRECTORIES)
+    directories = directories or list(DEFAULT_TRANSCRIPT_DIRECTORIES)
     today = (now or datetime.datetime.now(datetime.timezone.utc)).date().isoformat()
 
     rules = registered_rules(REPOSITORY)
