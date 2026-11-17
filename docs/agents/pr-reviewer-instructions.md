@@ -28,4 +28,4 @@ A defect is a flaw in a program, or in agent-instructions, that makes or would m
 
 ## What is not a finding
 
-- A missing test for a failure of a critical component, as `docs/nedschorus-wiki/nedschorus-project-architecture-overview.md` lists them, such as git killed by a signal or GitHub not answering in the middle of a command. The project stops and waits for such a part to work again, so code needs no test for it.
+- A missing test for code that only reports that a critical component is unavailable, as the section "When a critical component fails" of `docs/nedschorus-wiki/nedschorus-project-architecture-overview.md` defines it, such as git killed by a signal or GitHub not answering in the middle of a command.
