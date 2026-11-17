@@ -509,6 +509,15 @@ def test_a_closing_line_between_backticks_is_sent_back_and_the_bare_line_passes(
     check_silent("the same closing line without its link or backticks passes", failed.run())
 
 
+def test_a_plain_text_line_that_reads_as_a_closing_line_only_once_rendered_is_not_taken_for_one_between_backticks():
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.")
+    # The rendered text of this one plain-text token is the closing line; the line as typed is not.
+    case.reply("Recorded.\n\n" + closing(2, link=None).replace(" · A approve", " &middot; A approve"))
+    check_reminded("a plain-text line that is a closing line only once rendered is sent back as no closing line",
+                   case.run(), "no closing line for `Item 2 of 9` ends the reply")
+
+
 def test_the_no_decision_line_is_the_walk_skills():
     skill = (Path(__file__).resolve().parents[4] / ".claude" / "skills" / "walk-me-through" / "SKILL.md").read_text()
     check("SKILL.md ends a no-decision sub-step with the line the hook reads",
