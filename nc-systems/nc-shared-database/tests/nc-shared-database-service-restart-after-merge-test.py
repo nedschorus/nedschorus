@@ -164,7 +164,7 @@ with tempfile.TemporaryDirectory() as scratch:
           (code, errors))
     code, calls, printed, errors = run(fail=True)
     check("a failed restart prints systemctl's error and exits 1",
-          code == 1 and "systemctl said: Failed to restart nc-shared-database-service."
+          code == 1 and "systemctl said: Failed to restart nn-shared-database-service."
           "service: Unit nn-shared-database-service.service not found" in errors
           and "exited 5" in errors, (code, errors))
 

@@ -253,7 +253,8 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # seat_of
     for list_id, expected in (("nedsnodes-reboot-test-tasks", "reboot-test"),
-                              ("nedschorus-merge-lane-2", "merge-lane-2"),
+                              ("nedsnodes-merge-lane-2", "merge-lane-2"),
+                              (reader.TASK_LIST_ID_PREFIX_BEFORE_PROJECT_RENAME + "merge-lane-2", "merge-lane-2"),
                               ("merge-lane-2-tasks", "merge-lane-2"),
                               ("some-other-list", "some-other-list"),
                               ("nedsnodes--tasks", "nedsnodes--tasks")):

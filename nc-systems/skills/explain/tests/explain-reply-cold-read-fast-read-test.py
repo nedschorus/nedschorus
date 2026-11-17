@@ -427,10 +427,10 @@ def main() -> int:
               misshapen_logged is not None and re.fullmatch(
                   r"explain-reply-draft-no-seat-\d{6}\.md", misshapen_logged["target_name"]),
               str(misshapen_logged))
-        # A misshapen id shorter than "nedsnodes-" and "-tasks" together, 17
+        # A misshapen id shorter than "nedsnodes-" and "-tasks" together, 16
         # characters, slices to nothing and reads no-seat even with the shape
-        # check gone. One of 18 or more characters does not: without the
-        # check, this one would name the seat "task-l".
+        # check gone. One of 17 or more characters does not: without the
+        # check, this one would name the seat "-task-l".
         _, long_misshapen_logged = run_program(scratch, success_plan, GOOD_INPUT,
                                                seat_task_list_id="some-other-task-list-id")
         check("a long task-list id of another shape is not sliced into a seat's name",
