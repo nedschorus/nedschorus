@@ -693,7 +693,8 @@ as a file, and a directory pathspec matches a submodule but not a file of the
 same name. So when the checkout's index, or the commit given to
 --only-suites-whose-recorded-inputs-changed-since, holds any submodule, even
 one the call's pathspecs do not match, a call being recorded is tied to the
-whole list, and a recorded call selects its suite. Any other git ls-files
+whole list, and a call already recorded as tied only through its pathspecs
+selects its suite. Any other git ls-files
 call, or one git could not match when recorded, stays tied to the whole list.
 
 Anything else stays git on the checkout and follows the rules below,
