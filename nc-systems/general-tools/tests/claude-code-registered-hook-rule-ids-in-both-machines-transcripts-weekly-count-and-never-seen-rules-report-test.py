@@ -526,7 +526,7 @@ with tempfile.TemporaryDirectory() as scratch:
           "with the other hook's registration, to be edited by hand",
           status == 1 and only_case(errors, "main") and undone
           and f"copy {repository}/hooks/new-hook.py to the same path" in new_hook_step
-          and "the changes that register hooks/new-hook.py" in new_hook_step
+          and "any changes that register hooks/new-hook.py" in new_hook_step
           and "other-new-hook.py" not in new_hook_step
           and not new_hook.exists() and other_new_hook.exists()
           and settings_file.read_text(encoding="utf-8") == both_registered, (errors, git(repository, "status", "--porcelain")))
@@ -546,8 +546,8 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a hook staged as a rename, on main, gets a step that deletes the rename's source in the topic "
           "worktree, and an undo that, run as printed, puts back the source and removes the renamed hook",
           status == 1 and only_case(errors, "main") and undone
-          and "run `git rm -q -- hooks/guard-hook.py` there" in renamed_step
-          and "the changes that register hooks/moved-hook.py in place of hooks/guard-hook.py" in renamed_step
+          and "run `git -C <that worktree's path> rm -q -- hooks/guard-hook.py`" in renamed_step
+          and "any changes that register hooks/moved-hook.py in place of hooks/guard-hook.py" in renamed_step
           and hook_file.read_text(encoding="utf-8") == committed_hook and not moved_hook.exists()
           and git(repository, "status", "--porcelain").strip() == "M  .claude/settings.json",
           (renamed_step, git(repository, "status", "--porcelain")))

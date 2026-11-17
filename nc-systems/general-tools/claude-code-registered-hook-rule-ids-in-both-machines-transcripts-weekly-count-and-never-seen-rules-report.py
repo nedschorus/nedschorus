@@ -489,14 +489,15 @@ def unknown_origin_next_steps(repository, rules, machine, rerun_command):
                     f"first run of this program after that change merges into main and reaches this checkout says "
                     f"who wrote the rule.")
         elif case == "main":
-            registration = f"the changes that register {hook}" + (f" in place of {renamed_from}" if renamed_from else "")
+            registration = f"any changes that register {hook}" + (f" in place of {renamed_from}" if renamed_from else "")
             step = (f"the ID is in an edit to {named} not committed in this checkout, which is on main. If the edit "
                     f"is your work, move the edit to a topic branch: make a worktree for the branch with "
                     f"`cd {repository} && python3 scripts/agent-seat-worktree-create-with-owner-file.py <topic "
                     f"branch name>`, which prints the worktree's path; copy {repository}/{hook} to the same path "
                     f"in that worktree")
             if renamed_from:
-                step += f", run `git rm -q -- {renamed_from}` there, as the edit renamed it to {hook}"
+                step += (f", run `git -C <that worktree's path> rm -q -- {renamed_from}`, as the edit renamed it to "
+                         f"{hook}")
             if SETTINGS_PATH in files:
                 step += (f", and make there, in {SETTINGS_PATH}, {registration}, which `git -C {repository} diff "
                          f"HEAD -- {SETTINGS_PATH}` shows; commit there and open a pull request. Then undo the edit "
