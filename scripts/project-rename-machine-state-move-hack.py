@@ -20,7 +20,7 @@ Usage:
   7. copies ~/.claude.json to a backup beside it, then rewrites every key and string value in it that holds the old checkout, worktrees-directory or log-store path, or `nedschorus/nedschorus`; and copies ~/.ssh/authorized_keys to a backup beside it, then rewrites those paths inside each `command="..."` option and nowhere else on the line, keeping the file's permissions;
   8. on ned-box only, renames each systemd user unit entry named `nc-*`, in the unit directory and its *.wants directories, to `nn-*`; a symlink is re-made pointing at the new checkout path with each `nc-` directory and file name in it changed to `nn-`; then runs `systemctl --user daemon-reload`; it starts nothing;
   9. leaves symlinks at the old reference-checkout path, the old ~/.config/nedschorus path and, on ned-box, the old log-store path, each pointing at its new sibling by a relative name.
---rollback reverses the journal's changes in reverse order, then runs `git worktree repair` with the old paths and `systemctl --user daemon-reload` when --apply ran them, restores ~/.claude.json and ~/.ssh/authorized_keys from their backups and deletes the backups, and renames the journal to <journal>.rolled-back-<time>. A change the journal records but that was never made, because --apply stopped first, is skipped.
+--rollback reverses the journal's changes in reverse order, then runs `git worktree repair` with the old paths and `systemctl --user daemon-reload` when --apply ran them, restores ~/.claude.json and ~/.ssh/authorized_keys from their backups and deletes the backups (a backup is restored only when its SHA-256 matches the one --apply journaled once the copy was complete; a file whose backup never got that record was never rewritten, so it is left as it is, and any partial backup is left in place and named), and renames the journal to <journal>.rolled-back-<time>. A change the journal records but that was never made, because --apply stopped first, is skipped.
 
 HARM IT CAN CAUSE. --apply leaves symlinks at the old reference-checkout, ~/.config/nedschorus and (ned-box) log-store paths, so old code keeps working against the new directories until the symlinks are removed by hand. It rewrites ~/.ssh/authorized_keys, after copying it to ~/.ssh/authorized_keys.before-project-rename-<time>; a mistake there would refuse the forced command ned-box's key runs on the Mac, and the backup or --rollback restores it. It rewrites ~/.claude.json, after copying it to ~/.claude.json.before-project-rename-<time>; a Claude Code process that starts or exits during the rewrite can overwrite the rewrite, which is why --apply refuses while any process named `claude` runs. Every directory is moved by a rename on one filesystem, so no directory's contents are copied; the only copies made are the two backups, and the only files deleted are the step-8 links, which are re-made under their new names, and the backups, which --rollback deletes after restoring from them. Programs holding the old paths (a supervisor, a cron job installed later from the old path) fail until restarted from the new ones.
 
@@ -33,6 +33,7 @@ Each path root is a flag, and the commands it runs to read processes, the cronta
 import argparse
 import datetime
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -189,7 +190,7 @@ def guarded_store_ops(layout, log_store):
             continue
         new_top = tree / str(new_root).lstrip(os.sep)
         ops.append(rename_op(3, top, new_top))
-        for directory, subdirectories, _ in os.walk(top, topdown=False):
+        for directory, subdirectories, _ in os.walk(top, topdown=False, onerror=unreadable_store_directory):
             relative = Path(directory).relative_to(top)
             for name in subdirectories:
                 target_name = inner_store_name(Path(directory), name)
@@ -197,6 +198,12 @@ def guarded_store_ops(layout, log_store):
                     ops.append(rename_op(3, new_top / relative / name, new_top / relative / target_name,
                                          exists_now=top / relative / target_name))
     return ops
+
+
+def unreadable_store_directory(error):
+    raise StepFailed(f"cannot read {error.filename} in the guarded-file versions-and-approvals store, "
+                     f"so its nested renames cannot be planned: {error.strerror}. "
+                     "Make it readable by this user, then run this program again.")
 
 
 def inner_store_name(parent, name):
@@ -552,6 +559,10 @@ def execute(layout, op):
         git_must(["-C", op["checkout"], "config", "--local", "core.hooksPath", op["new_value"]], "setting core.hooksPath")
     elif kind == "rewrite-file":
         shutil.copy2(op["path"], op["backup"])
+        digest = sha256_of(op["path"])
+        if sha256_of(op["backup"]) != digest:
+            raise StepFailed(f"the backup {op['backup']} differs from {op['path']}, so {op['path']} was not rewritten")
+        journal_append(layout.journal, {"kind": BACKUP_COMPLETE, "backup": op["backup"], "sha256": digest})
         write_atomically(Path(op["path"]), rewritten_file(layout, op["format"], Path(op["path"]).read_text()))
     elif kind == "relink":
         os.symlink(op["to_target"], op["to"])
@@ -560,6 +571,10 @@ def execute(layout, op):
         systemctl_must(["daemon-reload"])
     elif kind == "symlink":
         os.symlink(op["target"], op["path"])
+
+
+def sha256_of(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def write_atomically(path, text):
@@ -602,17 +617,19 @@ def apply(layout):
 
 
 UNDONE = "undone"
+BACKUP_COMPLETE = "backup-complete"
 
 
 def read_journal(journal):
-    """The journaled changes, and the indexes of those a --rollback already reversed."""
+    """The journaled changes, the indexes of those a --rollback already reversed, and each complete backup's SHA-256."""
     lines = [json.loads(line) for line in journal.read_text().splitlines() if line.strip()]
-    changes = [line for line in lines if line["kind"] != UNDONE]
+    changes = [line for line in lines if line["kind"] not in (UNDONE, BACKUP_COMPLETE)]
     undone = {line["index"] for line in lines if line["kind"] == UNDONE}
-    return changes, undone
+    complete_backups = {line["backup"]: line["sha256"] for line in lines if line["kind"] == BACKUP_COMPLETE}
+    return changes, undone, complete_backups
 
 
-def undo(op, deferred):
+def undo(op, deferred, complete_backups):
     """Reverse one journal entry; an entry whose change was never made is left alone."""
     kind = op["kind"]
     if kind == "rename":
@@ -631,7 +648,15 @@ def undo(op, deferred):
         if not os.path.lexists(op["from"]):
             os.symlink(op["from_target"], op["from"])
     elif kind == "rewrite-file":
-        if os.path.exists(op["backup"]):
+        recorded = complete_backups.get(op["backup"])
+        if recorded is None:
+            if os.path.lexists(op["backup"]):
+                print(f"Left as it is: {op['path']}, which --apply never rewrote; "
+                      f"the partial backup {op['backup']} is left too, for you to delete.")
+        elif os.path.exists(op["backup"]):
+            if sha256_of(op["backup"]) != recorded:
+                raise StepFailed(f"the backup {op['backup']} no longer matches the SHA-256 --apply recorded, "
+                                 f"so it is not restored over {op['path']}. Compare the two by hand.")
             shutil.copy2(op["backup"], op["path"])
             os.unlink(op["backup"])
     elif kind == "hooks-path":
@@ -646,14 +671,14 @@ def rollback(layout):
     if not layout.journal.exists():
         print(f"{PROGRAM}: nothing to roll back: no journal at {layout.journal}.")
         return EXIT_REFUSED_OR_FAILED
-    entries, undone = read_journal(layout.journal)
+    entries, undone, complete_backups = read_journal(layout.journal)
     deferred = []
     try:
         for index in reversed(range(len(entries))):
             if index in undone:
                 continue
             before = len(deferred)
-            undo(entries[index], deferred)
+            undo(entries[index], deferred, complete_backups)
             if len(deferred) == before:
                 journal_append(layout.journal, {"kind": UNDONE, "index": index})
             else:
@@ -701,7 +726,7 @@ def check(layout):
         if len(step_ops) > CHECK_EXAMPLES_SHOWN:
             print(f"    and {len(step_ops) - CHECK_EXAMPLES_SHOWN} more")
     if layout.journal.exists():
-        entries, undone = read_journal(layout.journal)
+        entries, undone, _ = read_journal(layout.journal)
         print(f"\nJournal {layout.journal}: {len(entries)} entr(ies), {len(undone)} already reversed by --rollback.")
     else:
         print(f"\nJournal {layout.journal}: none.")

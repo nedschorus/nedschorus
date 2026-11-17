@@ -489,6 +489,7 @@ def run_mid_run_failure_cases():
     try:
         before = fixture.snapshot()
         tasks = fixture.claude / "tasks"
+        tasks_mode = stat.S_IMODE(os.stat(tasks).st_mode)
         os.chmod(tasks, 0o555)
         code, output = fixture.run("--apply")
         expect("a rename failing at step 5 stops --apply with the step and the journal named",
@@ -496,7 +497,7 @@ def run_mid_run_failure_cases():
         entries = [json.loads(line) for line in fixture.journal.read_text().splitlines()]
         expect("the journal records the failed change before it was tried", entries[-1]["step"] == 5, str(entries[-1]))
         code, output = fixture.run("--rollback")
-        os.chmod(tasks, 0o755)
+        os.chmod(tasks, tasks_mode)
         after = fixture.snapshot()
         expect("--rollback after a step-5 failure restores the original tree exactly",
                code == 0 and after == before, output + snapshot_difference(before, after))
@@ -578,9 +579,10 @@ def run_rollback_git_failure_case():
         before = fixture.snapshot()
         code, output = fixture.run("--apply")
         git_dir = fixture.home / "Projects" / "nedsnodes" / ".git"
+        git_dir_mode = stat.S_IMODE(os.stat(git_dir).st_mode)
         os.chmod(git_dir, 0o555)
         code, output = fixture.run("--rollback")
-        os.chmod(git_dir, 0o755)
+        os.chmod(git_dir, git_dir_mode)
         expect("--rollback reports a git config that fails, keeping the journal",
                code == 1 and "restoring core.hooksPath" in output and fixture.journal.exists(), output)
         code, output = fixture.run("--rollback")
@@ -588,6 +590,59 @@ def run_rollback_git_failure_case():
         expect("a second --rollback after the git failure restores the original tree exactly",
                code == 0 and after == before, output + snapshot_difference(before, after))
     finally:
+        fixture.cleanup()
+
+
+def run_partial_backup_case():
+    fixture = Fixture("ned-box")
+    ssh = fixture.authorized_keys.parent
+    ssh_mode = stat.S_IMODE(os.stat(ssh).st_mode)
+    try:
+        original = fixture.authorized_keys.read_bytes()
+        os.chmod(ssh, 0o500)
+        code, output = fixture.run("--apply")
+        expect("a backup that cannot be made stops --apply at step 7", code == 1 and "FAILED at step 7 (rewrite-file)" in output, output)
+        entries = [json.loads(line) for line in fixture.journal.read_text().splitlines()]
+        backup = Path(entries[-1]["backup"])
+        os.chmod(ssh, ssh_mode)
+        backup.write_bytes(original[:10])
+        code, output = fixture.run("--rollback")
+        expect("--rollback leaves a file whose backup was never recorded complete, naming the partial backup",
+               code == 0 and fixture.authorized_keys.read_bytes() == original and backup.exists()
+               and "partial backup" in output, output)
+    finally:
+        os.chmod(ssh, ssh_mode)
+        fixture.cleanup()
+
+    fixture = Fixture("ned-box")
+    try:
+        code, output = fixture.run("--apply")
+        entries = [json.loads(line) for line in fixture.journal.read_text().splitlines()]
+        backup = Path(next(entry["backup"] for entry in entries
+                           if entry["kind"] == "rewrite-file" and entry["path"] == str(fixture.claude_json)))
+        rewritten = fixture.claude_json.read_bytes()
+        backup.write_text("{}\n")
+        code, output = fixture.run("--rollback")
+        expect("--rollback refuses a backup that no longer matches its recorded SHA-256, keeping the journal",
+               code == 1 and "no longer matches" in output and fixture.claude_json.read_bytes() == rewritten
+               and fixture.journal.exists(), output)
+    finally:
+        fixture.cleanup()
+
+
+def run_unreadable_store_directory_case():
+    fixture = Fixture("ned-box")
+    unreadable = fixture.store / str(fixture.checkout).lstrip("/") / "nc-systems"
+    mode = stat.S_IMODE(os.stat(unreadable).st_mode)
+    try:
+        os.chmod(unreadable, 0)
+        before = fixture.snapshot()
+        code, output = fixture.run("--apply")
+        expect("a store directory the walk cannot read refuses --apply before any change",
+               code == 1 and "REFUSED, nothing changed" in output and "cannot read" in output
+               and str(unreadable) in output and fixture.snapshot() == before, output)
+    finally:
+        os.chmod(unreadable, mode)
         fixture.cleanup()
 
 
@@ -613,6 +668,8 @@ if __name__ == "__main__":
     run_dangling_unit_warning_case()
     run_check_planning_failure_case()
     run_rollback_git_failure_case()
+    run_partial_backup_case()
+    run_unreadable_store_directory_case()
     print()
     if failures:
         print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
