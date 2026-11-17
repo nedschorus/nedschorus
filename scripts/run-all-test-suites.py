@@ -1822,8 +1822,8 @@ def suites_listed_by_git(top):
     if listed.returncode != 0:
         raise CouldNotRun(
             f"{PROGRAM}: not run — git ls-files failed in {top}: "
-            f"{listed.stderr.strip()}\n"
-            f"Fix what git reports, then run this again.")
+            f"{first_line_of_error(listed) or 'git printed no error'}\n"
+            + git_failure_next_step_lines(Path(__file__).name))
     suites = [path for path in listed.stdout.split("\0") if path]
     if not suites:
         raise CouldNotRun(
@@ -1888,7 +1888,7 @@ def commit_and_state(top):
         commit = "no commit"
     else:
         commit = (f"commit unknown (git rev-parse HEAD exited {head.returncode}: "
-                  f"{first_line_of_error(head)})")
+                  f"{first_line_of_error(head) or 'git printed no error'})")
     changed = git(top, "status", "--porcelain", "--untracked-files=no")
     if changed.returncode != 0:
         state = "tracked-file state unknown"
@@ -2859,7 +2859,7 @@ def branch_of_checkout(top):
     if named.returncode == 1:
         return "HEAD"
     return (f"branch unknown (git symbolic-ref HEAD exited {named.returncode}: "
-            f"{first_line_of_error(named)})")
+            f"{first_line_of_error(named) or 'git printed no error'})")
 
 
 def lock_explicit_log_directory(log_dir):
@@ -3868,8 +3868,9 @@ def checkout_files(top):
     listed = git(top, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
     if listed.returncode != 0:
         raise CouldNotRun(
-            f"{PROGRAM}: not run — git ls-files failed in {top}: {listed.stderr.strip()}\n"
-            f"Fix what git reports, then run this again.")
+            f"{PROGRAM}: not run — git ls-files failed in {top}: "
+            f"{first_line_of_error(listed) or 'git printed no error'}\n"
+            + git_failure_next_step_lines(Path(__file__).name))
     return {path for path in listed.stdout.split("\0")
             if path and os.path.lexists(top / path)}
 
@@ -3879,7 +3880,8 @@ def files_at_commit(top, commit):
     if listed.returncode != 0:
         raise CouldNotRun(
             f"{PROGRAM}: not run — git ls-tree {commit} failed in {top}: "
-            f"{listed.stderr.strip()}\nFix what git reports, then run this again.")
+            f"{first_line_of_error(listed) or 'git printed no error'}\n"
+            + git_failure_next_step_lines(Path(__file__).name))
     return {path for path in listed.stdout.split("\0") if path}
 
 
@@ -4307,8 +4309,9 @@ def files_that_differ_since(top, commit):
     diff = git(top, "diff", "--no-renames", "--name-status", "-z", commit)
     if diff.returncode != 0:
         raise CouldNotRun(
-            f"{PROGRAM}: not run — git diff {commit} failed in {top}: {diff.stderr.strip()}\n"
-            f"Fix what git reports, then run this again.")
+            f"{PROGRAM}: not run — git diff {commit} failed in {top}: "
+            f"{first_line_of_error(diff) or 'git printed no error'}\n"
+            + git_failure_next_step_lines(Path(__file__).name))
     fields = [field for field in diff.stdout.split("\0") if field]
     for status, path in zip(fields[0::2], fields[1::2]):
         differ[path] = "A" if status.startswith("A") else "D" if status.startswith("D") else "M"
@@ -4316,7 +4319,7 @@ def files_that_differ_since(top, commit):
     if untracked.returncode != 0:
         raise CouldNotRun(
             f"{PROGRAM}: not run — git ls-files --others failed in {top}: "
-            f"{untracked.stderr.strip()}\n"
+            f"{first_line_of_error(untracked) or 'git printed no error'}\n"
             + git_failure_next_step_lines(Path(__file__).name))
     for path in untracked.stdout.split("\0"):
         if path:
