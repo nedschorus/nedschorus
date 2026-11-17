@@ -55,7 +55,7 @@ WHAT ONE RUN DOES, in order:
      record, and an empty failing_suites list when it prints no FAIL line;
      anything else is stopped, with the reason: each NOT RUN line the runner
      prints, which says why that suite was not run, such as claude's usage
-     limit, or else the first line of the runner's stderr.
+     limit, or else the first line of the runner's stderr, or else "no detail".
 
 THE STATE FILE, a JSON object written whole to a temporary file renamed into
 place, with these keys:

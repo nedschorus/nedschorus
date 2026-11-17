@@ -118,6 +118,10 @@ def test_claude_outside_cause_is_told_from_a_failure():
           claude_outside_cause_or_none(1, weekly_limit, "")
           == "account-limit — weekly limit · resets Nov 16, 8pm (America/Los_Angeles)",
           repr(claude_outside_cause_or_none(1, weekly_limit, "")))
+    check("claude's haiku model limit, as claude capitalises it, exit 1, is an outside cause",
+          (claude_outside_cause_or_none(1, "You've reached your Haiku limit · resets 3am\n", "") or "")
+          .startswith("model-limit — "),
+          repr(claude_outside_cause_or_none(1, "You've reached your Haiku limit · resets 3am\n", "")))
     check("claude logged out, exit 1, is an outside cause",
           claude_outside_cause_or_none(1, "", "Not logged in · Please run /login\n")
           == "logged-out — Not logged in · Please run /login")
@@ -222,14 +226,32 @@ def test_trial_against_the_installed_claude_code():
         shutil.rmtree(project_directory, ignore_errors=True)
 
 
+def suite_last_line_and_exit_code(failed_cases, outside_causes):
+    """A failed case outranks an outside cause, so a real failure is never shown as NOT RUN."""
+    if failed_cases:
+        return f"FAILED: {len(failed_cases)} failed", 1
+    if outside_causes:
+        return (f"NOT RUN: the trial against the installed Claude Code; claude stopped: {outside_causes[0]}",
+                test_suite_runner.NC_TEST_SUITE_EXIT_CODE_FOR_NOT_RUN_BECAUSE_A_CAUSE_OUTSIDE_THIS_REPOSITORY_STOPPED_ITS_CASES)
+    return "PASSED: 0 failed", 0
+
+
+def test_a_failed_case_outranks_an_outside_cause():
+    weekly_limit = "account-limit — weekly limit · resets Nov 16, 8pm (America/Los_Angeles)"
+    check("a failed case and claude's weekly limit together exit 1, not NOT RUN",
+          suite_last_line_and_exit_code(["a pure case"], [weekly_limit]) == ("FAILED: 1 failed", 1),
+          repr(suite_last_line_and_exit_code(["a pure case"], [weekly_limit])))
+    check("claude's weekly limit alone exits NOT RUN's code, naming the cause",
+          suite_last_line_and_exit_code([], [weekly_limit])
+          == (f"NOT RUN: the trial against the installed Claude Code; claude stopped: {weekly_limit}",
+              test_suite_runner.NC_TEST_SUITE_EXIT_CODE_FOR_NOT_RUN_BECAUSE_A_CAUSE_OUTSIDE_THIS_REPOSITORY_STOPPED_ITS_CASES))
+    check("neither exits 0", suite_last_line_and_exit_code([], []) == ("PASSED: 0 failed", 0))
+
+
 test_git_worktree_adds_own_lock_is_not_counted_as_a_lock()
 test_claude_outside_cause_is_told_from_a_failure()
+test_a_failed_case_outranks_an_outside_cause()
 test_trial_against_the_installed_claude_code()
-if failures:
-    print(f"FAILED: {len(failures)} failed")
-    sys.exit(1)
-if stopped_by_an_outside_cause:
-    print(f"NOT RUN: the trial against the installed Claude Code; claude stopped: {stopped_by_an_outside_cause[0]}")
-    sys.exit(test_suite_runner.NC_TEST_SUITE_EXIT_CODE_FOR_NOT_RUN_BECAUSE_A_CAUSE_OUTSIDE_THIS_REPOSITORY_STOPPED_ITS_CASES)
-print("PASSED: 0 failed")
-sys.exit(0)
+last_line, exit_code = suite_last_line_and_exit_code(failures, stopped_by_an_outside_cause)
+print(last_line)
+sys.exit(exit_code)

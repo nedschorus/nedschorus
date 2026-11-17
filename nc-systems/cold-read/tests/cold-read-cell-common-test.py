@@ -994,6 +994,9 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the family name is the model id's second word, capitalised",
           claude_module.model_family_name("claude-fable-5-1") == "Fable"
           and claude_module.model_family_name("claude-opus-5") == "Opus")
+    check("a one-word alias such as haiku is capitalised too, as Claude's model-limit message spells it",
+          claude_module.model_family_name("haiku") == "Haiku",
+          repr(claude_module.model_family_name("haiku")))
 
     # Through the real cells: the cause line is the last line of the attempt
     # in the log the grid reads, in the form the grid parses.

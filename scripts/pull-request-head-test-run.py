@@ -14,7 +14,7 @@ request's code, so it starts no real claude, and the merge-lane puts a claude th
 on its PATH.
 
 Exit codes: 0 suites passed, 1 suite failed, 2 refused, unable to start, or no suite failed but
-one did not run because its test sandbox did not start, 4 failed step,
+one was NOT RUN, as scripts/run-all-test-suites.py's HOW EACH SUITE IS JUDGED says, 4 failed step,
 5 record not written, 7 uncaught exception. Local logs and the record remain available for recovery."""
 
 import argparse
