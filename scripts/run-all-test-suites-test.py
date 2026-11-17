@@ -2610,6 +2610,11 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a list holding a submodule is not matched, since the scratch index would hold it "
           "as a file, which the directory pathspec mod/ does not match",
           answer == (None, "mod is a submodule"), answer)
+    answer = module.files_git_ls_files_lists_of_these(top, {"a.py", "mod/"}, ".", ["mod/"],
+                                                      set())
+    check("a list holding an untracked repository inside the checkout, which git ls-files "
+          "--others names with a trailing slash, is not matched, since update-index would drop it",
+          answer == (None, "mod/ is a repository inside the checkout"), answer)
 
 # Submodules are read from git's index and from a commit's tree.
 with tempfile.TemporaryDirectory() as scratch:

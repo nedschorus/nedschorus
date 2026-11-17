@@ -1699,6 +1699,11 @@ def files_git_ls_files_lists_of_these(top, files, directory, pathspecs, submodul
         # The scratch index holds every path as a file, and a directory pathspec such as
         # sub/ matches a submodule sub but not a file sub.
         return None, f"{held[0]} is a submodule"
+    nested = sorted(path for path in paths if path.endswith("/"))
+    if nested:
+        # git ls-files --others names an untracked nested repository with a trailing slash,
+        # and update-index drops such a path without failing.
+        return None, f"{nested[0]} is a repository inside the checkout"
     environment = {name: value
                    for name, value in environment_without_git_redirecting_variables().items()
                    if not name.startswith("GIT_")
