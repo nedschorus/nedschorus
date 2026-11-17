@@ -546,7 +546,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a hook staged as a rename, on main, gets a step that deletes the rename's source in the topic "
           "worktree, and an undo that, run as printed, puts back the source and removes the renamed hook",
           status == 1 and only_case(errors, "main") and undone
-          and "delete hooks/guard-hook.py there" in renamed_step
+          and "run `git rm -q -- hooks/guard-hook.py` there" in renamed_step
           and "the changes that register hooks/moved-hook.py in place of hooks/guard-hook.py" in renamed_step
           and hook_file.read_text(encoding="utf-8") == committed_hook and not moved_hook.exists()
           and git(repository, "status", "--porcelain").strip() == "M  .claude/settings.json",

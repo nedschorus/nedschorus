@@ -31,7 +31,7 @@ its author. The search runs `git log -p` without -m or --cc, which prints a merg
 so a merge commit is never the commit that adds an ID: a line a merge brings in is found in the commit on
 the merged branch that added it, and an ID that a merge commit's own change added, such as a conflict
 resolution, is found in no commit's diff, so its rule must be listed in the .json file named under
-"Who wrote the rule", and every firing of it is counted, whatever its date.
+"Who wrote the rule", and every firing of it in the transcripts read is counted, whatever its date.
 
 Who wrote the rule: two kinds of rule are listed in
 nc-systems/general-tools/claude-code-registered-hook-rule-id-to-origin-commit-pr-and-agent-seat-of-rules-whose-message-predates-its-id.json,
@@ -493,9 +493,10 @@ def unknown_origin_next_steps(repository, rules, machine, rerun_command):
             step = (f"the ID is in an edit to {named} not committed in this checkout, which is on main. If the edit "
                     f"is your work, move the edit to a topic branch: make a worktree for the branch with "
                     f"`cd {repository} && python3 scripts/agent-seat-worktree-create-with-owner-file.py <topic "
-                    f"branch name>`, copy {repository}/{hook} to the same path in that worktree")
+                    f"branch name>`, which prints the worktree's path; copy {repository}/{hook} to the same path "
+                    f"in that worktree")
             if renamed_from:
-                step += f", delete {renamed_from} there, as the edit renamed it to {hook}"
+                step += f", run `git rm -q -- {renamed_from}` there, as the edit renamed it to {hook}"
             if SETTINGS_PATH in files:
                 step += (f", and make there, in {SETTINGS_PATH}, {registration}, which `git -C {repository} diff "
                          f"HEAD -- {SETTINGS_PATH}` shows; commit there and open a pull request. Then undo the edit "
