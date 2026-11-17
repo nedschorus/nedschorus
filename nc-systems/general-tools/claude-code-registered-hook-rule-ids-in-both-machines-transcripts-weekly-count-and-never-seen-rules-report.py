@@ -419,6 +419,27 @@ def unknown_origin_case(repository, rule, branch):
     return "unpushed"
 
 
+SETTINGS_PATH = ".claude/settings.json"
+
+
+def files_of_uncommitted_rule_edit(repository, hook):
+    """The hook and, when it too differs from HEAD, .claude/settings.json: a new rule's registration is
+    part of the same edit, and a move that leaves it behind lands a rule nothing runs."""
+    status = git(repository, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", hook, SETTINGS_PATH)
+    changed = {entry[3:] for entry in status.split("\0") if entry}
+    return [path for path in (hook, SETTINGS_PATH) if path in changed]
+
+
+def undo_of_uncommitted_edit(repository, path):
+    """A command that puts path back as HEAD has it, in the index and the working tree, staged or not:
+    restored from HEAD when HEAD holds it, and otherwise taken out of the index and deleted."""
+    if git(repository, "ls-tree", "--name-only", "HEAD", "--", path).strip():
+        return shlex.join(["git", "-C", str(repository), "restore", "--staged", "--worktree", "--source=HEAD",
+                           "--", path])
+    return (shlex.join(["git", "-C", str(repository), "rm", "-q", "-f", "--cached", "--ignore-unmatch", "--", path])
+            + " && " + shlex.join(["rm", "--", str(Path(repository) / path)]))
+
+
 def unknown_origin_next_steps(repository, rules, machine, rerun_command):
     """The block printed after the FAILED lines of rules whose writer cannot be found: for each rule,
     the next step of the one case that holds."""
@@ -427,12 +448,18 @@ def unknown_origin_next_steps(repository, rules, machine, rerun_command):
              f"on {machine}:"]
     try:
         branch = git(repository, "branch", "--show-current").strip()
-        cases = [(rule, unknown_origin_case(repository, rule, branch)) for rule in rules]
+        cases = []
+        for rule in rules:
+            case = unknown_origin_case(repository, rule, branch)
+            files = [] if case == "merge" else files_of_uncommitted_rule_edit(repository, rule["hook"])
+            undo = " && ".join(undo_of_uncommitted_edit(repository, path) for path in files) if case == "main" else ""
+            cases.append((rule, case, files, undo))
     except GitLookupFailed as error:
         return (lines[0] + f"\nNot found: which case holds could not be read, because {error}. Run that git "
                 f"command, as it is written there, on {machine}, to see why it failed, and fix that; {rerun}")
-    for rule, case in cases:
+    for rule, case, files, undo in cases:
         hook, rule_id = rule["hook"], rule["id"]
+        named = " and ".join(files) if files else hook
         if case == "merge":
             step = (f"HEAD's copy of {hook} holds the ID, so a merge commit's own change added it, such as a "
                     f"conflict resolution; the merge's author need not be who wrote the rule. Add the rule, on a "
@@ -440,28 +467,31 @@ def unknown_origin_next_steps(repository, rules, machine, rerun_command):
                     f"\"{rule_id}\", with \"commit\": the hash of the commit that first wrote the rule's message, "
                     f"the first field of the first line that `git -C {repository} log --follow --reverse --format='%H %an %s' -S \"<a phrase from the "
                     f"rule's message>\" -- {hook}` prints; \"pull_request\": the number, as a string, of the "
-                    f"pull request that brought that commit, which is the `(#<number>)` ending the commit's subject "
-                    f"when GitHub squash-merged it, and otherwise the `Merge pull request #<number>` that "
+                    f"pull request that brought that commit: read the commit's own subject first, with "
+                    f"`git -C {repository} log -1 --format=%s <that commit>`, which ends with `(#<number>)` when "
+                    f"GitHub squash-merged it and starts `Merge pull request #<number>` when it is itself the merge; "
+                    f"when it names neither, the `Merge pull request #<number>` that "
                     f"`git -C {repository} log --first-parent --merges --reverse --ancestry-path --format=%s "
-                    f"<that commit>..HEAD` shows first, or null when neither names one; \"agent_seat\": the "
+                    f"<that commit>..HEAD` shows first; or null when none names one; \"agent_seat\": the "
                     f"agent-seat that wrote that commit, which is its author name unless GitHub squash-merged it, "
                     f"when the pull request's description names the agent-seat. The first run of this program after "
                     f"that change merges into main and reaches this checkout says who wrote the rule.")
         elif case == "main":
-            step = (f"the ID is in an edit to {hook} not committed in this checkout, which is on main. If the edit "
+            step = (f"the ID is in an edit to {named} not committed in this checkout, which is on main. If the edit "
                     f"is your work, move the edit to a topic branch: make a worktree for the branch with "
                     f"`python3 {repository}/scripts/agent-seat-worktree-create-with-owner-file.py <topic branch "
-                    f"name>`, copy {repository}/{hook} to the same path in that worktree, commit it there and open a pull request, then undo "
-                    f"the edit here with `git -C {repository} restore -- {hook}`. The first run of this program "
+                    f"name>`, copy {' and '.join(f'{repository}/{path}' for path in files)} to the same path in "
+                    f"that worktree, commit them there and open a pull request, then undo the edit here with "
+                    f"`{undo}`. The first run of this program "
                     f"after the pull request merges into main and main reaches this checkout says who wrote the "
                     f"rule.\n  If the edit is not your work, leave it to whoever is making it.")
         elif case == "detached":
-            step = (f"the ID is in an edit to {hook} not committed in this checkout, whose HEAD is detached, so a "
+            step = (f"the ID is in an edit to {named} not committed in this checkout, whose HEAD is detached, so a "
                     f"commit made here would be on no branch. If the edit is your work, put it on a branch with "
                     f"`git -C {repository} switch -c <topic branch name>`, commit it there, {rerun}\n"
                     f"  If the edit is not your work, leave it to whoever is making it.")
         else:
-            step = (f"the ID is in an edit to {hook} not committed on branch {branch}. If the edit is your work, "
+            step = (f"the ID is in an edit to {named} not committed on branch {branch}. If the edit is your work, "
                     f"commit it on {branch}")
             if case == "pushed":
                 step += (f" as a new commit, not by amending or rebasing, because {branch} is pushed as "

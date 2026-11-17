@@ -455,8 +455,43 @@ with tempfile.TemporaryDirectory() as scratch:
     check("an uncommitted edit holding the ID, on main, gets only the main case: commit on a topic branch, "
           "or leave another's edit",
           status == 1 and only_case(errors, "main") and "scripts/agent-seat-worktree-create-with-owner-file.py <topic branch name>" in errors
-          and f"git -C {repository} restore -- hooks/guard-hook.py" in errors
+          and f"git -C {repository} restore --staged --worktree --source=HEAD -- hooks/guard-hook.py" in errors
           and "leave it to whoever is making it" in errors, errors)
+
+    def printed_undo(errors):
+        found = re.search(r"undo the edit here with `([^`]*)`", errors)
+        return found.group(1) if found else None
+
+    def run_printed_undo(errors):
+        undo = printed_undo(errors)
+        return undo is not None and subprocess.run(["bash", "-c", undo], capture_output=True).returncode == 0
+
+    git(repository, "add", "hooks/guard-hook.py")
+    status, _, errors = run_program(arguments, now)
+    undone = run_printed_undo(errors)
+    check("an edit already staged on main gets an undo that, run as printed, puts the hook back as HEAD has it "
+          "in both the index and the working tree",
+          status == 1 and only_case(errors, "main") and undone
+          and hook_file.read_text(encoding="utf-8") == committed_hook
+          and git(repository, "status", "--porcelain").strip() == "", (errors, git(repository, "status", "--porcelain")))
+
+    settings_file = repository / ".claude" / "settings.json"
+    committed_settings = settings_file.read_text(encoding="utf-8")
+    new_hook = repository / "hooks" / "new-hook.py"
+    new_hook.write_text('NEW = "[rule fixture-new-hook] new"\n', encoding="utf-8")
+    registered = json.loads(committed_settings)
+    registered["hooks"]["PreToolUse"][0]["hooks"].append(
+        {"type": "command", "command": 'python3 "$CLAUDE_PROJECT_DIR"/hooks/new-hook.py'})
+    settings_file.write_text(json.dumps(registered), encoding="utf-8")
+    status, _, errors = run_program(arguments, now)
+    undone = run_printed_undo(errors)
+    check("a new, untracked hook registered by an uncommitted settings.json edit, on main, is moved with its "
+          "registration, and its undo, run as printed, deletes the hook and restores settings.json",
+          status == 1 and only_case(errors, "main") and undone
+          and f"copy {repository}/hooks/new-hook.py and {repository}/.claude/settings.json to the same path" in errors
+          and not new_hook.exists() and settings_file.read_text(encoding="utf-8") == committed_settings
+          and git(repository, "status", "--porcelain").strip() == "", (errors, git(repository, "status", "--porcelain")))
+    hook_file.write_text(committed_hook + 'LATER = "[rule fixture-uncommitted] later"\n', encoding="utf-8")
 
     git(repository, "checkout", "-q", "-b", "topic")
     status, _, errors = run_program(arguments, now)
@@ -510,6 +545,12 @@ with tempfile.TemporaryDirectory() as scratch:
               f"\"fixture-merge-added\"" in errors
           and f"git -C {merged} log --follow --reverse --format='%H %an %s' -S \"<a phrase from the rule's message>\" "
               f"-- hooks/guard-hook.py" in errors, errors)
+    own_subject = f"`git -C {merged} log -1 --format=%s <that commit>`"
+    descendants = f"`git -C {merged} log --first-parent --merges --reverse --ancestry-path --format=%s <that commit>..HEAD`"
+    check("the merge case reads the commit's own subject before its descendants', so a rule first written in a "
+          "merge commit gets that merge's pull request, not a later one",
+          own_subject in errors and descendants in errors and errors.index(own_subject) < errors.index(descendants),
+          errors)
     origin_table = base / "origin-table.json"
     origin_table.write_text(json.dumps({"fixture-merge-added": {
         "commit": git(merged, "rev-parse", "HEAD").strip(), "pull_request": "11", "agent_seat": "seat-h"}}),
