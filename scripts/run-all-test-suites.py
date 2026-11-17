@@ -689,10 +689,12 @@ GIT_LS_FILES_OPTIONS_LISTING_THE_FILE_LIST, --others only with
 literal, icase, exclude and top. Which files a pathspec matches is asked of
 git itself: git ls-files runs with the call's pathspecs from its directory
 on a scratch index holding the files to match. That index holds every path
-as a file, so a call is tied to the whole list whenever the checkout's index,
-or COMMIT, holds a submodule, which a directory pathspec matches and a file of
-the same name does not. Any other git ls-files call, or one git could not
-match when recorded, stays tied to the whole list.
+as a file, and a directory pathspec matches a submodule but not a file of the
+same name. So when the checkout's index, or the commit given to
+--only-suites-whose-recorded-inputs-changed-since, holds any submodule, even
+one the call's pathspecs do not match, a call being recorded is tied to the
+whole list, and a recorded call selects its suite. Any other git ls-files
+call, or one git could not match when recorded, stays tied to the whole list.
 
 Anything else stays git on the checkout and follows the rules below,
 including calls with no parseable command, a clone whose source is inside
@@ -1668,7 +1670,8 @@ def gitlinks_in_the_index_and_commit(top, commit=None):
                     *([["ls-tree", "-r", "-z", commit]] if commit is not None else [])):
         answer = git(top, *command)
         if answer.returncode != 0:
-            return None, first_line_of_error(answer) or f"git {command[0]} printed no error"
+            return None, ("git could not list the submodules: "
+                          + (first_line_of_error(answer) or f"git {command[0]} printed no error"))
         for entry in answer.stdout.split("\0"):
             meta, _, path = entry.partition("\t")
             if path and meta.split(" ", 1)[0] == GIT_GITLINK_MODE:

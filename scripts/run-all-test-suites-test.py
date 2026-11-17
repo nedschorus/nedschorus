@@ -2638,7 +2638,8 @@ with tempfile.TemporaryDirectory() as scratch:
         finally:
             os.environ["PATH"] = previous
         check(f"git {words} failing while looking for submodules is reported with its error",
-              answer == (None, "fatal: injected git failure"), answer)
+              answer == (None, "git could not list the submodules: fatal: injected git "
+                               "failure"), answer)
 
 # A git ls-files call that passes through a directory the recording does not name, or that a
 # submodule could answer, selects its suite when the file list changes.
