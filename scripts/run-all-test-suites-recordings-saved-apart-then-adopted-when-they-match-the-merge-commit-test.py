@@ -12,7 +12,11 @@ changes the other file and is then tested, and never merges; then pull request A
 on main after X, is tested. When every run saves into the store, Z's run replaces X's
 recording, and A's run selects the suite because its recording read another copy of a
 file than the checkout holds. When runs save apart and the merge adopts, A's run leaves
-the suite out.
+the suite out. The after-merge test run selects by another store, which head test runs
+never write: its stale recording selects the suite on the merge commit, where X's head
+test run passed it on the same files, until the merge adopts the store's matching
+recording into it; a suite that reads a file which differs since the commit the run
+selects since stays selected.
 
 Run: python3 scripts/run-all-test-suites-recordings-saved-apart-then-adopted-when-they-match-the-merge-commit-test.py   (exit 0 = all passed)
 """
@@ -165,6 +169,37 @@ def main():
 
     scratch = Scratch()
     main_checkout, _ = scratch.worktree("main-at-m0", scratch.m0)
+    scratch.run(main_checkout, store="after-merge-store")
+    x_checkout, x_head = scratch.worktree("pr-x", scratch.m0, {"first.txt": "x\n"})
+    scratch.run(x_checkout, since=scratch.m0, save_to="pr-x-recordings")
+    git(scratch.repo, "merge", "-q", "--no-ff", "-m", "merge X", x_head)
+    merge_commit_checkout, _ = scratch.worktree("merge-commit", git(scratch.repo, "rev-parse",
+                                                                    "HEAD"))
+    runner.adopt_passing_recordings_that_match_the_checkout(
+        merge_commit_checkout, scratch.root / "store", [scratch.root / "pr-x-recordings"])
+    # Saving apart, so this run's own recording cannot answer the next run in place of adoption.
+    before = scratch.run(merge_commit_checkout, since=x_head, store="after-merge-store",
+                         save_to="unread-recordings")
+    check("reproduced: the after-merge test run, selecting since the tree X's head test run "
+          "passed on, selects the suite because its own store's recording is stale",
+          selection_line(before) == (
+              f"SELECTED {SUITE}: its recording read another copy of first.txt than the "
+              f"checkout holds, so what it reads here is unknown"), selection_line(before))
+    adopted = runner.adopt_passing_recordings_that_match_the_checkout(
+        merge_commit_checkout, scratch.root / "after-merge-store", [scratch.root / "store"])
+    after = scratch.run(merge_commit_checkout, since=x_head, store="after-merge-store")
+    check("once the store's recording that matches the merge commit is adopted into the "
+          "after-merge test run's store, that run leaves the suite out",
+          len(adopted) == 1 and selection_line(after).startswith(f"NOT SELECTED {SUITE}: none of the")
+          and after.returncode == 0, (adopted, selection_line(after)))
+    since_m0 = scratch.run(merge_commit_checkout, since=scratch.m0, store="after-merge-store")
+    check("a suite whose adopted recording matches the merge commit is still selected when a "
+          "file it reads differs since the commit the run selects since",
+          selection_line(since_m0) == f"SELECTED {SUITE}: it reads first.txt, which differs",
+          selection_line(since_m0))
+
+    scratch = Scratch()
+    main_checkout, _ = scratch.worktree("main-at-m0", scratch.m0)
     scratch.run(main_checkout)
     in_store = scratch.recording("store")
     z_checkout, _ = scratch.worktree("pr-z", scratch.m0, {"second.txt": "z\n"})
@@ -207,12 +242,15 @@ def main():
               no_suites, scratch.root / "store", [scratch.root / "pr-z-recordings"]) == [])
 
     real_git = runner.git
-    for exit_code, how in ((128, "exits 128"), (-9, "is killed by a signal")):
+    for exit_code, how, stderr, error in (
+            (128, "exits 128", "fatal: injected\nmore\n", ": fatal: injected"),
+            (-9, "is killed by a signal", "fatal: injected\n", ": fatal: injected"),
+            (-9, "is killed by a signal printing nothing", "", ": git printed no error")):
 
-        def git_whose_ls_files_fails(checkout, *arguments, exit_code=exit_code):
+        def git_whose_ls_files_fails(checkout, *arguments, exit_code=exit_code, stderr=stderr):
             # Only the listing of suites, so a later git ls-files cannot raise in its place.
             if arguments[:1] == ("ls-files",) and runner.TEST_SUITE_PATHSPEC in arguments:
-                return subprocess.CompletedProcess(arguments, exit_code, "", "fatal: injected\n")
+                return subprocess.CompletedProcess(arguments, exit_code, "", stderr)
             return real_git(checkout, *arguments)
 
         runner.git = git_whose_ls_files_fails
@@ -224,9 +262,10 @@ def main():
             refused = str(refusal)
         finally:
             runner.git = real_git
-        check(f"a git ls-files of the suites that {how} is refused with git's error",
-              refused is not None and "git ls-files failed" in refused
-              and "fatal: injected" in refused, refused)
+        check(f"a git ls-files of the suites that {how} is refused with git's first error line, "
+              f"or with words saying git printed none",
+              refused is not None and refused.startswith("git ls-files failed in ")
+              and refused.endswith(error), refused)
 
     not_a_repository = scratch.root / "not-a-repository"
     not_a_repository.mkdir()

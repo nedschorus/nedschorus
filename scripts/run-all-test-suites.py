@@ -608,17 +608,15 @@ tree, or on one built on an older main, replaces the recording a merged pull
 request's run made, and every later run on main selects the suite again
 because its recording read another copy of a file than the checkout holds.
 The function adopt_passing_recordings_that_match_the_checkout(), which has no
-command-line option, keeps a directory of recordings that only main's trees
-write. For each suite, it copies into that directory the first recording,
+command-line option, brings a directory's recordings up to date with a
+checkout. For each suite, it copies into that directory the first recording,
 from a list of other directories, whose run passed and which matches the
 checkout exactly: selection, given no file that differs, would leave the
 suite out. A suite whose recording in the directory already matches, or for
 which no recording matches, keeps the one it has. It runs no suite.
 scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py,
-merge-lane-2's merge program, calls it in its worktree at the merge commit,
-twice: before its after-merge test run, from the directory where the pull
-request's head test runs saved their recordings, and after that run, from
-the directory where the after-merge test run saved its recordings.
+merge-lane-2's merge program, calls it in its worktree at each merge commit;
+that program's module docstring says from which directories into which.
 
 SELECTION, with --only-suites-whose-recorded-inputs-changed-since COMMIT.
 Two explicit allowlists set aside git calls that read no file of the
@@ -4490,7 +4488,8 @@ def adopt_passing_recordings_that_match_the_checkout(top, into_given, from_given
     commit, _ = commit_and_state(top)
     listed = git(top, "ls-files", "-z", "--", TEST_SUITE_PATHSPEC, SHELL_TEST_SUITE_PATHSPEC)
     if listed.returncode != 0:
-        raise CouldNotRun(f"git ls-files failed in {top}: {listed.stderr.strip()}")
+        raise CouldNotRun(f"git ls-files failed in {top}: "
+                          f"{first_line_of_error(listed) or 'git printed no error'}")
     suites = [path for path in listed.stdout.split("\0") if path]
     candidates = {suite: [(directory, load_recording(directory, suite))
                           for directory in [into, *sources]] for suite in suites}
