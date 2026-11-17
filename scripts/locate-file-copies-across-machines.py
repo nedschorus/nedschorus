@@ -1148,7 +1148,9 @@ def main(argv=None) -> int:
 
     plan = plan_for_this_run()
     code, candidate_names, unreached = search_and_report(query, plan)
-    if code == 0 or candidate_names is None or len(candidate_names) != 1:
+    if code == 0:  # pragma: no mutate, render gives only 0, 1 or 3, so `<=` matches only 0 as `==` does
+        return code
+    if candidate_names is None or len(candidate_names) != 1:
         return code
     (full_name,) = candidate_names
     if is_same_name(full_name, name):

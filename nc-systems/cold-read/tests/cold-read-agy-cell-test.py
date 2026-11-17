@@ -33,8 +33,9 @@ WHAT IS PINNED HERE.
   - The chat-instead-of-file quirk. The campaign measured gemini-3.8-flash
     sometimes answering the whole review in chat rather than writing the
     file. A model that exits 0 with no file and a stdout long enough to be a
-    review (the campaign's 120-word threshold) has its stdout taken as the
-    report, stamped, and the recovery announced on stderr. Three things
+    review (the campaign's 120-word threshold, exactly 120 words included)
+    has its stdout taken as the report, stamped, and the recovery announced
+    on stderr. Three things
     bound that: a short stdout -- a remark, not a review -- still fails the
     cell with no report left behind; a non-zero exit is a failure whatever
     stdout holds, as on every leg; and a report the model wrote one directory
@@ -659,6 +660,15 @@ with tempfile.TemporaryDirectory() as scratch:
           STDOUT_RECOVERY_PHRASE not in result.stderr, repr(result.stderr))
     check("the remark itself still reaches stderr, as the model's own account",
           SHORT_CHAT_REMARK.strip() in result.stderr, repr(result.stderr))
+
+    # --- The threshold's boundary: exactly the minimum is a review ---------
+    minimum_words_stdout = " ".join(
+        f"word{index}" for index in range(agy_cell.STDOUT_REVIEW_MINIMUM_WORDS))
+    check("a stdout of exactly the minimum word count is returned as the review",
+          agy_cell.stdout_is_a_review(minimum_words_stdout) == minimum_words_stdout)
+    one_word_short_stdout = minimum_words_stdout.rsplit(" ", 1)[0]
+    check("a stdout one word short of the minimum is not a review",
+          agy_cell.stdout_is_a_review(one_word_short_stdout) == "")
 
     # --- A non-zero exit is a failure whatever stdout holds ---------------
     repository = build_scratch_repository(scratch)
