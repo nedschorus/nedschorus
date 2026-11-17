@@ -23,9 +23,11 @@ Subcommands:
       keep running. When the newest stop file cannot be read, start prints
       FAILED: that file counts as a stop in force, and a new file would hide it.
       After writing, start reads the folder again; when the stop it wrote or
-      added to is not the one in force, it writes and reads back once more,
-      and prints FAILED, saying whether a stop is in force, when that also
-      fails.
+      added to is not the one in force, it writes and reads back once more.
+      When that succeeds, it deletes the first try's stop file unless that
+      file is the one in force; when it also fails, it deletes the stop files
+      it created, so a failed start never comes into force later, and prints
+      FAILED, saying what the folder now holds.
   coordinate --agent-seat NAME --words TEXT
       Names another coordinating agent-seat, on the user's word.
   push-notification sent | failed [--error TEXT]
@@ -141,7 +143,8 @@ def require_in_force(folder, rerun):
         return None, f"the emergency-stop file {state.path} cannot be read: {state.error}"
     if isinstance(state, common.FolderUnreachable):
         return None, (f"the emergency-stop folder {state.folder} cannot be reached: {state.error}; nothing was "
-                      "written, so an emergency stop that was in force before is still in force."
+                      "written, so the folder holds what it held before. While this machine cannot reach the "
+                      "folder, its emergency-stop hook refuses no pushes or merges here."
                       f"\nAdd a task to run this command again once this machine can reach that folder: {rerun}"
                       "\nTell the user now that this machine cannot reach that folder.")
     return None, f"no emergency stop is in force in {folder}"
@@ -152,47 +155,55 @@ class StartRefused(Exception):
 
 
 class ReadBackNotInForce(Exception):
-    """start wrote path, but the folder read back answered state, not path in force."""
-
-    def __init__(self, path, state):
-        super().__init__(path, state)
-        self.path = path
-        self.state = state
+    """start wrote its stop, but the folder read back did not hold that stop in force."""
 
 
 def start(folder, agent_seat, kind, words, jobs_file, moment, rerun=None):
     rerun = rerun or rerun_command(["start", f"--{kind}", words])
+    created = []
     try:
-        return start_once(folder, agent_seat, kind, words, jobs_file, moment, rerun)
+        return start_once(folder, agent_seat, kind, words, jobs_file, moment, rerun, created)[0]
     except ReadBackNotInForce:
         pass
     try:
-        return start_once(folder, agent_seat, kind, words, jobs_file, moment, rerun)
-    except ReadBackNotInForce as second:
-        raise StartRefused(f"start wrote its emergency stop and read the emergency-stop folder back, twice, and "
-                           f"neither time found its stop in force. The second time it wrote {second.path}, and "
-                           f"the folder held: {folder_state_description(second.state)}. "
-                           f"{refused_or_not(second.state)}\nTell the user this whole message.")
+        report, in_force_path = start_once(folder, agent_seat, kind, words, jobs_file, moment, rerun, created)
+    except (StartRefused, ReadBackNotInForce) as failure:
+        for path in created:
+            path.unlink(missing_ok=True)
+        if isinstance(failure, StartRefused):
+            raise
+        state = common.read_state(folder)
+        raise StartRefused("start wrote its emergency stop and read the emergency-stop folder back, twice, and "
+                           "neither time found its stop in force, so it deleted the stop files it wrote. A read of "
+                           f"the folder now finds that {folder_state_description(state)}. {refused_clause(state)}"
+                           f"\nTell the user this whole message.\nRun start again only if the user says to: {rerun}")
+    for path in created:
+        # The second try can append to the first try's file, which is then the stop in force.
+        if path != in_force_path:
+            path.unlink(missing_ok=True)
+    return report
 
 
-def start_once(folder, agent_seat, kind, words, jobs_file, moment, rerun):
+def start_once(folder, agent_seat, kind, words, jobs_file, moment, rerun, created):
+    """(report, path of the stop file in force); appends each stop file it creates to created.
+
+    Raises ReadBackNotInForce when the folder read back after the write does not hold its stop in force."""
     state = common.read_state(folder)
     if isinstance(state, common.InForce):
         append(state.path, f"{moment.isoformat()} {kind} added by {agent_seat}: {one_line(words)}")
-        return f"added to the emergency stop in force, {state.path}"
+        return f"added to the emergency stop in force, {state.path}", state.path
     if isinstance(state, common.Unreadable):
-        raise StartRefused(f"start wrote nothing: the newest emergency-stop file, {state.path}, cannot be read: "
-                           f"{state.error}. That unreadable file already counts as an emergency stop in force, "
-                           "so pushes and merges stay refused; a newer emergency-stop file would take its place "
-                           "as the one in force and hide it.\nTell the user the file's path and this error, and "
+        raise StartRefused(f"start wrote no emergency-stop file: the newest emergency-stop file, {state.path}, "
+                           f"cannot be read: {state.error}. That unreadable file already counts as an emergency "
+                           "stop in force, so pushes and merges stay refused; writing a newer emergency-stop file "
+                           "would hide the unreadable one.\nTell the user the file's path and this error, and "
                            "leave the file as it is: only the user repairs or moves it.")
     if isinstance(state, common.FolderUnreachable):
         raise StartRefused(f"start wrote nothing: the emergency-stop folder {state.folder} cannot be reached: "
                            f"{state.error}. No emergency stop was started. This machine cannot tell whether "
-                           "another emergency stop is in force, so its hook refuses no pushes or merges here."
-                           "\nTell the user at once that the emergency stop was not started, and why."
-                           "\nAdd a task to run this command again once this machine can reach that folder: "
-                           f"{rerun}")
+                           "another emergency stop is in force, so its emergency-stop hook refuses no pushes or "
+                           "merges here.\nTell the user at once that the emergency stop was not started, and why."
+                           f"\nRun this command again only if the user says to: {rerun}")
     folder.mkdir(exist_ok=True)
     named = name_moment_after(moment, state.path) if isinstance(state, common.Lifted) else moment
     path = folder / stop_file_name(named)
@@ -208,15 +219,16 @@ def start_once(folder, agent_seat, kind, words, jobs_file, moment, rerun):
         return in_force_check(folder, path, f"added to the emergency stop started at the same second, {path}")
     finally:
         os.unlink(temporary)
+    created.append(path)
     return in_force_check(folder, path, f"started the emergency stop {path}")
 
 
 def in_force_check(folder, path, report):
-    """report when the stop file at path is the one in force; else raises ReadBackNotInForce."""
+    """(report, path) when the stop file at path is the one in force; else raises ReadBackNotInForce."""
     state = common.read_state(folder)
     if isinstance(state, common.InForce) and state.path == path:
-        return report
-    raise ReadBackNotInForce(path, state)
+        return report, path
+    raise ReadBackNotInForce()
 
 
 def folder_state_description(state):
@@ -231,14 +243,31 @@ def folder_state_description(state):
     return f"no emergency-stop file in {state.folder} is in force"
 
 
-def refused_or_not(state):
+def refused_clause(state):
     """Whether the push-and-merge refusal hook refuses pushes and merges, given the state it reads."""
     if isinstance(state, (common.InForce, common.Unreadable)):
-        return "That counts as an emergency stop in force, so pushes and merges are refused."
+        return "So an emergency stop counts as in force, and pushes and merges are refused."
     if isinstance(state, common.FolderUnreachable):
         return ("So no one on this machine can tell whether an emergency stop is in force, and pushes and "
                 "merges are not refused here.")
     return "So no emergency stop is in force, and pushes and merges are not refused."
+
+
+def failed_write_message(command, folder, error, rerun):
+    state = common.read_state(folder)
+    last_line = (f"Run this command again only if the user says to: {rerun}" if command == "start"
+                 else f"Add a task to run this command again once a write to that folder can succeed: {rerun}")
+    return (f"{command} could not finish writing to the emergency-stop folder {folder}: {error}. A read of the "
+            f"folder now finds that {folder_state_description(state)}. {refused_clause(state)}"
+            f"\nTell the user this whole message.\n{last_line}")
+
+
+def without_agent_seat_option(arguments):
+    """arguments from the subcommand on: the --as-agent-seat option before it is dropped."""
+    rest = list(arguments)
+    while rest and rest[0].startswith("--as-agent-seat"):
+        rest = rest[2:] if rest[0] == "--as-agent-seat" else rest[1:]
+    return rest
 
 
 def current_umask():
@@ -277,9 +306,9 @@ def run(arguments, environment):
         return 0
     if not agent_seat:
         return failed(f"{options.command} wrote nothing: no agent-seat is known, because GIT_AUTHOR_NAME is "
-                      f"unset.\nRun this command, with your agent-seat's name in place of "
-                      f"<your agent-seat name>:\n"
-                      f"python3 {PROGRAM_PATH} --as-agent-seat <your agent-seat name> {shlex.join(arguments)}")
+                      f"unset or empty.\nRun this command, with your agent-seat's name in place of "
+                      f"<your agent-seat name>:\npython3 {PROGRAM_PATH} --as-agent-seat <your agent-seat name> "
+                      f"{shlex.join(without_agent_seat_option(arguments))}")
     try:
         if options.command == "start":
             kind, words = ("words", options.words) if options.words is not None else ("evidence", options.evidence)
@@ -305,12 +334,7 @@ def run(arguments, environment):
     except StartRefused as refusal:
         return failed(str(refusal))
     except OSError as error:
-        state = common.read_state(folder)
-        return failed(f"{options.command} could not finish writing to the emergency-stop folder {folder}: "
-                      f"{error}. Read now, the folder holds: {folder_state_description(state)}. "
-                      f"{refused_or_not(state)}\nTell the user this error, and whether pushes and merges are "
-                      f"refused.\nAdd a task to run this command again once a write to that folder can "
-                      f"succeed: {rerun_command(arguments)}")
+        return failed(failed_write_message(options.command, folder, error, rerun_command(arguments)))
 
 
 def main():
