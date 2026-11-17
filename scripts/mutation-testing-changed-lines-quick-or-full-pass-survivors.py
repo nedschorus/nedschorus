@@ -1660,9 +1660,10 @@ def recorded_mutant_killed_check(arguments, checkout, environment, runner,
     try:
         recordings_directory = runner.recordings_directory_for(recorded_inputs_directory, checkout)
     except runner.CouldNotRun as refusal:
-        raise CouldNotRun(str(refusal).splitlines()[0].replace(
-            f"{runner.PROGRAM}:", f"{PROGRAM}:", 1) + "\n"
-            + runner.git_failure_next_step_lines(Path(__file__).name)) from refusal
+        what_failed = str(refusal).splitlines()[0].replace(f"{runner.PROGRAM}:", f"{PROGRAM}:", 1)
+        raise CouldNotRun(what_failed + "\n"
+                          + runner.git_failure_next_step_lines(Path(__file__).name, what_failed)) \
+            from refusal
     suites_at = suites_at_head(checkout, head, environment)
     verdicts = {}
     to_run = []
@@ -2034,7 +2035,8 @@ def quick_or_full_mutation_pass_or_recorded_mutant_killed_check(
             what_failed = str(refusal).splitlines()[0].replace(f"{runner.PROGRAM}:",
                                                                f"{PROGRAM}:", 1)
             raise CouldNotRun(what_failed + "\n"
-                              + runner.git_failure_next_step_lines(Path(__file__).name)) \
+                              + runner.git_failure_next_step_lines(Path(__file__).name,
+                                                                   what_failed)) \
                 from refusal
         suites_listed_at_head = suites_at_head(checkout, head, environment)
 
