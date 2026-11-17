@@ -137,6 +137,11 @@ def configure_identity(repository: Path):
     git(["config", "user.name", "freshness test"], repository)
 
 
+def mark_as_agent_home(worktree: Path):
+    git_directory = Path(git(["rev-parse", "--absolute-git-dir"], worktree).stdout.strip())
+    (git_directory / "agent-home-marker").write_text("", encoding="utf-8")
+
+
 def commit_file(repository: Path, name: str, content: str, message: str):
     # Parents created: the telling's categories are decided by PATH, so its
     # cases need real ones (scripts/, docs/, .claude/skills/), not flat files.
@@ -561,11 +566,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         "files listed above stay older here than on main.")
     detached_work_line = (
         "It holds work of its own.\n"
-        "If this checkout is an agent-home, git refuses commits in it: carry that work to a "
+        "This checkout is an agent-home, so git refuses commits in it: carry that work to a "
         "worktree of your own on an nc-topic-branch, as the refusal of `git commit` here says "
-        "how.\n"
-        "Otherwise run `git switch -c <branch name>` to put that work on a branch, and commit "
-        "any uncommitted changes there; from then on the hook's rules for a branch apply.")
+        "how.")
     detached_bisect_line = (
         "A bisect is in progress: finish it or abort it; the next turn's end moves the "
         "checkout forward.")
@@ -575,11 +578,13 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         "If git names anything else, leave the checkout as it is: the refusal has been "
         "reported to the user.")
 
-    def detached_worktree_behind_main(name):
+    def detached_worktree_behind_main(name, agent_home=True):
         git(["fetch", "-q"], reference)
         path = tmp / name
         git(["worktree", "add", "-q", "--detach", str(path), "origin/main~1"], reference)
         configure_identity(path)
+        if agent_home:
+            mark_as_agent_home(path)
         return path
 
     def head_of(checkout):
@@ -601,6 +606,19 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = run_catch_up(["--cwd", str(detached)])
     check("a detached HEAD already at origin/main prints nothing",
           result.stdout.strip() == "", result.stdout)
+
+    # A review worktree pinned at the commit under review, which main already
+    # holds: detached, behind, nothing of its own, but no agent-home.
+    pinned = detached_worktree_behind_main("detached-pinned-review-worktree", agent_home=False)
+    pinned_head = head_of(pinned)
+    result = run_catch_up(["--cwd", str(pinned)])
+    check("a detached HEAD at an ancestor of main that is not an agent-home is not moved",
+          head_of(pinned) == pinned_head and pinned_head != main_tip()
+          and not (pinned / "scripts/detached-advance.py").exists(), pinned_head)
+    check("and neither the agent nor the user is told anything, and no note is queued",
+          agent_text(result) == "" and display_text(result) == ""
+          and not stamp_of(pinned).get("pending_agent_notes"),
+          agent_text(result) + display_text(result) + str(stamp_of(pinned)))
 
     tracked = detached_worktree_behind_main("detached-tracked-change-worktree")
     tracked_head = head_of(tracked)
@@ -2143,6 +2161,7 @@ with tempfile.TemporaryDirectory() as notes_scratch:
     detached = notes_seat.parent / "detached"
     git(["worktree", "add", "-q", "--detach", str(detached), "main"], notes_seat.parent / "clone")
     configure_identity(detached)
+    mark_as_agent_home(detached)
     (detached / "shared.txt").write_text("dirty\n", encoding="utf-8")
     commit_file(origin_repo, "a.txt", "a\n", "advance a")
     stop_only(detached)
