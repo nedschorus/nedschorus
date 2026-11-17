@@ -629,15 +629,18 @@ A call that reads the checkout is still not tied to the checkout's list of
 files when its answer comes from commits, refs, another repository or the
 paths it names, so that adding or deleting any other file cannot change it.
 The command and every option must be on an explicit list, and its global
-options only -C pairs, with no GIT_DIR or GIT_WORK_TREE: rev-parse, log and
-merge-base given revisions with no ':' (a revision with ':' names a path in a
-tree); ls-remote given an absolute repository path outside the checkout's
-top directory; check-ignore given paths inside it. The paths git consults in
-the work tree for such a call are recorded as read or looked for: for
-rev-parse and log, a file named like each revision, which makes the argument
-ambiguous or, for one that does not resolve, gives rev-parse its answer; for
-log, .mailmap; for check-ignore, each path given, since a tracked path is
-never ignored, and the .gitignore of every directory above it. Every other
+options only -C pairs naming a directory that exists, with no GIT_DIR or
+GIT_WORK_TREE: rev-parse, log and merge-base given revisions with no ':' (a
+revision with ':' names a path in a tree), none starting with '^', holding a
+glob character or naming a directory, since git takes such an operand as a
+path whose files decide the answer; ls-remote given an absolute repository
+path outside the checkout's top directory; check-ignore given paths in the
+top directory, since a path below a directory depends on what that directory
+is. The paths git consults in the work tree for such a call are recorded as
+read or looked for: for rev-parse and log, a file named like each revision,
+which makes the argument ambiguous or, for one that does not resolve, gives
+rev-parse its answer; for log, .mailmap; for check-ignore, each path given,
+since a tracked path is never ignored, and the top .gitignore. Every other
 call reading the checkout, such as ls-files, ls-tree, status, diff, add,
 stash, commit, grep or worktree, stays tied, and so does an option not on the
 list.
@@ -1136,6 +1139,7 @@ GIT_OPTION_PREFIXES_NOT_TYING_A_CALL_TO_THE_FILE_LIST = {
     "log": ("--format=", "--pretty=", "--max-count=", "--date="),
 }
 GIT_LOG_COUNT_OPTION = re.compile(r"^-\d+$")
+GIT_GLOB_CHARACTERS = re.compile(r"[*?\[\\]")
 GIT_CALL_SEES_NO_FILE = "sees no file"
 GIT_CALL_RUNS_ON_ANOTHER_REPOSITORY = "runs on another repository"
 GIT_CALL_READS_THE_CHECKOUT = "reads the checkout"
@@ -1452,7 +1456,10 @@ def work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(call, top):
     The paths were measured with strace on git 2.53.0: log and rev-parse look for a file named
     like each revision, since such a file makes the argument ambiguous or, for a revision that
     does not resolve, its answer; log reads .mailmap; check-ignore looks at the path it is given,
-    since a tracked path is never ignored, and at the .gitignore of each directory above it."""
+    since a tracked path is never ignored, and at the top .gitignore. An operand whose meaning
+    git settles from more of the work tree than that path stays tied: a directory, a glob, a
+    revision behind prefix syntax such as ^, a check-ignore path below a directory, and any
+    operand of a call whose -C directory does not exist."""
     arguments, directory = call.get("arguments"), call.get("directory")
     if call.get("GIT_DIR") is not None or call.get("GIT_WORK_TREE") is not None \
             or not isinstance(directory, str) or not isinstance(arguments, list) \
@@ -1468,6 +1475,8 @@ def work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(call, top):
         if option != "-C" or value is None:
             return None
         directory = os.path.join(directory, value)
+    if not os.path.isdir(directory):
+        return None
     operands = []
     for argument in command_arguments:
         if not argument.startswith("-"):
@@ -1490,7 +1499,9 @@ def work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(call, top):
             return None
         return []
     if command in ("rev-parse", "log", "merge-base") and any(
-            ":" in operand or not operand for operand in operands):
+            ":" in operand or not operand or operand.startswith("^")
+            or GIT_GLOB_CHARACTERS.search(operand)
+            or os.path.isdir(os.path.join(directory, operand)) for operand in operands):
         return None
     if command == "merge-base":
         return []
@@ -1500,10 +1511,9 @@ def work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(call, top):
     if command == "log":
         consulted.append(".mailmap")
     if command == "check-ignore":
-        for path in list(consulted):
-            parts = path.split("/")
-            consulted.extend("/".join(parts[:depth] + [".gitignore"])
-                             for depth in range(len(parts)))
+        if any("/" in path for path in consulted):
+            return None
+        consulted.append(".gitignore")
     return sorted(set(consulted))
 
 
