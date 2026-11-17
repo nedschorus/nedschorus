@@ -144,9 +144,7 @@ def run(command, environment):
                           stdin=subprocess.DEVNULL)
 
 
-def git_error(completed):
-    return (common.run_all_test_suites.first_line_of_error(completed)
-            or "git printed no error")
+git_error = common.run_all_test_suites.git_failure_stderr_first_line_or_printed_no_error_text
 
 
 def gh_error(completed):

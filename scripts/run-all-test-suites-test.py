@@ -1130,6 +1130,16 @@ try:
     check("recordings_directory_for refuses when git cannot resolve HEAD",
           refused is not None and "fatal: injected" in refused, refused)
 
+    for stderr, git_command, expected in (
+            ("fatal: injected\nmore\n", "git", "fatal: injected"),
+            ("", "git", "git printed no error"), (None, "git", "git printed no error"),
+            ("  \n", "git ls-files", "git ls-files printed no error")):
+        completed = subprocess.CompletedProcess(["git"], -9, "", stderr)
+        answer = module.git_failure_stderr_first_line_or_printed_no_error_text(
+            completed, git_command)
+        check(f"a {git_command} whose stderr is {stderr!r} is reported as {expected!r}",
+              answer == expected, answer)
+
     # A git killed by a signal prints nothing; a git that fails may print several lines.
     for how, status, stderr, error in (
             ("exits 128 printing two lines", 128, "fatal: injected\nmore\n", "fatal: injected"),
