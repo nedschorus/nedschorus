@@ -15,7 +15,6 @@ import importlib.util
 import io
 import json
 import re
-import shutil
 import socket
 import os
 import subprocess
@@ -23,7 +22,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-SCRATCH_REPORT_DIRECTORY = Path(tempfile.mkdtemp(prefix="hook-rule-ids-weekly-reports-"))
+# Kept in a variable so the directory is removed at exit even when a case raises.
+_SCRATCH_REPORT_DIRECTORY_HOLDER = tempfile.TemporaryDirectory(prefix="hook-rule-ids-weekly-reports-")
+SCRATCH_REPORT_DIRECTORY = Path(_SCRATCH_REPORT_DIRECTORY_HOLDER.name)
 os.environ["NEDSCHORUS_MAINTENANCE_JOB_REPORTS_DIRECTORY"] = str(SCRATCH_REPORT_DIRECTORY)
 PROGRAM = (Path(__file__).resolve().parents[1]
            / "claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report.py")
@@ -429,6 +430,20 @@ with tempfile.TemporaryDirectory() as scratch:
           and "For each `not read: git lookup:` line above: run the git command it quotes" in errors.getvalue()
           and f"Then run, on {socket.gethostname()}:\n    {rerun}" in errors.getvalue(), errors.getvalue())
 
+    working_directory = os.getcwd()
+    os.chdir(base)
+    try:
+        status, _, errors = run_program(["--transcript-directory", "transcripts", "--transcript-directory", missing.name,
+                                         "--report-directory", "reports"], now)
+    finally:
+        os.chdir(working_directory)
+    # The working directory is base with symbolic links resolved, as a test sandbox's temporary directory can be one.
+    resolved = base.resolve()
+    check("an invocation given relative paths prints a command to run again, and a path to check, that work from "
+          "any directory",
+          status == 1 and f"Then run, on {socket.gethostname()}:\n    {rerun.replace(str(base), str(resolved))}" in errors
+          and f"not read: {resolved / missing.name}: not a directory" in errors, errors)
+
     hook_file = repository / "hooks" / "guard-hook.py"
     committed_hook = hook_file.read_text(encoding="utf-8")
     hook_file.write_text(committed_hook + 'LATER = "[rule fixture-uncommitted] later"\n', encoding="utf-8")
@@ -457,9 +472,27 @@ with tempfile.TemporaryDirectory() as scratch:
           status == 1 and only_case(errors, "main") and "scripts/agent-seat-worktree-create-with-owner-file.py <topic branch name>" in errors
           and f"git -C {repository} restore --staged --worktree --source=HEAD -- hooks/guard-hook.py" in errors
           and "leave it to whoever is making it" in errors, errors)
+    worktree_command = re.search(r"`([^`]*agent-seat-worktree-create-with-owner-file\.py <topic branch name>)`", errors)
+    fake_helper = repository / "scripts" / "agent-seat-worktree-create-with-owner-file.py"
+    fake_helper.parent.mkdir()
+    fake_helper.write_text("import subprocess\nsubprocess.run(['git', 'rev-parse', '--path-format=absolute', "
+                           "'--git-common-dir'], check=True)\n", encoding="utf-8")
+    elsewhere = base / "elsewhere"
+    elsewhere.mkdir()
+    helper_run = (subprocess.run(["bash", "-c", worktree_command.group(1).replace("<topic branch name>", "topic-x")],
+                                 cwd=elsewhere, capture_output=True, text=True) if worktree_command else None)
+    fake_helper.unlink()
+    fake_helper.parent.rmdir()
+    check("the printed worktree command, run from a directory outside the checkout, runs the helper in the checkout",
+          helper_run is not None and helper_run.returncode == 0
+          and helper_run.stdout.strip() == str((repository / ".git").resolve()),
+          (worktree_command and worktree_command.group(1), helper_run))
+
+    def step_of(errors, rule_id):
+        return next((line for line in errors.splitlines() if line.startswith(f"- `[rule {rule_id}]`")), "")
 
     def printed_undo(errors):
-        found = re.search(r"undo the edit here with `([^`]*)`", errors)
+        found = re.search(r"undo the edit here(?: with|: run) `([^`]*)`", errors)
         return found.group(1) if found else None
 
     def run_printed_undo(errors):
@@ -479,18 +512,48 @@ with tempfile.TemporaryDirectory() as scratch:
     committed_settings = settings_file.read_text(encoding="utf-8")
     new_hook = repository / "hooks" / "new-hook.py"
     new_hook.write_text('NEW = "[rule fixture-new-hook] new"\n', encoding="utf-8")
+    other_new_hook = repository / "hooks" / "other-new-hook.py"
+    other_new_hook.write_text('OTHER = "[rule fixture-other-new-hook] other"\n', encoding="utf-8")
     registered = json.loads(committed_settings)
-    registered["hooks"]["PreToolUse"][0]["hooks"].append(
-        {"type": "command", "command": 'python3 "$CLAUDE_PROJECT_DIR"/hooks/new-hook.py'})
+    for name in ("new-hook.py", "other-new-hook.py"):
+        registered["hooks"]["PreToolUse"][0]["hooks"].append(
+            {"type": "command", "command": f'python3 "$CLAUDE_PROJECT_DIR"/hooks/{name}'})
     settings_file.write_text(json.dumps(registered), encoding="utf-8")
+    both_registered = settings_file.read_text(encoding="utf-8")
     status, _, errors = run_program(arguments, now)
-    undone = run_printed_undo(errors)
-    check("a new, untracked hook registered by an uncommitted settings.json edit, on main, is moved with its "
-          "registration, and its undo, run as printed, deletes the hook and restores settings.json",
+    new_hook_step = step_of(errors, "fixture-new-hook")
+    undone = run_printed_undo(new_hook_step)
+    check("two new hooks registered by one uncommitted settings.json edit, on main: the step for one copies only "
+          "its hook and its registration, and its undo, run as printed, deletes that hook and leaves settings.json, "
+          "with the other hook's registration, to be edited by hand",
           status == 1 and only_case(errors, "main") and undone
-          and f"copy {repository}/hooks/new-hook.py and {repository}/.claude/settings.json to the same path" in errors
-          and not new_hook.exists() and settings_file.read_text(encoding="utf-8") == committed_settings
-          and git(repository, "status", "--porcelain").strip() == "", (errors, git(repository, "status", "--porcelain")))
+          and f"copy {repository}/hooks/new-hook.py to the same path" in new_hook_step
+          and "any changes that register hooks/new-hook.py" in new_hook_step
+          and "other-new-hook.py" not in new_hook_step
+          and not new_hook.exists() and other_new_hook.exists()
+          and settings_file.read_text(encoding="utf-8") == both_registered, (errors, git(repository, "status", "--porcelain")))
+    other_new_hook.unlink()
+    settings_file.write_text(committed_settings, encoding="utf-8")
+    check("the two-new-hooks case leaves the fixture clean", git(repository, "status", "--porcelain").strip() == "",
+          git(repository, "status", "--porcelain"))
+
+    git(repository, "mv", "hooks/guard-hook.py", "hooks/moved-hook.py")
+    moved_hook = repository / "hooks" / "moved-hook.py"
+    moved_hook.write_text(committed_hook + 'MOVED = "[rule fixture-renamed] moved"\n', encoding="utf-8")
+    settings_file.write_text(committed_settings.replace("guard-hook.py", "moved-hook.py"), encoding="utf-8")
+    git(repository, "add", "-A")
+    status, _, errors = run_program(arguments, now)
+    renamed_step = step_of(errors, "fixture-renamed")
+    undone = run_printed_undo(renamed_step)
+    check("a hook staged as a rename, on main, gets a step that deletes the rename's source in the topic "
+          "worktree, and an undo that, run as printed, puts back the source and removes the renamed hook",
+          status == 1 and only_case(errors, "main") and undone
+          and "run `git -C <that worktree's path> rm -q -- hooks/guard-hook.py`" in renamed_step
+          and "any changes that register hooks/moved-hook.py in place of hooks/guard-hook.py" in renamed_step
+          and hook_file.read_text(encoding="utf-8") == committed_hook and not moved_hook.exists()
+          and git(repository, "status", "--porcelain").strip() == "M  .claude/settings.json",
+          (renamed_step, git(repository, "status", "--porcelain")))
+    git(repository, "restore", "--staged", "--worktree", "--source=HEAD", "--", ".claude/settings.json")
     hook_file.write_text(committed_hook + 'LATER = "[rule fixture-uncommitted] later"\n', encoding="utf-8")
 
     git(repository, "checkout", "-q", "-b", "topic")
@@ -498,6 +561,12 @@ with tempfile.TemporaryDirectory() as scratch:
     check("an uncommitted edit holding the ID, on a branch not pushed, gets only the commit-and-run-again step",
           status == 1 and only_case(errors, "branch")
           and f"commit it on topic, then run, on {socket.gethostname()}:\n    {rerun}" in errors, errors)
+
+    git(repository, "update-ref", "refs/remotes/origin/topic/sub", "HEAD")
+    status, _, errors = run_program(arguments, now)
+    git(repository, "update-ref", "-d", "refs/remotes/origin/topic/sub")
+    check("a branch not pushed, while origin has a branch named under it, such as topic/sub, is not read as pushed",
+          status == 1 and only_case(errors, "branch"), errors)
 
     git(repository, "update-ref", "refs/remotes/origin/topic", "HEAD")
     status, _, errors = run_program(arguments, now)
@@ -588,7 +657,6 @@ with tempfile.TemporaryDirectory() as scratch:
           and "if a file that is not a directory is there, find out what wrote it" in errors.getvalue()
           and f"Then run, on {socket.gethostname()}:\n    {rerun}" in errors.getvalue(), errors.getvalue())
 
-shutil.rmtree(SCRATCH_REPORT_DIRECTORY, ignore_errors=True)
 print()
 if FAILURES:
     print(f"{len(FAILURES)} case(s) failed: {', '.join(FAILURES)}")
