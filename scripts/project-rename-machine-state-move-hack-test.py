@@ -332,7 +332,12 @@ def run_apply_check_rollback_on_ned_box():
         expect("--rollback renames the journal so it cannot run twice",
                not fixture.journal.exists() and list(fixture.journal.parent.glob("journal.jsonl.rolled-back-*")))
         code, output = fixture.run("--rollback")
-        expect("--rollback without a journal says so and exits 1", code == 1 and "nothing to roll back" in output, output)
+        expect("--rollback after a finished --rollback says it finished and names the renamed journal, and exits 1",
+               code == 1 and "nothing to roll back" in output and "--rollback already finished and renamed it to" in output
+               and ".rolled-back-" in output, output)
+        code, output = fixture.run("--check")
+        expect("--check after a finished --rollback says the journal was rolled back, not that --apply never ran",
+               "--rollback already finished and renamed it to" in output and "no --apply has run" not in output, output)
     finally:
         fixture.cleanup()
 
@@ -421,9 +426,9 @@ def run_refusal_cases():
     refusal_case("the mount LaunchAgent is not counted; any other com.nedschorus one is",
                  lambda f: (f.launch_agents / "com.nedschorus.mount-ned-box-home-share-x.plist").write_text("<plist/>"),
                  "the LaunchAgent com.nedschorus.mount-ned-box-home-share-x of this project", machine="mac")
-    refusal_case("a com.nedsnodes LaunchAgent is installed",
+    refusal_case("a com.nedsnodes LaunchAgent is installed, and its remedy is launchctl, which the installer's --remove cannot replace",
                  lambda f: (f.launch_agents / "com.nedsnodes.clean-worktrees.plist").write_text("<plist/>"),
-                 "--remove --job clean-worktrees`")
+                 "Run `launchctl bootout gui/$(id -u)/com.nedsnodes.clean-worktrees`, then delete")
     refusal_case("a systemd user unit names the checkout",
                  lambda f: (f.units / "restart-live-seats-at-login.service").write_text(f"ExecStart={f.checkout}/scripts/r.py\n"),
                  "install-restart-live-seats-at-login-systemd-unit.py --remove`")
@@ -575,6 +580,16 @@ def run_rollback_conflict_case():
         after = fixture.snapshot()
         expect("a later --rollback skips what was already reversed and restores the original tree exactly",
                code == 0 and after == before, output + snapshot_difference(before, after))
+    finally:
+        fixture.cleanup()
+
+
+def run_rollback_with_no_journal_ever_case():
+    fixture = Fixture("ned-box")
+    try:
+        code, output = fixture.run("--rollback")
+        expect("--rollback with no journal and none rolled back says no --apply has run, and names the flags that must match",
+               code == 1 and "no --apply has run with these flags" in output and "--journal, --claude-dir or --home" in output, output)
     finally:
         fixture.cleanup()
 
@@ -772,6 +787,7 @@ if __name__ == "__main__":
     run_rollback_conflict_case()
     run_dangling_unit_warning_case()
     run_check_planning_failure_case()
+    run_rollback_with_no_journal_ever_case()
     run_rollback_git_failure_case()
     run_partial_backup_case()
     run_unreadable_store_directory_case()
