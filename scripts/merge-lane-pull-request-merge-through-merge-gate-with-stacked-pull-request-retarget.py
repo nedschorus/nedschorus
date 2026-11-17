@@ -503,7 +503,8 @@ def main(argv=None, wait=time.sleep):
         token = common.read_merge_account_token()
     except common.MergeAccountTokenUnusable as unusable:
         print(f"STOP: not merged: {unusable}.\n"
-              f"Tell the user this message: only the user can restore the token.")
+              f"Tell the user this message as printed, from its STOP line, which says why the "
+              f"token is unusable, through this line: only the user can restore the token.")
         return EXIT_COULD_NOT_RUN
     environment = {**os.environ, "GH_TOKEN": token}
 

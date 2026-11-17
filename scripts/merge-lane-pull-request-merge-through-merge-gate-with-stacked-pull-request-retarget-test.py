@@ -663,8 +663,13 @@ def main():
         exit_code, output, gh_calls, gate_calls, _ = run_case(
             scratch, "no-token", [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
             token=None)
-        check("an unreadable token file exits 2 before the gate or gh runs",
-              exit_code == 2 and gate_calls == [] and gh_calls == [],
+        check("an unreadable token file exits 2 before the gate or gh runs, quoting the "
+              "operating system's error and saying to tell the user the message",
+              exit_code == 2 and gate_calls == [] and gh_calls == []
+              and "could not read the merge account's token at " in output
+              and ": No such file or directory.\nTell the user this message as printed, from its "
+                  "STOP line, which says why the token is unusable, through this line: only the "
+                  "user can restore the token." in output,
               f"exit {exit_code}\n{output}")
 
         exit_code, output, gh_calls, gate_calls, _ = run_case(
