@@ -2447,11 +2447,14 @@ for call in (None, {"arguments": None}, {}, {"arguments": [b"log"]}):
 # --- Git calls tied to the checkout's list of files ---------------------------
 # A call is untied only when no file added or deleted, other than the paths it
 # consults, can change its answer; anything not shown to be so stays tied.
-TOP = pathlib.Path("/checkout-top")
+# A real top directory, because a call whose -C directory does not exist stays tied.
+TOP = pathlib.Path(os.path.realpath(tempfile.mkdtemp()))
+(TOP / "sub" / "a").mkdir(parents=True)
+(TOP / "docs").mkdir()
 for arguments, consulted in (
         (["rev-parse", "--short", "HEAD"], ["HEAD"]),
         (["rev-parse", "--verify", "--quiet", "08ddce3^{commit}"], ["08ddce3^{commit}"]),
-        (["-C", "/checkout-top/sub", "rev-parse", "HEAD"], ["sub/HEAD"]),
+        (["-C", str(TOP) + "/sub", "rev-parse", "HEAD"], ["sub/HEAD"]),
         (["log", "--first-parent", "--format=%H %s", "HEAD"], [".mailmap", "HEAD"]),
         (["-C", "sub", "log", "-1", "--format=%s", "0e12f5f"], [".mailmap", "sub/0e12f5f"]),
         (["log", "--first-parent", "--merges", "--format=%s%x09%b", "aaaa..bbbb"],
@@ -2460,10 +2463,8 @@ for arguments, consulted in (
         (["merge-base", "origin/main", "HEAD"], []),
         (["ls-remote", "--heads", "/tmp/elsewhere/remote.git", "ghi-570-edit-*"], []),
         (["check-ignore", "-q", ".ghi-guide-agent-state.json"],
-         [".ghi-guide-agent-state.json", ".gitignore"]),
-        (["-C", "sub", "check-ignore", "-q", "a/b.json"],
-         [".gitignore", "sub/.gitignore", "sub/a/.gitignore", "sub/a/b.json"])):
-    call = {"arguments": arguments, "directory": "/checkout-top",
+         [".ghi-guide-agent-state.json", ".gitignore"])):
+    call = {"arguments": arguments, "directory": str(TOP) + "",
             "GIT_DIR": None, "GIT_WORK_TREE": None}
     answer = module.work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(call, TOP)
     check(f"git {' '.join(arguments)} is not tied to the list of files, and consults "
@@ -2480,31 +2481,124 @@ for arguments in (
         ["log", "HEAD", "--", "README.md"], ["log", "-n", "1", "HEAD"], ["log"],
         ["merge-base", "--fork-point", "main"], ["merge-base", "HEAD:x", "HEAD"],
         ["ls-remote", "origin"], ["ls-remote", "--heads"],
-        ["ls-remote", "/checkout-top/sub/remote.git"], ["ls-remote", "relative/remote.git"],
+        ["ls-remote", str(TOP) + "/sub/remote.git"], ["ls-remote", "relative/remote.git"],
         ["check-ignore", "--stdin"], ["check-ignore", "-q"],
         ["check-ignore", "-q", "../outside.json"], ["check-ignore", "-q", "."],
         ["check-ignore", "-q", "--", "a.json"],
         ["-c", "core.hooksPath=/dev/null", "rev-parse", "HEAD"],
-        ["--no-pager", "log", "HEAD"], ["-C", "/elsewhere", "rev-parse", "HEAD"]):
-    call = {"arguments": arguments, "directory": "/checkout-top",
+        ["--no-pager", "log", "HEAD"], ["-C", "/elsewhere", "rev-parse", "HEAD"],
+        # git settles what these operands mean from more of the work tree than one path.
+        ["log", "HEAD", "docs"], ["log", "HEAD", "*.py"], ["rev-parse", "HEAD", "s[ub]"],
+        ["log", "HEAD", "^HEAD~1"], ["rev-parse", "^HEAD~1"],
+        ["-C", "sub", "check-ignore", "-q", "a/b.json"],
+        ["check-ignore", "-q", "sub/state.json"],
+        ["-C", "missing", "rev-parse", "HEAD"], ["-C", "missing", "merge-base", "HEAD", "HEAD"]):
+    call = {"arguments": arguments, "directory": str(TOP) + "",
             "GIT_DIR": None, "GIT_WORK_TREE": None}
     answer = module.work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(call, TOP)
     check(f"git {' '.join(arguments)} stays tied to the list of files", answer is None, answer)
 
-for environment in ({"GIT_DIR": "/checkout-top/.git", "GIT_WORK_TREE": None},
-                    {"GIT_DIR": None, "GIT_WORK_TREE": "/checkout-top"}):
-    call = dict({"arguments": ["rev-parse", "HEAD"], "directory": "/checkout-top"},
+for environment in ({"GIT_DIR": str(TOP) + "/.git", "GIT_WORK_TREE": None},
+                    {"GIT_DIR": None, "GIT_WORK_TREE": str(TOP) + ""}):
+    call = dict({"arguments": ["rev-parse", "HEAD"], "directory": str(TOP) + ""},
                 **environment)
     answer = module.work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(call, TOP)
     check(f"git rev-parse HEAD with environment {environment} stays tied to the list of files",
           answer is None, answer)
 
-for call in ({"arguments": None, "directory": "/checkout-top"},
+for call in ({"arguments": None, "directory": str(TOP) + ""},
              {"arguments": ["log", "HEAD"]}, {"arguments": [b"log", "HEAD"],
-                                              "directory": "/checkout-top"}):
+                                              "directory": str(TOP) + ""}):
     answer = module.work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(call, TOP)
     check(f"an unrecognised git call {call!r} stays tied to the list of files",
           answer is None, answer)
+shutil.rmtree(TOP)
+
+# --- git ls-files calls tied to the list of files only through their pathspecs ----------
+through_pathspecs = getattr(
+    module, "git_ls_files_call_whose_answer_can_change_only_when_a_file_its_pathspecs_match_is_added_or_deleted")
+THROUGH_PATHSPECS = (
+    module.RECORDED_GIT_LS_FILES_CALLS_CHANGED_ONLY_BY_A_FILE_THEIR_PATHSPECS_MATCH_KEY)
+TOP = pathlib.Path(os.path.realpath(tempfile.mkdtemp()))
+(TOP / "sub").mkdir()
+for arguments, directory, variables, expected in (
+        (["ls-files", "-z", "--", "*.py"], str(TOP), [], (".", ["*.py"])),
+        (["-C", str(TOP), "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--",
+          "*.py"], "/elsewhere", ["GIT_AUTHOR_NAME", "GIT_EDITOR"], (".", ["*.py"])),
+        (["ls-files", "*-glossary.md"], str(TOP), [], (".", ["*-glossary.md"])),
+        (["-C", "sub", "ls-files", "--", "*.txt", ":(exclude)old/*", ":!x", ":/top.md",
+          ":(icase,glob)**/A.md"], str(TOP), [],
+         ("sub", ["*.txt", ":(exclude)old/*", ":!x", ":/top.md", ":(icase,glob)**/A.md"])),
+        (["ls-files", "--", "-starts-with-a-dash"], str(TOP), [],
+         (".", ["-starts-with-a-dash"]))):
+    call = {"arguments": arguments, "directory": directory, "GIT_DIR": None,
+            "GIT_WORK_TREE": None, "GIT_variables": variables}
+    answer = through_pathspecs(call, TOP)
+    check(f"git {' '.join(arguments)} is tied to the list of files only through its "
+          f"pathspecs {expected[1]}, from {expected[0]}",
+          answer == {"directory": expected[0], "pathspecs": expected[1]}, answer)
+
+for arguments, variables, why in (
+        (["ls-files", "-z"], [], "no pathspec"),
+        (["-C", "sub", "ls-files"], [], "no pathspec, from a subdirectory"),
+        (["ls-files", "-s", "--", "*.py"], [], "an option not on the list"),
+        (["ls-files", "--others", "--", "*.py"], [], "--others without --exclude-standard"),
+        (["ls-files", "-x", "*.pyc", "--others", "--exclude-standard", "--", "*.py"], [],
+         "an option not on the list"),
+        (["-c", "core.hooksPath=/dev/null", "ls-files", "--", "*.py"], [], "a -c option"),
+        (["-C", "missing", "ls-files", "--", "*.py"], [], "a -C directory that does not exist"),
+        (["-C", "/elsewhere", "ls-files", "--", "*.py"], [], "a -C directory outside the top"),
+        (["ls-files", "--", ":(attr:text)*.py"], [], "attr magic"),
+        (["ls-files", "--", ":(unknown)*.py"], [], "unknown magic"),
+        (["ls-files", "--", ":.py"], [], "an unknown short magic"),
+        (["ls-files", "--", ""], [], "an empty pathspec"),
+        (["ls-files", "--", "*.py"], ["GIT_LITERAL_PATHSPECS"], "GIT_LITERAL_PATHSPECS set"),
+        (["ls-files", "--", "*.py"], ["GIT_INDEX_FILE"], "GIT_INDEX_FILE set"),
+        (["ls-files", "--", "*.py"], None, "a recording made before GIT_ variables were kept"),
+        (["ls-tree", "-r", "HEAD", "--", "docs"], [], "not ls-files")):
+    call = {"arguments": arguments, "directory": str(TOP), "GIT_DIR": None,
+            "GIT_WORK_TREE": None, "GIT_variables": variables}
+    answer = through_pathspecs(call, TOP)
+    check(f"git {' '.join(arguments)} stays tied to the whole list of files: {why}",
+          answer is None, answer)
+shutil.rmtree(TOP)
+
+# git itself says which files a pathspec matches, with its glob, magic and directory prefix.
+with tempfile.TemporaryDirectory() as scratch:
+    top = pathlib.Path(os.path.realpath(scratch))
+    subprocess.run(["git", "init", "-q", str(top)], check=True)
+    (top / "sub").mkdir()
+    files = {"a.py", "sub/b.py", "sub/c.txt", "docs/issues/1-x.md", "CLAUDE.md", "x/CLAUDE.md"}
+    for directory, pathspecs, expected in (
+            (".", ["*.py"], {"a.py", "sub/b.py"}),
+            (".", ["*.py", ":(exclude)sub/*"], {"a.py"}),
+            ("sub", ["*"], {"sub/b.py", "sub/c.txt"}),
+            ("sub", [":/CLAUDE.md"], {"CLAUDE.md"}),
+            (".", ["*/CLAUDE.md"], {"x/CLAUDE.md"}),
+            (".", [":(literal)*.py"], set())):
+        answer = module.files_git_ls_files_lists_of_these(top, files, directory, pathspecs)
+        check(f"git ls-files -- {pathspecs} from {directory} lists {sorted(expected)}",
+              answer == (expected, None), answer)
+    for files, directory, why in (
+            ({"a.py"}, "missing", "cannot change to"),
+            ({"a.py"}, ".", "outside repository")):
+        answer = module.files_git_ls_files_lists_of_these(
+            top, files, directory, ["*.py"] if directory == "missing" else ["../a.py"])
+        check(f"git failing to match from {directory} is reported with its error",
+              answer[0] is None and why in (answer[1] or ""), answer)
+    for words in ("hash-object", "update-index"):
+        previous = os.environ["PATH"]
+        os.environ.update(stand_in_git_failing_on(top, words))
+        try:
+            answer = module.files_git_ls_files_lists_of_these(top, {"a.py"}, ".", ["*.py"])
+        finally:
+            os.environ["PATH"] = previous
+        check(f"git {words} failing while matching is reported with its error",
+              answer == (None, "fatal: injected git failure"), answer)
+    answer = module.files_git_ls_files_lists_of_these(top, {"a", "a/b"}, ".", ["*"])
+    check("a list holding a path both as a file and as a directory is not matched, since "
+          "update-index would drop one of them", answer == (None, "a is both a file and a "
+                                                             "directory"), answer)
 
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
@@ -2550,7 +2644,7 @@ finally:
 finally:
     shutil.rmtree(scratch)
 ''',
-        "git-rev-parse-unknown-option-test.py": (
+        "git-rev-parse-path-in-a-tree-test.py": (
             "import subprocess\n"
             "subprocess.run(['git', 'rev-parse', 'HEAD:input.txt'], "
             "check=True, capture_output=True)\n"),
@@ -2591,7 +2685,7 @@ finally:
               and call["arguments"] == ["rev-parse", "--show-toplevel"] for call in calls),
           calls)
     commands = {"git-status-with-git-dir-test.py": "status",
-                "git-rev-parse-unknown-option-test.py": "rev-parse",
+                "git-rev-parse-path-in-a-tree-test.py": "rev-parse",
                 "git-config-write-test.py": "config"}
     for suite, command in commands.items():
         recorded = recording(root, suite)
@@ -2682,20 +2776,21 @@ with tempfile.TemporaryDirectory() as scratch:
                     "subprocess.run(['git', 'merge-base', '--is-ancestor', 'HEAD', 'HEAD'], "
                     "check=True, capture_output=True)\n"),
         ignore_suite: ("import subprocess\n"
-                       "subprocess.run(['git', '-C', 'sub', 'check-ignore', '-q', "
-                       "'state.json'], capture_output=True)\n"),
+                       "subprocess.run(['git', 'check-ignore', '-q', 'state.json'], "
+                       "capture_output=True)\n"),
         tied_suite: ("import subprocess\n"
-                     "subprocess.run(['git', 'ls-files', '-z', '--', '*.py'], "
+                     "subprocess.run(['git', 'ls-files', '-z'], "
                      "check=True, capture_output=True)\n")})
     base = commit_files(repo, {".gitignore": "state.json\n", "sub/kept.txt": "kept\n"},
                         "inputs")
+    # An ignored file on disk at the recording is absent to git, so it is recorded as absent.
+    (repo / "state.json").write_text("ignored, then tracked\n")
     result = run(root)
     check("the untied git call fixture's full run passes", result.returncode == 0,
           (result.stdout, result.stderr))
     for suite, tied, read, looked_for in (
             (log_suite, [], [], {".mailmap": False, "HEAD~0": False}),
-            (ignore_suite, [], [".gitignore"],
-             {"sub/.gitignore": False, "sub/state.json": False}),
+            (ignore_suite, [], [".gitignore"], {"state.json": False}),
             (tied_suite, ["ls-files"], [], {})):
         recorded = recording(root, suite)
         check(f"{suite} records {tied or 'no command'} as tied to the list of files, "
@@ -2723,9 +2818,7 @@ with tempfile.TemporaryDirectory() as scratch:
             ({"HEAD~0": "a file named like a revision\n"}, log_suite,
              "it looks for HEAD~0, which was added", 1),
             ({".gitignore": "state.json\nother.json\n"}, ignore_suite,
-             "it reads .gitignore, which differs", 0),
-            ({"sub/.gitignore": "\n"}, ignore_suite,
-             "it looks for sub/.gitignore, which was added", 0)):
+             "it reads .gitignore, which differs", 0)):
         since = head(repo)
         commit_files(repo, files, f"change {sorted(files)}")
         result = select_since(root, since)
@@ -2740,20 +2833,22 @@ with tempfile.TemporaryDirectory() as scratch:
         run(root)
 
     since = head(repo)
-    (repo / "sub" / "state.json").write_text("ignored, then tracked\n")
-    git(repo, "add", "-f", "sub/state.json")
+    git(repo, "add", "-f", "state.json")
     git(repo, "commit", "-q", "-m", "track an ignored path check-ignore was given")
     result = select_since(root, since)
-    check("tracking a path check-ignore was given, which was ignored when recorded, selects "
-          "the suite",
+    check("tracking a path check-ignore was given, which was on disk and ignored when "
+          "recorded, selects the suite",
           result.returncode == 0 and ignore_suite in ran(root)
-          and f"SELECTED {ignore_suite}: it looks for sub/state.json, which was added"
+          and f"SELECTED {ignore_suite}: it looks for state.json, which was added"
           in lines(result.stdout),
           (ran(root), [line for line in lines(result.stdout) if ignore_suite in line]))
 
     recorded_file = next((root / "recordings").glob(f"*/{log_suite}.json"))
     recorded = json.loads(recorded_file.read_text())
-    recorded.pop("git_commands_tied_to_the_file_list")
+    for key in ("git_commands_tied_to_the_file_list",
+                module.RECORDED_GIT_COMMANDS_CHANGED_BY_ANY_FILE_KEY,
+                THROUGH_PATHSPECS):
+        recorded.pop(key)
     recorded_file.write_text(json.dumps(recorded))
     since = head(repo)
     commit_files(repo, {"notes/another.txt": "new\n"}, "add another file")
@@ -2764,6 +2859,134 @@ with tempfile.TemporaryDirectory() as scratch:
           and f"SELECTED {log_suite}: it runs git log, merge-base on the checkout, and "
               "notes/another.txt was added" in lines(result.stdout),
           (ran(root), [line for line in lines(result.stdout) if log_suite in line]))
+
+# A git ls-files call with pathspecs selects its suite only for a file its pathspecs match.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+
+    def ls_files(*arguments, environment=None):
+        return ("import os, subprocess\n"
+                f"subprocess.run(['git', *{list(arguments)!r}], check=True, capture_output=True"
+                + (f", env=dict(os.environ, **{environment!r})" if environment else "")
+                + ")\n")
+
+    suites = {
+        "py-test.py": ls_files("ls-files", "-z", "--cached", "--others", "--exclude-standard",
+                               "--", "*.py"),
+        "exclude-test.py": ls_files("ls-files", "-z", "--", "*.txt", ":(exclude)notes/*"),
+        "sub-test.py": ls_files("-C", "sub", "ls-files", "-z", "--", "*.txt"),
+        "whole-test.py": ls_files("ls-files", "-z"),
+        "attr-test.py": ls_files("ls-files", "-z", "--", ":(attr:text)*.txt"),
+        "literal-test.py": ls_files("ls-files", "-z", "--", "*.py",
+                                    environment={"GIT_LITERAL_PATHSPECS": "1"}),
+        "outside-test.py": ("import subprocess\n"
+                            "subprocess.run(['git', 'ls-files', '--', '../outside.txt'], "
+                            "capture_output=True)\n")}
+    narrowed = ["exclude-test.py", "py-test.py", "sub-test.py"]
+    whole = ["attr-test.py", "literal-test.py", "outside-test.py", "whole-test.py"]
+    repo = make_repo(root, suites)
+    base = commit_files(repo, {"sub/kept.txt": "kept\n", "notes/one.txt": "one\n"}, "inputs")
+    result = run(root)
+    check("the git ls-files pathspec fixture's full run passes", result.returncode == 0,
+          (result.stdout, result.stderr))
+    for suite in narrowed + whole:
+        recorded = recording(root, suite)
+        expected = [] if suite in narrowed else ["ls-files"]
+        check(f"{suite} records {expected or 'no command'} as tied to the whole list of files",
+              recorded.get("git_commands_tied_to_the_file_list") == ["ls-files"]
+              and recorded.get(module.RECORDED_GIT_COMMANDS_CHANGED_BY_ANY_FILE_KEY) == expected
+              and bool(recorded.get(
+                  THROUGH_PATHSPECS))
+              == (suite in narrowed), recorded)
+    check("a git ls-files call from -C sub is recorded with its directory and pathspecs",
+          [{key: call[key] for key in ("directory", "pathspecs")} for call in recording(
+              root, "sub-test.py").get(THROUGH_PATHSPECS, [])]
+          == [{"directory": "sub", "pathspecs": ["*.txt"]}], recording(root, "sub-test.py"))
+
+    for files, deleted, selected, why in (
+            ({"notes/added.txt": "new\n"}, [], {}, None),
+            ({"docs/added.txt": "new\n"}, [],
+             {"exclude-test.py": "it runs git ls-files -- '*.txt' ':(exclude)notes/*' on the "
+                                 "checkout, which lists docs/added.txt, and docs/added.txt was "
+                                 "added"}, None),
+            ({"sub/added.txt": "new\n"}, [],
+             {"sub-test.py": "it runs git ls-files -- '*.txt' from sub/ on the checkout, which "
+                             "lists sub/added.txt, and sub/added.txt was added",
+              "exclude-test.py": None}, None),
+            ({"tool.py": "VALUE = 1\n"}, [],
+             {"py-test.py": "it runs git ls-files -- '*.py' on the checkout, which lists "
+                            "tool.py, and tool.py was added"}, None),
+            ({}, ["tool.py"],
+             {"py-test.py": "it runs git ls-files -- '*.py' on the checkout, which lists "
+                            "tool.py, and tool.py was deleted"}, None)):
+        since = head(repo)
+        for path in deleted:
+            git(repo, "rm", "-q", path)
+        commit_files(repo, files, f"change {sorted(files)} {deleted}")
+        result = select_since(root, since)
+        out = lines(result.stdout)
+        changed = sorted(files) + deleted
+        expected = sorted(set(selected) | set(whole))
+        check(f"adding or deleting {changed} selects only {expected}",
+              result.returncode == 0 and ran(root) == expected
+              and all(why is None or f"SELECTED {suite}: {why}" in out
+                      for suite, why in selected.items())
+              and f"SELECTED whole-test.py: it runs git ls-files on the checkout, and "
+                  f"{changed[0]} was {'deleted' if deleted else 'added'}" in out,
+              (ran(root), result.stdout, result.stderr))
+        run(root)
+
+    def edit_recording(suite, change):
+        recorded_file = next((root / "recordings").glob(f"*/{suite}.json"))
+        recorded = json.loads(recorded_file.read_text())
+        change(recorded)
+        recorded_file.write_text(json.dumps(recorded))
+
+    since = head(repo)
+    edit_recording("py-test.py", lambda recorded: recorded.update(
+        files_fingerprint="a recording made on another set of files"))
+    result = select_since(root, since)
+    check("a recording made on another set of files, where its pathspecs listed the same files, "
+          "leaves a suite running only git ls-files with pathspecs NOT SELECTED",
+          result.returncode == 0 and "py-test.py" not in ran(root),
+          (ran(root), result.stdout, result.stderr))
+    edit_recording("py-test.py", lambda recorded: recorded[
+        THROUGH_PATHSPECS][0].update(
+        files_fingerprint="its pathspecs listed other files"))
+    result = select_since(root, since)
+    check("a recording made where the pathspecs of its git ls-files call listed other files "
+          "selects the suite",
+          result.returncode == 0 and "py-test.py" in ran(root)
+          and "SELECTED py-test.py: it runs git ls-files -- '*.py' on the checkout, and its "
+              "recording was made where its pathspecs listed other files" in lines(result.stdout),
+          (ran(root), result.stdout, result.stderr))
+
+    edit_recording("py-test.py", lambda recorded: [recorded.pop(key) for key in (
+        module.RECORDED_GIT_COMMANDS_CHANGED_BY_ANY_FILE_KEY,
+        THROUGH_PATHSPECS)])
+    since = head(repo)
+    commit_files(repo, {"notes/another.txt": "new\n"}, "add a file no pathspec matches")
+    result = select_since(root, since)
+    check("a recording saved before recordings named the git ls-files calls tied only through "
+          "their pathspecs ties its git ls-files calls to the whole list of files",
+          result.returncode == 0 and "py-test.py" in ran(root)
+          and "SELECTED py-test.py: it runs git ls-files on the checkout, and "
+              "notes/another.txt was added" in lines(result.stdout),
+          (ran(root), result.stdout, result.stderr))
+    run(root)
+
+    since = head(repo)
+    git(repo, "rm", "-q", "-r", "sub")
+    git(repo, "commit", "-q", "-m", "remove the directory a suite runs git ls-files from")
+    result = select_since(root, since)
+    check("a git ls-files call from a directory the checkout no longer holds selects its "
+          "suite, with git's error",
+          "sub-test.py" in ran(root)
+          and any(line.startswith("SELECTED sub-test.py: it runs git ls-files -- '*.txt' from "
+                                  "sub/ on the checkout, and git could not say which files "
+                                  "that lists: fatal: cannot change to ")
+                  for line in lines(result.stdout)),
+          (ran(root), result.stdout, result.stderr))
 
 # The recorder resolves a git operand from the last -C, as git does.
 with tempfile.TemporaryDirectory() as scratch:
