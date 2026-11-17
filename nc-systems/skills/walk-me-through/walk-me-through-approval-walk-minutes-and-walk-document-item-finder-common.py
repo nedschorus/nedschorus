@@ -560,7 +560,7 @@ def item_unit_spans(document_text, parser):
     withdrawn = [token.map[0] for index, token in enumerate(tokens)
                  if token.type == "heading_open" and token.map is not None and token.level == 0
                  and index + 1 < len(tokens) and WITHDRAWN_HEADING.match(tokens[index + 1].content)]
-    headings = [(token.map[0], heading_level(token), label_numbers(tokens[index + 1].content if index + 1 < len(tokens)
+    headings = [(token.map[0], heading_level(token), label_numbers(tokens[index + 1].content if index + 1 < len(tokens)  # pragma: no mutate, markdown-it puts an inline token after every heading_open, so index + 1 < len(tokens) holds wherever index * 1 < len(tokens) does
                                                                      else ""))
                 for index, token in enumerate(tokens)
                 if token.type == "heading_open" and token.map is not None and token.level == 0]
