@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Move one machine's state outside the repository from the nedschorus names to the nedsnodes names, and back.
 
+The user runs it in the stopped window of the project rename, once on each machine: --apply on ned-box first, then on the Mac (the Mac step), because the Mac reaches the log-store through ned-box's home share and its --apply refuses until ned-box has renamed the log-store; --rollback in the reverse order, the Mac first, then ned-box.
+
 Usage:
   scripts/project-rename-machine-state-move-hack.py (--check | --apply | --rollback)
       [--machine mac|ned-box] [--home DIR] [--claude-dir DIR] [--claude-json FILE]
@@ -9,15 +11,15 @@ Usage:
 
 --check reports, without changing anything, whether --apply would refuse and why, how many changes each step has left to make, whether a journal file exists and how many of its entries --rollback already reversed, whether `git status` works in every worktree of the reference-checkout, and each worktree git lists whose directory is missing, as after a move whose repair did not run.
 
---apply first refuses, changing nothing, unless all of these hold: no scheduled job of this project is installed (a crontab line naming the reference-checkout, the worktrees directory or the log-store, a `com.nedschorus.*` or `com.nedsnodes.*` LaunchAgent plist other than com.nedschorus.mount-ned-box-home-share, whose mount the Mac step needs and whose plist this program leaves as it is, a systemd user unit naming one of those paths, other than the units step 8 moves); `~/.claude/.transcript-mirror.lock` is not held; no process named `claude` runs on this machine; none of the `nc-*` systemd user units step 8 renames is active; no path a step would create already exists; the reference-checkout is on main with no uncommitted change to a tracked file (untracked files are allowed and move with it); every worktree git lists for the reference-checkout has its directory, since `git worktree repair` cannot repair one that is missing; no journal exists yet; on the Mac, the log-store is already at its new name under the /Volumes/nedhome mount. It also refuses when it cannot find out: the crontab or the process list cannot be read, ~/.claude.json is not JSON, or the reference-checkout is missing or `git worktree list` fails in it. Then, in this order, journaling each change before making it:
+--apply first refuses, changing nothing, unless all of these hold: no scheduled job of this project is installed (a crontab line naming the reference-checkout, the worktrees directory or the log-store, a `com.nedschorus.*` or `com.nedsnodes.*` LaunchAgent plist other than com.nedschorus.mount-ned-box-home-share, whose mount the Mac step (this program's --apply on the Mac) needs and whose plist this program leaves as it is, a systemd user unit naming one of those paths, other than the units step 8 moves); `~/.claude/.transcript-mirror.lock` is not held; no process named `claude` runs on this machine; none of the `nc-*` systemd user units step 8 renames is active; no path a step would create already exists; the reference-checkout is on main with no uncommitted change to a tracked file (untracked files are allowed and move with it); every worktree git lists for the reference-checkout has its directory, since `git worktree repair` cannot repair one that is missing; no journal exists yet; on the Mac, the log-store is already at its new name under the /Volumes/nedhome mount. It also refuses when it cannot find out: the crontab or the process list cannot be read, ~/.claude.json is not JSON, or the reference-checkout is missing or `git worktree list` fails in it. Then, in this order, journaling each change before making it:
   1. renames ~/Projects/nedschorus to ~/Projects/nedsnodes and ~/Projects/nedschorus-worktrees to ~/Projects/nedsnodes-worktrees;
   2. on ned-box only, renames the log-store ~/nedschorus-logs to ~/nedsnodes-logs;
-  then, on the Mac as on ned-box, runs `git worktree repair` in this machine's reference-checkout with the new path of every worktree it listed before step 1, runs `git status` in every worktree, stopping when one fails, and sets core.hooksPath to the new path when it named the old checkout path;
+  2a. on the Mac as on ned-box, runs `git worktree repair` in this machine's reference-checkout with the new path of every worktree it listed before step 1, runs `git status` in every worktree, stopping when one fails, and sets core.hooksPath to the new path when it named the old checkout path (--check counts these with step 1);
   3. in this machine's tree of the log-store's guarded-file versions-and-approvals store, renames the directories of the old checkout, worktrees-directory and log-store paths to the new ones, and inside them every `nc-systems` to `nn-systems`, `nc-queue` to `nn-queue`, `docs/nedschorus-wiki` to `docs/nedsnodes-wiki` and each `nedschorus-*` directory directly in `docs/nedschorus-wiki` to `nedsnodes-*`;
   4. renames each ~/.claude/projects/<key> that Claude Code made for the reference-checkout or a worktree that still exists, replacing only the part of the key made from the moved directory, and its copy under <log-store>/agent-session-files-by-machine/<machine>/projects/ the same way;
   5. renames each ~/.claude/tasks/nedschorus-<seat>-tasks to nedsnodes-<seat>-tasks, and its copy under <log-store>/agent-session-files-by-machine/<machine>/tasks/;
   6. renames ~/.config/nedschorus to ~/.config/nedsnodes;
-  7. copies ~/.claude.json to a backup beside it, then rewrites every key and string value in it that holds the old checkout, worktrees-directory or log-store path, to the new path, and `nedschorus/nedschorus` to `nedsnodes/nedsnodes`; and copies ~/.ssh/authorized_keys to a backup beside it, then rewrites those paths inside each `command="..."` option and nowhere else on the line, keeping the file's permissions;
+  7. copies ~/.claude.json to a backup beside it, then rewrites every key and string value in it that holds the old checkout, worktrees-directory or log-store path, to the new path, and `nedschorus/nedschorus` to `nedsnodes/nedsnodes`; and copies ~/.ssh/authorized_keys to a backup beside it, then rewrites the old checkout, worktrees-directory and log-store paths inside each `command="..."` option and nowhere else on the line, keeping the file's permissions;
   8. on ned-box only, renames each systemd user unit entry named `nc-*`, in the unit directory and its *.wants directories, to `nn-*`; a symlink is re-made pointing at the new checkout path with each `nc-` directory and file name in it changed to `nn-`; then runs `systemctl --user daemon-reload`; it starts nothing;
   9. leaves symlinks at the old reference-checkout path, the old ~/.config/nedschorus path and, on ned-box, the old log-store path, each pointing at its new sibling by a relative name.
 --rollback reverses the journal's changes in reverse order: it removes the step-9 symlinks, re-makes the step-8 links under their old names, restores core.hooksPath to its old value, renames every directory back, and restores ~/.claude.json and ~/.ssh/authorized_keys from their backups and deletes the backups. A backup is restored only when its SHA-256 matches the one --apply journaled once the copy was complete; a file whose backup never got that record was never rewritten, so it is left as it is, and any partial backup is left in place and named; when a backup recorded complete is missing, --rollback stops, unless the file already holds the backed-up content. It then runs `git worktree repair` with the old paths and `systemctl --user daemon-reload` when --apply ran them, and renames the journal to <journal>.rolled-back-<time>. A change the journal records but that was never made, because --apply stopped first, is skipped.
@@ -210,8 +212,9 @@ def guarded_store_ops(layout, log_store):
 def unreadable_store_directory(error):
     raise StepFailed(f"cannot read {error.filename} in the guarded-file versions-and-approvals store, "
                      f"so its nested renames cannot be planned: {error.strerror}. "
-                     f"Give the user running this program read and search permission on it, for example with "
-                     f"`chmod u+rx {error.filename}`, then run this program again.")
+                     f"Look at why with `ls -ld {error.filename}`: if it is a permission that this user may change, "
+                     f"give it read and search permission, as `chmod u+rx {error.filename}` does; if it belongs to "
+                     f"another user, or the error is an I/O error, fix that first. Then run this program again.")
 
 
 def inner_store_name(parent, name):
@@ -444,7 +447,10 @@ def scheduled_job_refusals(layout):
     for plist in plists:
         label = plist.stem
         job = label.split(".", 2)[2]
-        if job == RESTART_LIVE_SEATS_JOB:
+        if label.startswith(f"com.{NEW_NAME}."):
+            # The installers take off only the com.nedschorus.<job> labels they write.
+            remedy = f"Run `launchctl bootout gui/$(id -u)/{label}`, then delete {plist}."
+        elif job == RESTART_LIVE_SEATS_JOB:
             remedy = (f"Take it off with `python3 {layout.current_checkout()}/scripts/"
                       f"install-restart-live-seats-at-login-launch-agent.py --remove --label {label}`.")
         else:
@@ -672,11 +678,13 @@ def undo(op, deferred, complete_backups):
         elif not (os.path.lexists(op["from"]) and not os.path.lexists(op["to"])):
             if os.path.lexists(op["from"]):
                 raise StepFailed(f"cannot reverse the rename {op['from']} -> {op['to']}: both exist, and --rollback "
-                                 f"moves {op['to']} back to {op['from']}. Look at both: if {op['from']} is empty or a "
-                                 f"leftover, move it aside by hand; if it holds work, move that work into {op['to']} "
-                                 f"first. Then run --rollback again.")
+                                 f"moves {op['to']} back to {op['from']}. Look at both: if {op['from']} holds work, move that work "
+                                 f"into {op['to']} first. Then move {op['from']} aside by hand, for example to "
+                                 f"{op['from']}.aside, so that only {op['to']} exists. Then run --rollback again, "
+                                 f"with the same path flags as before.")
             raise StepFailed(f"cannot reverse the rename {op['from']} -> {op['to']}: neither exists. Find where the "
-                             f"directory went and move it to {op['to']} by hand, then run --rollback again.")
+                             f"directory went and move it to {op['to']} by hand, then run --rollback again, with the same "
+                             f"path flags as before.")
     elif kind == "symlink":
         if os.path.islink(op["path"]) and os.readlink(op["path"]) == op["target"]:
             os.unlink(op["path"])
@@ -699,7 +707,8 @@ def undo(op, deferred, complete_backups):
                                  f"so it is not restored over {op['path']}. Put back into {op['path']} the content "
                                  f"--apply backed up, whose SHA-256 is {recorded}, from a copy of your own (check it "
                                  f"with `sha256sum` on ned-box or `shasum -a 256` on the Mac), delete {op['backup']}, "
-                                 f"then run --rollback again: it skips this file once {op['path']} has that SHA-256.")
+                                 f"then run --rollback again, with the same path flags as before: it skips this file once "
+                                 f"{op['path']} has that SHA-256.")
             shutil.copy2(op["backup"], op["path"])
             os.unlink(op["backup"])
         elif not (os.path.exists(op["path"]) and sha256_of(op["path"]) == recorded):
@@ -713,10 +722,18 @@ def undo(op, deferred, complete_backups):
         deferred.append(op)
 
 
+def no_journal_text(layout):
+    """Why there is no journal: no --apply with these flags, or a finished --rollback renamed it."""
+    rolled_back = sorted(layout.journal.parent.glob(f"{layout.journal.name}.rolled-back-*"))
+    if rolled_back:
+        return (f"no journal at {layout.journal}: --rollback already finished and renamed it to {rolled_back[-1]}")
+    return (f"no journal at {layout.journal}, so no --apply has run with these flags. If --apply ran with "
+            f"--journal, --claude-dir or --home, each of those must be given with the same value")
+
+
 def rollback(layout):
     if not layout.journal.exists():
-        print(f"{PROGRAM}: nothing to roll back: no journal at {layout.journal}. "
-              "If --apply ran with --journal, --claude-dir or --home, run --rollback with the same one.")
+        print(f"{PROGRAM}: nothing to roll back: {no_journal_text(layout)}.")
         return EXIT_REFUSED_OR_FAILED
     entries, undone, complete_backups = read_journal(layout.journal)
     deferred = []
@@ -776,7 +793,7 @@ def check(layout):
         entries, undone, _ = read_journal(layout.journal)
         print(f"\nJournal {layout.journal}: {len(entries)} entr(ies), {len(undone)} already reversed by --rollback.")
     else:
-        print(f"\nJournal: no journal file at {layout.journal}, so --apply has not run with these flags.")
+        print(f"\nJournal: {no_journal_text(layout)}.")
     checkout = layout.current_checkout()
     if checkout.is_dir():
         present, missing = worktrees_listed(checkout)
