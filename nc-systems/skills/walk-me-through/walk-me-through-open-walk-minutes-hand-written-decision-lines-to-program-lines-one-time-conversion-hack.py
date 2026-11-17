@@ -34,7 +34,7 @@ the old one did not, since a hand-written `<revised, awaiting ruling>` line no
 longer undoes a decision; it proposes nothing for those.
 
 Usage:
-  walk-me-through-open-walk-minutes-hand-written-decision-lines-to-program-lines-one-time-conversion-nbd.py
+  walk-me-through-open-walk-minutes-hand-written-decision-lines-to-program-lines-one-time-conversion-hack.py
       [--minutes PATH ...] [--skip PATH:LINE ...] [--as-moved-on PATH:LINE ...] [--write]
 
 By default it reads every /home/nedlern/agents/*/docs/walk/*-minutes.md on

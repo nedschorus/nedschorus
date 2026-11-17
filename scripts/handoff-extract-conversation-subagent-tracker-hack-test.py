@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for handoff-extract-conversation-subagent-tracker-nbd.py, through the extractor that loads it.
+"""Tests for handoff-extract-conversation-subagent-tracker-hack.py, through the extractor that loads it.
 
-Run: python3 scripts/handoff-extract-conversation-subagent-tracker-nbd-test.py
+Run: python3 scripts/handoff-extract-conversation-subagent-tracker-hack-test.py
 Prints one line per case and exits non-zero if any case fails.
 
 Every case builds its own transcript in a temporary directory, so the tests
@@ -553,7 +553,7 @@ with tempfile.TemporaryDirectory() as workspace:
           ([turn["text"] for turn in turns], skips))
 
 
-# The tracker is nice-but-dirty: when it cannot load or raises, the dialog is written without subagent turns.
+# The tracker is nn-hack: when it cannot load or raises, the dialog is written without subagent turns.
 with tempfile.TemporaryDirectory() as workspace:
     path = write_transcript(workspace, "tracker-fails.jsonl", foreground)
     output_path = Path(workspace) / "seat-dialog-0001.md"
@@ -561,7 +561,7 @@ with tempfile.TemporaryDirectory() as workspace:
     file_stderr, stdout_stderr, stdout_text = io.StringIO(), io.StringIO(), io.StringIO()
     try:
         extractor._subagent_tracker_module = None
-        extractor.subagent_tracker_module_path = lambda: Path(workspace) / "no-such-tracker-nbd.py"
+        extractor.subagent_tracker_module_path = lambda: Path(workspace) / "no-such-tracker-hack.py"
         with contextlib.redirect_stderr(file_stderr):
             exit_code = extractor.main(["--transcript-path", str(path), "--output", str(output_path)])
         with contextlib.redirect_stderr(stdout_stderr), contextlib.redirect_stdout(stdout_text):
@@ -593,7 +593,7 @@ with tempfile.TemporaryDirectory() as workspace:
     whole_output = Path(workspace) / "whole-out.md"
     try:
         extractor._subagent_tracker_module = None
-        extractor.subagent_tracker_module_path = lambda: Path(workspace) / "no-such-tracker-nbd.py"
+        extractor.subagent_tracker_module_path = lambda: Path(workspace) / "no-such-tracker-hack.py"
         with contextlib.redirect_stderr(io.StringIO()):
             extractor.main(["--transcript-path", str(whole_path), "--output", str(whole_output)])
     finally:

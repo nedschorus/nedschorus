@@ -1107,7 +1107,7 @@ def main(argv=None) -> int:
                         "extension is the same, so report finds report.md; a name "
                         "with a dot anywhere, such as .gitignore, counts only that "
                         "name. A name that opens with a "
-                        "dash goes after --, as in -- -nbd-test.py. When nothing "
+                        "dash goes after --, as in -- -hack-test.py. When nothing "
                         "is found and every candidate has one and the same name, "
                         "other than the query's own, the program runs again with "
                         "that full name, in the query's directory when the "

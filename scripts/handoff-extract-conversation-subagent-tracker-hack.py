@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The subagent tracker: turn a session's records into the subagent turns its complete dialog carries.
 
-Nice-but-dirty: scripts/handoff-extract-conversation.py loads this file only
+nn-hack: scripts/handoff-extract-conversation.py loads this file only
 when a caller asks for subagent turns, and when loading it or running it
 fails, the extractor leaves the subagent turns out and says so in the
 dialog, so a fault here never stops a handoff. Not a program to run; the

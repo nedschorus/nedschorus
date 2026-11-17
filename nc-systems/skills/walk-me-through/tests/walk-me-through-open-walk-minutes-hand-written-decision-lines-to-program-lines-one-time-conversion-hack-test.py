@@ -16,7 +16,7 @@ import tempfile
 from pathlib import Path
 
 SCRIPT = (Path(__file__).resolve().parents[1]
-          / "walk-me-through-open-walk-minutes-hand-written-decision-lines-to-program-lines-one-time-conversion-nbd.py")
+          / "walk-me-through-open-walk-minutes-hand-written-decision-lines-to-program-lines-one-time-conversion-hack.py")
 CHECK_PROGRAM = Path(__file__).resolve().parents[1] / "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py"
 ROOT = Path(tempfile.mkdtemp(prefix="walk-minutes-conversion-test-")).resolve()
 failures = []

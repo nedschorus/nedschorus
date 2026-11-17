@@ -2,8 +2,8 @@
 """Keep every session's complete filtered dialog current in the log-store, beside the transcripts.
 
 Usage:
-  scripts/log-store-session-dialogs-refresh-nbd.py                   # one pass, a summary line
-  scripts/log-store-session-dialogs-refresh-nbd.py --failures-only   # one pass, only FAILED lines (cron)
+  scripts/log-store-session-dialogs-refresh-hack.py                   # one pass, a summary line
+  scripts/log-store-session-dialogs-refresh-hack.py --failures-only   # one pass, only FAILED lines (cron)
 
 WHAT IT READS AND WRITES. It runs on ned-box, where the log-store is. The
 transcript mirror (scripts/transcript-mirror-to-log-store.py) copies each
@@ -44,7 +44,7 @@ whole second, so a Mac transcript that grows again within the same second
 keeps the same modification time; the change time is set by ned-box's own
 file system whenever rsync puts a new copy in place. The extractor is known
 by the sha256 of its bytes, its subagent tracker's
-(scripts/handoff-extract-conversation-subagent-tracker-nbd.py) and those of
+(scripts/handoff-extract-conversation-subagent-tracker-hack.py) and those of
 the module the tracker loads
 (scripts/claude-code-subagent-task-notification-interim-recognizer-common.py)
 and of scripts/log-store-session-dialogs-refresh-common.py, which writes it as
@@ -82,7 +82,7 @@ SCHEDULE. Every 10 minutes, by cron on ned-box only, installed by
 nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py from the
 table beside that program:
 
-  ned-box: */10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/log-store-session-dialogs-refresh-nbd.py --failures-only >> /home/nedlern/.claude/log-store-session-dialogs-refresh.log 2>&1
+  ned-box: */10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/log-store-session-dialogs-refresh-hack.py --failures-only >> /home/nedlern/.claude/log-store-session-dialogs-refresh.log 2>&1
 
 LOG_STORE_SESSION_DIALOGS_REFRESH_LOG_STORE_ROOT_OVERRIDE in the environment overrides the
 store's root for the tests, which point it at a scratch directory.

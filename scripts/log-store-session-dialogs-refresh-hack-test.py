@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for log-store-session-dialogs-refresh-nbd.py.
+"""Tests for log-store-session-dialogs-refresh-hack.py.
 
-Run: python3 scripts/log-store-session-dialogs-refresh-nbd-test.py
+Run: python3 scripts/log-store-session-dialogs-refresh-hack-test.py
 Prints one line per case and exits non-zero if any case fails.
 
 Every case builds a scratch log-store in a temporary directory and points the
@@ -19,9 +19,9 @@ import tempfile
 import time
 from pathlib import Path
 
-SCRIPT_PATH = Path(__file__).with_name("log-store-session-dialogs-refresh-nbd.py")
+SCRIPT_PATH = Path(__file__).with_name("log-store-session-dialogs-refresh-hack.py")
 EXTRACTOR_PATH = Path(__file__).with_name("handoff-extract-conversation.py")
-SUBAGENT_TRACKER_PATH = Path(__file__).with_name("handoff-extract-conversation-subagent-tracker-nbd.py")
+SUBAGENT_TRACKER_PATH = Path(__file__).with_name("handoff-extract-conversation-subagent-tracker-hack.py")
 INTERIM_RECOGNIZER_PATH = Path(__file__).with_name(
     "claude-code-subagent-task-notification-interim-recognizer-common.py")
 REFRESH_COMMON_PATH = Path(__file__).with_name("log-store-session-dialogs-refresh-common.py")
