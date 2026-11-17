@@ -309,8 +309,8 @@ GIT_FAILED_STOP_HOOK_USER_NEXT_STEP_LINES = (
 )
 GIT_FAILED_NOTES_DELIVERY_AGENT_NEXT_STEP_LINES = (
     "Nothing needs rerunning: this check runs again when the next prompt arrives.\n"
-    "If the same failure is reported again with the next prompt, tell the user what "
-    f"{Path(__file__).name} printed, git's error included."
+    "If the next prompt's check also reports a git failure, whether this error or another, "
+    "give the user both messages, word for word."
 )
 
 

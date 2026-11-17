@@ -1098,7 +1098,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("when git cannot list untracked files, a selective run exits 2 before any suite "
           "runs, rather than selecting without them",
           result.returncode == 2 and ran(root) == []
-          and "git ls-files --others failed" in result.stderr
+          and "not run — git ls-files failed in " in result.stderr
           and result.stderr.endswith(
               "\n" + next_steps_for("fatal: injected git failure",
                                      program_command_line(root, CHANGED_SINCE, since)) + "\n")

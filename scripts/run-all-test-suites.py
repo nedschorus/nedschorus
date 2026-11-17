@@ -4435,7 +4435,7 @@ def files_that_differ_since(top, commit):
     if untracked.returncode != 0:
         error = git_failure_stderr_first_line_or_printed_no_error_text(untracked)
         raise CouldNotRun(
-            f"{PROGRAM}: not run — git ls-files --others failed in {top}: {error}\n"
+            f"{PROGRAM}: not run — git ls-files failed in {top}: {error}\n"
             + git_failure_next_step_lines(error))
     for path in untracked.stdout.split("\0"):
         if path:

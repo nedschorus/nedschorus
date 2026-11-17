@@ -1644,7 +1644,7 @@ def git_check_failed_after_a_cell(cell: str, what: str, failure, rerun: str) -> 
     sys.stdout.write(f"WARNING: the runner could not check {what}, because "
                      f"{failure}. {cell}'s report is saved without that check. Follow the "
                      f"steps below; the rerun command in them runs {cell} alone again, "
-                     f"in a new record whose report has the check.\n"
+                     f"in a new record.\n"
                      + git_failure_next_step_lines(rerun, CELL_GIT_CHECK_FAILED_AGAIN, failure))
     sys.stdout.flush()
 
