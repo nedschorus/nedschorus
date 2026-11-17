@@ -659,6 +659,9 @@ def undo(op, deferred, complete_backups):
                                  f"so it is not restored over {op['path']}. Compare the two by hand.")
             shutil.copy2(op["backup"], op["path"])
             os.unlink(op["backup"])
+        elif not (os.path.exists(op["path"]) and sha256_of(op["path"]) == recorded):
+            raise StepFailed(f"the backup {op['backup']} that --apply recorded complete is missing, and {op['path']} "
+                             f"does not hold the content it backed up, so {op['path']} cannot be restored.")
     elif kind == "hooks-path":
         if os.path.isdir(op["checkout"]):
             git_must(["-C", op["checkout"], "config", "--local", "core.hooksPath", op["old_value"]],

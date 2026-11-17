@@ -629,6 +629,36 @@ def run_partial_backup_case():
     finally:
         fixture.cleanup()
 
+    fixture = Fixture("ned-box")
+    try:
+        code, output = fixture.run("--apply")
+        entries = [json.loads(line) for line in fixture.journal.read_text().splitlines()]
+        backup = Path(next(entry["backup"] for entry in entries
+                           if entry["kind"] == "rewrite-file" and entry["path"] == str(fixture.claude_json)))
+        rewritten = fixture.claude_json.read_bytes()
+        backup.unlink()
+        code, output = fixture.run("--rollback")
+        expect("--rollback refuses a recorded-complete backup that is missing, keeping the rewritten file and the journal",
+               code == 1 and "is missing" in output and fixture.claude_json.read_bytes() == rewritten
+               and fixture.journal.exists(), output)
+    finally:
+        fixture.cleanup()
+
+    fixture = Fixture("ned-box")
+    try:
+        code, output = fixture.run("--apply")
+        entries = [json.loads(line) for line in fixture.journal.read_text().splitlines()]
+        backup = Path(next(entry["backup"] for entry in entries
+                           if entry["kind"] == "rewrite-file" and entry["path"] == str(fixture.claude_json)))
+        original = backup.read_bytes()
+        fixture.claude_json.write_bytes(original)
+        backup.unlink()
+        code, output = fixture.run("--rollback")
+        expect("--rollback skips a missing backup when the file already holds the backed-up content",
+               code == 0 and fixture.claude_json.read_bytes() == original, output)
+    finally:
+        fixture.cleanup()
+
 
 def run_unreadable_store_directory_case():
     fixture = Fixture("ned-box")
