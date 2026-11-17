@@ -63,6 +63,15 @@ sys.exit(route.get("exit", 0))
 '''
 
 
+GIT_FAILING_ON_LINE_LOG = r'''#!/usr/bin/env python3
+import os, sys
+if "log" in sys.argv and any(argument.startswith("-L") for argument in sys.argv):
+    sys.stderr.write("fatal: file scripts/fixed.py has only 5 lines\n")
+    sys.exit(128)
+os.execv("REAL_GIT", ["REAL_GIT", *sys.argv[1:]])
+'''
+
+
 def closing_route(closing_issues=(), body=DESCRIPTION):
     return {"stdout": json.dumps({"closingIssuesReferences": list(closing_issues), "body": body})}
 
@@ -97,7 +106,18 @@ def commit_file(repository, path, text, message):
     return git(repository, "rev-parse", "HEAD")
 
 
-def run_program(scratch, helpers, specs, *extra, gh_routes=None, token=TEST_TOKEN):
+def git_failing_on_line_log_directory(scratch):
+    """A directory holding a git that fails `git log -L` as git does on a bad range,
+    and runs the real git for every other command."""
+    directory = scratch / "git-failing-on-line-log"
+    directory.mkdir(exist_ok=True)
+    (directory / "git").write_text(GIT_FAILING_ON_LINE_LOG.replace("REAL_GIT", shutil.which("git")))
+    (directory / "git").chmod(0o755)
+    return directory
+
+
+def run_program(scratch, helpers, specs, *extra, gh_routes=None, token=TEST_TOKEN,
+                first_path_directory=None):
     specs_file = scratch / "brief-specs.json"
     specs_file.write_text(json.dumps(specs))
     stand_in_directory = scratch / "gh-stand-in"
@@ -121,7 +141,9 @@ def run_program(scratch, helpers, specs, *extra, gh_routes=None, token=TEST_TOKE
          "--merge-lane-pull-request-reviewer-scratch-directories-parent-directory", str(scratch / "reviewer-scratch"), *extra],
         capture_output=True, text=True,
         env={**GIT_ENVIRONMENT, "GIT_DIR": str(scratch / "no-such-git-directory"), "HOME": str(home),
-             "PATH": f"{stand_in_directory}{os.pathsep}{os.environ['PATH']}",
+             "PATH": os.pathsep.join(
+                 [str(directory) for directory in (first_path_directory, stand_in_directory)
+                  if directory is not None] + [os.environ["PATH"]]),
              "BRIEF_COMPOSE_TEST_GH_ROUTES": str(scratch / "gh-routes.json"),
              "BRIEF_COMPOSE_TEST_GH_CALL_LOG": str(scratch / "gh-calls.jsonl")})
 
@@ -346,6 +368,92 @@ def main():
               and not (helpers / "briefs" / "brief-11-mac-claude.md").exists(),
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
 
+        # Line 4 begins "-- ", so its deletion reads "--- four" in the patch, like a header.
+        fixed_path = "scripts/fixed côté.py"
+        fixed_lines = ["one", "two", "three", "-- four", "five", "six", "seven", "eight"]
+
+        def merge_pull_request(number, *lines_and_texts):
+            git(repository, "checkout", "-q", "-b", f"pr{number}", "main")
+            for line, text in lines_and_texts:
+                fixed_lines[line - 1] = text
+            commit_file(repository, fixed_path, "\n".join(fixed_lines) + "\n", f"pull request {number}")
+            git(repository, "checkout", "-q", "main")
+            git(repository, "merge", "-q", "--no-ff", "-m",
+                f"Merge pull request #{number} from nedschorus/pr{number}", f"pr{number}")
+
+        commit_file(repository, fixed_path, "\n".join(fixed_lines) + "\n", "a file changed directly on main")
+        merge_pull_request(201, (2, "two, fixed"), (5, "five, fixed"))
+        merge_pull_request(202, (2, "two, fixed again"))
+        merge_pull_request(203, (2, "two, fixed a third way"))
+        merge_pull_request(204, (2, "two, by a pull request gh does not list"))
+        merge_pull_request(205, (5, "five, fixed again"), (7, "seven, fixed"))
+        fixed_lines[1] = "two, changed on main directly"
+        history_main = commit_file(repository, fixed_path, "\n".join(fixed_lines) + "\n",
+                                   "a direct change to line two")
+        git(repository, "checkout", "-q", "-b", "history-topic")
+        changed = fixed_lines[:1] + ["two, changed by this pull request"] + fixed_lines[2:3] \
+            + ["five, changed by this pull request"] + fixed_lines[5:6] \
+            + ["seven, changed by this pull request", "eight", "nine, added"]
+        commit_file(repository, fixed_path, "\n".join(changed) + "\n",
+                    "change lines 2, 5 and 7, delete line 4, add line 9")
+        history_head = commit_file(repository, "scripts/new.py", "new\n", "a new file")
+        git(repository, "checkout", "-q", "main")
+        history_round = {**first_round, "tag": "7h", "head": history_head, "main": history_main}
+
+        def merged_route(fixing_no_defect=()):
+            listed = [
+                {"number": 201, "title": "Fixed two and five", "url": "https://github.com/nedschorus/nedschorus/pull/201",
+                 "body": "- #root_cause the reader split on spaces."},
+                {"number": 202, "title": "Fixed two again", "url": "https://github.com/nedschorus/nedschorus/pull/202",
+                 "body": "**Root cause:** the reader split on tabs."},
+                {"number": 203, "title": "Kept a workaround", "url": "https://github.com/nedschorus/nedschorus/pull/203",
+                 "body": "#root_cause_not_fixed it stays. #follow_up https://github.com/nedschorus/nedschorus/issues/51"},
+                {"number": 205, "title": "Fixed five and seven", "url": "https://github.com/nedschorus/nedschorus/pull/205",
+                 "body": "#root_cause seven was wrong."}]
+            return {"stdout": json.dumps([
+                {**merged, "body": "#no_defect_fixed"} if merged["number"] in fixing_no_defect else merged
+                for merged in listed])}
+
+        completed = run_program(scratch, helpers, [history_round],
+                                gh_routes={**QUIET_GH_ROUTES, "merged": merged_route()})
+        brief_file = helpers / "briefs" / "brief-7h-mac-claude.md"
+        brief = brief_file.read_text() if brief_file.exists() else ""
+        check("the brief names each line range that two earlier pull requests with a #root_cause "
+              "line, in either form, changed, and no range that only one changed, then each of "
+              "those pull requests once, after the not-fixed line's fact; it counts no direct "
+              "commit, no not-fixed-only pull request and no merge gh does not list, and reads a "
+              "deleted line beginning \"-- \" as a line, not a header",
+              completed.returncode == 0
+              and ("closes, or to this pull request: none.\n"
+                   "- Line ranges at the merge base that this pull request changes and that two or "
+                   "more earlier merged pull requests with a `#root_cause` line also changed, which "
+                   "suggests each of those fixed a symptom, not its cause: "
+                   "`scripts/fixed côté.py` lines 2-2 (#201, #202); "
+                   "`scripts/fixed côté.py` lines 4-5 (#201, #205). Those pull requests: "
+                   "#201 \"Fixed two and five\" (https://github.com/nedschorus/nedschorus/pull/201); "
+                   "#202 \"Fixed two again\" (https://github.com/nedschorus/nedschorus/pull/202); "
+                   "#205 \"Fixed five and seven\" (https://github.com/nedschorus/nedschorus/pull/205).\n"
+                   "- Hazards: ") in brief,
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n--- brief ---\n{brief}")
+        check("the line ranges are read with no more gh calls than before",
+              [call["argv"][1] for call in gh_calls(scratch)] == ["view", "list"],
+              json.dumps(gh_calls(scratch)))
+
+        completed = run_program(scratch, helpers, [history_round], gh_routes={
+            **QUIET_GH_ROUTES, "merged": merged_route(fixing_no_defect={202, 205})})
+        brief = brief_file.read_text() if brief_file.exists() else ""
+        check("line ranges each changed by only one earlier pull request with a #root_cause "
+              "line give no line-range fact",
+              completed.returncode == 0 and "- Hazards: " in brief and "- Line ranges" not in brief,
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n--- brief ---\n{brief}")
+
+        brief_file.unlink(missing_ok=True)
+        completed = run_program(scratch, helpers, [history_round],
+                                first_path_directory=git_failing_on_line_log_directory(scratch))
+        check("git log -L failing exits 1, naming git's error, and writes no brief",
+              completed.returncode == 1 and "brief not composed: StepFailed" in completed.stderr
+              and "has only 5 lines" in completed.stderr and not brief_file.exists(),
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
 
         (scratch / "standing.md").write_text("A standing text with no instructions line.\n")
         completed = run_program(scratch, helpers, [{**first_round, "tag": "9"}])

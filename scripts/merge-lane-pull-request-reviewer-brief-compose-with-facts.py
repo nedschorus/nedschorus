@@ -19,7 +19,12 @@ worktrees directory's pr<n>-merged, and gh reads from GitHub as the merge
 account. Among the facts are the merged pull requests whose not-fixed line, in
 either form, links to an issue the pull request closes, as GitHub lists them,
 or to the pull request itself: the reviewer judges whether this pull request
-makes useless a case fix or workaround they kept. The facts end with the pull
+makes useless a case fix or workaround they kept. For each range of lines at
+the merge base that this pull request changes or deletes, git log -L, following
+main's first parents from the merge base, finds the merges that changed that
+range; when two or more of them merged a pull request whose description has a
+#root_cause line, in either form, the facts name the range and those pull
+requests. The facts end with the pull
 request's description, which the brief quotes as the author's claims. The
 reviewer runs with no GitHub login, so the brief is where it reads the
 description. The brief is written to
@@ -75,6 +80,10 @@ GITHUB_ISSUE_OR_PULL_REQUEST_LINK = re.compile(
     r"https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/(?:issues|pull)/([0-9]+)")
 # Far above the merged count, so gh lists them all.
 MERGED_PULL_REQUESTS_LIMIT = "100000"
+PULL_REQUEST_MERGE_SUBJECT = re.compile(r"Merge pull request #([0-9]+) from ")
+HUNK_OLD_SIDE = re.compile(r"@@ -([0-9]+)(?:,([0-9]+))? ")
+# One earlier fix to a range is no sign of a symptom fix; two are.
+EARLIER_ROOT_CAUSE_PULL_REQUESTS_THRESHOLD = 2
 
 
 def parse_arguments(argv):
@@ -185,6 +194,61 @@ def follow_up_pull_requests_text(number, closing_issues, merged_pull_requests):
             "closes, or to this pull request: " + ("; ".join(found) or "none") + ".")
 
 
+def changed_line_ranges_at_merge_base(review_tools_worktree, merge_base, head):
+    """Each path at `merge_base` with the line ranges, as (first, last), that the
+    change to `head` alters or deletes. A pure insertion alters no line there."""
+    patch = run(["git", "-C", str(review_tools_worktree), "diff", "-U0", "-M", "--no-color",
+                 "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", merge_base, head])
+    ranges, path, in_header = {}, None, False
+    for line in patch.split("\n"):
+        if line.startswith("diff --git "):
+            path, in_header = None, True
+        elif in_header and line.startswith("--- "):
+            # Only in the header: in a hunk, a deleted line beginning "-- " reads the same.
+            old = git_output.patch_header_path(line[4:])
+            path = None if old == "/dev/null" else old.removeprefix("a/")
+        elif line.startswith("@@ "):
+            in_header = False
+            found = HUNK_OLD_SIDE.match(line)
+            first, count = int(found.group(1)), int(found.group(2) or "1")
+            if path is not None and count > 0:
+                ranges.setdefault(path, []).append((first, first + count - 1))
+    return ranges
+
+
+def earlier_root_cause_pull_requests_text(review_tools_worktree, merge_base, head,
+                                          merged_pull_requests):
+    """The brief's fact naming, for each line range this change alters, the earlier
+    merged pull requests with a #root_cause line that changed that range, or None
+    when no range was changed by two or more of them."""
+    root_cause_pull_requests = {
+        merged["number"]: merged for merged in merged_pull_requests.all()
+        if any(defect_line["kind"] == defect_line_reader.ROOT_CAUSE
+               for defect_line in defect_line_reader.pull_request_description_defect_lines(
+                   merged["body"] or ""))}
+    ranges_found, named = [], set()
+    for path, ranges in changed_line_ranges_at_merge_base(
+            review_tools_worktree, merge_base, head).items():
+        for first, last in ranges:
+            subjects = git(review_tools_worktree, "log", "--first-parent", "--no-patch",
+                           "--format=%s", f"-L{first},{last}:{path}", merge_base)
+            numbers = sorted({int(merge.group(1)) for merge in map(
+                PULL_REQUEST_MERGE_SUBJECT.match, subjects.split("\n")) if merge}
+                & root_cause_pull_requests.keys())
+            if len(numbers) >= EARLIER_ROOT_CAUSE_PULL_REQUESTS_THRESHOLD:
+                ranges_found.append(f"`{path}` lines {first}-{last} ("
+                                    + ", ".join(f"#{number}" for number in numbers) + ")")
+                named.update(numbers)
+    if not ranges_found:
+        return None
+    return ("- Line ranges at the merge base that this pull request changes and that two or "
+            "more earlier merged pull requests with a `#root_cause` line also changed, which "
+            "suggests each of those fixed a symptom, not its cause: " + "; ".join(ranges_found)
+            + ". Those pull requests: " + "; ".join(
+                f"#{number} \"{root_cause_pull_requests[number]['title']}\" "
+                f"({root_cause_pull_requests[number]['url']})" for number in sorted(named)) + ".")
+
+
 def compose(spec, arguments, review_tools_worktree, instructions_file, merged_pull_requests):
     tag, number = spec["tag"], spec["number"]
     head, main = spec["head"], spec["main"]
@@ -226,6 +290,10 @@ def compose(spec, arguments, review_tools_worktree, instructions_file, merged_pu
     closing_issues, description = pull_request_closing_issues_and_description(
         number, merged_pull_requests.gh_token)
     facts.append(follow_up_pull_requests_text(number, closing_issues, merged_pull_requests))
+    earlier_root_cause_pull_requests = earlier_root_cause_pull_requests_text(
+        review_tools_worktree, merge_base, head, merged_pull_requests)
+    if earlier_root_cause_pull_requests is not None:
+        facts.append(earlier_root_cause_pull_requests)
     facts.append(f"- Hazards: {spec['hazards']}")
     facts.append("- The author's description of the pull request, quoted below. It is what "
                  "the author claims; check each claim against the repository yourself, "
