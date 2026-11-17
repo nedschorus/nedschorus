@@ -549,7 +549,7 @@ def run_mid_run_failure_cases():
         before = fixture.snapshot()
         code, output = fixture.run("--apply")
         expect("a worktree whose git status fails after the repair stops --apply",
-               code == 1 and "FAILED at step 1 (worktree-repair)" in output and "nedsnodes-worktrees/wt2" in output, output)
+               code == 1 and "FAILED at step 2a (worktree-repair)" in output and "nedsnodes-worktrees/wt2" in output, output)
         code, output = fixture.run("--rollback")
         after = fixture.snapshot()
         expect("--rollback after the failed repair restores the original tree exactly",
@@ -588,8 +588,10 @@ def run_rollback_with_no_journal_ever_case():
     fixture = Fixture("ned-box")
     try:
         code, output = fixture.run("--rollback")
-        expect("--rollback with no journal and none rolled back says no --apply has run, and names the flags that must match",
-               code == 1 and "no --apply has run with these flags" in output and "--journal, --claude-dir or --home" in output, output)
+        expect("--rollback with no journal and none rolled back names the journal it looked for and the command for another one",
+               code == 1 and f"no journal at {fixture.journal}" in output and "--journal, --claude-dir or --home" in output
+               and f"python3 {PROGRAM} --rollback --journal <that journal>" in output
+               and "each of those must be given with the same value" not in output, output)
     finally:
         fixture.cleanup()
 
@@ -778,6 +780,68 @@ def run_dangling_unit_warning_case():
         fixture.cleanup()
 
 
+def rollback_command(fixture):
+    return f"python3 {PROGRAM} --rollback --journal {fixture.journal}"
+
+
+def run_recorded_command_cases():
+    fixture = Fixture("ned-box")
+    try:
+        tasks = fixture.claude / "tasks"
+        tasks_mode = stat.S_IMODE(os.stat(tasks).st_mode)
+        os.chmod(tasks, 0o555)
+        code, output = fixture.run("--apply")
+        os.chmod(tasks, tasks_mode)
+        expect("a failed --apply prints the exact --rollback command, with the journal it wrote",
+               code == 1 and f"To reverse them, run: {rollback_command(fixture)}" in output
+               and "the same flags" not in output, output)
+        entries = [json.loads(line) for line in fixture.journal.read_text().splitlines()]
+        recorded = entries[0].get("arguments", [])
+        expect("--apply records its path flags, each with its value, as the journal's first entry",
+               entries[0]["kind"] == "arguments" and "--journal" in recorded
+               and recorded[recorded.index("--journal") + 1] == str(fixture.journal)
+               and recorded[recorded.index("--home") + 1] == str(fixture.home)
+               and recorded[recorded.index("--machine") + 1] == "ned-box", str(entries[0]))
+        code, output = fixture.run("--check")
+        expect("--check with a journal shows the exact --rollback command and the command the --apply ran as",
+               rollback_command(fixture) in output
+               and f"python3 {PROGRAM} --apply " in output and f"--home {fixture.home}" in output, output)
+        code, output = fixture.run("--rollback")
+        expect("--rollback after the failed --apply succeeds", code == 0, output)
+    finally:
+        fixture.cleanup()
+
+    fixture = Fixture("ned-box")
+    try:
+        code, output = fixture.run("--apply")
+        expect("recorded-command conflict case: --apply succeeds", code == 0, output)
+        old_config = fixture.config / "nedschorus"
+        old_config.unlink()
+        old_config.mkdir()
+        (fixture.config / "nedsnodes" / "kept").write_text("x\n")
+        code, output = fixture.run("--rollback")
+        expect("--rollback that stops prints the exact command to run it again, not 'the same path flags'",
+               code == 1 and f"run: {rollback_command(fixture)}" in output and "same path flags" not in output, output)
+    finally:
+        fixture.cleanup()
+
+    fixture = Fixture("ned-box")
+    try:
+        code, output = fixture.run("--check")
+        expect("--check numbers the worktree repair as step 2a, as the docstring does",
+               "step 2a: " in output and "(--check counts these with step 1)" not in output, output)
+        code, output = fixture.run("--apply")
+        code, output = fixture.run("--rollback")
+        older = fixture.journal.with_name(fixture.journal.name + ".rolled-back-20000101T000000Z")
+        older.write_text("")
+        code, output = fixture.run("--rollback")
+        newest = sorted(fixture.journal.parent.glob(fixture.journal.name + ".rolled-back-*"))[-1]
+        expect("with several rolled-back journals, 'already finished' names the newest and says it is the newest",
+               code == 1 and str(newest) in output and "the newest of 2" in output, output)
+    finally:
+        fixture.cleanup()
+
+
 if __name__ == "__main__":
     run_apply_check_rollback_on_ned_box()
     run_apply_and_rollback_on_mac()
@@ -793,6 +857,7 @@ if __name__ == "__main__":
     run_unreadable_store_directory_case()
     run_missing_worktree_directory_case()
     run_backup_that_differs_stops_apply_case()
+    run_recorded_command_cases()
     print()
     if failures:
         print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
