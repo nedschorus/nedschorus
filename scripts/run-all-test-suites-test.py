@@ -2492,7 +2492,9 @@ for arguments in (
         ["log", "HEAD", "^HEAD~1"], ["rev-parse", "^HEAD~1"],
         ["-C", "sub", "check-ignore", "-q", "a/b.json"],
         ["check-ignore", "-q", "sub/state.json"],
-        ["-C", "missing", "rev-parse", "HEAD"], ["-C", "missing", "merge-base", "HEAD", "HEAD"]):
+        ["-C", "missing", "rev-parse", "HEAD"], ["-C", "missing", "merge-base", "HEAD", "HEAD"],
+        # git needs sub on the way, and the recording would name only where the call ends.
+        ["-C", "sub", "-C", "..", "rev-parse", "HEAD"], ["-C", "sub/..", "rev-parse", "HEAD"]):
     call = {"arguments": arguments, "directory": str(TOP) + "",
             "GIT_DIR": None, "GIT_WORK_TREE": None}
     answer = module.work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(call, TOP)
@@ -2617,24 +2619,24 @@ with tempfile.TemporaryDirectory() as scratch:
     without = head(top)
     git(top, "update-index", "--add", "--cacheinfo", f"160000,{without},mod")
     check("a submodule staged in the index is found",
-          module.gitlinks_in_the_index_and_commit(top) == ({"mod"}, None),
-          module.gitlinks_in_the_index_and_commit(top))
+          module.submodules_in_the_index_and_commit(top) == ({"mod"}, None),
+          module.submodules_in_the_index_and_commit(top))
     git(top, "commit", "-q", "-m", "add a submodule")
     with_submodule = head(top)
     git(top, "rm", "-q", "--cached", "mod")
     git(top, "commit", "-q", "-m", "remove the submodule")
     check("a submodule only a commit's tree holds is found when that commit is given, and "
           "none when it is not",
-          module.gitlinks_in_the_index_and_commit(top, with_submodule) == ({"mod"}, None)
-          and module.gitlinks_in_the_index_and_commit(top) == (set(), None)
-          and module.gitlinks_in_the_index_and_commit(top, without) == (set(), None),
-          (module.gitlinks_in_the_index_and_commit(top, with_submodule),
-           module.gitlinks_in_the_index_and_commit(top)))
+          module.submodules_in_the_index_and_commit(top, with_submodule) == ({"mod"}, None)
+          and module.submodules_in_the_index_and_commit(top) == (set(), None)
+          and module.submodules_in_the_index_and_commit(top, without) == (set(), None),
+          (module.submodules_in_the_index_and_commit(top, with_submodule),
+           module.submodules_in_the_index_and_commit(top)))
     for words in ("--stage", "ls-tree"):
         previous = os.environ["PATH"]
         os.environ.update(stand_in_git_failing_on(top, words))
         try:
-            answer = module.gitlinks_in_the_index_and_commit(top, without)
+            answer = module.submodules_in_the_index_and_commit(top, without)
         finally:
             os.environ["PATH"] = previous
         check(f"git {words} failing while looking for submodules is reported with its error",
@@ -2683,6 +2685,42 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and "submodule-test.py" in ran(root)
           and any(line.startswith("SELECTED submodule-test.py: ") and "mod is a submodule"
                   in line for line in lines(result.stdout)),
+          (ran(root), result.stdout, result.stderr))
+    recorded = recording(root, "submodule-test.py")
+    check("a git ls-files call recorded where the index holds a submodule is tied to the whole "
+          "list of files",
+          recorded.get(module.RECORDED_GIT_COMMANDS_CHANGED_BY_ANY_FILE_KEY) == ["ls-files"]
+          and not recorded.get(THROUGH_PATHSPECS), recorded)
+
+# When git cannot list the submodules, a git ls-files call is tied to the whole list when it is
+# recorded, and selects its suite when it was recorded as tied through its pathspecs.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {
+        "py-test.py": ("import subprocess\n"
+                       "subprocess.run(['git', 'ls-files', '-z', '--', '*.py'], "
+                       "capture_output=True)\n")})
+    commit_files(repo, {"notes.txt": "notes\n"}, "inputs")
+    failing = stand_in_git_failing_on(root, "--stage")
+    result = run(root, environment_extra=failing)
+    recorded = recording(root, "py-test.py")
+    check("a git ls-files call recorded while git cannot list the submodules is tied to the "
+          "whole list of files",
+          result.returncode == 0
+          and recorded.get(module.RECORDED_GIT_COMMANDS_CHANGED_BY_ANY_FILE_KEY) == ["ls-files"]
+          and not recorded.get(THROUGH_PATHSPECS), (recorded, result.stdout, result.stderr))
+    run(root)
+    check("the same call recorded while git can list them is tied only through its pathspecs",
+          bool(recording(root, "py-test.py").get(THROUGH_PATHSPECS)), recording(root, "py-test.py"))
+    since = head(repo)
+    commit_files(repo, {"more-notes.txt": "more\n"}, "add a file the pathspec does not match")
+    result = select_since(root, since, environment_extra=failing)
+    check("a call recorded as tied through its pathspecs selects its suite, with git's error, "
+          "when git cannot list the submodules",
+          "py-test.py" in ran(root)
+          and "SELECTED py-test.py: it runs git ls-files -- '*.py' on the checkout, and git "
+              "could not say which files that lists: git could not list the submodules: fatal: "
+              "injected git failure" in lines(result.stdout),
           (ran(root), result.stdout, result.stderr))
 
 with tempfile.TemporaryDirectory() as scratch:
