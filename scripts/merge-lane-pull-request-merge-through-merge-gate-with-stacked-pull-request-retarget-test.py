@@ -714,14 +714,15 @@ def main():
         review_tools = scratch / "review-tools-behind-main" / "review-tools"
         main_now = origin_commit(scratch, "review-tools-behind-main")
         check("a review tools worktree behind origin/main that holds nothing of its own is "
-              "moved, detached, to origin/main before the gate, and the merge goes on",
+              "checked out, detached, at origin/main before the gate, and the merge goes on",
               exit_code == 0 and git_output(review_tools, "rev-parse", "HEAD") == main_now
               and git_output(review_tools, "symbolic-ref", "-q", "HEAD", check=False) == ""
               and (review_tools / "new-on-main.txt").is_file()
               and (review_tools / "scripts" / "merge-gate.sh").is_file()
               and gate_calls == [f"{PULL_REQUEST} {HEAD} {SINCE}"]
               and index_of(argvs(gh_calls), ["pr", "merge"]) is not None
-              and printed_in_order(output, f"moved {review_tools} from ", " to origin/main\n",
+              and printed_in_order(output,
+                                   f"checked out origin/main in {review_tools}, which was at ",
                                    "gate passed (#10)"),
               f"exit {exit_code}\n{output}")
 
@@ -733,8 +734,8 @@ def main():
             leave_it_alone + "\nTell the user that merges stop until that work is kept elsewhere "
             "and {worktree} is detached at origin/main or an older commit of main, with no "
             "change to a tracked file and no operation in progress; name the work, and ask how the user wants it kept and who "
-            "does it. Once {worktree} is in that state, run this program again, which then moves "
-            "it to origin/main itself. " + subagent)
+            "does it. Once {worktree} is in that state, run this program again, which then checks "
+            "out origin/main in it itself. " + subagent)
         files_in_the_way_to_the_user = (
             leave_it_alone + " Do not move or remove the files git lists, whatever git suggests "
             "above.\nTell the user that merges stop until the files git lists are gone from "
@@ -769,7 +770,8 @@ def main():
                   f"work it holds, to leave it alone and to tell the user",
                   exit_code == 2 and gate_calls == [] and gh_calls == []
                   and git_output(review_tools, "rev-parse", "HEAD") == head_before[0]
-                  and "and holds work of its own, so this program does not move it: " in output
+                  and ("and holds work of its own, so this program does not check out "
+                       "origin/main in it: ") in output
                   and own_work in output
                   and output.rstrip().endswith(
                       own_work_to_the_user.format(worktree=review_tools)),
@@ -790,6 +792,29 @@ def main():
               and f"could not check {review_tools} out at origin/main" in output
               and "would be overwritten by checkout:\n\tnew-on-main.txt" in output
               and (review_tools / "new-on-main.txt").read_text() == "untracked\n"
+              and output.rstrip().endswith(
+                  files_in_the_way_to_the_user.format(worktree=review_tools)),
+              f"exit {exit_code}\n{output}")
+
+        def ignored_file_main_adds(directory):
+            tools = directory / "review-tools"
+            (tools / "new-on-main.txt").write_text("ignored\n")
+            exclude = git_path(tools, "info/exclude")
+            exclude.parent.mkdir(parents=True, exist_ok=True)
+            with exclude.open("a") as excluded:
+                excluded.write("new-on-main.txt\n")
+
+        case = "review-tools-behind-main-checkout-refuses-ignored-file"
+        exit_code, output, gh_calls, gate_calls, _ = run_case(
+            scratch, case, [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+            review_tools_state="behind-main", before_the_program_runs=ignored_file_main_adds)
+        review_tools = scratch / case / "review-tools"
+        check("a review tools worktree holding an ignored file at a path main adds is not "
+              "checked out at origin/main over the file: the program stops before the gate, "
+              "exit 2, with git's whole error, which names the file, the ignored file kept",
+              exit_code == 2 and gate_calls == [] and gh_calls == []
+              and "would be overwritten by checkout:\n\tnew-on-main.txt" in output
+              and (review_tools / "new-on-main.txt").read_text() == "ignored\n"
               and output.rstrip().endswith(
                   files_in_the_way_to_the_user.format(worktree=review_tools)),
               f"exit {exit_code}\n{output}")
@@ -833,7 +858,9 @@ def main():
                   and words in output and f": git printed no error\n{instruction}" in output,
                   f"exit {exit_code}\n{output}")
 
-        for failing, words in ((" merge-base ", "could not read whether HEAD "),
+        for failing, words in ((" symbolic-ref ", "could not read whether a branch is checked "
+                                                  "out in "),
+                               (" merge-base ", "could not read whether HEAD "),
                                (" status ", "could not read the changes to tracked files in "),
                                (" --git-path ", "could not read where git keeps its operation "
                                                 "state in ")):
@@ -1495,7 +1522,7 @@ def main():
               "seconds later, the same command, and merges, exit 0",
               exit_code == 0 and merges == [EXPECTED_MERGE, EXPECTED_MERGE] and waits == [5]
               and "merge try 1 of 3: GitHub refused the merge because main moved during it; "
-                  "running the merge command again in 5 seconds\n" in output
+                  "this program runs the merge command again in 5 seconds\n" in output
               and "merge exit 0" in output,
               f"exit {exit_code}\n{output}")
 
@@ -1513,7 +1540,7 @@ def main():
               and output.rstrip().endswith(
                   "GitHub refused the merge 3 times because main moved during it, as when other "
                   "merges run at the same time; GitHub's \"Review and try the merge again\" asks "
-                  "for no new review.\nRun this program again in a few minutes. If it is refused "
+                  "for no new review.\nRun this program again once; if it is refused "
                   "this way again, tell the user that merges keep failing because main moves "
                   "during each one. If you are a subagent, report it to the agent that dispatched "
                   "you instead."),

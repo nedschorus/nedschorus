@@ -73,10 +73,11 @@ origin/main, so a stale worktree never lets an older gate decide a merge. It
 refuses instead when the worktree holds work of its own, which a checkout
 could lose or carry along: a branch checked out, a HEAD that is not an
 ancestor of origin/main, a change to a tracked file, or a merge, rebase,
-cherry-pick, revert or bisect in progress. Untracked files stay, as git
-leaves them. A review whose Codex cell runs from the same worktree at the same
-time may fail when the checkout moves files under it; such a review is run
-again.
+cherry-pick, revert or bisect in progress. Untracked files, ignored ones
+included, stay: where origin/main tracks a path such a file is at, git
+refuses the checkout and the program stops. A review whose Codex cell runs
+from the same worktree at the same time may fail when the checkout moves
+files under it; such a review is run again.
 
 Exit codes: 0 merged, with the review worktrees removed, and main's after-merge
 test run passed; 1 the gate refused,
@@ -197,7 +198,7 @@ def merge_after_retries(command, environment, wait):
                 or attempt == MERGE_TRIES):
             return merge
         print(f"merge try {attempt} of {MERGE_TRIES}: GitHub refused the merge because main "
-              f"moved during it; running the merge command again in "
+              f"moved during it; this program runs the merge command again in "
               f"{SECONDS_BETWEEN_MERGE_TRIES} seconds", flush=True)
         wait(SECONDS_BETWEEN_MERGE_TRIES)
 
@@ -232,6 +233,8 @@ def review_tools_worktree_moved_to_main_refusal_message(worktree):
 
     own_work = []
     branch = git("symbolic-ref", "--quiet", "--short", "HEAD")
+    if branch.returncode not in (0, 1):
+        return could_not_read("whether a branch is checked out", branch)
     if branch.returncode == 0:
         own_work.append(f"the branch {branch.stdout.strip()} is checked out")
     ancestor = git("merge-base", "--is-ancestor", head, main)
@@ -260,16 +263,17 @@ def review_tools_worktree_moved_to_main_refusal_message(worktree):
     subagent = "If you are a subagent, ask the agent that dispatched you instead."
     if own_work:
         return (f"{worktree} is at {head[:8]}, not at origin/main {main[:8]}, and holds work "
-                f"of its own, so this program does not move it: {'; '.join(own_work)}.\n"
+                f"of its own, so this program does not check out origin/main in it: "
+                f"{'; '.join(own_work)}.\n"
                 f"{leave_it}\n"
                 f"Tell the user that merges stop until that work is kept elsewhere and "
                 f"{worktree} is detached at origin/main or an older commit of main, with no "
                 f"change to a tracked file and no operation in progress; name the work, and ask how the user wants it "
                 f"kept and who does it. Once {worktree} is in that state, run this program "
-                f"again, which then moves it to origin/main itself. {subagent}")
+                f"again, which then checks out origin/main in it itself. {subagent}")
     # By name, not the commit read above: a parallel run may already have moved the worktree
     # to a newer main, and origin/main only moves forward.
-    checkout = git("checkout", "--quiet", "--detach", "origin/main")
+    checkout = git("checkout", "--quiet", "--no-overwrite-ignore", "--detach", "origin/main")
     if checkout.returncode != 0:
         could_not_check_out = (f"could not check {worktree} out at origin/main, so its "
                                f"merge-gate.sh may not be main's")
@@ -285,7 +289,7 @@ def review_tools_worktree_moved_to_main_refusal_message(worktree):
                 f"Run this program again once; if it fails the same way, tell the user this "
                 f"message as printed, from its STOP line, which quotes git's error, through "
                 f"this line.")
-    print(f"moved {worktree} from {head[:8]} to origin/main", flush=True)
+    print(f"checked out origin/main in {worktree}, which was at {head[:8]}", flush=True)
     return None
 
 
@@ -672,7 +676,7 @@ def main(argv=None, wait=time.sleep):
             print(f"GitHub refused the merge {MERGE_TRIES} times because main moved during it, "
                   f"as when other merges run at the same time; GitHub's \"Review and try the "
                   f"merge again\" asks for no new review.\n"
-                  f"Run this program again in a few minutes. If it is refused this way again, "
+                  f"Run this program again once; if it is refused this way again, "
                   f"tell the user that merges keep failing because main moves during each one. "
                   f"If you are a subagent, report it to the agent that dispatched you instead.")
         return EXIT_REFUSED
