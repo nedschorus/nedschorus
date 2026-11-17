@@ -270,13 +270,13 @@ DEFER_INSTRUCTION = (
     "metadata.prerequisites, or a task with addBlockedBy."
 )
 CLOSED_WITHOUT_MERGING_LINE_TEMPLATE = (
-    'Task {task_id} "{subject}" is not raised while a pull request in its metadata.prerequisites '
-    "stays closed without merging: {citations}.")
+    'Task {task_id} "{subject}" waits on a pull request that was closed without merging: '
+    "{citations}.")
 CLOSED_WITHOUT_MERGING_INSTRUCTIONS = (
     "If a task named above as waiting on a pull request closed without merging is still wanted, "
     "put what it now waits on in its metadata.prerequisites with TaskUpdate, in place of that pull "
     "request, or act on the task now.",
-    "If such a task is no longer wanted, delete it with TaskUpdate.",
+    "If such a task is no longer wanted, set its status to deleted with TaskUpdate.",
     "If you expect such a pull request to be reopened and merged, leave its task as it is: this "
     "hook raises the task when the pull request merges, and does not name the closing again.",
 )

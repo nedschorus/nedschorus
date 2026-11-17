@@ -617,7 +617,7 @@ CLOSED_INSTRUCTIONS = (
     "If a task named above as waiting on a pull request closed without merging is still wanted, "
     "put what it now waits on in its metadata.prerequisites with TaskUpdate, in place of that pull "
     "request, or act on the task now.\n"
-    "If such a task is no longer wanted, delete it with TaskUpdate.\n"
+    "If such a task is no longer wanted, set its status to deleted with TaskUpdate.\n"
     "If you expect such a pull request to be reopened and merged, leave its task as it is: this "
     "hook raises the task when the pull request merges, and does not name the closing again.")
 
@@ -636,8 +636,8 @@ seat.respond({"pr:150": {"state": "CLOSED", "title": "Add a flag", "url": "https
 result = seat.run()
 check("pull request closed without merging: exit 0, the exact text handed to the agent",
       result.returncode == 0 and context_of(result) == (
-          'Task 120 "Use the new flag" is not raised while a pull request in its '
-          'metadata.prerequisites stays closed without merging: PR "Add a flag" (https://x/150).\n'
+          'Task 120 "Use the new flag" waits on a pull request that was closed without merging: '
+          'PR "Add a flag" (https://x/150).\n'
           + CLOSED_INSTRUCTIONS), (result, context_of(result)))
 check("pull request closed without merging: recorded by its number",
       json.loads(seat.state_path.read_text())["raised"]["120"]
@@ -656,8 +656,8 @@ seat.respond({"pr:151": {"state": "CLOSED"},
 text = context_of(seat.run()) or ""
 check("several prerequisites, one other unmet and a blocker open: raised at once, cited by "
       "number when gh gave no title",
-      text.startswith('Task 121 "Subject of task 121" is not raised while a pull request in its '
-                      "metadata.prerequisites stays closed without merging: PR 151.\n")
+      text.startswith('Task 121 "Subject of task 121" waits on a pull request that was closed '
+                      "without merging: PR 151.\n")
       and "Act on task" not in text and "PR 900" not in text, text)
 seat.task("121", metadata={"prerequisites": [{"pr_merged": 151}, {"issue_closed": 153}]},
           blocked_by=["122", "123"])
@@ -671,9 +671,8 @@ seat.task("121", metadata={"prerequisites": [{"pr_merged": 151}, {"pr_merged": 1
 seat.respond({"pr:154": {"state": "CLOSED", "title": "Second", "url": "https://x/154"}})
 text = context_of(seat.run()) or ""
 check("several prerequisites: a second pull request closed without merging is raised, alone",
-      text.startswith('Task 121 "Subject of task 121" is not raised while a pull request in its '
-                      'metadata.prerequisites stays closed without merging: PR "Second" '
-                      "(https://x/154).\n"), text)
+      text.startswith('Task 121 "Subject of task 121" waits on a pull request that was closed '
+                      'without merging: PR "Second" (https://x/154).\n'), text)
 
 seat = Seat()
 seat.task("124", metadata={"prerequisites": [{"pr_merged": 155}]}, subject="Reopen me")
