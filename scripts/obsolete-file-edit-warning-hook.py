@@ -296,8 +296,8 @@ GIT_FAILURE_CAUSE_LINE = (
     "against origin/main; the edit itself succeeded."
 )
 GIT_FAILURE_TOOL_MESSAGE_TO_AGENT_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CHECKS_IT_NOW = (
-    "A later run of this hook checks only the file that run's Edit or Write touched, so check "
-    "{path} by running the command printed on its own line below this paragraph. {when_to_run_it} "
+    "A later run of this hook checks only the file that run's Edit or Write touched, so "
+    "{path} is checked by the command printed on its own line below this paragraph. {when_to_run_it} "
     "The command prints nothing when there is nothing new to tell you about the file. Otherwise it prints JSON "
     "whose hookSpecificOutput.additionalContext field holds one of two texts: this hook's warning, "
     "whose instructions you follow; or, when git fails again, a git-failure message like this one, "

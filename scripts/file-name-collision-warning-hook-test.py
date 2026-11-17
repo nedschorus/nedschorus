@@ -441,7 +441,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               "that reruns the hook on it, then the line saying what to do if that rerun fails too",
               len(failure_lines) == 4
               and failure_lines[1] == (f"A later run of this hook checks only the file that run's Write or Edit "
-                                       f"touched, so check {written} by running the command printed on its own line below this paragraph. "
+                                       f"touched, so {written} is checked by the command printed on its own line below this paragraph. "
                                        "Run that command now. The command prints nothing when no other tracked file has the "
                                        "basename, and also when this hook skips the file without checking: a file "
                                        "outside the checkout, a file git ignores, a file named SKILL.md, README.md "

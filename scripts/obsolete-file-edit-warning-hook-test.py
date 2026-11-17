@@ -127,8 +127,8 @@ def silent(result) -> bool:
 
 
 GIT_FAILURE_RERUN_LINE = (
-    "A later run of this hook checks only the file that run's Edit or Write touched, so check "
-    "{path} by running the command printed on its own line below this paragraph. Run that "
+    "A later run of this hook checks only the file that run's Edit or Write touched, so "
+    "{path} is checked by the command printed on its own line below this paragraph. Run that "
     "command now. The command "
     "prints nothing when there is nothing new to tell you about the file. Otherwise it prints JSON "
     "whose hookSpecificOutput.additionalContext field holds one of two texts: this hook's warning, "
