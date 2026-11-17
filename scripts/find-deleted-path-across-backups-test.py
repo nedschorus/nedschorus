@@ -4166,7 +4166,7 @@ with tempfile.TemporaryDirectory() as tmp:
                  "--skip", "timemachine"]
     rerun_lines = finder.next_step_lines.git_failure_next_step_lines(
         shlex.join(["python3", program] + arguments), "scripts/find-deleted-path-across-backups.py",
-        text_the_failure_line_contains="git's failure:")
+        git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path="fatal: unable to read index", text_the_failure_line_contains="git's failure:")
     checkout = str(Path(program).parents[1])
     for how, typed, directory in (("by absolute path from another directory", program, str(elsewhere)),
                                   ("by a path relative to its checkout", os.path.relpath(program, checkout),
@@ -4198,6 +4198,20 @@ with tempfile.TemporaryDirectory() as tmp:
                % repo_rerun) in completed.stderr, "%r\n%s" % (repo_rerun, completed.stderr))
         check("... and names the program's absolute path, with every argument, as the command to rerun",
               completed.stderr.count(rerun_lines) == 1, "%r\n%s" % (rerun_lines, completed.stderr))
+    lock_table = tmp / "lock-table.json"
+    lock_table.write_text(json.dumps([
+        ["git -C %s rev-parse --git-dir" % repo, [0, ".git\n", ""]],
+        ["rev-parse --show-toplevel",
+         [128, "", "fatal: Unable to create '%s/.git/index.lock': File exists.\n" % repo]],
+    ]))
+    completed = subprocess.run(
+        [sys.executable, program] + arguments, cwd=str(elsewhere), capture_output=True, text=True,
+        env=dict(os.environ, PATH="%s%s%s" % (stand_ins, os.pathsep, os.environ["PATH"]),
+                 STAND_IN_TABLE=str(lock_table), STAND_IN_CALLS=str(calls)))
+    check("... and when git's error names a lock file, the next steps wait for that lock file instead of "
+          "offering the misspelt-name step",
+          "Git's error names the lock file %s/.git/index.lock: " % repo in completed.stderr
+          and "is misspelt" not in completed.stderr, completed.stderr)
     # Both git surfaces skipped, and the path after a -- separator.
     (tmp / "log-store").mkdir()
     skip_both = ["--repo", str(repo), "--found-copies-root", str(tmp / "found"), "--log-store-root", str(tmp / "log-store"),

@@ -164,7 +164,7 @@ TURN_STARTING_ORIGIN_KINDS = ("human", "peer", "coordinator", "task-notification
 USER_TURN_ORIGIN = "human"
 
 UNUSABLE_OPENING_TEMPLATE = (
-    "approval-walk current-item check: the open approval-walk {walk} could not "
+    "[rule walk-me-through-reply-ends-with-waiting-item-closing-line] approval-walk current-item check: the open approval-walk {walk} could not "
     "be checked: {problem}"
 )
 UNUSABLE_INSTRUCTIONS = (
@@ -182,7 +182,7 @@ OLD_MARKER_PROBLEM = (
     "the newest marker line in its minutes {minutes} is the old form `Next to present:`, "
     "and the hook reads the current item only from a `#next_to_present` line.")
 UNPUBLISHED_OPENING_TEMPLATE = (
-    "approval-walk current-item check: the walk-minutes {minutes} hold no `#item_page` line for {named}, which "
+    "[rule walk-me-through-reply-ends-with-waiting-item-closing-line] approval-walk current-item check: the walk-minutes {minutes} hold no `#item_page` line for {named}, which "
     "the open approval-walk {walk} has waiting for his answer, so the item's closing line has no page to link to. "
     "The walk-me-through skill publishes every item before any message shows the item or its closing line, "
     "because the page is where the user sees the item in full on every screen he reads.")
@@ -202,7 +202,7 @@ UNPUBLISHED_INSTRUCTIONS = (
     "the `](<page link>)` before its first ` · `, keeping the rest of the line.",
 )
 REPLY_LACKS_CLOSING_LINE_OPENING_TEMPLATE = (
-    "approval-walk current-item check: your reply to the user does not end with the right closing line for "
+    "[rule walk-me-through-reply-ends-with-waiting-item-closing-line] approval-walk current-item check: your reply to the user does not end with the right closing line for "
     "{named}, which the open approval-walk {walk} has waiting for his answer: {problems}. The user often reads "
     "only the bottom of a message, and the closing line's link opens the item's page, so without the right "
     "closing line he cannot tell which item his next answer goes to or open it.")

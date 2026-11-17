@@ -89,7 +89,7 @@ FETCH_VALUE_SHORT_OPTIONS = set("oj")
 FETCH_EVERY_OPERAND_A_REMOTE_OPTIONS = {"--all", "--multiple", "-m"}
 
 REMINDER_TEMPLATE = (
-    HOOK_NAME + ": this push goes ahead now. It sends {ref}, which changes "
+    "[rule git-push-of-markdown-change-citation-checks-reminder] " + HOOK_NAME + ": this push goes ahead now. It sends {ref}, which changes "
     "{count} Markdown file(s) against " + COMPARED_BRANCH + ": {files}.\n"
     "{checkout_line}"
     "Run both citation checks on the branch, from its checkout:\n"

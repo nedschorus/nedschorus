@@ -310,6 +310,9 @@ OPENING_WORDS = ("Do not", "Put", "If", "Write", "Edit", "To change", "Close",
                  "Run", "Record", "Change", "This", "The", "Otherwise")
 for text in REFUSAL_TEXTS:
     for line in text.splitlines():
+        # The rule ID opens the refusal's first line; the instruction follows it.
+        if line.startswith("[rule "):
+            line = line.split("] ", 1)[1]
         check(f"refusal line is an instruction: {line[:48]}",
               line.startswith(OPENING_WORDS)
               and "ruled" not in line
@@ -463,6 +466,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           refusal == guard.NO_COMMENTS_LINE + "\n" + NO_FILE_LINE, refusal)
 
     BODY_FIRST_LINES = [
+        "[rule bash-guard-gh-issue-body-or-title-set-by-hand] "
         "Do not set this project's issue bodies with gh issue edit: an issue's body is "
         "the links to its files on main, and scripts/ghi-issue-write.py writes it from "
         "those files.",
@@ -491,6 +495,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           refusal is not None and refusal.split("\n")[:3] == BODY_FIRST_LINES, refusal)
 
     TITLE_FIRST_LINES = [
+        "[rule bash-guard-gh-issue-body-or-title-set-by-hand] "
         "Do not set this project's issue titles with gh issue edit: "
         "scripts/ghi-issue-write.py sets an issue's title from the first heading of the "
         "issue's GHI-MD, when the issue has one file on main and an edit changes that "

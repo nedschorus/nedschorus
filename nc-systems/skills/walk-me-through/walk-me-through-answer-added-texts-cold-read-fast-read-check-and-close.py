@@ -1184,7 +1184,7 @@ def item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_
     openings = walk_finder.item_opening_lines(text, parser, tokens)
     ranges = []
     for unit_numbers, unit_total, _, first, end in spans:
-        if len(numbers) == 1 and len(unit_numbers) > 1:
+        if len(numbers) == 1:
             first, end = walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
                 openings, first, end, numbers[0], unit_numbers, unit_total)
         ranges.append((first, end))
@@ -1240,10 +1240,8 @@ def approval_walk_item_word_counted_line_ranges(walk_finder, text, tokens, parse
 
     def own_range(unit, number):
         unit_numbers, unit_total, _, first, end = unit
-        if len(unit_numbers) > 1:
-            return walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
-                openings, first, end, number, unit_numbers, unit_total)
-        return first, end
+        return walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
+            openings, first, end, number, unit_numbers, unit_total)
 
     def shared_heading_text(unit):
         first_opening = min(own_range(unit, part)[0] for part in unit[0])

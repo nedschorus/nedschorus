@@ -49,6 +49,7 @@ REVIEW_RECORD_DIRECTORY_NAMES = ("cold-read-records", "md-review-records", "sani
 APPROVAL_MARKER_NAME = ".walk-approved"
 
 MISSING_SESSION_DIRECTORY_DENY_MESSAGE = (
+    "[rule write-guard-guarded-file-edit-needs-approval-marker] "
     "Refusing to modify {path}: this session's working directory ({cwd}) does not exist, so "
     "there is no session checkout to resolve an approval marker from. A seat whose worktree "
     "was removed while the session ran reaches this state. Move to a directory that exists, "
@@ -108,6 +109,7 @@ PRE_APPROVED_CHANGE_MARKER_STEP = (
 def guarded_write_deny_message(guarded_kind: str, draft_lines: str = "") -> str:
     """The refusal of a guarded write, for the kind of guarded file named."""
     return (
+        "[rule write-guard-guarded-file-edit-needs-approval-marker] "
         "Before you change {path}, check whether the change needs the user's approval: it does "
         "only when the approval page lists it and it is none of the page's exceptions.\n"
         "The approval page is " + APPROVAL_PAGE_PATH + ". This guard refuses every write to "
@@ -144,6 +146,7 @@ DENY_MESSAGE = guarded_write_deny_message(
     "machinery are,")
 
 PRE_APPROVED_CHANGE_MARKER_WITHOUT_REASON_DENY_MESSAGE = (
+    "[rule write-guard-guarded-file-edit-needs-approval-marker] "
     "Refusing to modify {path}: {marker_path} has `" + PRE_APPROVED_CHANGE_MARKER_FIRST_LINE
     + "` as its first line but no second line saying why the change needs no approval, so it "
     "approves nothing; this guard left it in place.\n"
@@ -158,6 +161,7 @@ PRE_APPROVED_CHANGE_MARKER_WITHOUT_REASON_DENY_MESSAGE = (
 def memory_write_deny_message(asked: str, asked_again: str) -> str:
     """The refusal of a memory write, sending the proposal and the question to the one named."""
     return (
+        "[rule write-guard-claude-code-memory-directory-write] "
         "Refusing to write {path}: it is in a Claude Code memory directory, where nothing "
         "recalls a note at the moment it applies.\n"
         "If what you meant to save would change how agents work, propose to " + asked

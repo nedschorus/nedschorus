@@ -126,7 +126,9 @@ letters, never counts as that line. Both texts are compared as the Markdown
 parser renders them, link targets and other markup left out, reference links
 resolved by the definitions of their own text, whitespace squeezed, each
 running count's `of M` and each deferred note dropped; the item's other text
-must appear in one run after the heading's line. When the message does not hold the text, or
+must appear in one run after the heading's line, its words compared without
+their punctuation or letter case, so that `rule; a` and `rule. A` match.
+When the message does not hold the text, or
 no message showed the item, the answer is not counted, and the text hands the
 agent the item's text to show unchanged before the user answers again. When
 the transcript or the item's text cannot be read, the answer is not counted
@@ -200,14 +202,15 @@ CHANGE_MAKING_ANSWERS = ("A", "AO", "AA", "D")
 # How an answer code is written to the agent: Aa's second letter is lower case.
 CODE_NAMES = {"AA": "Aa"}
 
-OPEN_WALK_OPENING = "The user answered \"{answer}\" to {item} of approval-walk {walk}."
-NO_WALK_OPENING = "The user answered \"{answer}\"; no approval-walk is open."
-WALK_UNKNOWN_OPENING = (
-    "The user answered \"{answer}\"; the hook could not tell whether an approval-walk is open, because "
+OPEN_WALK_OPENING_LINE = "[rule walk-me-through-short-answer-expanded-into-instructions] The user answered \"{answer}\" to {item} of approval-walk {walk}."
+NO_WALK_OPENING_LINE = "[rule walk-me-through-short-answer-expanded-into-instructions] The user answered \"{answer}\"; no approval-walk is open."
+WALK_UNKNOWN_OPENING_LINE = (
+    "[rule walk-me-through-short-answer-expanded-into-instructions] The user answered \"{answer}\"; the hook could not tell whether an approval-walk is open, because "
     "reading the approval-walk state failed: {error}")
 WALK_UNKNOWN_FIND = (
     "Find out yourself: the last `#next_to_present` line in each of the checkout's docs/walk/*-minutes.md names its "
     "waiting item, and a value other than `none` or `closed` marks the approval-walk open.")
+ITEM_NOT_SHOWN_OPENING_LINE = "[rule walk-me-through-short-answer-to-item-not-shown-discarded] The user answered \"{answer}\" to {item} of approval-walk {walk}."
 IF_WALK_OPEN = "If an approval-walk is open:"
 IF_NO_WALK = "If no approval-walk is open:"
 USER_REPLY_LINE = (
@@ -456,10 +459,11 @@ SHOWN_DIFFERENT_REASON = (
     "The words after the heading of {item} in your last message that showed it, written at {timestamp}, do not "
     "hold the item's current walk-document text after its heading as one unbroken run of words. Other words before "
     "or after that run are allowed and are not the fault. Either that message misquoted the item, or the "
-    "walk-document changed after that message. Only these count as words: the text the user reads rendered, "
-    "punctuation included, code, "
-    "an image's alt text, HTML, tags included, and `<!-- -->` comments. Whitespace, line breaks, Markdown markup, a link's target (its text "
-    "counts), `#approval_walk_item_` lines and the `of M` in a running count do not.")
+    "walk-document changed after that message. Only words, runs of letters, digits and underscores, count, wherever "
+    "they stand: in the text the user reads rendered, in code, in an image's alt text, in HTML, tags included, and in `<!-- -->` comments. Punctuation, "
+    "code's operators and HTML's angle brackets included, letter case, whitespace, line breaks, Markdown markup, a "
+    "link's target (its text counts), `#approval_walk_item_` lines and the `of M` in a running count do not count, "
+    "so a word changed, added or dropped is a fault, but a comma made a full stop is not.")
 TRANSCRIPT_UNREADABLE_LINES = (
     ANSWER_DISCARDED + ": it could not read this agent-session's transcript, {path}, which it reads to check that "
     "the user was last shown {item} as the walk-document now has it. The error: {error}.",
@@ -695,10 +699,9 @@ def recommendations_in(lines, openings, spans, walk_finder, starts):
     item's opening, since an opening missed leaves the part before it running on into the next item's text."""
     found, problems, parts = {}, {}, {}
     for numbers, unit_total, _, first, end in spans:
-        ranges = {number: (first, end) for number in numbers}
+        ranges = {number: walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
+            openings, first, end, number, numbers, unit_total) for number in numbers}
         if len(numbers) > 1:
-            ranges = {number: walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
-                openings, first, end, number, numbers, unit_total) for number in numbers}
             # Only an item with no opening of its own has a range that starts at the unit's heading.
             missing = [number for number in numbers if ranges[number][0] == first]
             # Only the items' own lines, so a Withdrawn version's recommendation is not counted.
@@ -900,6 +903,12 @@ def shown_words(markdown, parser, env=None):
     return re.sub(r"\s*" + re.escape(walk_finder.APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT), "", words)
 
 
+def words_without_punctuation_or_case(words):
+    """words as its runs of letters, digits and underscores, casefolded, one space apart. Punctuation parts words
+    rather than vanishing, so that `ned-box` shown as `nedbox` still differs."""
+    return " ".join(re.findall(r"\w+", words.casefold()))
+
+
 def shown_text_parser(walk_finder):
     """The walk finder's Markdown parser, accepting every link target: by default markdown-it reads a file: link,
     which walks use, as text, so its target would count as words, and drops a reference definition with one."""
@@ -961,10 +970,10 @@ def unseen_item_lines(answer, walk, transcript_path):
         item = item_name(number, walk)
         text = walk.shown_texts.get(number)
         if text is None:
-            problem = walk.problem or walk.shown_text_problem or f"the walk-document has no text for {item}"
+            problem = walk.problem or walk.shown_text_problem
             # A walk.problem that leaves numbers is the missing walk-document; a shown_text_problem says which file
             # to change itself, and for an item with two headings offers either.
-            where = f", in {walk.document}" if walk.problem or not walk.shown_text_problem else ""
+            where = f", in {walk.document}" if walk.problem else ""
             closing = closing_line(number, walk)
             return [line.format(item=item, problem=problem, where=where,
                                 closing_line=f"this closing line: {closing}" if closing else CLOSING_LINE_NAMED)
@@ -987,7 +996,8 @@ def unseen_item_lines(answer, walk, transcript_path):
             reason = NEVER_SHOWN_REASON.format(item=item)
         else:
             after_heading, timestamp = shown
-            if not body or f" {body} " in f" {after_heading} ":
+            body = words_without_punctuation_or_case(body)
+            if not body or f" {body} " in f" {words_without_punctuation_or_case(after_heading)} ":
                 continue
             reason = SHOWN_DIFFERENT_REASON.format(item=item, timestamp=timestamp)
         lines += [line.format(item=item, reason=reason, text=text) for line in ITEM_NOT_SHOWN_LINES]
@@ -1007,7 +1017,7 @@ def output_for(payload):
         return None
     refusal = unseen_item_lines(answer, walk, payload.get("transcript_path"))
     if refusal:
-        context = "\n".join([OPEN_WALK_OPENING.format(answer=answer["answer"], item=walk.item, walk=walk.name),
+        context = "\n".join([ITEM_NOT_SHOWN_OPENING_LINE.format(answer=answer["answer"], item=walk.item, walk=walk.name),
                              *refusal])
         return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}}
     context = context_for(answer, walk, walk_error)
@@ -1036,15 +1046,15 @@ def context_for(answer, walk, walk_error):
     elif answer["form"] == "rider":
         prefix = [line.format(rest=answer["rest"]) for line in RIDER_LINES]
     if walk_error is not None:
-        lines = [WALK_UNKNOWN_OPENING.format(answer=answer["answer"], error=repr(walk_error)), WALK_UNKNOWN_FIND]
+        lines = [WALK_UNKNOWN_OPENING_LINE.format(answer=answer["answer"], error=repr(walk_error)), WALK_UNKNOWN_FIND]
         lines += prefix + [IF_WALK_OPEN]
         lines += meaning_lines(answer, WalkState("", "the waiting item", [], None, {}, None), True)
         lines += [IF_NO_WALK] + meaning_lines(answer, None, False)
     else:
         if walk is None:
-            lines = [NO_WALK_OPENING.format(answer=answer["answer"])] + prefix + meaning_lines(answer, None, False)
+            lines = [NO_WALK_OPENING_LINE.format(answer=answer["answer"])] + prefix + meaning_lines(answer, None, False)
         else:
-            lines = ([OPEN_WALK_OPENING.format(answer=answer["answer"], item=walk.item, walk=walk.name)]
+            lines = ([OPEN_WALK_OPENING_LINE.format(answer=answer["answer"], item=walk.item, walk=walk.name)]
                      + prefix + meaning_lines(answer, walk, True))
     return "\n".join(lines)
 

@@ -72,7 +72,7 @@ WRAPPER_DIRECTORY_OPTIONS = {("env", "-C"), ("env", "--chdir"), ("sudo", "-D"), 
 UNEXPANDED_PATTERN = re.compile(r"[$`*?]|\{\}")
 
 DENY_REASON_TEMPLATE = (
-    "Refused: branch {branch} has an open pull request, \"{title}\" ({url}). "
+    "[rule bash-guard-git-push-force] Refused: branch {branch} has an open pull request, \"{title}\" ({url}). "
     "A force push would replace the commits under review.\n"
     "If you are force-pushing to restore what an earlier force push replaced, "
     "stop: leave the branch as it is and message merge-lane-2 with SendMessage "
@@ -88,7 +88,7 @@ DENY_REASON_TEMPLATE = (
 )
 
 UNRESOLVED_REASON_TEMPLATE = (
-    "Refused: this guard cannot read {word}, so it cannot check whether the "
+    "[rule bash-guard-git-push-force] Refused: this guard cannot read {word}, so it cannot check whether the "
     "branch has an open pull request.\n"
     "Run the push again with the checkout path and the branch name written "
     "out, so this guard can check it: git -C <checkout path> push --force "

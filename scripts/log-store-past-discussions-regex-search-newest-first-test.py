@@ -577,7 +577,7 @@ sys.exit(search.main(["start the heron plan", "--kind", "session-dialogs", "--jo
         agent("the stork plan", "2026-09-01T08:00:00Z"),
         agent("the stork plan", "2026-09-02T08:00:00Z")))
     left_out_section = ("## Subagent tasks and reports left out\n\nThe subagent tracker, "
-                        "handoff-extract-conversation-subagent-tracker-nbd.py, failed, so this dialog leaves out "
+                        "handoff-extract-conversation-subagent-tracker-hack.py, failed, so this dialog leaves out "
                         "every subagent task and report: RuntimeError: gone\n")
     egret_dialog = write(root / "session-dialogs" / "ned-box" / egret_key / "s22-dialog-complete.md",
                          "## Agent\n\nthe stork plan\n\n" + left_out_section)

@@ -246,7 +246,7 @@ check("a failed shipment refuses the removal",
       code == 0 and output["hookSpecificOutput"]["permissionDecision"] == "deny", (code, output, stderr))
 check("the refusal opens by saying it refused on purpose, that the removed worktree's records are shipped, and how "
       "many failed",
-      reason.startswith("Refused on purpose: before a `git worktree remove`, this hook ships the cold-read-records "
+      reason.startswith("[rule bash-guard-git-worktree-remove-cold-read-and-sanity-check-records-not-shipped] Refused on purpose: before a `git worktree remove`, this hook ships the cold-read-records "
                         "and sanity-check records of the worktree it removes to the log-store, and 2 "
                         "record(s) did not reach it."), reason)
 check("a removal the hook placed gets no instruction to write its path out", "Run the removal again" not in reason,
@@ -309,7 +309,7 @@ code, output, stderr = run_hook_process('git worktree remove -f "$W"', checkout)
 reason = refusal(output) or ""
 check("a removal the hook cannot place is refused while any worktree holds a record the log-store refuses, saying "
       "it shipped every worktree's records",
-      reason.startswith("Refused on purpose: before a `git worktree remove`, this hook ships the cold-read-records "
+      reason.startswith("[rule bash-guard-git-worktree-remove-cold-read-and-sanity-check-records-not-shipped] Refused on purpose: before a `git worktree remove`, this hook ships the cold-read-records "
                         "and sanity-check records of the worktree it removes to the log-store; it could not tell "
                         "which worktree this command removes (the path $W holds a variable, a glob or a "
                         "substitution), so it shipped the records of every worktree of this repository, and 1 "
@@ -715,9 +715,11 @@ other_worktree = checkout.parent / "beingwritten-other-worktree"
 git(checkout, "worktree", "add", "-q", "--detach", str(other_worktree))
 writer, held = record_writer_started(being_written)
 being_written_in_store = STORE / "cold-read-records" / being_written.name
-removes_worktree_refusal_start = ("Refused on purpose: this command removes a worktree in which a running "
+removes_worktree_refusal_start = ("[rule bash-guard-git-worktree-remove-record-being-written] "
+                                  "Refused on purpose: this command removes a worktree in which a running "
                                   "program, such as the cold-read-grid, is still writing a record.")
-unresolved_refusal_start = "Refused on purpose: this hook could not tell which worktree this command removes ("
+unresolved_refusal_start = ("[rule bash-guard-git-worktree-remove-record-being-written] "
+                            "Refused on purpose: this hook could not tell which worktree this command removes (")
 deferred_ending = ("This hook has deferred the removal: a program waits until every record above is finished, "
                    "ships the records, removes the worktree, and tells the user if that fails. You have nothing "
                    "to do for the removal. If your command did anything else, none of it ran: run again now only "

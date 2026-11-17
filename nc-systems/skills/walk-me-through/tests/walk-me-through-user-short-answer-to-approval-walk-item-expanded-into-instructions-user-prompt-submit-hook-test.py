@@ -32,6 +32,8 @@ HOOK_SCRIPT = (Path(__file__).resolve().parents[1]
                / "walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-user-prompt-submit-hook.py")
 SUITE_ROOT = Path(tempfile.mkdtemp(prefix="short-answer-expansion-hook-test-")).resolve()
 WALK_NAME = "reboot-test-older-open-items-2026-10-15"
+EXPANDED_RULE_ID_OPENING = "[rule walk-me-through-short-answer-expanded-into-instructions] "
+NOT_SHOWN_RULE_ID_OPENING = "[rule walk-me-through-short-answer-to-item-not-shown-discarded] "
 CHECKOUT = HOOK_SCRIPT.parents[3]
 CHECK = f"python3 {CHECKOUT}/nc-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check"
 ONE_ITEM_AT_A_TIME_LINE = (
@@ -205,7 +207,7 @@ def test_each_single_answer_in_either_case_with_or_without_a_period():
             lines = case.lines(prompt)
             check(f"{prompt!r} is expanded",
                   lines is not None
-                  and lines[0] == f"The user answered \"{prompt.strip().rstrip('.')}\"; no approval-walk is open."
+                  and lines[0] == EXPANDED_RULE_ID_OPENING + f"The user answered \"{prompt.strip().rstrip('.')}\"; no approval-walk is open."
                   and lines[1].startswith(meaning) and not any("which one" in line for line in lines),
                   f"lines {lines!r}")
 
@@ -219,7 +221,7 @@ def test_a_hyphen_between_the_letters_of_ao_o2_and_o3_is_read_as_that_letter():
         lines = case.lines(prompt)
         check(f"{prompt!r} is {code}",
               lines is not None
-              and lines[0] == f"The user answered \"{prompt.rstrip('.')}\" to item 4 of 9 of approval-walk {WALK_NAME}."
+              and lines[0] == EXPANDED_RULE_ID_OPENING + f"The user answered \"{prompt.rstrip('.')}\" to item 4 of 9 of approval-walk {WALK_NAME}."
               and lines[1].startswith(meaning), f"lines {lines!r}")
     lines = case.lines("A-O, keep the old name")
     check("'A-O, keep the old name' is a rider on AO",
@@ -267,7 +269,7 @@ def test_a_on_an_open_walk_names_the_item_its_recommendation_and_the_check_step(
     case = Case(next_to_present="item 4 of 9 (awaiting answer)")
     lines = case.lines("a")
     check("A names the waiting item and its recommendation as written, and sends every A to the check step and close",
-          lines == [f"The user answered \"a\" to item 4 of 9 of approval-walk {WALK_NAME}.",
+          lines == [EXPANDED_RULE_ID_OPENING + f"The user answered \"a\" to item 4 of 9 of approval-walk {WALK_NAME}.",
                     "A means approve: the user agrees with the recommendation of item 4 of 9 (leave the filter out). "
                     "Do what the recommendation says.",
                     f"Whether or not that makes a change, first run `{CHECK}`, {CLOSE_END}"], f"lines {lines!r}")
@@ -492,7 +494,7 @@ def test_walk_marker_read_as_the_stop_hook_reads_it():
     lines = case.lines("z")
     check("a colon and a code-span value are read as the Stop hook reads them",
           lines is not None
-          and lines[0] == f"The user answered \"z\" to items 5 and 6 of 9 of approval-walk {WALK_NAME}.",
+          and lines[0] == EXPANDED_RULE_ID_OPENING + f"The user answered \"z\" to items 5 and 6 of 9 of approval-walk {WALK_NAME}.",
           f"lines {lines!r}")
 
 
@@ -502,7 +504,7 @@ def test_no_open_walk():
     case.minutes("No marker line here.", name="older-walk-2026-09-01")
     lines = case.lines("d")
     check("a closed approval-walk and minutes without a marker are not open",
-          lines is not None and lines[0] == "The user answered \"d\"; no approval-walk is open.",
+          lines is not None and lines[0] == EXPANDED_RULE_ID_OPENING + "The user answered \"d\"; no approval-walk is open.",
           f"lines {lines!r}")
 
 
@@ -591,7 +593,7 @@ def test_r_on_an_open_walk_goes_to_the_agent_and_does_not_block():
         lines = case.lines(prompt)
         check(f"{prompt!r} gives the agent additionalContext telling it to show the waiting item, and no decision",
               not_blocked(result) and lines is not None
-              and lines[0] == f"The user answered \"{prompt.rstrip('.')}\" to item 4 of 9 of approval-walk {WALK_NAME}."
+              and lines[0] == EXPANDED_RULE_ID_OPENING + f"The user answered \"{prompt.rstrip('.')}\" to item 4 of 9 of approval-walk {WALK_NAME}."
               and lines[1:] == r_lines(word, "item 4 of 9", "a filter")
               and not any("leave the filter out" in line or "old rows" in line for line in lines),
               f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
@@ -605,7 +607,7 @@ def test_r_on_an_open_walk_goes_to_the_agent_and_does_not_block():
     case.minutes("#next_to_present item 3 of 9\n\n#next_to_present none, closed")
     lines = case.lines("r")
     check("R with only a closed approval-walk asks for the last question again",
-          lines is not None and lines[0] == "The user answered \"r\"; no approval-walk is open."
+          lines is not None and lines[0] == EXPANDED_RULE_ID_OPENING + "The user answered \"r\"; no approval-walk is open."
           and lines[1].startswith(NO_WALK_MEANINGS["R"]), f"lines {lines!r}")
     lines = Case(next_to_present="item 4 of 9").lines("r but shorter")
     check("R with more text after it goes to the agent as a rider",
@@ -1109,7 +1111,7 @@ def test_a_numbered_answer_within_the_waiting_items_parts_answers_the_parts():
         check(f"{prompt!r} on an item with parts 1 to 3 names each part's letter and gives the check command "
               "with one --part-answer flag per part, in part number order",
               lines is not None
-              and lines[0] == f"The user answered \"{prompt}\" to item 4 of 9 of approval-walk {WALK_NAME}."
+              and lines[0] == EXPANDED_RULE_ID_OPENING + f"The user answered \"{prompt}\" to item 4 of 9 of approval-walk {WALK_NAME}."
               and lines[1:] == [parts_read_line(pairs)] + parts_different_letters_lines(flags), f"lines {lines!r}")
     lines = case.lines("1 a 2 d")
     check("'1 a 2 d' on an item with parts 1 to 3 leaves part 3 unanswered, so nothing is recorded, though the "
@@ -1412,7 +1414,7 @@ def test_numbered_r_reads_the_walk_in_the_payloads_cwd_not_the_hooks_own():
                             capture_output=True, text=True, cwd=SUITE_ROOT)
     context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"] if not_blocked(result) else ""
     check("'37.4 r' run from outside the checkout still finds item 37.4 in the payload's cwd",
-          context.startswith(f"The user answered \"37.4 r\" to item 4 of 9 of approval-walk {WALK_NAME}.\n"
+          context.startswith(EXPANDED_RULE_ID_OPENING + f"The user answered \"37.4 r\" to item 4 of 9 of approval-walk {WALK_NAME}.\n"
                              + "\n".join(numbered_r_lines("37.4", "item 37.4 of 9", "R with a number",
                                                            f" {case.walk / (WALK_NAME + '-minutes.md')}"))),
           f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
@@ -1562,7 +1564,7 @@ def test_unreadable_minutes_still_expand_and_say_so():
     lines = case.lines("d")
     check("minutes that cannot be read still give both branches and name the failure",
           lines is not None
-          and lines[0].startswith("The user answered \"d\"; the hook could not tell whether an approval-walk "
+          and lines[0].startswith(EXPANDED_RULE_ID_OPENING + "The user answered \"d\"; the hook could not tell whether an approval-walk "
                                   "is open, because reading the approval-walk state failed: UnicodeDecodeError")
           and lines[1].startswith("Find out yourself: the last `#next_to_present` line in each of the checkout's")
           and "If an approval-walk is open:" in lines and "If no approval-walk is open:" in lines
@@ -1576,7 +1578,7 @@ def test_two_unclosed_approval_walks_are_reported_naming_both():
     lines = case.lines("a")
     check("with two unclosed approval-walks the hook takes neither and names both walk-minutes files",
           lines is not None
-          and lines[0].startswith("The user answered \"a\"; the hook could not tell whether an approval-walk "
+          and lines[0].startswith(EXPANDED_RULE_ID_OPENING + "The user answered \"a\"; the hook could not tell whether an approval-walk "
                                   "is open, because reading the approval-walk state failed: "
                                   "MoreThanOneUnclosedApprovalWalk")
           and re.search(rf"/docs/walk/{second.name}, (<minutes>|\S*/docs/walk/{WALK_NAME}-minutes\.md)'\)", lines[0])
@@ -1656,7 +1658,7 @@ ITEM_4_CLOSING_LINE = f"[Item 4 of 9, a filter](https://claude.ai/artifact/x) ·
 
 
 def not_shown_lines(answer, reason):
-    return [f"The user answered \"{answer}\" to item 4 of 9 of approval-walk {WALK_NAME}.",
+    return [NOT_SHOWN_RULE_ID_OPENING + f"The user answered \"{answer}\" to item 4 of 9 of approval-walk {WALK_NAME}.",
             f"{ANSWER_DISCARDED}, because the user may not have seen item 4 of 9 as the walk-document now has it.",
             reason,
             "Record nothing in the walk-minutes and act on none of the answer.",
@@ -1666,15 +1668,16 @@ def not_shown_lines(answer, reason):
             "BEGIN", *SHOWN_ITEM_TEXT.split("\n"), "END"]
 
 
-def shown_different_reason(minute):
-    return (f"The words after the heading of item 4 of 9 in your last message that showed it, written at "
+def shown_different_reason(minute, item="item 4 of 9"):
+    return (f"The words after the heading of {item} in your last message that showed it, written at "
             f"2026-11-13T20:{minute:02}:00Z, do not hold the item's current walk-document text after its heading as "
             "one unbroken run of words. Other words before or after that run are allowed and are not the fault. Either "
-            "that message misquoted the item, or the walk-document changed after that message. Only these count as "
-            "words: the text the user reads rendered, punctuation included, code, an image's alt text, HTML, tags included, and `<!-- -->` "
-            "comments. Whitespace, line breaks, "
-            "Markdown markup, a link's target (its text counts), `#approval_walk_item_` lines and the `of M` in a "
-            "running count do not.")
+            "that message misquoted the item, or the walk-document changed after that message. Only words, runs of "
+            "letters, digits and underscores, count, wherever they stand: in the text the user reads rendered, in code, in an image's alt text, in HTML, tags "
+            "included, and in `<!-- -->` comments. Punctuation, code's operators and HTML's angle brackets included, "
+            "letter case, whitespace, line breaks, Markdown markup, a link's target (its text counts), "
+            "`#approval_walk_item_` lines and the `of M` in a running count do not count, so a word changed, added or "
+            "dropped is a fault, but a comma made a full stop is not.")
 
 
 def never_shown_reason(item="item 4 of 9"):
@@ -1707,6 +1710,10 @@ def test_an_answer_counts_when_the_last_message_showing_the_item_holds_its_text_
               f"lines {lines!r}")
     lines = case.lines("a", case.transcript(SHOWN_ITEM))
     check("an answer counts when the message shows the tag lines too", counted(lines), f"lines {lines!r}")
+    no_blank_line_after_heading = SHOWN_ITEM_TEXT.replace("a filter\n\nA filter", "a filter\nA filter")
+    lines = case.lines("a", case.transcript(no_blank_line_after_heading))
+    check("an answer counts when the item's first body line follows its heading line with no blank line between",
+          no_blank_line_after_heading != SHOWN_ITEM_TEXT and counted(lines), f"lines {lines!r}")
 
 
 def test_an_answer_to_an_item_revised_after_it_was_shown_is_not_counted_and_the_new_text_is_handed_over():
@@ -1722,6 +1729,91 @@ def test_an_answer_to_an_item_revised_after_it_was_shown_is_not_counted_and_the_
                   "the item's current text, with no check command and no reply line",
                   context.split("\n") == not_shown_lines(prompt, shown_different_reason(0)),
                   f"exit {result.returncode}, context {context!r}, stderr {result.stderr!r}")
+
+
+# Item 47.2 of merge-lane-2's approval-walk, as its walk-document held it when the user answered "Ao".
+ITEM_47_2 = """### Item 47.2 of 68: The change
+
+Each message a hook prints for a rule, a refusal, warning or reminder, starts with that rule's ID, such as `[rule bash-guard-git-push-force]`; a test fails when a hook prints a message without one, or when two rules share one. A scheduled program, added as a job to [GHI 1058, "Regular maintenance"](https://github.com/nedschorus/nedschorus/issues/1058), counts each ID once a week in the transcripts of both machines, the Mac's through its mirror on ned-box. Its one weekly report lists the rules not seen since their IDs were added, each beside the agent-seat that wrote it, found from the pull request that added the rule, as candidates to question, not verdicts: a guard against a rare, permanent harm may rightly never fire. A rule written only in prose, such as in `CLAUDE.md`, is not covered.
+
+[advisor] The advisor was called on this item; it changed the recommendation from a new shared log file to rule IDs counted in the transcripts.
+
+#case_against medium: every hook's messages change in one sweep, counts start only at the merge, and a rule that only ever lets actions through is never seen.
+
+The alternative: every hook also writes a log line with the rule ID, agent-seat and time into one file in the log-store, and a weekly report reads that file.
+
+Recommendation: ask the agent-seat reboot-test, which owns the Bash guards, to add rule IDs to every hook's messages, other agent-seats' hooks included, and to build the weekly count as a GHI 1058 job, in one pull request."""
+ITEM_47_2_DOCUMENT = f"""# A walk
+
+## Item 47 of 68: Rule IDs
+
+### Item 47.1 of 68: What you asked for
+
+The user asked for rule IDs.
+
+[No decision here; type N or next to continue.](https://claude.ai/artifact/x)
+
+{ITEM_47_2}
+
+## Item 48 of 68: The next item
+
+Recommendation: do the next thing.
+"""
+# The message merge-lane-2 showed item 47.2 in. Against ITEM_47_2 it changes "`; a test"
+# to "`. A test", and "the rule, as candidates" to "the rule. These are candidates": "as" dropped, "These are" added.
+ITEM_47_2_REAL_SHOWING = """Session handed off after you moved on from 47.1 (no decision there); resuming at 47.2.
+
+### Item 47.2 of 68: The change
+
+Each message a hook prints for a rule, a refusal, warning or reminder, starts with that rule's ID, such as `[rule bash-guard-git-push-force]`. A test fails when a hook prints a message without one, or when two rules share one. A scheduled program, added as a job to [GHI 1058, "Regular maintenance"](https://github.com/nedschorus/nedschorus/issues/1058), counts each ID once a week in the transcripts of both machines, the Mac's through its mirror on ned-box. Its one weekly report lists the rules not seen since their IDs were added, each beside the agent-seat that wrote it, found from the pull request that added the rule. These are candidates to question, not verdicts: a guard against a rare, permanent harm may rightly never fire. A rule written only in prose, such as in `CLAUDE.md`, is not covered.
+
+[advisor] The advisor was called on this item; it changed the recommendation from a new shared log file to rule IDs counted in the transcripts.
+
+#case_against medium: every hook's messages change in one sweep, counts start only at the merge, and a rule that only ever lets actions through is never seen.
+
+The alternative: every hook also writes a log line with the rule ID, agent-seat and time into one file in the log-store, and a weekly report reads that file.
+
+Recommendation: ask the agent-seat reboot-test, which owns the Bash guards, to add rule IDs to every hook's messages, other agent-seats' hooks included, and to build the weekly count as a GHI 1058 job, in one pull request.
+
+[Item 47.2 of 68, The change](https://claude.ai/artifact/SXzwJaGtf7sXGpYVsH1eDr) · A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · Z defer · E explain · O other options"""
+ITEM_47_2_CLOSING_LINE = """[Item 47.2 of 68, The change](https://claude.ai/artifact/SXzwJaGtf7sXGpYVsH1eDr) · A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · Z defer · E explain · O other options"""
+
+
+def item_47_2_lines(prompt, shown_item):
+    case = Case(next_to_present="item 47.2 of 68", document=ITEM_47_2_DOCUMENT)
+    return case.lines(prompt, case.transcript(f"{shown_item}\n\n{ITEM_47_2_CLOSING_LINE}"))
+
+
+def test_an_answer_counts_when_the_item_was_shown_with_only_its_punctuation_or_letter_case_changed():
+    lines = item_47_2_lines("Ao", ITEM_47_2)
+    check("'Ao' to item 47.2 counts when its text was shown as the walk-document has it", counted(lines),
+          f"lines {lines!r}")
+    semicolon_to_full_stop = ITEM_47_2.replace("`; a test fails", "`. A test fails")
+    comma_to_full_stop = ITEM_47_2.replace("added the rule, as candidates", "added the rule. As candidates")
+    for name, shown in (("the semicolon made a full stop and the next word capitalised", semicolon_to_full_stop),
+                        ("a comma made a full stop and the next word capitalised", comma_to_full_stop),
+                        ("both of 47.2's re-punctuations", comma_to_full_stop.replace("`; a test", "`. A test")),
+                        ("only a comma dropped", ITEM_47_2.replace("rare, permanent", "rare permanent")),
+                        ("only a word's letter case changed", ITEM_47_2.replace("verdicts", "Verdicts"))):
+        lines = item_47_2_lines("Ao", shown)
+        check(f"'Ao' to item 47.2 counts when it was shown with {name}", shown != ITEM_47_2 and counted(lines),
+              f"lines {lines!r}")
+
+
+def test_an_answer_is_refused_when_the_item_was_shown_with_a_word_changed_added_dropped_split_or_joined():
+    for name, shown in (
+            ("the real showing, which adds \"These are\" and drops \"as\"", ITEM_47_2_REAL_SHOWING),
+            ("a word added", ITEM_47_2.replace("as candidates", "as good candidates")),
+            ("a word dropped", ITEM_47_2.replace("rare, permanent harm", "rare harm")),
+            ("a word changed", ITEM_47_2.replace("once a week", "twice a week")),
+            ("two words swapped", ITEM_47_2.replace("question, not verdicts", "verdicts, not question")),
+            ("two words joined where only punctuation parted them", ITEM_47_2.replace("ned-box", "nedbox")),
+            ("one word split in two", ITEM_47_2.replace("weekly report", "week ly report"))):
+        lines = item_47_2_lines("Ao", shown)
+        check(f"'Ao' to item 47.2 is refused when it was shown with {name}", shown != ITEM_47_2
+              and lines is not None and lines[1:3] == [
+                  f"{ANSWER_DISCARDED}, because the user may not have seen item 47.2 of 68 as the walk-document now "
+                  "has it.", shown_different_reason(0, "item 47.2 of 68")], f"lines {lines!r}")
 
 
 def test_closing_lines_alone_after_the_item_was_shown_do_not_hide_the_message_that_showed_it():
@@ -2070,6 +2162,32 @@ def test_a_label_heading_inside_a_shared_heading_keeps_the_shared_heading_items_
     shown, _ = finder_shown_text(document, "2")
     check("item 2 under a shared `## Items 1 and 2 of 3` heading and a `## Item 2: details` heading is item 2's "
           "text, not item 1's", shown.endswith(item_2) and "do item 1" not in shown, shown)
+    check("the `## Item 2: details` heading is in item 2's text", "## Item 2: details" in shown, shown)
+    shown, _ = finder_shown_text(document, "1")
+    check("item 1's text under the shared heading ends before `## Item 2: details`, the heading that labels item 2",
+          shown.endswith("Recommendation: do item 1.") and "Item 2" not in shown, shown)
+
+
+def test_a_label_heading_in_a_withdrawn_version_opens_no_item():
+    document = ("# A walk\n\n## Items 1 and 2 of 3\n\n#### Withdrawn version 1 of item 1\n\n#### Item 1: old\n\n"
+                "Recommendation: old.\n\n**Item 1 of 3**\n\nRecommendation: new.\n\n**Item 2 of 3**\n\n"
+                "Recommendation: do item 2.\n")
+    shown, _ = finder_shown_text(document, "1")
+    check("a `#### Item 1: old` heading after a Withdrawn heading that names item 1 is the withdrawn version's own "
+          "and opens no item, so item 1's text holds none of the withdrawn version", "old" not in shown, shown)
+
+
+def test_a_heading_that_ends_a_shared_heading_unit_ends_its_group_too():
+    finder = load_walk_finder_for_test()
+    parser = finder.markdown_parser()
+    item_2 = "**Item 2 of 3**\n\nRecommendation: do item 2."
+    document = ("# A walk\n\n# Items 1 and 2 of 3\n\n**Item 1 of 3**\n\nRecommendation: do item 1.\n\n"
+                f"# Part B\n\n{item_2}\n\n# Item 3 of 3: the last\n\nRecommendation: do item 3.\n")
+    units = finder.item_unit_spans(document, parser)
+    own = [unit for unit in units if unit[0] == ["2"]]
+    shown = finder.approval_walk_item_text_as_shown_to_user(document, parser, units, own[0], "2") if own else ""
+    check("a `**Item 2 of 3**` below `# Part B`, which ends the shared `# Items 1 and 2 of 3` unit, starts a unit of "
+          "its own whose text is item 2's", len(own) == 1 and shown == item_2, f"{units!r} {shown!r}")
 
 
 def test_a_setext_heading_has_its_own_level_not_its_underline_length():
@@ -2122,7 +2240,7 @@ def test_a_marker_value_naming_no_item_is_reported_for_a_and_d():
     lines = Case(next_to_present="paused until rewritten").lines("a")
     check("a `#next_to_present` value with no running count is quoted and reported before acting on A",
           lines is not None
-          and lines[0] == (f"The user answered \"a\" to the item its minutes' `#next_to_present` line names, "
+          and lines[0] == (EXPANDED_RULE_ID_OPENING + f"The user answered \"a\" to the item its minutes' `#next_to_present` line names, "
                            f"`paused until rewritten`, of approval-walk {WALK_NAME}.")
           and any(line.startswith("The hook could not read the recommendation of ") for line in lines),
           f"lines {lines!r}")

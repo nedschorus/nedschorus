@@ -23,7 +23,7 @@ searched.
 
 Before it searches session-dialogs, it writes again each session dialog
 whose transcript changed since the dialog was written, as the dialogs
-refresher, scripts/log-store-session-dialogs-refresh-nbd.py, does every 10
+refresher, scripts/log-store-session-dialogs-refresh-hack.py, does every 10
 minutes, so a dialog is as current as the transcript the mirror last copied,
 about a minute behind the session. It writes them only with the dialog
 extractor, scripts/handoff-extract-conversation.py, subagent tracker and
@@ -260,7 +260,7 @@ OTHER_EXTRACTOR_RECORDED_NOTE = (
     "tracker's files and log-store-session-dialogs-refresh-common.py in {scripts} is not the one {recorded} "
     "records, or none is recorded.\n"
     "If main changed one of those files and this checkout has the change, wait: the dialogs refresher, "
-    "scripts/log-store-session-dialogs-refresh-nbd.py, which runs from ned-box's main checkout every 10 minutes, "
+    "scripts/log-store-session-dialogs-refresh-hack.py, which runs from ned-box's main checkout every 10 minutes, "
     "brings the dialogs up to date within 10 minutes.\n"
     "If those files in this checkout differ from main's, as on a branch that changes them or in a worktree behind "
     "main, the recorded digest never matches them, since the refresher records the digest of main's: for a search "
@@ -755,7 +755,7 @@ def dialog_line_turn_times(transcript_text, dialog_text, wanted, written_left_ou
         return {}, (f"could not date the hits in the session dialog {dialog_text} by their turns, since it "
                     f"was written while the subagent tracker failed and lacks the subagent turns the dialog "
                     f"built again from {transcript_text} holds; the dialogs refresher, "
-                    f"scripts/log-store-session-dialogs-refresh-nbd.py, writes it whole once its transcript "
+                    f"scripts/log-store-session-dialogs-refresh-hack.py, writes it whole once its transcript "
                     f"or the extractor changes")
     stamps_by_line = collections.defaultdict(list)
     for line, stamp in built:

@@ -23,7 +23,7 @@ Each script's module docstring says what it does and why it is built that way; e
 - `nc-systems/handoff/handoff-write-and-check-supervisor.py`, the writer script.
 - `nc-systems/handoff/handoff-supervisor.py`, the handoff-supervisor.
 - `scripts/handoff-extract-conversation.py`, the extractor.
-- `scripts/log-store-session-dialogs-refresh-nbd.py`, the session dialogs refresh.
+- `scripts/log-store-session-dialogs-refresh-hack.py`, the session dialogs refresh.
 
 ## What a reincarnate-seat kills, and how work survives it
 

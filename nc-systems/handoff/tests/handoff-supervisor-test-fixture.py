@@ -19,6 +19,7 @@ import atexit
 import builtins
 import contextlib
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -132,29 +133,56 @@ def handoff_supervisor_suite_workspace():
         yield Path(directory)
 
 
+STAND_IN_SUPERVISOR_READY_LINE = "stand-in supervisor running"
+
+
 @contextlib.contextmanager
 def a_process_that_looks_like_a_supervisor(workspace: Path, agent: str,
-                                          agent_argument=None, equals_form=False):
+                                          agent_argument=None, equals_form=False,
+                                          launched_through=None):
     """A live process whose command line is a supervisor's for `agent`.
 
     The identity check reads the command line, so the process has to have a
     real one: a file actually NAMED handoff-supervisor.py, run with --agent.
     It sleeps; nothing about the supervisor's behaviour is being tested here,
     only that it can be recognised.
+
+    Yields only once the stand-in prints its ready line: Popen can return while
+    the child is still inside exec, when `ps -o args=` shows `[python3]`, and a
+    real supervisor writes its pid to the lock only once it is running.
+    `launched_through`, when given, is the command run in its place, with the
+    stand-in's command as a JSON list in STAND_IN_SUPERVISOR_COMMAND rather than
+    on its own command line, which would look like a supervisor's: a case uses
+    it to delay the stand-in's exec, or to stop it from ever running. Raises
+    RuntimeError when the process ends without printing the ready line.
     """
     stub_directory = workspace / f"looks-like-a-supervisor-for-{agent}"
     stub_directory.mkdir(parents=True, exist_ok=True)
     stub = stub_directory / "handoff-supervisor.py"
-    stub.write_text("import time\ntime.sleep(120)\n", encoding="utf-8")
+    stub.write_text(f"import time\nprint({STAND_IN_SUPERVISOR_READY_LINE!r}, flush=True)\n"
+                    "time.sleep(120)\n", encoding="utf-8")
     named = agent if agent_argument is None else agent_argument
     arguments = ([f"--agent={named}"] if equals_form else ["--agent", named])
+    command = [sys.executable, str(stub), *arguments, "--cd", str(stub_directory)]
+    environment = None
+    if launched_through:
+        environment = {**os.environ, "STAND_IN_SUPERVISOR_COMMAND": json.dumps(command)}
+        command = list(launched_through)
     process = subprocess.Popen(  # pylint: disable=consider-using-with
-        [sys.executable, str(stub), *arguments, "--cd", str(stub_directory)])
+        command, env=environment, stdout=subprocess.PIPE, text=True)
     try:
+        first_line = process.stdout.readline().rstrip("\n")
+        if first_line != STAND_IN_SUPERVISOR_READY_LINE:
+            exit_status = process.wait() if first_line == "" else "none yet, it is still running"
+            raise RuntimeError(
+                f"the stand-in supervisor for {agent} (process {process.pid}) never printed "
+                f"{STAND_IN_SUPERVISOR_READY_LINE!r}: its first line was {first_line!r} and its "
+                f"exit status is {exit_status}, so no case can use it as a running supervisor")
         yield process
     finally:
         process.kill()
         process.wait()
+        process.stdout.close()
 
 
 def git_in(arguments, cwd):

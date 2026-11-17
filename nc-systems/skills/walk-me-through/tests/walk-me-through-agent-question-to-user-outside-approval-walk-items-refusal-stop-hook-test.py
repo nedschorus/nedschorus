@@ -388,7 +388,7 @@ def test_the_block_message_says_what_to_do():
              "step chooses when it is shown and numbers it",
              "headed `## <the point of the question>`, with no number. In the file, place it right after the whole "
              "of item 2: past that item's sub-steps and `#### Withdrawn version` sections, and before the next item "
-             "below those sub-steps and sections. Under the heading, give it a line of its own naming its category, the one for how soon its work must happen, one of "
+             "below those sub-steps and sections, or, when no item follows, at the end of the file, below any text after those sub-steps and sections. Under the heading, give it a line of its own naming its category, the one for how soon its work must happen, one of "
              "`#approval_walk_item_in_category_must_fix_now`, "
              "`#approval_walk_item_in_category_fix_next`, `#approval_walk_item_in_category_fix_during_maintenance`, "
              "`#approval_walk_item_in_category_file_an_improvement_feature_or_change`, and a line "
@@ -640,6 +640,16 @@ def test_a_failed_model_check_blocks():
         os.environ["PATH"] = saved_path
         os.environ.pop("FAKE_CLAUDE_MODE", None)
         os.environ.pop("FAKE_CLAUDE_CALLS", None)
+
+
+def test_a_question_above_a_label_subheading_in_an_interruption_item_is_held():
+    stray = "merge-lane-2 asks: should I file one GHI listing the remaining seats' tests?"
+    item = INTERRUPTION_ITEM.replace("Recommendation: File it.", "#### Item 2.1: details\n\nMore.\n\nRecommendation: File it.")
+    case = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + item, minutes="#next_to_present item 2 of 11")
+    case.records(PEER_PROMPT, text_record(stray),
+                 text_record("I added it as Item 2.1 of 11.\n\nItem 2 of 11 is waiting for your answer."))
+    check_silent("a question above a `#### Item 2.1: details` subheading in interruption item 2.1 is still the item's, "
+                 "so it passes", case.run(model="yes"))
 
 
 def test_a_question_held_in_an_interruption_item_is_not_checked():

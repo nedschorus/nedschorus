@@ -240,13 +240,15 @@ PREREQUISITE_FORMS = (
     + '": {"' + WALK_MINUTES_FIELD + '": "<absolute path of the walk-minutes file>", "'
     + ITEM_HEADING_FIELD + '": "<the item\'s heading in the walk-document>"}}')
 
+RAISE_LINE_TEMPLATE = ('[rule due-task-raise-when-prerequisites-met] Act on task {task_id} "{subject}" '
+                       "now: {reasons}.")
 DEFER_INSTRUCTION = (
     "If a task above cannot be acted on yet, record what it now waits on with TaskUpdate "
     "instead: a pull request, a GHI or an approval-walk item in a new "
     "metadata.prerequisites, or a task with addBlockedBy."
 )
 PREREQUISITES_PROBLEM_LINE_TEMPLATE = (
-    'Task {task_id} "{subject}" is never raised as its metadata.prerequisites stand, because '
+    '[rule due-task-prerequisites-unusable-correct-them] Task {task_id} "{subject}" is never raised as its metadata.prerequisites stand, because '
     "{problem}.")
 PREREQUISITES_CORRECTION_INSTRUCTION = (
     'Correct the task with TaskUpdate, giving its metadata a "prerequisites" list whose entries '
@@ -575,8 +577,8 @@ def raise_line(task: dict, met_citations, done_blockers=None) -> str:
     if done_blockers is not None:
         reasons.append("the tasks it waited on are completed: "
                        + ", ".join(f"task {single_line(blocker)}" for blocker in done_blockers))
-    return (f'Act on task {task["id"]} "{single_line(task.get("subject", ""))}" '
-            f"now: {', and '.join(reasons)}.")
+    return RAISE_LINE_TEMPLATE.format(task_id=task["id"], subject=single_line(task.get("subject", "")),
+                                      reasons=", and ".join(reasons))
 
 
 def due_task_lines(tasks: dict, directory: Path, state: dict,
@@ -688,7 +690,8 @@ NEXT_ACTION_LISTED_OPEN_ITEMS_LIMIT = 15
 NEXT_ACTION_LISTED_LINE_CHARACTERS = 160
 
 NEXT_ACTION_INSTRUCTIONS = (
-    "No approval-walk is open and none of your work is running, so do not stop here.",
+    "[rule due-task-idle-agent-seat-start-ready-tasks-and-next-approval-walk] No approval-walk is open and none of "
+    "your work is running, so do not stop here.",
     "Tell the user in one line that you are building a new approval-walk.",
     "Start subagents now on every ready task that needs no review or approval from the user.",
     "Build an approval-walk of 8 to 16 items, more than 16 only for one large thing with many "

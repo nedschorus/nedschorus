@@ -167,13 +167,21 @@ RX_GERUND_NARRATIVE = re.compile(
 RX_GERUND_NOUN = re.compile(r"^\W*\w+\s+(list|order|time|notes?|material|guide|room)\b", re.I)
 RX_NOW_NEXT = re.compile(r"^\W*(?:now|next|then)\b|\bnow\b|\bnext\b", re.I)
 # The user has the next move in these; an event-conditional sentence is a promise after the event.
+# "If you don't, I'll ..." and "unless you object, I'll ..." leave the move with the agent.
 RX_CONDITIONAL_ON_USER = re.compile(
-    r"\b(?:should you|want me|would you|shall I|say the word|say go|your call|if you'?d like|"
+    r"\b(?:should you|want me|would you|shall I|say the word|say go|your call|"
     r"can I|may I|on your (?:go|word|approval|ok|yes|y))\b"
+    r"|\bif you\b(?!\s+(?:don'?t|do not|haven'?t|have not|didn'?t|did not|won'?t|will not)\s*(?:[,;.]|$))"
     r"|^\W*(?:say|tell me|reply|answer|pick|choose)\b", re.I)
+# "as" is temporal only before "each" or before "it" or "they" and a verb that is not a form of be,
+# a modal or past tense: "as it opens", not "as it is", "as it currently stands", "as the task
+# requires" or "as those two items"; "these", "those" and "that" are left out, being determiners too.
 RX_CONDITIONAL_ON_EVENT = re.compile(
     r"\b(?:if|once|when|whenever|after|unless|until|tomorrow|later|next session|next time|"
-    r"as soon as|the moment|in a day|in an hour|by tomorrow)\b", re.I)
+    r"as soon as|the moment|in a day|in an hour|by tomorrow)\b"
+    r"|\bas\s+(?:each\b|(?:it|they)\s+(?!(?:(?:\w+ly|always|now|still|already|often|never)\s+)?"
+    r"(?:is|are|was|were|be|should|would|could|can|may|might|must|will|does|did|do|has|had|have|"
+    r"says?|said|stands?|seems?|looks?|goes|went|happens|turns|\w+ed)\b)[a-z])", re.I)
 RX_NEGATED_ACTION = re.compile(
     r"\b(?:without|instead of|rather than|not yet|never|no longer|don't|won't|can't)\s+"
     r"(?:\w+\s+){0,2}?(?:push|pushing|commit|committing|dispatch|dispatching|fork|forking|file|"
@@ -443,7 +451,8 @@ def newest_token_spend_in(path):
     return newest
 
 
-def running_subagent_entry(agent_id, facts, transcript, newest_spend_by_subagent_transcript, now):
+def running_subagent_entry(agent_id, facts, transcript, newest_spend_by_subagent_transcript, now,
+                           task_ids_ended_in_session_transcript):
     """The entry for a subagent the session's records leave running. Claude Code marks a subagent's
     report interim while background commands it launched still run, its final report included, so
     a subagent whose last report is interim and that has spent no token since is reported as
@@ -456,7 +465,8 @@ def running_subagent_entry(agent_id, facts, transcript, newest_spend_by_subagent
         return entry
     own = threshold_hook.work_in_flight(str(own_transcript),
                                         background_task_wait_seconds=float("inf"), now=now,
-                                        should_raise_on_undecodable_bytes=True)
+                                        should_raise_on_undecodable_bytes=True,
+                                        task_ids_ended_in_session_transcript=task_ids_ended_in_session_transcript)
     entry[fields.SUBAGENT_STOPPED_AT] = iso(stopped_at)
     entry[fields.SUBAGENT_OWN_RUNNING_BACKGROUND_COMMANDS] = [
         {"id": task_id, "started": iso(own.launched_at_by_id.get(task_id))}
@@ -694,7 +704,8 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
                 str(transcript), background_task_wait_seconds=float("inf"), now=now)
             running_subagents = [
                 running_subagent_entry(agent_id, facts, transcript,
-                                       newest_spend_by_subagent_transcript, now)
+                                       newest_spend_by_subagent_transcript, now,
+                                       flight.ended_task_ids)
                 for agent_id in flight.subagent_ids]
         except threshold_hook.TranscriptCouldNotBeFullyRead as error:
             raise ReadFailure(f"{error}: it is the last line, still being written, which the next "

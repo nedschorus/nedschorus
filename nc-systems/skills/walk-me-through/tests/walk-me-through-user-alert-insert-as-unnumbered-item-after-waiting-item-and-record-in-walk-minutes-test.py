@@ -248,6 +248,33 @@ def run_several_alert_cases(root):
           and document.index("### Item 4.1 of 9: a part of four") < document.index("## shared")
           < document.index("### Item 5.1 of 9: a part of five"), result.stderr + document)
 
+    shared_sub_step = ("# A walk\n\n## Items 4 and 5 of 9: four and five\n\n### Item 4.1 of 9: a part of four\n\n"
+                       "Recommendation: go.\n\n### Items 4.2 and 5.1 of 9: parts of four and five\n\n"
+                       "Recommendation: go.\n\n## Item 6 of 9: six\n\nRecommendation: go.\n")
+    checkout, home = walk_checkout(root, "shared-sub-step-heading", waiting="item 4.1 of 9", document=shared_sub_step)
+    claimed_alert(home, "alert-s", "shared sub-step")
+    result = run(checkout, home, "alert-s")
+    document, _ = files(checkout)
+    check("while sub-step 4.1 waits, the alert goes after `Items 4.2 and 5.1 of 9`, which holds item 4's 4.2, so "
+          "item 4 is not split",
+          result.returncode == 0
+          and document.index("### Items 4.2 and 5.1 of 9: parts of four and five") < document.index("## shared sub-step")
+          < document.index("## Item 6 of 9: six"), result.stderr + document)
+
+    reused_four = ("# A walk\n\n## Items 4 and 5 of 9: four and five\n\n### Item 4.1 of 9: a part of four\n\n"
+                   "Recommendation: go.\n\n## Item 4 of 12: four, reused\n\nRecommendation: go.\n\n"
+                   "### Items 4.2 and 5.1 of 9: parts of four and five\n\nRecommendation: go.\n\n"
+                   "## Item 6 of 9: six\n\nRecommendation: go.\n")
+    checkout, home = walk_checkout(root, "reused-four", waiting="item 4.1 of 9", document=reused_four)
+    claimed_alert(home, "alert-r", "reused four")
+    result = run(checkout, home, "alert-r")
+    document, _ = files(checkout)
+    check("while sub-step 4.1 waits and a reused `Item 4 of 12` ends item 4's search, the alert goes before the "
+          "reused item 4, not past the `Items 4.2 and 5.1 of 9` that only item 5's search reaches",
+          result.returncode == 0
+          and document.index("### Item 4.1 of 9: a part of four") < document.index("## reused four")
+          < document.index("## Item 4 of 12: four, reused"), result.stderr + document)
+
     two_versions = ("# A walk\n\n## Item 4 of 9: four\n\n### Item 4.1 of 9: a part\n\nRecommendation: go.\n\n"
                     "## Item 4 of 8: four, as first shown\n\n### Item 4.1 of 8: the part, as first shown\n\n"
                     "Recommendation: go.\n\n## Item 5 of 9: five\n\nRecommendation: go.\n")

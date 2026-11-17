@@ -441,7 +441,7 @@ MAIN_BRANCH = "main"
 # One listing of every pull request serves the whole invocation; gh pages through them all.
 PULL_REQUEST_LISTING_TIMEOUT_SECONDS = 300
 PULL_REQUEST_LISTING_LIMIT = 100000
-PULL_REQUEST_HEAD_REFS_LISTING_TIMEOUT_SECONDS = 120
+PULL_REQUEST_HEAD_REFS_LISTING_TIMEOUT_SECONDS = 120  # pragma: no mutate, a limit a second longer or shorter changes nothing a test can see without a git ls-remote that runs for two minutes
 PULL_REQUEST_HEAD_REF = re.compile(r"refs/pull/(\d+)/head")
 FINISHED_PULL_REQUEST_STATES = ("MERGED", "CLOSED")
 FORCE_DELETABLE_BRANCH_LINE_START = (
@@ -690,8 +690,9 @@ def branch_refs_and_tips_with_no_worktree_not_fully_on_main(repo, freed_branches
                 for record in git_output.worktree_records(listing)} - set(freed_branches)
     unlanded = git_output.run_git(repo, ["for-each-ref", "--format=%(objectname) %(refname:lstrip=2)",
                                          "--no-merged", "origin/main", "refs/heads/"])
-    refs = [line.split(" ", 1) for line in os.fsdecode(unlanded).splitlines()]
-    return [(branch, tip) for tip, branch in refs if branch not in attached and branch != MAIN_BRANCH]
+    # Split on the ASCII space alone: a ref name can hold other whitespace, such as U+00A0.
+    refs = [line.partition(" ") for line in os.fsdecode(unlanded).splitlines()]
+    return [(branch, tip) for tip, _, branch in refs if branch not in attached and branch != MAIN_BRANCH]
 
 
 def first_prompt_list_module():
@@ -2266,7 +2267,9 @@ def remove_one_named_worktree(repo, main_checkout, path):
             continue
         if not removal_never_began(record, listed):
             branch = record.get("branch")
-            if branch and branch != MAIN_BRANCH and commit_of(repo, f"refs/heads/{branch}") != "unknown":
+            if (branch and branch != MAIN_BRANCH and
+                    commit_of(repo, f"refs/heads/{branch}") != "unknown"  # pragma: no mutate, commit_of returns "unknown" or a hex commit name, and every hex digit sorts before "u", so < gives what != gives
+            ):
                 failure = push_branch_unless_origin_holds_its_last_commit_failure(repo, branch)
                 if failure is not None:
                     print(f"{Path(path).name}: kept — an earlier run of scripts/clean-worktrees.py "
@@ -2426,7 +2429,8 @@ def main(argv=None):
                    else WHAT_A_STOPPED_INVOCATION_REMOVED_WITHOUT_REMOVE)
         print(f"{STOPPED_LINE_START}{' '.join(str(error).split())}; {removed}\n"
               + next_step_lines.git_failure_next_step_lines(
-                  rerun, text_the_failure_line_contains=STOPPED_LINE_START.strip()),
+                  rerun, git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=str(error),
+                  text_the_failure_line_contains=STOPPED_LINE_START.strip()),
               file=sys.stderr)
         return 2
 

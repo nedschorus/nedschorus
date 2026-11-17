@@ -282,6 +282,32 @@ def run_process_identity_cases(workspace: Path):
     check("and once it is gone it is no longer recognised",
           not supervisor.process_is_supervisor_for_agent(running.pid, "identity-seat")[0])
 
+    # The stand-in is reached through a process that waits before its exec,
+    # so for that time its command line is not a supervisor's: a fixture that
+    # yielded as soon as Popen returned would hand the case a process that is
+    # not yet a supervisor, as `ps` showed `[python3]` mid-exec under load.
+    late_exec = ("import json, os, time\n"
+                 "time.sleep(0.5)\n"
+                 "command = json.loads(os.environ['STAND_IN_SUPERVISOR_COMMAND'])\n"
+                 "os.execv(command[0], command)\n")
+    with a_process_that_looks_like_a_supervisor(
+            workspace, "late-exec-seat",
+            launched_through=[sys.executable, "-c", late_exec]) as running:
+        alive, detail = supervisor.process_is_supervisor_for_agent(
+            running.pid, "late-exec-seat")
+        check("the stand-in supervisor is handed over only once it is running", alive, detail)
+
+    try:
+        with a_process_that_looks_like_a_supervisor(
+                workspace, "never-runs-seat",
+                launched_through=["sh", "-c", "exit 3"]):
+            check("a stand-in supervisor that never runs is not handed over", False,
+                  "the fixture yielded")
+    except RuntimeError as refusal:
+        check("a stand-in supervisor that never runs is not handed over",
+              "never printed" in str(refusal) and "exit status is 3" in str(refusal),
+              str(refusal))
+
     # argparse accepts --agent=NAME as well as --agent NAME. No launcher writes
     # it that way today (checked across both launchers and both recovery
     # tools), but a supervisor started by hand that way must still be
