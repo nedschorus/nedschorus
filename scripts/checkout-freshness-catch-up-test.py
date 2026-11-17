@@ -2749,6 +2749,7 @@ with tempfile.TemporaryDirectory() as failing_git_scratch:
           "with the hook's next steps",
           run.returncode == 0 and INJECTED_STDERR in agent_text(run)
           and "this check runs again when the next prompt arrives." in agent_text(run)
+          and "also reports a git failure, whether this error or another," in agent_text(run)
           and "end of your next turn" not in agent_text(run)
           and "you gave that name to" not in agent_text(run), run.stdout + run.stderr)
     run = run_catch_up_once(["--report", "--repo", str(level_seat)], git_dir_fails)
