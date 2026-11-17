@@ -1864,8 +1864,8 @@ def run_cases(scratch: Path):
                   and create_lines[-1] == (
                       "Filed GHI 571. ghi-guide-agent thinks the GHI-MD's proposal "
                       "may go against a user-ruling held in GHI [Closed "
-                      "issues are frozen](https://github.com/nedschorus/"
-                      "nedschorus/issues/46).\n"
+                      "issues are frozen](https://github.com/nedsnodes/"
+                      "nedsnodes/issues/46).\n"
                       "ghi-guide-agent's question: closed issues are frozen\n"
                       "The question is entry E1 of "
                       f"{clean_store / proposed_name}, in the log-store, not "
