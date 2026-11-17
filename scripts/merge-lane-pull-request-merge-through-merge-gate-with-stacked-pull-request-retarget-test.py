@@ -780,16 +780,40 @@ def main():
                                  / "pr10-merge-commit-on-main-worktree")
         saved = scratch / name / "outputs" / "hr" / "pr10" / "recorded-inputs"
         check("a recording that cannot be saved into hr/store exits 3, says the recordings "
-              "were not adopted and to remove hr/pr10/recorded-inputs once the cause is fixed, "
-              "keeps that directory, still runs the after-merge test run and removes the "
-              "worktree",
+              "were not adopted, removes hr/pr10/recorded-inputs, which no later merge reads, "
+              "still runs the after-merge test run and removes the worktree",
               exit_code == 3
               and f"STOP: merged, but the recordings in {saved}, where this pull request's "
                   f"head test runs saved their recordings, were not adopted into "
                   f"{scratch / name / 'outputs' / 'hr' / 'store'}" in output
-              and f"fix it, then remove {saved}, which no later merge reads." in output
-              and saved.exists() and len(runner_calls(scratch, name)) == 1
+              and ("Nothing else waits on this adoption.\nIf the error names a cause you can "
+                   "fix, fix it. Otherwise, tell the user this message.") in output
+              and f"remove {saved}" not in output
+              and not saved.exists() and len(runner_calls(scratch, name)) == 1
               and not merge_commit_worktree.exists(), f"exit {exit_code}\n{output}")
+
+        def store_cannot_be_written_nor_saved_apart_removed(directory):
+            store_cannot_be_written(directory)
+            for held in (directory / "outputs" / "hr" / "pr10" / "recorded-inputs").glob("*"):
+                held.chmod(0o555)
+
+        name = "recordings-not-adopted-and-saved-apart-not-removed"
+        try:
+            exit_code, output, _, _, _ = run_case(
+                scratch, name, [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+                origin_files={RECORDED_SUITE: "print('ok')\n", STALE_SUITE: "print('ok')\n"},
+                before_the_program_runs=store_cannot_be_written_nor_saved_apart_removed)
+        finally:
+            for held in (scratch / name / "outputs" / "hr" / "pr10" / "recorded-inputs").glob("*"):
+                held.chmod(0o755)
+        saved = scratch / name / "outputs" / "hr" / "pr10" / "recorded-inputs"
+        check("after a failed adoption before the run, a hr/pr10/recorded-inputs that cannot "
+              "be removed exits 3 with a STOP line naming it, after the adoption's own",
+              exit_code == 3
+              and printed_in_order(output, f"STOP: merged, but the recordings in {saved}, ",
+                                   f"STOP: merged, but {saved}, which no run reads any more, "
+                                   f"was not removed")
+              and len(runner_calls(scratch, name)) == 1, f"exit {exit_code}\n{output}")
 
         def saved_apart_cannot_be_removed(directory):
             head_test_run_recordings(directory)
