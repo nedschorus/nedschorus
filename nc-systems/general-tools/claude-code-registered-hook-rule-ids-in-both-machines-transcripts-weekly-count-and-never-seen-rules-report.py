@@ -419,6 +419,48 @@ def unknown_origin_case(repository, rule, branch):
     return "unpushed"
 
 
+RULE_MESSAGE_PHRASE_END_PATTERN = re.compile(r"[\"'{\\]")
+
+
+def hook_rule_message_words_after_rule_id_in_head_copy_of_hook(repository, rule):
+    """The words after `[rule <id>]` on its line in HEAD's copy of the hook, up to the first quote, brace or
+    backslash: text of the message that was there before the ID, if the ID was added later; or "" when none."""
+    for line in git(repository, "show", f"HEAD:{rule['hook']}").splitlines():
+        marker = f"[rule {rule['id']}]"
+        if marker in line:
+            return RULE_MESSAGE_PHRASE_END_PATTERN.split(line.split(marker, 1)[1], 1)[0].strip()
+    return ""
+
+
+def hook_rule_message_oldest_writing_commit_pull_request_and_agent_seat_for_rule_id_added_by_merge_commit(repository, rule, merges, first_parent_subjects):
+    """{phrase, commit, pull_request, agent_seat, phrase_found} for a rule whose ID a merge commit's own change
+    added: the oldest commit whose change, a merge's own change against its first parent included, wrote the
+    phrase, or, when none did (phrase_found False), the one that wrote the ID. agent_seat is None when the
+    commit's author is not the agent-seat that wrote it, as for a commit GitHub squash-merged or a merge
+    commit, whose author merged it."""
+    phrase = hook_rule_message_words_after_rule_id_in_head_copy_of_hook(repository, rule)
+
+    def oldest_writing(text):
+        return git(repository, "log", "--follow", "--diff-merges=first-parent", "--no-patch", "--reverse",
+                   "--format=%H", "-S", text, "--", rule["hook"]).split()[:1]
+
+    found = oldest_writing(phrase) if phrase else []
+    origin = {"phrase": phrase, "phrase_found": bool(found), "commit": None, "pull_request": None, "agent_seat": None}
+    found = found or oldest_writing(f"[rule {rule['id']}]")
+    if not found:
+        return origin
+    sha = origin["commit"] = found[0]
+    if sha in first_parent_subjects:
+        subject = first_parent_subjects[sha]
+        match = SQUASH_MERGE_SUBJECT_PATTERN.search(subject) or MERGE_SUBJECT_PATTERN.match(subject)
+        origin["pull_request"] = match.group(1) if match else None
+    else:
+        origin["pull_request"] = pull_request_bringing(repository, sha, merges, first_parent_subjects)
+    if sha not in first_parent_subjects or not origin["pull_request"]:
+        origin["agent_seat"] = git(repository, "log", "-1", "--format=%an", sha).strip()
+    return origin
+
+
 SETTINGS_PATH = ".claude/settings.json"
 
 
@@ -453,29 +495,36 @@ def unknown_origin_next_steps(repository, rules, machine, rerun_command):
             case = unknown_origin_case(repository, rule, branch)
             files = [] if case == "merge" else files_of_uncommitted_rule_edit(repository, rule["hook"])
             undo = " && ".join(undo_of_uncommitted_edit(repository, path) for path in files) if case == "main" else ""
-            cases.append((rule, case, files, undo))
+            origin = (hook_rule_message_oldest_writing_commit_pull_request_and_agent_seat_for_rule_id_added_by_merge_commit(repository, rule, first_parent_merges_oldest_first(repository),
+                                             first_parent_commit_subjects(repository)) if case == "merge" else None)
+            cases.append((rule, case, files, undo, origin))
     except GitLookupFailed as error:
-        return (lines[0] + f"\nNot found: which case holds could not be read, because {error}. Run that git "
+        return (lines[0] + f"\nNot found: which case holds, or who wrote a rule a merge added, could not be read, because {error}. Run that git "
                 f"command, as it is written there, on {machine}, to see why it failed, and fix that; {rerun}")
-    for rule, case, files, undo in cases:
+    for rule, case, files, undo, origin in cases:
         hook, rule_id = rule["hook"], rule["id"]
         named = " and ".join(files) if files else hook
         if case == "merge":
             step = (f"HEAD's copy of {hook} holds the ID, so a merge commit's own change added it, such as a "
-                    f"conflict resolution; the merge's author need not be who wrote the rule. Add the rule, on a "
-                    f"topic branch, to nc-systems/general-tools/{RULES_WRITTEN_BEFORE_THEIR_IDS_PATH.name}, keyed "
-                    f"\"{rule_id}\", with \"commit\": the hash of the commit that first wrote the rule's message, "
-                    f"the first field of the first line that `git -C {repository} log --follow --reverse --format='%H %an %s' -S \"<a phrase from the "
-                    f"rule's message>\" -- {hook}` prints; \"pull_request\": the number, as a string, of the "
-                    f"pull request that brought that commit: read the commit's own subject first, with "
-                    f"`git -C {repository} log -1 --format=%s <that commit>`, which ends with `(#<number>)` when "
-                    f"GitHub squash-merged it and starts `Merge pull request #<number>` when it is itself the merge; "
-                    f"when it names neither, the `Merge pull request #<number>` that "
-                    f"`git -C {repository} log --first-parent --merges --reverse --ancestry-path --format=%s "
-                    f"<that commit>..HEAD` shows first; or null when none names one; \"agent_seat\": the "
-                    f"agent-seat that wrote that commit, which is its author name unless GitHub squash-merged it, "
-                    f"when the pull request's description names the agent-seat. The first run of this program after "
-                    f"that change merges into main and reaches this checkout says who wrote the rule.")
+                    f"conflict resolution; the merge's author need not be who wrote the rule. ")
+            table = f"nc-systems/general-tools/{RULES_WRITTEN_BEFORE_THEIR_IDS_PATH.name}"
+            pull_request = f'"{origin["pull_request"]}"' if origin["pull_request"] else "null"
+            if origin["phrase_found"]:
+                seat = (f'"{origin["agent_seat"]}"' if origin["agent_seat"] else
+                        f"the agent-seat that pull request {origin['pull_request']}'s description names, or null "
+                        f"when it names none, as the commit's author is who merged it")
+                step += (f"The oldest commit whose change wrote \"{origin['phrase']}\", the words after the ID, is "
+                         f"{origin['commit']}. ")
+            else:
+                seat = "the agent-seat the user names, or null when he does not know"
+                searched = (f"no commit's change, a merge's own change included, wrote \"{origin['phrase']}\", the "
+                            f"words after the ID" if origin["phrase"] else "no words follow the ID on its line")
+                step += (f"Who wrote the rule cannot be read from git, because {searched}; ask the user. The "
+                         f"commit whose own change added the ID is {origin['commit']}. ")
+            step += (f"Add the rule, on a topic branch, to {table}, keyed \"{rule_id}\", with \"commit\": "
+                     f"\"{origin['commit']}\", \"pull_request\": {pull_request}, \"agent_seat\": {seat}.")
+            step += (" The first run of this program after that change merges into main and reaches this "
+                     "checkout says who wrote the rule.")
         elif case == "main":
             step = (f"the ID is in an edit to {named} not committed in this checkout, which is on main. If the edit "
                     f"is your work, move the edit to a topic branch: make a worktree for the branch with "

@@ -527,7 +527,7 @@ with tempfile.TemporaryDirectory() as scratch:
         program.git = real_git
     hook_file.write_text(committed_hook, encoding="utf-8")
     check("a git failure while choosing the case is printed with its command and the rerun, and no case is guessed",
-          status == 1 and "which case holds could not be read, because `git branch --show-current` exited 128" in errors
+          status == 1 and "which case holds, or who wrote a rule a merge added, could not be read, because `git branch --show-current` exited 128" in errors
           and f"Then run, on {socket.gethostname()}:\n    {rerun}".lower() in errors.lower()
           and not any(opening in errors for opening in case_openings.values()), errors)
 
@@ -543,14 +543,51 @@ with tempfile.TemporaryDirectory() as scratch:
           status == 1 and only_case(errors, "merge")
           and f"to nc-systems/general-tools/{program.RULES_WRITTEN_BEFORE_THEIR_IDS_PATH.name}, keyed "
               f"\"fixture-merge-added\"" in errors
-          and f"git -C {merged} log --follow --reverse --format='%H %an %s' -S \"<a phrase from the rule's message>\" "
-              f"-- hooks/guard-hook.py" in errors, errors)
-    own_subject = f"`git -C {merged} log -1 --format=%s <that commit>`"
-    descendants = f"`git -C {merged} log --first-parent --merges --reverse --ancestry-path --format=%s <that commit>..HEAD`"
-    check("the merge case reads the commit's own subject before its descendants', so a rule first written in a "
-          "merge commit gets that merge's pull request, not a later one",
-          own_subject in errors and descendants in errors and errors.index(own_subject) < errors.index(descendants),
+          and "Add the rule, on a topic branch," in errors, errors)
+    merge_sha = git(merged, "rev-parse", "HEAD").strip()
+    check("the merge case runs the lookup itself and names the merge commit whose own change wrote the "
+          "message, its pull request from the merge's subject, and the pull request's description for the "
+          "agent-seat, as the merge's author is who merged it",
+          f'with "commit": "{merge_sha}", "pull_request": "11", "agent_seat": the agent-seat that pull request '
+          f"11's description names, or null when it names none" in errors
+          and 'wrote "Refused: merged.", the words after the ID' in errors and "git -C" not in errors.split(
+              "`[rule fixture-merge-added]`")[1].split("\n- ")[0], errors)
+    rule = {"id": "fixture-merge-added", "hook": "hooks/guard-hook.py"}
+    merges = program.first_parent_merges_oldest_first(merged)
+    subjects = program.first_parent_commit_subjects(merged)
+    check("the lookup finds the merge commit whose own change wrote the message",
+          program.hook_rule_message_oldest_writing_commit_pull_request_and_agent_seat_for_rule_id_added_by_merge_commit(merged, rule, merges, subjects)
+          == {"phrase": "Refused: merged.", "phrase_found": True, "commit": merge_sha, "pull_request": "11",
+             "agent_seat": None})
+    real_phrase = program.hook_rule_message_words_after_rule_id_in_head_copy_of_hook
+    program.hook_rule_message_words_after_rule_id_in_head_copy_of_hook = lambda repository_path, rule_given: "words no commit wrote"
+    try:
+        origin = program.hook_rule_message_oldest_writing_commit_pull_request_and_agent_seat_for_rule_id_added_by_merge_commit(merged, rule, merges, subjects)
+        status, _, errors = run_program(arguments, now)
+    finally:
+        program.hook_rule_message_words_after_rule_id_in_head_copy_of_hook = real_phrase
+    check("when no commit wrote the words after the ID, the step says so, sends the agent to the user for the "
+          "agent-seat, and names the merge commit that added the ID",
+          origin["phrase_found"] is False and origin["commit"] == merge_sha and status == 1
+          and "Who wrote the rule cannot be read from git, because no commit's change, a merge's own change "
+              "included, wrote \"words no commit wrote\", the words after the ID; ask the user." in errors
+          and f'"commit": "{merge_sha}", "pull_request": "11", "agent_seat": the agent-seat the user names' in errors,
           errors)
+    real_git = program.git
+
+    def git_failing_on_lookup(repository_path, *git_arguments):
+        if "-S" in git_arguments:
+            raise program.GitLookupFailed("`git log -S` exited 128: injected")
+        return real_git(repository_path, *git_arguments)
+
+    program.git = git_failing_on_lookup
+    try:
+        status, _, errors = run_program(arguments, now)
+    finally:
+        program.git = real_git
+    check("a failed lookup is printed with its error, and no commit is named or said to be missing",
+          status == 1 and "could not be read, because `git log -S` exited 128: injected" in errors
+          and "Who wrote the rule cannot be read from git" not in errors and '"commit": "' not in errors, errors)
     origin_table = base / "origin-table.json"
     origin_table.write_text(json.dumps({"fixture-merge-added": {
         "commit": git(merged, "rev-parse", "HEAD").strip(), "pull_request": "11", "agent_seat": "seat-h"}}),
