@@ -4662,7 +4662,7 @@ def adopt_passing_recordings_that_match_the_checkout(top, into_given, from_given
     commit, why_none = head_commit_or_why_none(top)
     if commit is None:
         raise CouldNotRun(f"{top} is at {why_none}, so no recording can be compared with "
-                          f"its commit")
+                          f"the checkout's commit")
     listed = git(top, "ls-files", "-z", "--", TEST_SUITE_PATHSPEC, SHELL_TEST_SUITE_PATHSPEC)
     if listed.returncode != 0:
         raise CouldNotRun(f"git ls-files failed in {top}: "

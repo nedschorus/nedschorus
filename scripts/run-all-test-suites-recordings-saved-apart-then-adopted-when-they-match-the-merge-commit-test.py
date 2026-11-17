@@ -274,11 +274,11 @@ def main():
     git(no_commit, "add", SUITE)
     for checkout, how, rev_parse_head_fails_from_call, expected in (
             (no_commit, "a branch with no commit yet", None,
-             f"{no_commit} is at no commit, so no recording can be compared with its commit"),
+             f"{no_commit} is at no commit, so no recording can be compared with the checkout's commit"),
             (main_checkout, "a git rev-parse HEAD that fails after the recordings directory "
              "was named", 2,
              f"{main_checkout} is at commit unknown (git rev-parse HEAD exited 128: "
-             f"fatal: injected), so no recording can be compared with its commit")):
+             f"fatal: injected), so no recording can be compared with the checkout's commit")):
         calls = []
 
         def git_recording_calls(checkout, *arguments, fails_from=rev_parse_head_fails_from_call):
