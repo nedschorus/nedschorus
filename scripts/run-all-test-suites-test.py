@@ -2580,32 +2580,68 @@ with tempfile.TemporaryDirectory() as scratch:
             ("sub", [":/CLAUDE.md"], {"CLAUDE.md"}),
             (".", ["*/CLAUDE.md"], {"x/CLAUDE.md"}),
             (".", [":(literal)*.py"], set())):
-        answer = module.files_git_ls_files_lists_of_these(top, files, directory, pathspecs)
+        answer = module.files_git_ls_files_lists_of_these(top, files, directory, pathspecs, set())
         check(f"git ls-files -- {pathspecs} from {directory} lists {sorted(expected)}",
               answer == (expected, None), answer)
     for files, directory, why in (
             ({"a.py"}, "missing", "cannot change to"),
             ({"a.py"}, ".", "outside repository")):
         answer = module.files_git_ls_files_lists_of_these(
-            top, files, directory, ["*.py"] if directory == "missing" else ["../a.py"])
+            top, files, directory, ["*.py"] if directory == "missing" else ["../a.py"], set())
         check(f"git failing to match from {directory} is reported with its error",
               answer[0] is None and why in (answer[1] or ""), answer)
     for words in ("hash-object", "update-index"):
         previous = os.environ["PATH"]
         os.environ.update(stand_in_git_failing_on(top, words))
         try:
-            answer = module.files_git_ls_files_lists_of_these(top, {"a.py"}, ".", ["*.py"])
+            answer = module.files_git_ls_files_lists_of_these(top, {"a.py"}, ".", ["*.py"], set())
         finally:
             os.environ["PATH"] = previous
         check(f"git {words} failing while matching is reported with its error",
               answer == (None, "fatal: injected git failure"), answer)
-    answer = module.files_git_ls_files_lists_of_these(top, {"a", "a/b"}, ".", ["*"])
+    answer = module.files_git_ls_files_lists_of_these(top, {"a", "a/b"}, ".", ["*"], set())
     check("a list holding a path both as a file and as a directory is not matched, since "
           "update-index would drop one of them", answer == (None, "a is both a file and a "
                                                              "directory"), answer)
+    answer = module.files_git_ls_files_lists_of_these(top, {"a.py", "mod"}, ".", ["mod/"],
+                                                      {"mod"})
+    check("a list holding a submodule is not matched, since the scratch index would hold it "
+          "as a file, which the directory pathspec mod/ does not match",
+          answer == (None, "mod is a submodule"), answer)
 
-# A git ls-files call that passes through a directory the recording does not name selects its
-# suite when that directory is deleted.
+# Submodules are read from git's index and from a commit's tree.
+with tempfile.TemporaryDirectory() as scratch:
+    top = pathlib.Path(os.path.realpath(scratch))
+    git(top, "init", "-q")
+    commit_files(top, {"a.py": "A = 1\n"}, "no submodule")
+    without = head(top)
+    git(top, "update-index", "--add", "--cacheinfo", f"160000,{without},mod")
+    check("a submodule staged in the index is found",
+          module.gitlinks_in_the_index_and_commit(top) == ({"mod"}, None),
+          module.gitlinks_in_the_index_and_commit(top))
+    git(top, "commit", "-q", "-m", "add a submodule")
+    with_submodule = head(top)
+    git(top, "rm", "-q", "--cached", "mod")
+    git(top, "commit", "-q", "-m", "remove the submodule")
+    check("a submodule only a commit's tree holds is found when that commit is given, and "
+          "none when it is not",
+          module.gitlinks_in_the_index_and_commit(top, with_submodule) == ({"mod"}, None)
+          and module.gitlinks_in_the_index_and_commit(top) == (set(), None)
+          and module.gitlinks_in_the_index_and_commit(top, without) == (set(), None),
+          (module.gitlinks_in_the_index_and_commit(top, with_submodule),
+           module.gitlinks_in_the_index_and_commit(top)))
+    for words in ("--stage", "ls-tree"):
+        previous = os.environ["PATH"]
+        os.environ.update(stand_in_git_failing_on(top, words))
+        try:
+            answer = module.gitlinks_in_the_index_and_commit(top, without)
+        finally:
+            os.environ["PATH"] = previous
+        check(f"git {words} failing while looking for submodules is reported with its error",
+              answer == (None, "fatal: injected git failure"), answer)
+
+# A git ls-files call that passes through a directory the recording does not name, or that a
+# submodule could answer, selects its suite when the file list changes.
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
 
@@ -2615,12 +2651,13 @@ with tempfile.TemporaryDirectory() as scratch:
 
     suites = {"two-dash-c-test.py": ls_files_call("-C", "sub", "-C", "..", "ls-files", "-z",
                                                   "--", "*.py"),
-              "dot-dot-test.py": ls_files_call("-C", "sub/..", "ls-files", "-z", "--", "*.py")}
+              "dot-dot-test.py": ls_files_call("-C", "sub/..", "ls-files", "-z", "--", "*.py"),
+              "submodule-test.py": ls_files_call("ls-files", "-z", "--", "mod/")}
     repo = make_repo(root, suites)
     commit_files(repo, {"sub/kept.txt": "kept\n"}, "inputs")
     result = run(root)
-    check("the fixture of git ls-files through another directory passes its full run",
-          result.returncode == 0, (result.stdout, result.stderr))
+    check("the fixture of git ls-files through another directory or a submodule passes its "
+          "full run", result.returncode == 0, (result.stdout, result.stderr))
     since = head(repo)
     git(repo, "rm", "-q", "-r", "sub")
     git(repo, "commit", "-q", "-m", "remove sub, which git -C sub needs")
@@ -2631,6 +2668,20 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and {"two-dash-c-test.py", "dot-dot-test.py"} <= set(ran(root))
           and all(f"SELECTED {suite}: it runs git ls-files on the checkout, and sub/kept.txt "
                   f"was deleted" in out for suite in ("two-dash-c-test.py", "dot-dot-test.py")),
+          (ran(root), result.stdout, result.stderr))
+    run(root)
+    since = head(repo)
+    (repo / "mod").mkdir()
+    git(repo / "mod", "init", "-q")
+    commit_files(repo / "mod", {"inside.txt": "inside\n"}, "the submodule's commit")
+    git(repo, "add", "mod")
+    git(repo, "commit", "-q", "-m", "add a submodule")
+    result = select_since(root, since)
+    check("adding a submodule that the directory pathspec mod/ matches selects the suite "
+          "whose git ls-files call names it",
+          result.returncode == 0 and "submodule-test.py" in ran(root)
+          and any(line.startswith("SELECTED submodule-test.py: ") and "mod is a submodule"
+                  in line for line in lines(result.stdout)),
           (ran(root), result.stdout, result.stderr))
 
 with tempfile.TemporaryDirectory() as scratch:

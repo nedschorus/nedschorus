@@ -688,8 +688,11 @@ GIT_LS_FILES_OPTIONS_LISTING_THE_FILE_LIST, --others only with
 --exclude-standard, at least one pathspec, and no pathspec magic but glob,
 literal, icase, exclude and top. Which files a pathspec matches is asked of
 git itself: git ls-files runs with the call's pathspecs from its directory
-on a scratch index holding the files to match. Any other git ls-files call,
-or one git could not match when recorded, stays tied to the whole list.
+on a scratch index holding the files to match. That index holds every path
+as a file, so a call is tied to the whole list whenever the checkout's index,
+or COMMIT, holds a submodule, which a directory pathspec matches and a file of
+the same name does not. Any other git ls-files call, or one git could not
+match when recorded, stays tied to the whole list.
 
 Anything else stays git on the checkout and follows the rules below,
 including calls with no parseable command, a clone whose source is inside
@@ -1214,6 +1217,7 @@ GIT_PATHSPEC_SHORT_MAGIC_MATCHING_BY_THE_PATH_ALONE = frozenset("/!^")
 GIT_VARIABLES_CHANGING_NO_FILE_A_LISTING_SEES = frozenset((
     "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE", "GIT_COMMITTER_NAME",
     "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE", "GIT_EDITOR"))
+GIT_GITLINK_MODE = "160000"
 GIT_CALL_SEES_NO_FILE = "sees no file"
 GIT_CALL_RUNS_ON_ANOTHER_REPOSITORY = "runs on another repository"
 GIT_CALL_READS_THE_CHECKOUT = "reads the checkout"
@@ -1656,14 +1660,36 @@ def git_ls_files_call_whose_answer_can_change_only_when_a_file_its_pathspecs_mat
     return {"directory": relative, "pathspecs": pathspecs}
 
 
-def files_git_ls_files_lists_of_these(top, files, directory, pathspecs):
+def gitlinks_in_the_index_and_commit(top, commit=None):
+    """(the paths that the checkout's index, and commit's tree when given, hold as submodules,
+    None), or (None, why git could not say)."""
+    found = set()
+    for command in (["ls-files", "-z", "--stage"],
+                    *([["ls-tree", "-r", "-z", commit]] if commit is not None else [])):
+        answer = git(top, *command)
+        if answer.returncode != 0:
+            return None, first_line_of_error(answer) or f"git {command[0]} printed no error"
+        for entry in answer.stdout.split("\0"):
+            meta, _, path = entry.partition("\t")
+            if path and meta.split(" ", 1)[0] == GIT_GITLINK_MODE:
+                found.add(path)
+    return found, None
+
+
+def files_git_ls_files_lists_of_these(top, files, directory, pathspecs, gitlinks):
     """(the files of `files` that git ls-files, run from `directory` under the top with
-    `pathspecs`, lists when they are the index, None), or (None, why git could not say)."""
+    `pathspecs`, lists when they are the index, None), or (None, why git could not say).
+    gitlinks names the paths that are submodules."""
     paths = set(files)
     both = sorted(paths & directory_entries(paths).keys())
     if both:
         # update-index drops, without a word, a file that is also another path's directory.
         return None, f"{both[0]} is both a file and a directory"
+    submodules = sorted(paths & set(gitlinks))
+    if submodules:
+        # The scratch index holds every path as a file, and a directory pathspec such as
+        # sub/ matches a submodule sub but not a file sub.
+        return None, f"{submodules[0]} is a submodule"
     environment = {name: value
                    for name, value in environment_without_git_redirecting_variables().items()
                    if not name.startswith("GIT_")
@@ -3871,6 +3897,7 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used,
     touched, probed, listed, git_commands = {suite}, set(), set(), set()
     git_commands_tied_to_the_file_list, consulted_by_git = set(), set()
     tied_to_the_whole_file_list, tied_only_through_pathspecs = set(), {}
+    gitlinks = None
     git_calls = {}
     try:
         hook_lines = read_text_without_following_symlinks(hook_log).splitlines()
@@ -3902,9 +3929,12 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used,
                         call, top)
                     if consulted is None else None)
                 if through_pathspecs is not None:
-                    listed_files, _ = files_git_ls_files_lists_of_these(
+                    if gitlinks is None:
+                        gitlinks, _ = gitlinks_in_the_index_and_commit(top)
+                    listed_files, _ = (files_git_ls_files_lists_of_these(
                         top, files, through_pathspecs["directory"],
-                        through_pathspecs["pathspecs"])
+                        through_pathspecs["pathspecs"], gitlinks)
+                        if gitlinks is not None else (None, None))
                     if listed_files is None:
                         through_pathspecs = None
                     else:
@@ -4286,8 +4316,10 @@ class CheckoutComparedWithCommit:
 
     def __init__(self, top, commit, differ, recordings):
         self.top = top
+        self.commit = commit
         self.differ = differ
         self.listed_by_git_ls_files = {}
+        self.gitlinks_or_why = None
         self.files_then = files_at_commit(top, commit)
         self.files_now = checkout_files(top)
         self.entries_then = directory_entries(self.files_then)
@@ -4304,12 +4336,17 @@ class CheckoutComparedWithCommit:
         """(files at COMMIT the call lists, files in the checkout it lists, None), or
         (None, None, why git could not say)."""
         key = (directory, tuple(pathspecs))
+        if self.gitlinks_or_why is None:
+            self.gitlinks_or_why = gitlinks_in_the_index_and_commit(self.top, self.commit)
+        gitlinks, why = self.gitlinks_or_why
+        if why is not None:
+            return None, None, why
         if key not in self.listed_by_git_ls_files:
             added = {path for path, status in self.differ.items() if status == "A"}
             then, why = files_git_ls_files_lists_of_these(
-                self.top, self.files_then, directory, pathspecs)
+                self.top, self.files_then, directory, pathspecs, gitlinks)
             now, why_now = (files_git_ls_files_lists_of_these(
-                self.top, self.files_now | added, directory, pathspecs)
+                self.top, self.files_now | added, directory, pathspecs, gitlinks)
                 if then is not None else (None, None))
             self.listed_by_git_ls_files[key] = then, now, why or why_now
         return self.listed_by_git_ls_files[key]
