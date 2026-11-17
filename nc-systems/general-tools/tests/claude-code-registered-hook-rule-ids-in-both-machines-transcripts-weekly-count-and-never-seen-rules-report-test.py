@@ -3,6 +3,8 @@
 
 Each case builds a scratch git repository holding a registered hook, scratch transcripts and a
 scratch report directory, so the real log-store and the real transcripts are never read or written.
+NEDSCHORUS_MAINTENANCE_JOB_REPORTS_DIRECTORY is set to a scratch directory before the program is
+loaded, so a run that loses its --report-directory still cannot write into the log-store.
 
 Run: python3 nc-systems/general-tools/tests/claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -13,6 +15,7 @@ import importlib.util
 import io
 import json
 import re
+import shutil
 import socket
 import os
 import subprocess
@@ -20,6 +23,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+SCRATCH_REPORT_DIRECTORY = Path(tempfile.mkdtemp(prefix="hook-rule-ids-weekly-reports-"))
+os.environ["NEDSCHORUS_MAINTENANCE_JOB_REPORTS_DIRECTORY"] = str(SCRATCH_REPORT_DIRECTORY)
 PROGRAM = (Path(__file__).resolve().parents[1]
            / "claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report.py")
 _specification = importlib.util.spec_from_file_location("hook_rule_ids_weekly_count", PROGRAM)
@@ -153,6 +158,40 @@ def squash_and_direct_fixture_repository(base):
     git(repository, "commit", "-q", "-m", "unrelated", author="seat-e", when="2026-10-03T00:00:00+00:00")
     merge_branch(repository, "unrelated", 9, "merge-lane-2", "2026-10-03T01:00:00+00:00")
     return repository
+
+
+def merge_resolution_fixture_repository(base):
+    """A repository where branch-side, by seat-f, and main both changed the hook's first line, and merge-lane-2's
+    resolution of that conflict added rule fixture-merge-added, which no other commit adds."""
+    repository = base / "merge-resolution-repository"
+    (repository / ".claude").mkdir(parents=True)
+    (repository / "hooks").mkdir()
+    git(repository, "init", "-q", "-b", "main")
+    (repository / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"PreToolUse": [
+        {"matcher": "Bash", "hooks": [{"type": "command",
+                                       "command": 'python3 "$CLAUDE_PROJECT_DIR"/hooks/guard-hook.py'}]}]}}))
+    hook = repository / "hooks" / "guard-hook.py"
+    hook.write_text("X = 1\n", encoding="utf-8")
+    git(repository, "add", "-A")
+    git(repository, "commit", "-q", "-m", "start")
+    commit_on_branch(repository, "branch-side", "X = 2\n", "seat-f", "2026-10-01T00:00:00+00:00")
+    git(repository, "checkout", "-q", "main")
+    hook.write_text("X = 3\n", encoding="utf-8")
+    git(repository, "commit", "-q", "-am", "main side", author="seat-g", when="2026-10-02T00:00:00+00:00")
+    subprocess.run(["git", "-C", str(repository), "merge", "-q", "--no-ff", "--no-commit", "branch-side"],
+                   capture_output=True)
+    hook.write_text('X = 4\nMERGED = "[rule fixture-merge-added] Refused: merged."\n', encoding="utf-8")
+    git(repository, "add", "-A", author="merge-lane-2", when="2026-10-03T00:00:00+00:00")
+    git(repository, "commit", "-q", "-m", "Merge pull request #11 from org/branch-side", author="merge-lane-2",
+        when="2026-10-03T00:00:00+00:00")
+    return repository
+
+
+def run_program(arguments, now):
+    output, errors = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+        status = program.main(arguments, now=now)
+    return status, output.getvalue(), errors.getvalue()
 
 
 def record(kind, when, **fields):
@@ -401,14 +440,139 @@ with tempfile.TemporaryDirectory() as scratch:
           status == 1 and "FAILED: hooks/guard-hook.py writes `[rule fixture-uncommitted]`" in errors.getvalue()
           and program.REPORT_NOTE_AUTHOR_UNKNOWN_FOR_HOOK_RULE_WHOSE_ID_IS_IN_NO_GIT_COMMIT in report.read_text(encoding="utf-8"), (status, errors.getvalue()))
     rerun = f"python3 {Path(program.__file__).resolve()} --transcript-directory {transcripts} --report-directory {reports}"
-    check("a rule whose ID is in no commit gets a next step for a change not yet merged into main, for a branch, and "
-          "for a checkout lacking the commit, with the exact command to run again",
-          "If the hook shows as changed and the branch is main:" in errors.getvalue()
-          and "Nothing needs doing now" in errors.getvalue()
-          and "If the hook shows as changed and the branch is another branch: commit the change" in errors.getvalue()
-          and "If the hook does not show as changed:" in errors.getvalue()
-          and f"git -C {repository} merge --ff-only origin/main" in errors.getvalue()
-          and f"Then run, on {socket.gethostname()}:\n    {rerun}" in errors.getvalue(), errors.getvalue())
+    arguments = ["--transcript-directory", str(transcripts), "--report-directory", str(reports)]
+    case_openings = {"merge": "HEAD's copy of hooks/guard-hook.py holds the ID",
+                     "main": "which is on main.", "detached": "whose HEAD is detached",
+                     "branch": "not committed on branch topic.", "pushed": "not by amending or rebasing"}
+
+    def only_case(errors, *cases):
+        return (all(case_openings[case] in errors for case in cases)
+                and not any(opening in errors for case, opening in case_openings.items() if case not in cases)
+                and "git rebase" not in errors and "rebase origin" not in errors)
+
+    hook_file.write_text(committed_hook + 'LATER = "[rule fixture-uncommitted] later"\n', encoding="utf-8")
+    status, _, errors = run_program(arguments, now)
+    check("an uncommitted edit holding the ID, on main, gets only the main case: commit on a topic branch, "
+          "or leave another's edit",
+          status == 1 and only_case(errors, "main") and "scripts/agent-seat-worktree-create-with-owner-file.py <topic branch name>" in errors
+          and f"git -C {repository} restore --staged --worktree --source=HEAD -- hooks/guard-hook.py" in errors
+          and "leave it to whoever is making it" in errors, errors)
+
+    def printed_undo(errors):
+        found = re.search(r"undo the edit here with `([^`]*)`", errors)
+        return found.group(1) if found else None
+
+    def run_printed_undo(errors):
+        undo = printed_undo(errors)
+        return undo is not None and subprocess.run(["bash", "-c", undo], capture_output=True).returncode == 0
+
+    git(repository, "add", "hooks/guard-hook.py")
+    status, _, errors = run_program(arguments, now)
+    undone = run_printed_undo(errors)
+    check("an edit already staged on main gets an undo that, run as printed, puts the hook back as HEAD has it "
+          "in both the index and the working tree",
+          status == 1 and only_case(errors, "main") and undone
+          and hook_file.read_text(encoding="utf-8") == committed_hook
+          and git(repository, "status", "--porcelain").strip() == "", (errors, git(repository, "status", "--porcelain")))
+
+    settings_file = repository / ".claude" / "settings.json"
+    committed_settings = settings_file.read_text(encoding="utf-8")
+    new_hook = repository / "hooks" / "new-hook.py"
+    new_hook.write_text('NEW = "[rule fixture-new-hook] new"\n', encoding="utf-8")
+    registered = json.loads(committed_settings)
+    registered["hooks"]["PreToolUse"][0]["hooks"].append(
+        {"type": "command", "command": 'python3 "$CLAUDE_PROJECT_DIR"/hooks/new-hook.py'})
+    settings_file.write_text(json.dumps(registered), encoding="utf-8")
+    status, _, errors = run_program(arguments, now)
+    undone = run_printed_undo(errors)
+    check("a new, untracked hook registered by an uncommitted settings.json edit, on main, is moved with its "
+          "registration, and its undo, run as printed, deletes the hook and restores settings.json",
+          status == 1 and only_case(errors, "main") and undone
+          and f"copy {repository}/hooks/new-hook.py and {repository}/.claude/settings.json to the same path" in errors
+          and not new_hook.exists() and settings_file.read_text(encoding="utf-8") == committed_settings
+          and git(repository, "status", "--porcelain").strip() == "", (errors, git(repository, "status", "--porcelain")))
+    hook_file.write_text(committed_hook + 'LATER = "[rule fixture-uncommitted] later"\n', encoding="utf-8")
+
+    git(repository, "checkout", "-q", "-b", "topic")
+    status, _, errors = run_program(arguments, now)
+    check("an uncommitted edit holding the ID, on a branch not pushed, gets only the commit-and-run-again step",
+          status == 1 and only_case(errors, "branch")
+          and f"commit it on topic, then run, on {socket.gethostname()}:\n    {rerun}" in errors, errors)
+
+    git(repository, "update-ref", "refs/remotes/origin/topic", "HEAD")
+    status, _, errors = run_program(arguments, now)
+    check("an uncommitted edit holding the ID, on a pushed pull-request branch, says to add a new commit and "
+          "never to rebase or amend the frozen-head",
+          status == 1 and only_case(errors, "branch", "pushed")
+          and "pushed as origin/topic" in errors and "frozen-head" in errors, errors)
+
+    git(repository, "checkout", "-q", "--detach")
+    status, _, errors = run_program(arguments, now)
+    check("an uncommitted edit holding the ID, on a detached HEAD, says to put the edit on a branch first",
+          status == 1 and only_case(errors, "detached")
+          and f"git -C {repository} switch -c <topic branch name>" in errors, errors)
+    git(repository, "checkout", "-q", "main")
+
+    real_git = program.git
+
+    def git_failing_on_branch(repository_path, *git_arguments):
+        if git_arguments[:1] == ("branch",):
+            raise program.GitLookupFailed("`git branch --show-current` exited 128: injected")
+        return real_git(repository_path, *git_arguments)
+
+    program.git = git_failing_on_branch
+    try:
+        status, _, errors = run_program(arguments, now)
+    finally:
+        program.git = real_git
+    hook_file.write_text(committed_hook, encoding="utf-8")
+    check("a git failure while choosing the case is printed with its command and the rerun, and no case is guessed",
+          status == 1 and "which case holds could not be read, because `git branch --show-current` exited 128" in errors
+          and f"Then run, on {socket.gethostname()}:\n    {rerun}".lower() in errors.lower()
+          and not any(opening in errors for opening in case_openings.values()), errors)
+
+    merged = merge_resolution_fixture_repository(base)
+    program.REPOSITORY = merged
+    check("an ID that only a merge's conflict resolution added is found in no commit by the ID search",
+          "fixture-merge-added" not in program.commits_adding_each_rule_id(merged))
+    merged_hook = merged / "hooks" / "guard-hook.py"
+    merged_hook.write_text(merged_hook.read_text(encoding="utf-8") + "# an unrelated edit\n", encoding="utf-8")
+    status, _, errors = run_program(arguments, now)
+    check("an ID added by a merge's own change, with an uncommitted edit to the hook that does not hold the ID, "
+          "gets only the step to add the rule to the .json origin table",
+          status == 1 and only_case(errors, "merge")
+          and f"to nc-systems/general-tools/{program.RULES_WRITTEN_BEFORE_THEIR_IDS_PATH.name}, keyed "
+              f"\"fixture-merge-added\"" in errors
+          and "Ask the user which commit first wrote the rule's message" in errors, errors)
+    merge_step = next((line for line in errors.splitlines() if line.startswith("- `[rule fixture-merge-added]`")), "")
+    fixture_hashes = git(merged, "rev-list", "--all").split()
+    named = ([sha[:7] for sha in fixture_hashes if sha[:7] in merge_step]
+             + [name for name in ("seat-f", "merge-lane-2", "#11", "11") if re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", merge_step)])
+    check("the merge case names no commit, pull request or agent-seat as the rule's writer, and gives the agent "
+          "no git command to run",
+          merge_step and named == [] and "git " not in merge_step, (named, merge_step))
+    origin_table = base / "origin-table.json"
+    origin_table.write_text(json.dumps({"fixture-merge-added": {
+        "commit": git(merged, "rev-parse", "HEAD").strip(), "pull_request": "11", "agent_seat": "seat-h"}}),
+        encoding="utf-8")
+    real_origin_table = program.RULES_WRITTEN_BEFORE_THEIR_IDS_PATH
+    program.RULES_WRITTEN_BEFORE_THEIR_IDS_PATH = origin_table
+    try:
+        status, _, errors = run_program(arguments, now)
+    finally:
+        program.RULES_WRITTEN_BEFORE_THEIR_IDS_PATH = real_origin_table
+    check("once the merge-added rule is in the .json origin table, the run exits 0 and the report names its "
+          "agent-seat and pull request",
+          status == 0 and "| `fixture-merge-added` | `hooks/guard-hook.py` | no commit adds it | seat-h | PR 11 |"
+          in report.read_text(encoding="utf-8"), (status, errors))
+    program.REPOSITORY = repository
+
+    check("the default report directory is the one NEDSCHORUS_MAINTENANCE_JOB_REPORTS_DIRECTORY names",
+          program.DEFAULT_REPORT_DIRECTORY == SCRATCH_REPORT_DIRECTORY, program.DEFAULT_REPORT_DIRECTORY)
+    if program.DEFAULT_REPORT_DIRECTORY == SCRATCH_REPORT_DIRECTORY:
+        status, output, _ = run_program(["--transcript-directory", str(transcripts)], now)
+        check("a run without --report-directory writes into the directory the environment variable names",
+              status == 0 and output.strip() == str(SCRATCH_REPORT_DIRECTORY / report.name), (status, output))
 
     blocked = base / "blocked"
     blocked.write_text("a file where the report directory should be", encoding="utf-8")
@@ -424,6 +588,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and "if a file that is not a directory is there, find out what wrote it" in errors.getvalue()
           and f"Then run, on {socket.gethostname()}:\n    {rerun}" in errors.getvalue(), errors.getvalue())
 
+shutil.rmtree(SCRATCH_REPORT_DIRECTORY, ignore_errors=True)
 print()
 if FAILURES:
     print(f"{len(FAILURES)} case(s) failed: {', '.join(FAILURES)}")
