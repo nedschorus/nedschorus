@@ -657,8 +657,9 @@ checkout. Every call is checked against its full arguments:
   its last --work-tree value, or otherwise its recorded GIT_WORK_TREE,
   resolves outside the top directory, or its command reads no work tree:
   rev-parse, log, show, cat-file, for-each-ref, config, or worktree whose
-  first argument is list. Its -C must be walked as written. Relative paths
-  resolve against the directory it names, then through realpath.
+  first argument is list. A -C, when it has one, must be walked as written.
+  Relative paths resolve against the directory the call works in, then
+  through realpath.
   The common git directory is git rev-parse --git-common-dir, resolved
   against the top directory when relative, then through realpath; when
   unknown, only the top directory counts as the checkout. A linked
