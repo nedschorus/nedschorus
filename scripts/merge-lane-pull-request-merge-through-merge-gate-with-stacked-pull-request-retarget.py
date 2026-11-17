@@ -42,10 +42,10 @@ each failed suite's line, and that directory, then removes the worktree.
 In that worktree, before the test run, it adopts into hr/store, the recordings
 every merge-lane head test run selects by, each recording that passed and
 matches the merge commit's files from hr/pr<n>/recorded-inputs, where this pull
-request's head test runs saved theirs, and then removes that directory; after
-the run, it adopts the same way from the runner's default recorded-inputs
-directory, where the after-merge test run saved its own. It prints how many it
-adopted each time.
+request's head test runs saved their recordings, and then removes that directory;
+after the run, it adopts the same way from the runner's default recorded-inputs
+directory, where the after-merge test run saved its recordings. It prints how
+many it adopted each time.
 
 The merge command deletes the pull request's branch, and GitHub closes every
 open pull request whose base branch is deleted. The retarget is here, not in
@@ -318,7 +318,8 @@ def head_test_run_passed_merged_commit(arguments):
     return newest[1], None
 
 
-def recordings_matching_the_merge_commit_adopted(arguments, worktree, source, which):
+def recordings_matching_the_merge_commit_adopted(arguments, worktree, source, which,
+                                                  no_later_merge_reads_source):
     """Adopt into the head test runs' store the recordings under source that match worktree,
     at the merge commit; print what happened and return False when adoption failed."""
     store = common.merge_lane_head_test_run_recorded_inputs_store_directory(arguments)
@@ -330,12 +331,14 @@ def recordings_matching_the_merge_commit_adopted(arguments, worktree, source, wh
               f"{store}: {error}\n"
               f"Until a later merge adopts recordings that match main, merge-lane head test "
               f"runs select the suites whose recordings in {store} are stale, and so run more "
-              f"suites than they need.\n"
-              f"If the error names a cause you can fix, fix it. Otherwise, tell the user this "
-              f"message.")
+              f"suites than they need. Nothing else waits on this adoption.\n"
+              + (f"If the error names a cause you can fix, fix it, then remove {source}, "
+                 f"which no later merge reads. " if no_later_merge_reads_source
+                 else "If the error names a cause you can fix, fix it. ")
+              + "Otherwise, tell the user this message.")
         return False
-    print(f"adopted into {store} {len(adopted)} recordings from {source}, {which}, that "
-          f"passed and match the merge commit")
+    print(f"adopted {len(adopted)} recordings into {store} from {source}, {which}; a "
+          f"recording is adopted only when its run passed and it matches the merge commit")
     return True
 
 
@@ -389,7 +392,9 @@ def after_merge_test_run(arguments, merge_commit):
     saved_apart = common.pull_request_head_test_run_saved_recorded_inputs_directory(
         arguments, arguments.pull_request)
     adopted_before = recordings_matching_the_merge_commit_adopted(
-        arguments, worktree, saved_apart, "where this pull request's head test runs saved theirs")
+        arguments, worktree, saved_apart,
+        "where this pull request's head test runs saved their recordings",
+        no_later_merge_reads_source=True)
     if adopted_before:
         try:
             shutil.rmtree(saved_apart)
@@ -436,7 +441,8 @@ def after_merge_test_run(arguments, merge_commit):
 
     if not recordings_matching_the_merge_commit_adopted(
             arguments, worktree, runner.DEFAULT_RECORDED_INPUTS_DIRECTORY,
-            "where the after-merge test run saved its own"):
+            "where the after-merge test run saved its recordings",
+            no_later_merge_reads_source=False):
         exit_code = EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE
 
     removal = git("worktree", "remove", "--force", str(worktree))

@@ -607,15 +607,18 @@ to save it wins, whatever tree it ran on: a run on another pull request's
 tree, or on one built on an older main, replaces the recording a merged pull
 request's run made, and every later run on main selects the suite again
 because its recording read another copy of a file than the checkout holds.
-adopt_passing_recordings_that_match_the_checkout() keeps a store that only
-states of main write: it replaces a suite's
-recording in one directory with the first recording, from a list of other
-directories, whose run passed and which matches the checkout exactly, as
-selection judges a match with no file differing, unless the recording already
-there matches. It runs no suite. merge-lane-2's merge program calls it in its
-worktree at the merge commit, so the recordings its head test runs keep
-apart, and its after-merge test run's, reach the store once their tree is
-main's.
+The function adopt_passing_recordings_that_match_the_checkout(), which has no
+command-line option, keeps a directory of recordings that only main's trees
+write. For each suite, it copies into that directory the first recording,
+from a list of other directories, whose run passed and which matches the
+checkout exactly: selection, given no file that differs, would leave the
+suite out. A suite whose recording in the directory already matches, or for
+which no recording matches, keeps the one it has. It runs no suite.
+scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py,
+merge-lane-2's merge program, calls it in its worktree at the merge commit,
+twice: before its after-merge test run, from the directory where the pull
+request's head test runs saved their recordings, and after that run, from
+the directory where the after-merge test run saved its recordings.
 
 SELECTION, with --only-suites-whose-recorded-inputs-changed-since COMMIT.
 Two explicit allowlists set aside git calls that read no file of the
