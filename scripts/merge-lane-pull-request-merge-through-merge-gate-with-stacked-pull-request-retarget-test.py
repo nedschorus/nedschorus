@@ -25,7 +25,9 @@ which the fake `gh` reports as the merge commit; the fake runner logs its
 arguments and directory and answers from an output file and exit code the
 case writes, or passes when the case writes none. A case may add suite files to
 origin's commit and, before the program runs, write recordings under the outputs
-directory, or put a plain file where hr/store goes so no recording can be saved.
+directory or under the runner's default recorded-inputs directory, which each case
+points into its scratch home, or put a plain file or a read-only directory where
+hr/store goes so no recording can be saved.
 
 Run: python3 scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget-test.py
 """
@@ -298,6 +300,10 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
     saved_path, saved_home = os.environ["PATH"], os.environ.get("HOME")
     os.environ["PATH"] = f"{bin_directory}{os.pathsep}{saved_path}"
     os.environ["HOME"] = str(home)
+    # The runner fixed this path from the real HOME when it was imported.
+    runner = program.common.run_all_test_suites
+    saved_default = runner.DEFAULT_RECORDED_INPUTS_DIRECTORY
+    runner.DEFAULT_RECORDED_INPUTS_DIRECTORY = default_recorded_inputs_directory(directory)
     os.environ["MERGE_LANE_MERGE_TEST_DIRECTORY"] = str(directory)
     output = io.StringIO()
     if before_the_program_runs is not None:
@@ -310,6 +316,7 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
                                       "--merge-lane-worktrees-and-outputs-directory",
                                       str(directory / "outputs")], wait=waits.append)
     finally:
+        runner.DEFAULT_RECORDED_INPUTS_DIRECTORY = saved_default
         os.environ["PATH"] = saved_path
         if saved_home is None:
             del os.environ["HOME"]
@@ -352,6 +359,23 @@ def registered_worktrees(review_tools):
 
 def argvs(gh_calls):
     return [call["argv"] for call in gh_calls]
+
+
+def printed_in_order(output, *lines):
+    """True when output holds every line, each after the one before; False, never an
+    exception, when one is missing, so its check prints FAIL and later cases still run."""
+    start = 0
+    for line in lines:
+        start = output.find(line, start)
+        if start == -1:
+            return False
+        start += len(line)
+    return True
+
+
+def default_recorded_inputs_directory(directory):
+    """The runner's default recorded-inputs directory while run_case runs a case in directory."""
+    return directory / "home" / ".cache" / "nedschorus-test-suite-recorded-inputs"
 
 
 def index_of(calls, prefix):
@@ -685,16 +709,61 @@ def main():
               "hr/pr10/recorded-inputs is removed",
               exit_code == 0
               and adopted == [RECORDED_SUITE.replace("/", "__") + ".json"]
-              and adopted_line in output
-              and output.index(adopted_line) < output.index("testing main at the merge commit")
+              and printed_in_order(output, adopted_line, "testing main at the merge commit")
               and not saved.exists(), f"exit {exit_code}\n{output}\n{adopted}")
         check("after the after-merge test run, recordings are adopted from the runner's "
               "default recorded-inputs directory too",
-              output.index("testing main at the merge commit") < output.index(
-                  f"adopted into {store} 0 recordings from "
-                  f"{program.common.run_all_test_suites.DEFAULT_RECORDED_INPUTS_DIRECTORY}, "
-                  f"where the after-merge test run saved its own")
-              if "testing main at the merge commit" in output else False, output)
+              printed_in_order(output, "testing main at the merge commit",
+                               f"adopted into {store} 0 recordings from "
+                               f"{default_recorded_inputs_directory(scratch / name)}, "
+                               f"where the after-merge test run saved its own"), output)
+
+        def after_merge_test_run_recording(directory):
+            recording_in_store(default_recorded_inputs_directory(directory), directory,
+                               RECORDED_SUITE, blob_of(directory, RECORDED_SUITE))
+
+        name = "recordings-adopted-from-the-default-store"
+        exit_code, output, _, _, _ = run_case(
+            scratch, name, [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+            origin_files={RECORDED_SUITE: "print('ok')\n"},
+            before_the_program_runs=after_merge_test_run_recording)
+        store = scratch / name / "outputs" / "hr" / "store"
+        adopted = sorted(path.name for path in store.glob("*/*.json"))
+        check("after the after-merge test run, a recording in the runner's default "
+              "recorded-inputs directory that matches the merge commit is adopted into hr/store",
+              exit_code == 0 and adopted == [RECORDED_SUITE.replace("/", "__") + ".json"]
+              and printed_in_order(output, "testing main at the merge commit",
+                                   f"adopted into {store} 1 recordings from "
+                                   f"{default_recorded_inputs_directory(scratch / name)}, "
+                                   f"where the after-merge test run saved its own"),
+              f"exit {exit_code}\n{output}\n{adopted}")
+
+        def only_the_after_run_adoption_can_fail(directory):
+            after_merge_test_run_recording(directory)
+            (directory / "outputs" / "hr" / "store").mkdir(parents=True)
+            (directory / "outputs" / "hr" / "store").chmod(0o555)
+
+        name = "recordings-not-adopted-after-the-run"
+        try:
+            exit_code, output, _, _, _ = run_case(
+                scratch, name, [(GATE_PASSED, 0)], default_routes(STACKED_AND_NOT),
+                origin_files={RECORDED_SUITE: "print('ok')\n"},
+                before_the_program_runs=only_the_after_run_adoption_can_fail)
+        finally:
+            (scratch / name / "outputs" / "hr" / "store").chmod(0o755)
+        store = scratch / name / "outputs" / "hr" / "store"
+        saved = scratch / name / "outputs" / "hr" / "pr10" / "recorded-inputs"
+        check("when the adoption before the after-merge test run succeeds and the run passes, "
+              "a recording from the default recorded-inputs directory that cannot be saved into "
+              "hr/store exits 3 with that adoption's STOP line alone",
+              exit_code == 3 and output.count("STOP:") == 1
+              and printed_in_order(output,
+                                   f"adopted into {store} 0 recordings from {saved}, ",
+                                   RUNNER_PASSED_SUMMARY,
+                                   f"STOP: merged, but the recordings in "
+                                   f"{default_recorded_inputs_directory(scratch / name)}, where "
+                                   f"the after-merge test run saved its own, were not adopted "
+                                   f"into {store}"), f"exit {exit_code}\n{output}")
 
         def store_cannot_be_written(directory):
             head_test_run_recordings(directory)
