@@ -12,7 +12,11 @@ refuses with "mergeStateStatus is UNKNOWN", it runs the gate again, 5 seconds
 apart, at most 8 times in all. When the gate passes, the merge command it
 prints must be exactly the one this program expects; then every open pull
 request whose base branch is this pull request's branch is retargeted to this
-pull request's base branch, and the merge command runs. Whether the pull
+pull request's base branch, and the merge command runs. While the merge
+command fails with GitHub's "Base branch was modified. Review and try the merge
+again.", which GitHub gives when another merge moves the base branch during
+this one, the program runs the merge command again, 5 seconds apart, at most 3
+times in all. Whether the pull
 request merged is decided by the state the program then reads from GitHub,
 not by the merge command's exit code: a GitHub error after the merge is done,
 such as a 502 on the response, makes the command exit nonzero over a merged
@@ -64,15 +68,22 @@ the file merge-gate.sh reads, so the gate, the retargets and the merge use one
 token.
 
 Before the gate runs, this program fetches origin in
---review-tools-worktree-at-main and refuses unless that worktree's HEAD is
-origin/main, so a stale worktree never lets an older gate decide a merge.
+--review-tools-worktree-at-main and checks that worktree out, detached, at
+origin/main, so a stale worktree never lets an older gate decide a merge. It
+refuses instead when the worktree holds work of its own, which a checkout
+could lose or carry along: a branch checked out, a HEAD that is not an
+ancestor of origin/main, a change to a tracked file, or a merge, rebase,
+cherry-pick, revert or bisect in progress. Untracked files stay, as git
+leaves them. A review whose Codex cell runs from the same worktree at the same
+time may fail when the checkout moves files under it; such a review is run
+again.
 
 Exit codes: 0 merged, with the review worktrees removed, and main's after-merge
 test run passed; 1 the gate refused,
 printed a merge command other than the expected one, or the pull request is
 not merged after the merge command ran; 2 the token file could not be read or
 was empty, --review-tools-worktree-at-main has no scripts/merge-gate.sh, could
-not be fetched or is not at origin/main, the gate could not run or exited with
+not be fetched, holds work of its own or could not be checked out at origin/main, the gate could not run or exited with
 a code it does not document, or a read or a retarget on GitHub failed, each
 before any merge; 3 merged, but a step after the merge was not done: a review
 worktree or the pr<n>-merge-commit-on-main-worktree worktree could not be removed, the
@@ -113,6 +124,16 @@ MERGE_STATE_UNKNOWN_REFUSAL = "mergeStateStatus is UNKNOWN"
 MERGE_GATE_TRIES = 8
 SECONDS_BETWEEN_MERGE_GATE_TRIES = 5
 MERGE_COMMAND_HEADING = "MERGE WITH THIS EXACT COMMAND:"
+# GitHub's refusal when another merge moved the base branch during this one; nothing merged.
+BASE_BRANCH_MODIFIED_MERGE_REFUSAL = "Base branch was modified. Review and try the merge again."
+MERGE_TRIES = 3
+SECONDS_BETWEEN_MERGE_TRIES = 5
+# The words git prints when a checkout would overwrite files, tracked or untracked.
+CHECKOUT_WOULD_OVERWRITE_FILES = "would be overwritten by checkout"
+# Present in the git directory while each operation is in progress.
+OPERATION_IN_PROGRESS_GIT_PATHS = {
+    "MERGE_HEAD": "a merge", "rebase-merge": "a rebase", "rebase-apply": "a rebase",
+    "CHERRY_PICK_HEAD": "a cherry-pick", "REVERT_HEAD": "a revert", "BISECT_LOG": "a bisect"}
 
 # gh pr list returns 30 pull requests unless told otherwise; a stacked pull
 # request beyond the limit would be missed and then closed by the merge.
@@ -168,13 +189,32 @@ def merge_gate_after_retries(arguments, environment, wait):
         wait(SECONDS_BETWEEN_MERGE_GATE_TRIES)
 
 
-def review_tools_worktree_not_at_main_message(worktree):
-    """Return None when worktree's HEAD is origin/main after a fetch; else what to do."""
+def merge_after_retries(command, environment, wait):
+    """Return the last run of the merge command."""
+    for attempt in range(1, MERGE_TRIES + 1):
+        merge = run(command, environment)
+        if (merge.returncode == 0 or BASE_BRANCH_MODIFIED_MERGE_REFUSAL not in merge.stderr
+                or attempt == MERGE_TRIES):
+            return merge
+        print(f"merge try {attempt} of {MERGE_TRIES}: GitHub refused the merge because main "
+              f"moved during it; running the merge command again in "
+              f"{SECONDS_BETWEEN_MERGE_TRIES} seconds", flush=True)
+        wait(SECONDS_BETWEEN_MERGE_TRIES)
+
+
+def review_tools_worktree_moved_to_main_refusal_message(worktree):
+    """Fetch origin in worktree and check it out, detached, at origin/main unless it holds
+    work of its own; return None when it is at origin/main, else what to do."""
     environment = common.run_all_test_suites.environment_without_git_redirecting_variables()
 
     def git(*arguments):
         return subprocess.run(["git", "-C", str(worktree), *arguments], capture_output=True,
                               text=True, env=environment, stdin=subprocess.DEVNULL)
+
+    def could_not_read(what, failed):
+        return (f"could not read {what} in {worktree}: {git_error(failed)}\n"
+                f"Tell the user this message as printed, from its STOP line, which quotes git's "
+                f"error, through this line.")
 
     fetch = git("fetch", "--quiet", "origin")
     if fetch.returncode != 0:
@@ -185,15 +225,67 @@ def review_tools_worktree_not_at_main_message(worktree):
     head = git("rev-parse", "HEAD")
     main = git("rev-parse", "origin/main")
     if head.returncode != 0 or main.returncode != 0:
-        return (f"could not read HEAD and origin/main in {worktree}: "
-                f"{git_error(head if head.returncode != 0 else main)}\n"
-                f"Tell the user this message as printed, from its STOP line, which quotes git's "
-                f"error, through this line.")
-    if head.stdout.strip() != main.stdout.strip():
-        return (f"{worktree} is at {head.stdout.strip()[:8]}, not at origin/main "
-                f"{main.stdout.strip()[:8]}, so its merge-gate.sh may not be main's.\n"
-                f"Move it to main: git -C {worktree} checkout --detach origin/main\n"
-                f"Then run this again.")
+        return could_not_read("HEAD and origin/main", head if head.returncode != 0 else main)
+    head, main = head.stdout.strip(), main.stdout.strip()
+    if head == main:
+        return None
+
+    own_work = []
+    branch = git("symbolic-ref", "--quiet", "--short", "HEAD")
+    if branch.returncode == 0:
+        own_work.append(f"the branch {branch.stdout.strip()} is checked out")
+    ancestor = git("merge-base", "--is-ancestor", head, main)
+    if ancestor.returncode not in (0, 1):
+        return could_not_read(f"whether HEAD {head[:8]} is an ancestor of origin/main", ancestor)
+    if ancestor.returncode == 1:
+        own_work.append(f"HEAD {head[:8]} is not an ancestor of origin/main, so it may hold "
+                        f"commits main lacks")
+    status = git("status", "--porcelain", "--untracked-files=no")
+    if status.returncode != 0:
+        return could_not_read("the changes to tracked files", status)
+    changed = [line[3:] for line in status.stdout.splitlines()]
+    if changed:
+        own_work.append(f"a tracked file is changed, such as {changed[0]}")
+    names = list(OPERATION_IN_PROGRESS_GIT_PATHS)
+    git_paths = git("rev-parse", *(argument for name in names
+                                   for argument in ("--git-path", name)))
+    if git_paths.returncode != 0:
+        return could_not_read("where git keeps its operation state", git_paths)
+    for name, git_path in zip(names, git_paths.stdout.splitlines()):
+        if (worktree / git_path).exists():
+            own_work.append(f"{OPERATION_IN_PROGRESS_GIT_PATHS[name]} is in progress")
+    leave_it = (f"Leave {worktree} as it is: do not move, remove, discard, stash or overwrite "
+                f"anything in it unless the user tells you to, because it may be someone's "
+                f"unsaved work.")
+    subagent = "If you are a subagent, ask the agent that dispatched you instead."
+    if own_work:
+        return (f"{worktree} is at {head[:8]}, not at origin/main {main[:8]}, and holds work "
+                f"of its own, so this program does not move it: {'; '.join(own_work)}.\n"
+                f"{leave_it}\n"
+                f"Tell the user that merges stop until that work is kept elsewhere and "
+                f"{worktree} is detached at origin/main or an older commit of main, with no "
+                f"change to a tracked file and no operation in progress; name the work, and ask how the user wants it "
+                f"kept and who does it. Once {worktree} is in that state, run this program "
+                f"again, which then moves it to origin/main itself. {subagent}")
+    # By name, not the commit read above: a parallel run may already have moved the worktree
+    # to a newer main, and origin/main only moves forward.
+    checkout = git("checkout", "--quiet", "--detach", "origin/main")
+    if checkout.returncode != 0:
+        could_not_check_out = (f"could not check {worktree} out at origin/main, so its "
+                               f"merge-gate.sh may not be main's")
+        if CHECKOUT_WOULD_OVERWRITE_FILES in checkout.stderr:
+            # Whole, because the files git lists are on the lines after its first.
+            return (f"{could_not_check_out}: {checkout.stderr.strip()}\n"
+                    f"{leave_it} Do not move or remove the files git lists, whatever git "
+                    f"suggests above.\n"
+                    f"Tell the user that merges stop until the files git lists are gone from "
+                    f"{worktree}; name them, and ask how the user wants them kept and who moves "
+                    f"them. Once they are gone, run this program again. {subagent}")
+        return (f"{could_not_check_out}: {git_error(checkout)}\n"
+                f"Run this program again once; if it fails the same way, tell the user this "
+                f"message as printed, from its STOP line, which quotes git's error, through "
+                f"this line.")
+    print(f"moved {worktree} from {head[:8]} to origin/main", flush=True)
     return None
 
 
@@ -508,9 +600,12 @@ def main(argv=None, wait=time.sleep):
         return EXIT_COULD_NOT_RUN
     environment = {**os.environ, "GH_TOKEN": token}
 
-    refusal = (common.review_tool_missing_message(arguments, MERGE_GATE)
-               or review_tools_worktree_not_at_main_message(
-                   arguments.review_tools_worktree_at_main))
+    # Moved first, so the missing-tool check reads main's files; a worktree that does not
+    # exist is left to that check, which says how to make it.
+    refusal = ((review_tools_worktree_moved_to_main_refusal_message(
+                    arguments.review_tools_worktree_at_main)
+                if arguments.review_tools_worktree_at_main.is_dir() else None)
+               or common.review_tool_missing_message(arguments, MERGE_GATE))
     if refusal:
         print(f"STOP: not merged: {refusal}")
         return EXIT_COULD_NOT_RUN
@@ -543,7 +638,7 @@ def main(argv=None, wait=time.sleep):
     if retarget_exit != EXIT_MERGED:
         return retarget_exit
 
-    merge = run(expected.split(), environment)
+    merge = merge_after_retries(expected.split(), environment, wait)
     print(merge.stdout, end="")
     print(f"merge exit {merge.returncode}", flush=True)
     merge_error = f"the merge command exited {merge.returncode}" + (
@@ -573,6 +668,13 @@ def main(argv=None, wait=time.sleep):
     if read.get("state") != "MERGED":
         print(f"STOP: not merged: pull request {arguments.pull_request} is "
               f"{read.get('state')} after the merge command ran; {merge_error}")
+        if BASE_BRANCH_MODIFIED_MERGE_REFUSAL in merge.stderr:
+            print(f"GitHub refused the merge {MERGE_TRIES} times because main moved during it, "
+                  f"as when other merges run at the same time; GitHub's \"Review and try the "
+                  f"merge again\" asks for no new review.\n"
+                  f"Run this program again in a few minutes. If it is refused this way again, "
+                  f"tell the user that merges keep failing because main moves during each one. "
+                  f"If you are a subagent, tell the agent that dispatched you instead.")
         return EXIT_REFUSED
     branch_exit = EXIT_MERGED
     if merge.returncode != 0:
