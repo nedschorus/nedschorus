@@ -1072,16 +1072,26 @@ def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: P
     git_in(["config", "user.name", "agent"], home)
     git_in(["config", "user.email", "agent@nedschorus.invalid"], home)
 
-    def launch_time_git_sync_next_steps(rerun):
+    def launch_time_git_sync_next_steps(rerun, error="fatal: stub failure"):
         return supervisor.next_step_lines.git_failure_next_step_lines(
-            rerun, rerun_fails_when="prints an error again",
+            rerun, git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=error,
+            rerun_fails_when="prints an error again",
             which_lines_to_quote_in_the_report=(
                 "the launch-time-git-sync line in this prompt and the error the rerun printed"),
             read_by_a_subagent=False, next_step_to_skip_when_the_rerun_fails_too="act on the rest of this prompt")
 
     report = sync_with_failing_call(home, "rev-parse --show-toplevel")
     check("a launch-time-git-sync git failure ends with the next steps, naming the git command to rerun",
-          report.endswith(launch_time_git_sync_next_steps(f"`git -C {home} rev-parse --show-toplevel`")), report)
+          report.endswith(launch_time_git_sync_next_steps(f"git -C {home} rev-parse --show-toplevel")), report)
+    lock_file = home / ".git" / "index.lock"
+    lock_report = sync_with_failing_call(home, "rev-parse --show-toplevel",
+                                         stderr=f"fatal: Unable to create '{lock_file}': File exists.")
+    check("a launch-time-git-sync git failure whose error names a lock file gets the step that waits "
+          "for that lock file, then reruns the git command",
+          f"Git's error names the lock file {lock_file}: " in lock_report
+          and lock_report.endswith(launch_time_git_sync_next_steps(
+              f"git -C {home} rev-parse --show-toplevel",
+              f"fatal: Unable to create '{lock_file}': File exists.")), lock_report)
     plan = supervisor.DialogIgnitionPlan(root / "extract.md", {})
     pushed = supervisor.BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION
     for shape, prompt in (
@@ -1165,7 +1175,7 @@ def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: P
         report = sync_with_failing_call(home, call)
         check(f"a failed `git {call}` on a level branch is reported with git's error",
               " left as is — " in report and "fatal: stub failure" in report
-              and launch_time_git_sync_next_steps(f"`git -C {home} {call}`") in report
+              and launch_time_git_sync_next_steps(f"git -C {home} {call}") in report
               and wrong_answer not in report, report)
 
     main_moves("main moves past the failing-git home")
@@ -1199,7 +1209,7 @@ def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: P
           "with git's error in place of the commit",
           "fast-forwarded to main (its new commit could not be read" in report
           and "fatal: stub failure" in report
-          and launch_time_git_sync_next_steps(f"`git -C {home} rev-parse --short HEAD`") in report, report)
+          and launch_time_git_sync_next_steps(f"git -C {home} rev-parse --short HEAD") in report, report)
 
     (home / "agent-note.txt").write_text("own work\n", encoding="utf-8")
     git_in(["add", "-A"], home)

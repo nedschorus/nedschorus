@@ -33,14 +33,8 @@ GIT_FAILURE_TEMPLATE = (
     "for another tracked file with the same basename; this hook compares basenames ignoring letter "
     "case, so Notes.md and notes.md count as the same basename.\n"
     "A later run of this hook checks only the file that run's Write or Edit touched, so check "
-    "{path} by running the command printed on its own line below this paragraph. If git's error "
-    "above names no lock file, run that "
-    "command now. "
-    + next_step_lines.GIT_ERROR_NAMES_A_LOCK_FILE_LINE_OPENING_IF_CONDITION_CLAUSE_WITHOUT_ITS_INSTRUCTION_IN_TOOL_MESSAGE_TO_AGENT + ", "
-    + next_step_lines.lock_file_named_by_git_error_wait_then_rerun_instruction("the command below this paragraph")
-    .replace("{", "{{").replace("}", "}}")
-    + ". The command "
-    "prints nothing when no other tracked file has the basename, and also when this hook skips the "
+    "{path} by running the command printed on its own line below this paragraph. {when_to_run_it} "
+    "The command prints nothing when no other tracked file has the basename, and also when this hook skips the "
     "file without checking: a file outside the checkout, a file git ignores, a file named SKILL.md, "
     "README.md or .gitkeep in any letter case, or a working directory that no longer exists or is in "
     "no git repository. Otherwise it prints JSON whose "
@@ -68,8 +62,10 @@ def git_failure_text(failure, path, working_directory) -> str:
         outcome = f"exit {failure.returncode}: {' '.join(failure.stderr.split()) or 'no error text'}"
     rerun = next_step_lines.file_edit_hook_shell_command_that_runs_the_hook_on_one_file_as_claude_code_would(
         Path(__file__).resolve(), working_directory, path)
+    when_to_run_it = next_step_lines.git_error_names_a_lock_file_wait_then_rerun_line_or_none(
+        failure.stderr, "the command below this paragraph") or "Run that command now."
     return GIT_FAILURE_TEMPLATE.format(command=" ".join(failure.arguments), outcome=outcome, path=path,
-                                       rerun=rerun)
+                                       when_to_run_it=when_to_run_it, rerun=rerun)
 
 
 def checkout_of(working_directory: Path):

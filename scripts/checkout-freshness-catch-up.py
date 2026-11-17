@@ -121,6 +121,7 @@ import importlib.util
 import json
 import os
 import subprocess
+import shlex
 import sys
 import time
 from pathlib import Path, PurePosixPath
@@ -304,16 +305,21 @@ GIT_FAILED_STOP_HOOK_USER_NEXT_STEP_LINES = (
 GIT_FAILED_NOTES_DELIVERY_AGENT_NEXT_STEP_LINES = (
     "Nothing needs rerunning: this check runs again when the next prompt arrives.\n"
     "If the same failure is reported again with the next prompt, tell the user what "
-    "{program} printed, git's error included."
+    f"{Path(__file__).name} printed, git's error included."
 )
-GIT_FAILED_RERUN_NEXT_STEP_LINES = next_step_lines.git_failure_next_step_lines(
-    "{rerun}", text_the_failure_line_contains="because a git command failed")
 
 
-def git_failed_text(prefix: str, what: str, error, next_steps: str, rerun: str = None) -> str:
+def git_failed_rerun_next_step_lines(error, *arguments: str) -> str:
+    """The next-step lines for a reader who ran this program with arguments and can rerun it."""
+    rerun = shlex.join(['python3', str(Path(__file__).resolve()), *arguments])
+    return next_step_lines.git_failure_next_step_lines(
+        rerun, git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=str(error),
+        text_the_failure_line_contains="because a git command failed")
+
+
+def git_failed_text(prefix: str, what: str, error, next_steps: str) -> str:
     """The message for a GitCommandFailed: GIT_FAILED_CAUSE_LINE, then next_steps."""
-    return (GIT_FAILED_CAUSE_LINE + next_steps).format(
-        prefix=prefix, what=what, error=error, rerun=rerun, program=Path(__file__).name)
+    return GIT_FAILED_CAUSE_LINE.format(prefix=prefix, what=what, error=error) + next_steps
 
 
 UNKNOWN_ADVICE = ("Your head state could not be determined (a git command failed); nothing "
@@ -1840,9 +1846,8 @@ def main(argv=None) -> int:
             print(report_line(repository, arguments.interval_seconds))
         except git_output.GitCommandFailed as error:
             print(git_failed_text("freshness", f"{repository} was not compared with "
-                                  "origin/main", error, GIT_FAILED_RERUN_NEXT_STEP_LINES,
-                                  rerun=f"`python3 {Path(__file__).resolve()} --report "
-                                        f"--repo {repository}`"))
+                                  "origin/main", error, git_failed_rerun_next_step_lines(
+                                      error, "--report", "--repo", str(repository))))
         return 0
 
     if arguments.reference_pull:
@@ -1862,9 +1867,8 @@ def main(argv=None) -> int:
                     reference, arguments.interval_seconds)
         except git_output.GitCommandFailed as error:
             report(git_failed_text("catch-up", f"the reference checkout of {repository} "
-                                   "was not updated", error, GIT_FAILED_RERUN_NEXT_STEP_LINES,
-                                   rerun=f"`python3 {Path(__file__).resolve()} "
-                                         f"--reference-pull --repo {repository}`"))
+                                   "was not updated", error, git_failed_rerun_next_step_lines(
+                                       error, "--reference-pull", "--repo", str(repository))))
         flush_report()
         return 0 if reached_origin_main else 1
 

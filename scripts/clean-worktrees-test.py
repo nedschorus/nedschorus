@@ -1515,8 +1515,27 @@ with tempfile.TemporaryDirectory() as scratch:
         check(f"a failed worktree listing{' under ' + flags[0] if flags else ''} gives the "
               "shared next steps, naming the command that was run",
               stderr_lines[1:] == load_clean_worktrees_module().next_step_lines.git_failure_next_step_lines(
-                  rerun, text_the_failure_line_contains="clean-worktrees: stopped, because").splitlines(),
+                  rerun, git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=LISTING_FAILURE_TEXT,
+                  text_the_failure_line_contains="clean-worktrees: stopped, because").splitlines(),
               failed_listing.stderr)
+
+    lock_file = checkout / ".git" / "index.lock"
+    lock_listing_stubs = scratch / "lock-file-worktree-list-git"
+    lock_listing_stubs.mkdir()
+    (lock_listing_stubs / "git").write_text(
+        "#!/bin/sh\n"
+        f'case " $* " in *" worktree list "*) echo "fatal: Unable to create \'{lock_file}\': File exists." >&2; '
+        f'exit 128 ;; esac\n'
+        f'exec {shutil.which("git")} "$@"\n', encoding="utf-8")
+    (lock_listing_stubs / "git").chmod(0o755)
+    failed_listing = subprocess.run(
+        [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout)], capture_output=True, text=True,
+        check=False, env=dict(environment, PATH=f"{lock_listing_stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
+    check("a failed worktree listing whose git error names a lock file gives the step that waits "
+          "for that lock file",
+          failed_listing.returncode == 2
+          and f"Git's error names the lock file {lock_file}: " in failed_listing.stderr,
+          failed_listing.stderr)
 
     module = load_clean_worktrees_module()
     saved_path = os.environ.get("PATH", "")

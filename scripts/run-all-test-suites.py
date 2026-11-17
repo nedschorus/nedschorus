@@ -1900,7 +1900,7 @@ def suites_listed_by_git(top):
         error = git_failure_stderr_first_line_or_printed_no_error_text(listed)
         raise CouldNotRun(
             f"{PROGRAM}: not run — git ls-files failed in {top}: {error}\n"
-            + git_failure_next_step_lines(Path(__file__).name, error))
+            + git_failure_next_step_lines(error))
     suites = [path for path in listed.stdout.split("\0") if path]
     if not suites:
         raise CouldNotRun(
@@ -1945,16 +1945,19 @@ def interpreter_and_version(given):
     return found, version[0]
 
 
-def git_failure_next_step_lines(program_file, git_error_line):
-    """The lines that end a refusal after a git failure, for a run of program_file.
+def git_failure_next_step_lines(git_error_line):
+    """The lines that end a refusal after a git failure, naming this process's command as the rerun.
 
     git_error_line is the line of git's error the refusal prints. No misspelt-name
     line: every git call that ends in this refusal runs after the checkout and any
-    commit given were checked.
+    commit given were checked. A program that imports this module and prints the
+    refusal under its own name gets its own command as the rerun.
     """
+    # From its working directory, since relative paths among the arguments are read from there.
+    rerun = (f"cd {shlex.quote(os.getcwd())} && "
+             f"{shlex.join([sys.executable, str(Path(sys.argv[0]).resolve()), *sys.argv[1:]])}")
     return next_step_lines.git_failure_next_step_lines(
-        f"the same {program_file} command",
-        git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=git_error_line,
+        rerun, git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=git_error_line,
         text_the_failure_line_contains="not run — git")
 
 
@@ -3969,7 +3972,7 @@ def checkout_files(top):
         error = git_failure_stderr_first_line_or_printed_no_error_text(listed)
         raise CouldNotRun(
             f"{PROGRAM}: not run — git ls-files failed in {top}: {error}\n"
-            + git_failure_next_step_lines(Path(__file__).name, error))
+            + git_failure_next_step_lines(error))
     return {path for path in listed.stdout.split("\0")
             if path and os.path.lexists(top / path)}
 
@@ -3980,7 +3983,7 @@ def files_at_commit(top, commit):
         error = git_failure_stderr_first_line_or_printed_no_error_text(listed)
         raise CouldNotRun(
             f"{PROGRAM}: not run — git ls-tree {commit} failed in {top}: {error}\n"
-            + git_failure_next_step_lines(Path(__file__).name, error))
+            + git_failure_next_step_lines(error))
     return {path for path in listed.stdout.split("\0") if path}
 
 
@@ -4151,7 +4154,7 @@ def recordings_directory_for(given, top):
             f"{PROGRAM}: not run — git could not list the root commits of HEAD in {top} "
             f"({error}), so this run cannot find its directory of recorded suite inputs, "
             f"which is named after a root commit of HEAD.\n"
-            + git_failure_next_step_lines(Path(__file__).name, error))
+            + git_failure_next_step_lines(error))
     return Path(given).expanduser() / min(roots.stdout.split())[:16]
 
 
@@ -4417,7 +4420,7 @@ def files_that_differ_since(top, commit):
         error = git_failure_stderr_first_line_or_printed_no_error_text(diff)
         raise CouldNotRun(
             f"{PROGRAM}: not run — git diff {commit} failed in {top}: {error}\n"
-            + git_failure_next_step_lines(Path(__file__).name, error))
+            + git_failure_next_step_lines(error))
     fields = [field for field in diff.stdout.split("\0") if field]
     for status, path in zip(fields[0::2], fields[1::2]):
         differ[path] = "A" if status.startswith("A") else "D" if status.startswith("D") else "M"
@@ -4426,7 +4429,7 @@ def files_that_differ_since(top, commit):
         error = git_failure_stderr_first_line_or_printed_no_error_text(untracked)
         raise CouldNotRun(
             f"{PROGRAM}: not run — git ls-files --others failed in {top}: {error}\n"
-            + git_failure_next_step_lines(Path(__file__).name, error))
+            + git_failure_next_step_lines(error))
     for path in untracked.stdout.split("\0"):
         if path:
             differ.setdefault(path, "A")
