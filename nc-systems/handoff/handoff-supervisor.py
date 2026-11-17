@@ -81,9 +81,6 @@ The handoff file the agent writes (simple `key: value` lines):
                         similar agents. Subagents that completed, failed, or
                         were stopped are not recorded at all (user-ruled
                         2026-08-29)
-  background-task-started-during-handoff-deferral-<n>: optional, one per
-                        background Bash task launched after the handoff-deferral
-                        began and still running when the handoff was written
   cold-read-full-run-command-refused-during-handoff-deferral-<n>: optional, one
                         per cold-read-full-run the deferral's hook refused and
                         saved for the successor
@@ -159,6 +156,16 @@ mac_reference_checkout_path_constant = importlib.util.module_from_spec(_mac_refe
 _mac_reference_checkout_path_constant_specification.loader.exec_module(mac_reference_checkout_path_constant)
 mac_launcher_command = (
     mac_reference_checkout_path_constant.mac_reference_checkout_launcher_path_agent_seat_start_command_text_for_user_to_type)
+
+
+def ask_user_to_start_agent_seat_from_mac_terminal(agent_seat: str) -> str:
+    # The handoff-supervisor runs on its agent-seat's machine.
+    return mac_reference_checkout_path_constant.mac_reference_checkout_launcher_agent_seat_start_command_agent_instruction_to_ask_user_to_type_in_mac_terminal(
+        agent_seat, handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box())
+
+
+def mac_launcher_command_for_agent_seat_on_this_machine(agent_seat: str) -> str:
+    return mac_launcher_command(agent_seat, handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box())
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
     "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
@@ -308,10 +315,6 @@ claude_code_session_transcript_lookup_and_text_search_common = importlib.util.mo
 _claude_code_session_transcript_lookup_and_text_search_common_spec.loader.exec_module(claude_code_session_transcript_lookup_and_text_search_common)
 # Live supervisors resolve this path at import; moving the extractor would break those processes.
 EXTRACTOR_PATH = SCRIPTS_DIRECTORY / "handoff-extract-conversation.py"
-_handoff_extract_conversation_spec = importlib.util.spec_from_file_location(
-    "handoff_extract_conversation", EXTRACTOR_PATH)
-handoff_extract_conversation = importlib.util.module_from_spec(_handoff_extract_conversation_spec)
-_handoff_extract_conversation_spec.loader.exec_module(handoff_extract_conversation)
 CLEAN_WORKTREES_PATH = SCRIPTS_DIRECTORY / "clean-worktrees.py"
 FINISHED_WORKTREE_REMOVAL_TIMEOUT_SECONDS = 180
 WORKTREE_CLEANER_STOP_GRACE_SECONDS = 5
@@ -387,13 +390,13 @@ NEXT_STEP_BLOCK_OPENING_MARKER = session_handoff_field_names.NEXT_STEP_BLOCK_OPE
 NEXT_STEP_BLOCK_TERMINATOR = session_handoff_field_names.NEXT_STEP_BLOCK_TERMINATOR
 NEXT_STEP_BLOCK_UNTERMINATED_FIELD = session_handoff_field_names.NEXT_STEP_BLOCK_UNTERMINATED_FIELD
 SPAWNED_SUBAGENT_FIELD_PREFIX = session_handoff_field_names.SPAWNED_SUBAGENT_FIELD_PREFIX
+SESSION_HANDOFF_BACKGROUND_TASK_STILL_RUNNING_FIELD_PREFIX = (
+    session_handoff_field_names.SESSION_HANDOFF_BACKGROUND_TASK_STILL_RUNNING_FIELD_PREFIX)
 WRITTEN_BY_SESSION_FIELD = session_handoff_field_names.WRITTEN_BY_SESSION_FIELD
 SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD = session_handoff_field_names.SESSION_HANDOFF_SEQUENCE_NUMBER_FIELD
 LEGACY_RESTART_COUNTER_FIELD = session_handoff_field_names.LEGACY_RESTART_COUNTER_FIELD
 ASK_USER_BEFORE_RESTART_FIELD = session_handoff_field_names.ASK_USER_BEFORE_RESTART_FIELD
 LEGACY_DONT_RESTART_FIELD = session_handoff_field_names.LEGACY_DONT_RESTART_FIELD
-BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX = (
-    "background-task-started-during-handoff-deferral-")
 COLD_READ_FULL_RUN_COMMAND_REFUSED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX = (
     "cold-read-full-run-command-refused-during-handoff-deferral-")
 BACKGROUND_TASK_PAST_WAIT_LIMIT_FIELD_PREFIX = "background-task-past-wait-limit-"
@@ -407,9 +410,10 @@ LAUNCH_TIME_GIT_SYNC_WHICH_LINES_TO_QUOTE_IN_THE_REPORT = "the launch-time-git-s
 
 def launch_time_git_sync_git_failure_next_steps(error) -> str:
     """The next-step lines for a GitCommandFailed the launch-time-git-sync reports."""
-    rerun = f"`{shlex.join(['git', '-C', str(error.directory), *error.arguments])}`"
+    rerun = shlex.join(['git', '-C', str(error.directory), *error.arguments])
     return next_step_lines.git_failure_next_step_lines(
-        rerun, rerun_fails_when=LAUNCH_TIME_GIT_SYNC_RERUN_FAILS_WHEN, which_lines_to_quote_in_the_report=LAUNCH_TIME_GIT_SYNC_WHICH_LINES_TO_QUOTE_IN_THE_REPORT,
+        rerun, git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=str(error),
+        rerun_fails_when=LAUNCH_TIME_GIT_SYNC_RERUN_FAILS_WHEN, which_lines_to_quote_in_the_report=LAUNCH_TIME_GIT_SYNC_WHICH_LINES_TO_QUOTE_IN_THE_REPORT,
         read_by_a_subagent=False,
         next_step_to_skip_when_the_rerun_fails_too=LAUNCH_TIME_GIT_SYNC_STOP_HOLDS_BACK)
 
@@ -435,11 +439,6 @@ def launch_time_git_sync_report_in_prompt(launch_time_git_sync_report: str,
     return f"\n\n{text}\n\n" if "\n" in launch_time_git_sync_report else text
 
 
-BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION = (
-    "This branch has never been pushed: rebase it onto origin/main before your "
-    "first substantive action and rerun the tests for what you touched."
-)
-
 BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION = (
     "This branch is pushed: leave its head as it is, and start new work on a "
     "branch from origin/main."
@@ -449,10 +448,11 @@ BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION = (
 # Printed to the handoff-supervisor's console, which the agent-session never reads.
 BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE = (
     "handoff-supervisor: could not tell whether {branch} is pushed, "
-    "so the new agent-session's initial-agent-instructions tell it neither to rebase that branch onto "
-    "origin/main nor to leave the branch's head as it is.\n"
+    "so the new agent-session's initial-agent-instructions leave out the instruction that tells it "
+    "to add no commit to {branch} and rewrite none of its history, and to start new work on a "
+    "branch from origin/main.\n"
     "handoff-supervisor: why: {cause}\n"
-    "handoff-supervisor: this launch goes ahead without either instruction, and nobody needs to act on "
+    "handoff-supervisor: this launch goes ahead without that instruction, and nobody needs to act on "
     "this message: a git error that persists also fails the new agent-session's own git commands, "
     "which show it the error; once an error has cleared, the Stop hook "
     "scripts/checkout-freshness-catch-up.py, at the end of each of the agent-session's turns, rebases "
@@ -462,9 +462,10 @@ BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE = (
 
 
 def choose_branch_state_instruction_from_working_directory_push_state(working_directory: Path) -> str:
-    """The one branch-state instruction that applies to the checkout's branch, or "" on
-    main, on a detached HEAD, or when git cannot tell, which it prints. Call it after
-    launch_time_git_sync, whose fetch brings origin's branches up to date."""
+    """The pushed-branch instruction when any of the branch's own commits is on origin, or
+    "" on main, on a never-pushed branch, on a detached HEAD, or when git cannot tell,
+    which it prints. Call it after launch_time_git_sync, whose fetch brings origin's
+    branches up to date."""
     branch = run_git_here(["rev-parse", "--abbrev-ref", "HEAD"], working_directory, timeout=15)  # pragma: no mutate, a limit a second longer or shorter behaves the same
     if branch.returncode != 0:
         command = shlex.join(["git", "-C", str(working_directory), "rev-parse", "--abbrev-ref", "HEAD"])
@@ -477,11 +478,9 @@ def choose_branch_state_instruction_from_working_directory_push_state(working_di
     # head_state reads main as pushed, since origin/main equals it.
     if name == "main":
         return ""
-    # The Stop hook rebases only what head_state calls unpushed, so the successor is told the same.
     key, text = checkout_freshness_catch_up.head_state(working_directory, name)
-    if key == "unpushed":  # pragma: no mutate, no key head_state returns sorts after "unpushed", so >= acts as ==
-        return BRANCH_STATE_NEVER_PUSHED_TO_ORIGIN_INSTRUCTION
-    if key == "detached":
+    # The checkout-freshness Stop hook rebases what head_state calls unpushed at each turn's end.
+    if key in ("unpushed", "detached"):
         return ""
     if key == "unknown":  # pragma: no mutate, of the keys head_state returns only "unpushed", handled above, sorts after "unknown", so >= acts as ==
         print(BRANCH_STATE_LEFT_OUT_CONSOLE_TEMPLATE.format(
@@ -584,10 +583,9 @@ ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE = (
 )
 
 
-BACKGROUND_TASKS_STARTED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE = (
-    "The session you are replacing started {task_count} background Bash task(s) during its "
-    "handoff-deferral that were still running when it ended, so they were stopped: "
-    "{joined_tasks}. Run again any whose result you still need."
+BACKGROUND_TASKS_STOPPED_AT_SESSION_HANDOFF_SUCCESSOR_RESTART_SENTENCE_TEMPLATE = (
+    "The session you are replacing had {task_count} background task(s) still running when it "
+    "ended: {joined_tasks}. Restart any you still need."
 )
 
 BACKGROUND_TASKS_PAST_WAIT_LIMIT_SENTENCE_TEMPLATE = (
@@ -733,10 +731,8 @@ def no_terminal_to_ask_user_before_restart_stop_message(agent_seat: str, handoff
     return (f"handoff-supervisor: the agent-seat {agent_seat}'s session-handoff asks the user "
             "before restarting, and this handoff-supervisor has no terminal to ask on, so it "
             f"stopped {agent_seat} without restarting it.\n"
-            "To start it again, run its launcher from the Mac: "
-            f"`{mac_launcher_command('launch-claude-ubuntu', agent_seat)}` for an agent-seat on ned-box, "
-            f"`{mac_launcher_command('launch-claude-mac', agent_seat)}` for one on the Mac. The new session is not given "
-            f"the session-handoff's next step, which stays in {handoff_path}.")
+            f"To start it again, {ask_user_to_start_agent_seat_from_mac_terminal(agent_seat)}. "
+            f"The new session is not given the session-handoff's next step, which stays in {handoff_path}.")
 
 
 def agent_exit_record_is_a_stop_at_an_ask_user_before_restart_handoff(state: dict) -> bool:
@@ -1226,11 +1222,11 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
             joined_roster="; ".join(roster),
             transcript_directory=transcript_directory,
         ))
-    late_tasks = numbered_field_values_from(
-        handoff_fields, BACKGROUND_TASK_STARTED_DURING_HANDOFF_DEFERRAL_FIELD_PREFIX)
-    if late_tasks:
-        lines.append(BACKGROUND_TASKS_STARTED_DURING_HANDOFF_DEFERRAL_SENTENCE_TEMPLATE.format(
-            task_count=len(late_tasks), joined_tasks="; ".join(late_tasks)))
+    still_running_tasks = numbered_field_values_from(
+        handoff_fields, SESSION_HANDOFF_BACKGROUND_TASK_STILL_RUNNING_FIELD_PREFIX)
+    if still_running_tasks:
+        lines.append(BACKGROUND_TASKS_STOPPED_AT_SESSION_HANDOFF_SUCCESSOR_RESTART_SENTENCE_TEMPLATE.format(
+            task_count=len(still_running_tasks), joined_tasks="; ".join(still_running_tasks)))
     past_wait_limit_tasks = numbered_field_values_from(
         handoff_fields, BACKGROUND_TASK_PAST_WAIT_LIMIT_FIELD_PREFIX)
     if past_wait_limit_tasks:
@@ -2657,7 +2653,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         else:
             consecutive_resumes_without_new_work = 0  # pragma: no mutate, the None below makes the death path reset the count before any read of it
             substantive_turns_at_the_last_resume = None
-        verb ="resuming" if next_launch_resumes_the_session else "launching"
+        verb = "resuming" if next_launch_resumes_the_session else "launching"
         print(f"handoff-supervisor: {verb} session {session_id} (generation {generation})")
         # Read at each launch: a resume after a crash is when a dead agent's work-snapshots appear.
         leftover_work_snapshots = uncommitted_work_snapshot_text(
@@ -2851,11 +2847,7 @@ def main(argv=None) -> int:
         print(
             "handoff-supervisor: startup stopped because the agent-seat was not started "
             "by a launcher that pins its task list; CLAUDE_CODE_TASK_LIST_ID is unset or empty.\n"
-            "For an agent-seat on the Mac, start it on the Mac with "
-            f"`{mac_launcher_command('launch-claude-mac', arguments.agent)}`.\n"
-            "For an agent-seat on ned-box, start it on the Mac with "
-            f"`{mac_launcher_command('launch-claude-ubuntu', arguments.agent)}`, "
-            "which reaches ned-box over ssh.",
+            f"To start the agent-seat, {ask_user_to_start_agent_seat_from_mac_terminal(arguments.agent)}.",
             file=sys.stderr,
         )
         return 2
@@ -2865,10 +2857,9 @@ def main(argv=None) -> int:
     except AgentSeatGithubTokenUnreadableError as error:
         print(agent_seat_github_token_unreadable_so_agent_seat_not_started_message_build(
             "handoff-supervisor", error,
-            "start the agent-seat again with its launcher, from the Mac: "
-            f"`{mac_launcher_command('launch-claude-ubuntu', arguments.agent)}` for an agent-seat on ned-box, "
-            f"`{mac_launcher_command('launch-claude-mac', arguments.agent)}` for one on the Mac. If the launcher left a "
-            "shell open in the agent-seat's tmux session, exit that shell first."),
+            "ask the user, in the Terminal on his Mac that shows the agent-seat's tmux session, first to "
+            "exit the shell the launcher left open there, if it left one, and then to run "
+            f"`{mac_launcher_command_for_agent_seat_on_this_machine(arguments.agent)}`."),
             file=sys.stderr)
         return AGENT_SEAT_GITHUB_TOKEN_UNREADABLE_EXIT_STATUS
     if arguments.agent_seat_github_token_file_readable_check_only:

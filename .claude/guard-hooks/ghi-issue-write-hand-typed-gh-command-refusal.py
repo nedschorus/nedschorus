@@ -113,12 +113,20 @@ import subprocess
 import sys
 from pathlib import Path
 
+_crash_notice_spec = importlib.util.spec_from_file_location(
+    "guard_hook_crash_fail_open_with_notice_common",
+    Path(__file__).resolve().parent / "guard-hook-crash-fail-open-with-notice-common.py")
+_crash_notice = importlib.util.module_from_spec(_crash_notice_spec)
+_crash_notice_spec.loader.exec_module(_crash_notice)
+
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-_shell_reader_spec = importlib.util.spec_from_file_location(
-    "shell_command_tree_sitter_bash_reader_common",
-    _REPOSITORY_ROOT / "nc-systems" / "general-tools" / "shell-command-tree-sitter-bash-reader-common.py")
-shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
-_shell_reader_spec.loader.exec_module(shell_reader)
+with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(
+        __file__, __name__ == "__main__"):
+    _shell_reader_spec = importlib.util.spec_from_file_location(
+        "shell_command_tree_sitter_bash_reader_common",
+        _REPOSITORY_ROOT / "nc-systems" / "general-tools" / "shell-command-tree-sitter-bash-reader-common.py")
+    shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
+    _shell_reader_spec.loader.exec_module(shell_reader)
 is_program = shell_reader.is_program
 
 PROJECT_REPOSITORY = "nedschorus/nedschorus"
@@ -183,7 +191,7 @@ REOPEN_OUTCOME = "why the issue is reopening"
 COMMENT_OUTCOME = "what the comment would say"
 EDIT_BODY_OUTCOME = "the change"
 NO_COMMENTS_LINE = (
-    "Do not comment on this project's issues: what an issue says lives in its "
+    "[rule bash-guard-gh-issue-comment] Do not comment on this project's issues: what an issue says lives in its "
     "GHI-MD, and a comment would sit outside it."
 )
 # Ends the comment, body and title refusals, except where the lookup line only
@@ -228,7 +236,7 @@ REOPEN_WITH_COMMENT_REFUSAL = (
     "{record_line}"
 )
 CREATE_REFUSAL = (
-    "Do not file this project's issues with gh issue create.\n"
+    "[rule bash-guard-gh-issue-create-by-hand] Do not file this project's issues with gh issue create.\n"
     "Write the issue as a GHI-MD, a markdown file whose first heading is the "
     "issue's title, then file it with: python3 scripts/ghi-issue-write.py "
     "create <path>\n"
@@ -236,7 +244,7 @@ CREATE_REFUSAL = (
     "run, stop and tell the user."
 )
 EDIT_BODY_REFUSAL = (
-    "Do not set this project's issue bodies with gh issue edit: an issue's body is "
+    "[rule bash-guard-gh-issue-body-or-title-set-by-hand] Do not set this project's issue bodies with gh issue edit: an issue's body is "
     "the links to its files on main, and scripts/ghi-issue-write.py writes it from "
     "those files.\n"
     + LABELS_ONLY_LINE + "\n"
@@ -248,7 +256,7 @@ EDIT_BODY_REFUSAL = (
 # and the edit changes that file's first heading, so {title_line} stops the
 # agent wherever the tool could not retitle.
 EDIT_TITLE_REFUSAL = (
-    "Do not set this project's issue titles with gh issue edit: "
+    "[rule bash-guard-gh-issue-body-or-title-set-by-hand] Do not set this project's issue titles with gh issue edit: "
     "scripts/ghi-issue-write.py sets an issue's title from the first heading of the "
     "issue's GHI-MD, when the issue has one file on main and an edit changes that "
     "heading.\n"
@@ -275,11 +283,11 @@ TITLE_LINES_LOOKUP_FAILED = (
     "<path>"
 )
 DELETE_REFUSAL = (
-    "Do not delete this project's issues: a deleted issue cannot be restored.\n"
+    "[rule bash-guard-gh-issue-delete] Do not delete this project's issues: a deleted issue cannot be restored.\n"
     "{close_lines}"
 )
 DELETE_REFUSAL_NO_FILE = (
-    "Do not delete this project's issues: a deleted issue cannot be restored.\n"
+    "[rule bash-guard-gh-issue-delete] Do not delete this project's issues: a deleted issue cannot be restored.\n"
     "This issue has no file on main under docs/issues/<number>-* or a system's "
     "directory: if the issue was filed by mistake, close it with gh issue close "
     "<number> --reason \"not planned\"; otherwise stop and tell the user."
@@ -572,10 +580,7 @@ PARSER_UNAVAILABLE_NEXT_STEP_LINES = (
 
 
 def main(stdin=sys.stdin):
-    try:
-        payload = json.load(stdin)
-    except (json.JSONDecodeError, ValueError):
-        return 0
+    payload = json.load(stdin)
     if payload.get("tool_name") != "Bash":
         return 0
     command = (payload.get("tool_input") or {}).get("command") or ""
@@ -596,4 +601,5 @@ def main(stdin=sys.stdin):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(__file__, True):
+        sys.exit(main())

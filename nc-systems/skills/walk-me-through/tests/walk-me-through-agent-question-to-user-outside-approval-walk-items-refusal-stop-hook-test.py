@@ -88,8 +88,11 @@ The page goes in the wiki, next to the glossary. Do you agree that agents look t
 # The minutes' `#next_to_present` line gives M as 10; once the agent adds the item a refusal asks for, the walk has 11.
 M_AFTER_THE_ADDED_ITEM = "11"
 M_WITH_NO_ITEM_ADDED = "10"
+# Shown before every closing line the refusal gives, so that the agent copies none between backticks.
+NOT_IN_BACKTICKS = ("Write the line or lines below as plain text, with no backticks around them, since the user sees "
+                    "text between backticks as code.")
 NO_QUESTION_SENTENCE = ("If the flagged text does not ask the user anything, end the turn with only the waiting item's "
-                        "closing line, printed below.")
+                        f"closing line, printed below. {NOT_IN_BACKTICKS}")
 INTERRUPTION_ITEM = f"""## Item 2.1 of 11: merge-lane-2's question about the GHI
 
 merge-lane-2 asks: should I file one GHI listing the remaining seats' tests?
@@ -383,17 +386,18 @@ def test_the_block_message_says_what_to_do():
             ("the message names the waiting item", "goes to the waiting item, item 2,"),
             ("the message gives the interruption item a heading with no number, and names the script whose close "
              "step chooses when it is shown and numbers it",
-             "headed `## <the point of the question>`, with no number, placed right after item 2. Under the heading, "
-             "give it a line of its own naming its category, the one for how soon its work must happen, one of "
+             "headed `## <the point of the question>`, with no number. In the file, place it right after the whole "
+             "of item 2: past that item's sub-steps and `#### Withdrawn version` sections, and before the next item "
+             "below those sub-steps and sections, or, when no item follows, at the end of the file, below any text after those sub-steps and sections. Under the heading, give it a line of its own naming its category, the one for how soon its work must happen, one of "
              "`#approval_walk_item_in_category_must_fix_now`, "
              "`#approval_walk_item_in_category_fix_next`, `#approval_walk_item_in_category_fix_during_maintenance`, "
              "`#approval_walk_item_in_category_file_an_improvement_feature_or_change`, and a line "
              "`#approval_walk_item_waits_on <title>` for each item it must follow, as the walk-me-through skill's "
              "section \"Re-planning\" says. Do not number it yourself: the close step of "
              "nc-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py "
-             "chooses when, among the items not yet shown, the user sees it, by the items it waits on, its category "
-             "and the day it first entered a walk, so it may come later than right after item 2, and writes its "
-             "number into this heading then."),
+             "chooses when the user sees it, among the items not yet shown, by the items it waits on, its category "
+             "and the day it first entered a walk, so he may see it later than items placed below it in the file, "
+             "and writes its number into this heading then."),
             ("the message says to quote the question whole with a recommendation",
              "Quote the question whole in the item, as its asker wrote it, whether you or another agent, giving each "
              "line of the flagged text a line of its own, word for word, and putting the rest of the question on "
@@ -408,15 +412,15 @@ def test_the_block_message_says_what_to_do():
             ("the message gives the closing line's form when the minutes record no page for the waiting item",
              "End the message you write next with the line `I added the question to the walk as a new item.` and "
              "then the waiting item's closing line, as the walk-me-through skill writes it, as the last text of that "
-             f"message:\n`[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the poem page lives](<page link>) · "
-             f"{CLOSING_LINE_ANSWER_LETTERS}`\n{NO_QUESTION_SENTENCE}\n"
-             f"`[Item 2 of {M_WITH_NO_ITEM_ADDED}, where the poem page lives](<page link>) · "
-             f"{CLOSING_LINE_ANSWER_LETTERS}`\n"
+             f"message. {NOT_IN_BACKTICKS}\n[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the poem page lives](<page link>) · "
+             f"{CLOSING_LINE_ANSWER_LETTERS}\n{NO_QUESTION_SENTENCE}\n"
+             f"[Item 2 of {M_WITH_NO_ITEM_ADDED}, where the poem page lives](<page link>) · "
+             f"{CLOSING_LINE_ANSWER_LETTERS}\n"
              "The minutes record no `#item_page` line for item 2. For each such item, publish its page first if it "
              f"has none and add to {case.minutes} the line `#item_page item <N> of <M> <the page's link>`, which this "
              "hook reads back; then put the same link in place of `<page link>` in the item's closing line.\n"),
             ("the message says how to clear a false block, with the closing line that keeps the walk's count",
-             f"{NO_QUESTION_SENTENCE}\n`[Item 2 of {M_WITH_NO_ITEM_ADDED}, where the poem page lives]")):
+             f"{NO_QUESTION_SENTENCE}\n[Item 2 of {M_WITH_NO_ITEM_ADDED}, where the poem page lives]")):
         check(case_name, phrase in reason, reason)
     check("the message asks for no change to M in any heading or in the minutes",
           "item count M" not in reason and "#next_to_present" not in reason, reason)
@@ -498,6 +502,14 @@ def test_a_line_about_only_the_waiting_items_decision_passes():
     check("a hashtag marker is dropped only when a word character follows `#`, so a heading keeps its text",
           hook.normalized("#new_if_d Alternative: x") == "alternative: x" and hook.normalized("## Item 3") == "item 3"
           and hook.normalized("#9 is closed") == "is closed", hook.normalized("#new_if_d Alternative: x"))
+
+
+def test_while_a_sub_step_waits_the_interruption_item_goes_after_the_whole_item():
+    case = Case(document=f"# A walk\n\n{REAL_ITEM_3_1_DOCUMENT_TEXT}\n", minutes="#next_to_present item 3.1 of 6")
+    case.reply("Should I merge the pull request now?")
+    check_blocked("while sub-step 3.1 waits, the interruption item goes after the whole of item 3, not between its "
+                  "sub-steps", case.run(model="yes"), "place it right after the whole of item 3: past that item's sub-steps",
+                  "later than items placed below it in the file,")
 
 
 def test_a_question_about_something_other_than_the_waiting_item_still_blocks():
@@ -628,6 +640,16 @@ def test_a_failed_model_check_blocks():
         os.environ["PATH"] = saved_path
         os.environ.pop("FAKE_CLAUDE_MODE", None)
         os.environ.pop("FAKE_CLAUDE_CALLS", None)
+
+
+def test_a_question_above_a_label_subheading_in_an_interruption_item_is_held():
+    stray = "merge-lane-2 asks: should I file one GHI listing the remaining seats' tests?"
+    item = INTERRUPTION_ITEM.replace("Recommendation: File it.", "#### Item 2.1: details\n\nMore.\n\nRecommendation: File it.")
+    case = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + item, minutes="#next_to_present item 2 of 11")
+    case.records(PEER_PROMPT, text_record(stray),
+                 text_record("I added it as Item 2.1 of 11.\n\nItem 2 of 11 is waiting for your answer."))
+    check_silent("a question above a `#### Item 2.1: details` subheading in interruption item 2.1 is still the item's, "
+                 "so it passes", case.run(model="yes"))
 
 
 def test_a_question_held_in_an_interruption_item_is_not_checked():
@@ -1050,25 +1072,25 @@ def test_two_waiting_items():
     case = Case(minutes="#next_to_present items 2 and 3 of 10")
     case.reply("Should I merge the pull request now?")
     check_blocked("with two items waiting, the interruption item follows the later one and both are named",
-                  case.run(), "`## <the point of the question>`, with no number, placed right after item 3. Under the heading",
-                  "so it may come later than right after item 3,", "`I added the question to the walk as a new item.`",
+                  case.run(), "`## <the point of the question>`, with no number. In the file, place it right after the whole of "
+                  "item 3: past that item's sub-steps", "`I added the question to the walk as a new item.`",
                   "and then each waiting item's closing line, on a line of its own, as the walk-me-through skill "
-                  f"writes it, as the last text of that message:\n`[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the "
-                  f"poem page lives](<page link>) · {CLOSING_LINE_ANSWER_LETTERS}`\n`[Item 3 of "
+                  f"writes it, as the last text of that message. {NOT_IN_BACKTICKS}\n[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the "
+                  f"poem page lives](<page link>) · {CLOSING_LINE_ANSWER_LETTERS}\n[Item 3 of "
                   f"{M_AFTER_THE_ADDED_ITEM}, the hook](<page link>) · "
-                  f"{CLOSING_LINE_ANSWER_LETTERS}`\n{NO_QUESTION_SENTENCE}\n`[Item 2 of {M_WITH_NO_ITEM_ADDED}, where "
-                  f"the poem page lives](<page link>) · {CLOSING_LINE_ANSWER_LETTERS}`\n`[Item 3 of "
+                  f"{CLOSING_LINE_ANSWER_LETTERS}\n{NO_QUESTION_SENTENCE}\n[Item 2 of {M_WITH_NO_ITEM_ADDED}, where "
+                  f"the poem page lives](<page link>) · {CLOSING_LINE_ANSWER_LETTERS}\n[Item 3 of "
                   f"{M_WITH_NO_ITEM_ADDED}, the hook](<page link>) · "
-                  f"{CLOSING_LINE_ANSWER_LETTERS}`\nThe minutes record no `#item_page` line for items 2 and 3. For each such item")
+                  f"{CLOSING_LINE_ANSWER_LETTERS}\nThe minutes record no `#item_page` line for items 2 and 3. For each such item")
     mixed = Case(minutes="#item_page item 3 of 10 https://claude.ai/artifact/p3\n#next_to_present items 2 and 3 of 10")
     mixed.reply("Should I merge the pull request now?")
     check_blocked("with two items waiting and a page for one, each gets its own form of the closing line",
-                  mixed.run(), f"`[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the poem page lives](<page link>) · "
-                  f"{CLOSING_LINE_ANSWER_LETTERS}`\n`[Item 3 of {M_AFTER_THE_ADDED_ITEM}, the hook]"
-                  f"(https://claude.ai/artifact/p3) · {CLOSING_LINE_ANSWER_LETTERS}`\n{NO_QUESTION_SENTENCE}\n"
-                  f"`[Item 2 of {M_WITH_NO_ITEM_ADDED}, where the poem page lives](<page link>) · "
-                  f"{CLOSING_LINE_ANSWER_LETTERS}`\n`[Item 3 of {M_WITH_NO_ITEM_ADDED}, the hook]"
-                  f"(https://claude.ai/artifact/p3) · {CLOSING_LINE_ANSWER_LETTERS}`\n"
+                  mixed.run(), f"[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the poem page lives](<page link>) · "
+                  f"{CLOSING_LINE_ANSWER_LETTERS}\n[Item 3 of {M_AFTER_THE_ADDED_ITEM}, the hook]"
+                  f"(https://claude.ai/artifact/p3) · {CLOSING_LINE_ANSWER_LETTERS}\n{NO_QUESTION_SENTENCE}\n"
+                  f"[Item 2 of {M_WITH_NO_ITEM_ADDED}, where the poem page lives](<page link>) · "
+                  f"{CLOSING_LINE_ANSWER_LETTERS}\n[Item 3 of {M_WITH_NO_ITEM_ADDED}, the hook]"
+                  f"(https://claude.ai/artifact/p3) · {CLOSING_LINE_ANSWER_LETTERS}\n"
                   "The minutes record no `#item_page` line for item 2. For each such item")
 
 
@@ -1183,21 +1205,21 @@ def test_the_refusal_gives_the_waiting_items_closing_line_and_it_passes_once_the
     case = Case(minutes="#item_page item 2 of 10 https://claude.ai/artifact/p2\n#next_to_present item 2 of 10")
     case.reply("Should I merge the pull request now?")
     reason = blocked_reason(case.run()) or ""
-    expected = (f"`[Item 2 of 11, where the poem page lives](https://claude.ai/artifact/p2) · "
-                f"{CLOSING_LINE_ANSWER_LETTERS}`")
+    expected = (f"[Item 2 of 11, where the poem page lives](https://claude.ai/artifact/p2) · "
+                f"{CLOSING_LINE_ANSWER_LETTERS}")
     unchanged = expected.replace("Item 2 of 11", "Item 2 of 10")
     check("the refusal gives the waiting item's closing line with its page link, the new total for a question and "
           "the walk's own total for text that asks nothing",
-          reason.endswith(f"as the last text of that message:\n{expected}\n{NO_QUESTION_SENTENCE}\n{unchanged}\n"
+          reason.endswith(f"as the last text of that message. {NOT_IN_BACKTICKS}\n{expected}\n{NO_QUESTION_SENTENCE}\n{unchanged}\n"
                           + hook.REFUSAL_INSTRUCTIONS[-1]), reason)
-    case.reply(unchanged[1:-1])
+    case.reply(unchanged)
     check_silent("the reply the refusal asks for when the flagged text asks nothing, the closing line alone, passes",
                  case.run(model="yes"))
     done = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n"
                 + INTERRUPTION_ITEM.replace("merge-lane-2 asks: should I file one GHI listing the remaining seats' "
                                             "tests?", "Should I merge the pull request now?"),
                 minutes="#item_page item 2 of 10 https://claude.ai/artifact/p2\n#next_to_present item 2 of 11")
-    done.reply("Should I merge the pull request now?\n\nI added the question as Item 2.1 of 11.\n\n" + expected[1:-1])
+    done.reply("Should I merge the pull request now?\n\nI added the question as Item 2.1 of 11.\n\n" + expected)
     check_silent("the reply the refusal's step 4 asks for passes once steps 1 and 2 are done", done.run(model="yes"))
 
 

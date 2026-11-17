@@ -56,6 +56,9 @@ sandboxed_update_lock_path = fixture.sandboxed_update_lock_path
 def run_unpinned_task_list_startup_refusal_cases(workspace: Path):
     """A supervisor not started by a launcher that pins its task list refuses
     to start; the read-only --check needs no pin."""
+    this_machine_launcher = ("launch-claude-ubuntu"
+                             if supervisor.handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box()
+                             else "launch-claude-mac")
     for value in (None, "", "   "):
         environment = dict(os.environ)
         environment.pop("CLAUDE_CODE_TASK_LIST_ID", None)
@@ -75,9 +78,9 @@ def run_unpinned_task_list_startup_refusal_cases(workspace: Path):
                   and "startup stopped" in result.stderr
                   and "not started by a launcher that pins its task list" in result.stderr
                   and "CLAUDE_CODE_TASK_LIST_ID is unset or empty" in result.stderr
-                  and "`/Users/el/Projects/nedschorus/scripts/launch-claude-mac unpinned`" in result.stderr
-                  and "`/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu unpinned`" in result.stderr
-                  and "start it on the Mac" in result.stderr
+                  and ("To start the agent-seat, ask the user to run "
+                       f"`/Users/el/Projects/nedschorus/scripts/{this_machine_launcher} unpinned` "
+                       "in a Terminal on his Mac.") in result.stderr
                   and not (workspace / "unpinned").exists(), result.stderr)
         result = subprocess.run(
             [sys.executable, str(SCRIPT_PATH), "--check", "--agent", "unpinned",
@@ -278,6 +281,32 @@ def run_process_identity_cases(workspace: Path):
 
     check("and once it is gone it is no longer recognised",
           not supervisor.process_is_supervisor_for_agent(running.pid, "identity-seat")[0])
+
+    # The stand-in is reached through a process that waits before its exec,
+    # so for that time its command line is not a supervisor's: a fixture that
+    # yielded as soon as Popen returned would hand the case a process that is
+    # not yet a supervisor, as `ps` showed `[python3]` mid-exec under load.
+    late_exec = ("import json, os, time\n"
+                 "time.sleep(0.5)\n"
+                 "command = json.loads(os.environ['STAND_IN_SUPERVISOR_COMMAND'])\n"
+                 "os.execv(command[0], command)\n")
+    with a_process_that_looks_like_a_supervisor(
+            workspace, "late-exec-seat",
+            launched_through=[sys.executable, "-c", late_exec]) as running:
+        alive, detail = supervisor.process_is_supervisor_for_agent(
+            running.pid, "late-exec-seat")
+        check("the stand-in supervisor is handed over only once it is running", alive, detail)
+
+    try:
+        with a_process_that_looks_like_a_supervisor(
+                workspace, "never-runs-seat",
+                launched_through=["sh", "-c", "exit 3"]):
+            check("a stand-in supervisor that never runs is not handed over", False,
+                  "the fixture yielded")
+    except RuntimeError as refusal:
+        check("a stand-in supervisor that never runs is not handed over",
+              "never printed" in str(refusal) and "exit status is 3" in str(refusal),
+              str(refusal))
 
     # argparse accepts --agent=NAME as well as --agent NAME. No launcher writes
     # it that way today (checked across both launchers and both recovery
@@ -899,6 +928,7 @@ def run_launched_session_github_token_cases(workspace: Path):
     machine_account = ("ubuntu-claude"
                        if supervisor.handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box()
                        else "mac-claude")
+    machine_launcher = "launch-claude-ubuntu" if machine_account == "ubuntu-claude" else "launch-claude-mac"
 
     def start_supervisor(agent, home=None):
         record_path.unlink(missing_ok=True)
@@ -938,7 +968,7 @@ def run_launched_session_github_token_cases(workspace: Path):
         prepare(token_file)
         completed, recorded = start_supervisor("merge-lane-2", home=home)
         check(f"a {label} token file: the supervisor starts no session and exits 5, "
-              "naming the agent-seat, the account, the file and the launchers by their path in the Mac checkout",
+              "naming the agent-seat, the account, the file, and the leftover shell the user exits before he runs this machine's launcher in a Terminal on his Mac",
               completed.returncode == supervisor.AGENT_SEAT_GITHUB_TOKEN_UNREADABLE_EXIT_STATUS == 5
               and recorded == "no session"
               and "the agent-seat merge-lane-2 was not started" in completed.stderr
@@ -947,8 +977,10 @@ def run_launched_session_github_token_cases(workspace: Path):
               and "Do not start the agent-seat any other way" in completed.stderr
               and remedy in completed.stderr
               and "If you are an agent, do not open, write or change the file" in completed.stderr
-              and "`/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu merge-lane-2`" in completed.stderr
-              and "`/Users/el/Projects/nedschorus/scripts/launch-claude-mac merge-lane-2`" in completed.stderr,
+              and ("Once the file is fixed: ask the user, in the Terminal on his Mac that shows the "
+                   "agent-seat's tmux session, first to exit the shell the launcher left open there, if it "
+                   "left one, and then to run "
+                   f"`/Users/el/Projects/nedschorus/scripts/{machine_launcher} merge-lane-2`.") in completed.stderr,
               f"{recorded!r}; exit {completed.returncode}: {completed.stderr[-800:]}")
         if token_file.exists():
             token_file.chmod(0o600)

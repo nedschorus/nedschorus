@@ -15,9 +15,10 @@ running. A worktree that is not idle is KEPT, with the reason, when:
   - its owner file cannot be read;
   - it has no owner file, as agent-homes and worktrees made by hand have,
     and is not a merge-lane review checkout;
-  - it is locked with `git worktree lock`, as Claude Code locks a subagent's
-    worktree while the subagent runs, apart from the lock CLAUDE CODE'S LOCK
-    below unlocks;
+  - it is locked with `git worktree lock`, apart from the lock CLAUDE CODE'S
+    LOCK below unlocks; a subagent's worktree that Claude Code made through
+    its `WorktreeCreate` hook, with an owner file and no lock, is judged by
+    its owner;
   - git would prune it, its directory being gone, unless STOPPED PARTWAY
     below applies;
   - a rebase, merge, cherry-pick or revert is in progress in it, or git
@@ -25,14 +26,20 @@ running. A worktree that is not idle is KEPT, with the reason, when:
   - whether its owner runs cannot be read;
   - a live process has its working directory inside it, or the vacancy check
     (lsof) cannot be trusted: lsof missing, failing, timing out or listing no
-    working directories at all.
+    working directory for any process.
 
 Otherwise the owner and the branch's pull request decide. The pull requests
-come from one `gh pr list --state all` per invocation; a pull request is the
-branch's when its head branch has the branch's name, and, for a merged or
-closed one, when its head commit is the worktree's HEAD, so a new worktree on a
-reused branch name is not judged by an old pull request. If gh fails, every
-worktree whose verdict needs a pull request is kept.
+come from one `gh pr list --state all` per invocation; an open pull request is
+the branch's when its head branch has the branch's name. A merged or closed
+one is the branch's when it holds the worktree's HEAD as one of its own
+commits: its head branch has the branch's name and its head commit is HEAD;
+or HEAD is not a commit of origin/main's first-parent line and either its head
+commit is HEAD under any head branch, as when HEAD was pushed under another
+name, or its head branch has the branch's name and HEAD is an ancestor of its
+head commit, as when a fix-round pushed later commits from another worktree.
+So a new worktree on a reused branch name, which stands on a main commit, is
+not judged by an old pull request. If gh fails, every worktree whose verdict
+needs a pull request is kept, as is one whose ancestry git cannot read.
 
   WHILE ITS OWNER RUNS, a worktree is removed only when its branch's pull
   request has merged or been closed and it holds no uncommitted or untracked
@@ -254,7 +261,8 @@ it was and a line opening `FAILED: ` says so.
 Modes:
   (default)    report every worktree, one line each, then the count lines
   --only-done  print only what needs someone's attention — done worktrees,
-               the orphaned-branch-ref line, and the dead-registration line
+               the line naming branch refs with no worktree that are fully
+               on main (orphaned branch refs), and the dead-registration line
                when there are any; nothing otherwise (the launchers run this
                at boot, so a reapable worktree, an orphaned branch ref or a
                dead registration is named at the moment someone is looking)
@@ -289,7 +297,8 @@ When a line cannot be written, the run prints a line containing FAILED
 with the cause, then the command that writes the unwritten line once the
 cause is fixed, then what to do if that command fails; it carries on
 removing, and exits 1 at the end. When the handoff-supervisor runs --remove
-at a session-handoff, its report keeps all three lines. The environment variable
+at a session-handoff, its report to the agent-session keeps the FAILED line
+and the two lines after it. The environment variable
 CLEAN_WORKTREES_REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_FILE_OVERRIDE names
 a local file to append to instead, which is how the tests keep out of the
 log-store.
@@ -322,7 +331,6 @@ the run where it failed; with --remove-worktree-and-force-delete-its-branch
 or --force-delete-branch that is exit 1 with a FAILED line.
 """
 
-import contextlib
 import fnmatch
 import hashlib
 import importlib.util
@@ -334,7 +342,6 @@ import shutil
 import stat
 import subprocess
 import sys
-import tempfile
 import time
 from collections import Counter
 from dataclasses import dataclass, field
@@ -374,6 +381,13 @@ _merge_lane_common_spec = importlib.util.spec_from_file_location(
     REPO_ROOT / "scripts" / "merge-lane-pull-request-helpers-common-options-paths-and-token.py")
 merge_lane_common = importlib.util.module_from_spec(_merge_lane_common_spec)
 _merge_lane_common_spec.loader.exec_module(merge_lane_common)
+
+_task_file_rewrite_spec = importlib.util.spec_from_file_location(
+    "agent_seat_task_list_task_file_rewrite_common",
+    REPO_ROOT / "nc-systems" / "general-tools" / "agent-seat-task-list-task-file-rewrite-common.py")
+_task_file_rewrite = importlib.util.module_from_spec(_task_file_rewrite_spec)
+_task_file_rewrite_spec.loader.exec_module(_task_file_rewrite)
+agent_seat_task_list_task_file_rewrite = _task_file_rewrite.agent_seat_task_list_task_file_rewrite
 
 # After a merge, merge-lane-2's merge program removes pr<n>-head and pr<n>-merged and runs main's tests
 # in pr<n>-merge-commit-on-main-worktree; between its steps no process has a working directory
@@ -427,7 +441,7 @@ MAIN_BRANCH = "main"
 # One listing of every pull request serves the whole invocation; gh pages through them all.
 PULL_REQUEST_LISTING_TIMEOUT_SECONDS = 300
 PULL_REQUEST_LISTING_LIMIT = 100000
-PULL_REQUEST_HEAD_REFS_LISTING_TIMEOUT_SECONDS = 120
+PULL_REQUEST_HEAD_REFS_LISTING_TIMEOUT_SECONDS = 120  # pragma: no mutate, a limit a second longer or shorter changes nothing a test can see without a git ls-remote that runs for two minutes
 PULL_REQUEST_HEAD_REF = re.compile(r"refs/pull/(\d+)/head")
 FINISHED_PULL_REQUEST_STATES = ("MERGED", "CLOSED")
 FORCE_DELETABLE_BRANCH_LINE_START = (
@@ -676,8 +690,9 @@ def branch_refs_and_tips_with_no_worktree_not_fully_on_main(repo, freed_branches
                 for record in git_output.worktree_records(listing)} - set(freed_branches)
     unlanded = git_output.run_git(repo, ["for-each-ref", "--format=%(objectname) %(refname:lstrip=2)",
                                          "--no-merged", "origin/main", "refs/heads/"])
-    refs = [line.split(" ", 1) for line in os.fsdecode(unlanded).splitlines()]
-    return [(branch, tip) for tip, branch in refs if branch not in attached and branch != MAIN_BRANCH]
+    # Split on the ASCII space alone: a ref name can hold other whitespace, such as U+00A0.
+    refs = [line.partition(" ") for line in os.fsdecode(unlanded).splitlines()]
+    return [(branch, tip) for tip, _, branch in refs if branch not in attached and branch != MAIN_BRANCH]
 
 
 def first_prompt_list_module():
@@ -1264,6 +1279,50 @@ def idle_worktree_removal_keep_reason(worktree, verdict):
     return None
 
 
+def finished_pull_requests_holding_head(worktree, head, pull_requests_of_branch, by_head_branch):
+    """Return (the merged or closed pull requests that hold the worktree's HEAD as one of their
+    own commits, None), or (None, git's error).
+
+    One on the worktree's branch whose head commit is HEAD always counts. Otherwise HEAD must not be
+    a commit of origin/main's first-parent line, where a new worktree cut from main stands, so that
+    a new worktree on a reused branch name is not judged by an earlier pull request; then one counts
+    whose head commit is HEAD under another branch name, as when HEAD was pushed under that name,
+    or one on the worktree's branch whose head commit HEAD is an ancestor of, as when a fix-round
+    pushed later commits from another worktree."""
+    finished_on_branch = [pull_request for pull_request in pull_requests_of_branch
+                          if pull_request["state"] in FINISHED_PULL_REQUEST_STATES]
+    exact = [pull_request for pull_request in finished_on_branch
+             if pull_request["headRefOid"] == head]
+    if exact or not head:
+        return exact, None
+    candidates = [pull_request for pull_requests in by_head_branch.values()
+                  for pull_request in pull_requests
+                  if pull_request["state"] in FINISHED_PULL_REQUEST_STATES
+                  and pull_request["headRefOid"] == head]
+    for pull_request in finished_on_branch:
+        later = pull_request["headRefOid"]
+        # A head commit missing from the clone, as a deleted branch's can be, cannot be shown to
+        # hold HEAD, so it counts for nothing and the worktree is kept.
+        if run_git(worktree, "cat-file", "-e", f"{later}^{{commit}}").returncode != 0:
+            continue
+        ancestry = run_git(worktree, "merge-base", "--is-ancestor", head, later)
+        if ancestry.returncode == 0:
+            candidates.append(pull_request)
+        elif ancestry.returncode != 1:
+            return None, (f"`git merge-base --is-ancestor {head} {later}` exited "
+                          f"{ancestry.returncode}: "
+                          f"{' '.join(ancestry.stderr.split())[:120] or 'no error text'}")
+    if not candidates:
+        return [], None
+    main_line = run_git(worktree, "rev-list", "--first-parent", "origin/main")
+    if main_line.returncode != 0:
+        return None, (f"`git rev-list --first-parent origin/main` exited {main_line.returncode}: "
+                      f"{' '.join(main_line.stderr.split())[:120] or 'no error text'}")
+    if head in main_line.stdout.split():
+        return [], None
+    return candidates, None
+
+
 def classify_unlocked(worktree, branch, record, pull_requests, owner_to_write=None):
     """Return the Verdict for an unlocked worktree, or one --remove will have unlocked and given
     owner_to_write as its owner file."""
@@ -1317,11 +1376,6 @@ def classify_unlocked(worktree, branch, record, pull_requests, owner_to_write=No
                                   f"{error}", KEPT_NOT_CHECKABLE, owner, state)
     open_pull_requests = [pull_request for pull_request in pull_requests_of_branch
                           if pull_request["state"] == "OPEN"]
-    # A merged or closed pull request counts only for the commit it was opened on, so a new
-    # worktree on a reused branch name is not judged by an earlier pull request.
-    finished_pull_requests = [pull_request for pull_request in pull_requests_of_branch
-                              if pull_request["state"] in FINISHED_PULL_REQUEST_STATES
-                              and pull_request["headRefOid"] == record.head]
 
     detached_commit = None
     if running:
@@ -1329,9 +1383,17 @@ def classify_unlocked(worktree, branch, record, pull_requests, owner_to_write=No
             return Verdict(False, f"its owner, {owner_text(owner)}, runs, and "
                                   f"{pull_request_text(open_pull_requests[0])} on its branch "
                                   f"{branch} is open", KEPT_OWNER_RUNNING, owner, state)
+        finished_pull_requests = []
+        if branch is not None:
+            # by_head_branch() already succeeded above, so it cannot raise here.
+            finished_pull_requests, git_error = finished_pull_requests_holding_head(
+                worktree, record.head, pull_requests_of_branch, pull_requests.by_head_branch())
+            if finished_pull_requests is None:
+                return Verdict(False, f"whether a finished pull request holds its HEAD could not "
+                                      f"be read: {git_error}", KEPT_NOT_CHECKABLE, owner, state)
         if not finished_pull_requests:
-            what = (f"its branch {branch} has no merged or closed pull request whose head commit "
-                    f"is its HEAD" if branch is not None
+            what = (f"its branch {branch} has no merged or closed pull request holding its HEAD "
+                    f"as one of the pull request's own commits" if branch is not None
                     else "its HEAD is detached, so no pull request is its")
             return Verdict(False, f"its owner, {owner_text(owner)}, runs, and {what}",
                            KEPT_OWNER_RUNNING, owner, state)
@@ -1340,8 +1402,12 @@ def classify_unlocked(worktree, branch, record, pull_requests, owner_to_write=No
                                   f"{len(uncommitted)} uncommitted or untracked file(s): "
                                   f"{discarded_files_text(uncommitted)}",
                            KEPT_OWNER_RUNNING, owner, state)
+        finished = finished_pull_requests[0]
+        on_which_branch = (f"on its branch {branch}" if finished["headRefName"] == branch
+                           else f"on the branch {finished['headRefName']}, whose head commit is "
+                                f"its HEAD,")
         why = (f"its owner, {owner_text(owner)}, runs, and "
-               f"{pull_request_text(finished_pull_requests[0])} on its branch {branch} is finished")
+               f"{pull_request_text(finished)} {on_which_branch} is finished")
     else:
         if open_pull_requests:
             return Verdict(False, f"its owner, {owner_text(owner)}, has stopped, and "
@@ -2052,18 +2118,9 @@ def close_restored_branch_tasks(repo, remove, only_done, task_lists_directory=No
         task = dict(task, status="completed", description=(
             str(task.get("description", "")).rstrip("\n")
             + f"\nMarked completed by scripts/clean-worktrees.py at {now}: {reason}."))
-        partial = None
         try:
-            # A partial file of its own: cleaners run at the same time, one per session-handoff.
-            descriptor, partial = tempfile.mkstemp(prefix=f".{task_file.name}.", suffix=".partial",
-                                                   dir=task_file.parent)
-            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                stream.write(json.dumps(task, indent=2))
-            os.replace(partial, task_file)
+            agent_seat_task_list_task_file_rewrite(task_file, task)
         except OSError as error:
-            if partial is not None:
-                with contextlib.suppress(OSError):
-                    os.unlink(partial)
             out(f"FAILED: {name} could not be rewritten as completed ({type(error).__name__}: "
                 f"{error}); it is left as it was")
             failures += 1
@@ -2210,7 +2267,9 @@ def remove_one_named_worktree(repo, main_checkout, path):
             continue
         if not removal_never_began(record, listed):
             branch = record.get("branch")
-            if branch and branch != MAIN_BRANCH and commit_of(repo, f"refs/heads/{branch}") != "unknown":
+            if (branch and branch != MAIN_BRANCH and
+                    commit_of(repo, f"refs/heads/{branch}") != "unknown"  # pragma: no mutate, commit_of returns "unknown" or a hex commit name, and every hex digit sorts before "u", so < gives what != gives
+            ):
                 failure = push_branch_unless_origin_holds_its_last_commit_failure(repo, branch)
                 if failure is not None:
                     print(f"{Path(path).name}: kept — an earlier run of scripts/clean-worktrees.py "
@@ -2370,7 +2429,8 @@ def main(argv=None):
                    else WHAT_A_STOPPED_INVOCATION_REMOVED_WITHOUT_REMOVE)
         print(f"{STOPPED_LINE_START}{' '.join(str(error).split())}; {removed}\n"
               + next_step_lines.git_failure_next_step_lines(
-                  rerun, text_the_failure_line_contains=STOPPED_LINE_START.strip()),
+                  rerun, git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=str(error),
+                  text_the_failure_line_contains=STOPPED_LINE_START.strip()),
               file=sys.stderr)
         return 2
 

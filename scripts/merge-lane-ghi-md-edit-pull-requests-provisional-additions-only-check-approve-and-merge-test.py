@@ -544,7 +544,8 @@ def main():
               f"exit {code}\n{output}")
         for merge_exit, outcome in ((1, "not merged"), (2, "not merged"),
                                     (3, "merged, but a step after the merge was not done"),
-                                    (4, "not merged"), (-9, "not merged")):
+                                    (4, "whether it merged is unknown"), (5, "not merged"),
+                                    (-9, "not merged")):
             scratch = Scratch(root, f"merge-exit-{merge_exit}")
             (scratch.directory / "merge.exit").write_text(str(merge_exit))
             scratch.routes(routes_for())

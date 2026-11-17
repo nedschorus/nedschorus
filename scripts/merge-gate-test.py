@@ -143,6 +143,7 @@ DESCRIPTION_DEFECT_LINE_READER = Path(__file__).with_name(
     "pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py")
 NO_SANDBOX_SUITES_PROGRAM = Path(__file__).with_name("no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py")
 GIT_REDIRECTING_ENVIRONMENT_COMMON = Path("nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py")
+GIT_MACHINE_READABLE_OUTPUT_COMMON = Path("nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
 FIXTURES = Path(__file__).with_name("merge-gate-test-captured-github-responses")
 BASH = shutil.which("bash")
 TEST_TOKEN = "merge-gate-test-token-not-a-credential"
@@ -334,8 +335,8 @@ def gate_copy(text):
     shutil.copyfile(DESCRIPTION_DEFECT_LINE_READER, directory / DESCRIPTION_DEFECT_LINE_READER.name)
     shutil.copyfile(NO_SANDBOX_SUITES_PROGRAM, directory / NO_SANDBOX_SUITES_PROGRAM.name)
     (top / GIT_REDIRECTING_ENVIRONMENT_COMMON).parent.mkdir(parents=True)
-    shutil.copyfile(Path(__file__).resolve().parent.parent / GIT_REDIRECTING_ENVIRONMENT_COMMON,
-                    top / GIT_REDIRECTING_ENVIRONMENT_COMMON)
+    for common in (GIT_REDIRECTING_ENVIRONMENT_COMMON, GIT_MACHINE_READABLE_OUTPUT_COMMON):
+        shutil.copyfile(Path(__file__).resolve().parent.parent / common, top / common)
     copy = directory / "merge-gate.sh"
     copy.write_text(text)
     return copy

@@ -5,12 +5,12 @@ The threshold hook, scripts/handoff-context-threshold-hook.py, writes the marker
 first handoff-deferral: when the deferral began, and the subagents, workflows and background
 Bash tasks then in flight, which are the only work later turns wait for. The cold-read-grid refusal hook
 refuses a cold-read-full-run while the marker file exists and appends the refused command to
-the file of refused commands. The handoff writer script reads both to list, in the
-session-handoff, the work the deferral did not wait for. When the threshold hook fires the
+the file of refused commands. The handoff writer script reads the file of refused commands to
+list them in the session-handoff, and the marker's start time to leave out of the past-wait-limit
+fields the background tasks the deferral did not wait for. When the threshold hook fires the
 handoff instruction it moves the marker file aside, so a later compaction cannot refire it, and
 the writer reads the moved record; a record left by an earlier deferral that fired is read only
-when no marker file exists, and then lists only background tasks still running, which the
-session-handoff stops anyway.
+when no marker file exists.
 
 Both files live in the handoff directory and are named by the Claude Code session id, which a
 hook running inside a subagent also receives, as the id of the agent-session that started it.

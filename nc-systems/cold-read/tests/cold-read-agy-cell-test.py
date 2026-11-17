@@ -33,8 +33,9 @@ WHAT IS PINNED HERE.
   - The chat-instead-of-file quirk. The campaign measured gemini-3.8-flash
     sometimes answering the whole review in chat rather than writing the
     file. A model that exits 0 with no file and a stdout long enough to be a
-    review (the campaign's 120-word threshold) has its stdout taken as the
-    report, stamped, and the recovery announced on stderr. Three things
+    review (the campaign's 120-word threshold, exactly 120 words included)
+    has its stdout taken as the report, stamped, and the recovery announced
+    on stderr. Three things
     bound that: a short stdout -- a remark, not a review -- still fails the
     cell with no report left behind; a non-zero exit is a failure whatever
     stdout holds, as on every leg; and a report the model wrote one directory
@@ -558,7 +559,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a fast-tier cell whose agy writes the report exits 0",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
     stamp = provenance_stamp_of(report)
-    check("the fast tier is pinned to gemini-3.8-flash-medium at medium, stamped as runtime agy",
+    check("the fast tier is pinned to gemini-3.8-flash-medium at medium, stamped runtime=agy",
           stamp.startswith("<!-- provenance: runtime=agy model=gemini-3.8-flash-medium "
                            "effort=medium cell=fast-clarify tier=fast "),
           repr(stamp))
@@ -660,6 +661,15 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the remark itself still reaches stderr, as the model's own account",
           SHORT_CHAT_REMARK.strip() in result.stderr, repr(result.stderr))
 
+    # --- The threshold's boundary: exactly the minimum is a review ---------
+    minimum_words_stdout = " ".join(
+        f"word{index}" for index in range(agy_cell.STDOUT_REVIEW_MINIMUM_WORDS))
+    check("a stdout of exactly the minimum word count is returned as the review",
+          agy_cell.stdout_is_a_review(minimum_words_stdout) == minimum_words_stdout)
+    one_word_short_stdout = minimum_words_stdout.rsplit(" ", 1)[0]
+    check("a stdout one word short of the minimum is not a review",
+          agy_cell.stdout_is_a_review(one_word_short_stdout) == "")
+
     # --- A non-zero exit is a failure whatever stdout holds ---------------
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "chat-then-crash")
@@ -704,7 +714,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and " model=gemini-3.8-flash-high " in stamp and " effort=high " in stamp,
           f"exit {result.returncode}; stamp={stamp!r}; stderr={result.stderr!r}")
 
-    print("SKIP  the credential-file cases: they need the real sandbox program, "
+    print("Not run here: the credential-file cases need the real sandbox program, "
           f"which cannot start in the nc-test-sandbox; {REAL_SANDBOX_CASES_SUITE} runs them")
 
     # --- The Google login, not a Gemini API key -------------------------------
@@ -1003,6 +1013,66 @@ with tempfile.TemporaryDirectory() as scratch:
           agy_descriptor_count == "1",
           f"descriptors on the record directory: {agy_descriptor_count}; exit {result.returncode}; "
           f"stderr={result.stderr[-2000:]!r}")
+
+    # --- A pipe holder outside the group does not keep the run waiting -----
+    # The runner is called directly, with its wait for the pipes cut to one
+    # second, so a holder that outlives that wait shows the bound in seconds.
+    holder_pid_file = scratch / "outside-group-pipe-holder-pids"
+
+    def reviewer_leaving_outside_holder(result_line):
+        # Starts a child in a session of its own that holds stdout and stderr
+        # for 60 s, optionally prints a result line, then exits 0.
+        return [sys.executable, "-c", (
+            "import subprocess, sys\n"
+            "holder = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'],"
+            " start_new_session=True)\n"
+            f"open({str(holder_pid_file)!r}, 'a').write('%d\\n' % holder.pid)\n"
+            f"sys.stdout.write({result_line!r}); sys.stdout.flush()\n")]
+
+    def result_line_parser(line):
+        return (0, "the answer") if line.startswith("RESULT") else None
+
+    saved_pipes_close_wait = cell_common.REVIEWER_PIPES_CLOSE_WAIT_SECONDS
+    real_killpg = cell_common.os.killpg
+    failed_killpg_calls = []
+
+    def counting_killpg(process_group, signal_number):
+        try:
+            real_killpg(process_group, signal_number)
+        except (ProcessLookupError, PermissionError):
+            failed_killpg_calls.append(process_group)
+            raise
+
+    saved_sigterm_handler = signal.getsignal(signal.SIGTERM)
+    cell_common.REVIEWER_PIPES_CLOSE_WAIT_SECONDS = 1.0
+    cell_common.os.killpg = counting_killpg
+    try:
+        started = time.monotonic()
+        result = cell_common.run_reviewer_program_in_own_process_group_until_timeout(
+            reviewer_leaving_outside_holder(""), None, None, 2.0, result_line_parser)
+        elapsed = time.monotonic() - started
+        check("a run with no result line whose pipes a process outside its group holds ends "
+              "soon after its deadline, saying the pipes were still held",
+              result.returncode is None and elapsed < 15
+              and cell_common.REVIEWER_PIPES_STILL_OPEN_PHRASE in result.stderr,
+              f"exit {result.returncode}; {elapsed:.1f} s; stderr={result.stderr!r}")
+        failed_killpg_calls.clear()
+        started = time.monotonic()
+        result = cell_common.run_reviewer_program_in_own_process_group_until_timeout(
+            reviewer_leaving_outside_holder("RESULT\n"), None, None, 30.0, result_line_parser)
+        elapsed = time.monotonic() - started
+        check("after the result line, a process outside the group holding the pipes keeps the "
+              "kill loop going only until the wait for the pipes ends",
+              result.returncode == 0 and result.stdout == "the answer" and elapsed < 15
+              and cell_common.REVIEWER_PIPES_STILL_OPEN_PHRASE in result.stderr,
+              f"exit {result.returncode}; {elapsed:.1f} s; stderr={result.stderr!r}")
+        check("once killing the emptied group fails, the group is not killed again",
+              len(failed_killpg_calls) <= 1, repr(failed_killpg_calls))
+    finally:
+        cell_common.REVIEWER_PIPES_CLOSE_WAIT_SECONDS = saved_pipes_close_wait
+        cell_common.os.killpg = real_killpg
+        signal.signal(signal.SIGTERM, saved_sigterm_handler)
+        kill_left_over_processes(pids_written_to(holder_pid_file))
 
     # --- No sandbox program on PATH: refused, agy never started ------------
     repository = build_scratch_repository(scratch)
