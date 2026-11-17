@@ -23,8 +23,9 @@ command that exited 0 counts as a merge. Once the pull request has merged, git i
 review worktrees, pr<n>-head and pr<n>-merged, with any changes in them; a
 worktree not there is left alone.
 
-Then main is tested where the merge changed it: the program fetches origin in
---review-tools-worktree-at-main, makes a detached worktree pr<n>-merge-commit-on-main-worktree
+Then main is tested where the merge changed it: the program fetches the merge
+commit alone from origin into --review-tools-worktree-at-main, which updates no
+remote-tracking branch, makes a detached worktree pr<n>-merge-commit-on-main-worktree
 at the merge commit GitHub reports, and runs that worktree's own
 scripts/run-all-test-suites.py --only-suites-whose-recorded-inputs-changed-since
 <since>, so only the suites whose recorded inputs changed since a tested tree
@@ -388,7 +389,10 @@ def after_merge_test_run(arguments, merge_commit):
     next_steps = (f"If git names a cause you can fix, fix it; then, in a detached worktree at "
                   f"{merge_commit}, run: {by_hand}\n"
                   f"Otherwise, tell the user this message.")
-    fetch = git("fetch", "--quiet", "origin")
+    # Not a fetch of every branch: that updates origin/main, which every agent-seat's
+    # checkout of the same clone also fetches into, and git refuses the second of two
+    # fetches that update it at once with "incorrect old value provided".
+    fetch = git("fetch", "--quiet", "--no-write-fetch-head", "origin", merge_commit)
     if fetch.returncode != 0:
         print(f"STOP: merged, but main was not tested: could not fetch origin in {checkout} "
               f"to get the merge commit {merge_commit}: "
