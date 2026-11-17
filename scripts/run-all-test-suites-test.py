@@ -2434,7 +2434,6 @@ for arguments, git_directory, work_tree in (
           "status"], None, None),
         (["add", "-A"], "/tmp/elsewhere/.git", "/tmp/elsewhere"),
         (["--git-dir", "../elsewhere.git", "log"], None, None),
-        (["-C", "sub", "-C", "../..", "--git-dir", "elsewhere.git", "log"], None, None),
         (["--git-dir", "/checkout-top/.git", "--git-dir", "/tmp/elsewhere/.git", "log"],
          "/checkout-top/.git", None),
         (["--git-dir", "/tmp/elsewhere/.git", "--work-tree=/tmp/elsewhere", "status"],
@@ -2459,6 +2458,8 @@ for arguments in (
         ["--git-dir", "/tmp/elsewhere/.git", "--namespace", "elsewhere", "log"],
         ["--git-dir", "/tmp/elsewhere/.git", "--config-env", "a.b=VALUE", "log"],
         ["--git-dir", "/tmp/elsewhere/.git", "--no-pager", "log"],
+        # git enters sub on the way, which a recording of where it ends up would not name.
+        ["-C", "sub", "-C", "../..", "--git-dir", "elsewhere.git", "log"],
         ["--git-dir", "/tmp/elsewhere/.git", "--git-dir", "/checkout-top/.git", "log"],
         ["--git-dir", "/tmp/elsewhere/.git", "--work-tree", "/tmp/elsewhere",
          "--work-tree", "/checkout-top", "status"]):
@@ -2714,8 +2715,8 @@ with tempfile.TemporaryDirectory() as scratch:
     check("deleting sub, which git enters on the way to the directory it lists, selects the "
           "suites whose git ls-files calls go through it",
           result.returncode == 0 and {"two-dash-c-test.py", "dot-dot-test.py"} <= set(ran(root))
-          and all(f"SELECTED {suite}: it runs git ls-files on the checkout, and sub/kept.txt "
-                  f"was deleted" in out for suite in ("two-dash-c-test.py", "dot-dot-test.py")),
+          and all(f"SELECTED {suite}: it looks for sub, which was deleted" in out
+                  for suite in ("two-dash-c-test.py", "dot-dot-test.py")),
           (ran(root), result.stdout, result.stderr))
     run(root)
     since = head(repo)
@@ -2736,6 +2737,164 @@ with tempfile.TemporaryDirectory() as scratch:
           "list of files",
           recorded.get(module.RECORDED_GIT_COMMANDS_CHANGED_BY_ANY_FILE_KEY) == ["ls-files"]
           and not recorded.get(THROUGH_PATHSPECS), recorded)
+    since = head(repo)
+    git(repo, "rm", "-q", "--cached", "mod")
+    shutil.rmtree(repo / "mod")
+    git(repo, "commit", "-q", "-m", "remove the submodule")
+    run(root)
+    check("the git ls-files -- mod/ call recorded once the submodule is gone is tied only "
+          "through its pathspecs", bool(recording(root, "submodule-test.py").get(THROUGH_PATHSPECS)),
+          recording(root, "submodule-test.py"))
+    result = select_since(root, since)
+    check("deleting a submodule that only COMMIT's tree holds selects the suite whose git "
+          "ls-files call names it",
+          result.returncode == 0 and "submodule-test.py" in ran(root)
+          and any(line.startswith("SELECTED submodule-test.py: ") and "mod is a submodule"
+                  in line for line in lines(result.stdout)),
+          (ran(root), result.stdout, result.stderr))
+
+# --- A git call's -C walk -----------------------------------------------------------------
+# A call stands for itself by where it ends up only when git walks exactly the path written;
+# else it is tied to the whole list, and the directories and links it walks are recorded.
+TOP = pathlib.Path(os.path.realpath(tempfile.mkdtemp()))
+OUTSIDE = pathlib.Path(os.path.realpath(tempfile.mkdtemp()))
+(TOP / "sub" / "a").mkdir(parents=True)
+(TOP / "other").mkdir()
+(TOP / "link").symlink_to("sub")
+(OUTSIDE / "real").mkdir()
+(OUTSIDE / "alias").symlink_to("real")
+walk_rule = module.git_call_directory_through_one_dash_c_path_git_walks_as_written_or_none
+for paths, expected in (
+        ([], str(TOP)), (["sub"], str(TOP / "sub")), (["sub/a/"], str(TOP / "sub" / "a")),
+        ([str(TOP / "sub")], str(TOP / "sub")), (["missing"], str(TOP / "missing")),
+        ([str(OUTSIDE / "alias")], str(OUTSIDE / "alias")),
+        (["sub", str(TOP / "other")], None), (["sub", ".."], None), (["sub/.."], None),
+        (["./sub"], None), (["sub//a"], None), (["link"], None), (["link/a"], None),
+        ([str(TOP / "link")], None), (["/"], None)):
+    answer = walk_rule(str(TOP), paths, TOP)
+    check(f"-C {paths} from the top is walked as written to {expected}", answer == expected,
+          answer)
+walk = module.directories_and_symbolic_links_a_git_call_dash_c_walk_passes_in_the_checkout
+for arguments, expected in (
+        (["rev-parse", "HEAD"], ([], [])),
+        (["-C", "sub/a", "rev-parse", "HEAD"], (["sub", "sub/a"], [])),
+        (["-C", "link/a", "ls-files"], (["sub", "sub/a"], ["link"])),
+        (["-C", "sub", "-C", "..", "-C", "other", "log"], (["sub", "other"], [])),
+        (["-C", "link/..", "log"], (["sub"], ["link"])),
+        (["-C", str(TOP / "sub"), "log"], (["sub"], [])),
+        (["-C", str(OUTSIDE / "alias"), "log"], ([], [])),
+        (["-C"], ([], []))):
+    answer = walk({"arguments": arguments, "directory": str(TOP)}, TOP)
+    check(f"git {' '.join(arguments)} walks the directories and links {expected}",
+          answer == expected, answer)
+for arguments in (["-C", "sub", "rev-parse", "--show-toplevel"],
+                  ["-C", str(OUTSIDE / "alias"), "rev-parse", "--show-toplevel"]):
+    answer = module.what_a_git_call_run_from_the_checkout_reads(
+        {"arguments": arguments, "directory": str(TOP), "GIT_DIR": None, "GIT_WORK_TREE": None},
+        TOP, str(TOP / ".git"))
+    check(f"git {' '.join(arguments)} still sees no file", answer == module.GIT_CALL_SEES_NO_FILE,
+          answer)
+for arguments in (["-C", "link", "rev-parse", "--show-toplevel"],
+                  ["-C", "sub", "-C", "..", "rev-parse", "--show-toplevel"],
+                  ["-C", "sub/..", "config", "user.email"],
+                  ["-C", "link", "--git-dir", "/tmp/elsewhere/.git", "log"],
+                  ["-C", "sub", "-C", "..", "--git-dir", "/tmp/elsewhere/.git", "log"]):
+    answer = module.what_a_git_call_run_from_the_checkout_reads(
+        {"arguments": arguments, "directory": str(TOP), "GIT_DIR": None, "GIT_WORK_TREE": None},
+        TOP, str(TOP / ".git"))
+    check(f"git {' '.join(arguments)}, which git does not walk as written, reads the checkout",
+          answer == module.GIT_CALL_READS_THE_CHECKOUT, answer)
+for arguments in (["-C", "link", "rev-parse", "HEAD"], ["rev-parse", "link/HEAD"],
+                  ["-C", "sub", "-C", str(TOP / "other"), "rev-parse", "HEAD"],
+                  ["rev-parse", "sub/../HEAD"]):
+    answer = module.work_tree_paths_a_git_call_not_tied_to_the_file_list_consults(
+        {"arguments": arguments, "directory": str(TOP), "GIT_DIR": None, "GIT_WORK_TREE": None},
+        TOP)
+    check(f"git {' '.join(arguments)} stays tied to the list of files", answer is None, answer)
+for arguments in (["-C", "sub", "-C", str(TOP / "other"), "ls-files", "--", "*.py"],
+                  ["-C", "link", "ls-files", "--", "*.py"]):
+    answer = through_pathspecs({"arguments": arguments, "directory": str(TOP), "GIT_DIR": None,
+                                "GIT_WORK_TREE": None, "GIT_variables": []}, TOP)
+    check(f"git {' '.join(arguments)} stays tied to the whole list of files", answer is None,
+          answer)
+shutil.rmtree(TOP)
+shutil.rmtree(OUTSIDE)
+
+# git stores a symbolic link as the path it holds, so that is the hash recorded for one.
+with tempfile.TemporaryDirectory() as scratch:
+    top = pathlib.Path(os.path.realpath(scratch))
+    git(top, "init", "-q")
+    (top / "target").mkdir()
+    (top / "target" / "a.txt").write_text("a\n")
+    (top / "link").symlink_to("target")
+    (top / "file-link").symlink_to("target/a.txt")
+    commit_files(top, {"plain.txt": "plain\n"}, "a link to a directory and one to a file")
+    listed = subprocess.run(["git", "-C", str(top), "ls-files", "-s"], capture_output=True,
+                            text=True, check=True).stdout
+    staged = {line.split("\t")[1]: line.split()[1] for line in listed.splitlines()}
+    answer = module.blob_hashes(top, ["link", "plain.txt", "file-link"])
+    check("a symbolic link's hash is git's blob of the path it holds, beside a file's",
+          answer == {"link": staged["link"], "plain.txt": staged["plain.txt"],
+                     "file-link": staged["file-link"]}, (answer, staged))
+    previous = os.environ["PATH"]
+    os.environ.update(stand_in_git_failing_on(top, "hash-object --stdin"))
+    try:
+        answer = module.blob_hashes(top, ["link", "plain.txt"])
+    finally:
+        os.environ["PATH"] = previous
+    check("a link git cannot hash is unknown, and the files beside it are still hashed",
+          answer == {"link": "unknown", "plain.txt": staged["plain.txt"]}, answer)
+
+# A suite whose git call walks a -C path is selected when a directory or link on the way changes.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+
+    def git_call(*arguments):
+        return ("import subprocess\n"
+                f"subprocess.run(['git', *{list(arguments)!r}], capture_output=True)\n")
+
+    repo = make_repo(root, {
+        "sub-rev-parse-test.py": git_call("-C", "sub", "rev-parse", "HEAD"),
+        "sub-toplevel-test.py": git_call("-C", "sub", "rev-parse", "--show-toplevel"),
+        "link-ls-files-test.py": git_call("-C", "link", "ls-files", "-z", "--", "*.txt")})
+    commit_files(repo, {"sub/kept.txt": "kept\n", "other/else.txt": "else\n"}, "inputs")
+    (repo / "link").symlink_to("sub")
+    git(repo, "add", "link")
+    git(repo, "commit", "-q", "-m", "a link to sub")
+    result = run(root)
+    check("the -C walk fixture passes its full run", result.returncode == 0,
+          (result.stdout, result.stderr))
+    since = head(repo)
+    (repo / "link").unlink()
+    (repo / "link").symlink_to("other")
+    git(repo, "commit", "-q", "-am", "point the link at other")
+    result = select_since(root, since)
+    check("pointing a link that a git -C walks through at another directory selects only the "
+          "suite whose call walks it",
+          result.returncode == 0 and ran(root) == ["link-ls-files-test.py"]
+          and "SELECTED link-ls-files-test.py: it reads link, which differs"
+          in lines(result.stdout), (ran(root), result.stdout, result.stderr))
+    run(root)
+    since = head(repo)
+    git(repo, "rm", "-q", "-r", "sub")
+    git(repo, "commit", "-q", "-m", "remove sub, which git -C sub enters")
+    result = select_since(root, since)
+    check("deleting the directory a single git -C enters selects the suites whose calls enter "
+          "it, those that see no file too",
+          result.returncode == 0
+          and {"sub-rev-parse-test.py", "sub-toplevel-test.py"} <= set(ran(root))
+          and all(f"SELECTED {suite}: it looks for sub, which was deleted" in lines(result.stdout)
+                  for suite in ("sub-rev-parse-test.py", "sub-toplevel-test.py")),
+          (ran(root), result.stdout, result.stderr))
+    run(root)
+    since = head(repo)
+    git(repo, "rm", "-q", "link")
+    git(repo, "commit", "-q", "-m", "remove the link")
+    result = select_since(root, since)
+    check("deleting a link that a git -C walks through selects the suite whose call walks it",
+          result.returncode == 0 and "link-ls-files-test.py" in ran(root)
+          and "SELECTED link-ls-files-test.py: it reads link, which differs"
+          in lines(result.stdout), (ran(root), result.stdout, result.stderr))
 
 # When git cannot list the submodules, a git ls-files call is tied to the whole list when it is
 # recorded, and selects its suite when it was recorded as tied through its pathspecs.
@@ -3148,12 +3307,9 @@ with tempfile.TemporaryDirectory() as scratch:
     git(repo, "commit", "-q", "-m", "remove the directory a suite runs git ls-files from")
     result = select_since(root, since)
     check("a git ls-files call from a directory the checkout no longer holds selects its "
-          "suite, with git's error",
+          "suite, since the recording names the directory the call enters",
           "sub-test.py" in ran(root)
-          and any(line.startswith("SELECTED sub-test.py: it runs git ls-files -- '*.txt' from "
-                                  "sub/ on the checkout, and git could not say which files "
-                                  "that lists: fatal: cannot change to ")
-                  for line in lines(result.stdout)),
+          and "SELECTED sub-test.py: it looks for sub, which was deleted" in lines(result.stdout),
           (ran(root), result.stdout, result.stderr))
 
 # The recorder resolves a git operand from the last -C, as git does.
