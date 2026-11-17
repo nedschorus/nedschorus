@@ -437,10 +437,12 @@ with tempfile.TemporaryDirectory() as scratch:
                                          "--report-directory", "reports"], now)
     finally:
         os.chdir(working_directory)
-    check("a run given relative paths prints a command to run again, and a path to check, that work from any "
-          "directory",
-          status == 1 and f"Then run, on {socket.gethostname()}:\n    {rerun}" in errors
-          and f"not read: {missing}: not a directory" in errors, errors)
+    # The working directory is base with symbolic links resolved, as a test sandbox's temporary directory can be one.
+    resolved = base.resolve()
+    check("an invocation given relative paths prints a command to run again, and a path to check, that work from "
+          "any directory",
+          status == 1 and f"Then run, on {socket.gethostname()}:\n    {rerun.replace(str(base), str(resolved))}" in errors
+          and f"not read: {resolved / missing.name}: not a directory" in errors, errors)
 
     hook_file = repository / "hooks" / "guard-hook.py"
     committed_hook = hook_file.read_text(encoding="utf-8")
