@@ -71,6 +71,36 @@ check("a program that takes no names gets one case; a line no subagent reads nam
           "If the rerun prints an error again, stop, do not act on the rest of this prompt, "
           "and tell the user word for word, the sync line and the error."], lines)
 
+LOCK_ERROR = ("fatal: Unable to create '/r/.git/index.lock': File exists.")
+STOP = (f'If the rerun prints a line containing "p: could not" again, stop, and tell {WHO} word for word, '
+        'the line containing "p: could not" from the command that printed this message and from the rerun.')
+for case_name, program, error, expected in [
+        ("an error naming a lock file gets the lock-file step as a fact, with the path filled "
+         "into the wait command, and no misspelt-name line, since git stopped at the lock", "p", LOCK_ERROR,
+         ["Git's error names the lock file /r/.git/index.lock: do not delete the lock file yourself, "
+          "because a git command still running may hold it; wait up to one minute for git to remove "
+          "it by running `i=0; while [ -e /r/.git/index.lock ] && [ $i -lt 30 ]; do sleep 2; "
+          "i=$((i+1)); done` (Claude Code refuses a plain `sleep 60`), then run exactly `p --x`, "
+          "whether or not the lock file is gone.", STOP]),
+        ("an error naming no lock file, in a call given no name of the agent's, gets only the "
+         "rerun", None, "fatal: bad object HEAD",
+         ["Run exactly `p --x` once more.", STOP]),
+        ("an error naming no lock file, in a call given a name of the agent's, gets the "
+         "misspelt-name case and otherwise the rerun", "p", "git printed no error",
+         ["If a branch, commit or path you gave p on its command line is misspelt or does "
+          "not exist, correct it in your command, then run the corrected command.",
+          "Otherwise, run exactly `p --x` once more.",
+          'If the rerun, or the corrected command, prints a line containing "p: could not" '
+          f'again, stop, and tell {WHO} word for word, the line containing "p: could not" '
+          "from the command that printed this message and from the rerun, or the corrected command."]),
+        ("a quoted pathspec that is not a lock file is no lock file", None,
+         "fatal: pathspec 'a-test.py' did not match any files",
+         ["Run exactly `p --x` once more.", STOP])]:
+    lines = next_step_lines.git_failure_next_step_lines(
+        "`p --x`", program, text_the_failure_line_contains="p: could not",
+        git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=error).splitlines()
+    check(f"given git's error line, {case_name}", lines == expected, lines)
+
 for case_name, arguments in [
         ("neither the failure text nor the free-text pair", {}),
         ("the failure text and which lines to quote",
@@ -156,6 +186,31 @@ with tempfile.TemporaryDirectory() as directory:
     check("the lock-file wait command, against a lock file that stays, stops after exactly 30 polls of "
           "2 seconds, one minute in all",
           outcome == (0, ["2"] * 30, True), outcome)
+
+with tempfile.TemporaryDirectory() as directory:
+    lock_file = Path(directory) / "a checkout's dir" / ".git" / "index.lock"
+    lock_file.parent.mkdir(parents=True)
+    lock_file.write_text("")
+    stub_directory = Path(directory) / "bin"
+    stub_directory.mkdir()
+    calls = Path(directory) / "sleep-calls"
+    # The stand-in sleep removes the lock file, so only a command polling that file sleeps once.
+    (stub_directory / "sleep").write_text(
+        f'#!/bin/sh\necho "$1" >> "{calls}"\nrm -f "$LOCK_FILE"\n')
+    (stub_directory / "sleep").chmod(0o755)
+    message = next_step_lines.git_failure_next_step_lines(
+        "`p --x`", text_the_failure_line_contains="p: could not",
+        git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=(
+            f"fatal: Unable to create '{lock_file}': File exists."))
+    command = message.split("running `", 1)[1].split("`", 1)[0]
+    completed = subprocess.run(["sh", "-c", command], check=False, timeout=30,
+                               env={"PATH": f"{stub_directory}:/usr/bin:/bin",
+                                    "LOCK_FILE": str(lock_file)})
+    polls = calls.read_text().splitlines() if calls.exists() else []
+    check("the wait command with git's lock file path filled in, run by sh, polls that file "
+          "though its path holds a space and a quote",
+          (completed.returncode, polls, lock_file.exists()) == (0, ["2"], False),
+          (command, completed.returncode, polls))
 
 with tempfile.TemporaryDirectory() as directory:
     hook_script_path = Path(directory) / "a hook's copy.py"

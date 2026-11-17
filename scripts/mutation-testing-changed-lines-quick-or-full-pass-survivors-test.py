@@ -3221,7 +3221,10 @@ def run_cases():
               and printed.getvalue() == (
                   "mutation-testing-changed-lines-quick-or-full-pass-survivors: not run — injected root-commit "
                   "failure\n" + survivors_module.load_test_suite_runner()
-                  .git_failure_next_step_lines("mutation-testing-changed-lines-quick-or-full-pass-survivors.py")
+                  .git_failure_next_step_lines(
+                      "mutation-testing-changed-lines-quick-or-full-pass-survivors.py",
+                      "mutation-testing-changed-lines-quick-or-full-pass-survivors: not run — injected "
+                      "root-commit failure")
                   + "\n"), (status, printed.getvalue()))
 
     # ------------------------------------------------------------------

@@ -1063,7 +1063,8 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 2 and ran(root) == []
           and "git could not list the root commits of HEAD" in result.stderr
           and result.stderr.endswith(
-              "\n" + module.git_failure_next_step_lines("run-all-test-suites.py") + "\n")
+              "\n" + module.git_failure_next_step_lines("run-all-test-suites.py",
+                                                      "fatal: injected git failure") + "\n")
           and "fatal: injected git failure" in result.stderr
           and not (root / "recordings" / "no-commit").exists(),
           (result.returncode, ran(root), result.stderr))
@@ -1080,7 +1081,8 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 2 and ran(root) == []
           and "git ls-files --others failed" in result.stderr
           and result.stderr.endswith(
-              "\n" + module.git_failure_next_step_lines("run-all-test-suites.py") + "\n")
+              "\n" + module.git_failure_next_step_lines("run-all-test-suites.py",
+                                                      "fatal: injected git failure") + "\n")
           and "fatal: injected git failure" in result.stderr,
           (result.returncode, ran(root), result.stderr))
 
@@ -1093,6 +1095,18 @@ def git_answering(answers):
                 return subprocess.CompletedProcess(arguments, status, output, error)
         raise AssertionError(f"unexpected git call {arguments}")
     return stand_in
+
+
+# git's own first line when another process holds the index lock.
+GIT_INDEX_LOCK_FILE_EXISTS_ERROR = "fatal: Unable to create '/nowhere/.git/index.lock': File exists."
+
+
+def next_steps_for(error):
+    """The shared module's next steps for a run of the runner whose git printed error."""
+    return module.next_step_lines.git_failure_next_step_lines(
+        "the same run-all-test-suites.py command",
+        git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=error,
+        text_the_failure_line_contains="not run — git")
 
 
 real_program_git = module.git
@@ -1144,7 +1158,9 @@ try:
     # A git killed by a signal prints nothing; a git that fails may print several lines.
     for how, status, stderr, error in (
             ("exits 128 printing two lines", 128, "fatal: injected\nmore\n", "fatal: injected"),
-            ("is killed by a signal printing nothing", -9, "", "git printed no error")):
+            ("is killed by a signal printing nothing", -9, "", "git printed no error"),
+            ("exits 128 naming a lock file", 128, GIT_INDEX_LOCK_FILE_EXISTS_ERROR + "\nmore\n",
+             GIT_INDEX_LOCK_FILE_EXISTS_ERROR)):
         for label, answers, call in [
                 ("git ls-files of the suites", [(("ls-files", module.TEST_SUITE_PATHSPEC),)],
                  lambda: module.suites_listed_by_git(pathlib.Path("/nowhere"))),
@@ -1168,6 +1184,25 @@ try:
                   refused is not None
                   and refused.splitlines()[0].endswith(f" failed in /nowhere: {error}")
                   and "\nmore\n" not in refused, refused)
+            check(f"a {label} that {how} ends with the next steps for that error line and no "
+                  f"misspelt-name step, since the checkout and any commit were checked first",
+                  refused is not None and refused.endswith("\n" + next_steps_for(error)), refused)
+        module.git = git_answering([(("rev-parse",), 0, "abc123\n", ""),
+                                    (("rev-list",), status, "", stderr)])
+        try:
+            module.recordings_directory_for("/store", pathlib.Path("/nowhere"))
+            refused = None
+        except module.CouldNotRun as refusal:
+            refused = str(refusal)
+        check(f"a git rev-list of HEAD's root commits that {how} is refused with git's error "
+              f"in parentheses, apart from the name of the recordings directory, and the next "
+              f"steps for that error line",
+              refused is not None
+              and refused.splitlines()[0] == (
+                  f"{module.PROGRAM}: not run — git could not list the root commits of HEAD in "
+                  f"/nowhere ({error}), so this run cannot find its directory of recorded suite "
+                  f"inputs, which is named after a root commit of HEAD.")
+              and refused.endswith("\n" + next_steps_for(error)), refused)
         for label, answers, call, expected in [
                 ("commit_and_state", [(("rev-parse",), status, "", stderr),
                                       (("status",), 0, "", "")],
