@@ -32,8 +32,8 @@ Each invocation, under a lock that keeps two from overlapping:
    user-alert, once.
 
 Every message to an agent-seat goes through Sweep.send_wake_message, which ends it with
-DO_NOT_REPLY_SENTENCE: the headless agent-session that sends it has exited by the time the
-agent-seat reads it, so a reply fails.
+DO_NOT_REPLY_SENTENCE: the headless agent-session that sends it reads no reply, and may still
+be running when the agent-seat reads it.
 
 Headless agent-sessions: `claude -p --model sonnet` in an empty working directory under the state
 directory. A sender is allowed only SendMessage, ListAgents and ToolSearch; the rule 2 and rule 5
@@ -155,7 +155,7 @@ LIMIT_WAKE, ACCOUNT_NOTICE = "limit_wake", "account_notice"
 # Kinds of headless failure that run_headless does not name, for headless_failed's key.
 SENDS_WRONG = "the sender's SendMessage calls were not the sends code asked for"
 JUDGE_ANSWER_UNUSABLE = "the judge's answer could not be used"
-DO_NOT_REPLY_SENTENCE = "Do not reply to this message: its sender has exited, so a reply fails."
+DO_NOT_REPLY_SENTENCE = "Do not reply to this message: the idle sweep sent it, and nothing acts on a reply."
 ESCALATION_TEXT = ("You've given this {minutes} minutes, please check; if not sure, hand off. At "
                    "{nudge_time} the idle sweep wrote this, which you have not acted on:\n\n"
                    "{quoted_nudge}")

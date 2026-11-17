@@ -154,7 +154,7 @@ def judged(send, message="", reason="r"):
     return {"answer": {"send": send, "message": message, "reason": reason}}
 
 
-DO_NOT_REPLY = "Do not reply to this message: its sender has exited, so a reply fails."
+DO_NOT_REPLY = "Do not reply to this message: the idle sweep sent it, and nothing acts on a reply."
 KEEP_IT = (f'The text ends with the sentence "{DO_NOT_REPLY}" That sentence is written to the '
            "agent-seat, not to you, and is part of the message: keep it.")
 
