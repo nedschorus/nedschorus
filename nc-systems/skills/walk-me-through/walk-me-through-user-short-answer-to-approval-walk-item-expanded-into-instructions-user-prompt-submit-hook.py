@@ -970,10 +970,10 @@ def unseen_item_lines(answer, walk, transcript_path):
         item = item_name(number, walk)
         text = walk.shown_texts.get(number)
         if text is None:
-            problem = walk.problem or walk.shown_text_problem or f"the walk-document has no text for {item}"
+            problem = walk.problem or walk.shown_text_problem
             # A walk.problem that leaves numbers is the missing walk-document; a shown_text_problem says which file
             # to change itself, and for an item with two headings offers either.
-            where = f", in {walk.document}" if walk.problem or not walk.shown_text_problem else ""
+            where = f", in {walk.document}" if walk.problem else ""
             closing = closing_line(number, walk)
             return [line.format(item=item, problem=problem, where=where,
                                 closing_line=f"this closing line: {closing}" if closing else CLOSING_LINE_NAMED)

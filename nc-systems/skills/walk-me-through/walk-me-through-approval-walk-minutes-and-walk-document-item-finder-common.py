@@ -318,13 +318,13 @@ def item_opening_lines(text, parser, tokens=None):
         if index in unit_starts:
             withdrawn_items = set()
         if token.type == "heading_open" and token.map is not None and token.level == 0:
-            if index + 1 < len(tokens) and WITHDRAWN_HEADING.match(tokens[index + 1].content):
+            if WITHDRAWN_HEADING.match(tokens[index + 1].content):
                 openings[token.map[0]] = ([], None)
                 withdrawn_items |= withdrawn_heading_items(tokens[index + 1].content)
                 continue
             # A heading that labels one item, such as `## Item 2: details` inside `## Items 1 and 2 of 3`, opens
             # that item, so the heading goes with the item it names and not with the item above it.
-            labelled = label_numbers(tokens[index + 1].content) if index + 1 < len(tokens) else set()
+            labelled = label_numbers(tokens[index + 1].content)
             if len(labelled) == 1 and not labelled <= withdrawn_items:
                 openings[token.map[0]] = (sorted(labelled), None)
             continue
@@ -559,9 +559,8 @@ def item_unit_spans(document_text, parser):
     tokens = parser.parse(document_text)
     withdrawn = [token.map[0] for index, token in enumerate(tokens)
                  if token.type == "heading_open" and token.map is not None and token.level == 0
-                 and index + 1 < len(tokens) and WITHDRAWN_HEADING.match(tokens[index + 1].content)]
-    headings = [(token.map[0], heading_level(token), label_numbers(tokens[index + 1].content if index + 1 < len(tokens)
-                                                                     else ""))
+                 and WITHDRAWN_HEADING.match(tokens[index + 1].content)]
+    headings = [(token.map[0], heading_level(token), label_numbers(tokens[index + 1].content))
                 for index, token in enumerate(tokens)
                 if token.type == "heading_open" and token.map is not None and token.level == 0]
     raw_starts = item_unit_starts(tokens, lines)
@@ -619,8 +618,7 @@ def item_unit_starts(tokens, lines):
     # Only whole-number counts decide, so `### Item 1.1 of 3` sub-steps under `##` items change nothing.
     count_heading_markups = set()
     for index, token in enumerate(tokens):
-        if (token.type == "heading_open" and token.map is not None and token.level == 0
-                and index + 1 < len(tokens)):
+        if token.type == "heading_open" and token.map is not None and token.level == 0:
             count = HEADING_COUNT.match(approval_walk_item_heading_with_deferred_note_removed(
                 tokens[index + 1].content.split("\n")[0]))
             if count and "." not in count[1]:
@@ -635,7 +633,7 @@ def item_unit_starts(tokens, lines):
             if withdrawn_level is not None and heading_level(token) > withdrawn_level:
                 continue
             withdrawn_level = None
-            if index + 1 < len(tokens) and WITHDRAWN_HEADING.match(tokens[index + 1].content):
+            if WITHDRAWN_HEADING.match(tokens[index + 1].content):
                 withdrawn_level = heading_level(token)
                 continue
         if token.type == "paragraph_open" and not lines[token.map[0]].lstrip().startswith("**"):
