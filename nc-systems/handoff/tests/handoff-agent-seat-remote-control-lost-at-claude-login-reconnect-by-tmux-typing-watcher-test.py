@@ -164,7 +164,7 @@ class Fixture:
                            encoding="utf-8")
         subprocess.run(["tmux", "-f", str(self.namespace / "empty.conf"), "-L", self.seat, "new-session",
                         "-d", "-s", self.seat, "-x", "100", "-y", "30",
-                        f"cat '{painter}'; stty -echo; exec cat"], check=True, capture_output=True)
+                        f"stty -echo; cat '{painter}'; exec cat"], check=True, capture_output=True)
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if "status line" in self.pane():
@@ -794,7 +794,7 @@ def case_types_into_the_recorded_pane(namespace):
         painter = fixture.root / "paint.txt"
         # A second window, made active, whose pane also shows an empty input box.
         subprocess.run(["tmux", "-L", fixture.seat, "new-window", "-t", f"={fixture.seat}:",
-                        f"cat '{painter}'; stty -echo; exec cat"], check=True, capture_output=True)
+                        f"stty -echo; cat '{painter}'; exec cat"], check=True, capture_output=True)
         exit_code, errors = fixture.run()
         time.sleep(1)
         recorded, active = (subprocess.run(["tmux", "-L", fixture.seat, "capture-pane", "-p", "-t", target],
@@ -812,7 +812,7 @@ def open_active_window_with_empty_box(fixture):
     painter = fixture.root / "active-paint.txt"
     painter.write_text("other window\n" + "\n".join(EMPTY_BOX) + "\n  status line\n", encoding="utf-8")
     subprocess.run(["tmux", "-L", fixture.seat, "new-window", "-t", f"={fixture.seat}:",
-                    f"cat '{painter}'; stty -echo; exec cat"], check=True, capture_output=True)
+                    f"stty -echo; cat '{painter}'; exec cat"], check=True, capture_output=True)
     time.sleep(0.5)
 
 
