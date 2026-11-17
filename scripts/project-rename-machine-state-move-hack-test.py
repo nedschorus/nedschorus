@@ -918,6 +918,61 @@ def run_printed_rollback_command_cases():
         fixture.cleanup()
 
 
+def run_journal_under_moved_root_and_journaled_rollback_flags_cases():
+    fixture = Fixture("ned-box")
+    try:
+        flags = fixture.flags()
+        flags[flags.index("--journal") + 1] = "move.jsonl"
+        result = subprocess.run([sys.executable, str(PROGRAM), "--check"] + flags, cwd=fixture.log_store,
+                                capture_output=True, text=True, env=fixture.environment())
+        expect("--check reports the journal under a moved root",
+               "--apply would REFUSE" in result.stdout and "which --apply moves" in result.stdout, result.stdout)
+        before = fixture.snapshot()
+        result = subprocess.run([sys.executable, str(PROGRAM), "--apply"] + flags, cwd=fixture.log_store,
+                                capture_output=True, text=True, env=fixture.environment())
+        output = result.stdout + result.stderr
+        expect("--apply refuses a relative --journal that resolves under the log-store it moves",
+               result.returncode == 1 and "REFUSED, nothing changed" in output
+               and f"is under {fixture.log_store}, which --apply moves" in output, output)
+        expect("that refusal changes nothing", fixture.snapshot() == before,
+               snapshot_difference(before, fixture.snapshot()))
+    finally:
+        fixture.cleanup()
+
+    fixture = Fixture("ned-box")
+    try:
+        started_at = fixture.checkout / "scripts" / PROGRAM.name
+        shutil.copy2(PROGRAM, started_at)
+        result = subprocess.run([sys.executable, str(started_at), "--apply"] + fixture.flags(), cwd=fixture.base,
+                                capture_output=True, text=True, env=fixture.environment())
+        expect("journaled-flags case: --apply with non-default --home succeeds", result.returncode == 0,
+               result.stdout + result.stderr)
+        moved_to = fixture.projects / "nedsnodes" / "scripts" / PROGRAM.name
+        before = fixture.snapshot()
+        other_home = fixture.base / "other-home"
+        code, output = run_printed(f"python3 {moved_to} --rollback --journal {fixture.journal} --home {other_home}",
+                                   fixture.base, fixture)
+        expect("--rollback refuses a path flag that differs from the one --apply journaled, naming both",
+               code == 1 and "REFUSED, nothing changed" in output
+               and f"--home: given {other_home}, recorded {fixture.home}" in output
+               and f"run: python3 {moved_to} --rollback --journal {fixture.journal}" in output, output)
+        expect("that refusal changes nothing", fixture.snapshot() == before and fixture.journal.exists(),
+               snapshot_difference(before, fixture.snapshot()))
+        (fixture.fakes / "daemon-reload-exit.txt").write_text("1")
+        code, output = run_printed(f"python3 {moved_to} --rollback --journal {fixture.journal}", fixture.base, fixture)
+        marker = "Once the cause is fixed, run: "
+        lines = [line[len(marker):] for line in output.splitlines() if line.startswith(marker)]
+        printed = shlex.split(lines[-1])[1] if lines else None
+        expect("a --rollback given only --journal, started under the new checkout and failing after it moved the "
+               "checkout back, prints the program's path under the old checkout, from the journaled --home",
+               code == 1 and printed == str(started_at) and started_at.exists(), output)
+        (fixture.fakes / "daemon-reload-exit.txt").write_text("0")
+        code, output = run_printed(lines[-1] if lines else "false", fixture.base, fixture)
+        expect("that printed command finishes the --rollback", code == 0 and not fixture.journal.exists(), output)
+    finally:
+        fixture.cleanup()
+
+
 if __name__ == "__main__":
     run_apply_check_rollback_on_ned_box()
     run_apply_and_rollback_on_mac()
@@ -935,6 +990,7 @@ if __name__ == "__main__":
     run_backup_that_differs_stops_apply_case()
     run_recorded_command_cases()
     run_printed_rollback_command_cases()
+    run_journal_under_moved_root_and_journaled_rollback_flags_cases()
     print()
     if failures:
         print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
