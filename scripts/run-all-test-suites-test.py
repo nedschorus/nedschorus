@@ -2614,29 +2614,30 @@ with tempfile.TemporaryDirectory() as scratch:
 # Submodules are read from git's index and from a commit's tree.
 with tempfile.TemporaryDirectory() as scratch:
     top = pathlib.Path(os.path.realpath(scratch))
+    submodules_of = module.submodule_paths_in_the_git_index_plus_an_optional_commit_tree
     git(top, "init", "-q")
     commit_files(top, {"a.py": "A = 1\n"}, "no submodule")
     without = head(top)
     git(top, "update-index", "--add", "--cacheinfo", f"160000,{without},mod")
     check("a submodule staged in the index is found",
-          module.submodules_in_the_index_and_commit(top) == ({"mod"}, None),
-          module.submodules_in_the_index_and_commit(top))
+          submodules_of(top) == ({"mod"}, None),
+          submodules_of(top))
     git(top, "commit", "-q", "-m", "add a submodule")
     with_submodule = head(top)
     git(top, "rm", "-q", "--cached", "mod")
     git(top, "commit", "-q", "-m", "remove the submodule")
     check("a submodule only a commit's tree holds is found when that commit is given, and "
           "none when it is not",
-          module.submodules_in_the_index_and_commit(top, with_submodule) == ({"mod"}, None)
-          and module.submodules_in_the_index_and_commit(top) == (set(), None)
-          and module.submodules_in_the_index_and_commit(top, without) == (set(), None),
-          (module.submodules_in_the_index_and_commit(top, with_submodule),
-           module.submodules_in_the_index_and_commit(top)))
+          submodules_of(top, with_submodule) == ({"mod"}, None)
+          and submodules_of(top) == (set(), None)
+          and submodules_of(top, without) == (set(), None),
+          (submodules_of(top, with_submodule),
+           submodules_of(top)))
     for words in ("--stage", "ls-tree"):
         previous = os.environ["PATH"]
         os.environ.update(stand_in_git_failing_on(top, words))
         try:
-            answer = module.submodules_in_the_index_and_commit(top, without)
+            answer = submodules_of(top, without)
         finally:
             os.environ["PATH"] = previous
         check(f"git {words} failing while looking for submodules is reported with its error",

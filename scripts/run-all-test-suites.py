@@ -1668,7 +1668,7 @@ def git_ls_files_call_whose_answer_can_change_only_when_a_file_its_pathspecs_mat
     return {"directory": relative, "pathspecs": pathspecs}
 
 
-def submodules_in_the_index_and_commit(top, commit=None):
+def submodule_paths_in_the_git_index_plus_an_optional_commit_tree(top, commit=None):
     """(the paths that the checkout's index, and commit's tree when given, hold as submodules,
     None), or (None, why git could not say)."""
     found = set()
@@ -3939,7 +3939,8 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used,
                     if consulted is None else None)
                 if through_pathspecs is not None:
                     if submodules is None:
-                        submodules, _ = submodules_in_the_index_and_commit(top)
+                        submodules, _ = (
+                            submodule_paths_in_the_git_index_plus_an_optional_commit_tree(top))
                     listed_files, _ = (files_git_ls_files_lists_of_these(
                         top, files, through_pathspecs["directory"],
                         through_pathspecs["pathspecs"], submodules)
@@ -4346,7 +4347,9 @@ class CheckoutComparedWithCommit:
         (None, None, why git could not say)."""
         key = (directory, tuple(pathspecs))
         if self.submodules_or_why is None:
-            self.submodules_or_why = submodules_in_the_index_and_commit(self.top, self.commit)
+            self.submodules_or_why = (
+                submodule_paths_in_the_git_index_plus_an_optional_commit_tree(
+                    self.top, self.commit))
         submodules, why = self.submodules_or_why
         if why is not None:
             return None, None, why
