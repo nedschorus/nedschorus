@@ -926,16 +926,31 @@ def run_journal_under_moved_root_and_journaled_rollback_flags_cases():
         result = subprocess.run([sys.executable, str(PROGRAM), "--check"] + flags, cwd=fixture.log_store,
                                 capture_output=True, text=True, env=fixture.environment())
         expect("--check reports the journal under a moved root",
-               "--apply would REFUSE" in result.stdout and "which --apply moves" in result.stdout, result.stdout)
+               "--apply would REFUSE" in result.stdout and f"is under {fixture.log_store}, which step 2 renames" in result.stdout, result.stdout)
         before = fixture.snapshot()
         result = subprocess.run([sys.executable, str(PROGRAM), "--apply"] + flags, cwd=fixture.log_store,
                                 capture_output=True, text=True, env=fixture.environment())
         output = result.stdout + result.stderr
         expect("--apply refuses a relative --journal that resolves under the log-store it moves",
                result.returncode == 1 and "REFUSED, nothing changed" in output
-               and f"is under {fixture.log_store}, which --apply moves" in output, output)
+               and f"is under {fixture.log_store}, which step 2 renames" in output, output)
         expect("that refusal changes nothing", fixture.snapshot() == before,
                snapshot_difference(before, fixture.snapshot()))
+    finally:
+        fixture.cleanup()
+
+    fixture = Fixture("ned-box")
+    try:
+        flags = fixture.flags()
+        journal = fixture.config / "nedschorus" / "move.jsonl"
+        flags[flags.index("--journal") + 1] = str(journal)
+        result = subprocess.run([sys.executable, str(PROGRAM), "--apply"] + flags, cwd=fixture.base,
+                                capture_output=True, text=True, env=fixture.environment())
+        output = result.stdout + result.stderr
+        expect("--apply refuses a --journal under ~/.config/nedschorus, which step 6 renames",
+               result.returncode == 1 and "REFUSED, nothing changed" in output
+               and (fixture.config / "nedschorus").is_dir() and not (fixture.config / "nedschorus").is_symlink()
+               and not journal.exists(), output)
     finally:
         fixture.cleanup()
 

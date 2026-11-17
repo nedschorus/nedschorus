@@ -11,7 +11,7 @@ Usage:
 
 --check reports, without changing anything, whether --apply would refuse and why, how many changes each step has left to make, whether a journal file exists and how many of its entries --rollback already reversed, whether `git status` works in every worktree of the reference-checkout, and each worktree git lists whose directory is missing, as after a move whose repair did not run.
 
---apply first refuses, changing nothing, unless all of these hold: no scheduled job of this project is installed (a crontab line naming the reference-checkout, the worktrees directory or the log-store, a `com.nedschorus.*` or `com.nedsnodes.*` LaunchAgent plist other than com.nedschorus.mount-ned-box-home-share, whose mount the Mac step (this program's --apply on the Mac) needs and whose plist this program leaves as it is, a systemd user unit naming one of those paths, other than the units step 8 moves); `~/.claude/.transcript-mirror.lock` is not held; no process named `claude` runs on this machine; none of the `nc-*` systemd user units step 8 renames is active; no path a step would create already exists; the reference-checkout is on main with no uncommitted change to a tracked file (untracked files are allowed and move with it); every worktree git lists for the reference-checkout has its directory, since `git worktree repair` cannot repair one that is missing; no journal exists yet, and the journal's path is not at or under the old or new name of the reference-checkout, the worktrees directory or the log-store, which --apply moves; on the Mac, the log-store is already at its new name under the /Volumes/nedhome mount. It also refuses when it cannot find out: the crontab or the process list cannot be read, ~/.claude.json is not JSON, or the reference-checkout is missing or `git worktree list` fails in it. Then it journals the path flags it was given, each with its value, and, in this order, journals each change before making it:
+--apply first refuses, changing nothing, unless all of these hold: no scheduled job of this project is installed (a crontab line naming the reference-checkout, the worktrees directory or the log-store, a `com.nedschorus.*` or `com.nedsnodes.*` LaunchAgent plist other than com.nedschorus.mount-ned-box-home-share, whose mount the Mac step (this program's --apply on the Mac) needs and whose plist this program leaves as it is, a systemd user unit naming one of those paths, other than the units step 8 moves); `~/.claude/.transcript-mirror.lock` is not held; no process named `claude` runs on this machine; none of the `nc-*` systemd user units step 8 renames is active; no path a step would create already exists; the reference-checkout is on main with no uncommitted change to a tracked file (untracked files are allowed and move with it); every worktree git lists for the reference-checkout has its directory, since `git worktree repair` cannot repair one that is missing; no journal exists yet, and the journal's path is not at or under any directory a step renames, under its old or its new path; on the Mac, the log-store is already at its new name under the /Volumes/nedhome mount. It also refuses when it cannot find out: the crontab or the process list cannot be read, ~/.claude.json is not JSON, or the reference-checkout is missing or `git worktree list` fails in it. Then it journals the path flags it was given, each with its value, and, in this order, journals each change before making it:
   1. renames ~/Projects/nedschorus to ~/Projects/nedsnodes and ~/Projects/nedschorus-worktrees to ~/Projects/nedsnodes-worktrees;
   2. on ned-box only, renames the log-store ~/nedschorus-logs to ~/nedsnodes-logs;
   2a. on the Mac as on ned-box, runs `git worktree repair` in this machine's reference-checkout with the new path of every worktree it listed before step 1, runs `git status` in every worktree, stopping when one fails, and sets core.hooksPath to the new path when it named the old checkout path;
@@ -449,13 +449,13 @@ def refusals(layout, ops):
                       f"If no --apply ran with it, such as a journal copied from elsewhere: move it aside, for example to "
                       f"{layout.journal}.set-aside, then run --apply again."))
     journal = os.path.realpath(layout.journal)
-    for root in layout.all_root_paths():
-        if is_under(journal, os.path.realpath(root)):
-            found.append((f"the journal {layout.journal} is under {root}, which --apply moves, so the journal would "
-                          "move away from the path --apply writes to and --rollback reads",
+    for op in ops:
+        if op["kind"] == "rename" and any(is_under(journal, os.path.realpath(op[end])) for end in ("from", "to")):
+            found.append((f"the journal {layout.journal} is under {op['from']}, which step {op['step']} renames to "
+                          f"{op['to']}, so the journal would move away from the path --apply writes to and "
+                          "--rollback reads",
                           f"Leave out --journal, to use {layout.claude_dir / JOURNAL_NAME}, or name with --journal a "
-                          "file outside the reference-checkout, the worktrees directory and the log-store, under both "
-                          "their old and new names. Then run --apply again."))
+                          f"file under neither {op['from']} nor {op['to']}. Then run --apply again."))
             break
     found += scheduled_job_refusals(layout)
     found += lock_refusals(layout)
