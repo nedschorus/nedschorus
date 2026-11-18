@@ -76,6 +76,8 @@ The user decided how the switch works on 2026-11-18, answering the eight questio
 
 Two of his answers add no sentence: the user holds the accounts for personal, work and nonprofit use, so the terms do not worry him; and a logout is a step of each switch, so an expired sign-in gets no case of its own.
 
+The Remote Control reconnect that sentence 5 says already happens is the project's program `nc-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py`, which turns Remote Control back on in each agent-seat after a Claude login changes the machine's account; the switcher adds no step for it.
+
 ## Questions for the user
 
 The user answered all eight questions on 2026-11-18; each names the answer under § What the user decided that settles it.
@@ -83,7 +85,7 @@ The user answered all eight questions on 2026-11-18; each names the answer under
 1. Which accounts take part, and in what order? Answered by sentence 1.
 2. Does the switcher switch accounts by itself, or does it propose the switch to the user and wait for his yes? And does it act when the limit is reached, or shortly before, from the status line's `seven_day` usage? Answered by sentence 2.
 3. How does the link or code from the login email reach the login: does the user click it or type it each time, or does Codex or another program read it and fill it in? Answered by sentence 3.
-4. Both machines, or ned-box only? The Mac's login was not checked. "Log out of all devices" is the user's step; `claude auth logout` logs out one machine, and how all devices are logged out was not checked. Answered by sentences 3 and 4.
+4. Both machines, or ned-box only? The Mac's login was not checked. "Log out of all devices" is the user's step; `claude auth logout` logs out one machine, and how all devices are logged out was not checked. Answered by sentences 3 and 4: Codex logs Claude out on each machine that switches, the Mac first. Neither sentence says whether a switch also logs out of all devices; the design settles that.
 5. What happens to agent-seats that are running when the login changes, since all of them on ned-box share one login file? And does a program switch back to the first account after its weekly reset? Answered by sentence 5; the switch back follows from sentences 1 and 2, since the switcher moves to the next account in the rotation only when the logged-in account reaches its weekly limit.
 6. Does a long-lived token from `claude setup-token`, made in advance for each account, remove the email step from a switch? Answered by sentence 6.
 7. Do the terms of the user's Claude subscriptions bear on running the agent-seats across several accounts? Answered by the first of the two answers that add no sentence.
@@ -91,4 +93,4 @@ The user answered all eight questions on 2026-11-18; each names the answer under
 
 ## Next action
 
-From the six sentences and the two answers under § What the user decided, write the design of the switch for the Mac's pilot in this GHI-MD, adding the line `kind: design` to its front matter, then give it the /cold-read that the ghi-write skill requires before an edit-GHI.
+From the six sentences and the two answers under § What the user decided, write the design of the switch for the Mac's pilot in this GHI-MD, adding the line `kind: design` to its front matter, then give it the /cold-read that the ghi-write skill requires before an edit-GHI. Before writing it, check what this GHI-MD records only for ned-box: where the Mac keeps Claude's login, and whether Codex is installed and logged in on the Mac. The design also says what the switcher does when the next account in the rotation has not yet reset, how it detects the limit, which steps its code runs and which it hands to Codex, and how it checks that a switch worked; the cold-read-fast-read of 2026-11-18, `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/1201-switch-the-agent-seats-to-another-claude-account-2026-11-18/cold-read-fast-read.md`, lists these questions.
