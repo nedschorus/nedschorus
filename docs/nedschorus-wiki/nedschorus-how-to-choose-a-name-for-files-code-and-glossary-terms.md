@@ -118,6 +118,8 @@ In prose, a hyphenated phrase marks a project-term or a system-term, such as age
 
 A new term is coined only when no existing name and no SDLC-term fits, and it is proposed to the user, with a definition of one sentence, before it is used. The glossary entries for project-term and system-term say which is which. An approved project-term goes into the project glossary; an approved system-term goes into the glossary of its system. If the system has no glossary yet, propose one to the user, named `<system-name>-glossary.md` in the system's directory, and list it at the top of the project glossary.
 
+A hyphen makes a name easy to find with `git grep`; the words must also say what it names. When a project-term or system-term gives a generic software word, such as block or test, a meaning of this project's own, keep the generic word and add the words that say which one is meant, as agent-session does for session; a name such as block-type, which could mean any kind of block, does not say what it names.
+
 ## Where a rule above does not apply, and why
 
 - **A name that belongs to the whole project names no system.** `agent-seat` and `log-store` belong to no single system, and a general tool such as `scripts/branch-conflict-check.py` serves them all. Adding the project's name, as in `nedschorus-agent-seat`, would add a word that every such name shares. The wiki's `nedschorus-` prefix is a pattern set by the file naming standards, and the pattern governs there.
