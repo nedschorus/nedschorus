@@ -4,7 +4,8 @@ waiting item and its last page link in a successor's
 initial-agent-instructions:
 successor_initial_agent_instructions_line_naming_waiting_approval_walk_item
 on fixture walk-minutes and walk-documents (open, closed, paused, no `#item_page` line, a failed
-publish, two open walks, several waiting items, no point, an unreadable
+publish, a failed-publish value equal to the walk finder's but not the same
+object, a link sorting after that value, two open walks, several waiting items, no point, an unreadable
 walk), and where the line goes in the prompts both ignition plans compose and
 in the prompt the launch site hands the successor.
 
@@ -121,6 +122,39 @@ def run_walk_minutes_cases(workspace):
     walk_in(root, OPEN_MINUTES + "#item_page item 2 of 3 publish failed: the Artifact tool timed out\n")
     check("a newest `#item_page` line recording a failed publish: the line without a link",
           lines_for(root) == (without_link_line(WALK, f"2 of 3, {POINT},", "2 of 3"),), repr(lines_for(root)))
+
+    root = workspace / "publish-failed-equal-not-identical"
+    walk_in(root, OPEN_MINUTES)
+    load_module_from_path = supervisor.load_module_from_path
+    sentinel_and_copy = []
+
+    def load_walk_finder_returning_a_copy_of_publish_failed(name, path):
+        module = load_module_from_path(name, path)
+        if path == supervisor.WALK_FINDER_PATH:
+            sentinel = module.ITEM_PAGE_PUBLISH_FAILED
+            # "".join([sentinel]), str(sentinel) and sentinel[:] all return sentinel itself in CPython.
+            copy = sentinel[:1] + sentinel[1:]
+            sentinel_and_copy[:] = [sentinel, copy]
+            module.newest_item_page_link_per_item_from_walk_minutes = lambda text, parser: {"2": copy}
+        return module
+
+    with fixture.supervisor_names_replaced(load_module_from_path=load_walk_finder_returning_a_copy_of_publish_failed):
+        lines = lines_for(root)
+    check("a walk finder whose failed-publish value is an equal string, not the same object: the line without a "
+          "link",
+          len(sentinel_and_copy) == 2 and sentinel_and_copy[0] == sentinel_and_copy[1]
+          and sentinel_and_copy[0] is not sentinel_and_copy[1]
+          and lines == (without_link_line(WALK, f"2 of 3, {POINT},", "2 of 3"),), f"{lines!r} {sentinel_and_copy!r}")
+
+    root = workspace / "link-sorting-after-publish-failed"
+    link_after = "vscode://file/fixture-item-two-page.html"
+    walk_in(root, OPEN_MINUTES + f"#item_page item 2 of 3 {link_after}\n")
+    publish_failed = supervisor.load_module_from_path(
+        "walk_finder_for_the_sort_case", supervisor.WALK_FINDER_PATH).ITEM_PAGE_PUBLISH_FAILED
+    check("a link that sorts after the failed-publish value: the line with that link",
+          link_after > publish_failed
+          and lines_for(root) == (approved_line(WALK, f"2 of 3, {POINT},", link_after, "2 of 3"),),
+          repr(lines_for(root)))
 
     root = workspace / "no-point"
     walk_in(root, "#next_to_present item 3 of 3\n#item_page item 3 of 3 https://claude.ai/artifact/ItemThree\n")
