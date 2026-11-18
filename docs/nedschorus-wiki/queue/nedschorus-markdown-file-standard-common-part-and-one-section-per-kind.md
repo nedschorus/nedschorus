@@ -8,8 +8,8 @@ This page is the standard for the project's Markdown files: a common part that e
 - **State what is, not how it came to be.** Leave out dates of events, approval-walks and user-rulings retold, review rounds, incidents, "was replaced by", "previously", "no longer", and pull requests or GHIs cited as provenance; git history, pull requests and walk-minutes hold them. A decision is written as what holds now. A past fact stays only where a reader would otherwise misread the present, as one clause with no date. A file whose job is to record what happened, such as a log, walk-minutes, a report, a commit message or a pull request description, is exempt from this rule.
 - **One canonical location for each fact.** Link to the document or file that holds a fact instead of restating it. Leave to the code what the code states, such as flags, exit codes, message texts and file formats: name the file and stop.
 - **A reason is one clause**, attached to the statement it explains, and only where it helps the reader act. Do not defend a decision or list rejected alternatives, unless the kind's section asks for them.
-- **Headings are the kind's sections, in its order.** A heading or line that a program reads, such as `## Provisional additions (not yet vetted by the user)` or a front matter line, keeps its exact text.
-- **Length.** Each section gives a range, in words as `wc -w` counts them. A file over its range usually holds something its section leaves out: cut that first.
+- **Headings.** Where a kind's section lists headings, the file has them, in that order. A heading or line that a program reads, such as `## Provisional additions (not yet vetted by the user)` or a front matter line, keeps its exact text.
+- **Length.** Where a kind's section gives a range, it is in words as `wc -w` counts them. A file over its range usually holds something its section leaves out: cut that first.
 - **Kept true.** When the thing a file describes changes, change the sentence that describes it. Do not append a dated note, an "Update:" paragraph or an "as of" line beside the old sentence.
 
 ## GHI-MDs
@@ -21,13 +21,13 @@ A GHI-MD is one of four kinds: a bug, code that does not do what its design, des
 It contains, in this order:
 
 1. The first heading, the GHI's title, by the rules of `/ghi-write` step 4.
-2. For a bug, `## Reproduction`: the command or steps, what happened, and what should have happened, naming the file that promises it. For a change request, `## Change`: the design and design-contract it changes, what should change, and whether the change is corrective, adaptive, perfective or preventive. For a chore, `## Work`. For research, `## Question`: the question, and what each likely answer would lead to.
+2. For a bug, `## Reproduction`: the command or steps, what happened, and what should have happened, naming the file that promises it. For a change request, `## Change`: the design and design-contract it changes, what should change, and which of ISO/IEC 14764's four maintenance categories the change is: corrective, adaptive, perfective or preventive. For a chore, `## Work`: the upkeep to do, the files or programs it touches, and why it is due now. For research, `## Question`: the question, and what each likely answer would lead to.
 3. `## Why`: who or what the problem or gap costs, and how often.
 4. `## Next action`: one action a fresh-reader can take.
 5. `## Done when`: the condition that closes the GHI.
 6. `## Relations`: each related GHI by title and link, with one clause on how it relates. Leave the section out when there are none.
-7. `## Outcome`, added when the work is done: what was done, by pull request link, in one paragraph.
-8. `## Provisional additions (not yet vetted by the user)`, when an agent has added lines that wait for the user.
+7. `## Outcome`, added when the work is done: what was done, by pull request link, in one paragraph. It replaces Next action, which is then no longer true.
+8. `## Provisional additions (not yet vetted by the user)`, always last, when an agent has added lines that wait for the user.
 
 A GHI-MD leaves out:
 
@@ -41,7 +41,7 @@ Length: 150 to 600 words; Outcome and Provisional additions aside. A GHI-MD over
 
 A design is a file whose name ends `-design.md`, other than a test-design: a GHI-MD that decides how something will be built, or such a file in its code's `docs/` directory. `docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md` says where it lives and how it is named at each stage.
 
-A design has these level-2 headings, in this order. A section the design does not need keeps its heading, and its whole body is one line, `Not needed:` followed by the reason.
+A design has these eight level-2 headings, in this order. A design that does not need one of the eight keeps its heading, and the section's whole body is one line, `Not needed:` followed by the reason.
 
 1. `## Problem`: what is wrong or missing, who it costs, and what the design must achieve, measurable where it can be.
 2. `## Goals and non-goals`: what the design delivers, and what it deliberately does not, one line each.
@@ -52,13 +52,13 @@ A design has these level-2 headings, in this order. A section the design does no
 7. `## Alternatives considered`: each alternative rejected, in one or two sentences with its reason.
 8. `## Deferred-decisions`: each case the design leaves open, one line each, or `Not needed:` with the reason.
 
-These headings follow them when the design has them: `## Decided elsewhere`, `## Defects fixed`, `## Next action` while the design's GHI is open, and `## Relations`.
+These headings follow the eight when the design has them, and are left out when it does not: `## Decided elsewhere`, `## Defects fixed`, `## Relations`, and, for a design that is a GHI-MD, the GHI-MDs section's `## Next action`, `## Done when`, `## Outcome` and `## Provisional additions (not yet vetted by the user)`, as that section describes them. A design that is a GHI-MD also opens with the GHI's title heading and the front matter `/ghi-write` step 4 gives it.
 
 A design leaves out:
 
 - Its own revision history, such as "this revision folds in", and the dates its decisions were made. A user-ruling the design rests on is stated as what is decided, followed by its walk-minutes citation in parentheses.
 - Detail the design-contract or the test-design holds.
-- Once its code has merged, detail the code now states. The design then changes only through a change-request GHI-MD.
+- Once its code has merged, any detail the code now states. From then on, a change to what the design promises goes through a GHI-MD that is a change request.
 
 Length: 800 to 3,000 words for a system, 300 to 1,200 for a single program. A design over 4,000 words usually holds two designs, or detail that belongs in the design-contract, the test-design or the code.
 
@@ -68,11 +68,11 @@ The project glossary is `docs/nedschorus-wiki/nedschorus-glossary.md`. Its openi
 
 Every entry has one pattern, on one line:
 
-`- **<term>** — <definition>[, such as <one example>][. <path of the document or program that holds the detail>.][ <labels>]`
+`- **<term>** — <definition>[, such as <one example>][. <one sentence naming the document or program that holds the detail, such as "The program is `<path>`.">][ <labels>]`
 
 - The definition is one sentence. It starts with the kind of thing the term names, such as "a skill", "the program" or "a filename suffix", then says what sets it apart from others of that kind. It does not use the term itself.
 - The example is one real case from this repository, given only where the definition alone leaves a reader unsure what counts.
-- The path is the canonical location of the detail, such as the program that implements the term, given where one exists.
+- The sentence naming the detail's canonical location, such as the program that implements the term, is given where one exists.
 
 An entry leaves out history, user-rulings, quotations of the user, the reasons for the term or the thing it names, how-to steps, design detail, a list of the term's cases, and anything the linked document says.
 
@@ -98,9 +98,9 @@ A seat-brief leaves out:
 
 Length: 150 to 800 words. A seat-brief over 1,000 words holds procedures that belong in a skill or a program. When a skill or a program takes over a rule, the rule leaves the seat-brief in the same change.
 
-## Handoff next-step files
+## Handoff next step files
 
-A next-step file is the file `/handoff` step 2 writes in `~/.claude/handoffs/`, read once, by the successor agent-session, when that agent-session's context is empty. `.claude/skills/handoff/SKILL.md` step 2 says what goes in it and what stays out; this section adds the order, the form and the length.
+A next step file is the file `/handoff` step 2 writes in `~/.claude/handoffs/`, read once, by the successor agent-session, which did not see the work. `.claude/skills/handoff/SKILL.md` step 2 says what goes in it and what stays out; this section adds the order, the form and the length.
 
 It contains, in this order:
 
@@ -108,20 +108,20 @@ It contains, in this order:
 2. Running work to restart, one line each, with its command.
 3. What the successor needs that no task, walk-minutes, committed file or `CLAUDE.md` holds, one line each, with a path, or a repository and number, for each reference.
 
-A next-step file leaves out what this agent-session did, the text of an approval-walk item or a task, which their files hold, the times and wording of the user's replies unless the successor acts on them, and the reasons behind the first action unless the successor would otherwise act differently.
+A next step file leaves out what this agent-session did, the text of an approval-walk item or a task, which their files hold, the times and wording of the user's replies unless the successor acts on them, and the reasons behind the first action unless the successor would otherwise act differently.
 
-Length: 100 to 400 words. A next-step file over 500 words holds work that belongs in tasks.
+Length: 100 to 400 words. A next step file over 500 words holds work that belongs in tasks.
 
 ## Wiki pages
 
-A wiki page is a page in `docs/nedschorus-wiki/`, or one in `docs/nedschorus-wiki/queue/` pending approval, other than the project glossary. An nc-architecture-overview also follows `docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md`, which wins where the two differ.
+A wiki page is a page in `docs/nedschorus-wiki/`, or one in `docs/nedschorus-wiki/queue/` pending approval, other than the project glossary and the proposed-improvements-or-changes-files an overview's claim-check writes beside it. An nc-architecture-overview also follows `docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md`, which wins where the two differ.
 
 Each page is one of three kinds, and keeps to its kind: a reference page lists rules or facts a reader looks up, such as `docs/nedschorus-wiki/nedschorus-style-guide.md`; a how-to page gives the steps of one job, such as `docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md`; an explanation page says how part of the project works and why, such as `docs/nedschorus-wiki/nedschorus-agent-seat-model.md`. When a page grows material of another kind, move that material to a page of its own and link to it.
 
 A page contains, in this order:
 
 1. A heading naming its subject.
-2. A first paragraph saying what the page covers and when a reader needs it, so a reader can tell from that paragraph alone whether to read on. A page whose content a program reads as data names that program here, as the file naming page's rule for prose a program reads says.
+2. A first paragraph saying what the page covers and when a reader needs it, so a reader can tell from that paragraph alone whether to read on. A page whose content a program reads as data names that program here, as the rule for prose a program reads in `docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md` says.
 3. The body: for a reference page, one rule or fact to an item, ordered for lookup; for a how-to page, numbered steps, each an action; for an explanation page, the parts and how they fit together, with a reason where it helps.
 
 A wiki page leaves out front matter or opening lines that say which approval-walk or user-ruling produced the page, status lines such as "status: ruled" or "streamlined on", the approval-walk or user-ruling behind each rule, and examples taken from past events when a current file or command would serve.

@@ -50,8 +50,8 @@ def run(argv, standard_path=program.MARKDOWN_FILE_STANDARD_PATH):
 
 # Each kind's paths, including the ones a wider pattern also matches.
 expected_kinds = {
-    "/home/nedlern/.claude/handoffs/merge-lane-2-next-step-20261117-133829.md": "Handoff next-step files",
-    "/Volumes/nedhome/.claude/handoffs/reboot-test-next-step-20261117-105148.md": "Handoff next-step files",
+    "/home/nedlern/.claude/handoffs/merge-lane-2-next-step-20261117-133829.md": "Handoff next step files",
+    "/Volumes/nedhome/.claude/handoffs/reboot-test-next-step-20261117-105148.md": "Handoff next step files",
     "/home/nedlern/agents/merge-lane-2/CLAUDE.local.md": "Seat-briefs",
     "CLAUDE.local.md": "Seat-briefs",
     "docs/nedschorus-wiki/nedschorus-glossary.md": "The project glossary",

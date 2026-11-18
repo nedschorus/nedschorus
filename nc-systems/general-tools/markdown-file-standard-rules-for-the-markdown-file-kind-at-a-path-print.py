@@ -32,7 +32,7 @@ UNCOVERED_PATH_PATTERNS = [r"-test-design\.md$", r"-contract\.md$"]
 # the glossary before the wiki pages. Each pattern is anchored at a path component, so it
 # matches the same file in any checkout.
 KIND_SECTION_HEADING_AND_PATH_PATTERNS = [
-    ("Handoff next-step files", r"(^|/)\.claude/handoffs/[^/]+-next-step-[^/]*\.md$"),
+    ("Handoff next step files", r"(^|/)\.claude/handoffs/[^/]+-next-step-[^/]*\.md$"),
     ("Seat-briefs", r"(^|/)CLAUDE\.local\.md$"),
     ("The project glossary", r"(^|/)docs/nedschorus-wiki/nedschorus-glossary\.md$"),
     ("Designs", r"(^|/)[^/]+-design\.md$"),
