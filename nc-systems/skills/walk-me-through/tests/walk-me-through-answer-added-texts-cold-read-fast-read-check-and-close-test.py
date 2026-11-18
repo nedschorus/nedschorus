@@ -930,8 +930,9 @@ def read_next_item_line(case, item):
 
 def prerequisite_line(case, item, heading):
     """The line close and the read step print last for the item they name, as a task's metadata.prerequisites entry."""
-    return (f"If a task waits on the user's decision on {item}, add this entry to its metadata.prerequisites with "
-            "TaskUpdate: " + json.dumps({"approval_walk_item_decided": {
+    return (f"If a task waits on the user's decision on {item}, append this entry to the task's "
+            "metadata.prerequisites list and give TaskUpdate the whole list, every entry the list holds now kept, "
+            "because TaskUpdate replaces metadata.prerequisites whole: " + json.dumps({"approval_walk_item_decided": {
                 "approval_walk_minutes_file_path": str(case.minutes.resolve()),
                 "approval_walk_item_heading": heading}}, ensure_ascii=False))
 

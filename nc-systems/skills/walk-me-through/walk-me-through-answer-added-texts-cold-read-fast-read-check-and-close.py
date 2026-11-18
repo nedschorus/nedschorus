@@ -255,7 +255,7 @@ last of what APPROVAL-WALK-WAITING-ITEM-COLD-READ-FAST-READ prints when it
 says to present the item, comes one line for each walk-document unit holding
 that item: the `approval_walk_item_decided` entry, as
 scripts/agent-seat-due-task-raise-hook.py reads it, that a task waiting on the
-user's decision on the item puts in its metadata.prerequisites, giving the
+user's decision on the item appends to its metadata.prerequisites, giving the
 walk-minutes' absolute path and the unit's heading line as the walk-document
 holds it then. It comes after the lines the agent must pass on to the user,
 so that it is not passed on.
@@ -975,8 +975,10 @@ ITEM_READ_LINES = (
 )
 ITEM_READ_NOT_RUN_NEXT = "Present {item}."
 # The form scripts/agent-seat-due-task-raise-hook.py's parse_prerequisites reads.
-WAITING_ON_ITEM_PREREQUISITE_LINE = ("If a task waits on the user's decision on {item}, add this entry to its "
-                                     "metadata.prerequisites with TaskUpdate: {entry}")
+WAITING_ON_ITEM_PREREQUISITE_LINE = ("If a task waits on the user's decision on {item}, append this entry to the "
+                                     "task's metadata.prerequisites list and give TaskUpdate the whole list, every "
+                                     "entry the list holds now kept, because TaskUpdate replaces "
+                                     "metadata.prerequisites whole: {entry}")
 ITEM_READ_FAILED_LINES = (
     "{item} has had no cold-read-fast-read of its text as it stands, so do not present it yet: the user is shown an "
     "item only after its cold-read-fast-read.",
