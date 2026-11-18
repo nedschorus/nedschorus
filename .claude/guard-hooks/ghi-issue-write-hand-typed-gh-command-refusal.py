@@ -459,7 +459,7 @@ def close_lines(files):
     if files is None:
         return (CLOSE_RECORD_LINE_LOOKUP_FAILED + "\n"
                 + CLOSE_LINES.format(path="<path>"))
-    if len(files) == 1:
+    if len(files) == 1:  # pragma: no mutate, <= 1 differs only for an empty list, which both callers send to their own no-file refusal first
         return (CLOSE_RECORD_LINE_ONE_FILE.format(path=files[0]) + "\n"
                 + CLOSE_LINES.format(path=files[0]))
     return (CLOSE_RECORD_LINE_SEVERAL_FILES.format(paths=", ".join(files)) + "\n"
