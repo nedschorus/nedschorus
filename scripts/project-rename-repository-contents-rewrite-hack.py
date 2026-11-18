@@ -336,6 +336,10 @@ ALLOWLIST = [
           r"|nedschorus's|in_nedschorus|nedschorus \"$",
      "the project's name in prose or test data, for the later pull request"),
     ("*", r"projects-nedschorus-", "test data name, renamed in the prose pull request"),
+    ("docs/issues/*", r"[A-Za-z0-9_./~:-]*(?i:nedschorus)[A-Za-z0-9_./-]*",
+     "an old name a GHI-MD's paths keep: a retired file, a log-store or GHI-MD file name, a domain; prose for the later pull request"),
+    ("docs/issues/*", r"^docs/issues/\S+\.md$",
+     "a GHI-MD's own file name, which its GitHub issue's body links, so it keeps its name"),
     ("*", r"(?i:nedschorus)(?= (?:checkout|project|repository)\b)|(?<=in a )nedschorus\b|\bthe nedschorus\b",
      "the project's name in prose, for the later pull request"),
 ]

@@ -309,5 +309,20 @@ check("stage 2 leaves the value of a TASK_LIST_ID_PREFIX_BEFORE_PROJECT_RENAME c
 covered = run(checkout, "--residue-report")
 check("the residue report covers a TASK_LIST_ID_PREFIX_BEFORE_PROJECT_RENAME constant's value", covered.returncode == 0, covered.stdout)
 
+# --- A GHI-MD keeps its own file name and the old names its prose holds --------------------------
+checkout = scratch_checkout({
+    "docs/issues/7-a-fix-in-nc-systems-handoff.md": "See notes.nedschorus.com and the retired nedschorus-founding-plan.md.\n",
+    "docs/issues/8-b.md": "Run nc-systems/handoff/x.py.\n",
+})
+for stage in ("1", "2", "3"):
+    run(checkout, "--stage", stage)
+covered = run(checkout, "--residue-report")
+check("a GHI-MD keeps its file name and its prose's old names, and the residue report covers both",
+      covered.returncode == 0
+      and git(checkout, "ls-files", "--", "docs/issues/7-a-fix-in-nc-systems-handoff.md").strip()
+      == "docs/issues/7-a-fix-in-nc-systems-handoff.md"
+      and read(checkout, "docs/issues/8-b.md") == "Run nn-systems/handoff/x.py.\n",
+      covered.stdout)
+
 print(f"{len(failures)} failed" if failures else "all passed")
 sys.exit(1 if failures else 0)
