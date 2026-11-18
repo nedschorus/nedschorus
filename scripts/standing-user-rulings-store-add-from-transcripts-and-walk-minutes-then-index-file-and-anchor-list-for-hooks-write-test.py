@@ -311,6 +311,29 @@ with tempfile.TemporaryDirectory() as directory:
     check("a top-level repository file named alone, without a path, is a tag",
           case.tags("see CLAUDE.md") == {"CLAUDE.md"}, case.tags("see CLAUDE.md"))
 
+# A record written before the project rename names a system and a file by their old directory names, and a tag
+# stored then keeps its old name. The rename's rewrite program leaves a line assigning a name ending
+# _BEFORE_PROJECT_RENAME alone, so the old name is written only there.
+SYSTEMS_DIRECTORY_BEFORE_PROJECT_RENAME = "nc-systems"
+with tempfile.TemporaryDirectory() as directory:
+    case = Case(directory)
+    old_record = f"see {SYSTEMS_DIRECTORY_BEFORE_PROJECT_RENAME}/handoff/handoff-supervisor.py"
+    case.transcript("ned-box", [human(old_record, "2026-10-24T00:00:00Z")])
+    case.run()
+    check("a path under the old systems directory name in an old record is tagged with its system and file under their new names",
+          case.tags(old_record) == {"nn-systems/handoff/", "nn-systems/handoff/handoff-supervisor.py"},
+          case.tags(old_record))
+    connection = sqlite3.connect(str(case.store_directory / program.STORE_FILE_NAME))
+    with connection:
+        connection.execute("UPDATE entry_tags SET tag = ? WHERE tag = 'nn-systems/handoff/'",
+                           (f"{SYSTEMS_DIRECTORY_BEFORE_PROJECT_RENAME}/handoff/",))
+    connection.close()
+    case.run()
+    check("a system tag stored under its old name makes an anchor under its new name",
+          "/nn-systems/handoff/" in case.anchors()
+          and not any(SYSTEMS_DIRECTORY_BEFORE_PROJECT_RENAME in anchor for anchor in case.anchors()),
+          case.anchors())
+
 # A transcript is read on from its stored position, not from its start.
 with tempfile.TemporaryDirectory() as directory:
     case = Case(directory)

@@ -23,7 +23,7 @@ A reader of a flat wiki finds a page only by knowing its file name or by searchi
 Measured on `origin/main` on 2026-10-27:
 
 - `docs/nedsnodes-wiki/` holds 19 Markdown pages and one subdirectory, `queue/`, with no other subdirectories (`git ls-tree --name-only origin/main docs/nedsnodes-wiki/`).
-- Only 2 of the 19 pages contain a Markdown link to another wiki page, 3 such links in all: `nedschorus-enforcement-ladder.md` links once and `nedschorus-fleet-git-worktree-working-model.md` twice (`git grep -noE '\]\([^)]*nedschorus-[a-z0-9-]+\.md[^)]*\)' origin/main -- 'docs/nedsnodes-wiki/*.md'`, less one hit that points outside the wiki, to `docs/cross-project/`). Other pages name wiki pages as backticked paths, which do not open as links.
+- Only 2 of the 19 pages contain a Markdown link to another wiki page, 3 such links in all: `nedsnodes-enforcement-ladder.md` links once and `nedsnodes-fleet-git-worktree-working-model.md` twice (`git grep -noE '\]\([^)]*nedschorus-[a-z0-9-]+\.md[^)]*\)' origin/main -- 'docs/nedsnodes-wiki/*.md'`, less one hit that points outside the wiki, to `docs/cross-project/`). Other pages name wiki pages as backticked paths, which do not open as links.
 - The systems have their own directories under `nn-systems/`: `cold-read/`, `general-tools/`, `handoff/`, `main-gatekeeper/`, `skills/explain/` and `skills/walk-me-through/` (`git ls-tree -d --name-only origin/main nn-systems/ nn-systems/skills/`). One system has wiki pages named after it, the handoff system's `nedsnodes-handoff-architecture-overview.md` and a page of proposed changes to it; no other system has one, and the wiki's folders do not follow the layout of `nn-systems/`.
 - No agent-seat owns the wiki.
 

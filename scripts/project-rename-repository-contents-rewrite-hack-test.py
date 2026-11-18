@@ -324,5 +324,56 @@ check("a GHI-MD keeps its file name and its prose's old names, and the residue r
       and read(checkout, "docs/issues/8-b.md") == "Run nn-systems/handoff/x.py.\n",
       covered.stdout)
 
+# --- Stage 3 leaves a path as it was at a past commit -------------------------------------------
+checkout = scratch_checkout({
+    "docs/issues/5-a.md": ("[line 9](https://github.com/o/r/blob/29fb37b38707b03bdefed9027e4907212f3df6c8/nc-systems/x/a.py#L9) "
+                           "and `git show 615a230:docs/nedschorus-wiki/nedschorus-plan.md`, now nc-systems/x/a.py\n"),
+    "nc-systems/x/check.py": ('MAP = {\n    "nc-systems/x/old-hook.py":  # in git history only\n        "nc-systems/x/hook.py",\n}\n'
+                              'PATH_PARTS_BEFORE_PROJECT_RENAME = {"nc-systems": "nn-systems"}\n'),
+    "nc-systems/x/a.py": "a = 1\n",
+})
+run(checkout, "--stage", "3")
+check("stage 3 leaves a commit-pinned path, a former path marked as such, and the names a reader keeps from before the rename",
+      read(checkout, "docs/issues/5-a.md") == (
+          "[line 9](https://github.com/o/r/blob/29fb37b38707b03bdefed9027e4907212f3df6c8/nc-systems/x/a.py#L9) "
+          "and `git show 615a230:docs/nedschorus-wiki/nedschorus-plan.md`, now nn-systems/x/a.py\n")
+      and read(checkout, "nn-systems/x/check.py") == (
+          'MAP = {\n    "nc-systems/x/old-hook.py":  # in git history only\n        "nn-systems/x/hook.py",\n}\n'
+          'PATH_PARTS_BEFORE_PROJECT_RENAME = {"nc-systems": "nn-systems"}\n'),
+      (read(checkout, "docs/issues/5-a.md"), read(checkout, "nn-systems/x/check.py")))
+covered = run(checkout, "--residue-report")
+check("the residue report covers the paths stage 3 leaves as they were at a past commit", covered.returncode == 0, covered.stdout)
+
+# --- A rerun of stage 3 after its move still renames a page cited by name alone -------------------
+checkout = scratch_checkout({"docs/nedsnodes-wiki/nedsnodes-glossary.md": "terms\n",
+                             "docs/issues/9-b.md": "See `nedschorus-glossary.md`.\n"})
+run(checkout, "--stage", "3")
+check("a rerun of stage 3 renames a citation by name alone of a page an earlier run renamed",
+      read(checkout, "docs/issues/9-b.md") == "See `nedsnodes-glossary.md`.\n", read(checkout, "docs/issues/9-b.md"))
+
+# --- The residue report finds a GHI-MD citation stage 3 missed --------------------------------------
+checkout = scratch_checkout({"docs/cross-project/nedsnodes-notes.md": "notes\n",
+                             "docs/issues/2636-c.md": "See `docs/cross-project/nedschorus-notes.md` and the retired `nedschorus-founding-plan.md`.\n"})
+missed = run(checkout, "--residue-report")
+check("the residue report names a GHI-MD citation of a file the checkout holds under its new name, and covers a retired one",
+      missed.returncode == 1 and "docs/issues/2636-c.md:1:" in missed.stdout and "1 not covered" in missed.stdout, missed.stdout)
+
+# --- Stage 3 gives a Bash guard it moves a former-path line in the Bash-guard check -----------------
+BASH_GUARD_CHECK = "nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py"
+checkout = scratch_checkout({BASH_GUARD_CHECK: (
+    'BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = {\n'
+    '    "scripts/old-guard.py":  # in git history only\n        ".claude/guard-hooks/guard.py",\n}\n'
+    'GUARDS = {\n    ".claude/guard-hooks/guard.py": read_guard,\n    "nc-systems/x/stop-hook.py": read_stop,\n}\n')})
+run(checkout, "--stage", "3")
+moved_check = BASH_GUARD_CHECK.replace("nc-systems", "nn-systems")
+check("stage 3 maps a Bash guard it moves from its former path, once, so the Bash-guard check reads the base's hook",
+      read(checkout, moved_check) == (
+          'BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = {\n'
+          '    "nc-systems/x/stop-hook.py":  # in git history only\n        "nn-systems/x/stop-hook.py",\n'
+          '    "scripts/old-guard.py":  # in git history only\n        ".claude/guard-hooks/guard.py",\n}\n'
+          'GUARDS = {\n    ".claude/guard-hooks/guard.py": read_guard,\n    "nn-systems/x/stop-hook.py": read_stop,\n}\n')
+      and run(checkout, "--stage", "3").returncode == 0 and read(checkout, moved_check).count("stop-hook.py\":") == 2,
+      read(checkout, moved_check))
+
 print(f"{len(failures)} failed" if failures else "all passed")
 sys.exit(1 if failures else 0)

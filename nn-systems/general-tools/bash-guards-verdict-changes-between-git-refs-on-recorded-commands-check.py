@@ -644,6 +644,10 @@ def read_emergency_stop(guard, command, working_directory, search_file_directory
 # A renamed guard's former file path, which a base ref's settings.json may still run, to its path in GUARDS.
 # The line does nothing once main's settings.json no longer runs the former path, and may then be removed.
 BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = {
+    "nc-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py":  # in git history only
+        "nn-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py",
+    "nc-systems/skills/emergency-stop/emergency-stop-file-shown-and-push-and-merge-refusal-hook.py":  # in git history only
+        "nn-systems/skills/emergency-stop/emergency-stop-file-shown-and-push-and-merge-refusal-hook.py",
     ".claude/hooks/ghi-issue-write-redirect.py":  # in git history only
         ".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py",
     "scripts/hand-typed-codex-exec-redirect-hook.py":  # in git history only
@@ -654,7 +658,7 @@ BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = {
         ".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py",
     ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py":  # in git history only
         ".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py",
-    "nn-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py":  # in git history only
+    "nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py":  # in git history only
         ".claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py",
     "scripts/search-file-argument-read-as-option-guard-hook.py":  # in git history only
         ".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py",

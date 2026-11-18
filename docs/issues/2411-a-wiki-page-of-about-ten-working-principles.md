@@ -38,7 +38,7 @@ How agents build and finish work, the three principles he gave on 2026-11-03:
 
 ## What the page is, and how it avoids drifting
 
-- It is a wiki page named `nedschorus-goals-and-philosophy-founding-statement-and-agent-working-principles.md`, a name a fresh subagent read correctly from the name alone. Each principle is one short paragraph that cites the user-rulings it comes from, quoted in the page's section Sources.
+- It is a wiki page named `nedsnodes-goals-and-philosophy-founding-statement-and-agent-working-principles.md`, a name a fresh subagent read correctly from the name alone. Each principle is one short paragraph that cites the user-rulings it comes from, quoted in the page's section Sources.
 - A principle is a rule for how agents work with the user, or build and finish work, across tasks. A user-ruling on one task's content is not a principle.
 - The page's goal section links to the section "What the project is" of the objective page, the user's own statement of the goal, in place of restating it.
 - The objective page links to the new page from the section "Standing decisions", and the new page links back to that section.
