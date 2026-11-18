@@ -573,7 +573,8 @@ try:
     check("a subagent and a background command running, each with its start: rule 5",
           verdicts["alpha"]["running"] == {
               "subagents": [{"id": "agent-1", "started": "2026-11-02T11:20:00Z"}],
-              "background_commands": [{"id": "bash-1", "started": "2026-11-02T11:25:00Z"}],
+              "background_commands": [{"id": "bash-1", "started": "2026-11-02T11:25:00Z",
+                                       "description": None, "timeout_ends_at": None}],
               "workflows": []}
           and verdicts["alpha"]["rule"] == 5, verdicts["alpha"])
 
@@ -617,6 +618,80 @@ try:
     check("a subagent whose final report came is not running",
           verdicts["alpha"]["running"]["subagents"] == [] and verdicts["alpha"]["rule"] == 4,
           verdicts["alpha"])
+
+
+    def background_bash_launch(task_id, tool_input, at, tool_id):
+        """The Bash call that starts a background command, and its result naming the command's id."""
+        return [assistant(tool=("Bash", {**tool_input, "run_in_background": True}), at=at,
+                          tool_id=tool_id),
+                user([{"type": "tool_result", "tool_use_id": tool_id,
+                       "content": f"Command running in background with ID: {task_id}"}],
+                     at=at, tool_result={"backgroundTaskId": task_id})]
+
+
+    LONG_COMMAND = "cd /home/nedlern/Projects/nedschorus && " + "python3 scripts/x-test.py && " * 6
+    machine = Machine()
+    machine.seat("alpha", [
+        user("go"),
+        *background_bash_launch("bk1", {"command": "timeout -k 5 10m python3 scripts/x-test.py",
+                                        "description": "Run the x test suite"},
+                                "2026-11-02T11:25:00Z", "tb1"),
+        *background_bash_launch("bk2", {"command": LONG_COMMAND}, "2026-11-02T11:26:00Z", "tb2"),
+        *background_bash_launch("bk3", {"command": "timeout 0 sleep 999", "description": "  "},
+                                "2026-11-02T11:27:00Z", "tb3"),
+        assistant("Waiting on them."), turn_end()])
+    _, verdicts, _ = machine.run()
+    commands = verdicts["alpha"]["running"]["background_commands"]
+    check("a background command is named by the description of the Bash call that started it, and "
+          "a command line starting with `timeout -k 5 10m` gives the time that timeout stops it",
+          commands[0] == {"id": "bk1", "started": "2026-11-02T11:25:00Z",
+                          "description": "Run the x test suite",
+                          "timeout_ends_at": "2026-11-02T11:35:00Z"}, commands)
+    check("a background command whose Bash call gave no description is named by its command line, "
+          "cut to the characters kept, and a line with no timeout gives no timeout end",
+          commands[1] == {"id": "bk2", "started": "2026-11-02T11:26:00Z",
+                          "description": " ".join(LONG_COMMAND.split())[
+                              :fields.BACKGROUND_COMMAND_LINE_CHARACTERS_KEPT - 1] + "…",
+                          "timeout_ends_at": None}, commands)
+    check("a blank description falls back to the command line, and `timeout 0`, which disables the "
+          "timeout, gives no timeout end",
+          commands[2] == {"id": "bk3", "started": "2026-11-02T11:27:00Z",
+                          "description": "timeout 0 sleep 999", "timeout_ends_at": None}, commands)
+    machine = Machine()
+    machine.seat("alpha", [
+        user("go"),
+        assistant(tool=("Bash", {"command": "timeout 10m python3 scripts/x-test.py",
+                                 "description": "Run the x test suite"}),
+                  at="2026-11-02T11:20:00Z", tool_id="tb1"),
+        user([{"type": "tool_result", "tool_use_id": "tb1",
+               "content": "Command was moved to the background (ID: bk1) after running for 180s."}],
+             at="2026-11-02T11:23:00Z", tool_result={"backgroundTaskId": "bk1"}),
+        assistant("Waiting on it."), turn_end()])
+    _, verdicts, _ = machine.run()
+    check("a Bash call Claude Code moved to the background is named by its description, and its "
+          "timeout counts from the call, not from the move",
+          verdicts["alpha"]["running"]["background_commands"] == [
+              {"id": "bk1", "started": "2026-11-02T11:23:00Z", "description": "Run the x test suite",
+               "timeout_ends_at": "2026-11-02T11:30:00Z"}], verdicts["alpha"])
+    TIMEOUT_END_BY_COMMAND_LINE = {
+        "timeout 900 python3 x.py": "2026-11-02T11:15:00Z",
+        "timeout --signal=KILL 1.5h x": "2026-11-02T12:30:00Z",
+        "timeout -s KILL 2d x": "2026-11-04T11:00:00Z",
+        "timeout -k5 30s x": "2026-11-02T11:00:30Z",
+        "timeout --preserve-status -v 3m x": "2026-11-02T11:03:00Z",
+        "cd a && timeout 5 x": None, "timeoutx 5 y": None, "timeout 5": None}
+    machine = Machine()
+    machine.seat("alpha", [user("go")] + [
+        record for number, command in enumerate(TIMEOUT_END_BY_COMMAND_LINE)
+        for record in background_bash_launch(f"bk{number}", {"command": command, "description": "d"},
+                                             "2026-11-02T11:00:00Z", f"tb{number}")]
+        + [assistant("Waiting on them."), turn_end()])
+    _, verdicts, _ = machine.run()
+    found = {command: entry["timeout_ends_at"] for command, entry in zip(
+        TIMEOUT_END_BY_COMMAND_LINE, verdicts["alpha"]["running"]["background_commands"])}
+    check("the timeout end of a command line starting with coreutils `timeout`, after any options, "
+          "with each duration unit; none for a timeout later in the line or no duration",
+          found == TIMEOUT_END_BY_COMMAND_LINE, found)
 
 
     def subagent_report(agent_id, result, at, interim):
@@ -663,7 +738,8 @@ try:
               "id": "a1b2", "started": "2026-11-02T09:00:00Z",
               fields.SUBAGENT_STOPPED_AT: "2026-11-02T09:20:00Z",
               fields.SUBAGENT_OWN_RUNNING_BACKGROUND_COMMANDS: [
-                  {"id": "bash-9", "started": "2026-11-02T09:05:00Z"}]}]
+                  {"id": "bash-9", "started": "2026-11-02T09:05:00Z", "description": None,
+                   "timeout_ends_at": None}]}]
           and verdicts["alpha"]["rule"] == 5, verdicts["alpha"])
     machine = Machine()
     subagent_with_own_background_command(machine, last_spend_at="2026-11-02T09:30:00Z")
@@ -710,7 +786,8 @@ try:
           "the subagent's running commands; one it did not stop still is",
           [entry.get(fields.SUBAGENT_OWN_RUNNING_BACKGROUND_COMMANDS)
            for entry in verdicts["alpha"]["running"]["subagents"]]
-          == [[{"id": "bash-10", "started": "2026-11-02T09:06:00Z"}]], verdicts["alpha"])
+          == [[{"id": "bash-10", "started": "2026-11-02T09:06:00Z", "description": None,
+               "timeout_ends_at": None}]], verdicts["alpha"])
 
     # Claude Code delivers a notification queued while the session was busy as a queued_command
     # attachment, not as a user record.
@@ -734,7 +811,30 @@ try:
               "id": "a1b2", "started": "2026-11-02T09:00:00Z",
               fields.SUBAGENT_STOPPED_AT: "2026-11-02T09:20:00Z",
               fields.SUBAGENT_OWN_RUNNING_BACKGROUND_COMMANDS: [
-                  {"id": "bash-9", "started": "2026-11-02T09:05:00Z"}]}], verdicts["alpha"])
+                  {"id": "bash-9", "started": "2026-11-02T09:05:00Z", "description": None,
+                   "timeout_ends_at": None}]}], verdicts["alpha"])
+
+    machine = Machine()
+    project, _ = machine.seat("alpha", [
+        user("go"), SUBAGENT_SPAWN,
+        subagent_report("a1b2", "Started the check.", "2026-11-02T09:20:00Z", interim=True),
+        assistant("Done."), turn_end()])
+    own = project / "s-1" / "subagents"
+    own.mkdir(parents=True, exist_ok=True)
+    (own / "agent-a1b2.jsonl").write_text("".join(json.dumps(record) + "\n" for record in [
+        *background_bash_launch(
+            "bk9617lvz", {"command": "python3 scripts/surviving-mutants-check.py",
+                          "description": "Check which recorded surviving mutants current main kills"},
+            "2026-11-02T09:05:00Z", "tb9"),
+        assistant("Started the check.", at="2026-11-02T09:19:59Z")]))
+    _, verdicts, _ = machine.run()
+    check("a stopped subagent's own background command is named by the description of the Bash "
+          "call in the subagent's transcript that started it",
+          [entry.get(fields.SUBAGENT_OWN_RUNNING_BACKGROUND_COMMANDS)
+           for entry in verdicts["alpha"]["running"]["subagents"]]
+          == [[{"id": "bk9617lvz", "started": "2026-11-02T09:05:00Z",
+                "description": "Check which recorded surviving mutants current main kills",
+                "timeout_ends_at": None}]], verdicts["alpha"])
 
     # --- rule 4 against rule 5: open tasks and their prerequisites -------------------------------
     machine = Machine()

@@ -2,11 +2,12 @@
 """The fields of one idle-sweep verdict, the JSON object scripts/agent-seat-idle-sweep-verdicts-print.py
 prints for each agent-seat, and the values its rule, decision and sentences may take.
 
-Not a program to run. The printing program takes nine field names from here, rule, decision,
+Not a program to run. The printing program takes eleven field names from here, rule, decision,
 text, if_every_sentence_backed, last_turn_ending_message, last_tool_call_at,
 successful_task_tool_calls_setting_prerequisites_or_blocked_by,
-tool_calls_since_start_of_earliest_turn_with_sentence_to_judge and
-open_tasks_with_prerequisites_or_blocked_by, and every value it prints for
+tool_calls_since_start_of_earliest_turn_with_sentence_to_judge,
+open_tasks_with_prerequisites_or_blocked_by, and a background command's description and
+timeout_ends_at, and every value it prints for
 decision, kind and code_reading; it writes the other field names as literals. Its test checks every verdict it prints with
 verdict_field_problems(), and the program that judges and sends reads verdicts by these names, so
 a field renamed in one place and not the other fails a test instead of being read as missing.
@@ -35,12 +36,22 @@ TURN_ENDED = "turn_ended"
 APPROVAL_WALK_ITEMS_WAITING_ON_THE_USER = "approval_walk_items_waiting_on_the_user"
 IDLE = "idle"
 NOT_IDLE_BECAUSE = "not_idle_because"      # [reason]
-# {"subagents": [{"id", "started"}], "background_commands": [{"id", "started"}],
+# {"subagents": [{"id", "started"}], "background_commands": [a background command entry],
 #  "workflows": [{"id", "started"}]}, a workflow being a Workflow-tool run
 RUNNING = "running"
+# A background command entry is {"id", "started", BACKGROUND_COMMAND_DESCRIPTION,
+# BACKGROUND_COMMAND_TIMEOUT_ENDS_AT}.
+# The description of the Bash call that started the command; when the call gave none, its command
+# line cut to BACKGROUND_COMMAND_LINE_CHARACTERS_KEPT characters; null when no such call was found.
+BACKGROUND_COMMAND_DESCRIPTION = "description"
+BACKGROUND_COMMAND_LINE_CHARACTERS_KEPT = 120
+# ISO time at which the coreutils `timeout <duration>` the command line starts with stops the
+# command, its start plus the duration; null when the line starts with no such timeout, the duration
+# is 0, or the start is unknown.
+BACKGROUND_COMMAND_TIMEOUT_ENDS_AT = "timeout_ends_at"
 # Keys a running subagent entry also carries when the subagent has stopped and reported, and is
 # counted only because background commands it launched still run: when it stopped (ISO time), and
-# those commands, [{"id", "started"}].
+# those commands, [a background command entry].
 SUBAGENT_STOPPED_AT = "stopped_at"
 SUBAGENT_OWN_RUNNING_BACKGROUND_COMMANDS = "own_running_background_commands"
 HANDOFF_DEFERRED_MARKER = "handoff_deferred_marker"  # path or null

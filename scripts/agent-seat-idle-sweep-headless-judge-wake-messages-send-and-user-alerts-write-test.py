@@ -456,7 +456,8 @@ check("rule 5: a subagent stopped with a background command of its own still run
       judge_facts.get("running_subagents") == [{
           "id": "a1b2", "started": at(-60), "minutes_running": 60, "stopped_at": at(-40),
           "own_running_background_commands": [
-              {"id": "b3c4", "started": at(-50), "minutes_running": 50}]}], calls)
+              {"id": "b3c4", "started": at(-50), "minutes_running": 50, "description": None,
+               "timeout_ends_at": None}]}], calls)
 
 machine = Machine()
 machine.seat("alpha", [
@@ -472,6 +473,94 @@ judge_facts = json.loads(prompt[prompt.rindex("\n{") + 1:])
 check("rule 5: a running Workflow-tool run is handed to the judge with its minutes",
       judge_facts.get("running_workflows") == [
           {"id": "wn6fctb8y", "started": at(-30), "minutes_running": 30}], calls)
+
+
+def background_bash_launch(task_id, command, when, tool_id, description=None):
+    """The Bash call that starts a background command, and its result naming the command's id."""
+    tool_input = {"command": command, "run_in_background": True}
+    if description is not None:
+        tool_input["description"] = description
+    return [assistant(tool=("Bash", tool_input), when=when, tool_id=tool_id),
+            dict(task_result(tool_id, f"Command running in background with ID: {task_id}", when),
+                 toolUseResult={"backgroundTaskId": task_id})]
+
+
+def rule_five_judge_facts(machine):
+    calls = machine.claude_calls()
+    prompt = calls[0]["prompt"] if calls else "\n{}"
+    return calls, json.loads(prompt[prompt.rindex("\n{") + 1:])
+
+
+machine = Machine()
+machine.seat("alpha", [
+    user("go"),
+    *background_bash_launch("bk1", "python3 scripts/surviving-mutants-check.py", at(-29), "tb1",
+                            description="Check which recorded surviving mutants current main kills"),
+    *background_bash_launch("bk2", "python3 scripts/x-test.py", at(-20), "tb2"),
+    assistant("Waiting on the checks."), turn_end()])
+machine.script(judged(False, reason="the checks are still running"))
+machine.run(0)
+calls, judge_facts = rule_five_judge_facts(machine)
+check("rule 5: a background command with no timeout is handed to the judge by its description, and "
+      "one whose Bash call gave no description by its command line",
+      judge_facts.get("running_background_commands") == [
+          {"id": "bk1", "started": at(-29), "minutes_running": 29,
+           "description": "Check which recorded surviving mutants current main kills",
+           "timeout_ends_at": None},
+          {"id": "bk2", "started": at(-20), "minutes_running": 20,
+           "description": "python3 scripts/x-test.py", "timeout_ends_at": None}], calls)
+
+machine = Machine()
+machine.seat("alpha", [
+    user("go"),
+    *background_bash_launch("bk1", "timeout 30m python3 scripts/x-test.py", at(-10), "tb1",
+                            description="Run the x test suite"),
+    assistant("Waiting on the test suite."), turn_end()])
+machine.script(judged(True, message="m"))
+machine.run(0)
+check("rule 5: a background command whose own `timeout 30m` has not ended it is work under way, and "
+      "with nothing else running the judge is not asked and nothing is sent",
+      machine.claude_calls() == [] and machine.events("judge_answer") == [], machine.events())
+machine.run(20)
+calls, judge_facts = rule_five_judge_facts(machine)
+check("rule 5: once the command's own timeout has passed, the judge is asked about it",
+      [entry["id"] for entry in judge_facts.get("running_background_commands", [])] == ["bk1"],
+      calls)
+
+machine = Machine()
+machine.seat("alpha", [
+    user("go"),
+    *background_bash_launch("bk1", "timeout -k 5 1h python3 scripts/x-test.py", at(-10), "tb1",
+                            description="Run the x test suite"),
+    dict(user("", when=at(-5)), toolUseResult={"status": "async_launched", "agentId": "a1b2"}),
+    assistant("Waiting."), turn_end()])
+machine.script(judged(False, reason="a subagent is running"))
+machine.run(0)
+calls, judge_facts = rule_five_judge_facts(machine)
+check("rule 5: beside a running subagent, a background command its own timeout has not ended is "
+      "not handed to the judge",
+      judge_facts.get("running_background_commands") == []
+      and [entry["id"] for entry in judge_facts.get("running_subagents", [])] == ["a1b2"], calls)
+
+machine = Machine()
+transcript = machine.seat("alpha", [
+    user("go"),
+    dict(user("", when=at(-60)), toolUseResult={"status": "async_launched", "agentId": "a1b2"}),
+    user("<task-notification>\n<task-id>a1b2</task-id>\n<status>completed</status>\n<note>the "
+         "result below may be interim.</note>\n<result>Started the check.</result>\n"
+         "</task-notification>", when=at(-40)),
+    assistant("Waiting on the subagent."), turn_end()])
+(transcript.with_suffix("") / "subagents").mkdir(parents=True)
+(transcript.with_suffix("") / "subagents" / "agent-a1b2.jsonl").write_text("".join(
+    json.dumps(record) + "\n" for record in [
+        *background_bash_launch("b3c4", "timeout 2h python3 scripts/surviving-mutants-check.py",
+                                at(-50), "tb1"),
+        assistant("Started the check.", when=at(-41))]))
+machine.script(judged(True, message="m"))
+machine.run(0)
+check("rule 5: a stopped subagent whose only running command is inside that command's own timeout "
+      "is work under way, and the judge is not asked",
+      machine.claude_calls() == [], machine.events())
 
 # --- rule 2: promises and announced actions -------------------------------------------------------
 PROMISE = "I'll report when PR 927 merges."
