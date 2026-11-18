@@ -2429,7 +2429,8 @@ def main(argv=None):
                    else WHAT_A_STOPPED_INVOCATION_REMOVED_WITHOUT_REMOVE)
         print(f"{STOPPED_LINE_START}{' '.join(str(error).split())}; {removed}\n"
               + next_step_lines.git_failure_next_step_lines(
-                  rerun, text_the_failure_line_contains=STOPPED_LINE_START.strip()),
+                  rerun, git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=str(error),
+                  text_the_failure_line_contains=STOPPED_LINE_START.strip()),
               file=sys.stderr)
         return 2
 

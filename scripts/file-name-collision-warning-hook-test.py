@@ -68,11 +68,6 @@ EXEMPT_FILE_NAMES_IN_TEST = {"skill.md", "readme.md", ".gitkeep"}
 
 failures = []
 
-LOCK_FILE_CONDITION = HOOK_MODULE.next_step_lines.GIT_ERROR_NAMES_A_LOCK_FILE_LINE_OPENING_IF_CONDITION_CLAUSE_WITHOUT_ITS_INSTRUCTION_IN_TOOL_MESSAGE_TO_AGENT
-LOCK_FILE_WAIT_CLAUSE = HOOK_MODULE.next_step_lines.lock_file_named_by_git_error_wait_then_rerun_instruction(
-    "the command below this paragraph")
-
-
 def check(case_name, condition, detail=""):
     if condition:
         print(f"PASS  {case_name}")
@@ -446,9 +441,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               "that reruns the hook on it, then the line saying what to do if that rerun fails too",
               len(failure_lines) == 4
               and failure_lines[1] == (f"A later run of this hook checks only the file that run's Write or Edit "
-                                       f"touched, so check {written} by running the command printed on its own line below this paragraph. If git's "
-                                       "error above names no lock file, run that command now. "
-                                       f"{LOCK_FILE_CONDITION}, {LOCK_FILE_WAIT_CLAUSE}. The command prints nothing when no other tracked file has the "
+                                       f"touched, so {written} is checked by the command printed on its own line below this paragraph. "
+                                       "Run that command now. The command prints nothing when no other tracked file has the "
                                        "basename, and also when this hook skips the file without checking: a file "
                                        "outside the checkout, a file git ignores, a file named SKILL.md, README.md "
                                        "or .gitkeep in any letter case, or a working directory that no longer "
@@ -461,10 +455,6 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               .hook_agent_instruction_if_rerun_command_reports_git_failure_tell_user_both_outputs_line(
                   "file-name-collision-warning:"), repr(failure_lines))
         rerun_line = failure_lines[1] if len(failure_lines) > 1 else ""
-        check(f"a failing git {failing_subcommand}'s rerun line says to run the command now when git names no lock "
-              "file, and gives the lock-file wait otherwise",
-              "names no lock file, run that command now. " + LOCK_FILE_CONDITION + ", "
-              + LOCK_FILE_WAIT_CLAUSE + "." in rerun_line, repr(rerun_line))
         check(f"a failing git {failing_subcommand}'s rerun line says what the command prints when git fails again "
               "and points to the closing line",
               "or, when git fails again, a git-failure message like this one, and the last line here says what to "
@@ -639,6 +629,19 @@ check("with several matches, the draft line names 'one of those files'",
 check("with several matches, the move line names the file you moved from",
       several_lines[1] == "If you are moving the file, delete the file you moved from in this change.",
       repr(several))
+
+lock_file = "/r/a {dir}/.git/index.lock"
+lock_text = HOOK_MODULE.git_failure_text(
+    HOOK_MODULE.git_machine_readable_output.GitCommandFailed(
+        ["ls-files"], "/r", 128, f"fatal: Unable to create '{lock_file}': File exists.\n"),
+    "notes.md", Path("/r"))
+check("a git failure whose error names a lock file, braces in its path, tells the agent to wait for "
+      "that lock file before running the command below, instead of running it now",
+      f"Git's error names the lock file {lock_file}: " in lock_text
+      and HOOK_MODULE.next_step_lines.git_error_names_a_lock_file_wait_then_rerun_line_or_none(
+          f"fatal: Unable to create '{lock_file}': File exists.", "the command below this paragraph")
+      in lock_text
+      and "Run that command now." not in lock_text, repr(lock_text))
 
 print()
 if failures:

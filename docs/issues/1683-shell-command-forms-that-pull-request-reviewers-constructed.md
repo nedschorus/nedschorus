@@ -27,7 +27,7 @@ GHI [Replace the hand-written parsers in the project's hooks and scripts with re
 
 ## Notation
 
-`<LF>` is a newline, `\<LF>` is a backslash followed by a newline (a line continuation), and `<TAB>` is a tab. `b` is a branch with an open pull request. `zzp`, `zzq` and `zzs` are made-up command names, so a form can be run safely.
+`<LF>` is a newline, `\<LF>` is a backslash followed by a newline (a line continuation), and `<TAB>` is a tab. `b` is a branch with an open pull request. `zzp`, `zzq`, `zzr`, `zzs` and `zzx` are made-up command names, so a form can be run safely.
 
 ## Forms whose force push the force-push guard lets through
 
@@ -72,6 +72,16 @@ In each row, for the form as written, every Bash guard decides as it would on ba
 | `zzs <<EOF<LF>$(zzq 'a\<LF>b')<LF>EOF` (the same inside a here-document body's `$( )`) | `zzq` with word `a\<LF>b` | `zzq` with word `ab` | [mac-claude's review of PR 1567](https://github.com/nedschorus/nedschorus/pull/1567#pullrequestreview-5554172978), section (a) |
 | `zzq \ <<E<LF>zzx body<LF>E` (an escaped blank before a here-document) | four commands: `zzq`, `E`, `zzx body` and `E`, read on origin/main at 5e508ba8 on 2026-11-11; the here-document's body and delimiter are read as commands, and the word ` ` is dropped | runs `zzq` with the word ` ` (a space) and the here-document `zzx body` as its input, checked with bash 5.3.9 and a stub `zzq` that prints its words and input | agent-seat reboot-test's task list, task 229, checked again at merge-lane-2's request on 2026-11-11 |
 
+## Forms with an escaped tab before a redirection, whose guard verdicts were not checked
+
+In each row a backslash and a literal tab come right before a redirection, so bash joins the redirection's descriptor digit to the word before it. Checked on origin/main at c7737563 on 2026-11-13 by calling `simple_commands` of the shared reader, and by running each form with `bash -c` (bash 5.3.9) in a scratch directory with a stub `zzq` that prints its words; the second row ran with `HOME` set to a scratch directory. No Bash guard was run on these forms. The replay of every recorded command through every Bash guard, at the base and head of PR 3542, changed no verdict, so no recorded command takes these forms. The first two rows are read in `_Collector.sequence` of the shared reader, where it joins text written before a redirection to the word that text continues; the third is read in `_Collector._read_command_part`, which does no such joining. An agent-seat that runs the Bash guards on these forms moves each row to the table its verdicts fit; until then they wait, as "Next action" says.
+
+| Form | Reader | bash | Found in |
+|---|---|---|---|
+| `zzq -3>f\<TAB>2>h` | `zzq` with word `-32`, and the target `f<TAB>`: `sequence` takes `-3` as the last word written, though the target `f\<TAB>` comes after it, so the `2` is joined to `-3` | `zzq` with word `-3`, and the target `f<TAB>2` | the Codex review of PR [3542](https://github.com/nedschorus/nedschorus/pull/3542), `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers/cx/pr3542-04d7e6d1/codex-code-review-report.md`, folded into [merge-lane-2's approving review of PR 3542](https://github.com/nedschorus/nedschorus/pull/3542#pullrequestreview-5899264983), first P2 |
+| `zzq >~/x\<TAB>2>f` | the target `~/x<TAB>2` as a plain string, which has lost the class `ShellWordWithUnexpandedTildePrefixBashWouldExpand`, so `shell_word_tilde_prefix_expand_as_bash_would` leaves `~` unexpanded; `replaced_paths_in_command` of the GHI-MD soft-block, `.claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py`, would then resolve the target under the working directory's `~/` (not run). The same form with a plain blank, `zzq >~/x 2>f`, keeps the class and expands | writes to `x<TAB>2` in the home directory | the Codex review of PR [3542](https://github.com/nedschorus/nedschorus/pull/3542), `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers/cx/pr3542-04d7e6d1/codex-code-review-report.md`, folded into [merge-lane-2's approving review of PR 3542](https://github.com/nedschorus/nedschorus/pull/3542#pullrequestreview-5899264983), second P2 |
+| `>g\<TAB>2>f zzq` (redirections before the command name) | the target `g<TAB>`; the `2` is taken as the next redirection's descriptor | the target `g<TAB>2` | the Codex review of PR [3542](https://github.com/nedschorus/nedschorus/pull/3542), `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers/cx/pr3542-04d7e6d1/codex-code-review-report.md`, folded into [merge-lane-2's approving review of PR 3542](https://github.com/nedschorus/nedschorus/pull/3542#pullrequestreview-5899264983), third P2 |
+
 ## Forms misread at an open pull request's head and read right on main
 
 These forms are misread only by the reader as a pull request that is still open changes it; origin/main at e5485184 reads them as bash reads them. Checked on 2026-10-19 as the first table was, at the head of [PR 1676](https://github.com/nedschorus/nedschorus/pull/1676), commit 5b113a1d. When that pull request merges unchanged, a row moves to the table its effect fits; when it merges with the form read right, or closes, the row is deleted.
@@ -115,3 +125,5 @@ None until a trigger: merge-lane-2 adds each new constructed form a review finds
 
 1. Who notices that a recorded command uses a form listed here, and which agent-seat then opens the pull request, is not decided; the approved rule names the trigger, not who watches for it.
 2. When the rows of "Forms with many here-documents" are resolved, since their forms are now read within the timeout but differently from bash after the 256th here-document: to be set when the reader is next rewritten.
+3. What becomes of the rows of "Forms misread at an open pull request's head and read right on main": PR 1676 merged on 2026-10-20, so each row is to be run against main and moved or deleted as that section says, by the agent-seat that next runs the forms here against the reader.
+4. Which guard "the GHI redirect guard" in "Why the forms can wait" names, perhaps the GHI-MD soft-block `.claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py`: to be settled by the agent-seat that wrote that sentence or the next one to edit that section.

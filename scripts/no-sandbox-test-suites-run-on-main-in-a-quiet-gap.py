@@ -53,7 +53,9 @@ WHAT ONE RUN DOES, in order:
      is passed, and the commit becomes the passing commit; exit 1 is failed,
      with each suite the runner's FAIL lines name and its log copied beside the
      record, and an empty failing_suites list when it prints no FAIL line;
-     anything else is stopped, with the reason.
+     anything else is stopped, with the reason: each NOT RUN line the runner
+     prints, which says why that suite was not run, such as claude's usage
+     limit, or else the first line of the runner's stderr.
 
 THE STATE FILE, a JSON object written whole to a temporary file renamed into
 place, with these keys:
@@ -93,7 +95,7 @@ exits 0.
 EXIT. 0 the run finished, whatever the suites did, or no run was due, or
 another run or a no-sandbox suite held its lock; 2 bad invocation or a refused
 --record-follow-up-request-sent; 4 the run stopped: the fetch, the worktree, the
-runner or a write failed, which the state file records where it can.
+runner or a write failed, or the runner reported a suite NOT RUN, which the state file records where it can.
 
 SCHEDULE. Installed on ned-box alone by
 nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py, from the
@@ -477,9 +479,13 @@ def run_under_lock(arguments, state_file):
         result, reason = RESULT_STOPPED, (f"the runner ran past {RUNNER_TIMEOUT_SECONDS:g} s "
                                           f"and was stopped")
     else:
+        # A NOT RUN suite's progress line, which carries no log path, says why it was not run.
+        not_run = [line for line in out.splitlines()
+                   if line.startswith(runner.NOT_RUN_SUITE_LINE_PREFIX)
+                   and runner.SUITE_LINE_LOG_MARK not in line]
         refusal = [line for line in err.splitlines() if line.strip()]
-        result, reason = RESULT_STOPPED, (f"the runner exited {code}: "
-                                          f"{refusal[0] if refusal else 'no detail'}")
+        detail = "; ".join(not_run) or (refusal[0] if refusal else "no detail")
+        result, reason = RESULT_STOPPED, f"the runner exited {code}: {detail}"
     last_run = {"commit": commit, "compared_with": passing, "started": stamp(started),
                 "ended": stamp(utc_now()), "result": result, "reason": reason,
                 "failing_suites": [], "record": None, "follow_up_request_sent": None}

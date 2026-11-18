@@ -102,8 +102,9 @@ def item_lines_and_count(walk_finder, document, text, number, parser):
     if len(naming) > 1:  # pragma: no mutate, naming is not empty here, so > 1 and != 1 pick the same lists
         headings = "\n".join(f"line {unit[3] + 1}: {lines[unit[3]]}" for unit in naming)
         raise Refused(SEVERAL_HEADINGS.format(document=document, number=number, headings=headings))
-    heading, body = walk_finder.approval_walk_item_heading_and_item_page_body_lines(text, parser, units, naming[0], number)
-    return body, heading, naming[0][1]
+    (unit,) = naming
+    heading, body = walk_finder.approval_walk_item_heading_and_item_page_body_lines(text, parser, units, unit, number)
+    return body, heading, unit[1]
 
 
 def rendered_item_html(parser, heading, body):

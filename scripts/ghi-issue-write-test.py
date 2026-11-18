@@ -2183,9 +2183,22 @@ def run_git_failure_cases(scratch: Path):
             check(case_name,
                   isinstance(outcome, tool.Refused) and outcome.code == 1
                   and expected in str(outcome)
-                  and tool.next_step_lines.GIT_ERROR_NAMES_A_LOCK_FILE_LINE_OPENING_IF_CONDITION_CLAUSE_WITHOUT_ITS_INSTRUCTION_IN_TOOL_MESSAGE_TO_AGENT in str(outcome), repr(outcome))
+                  and "Otherwise, run exactly `cd " in str(outcome)
+                  and "Git's error names the lock file" not in str(outcome), repr(outcome))
         else:
             check(case_name, outcome == expected, repr(outcome))
+
+    lock_error = "fatal: Unable to create '/r/.git/index.lock': File exists."
+    try:
+        outcome = tool.blob_at(revision, relative, scratch, Recorder(
+            {show: Completed("", 128, "fatal: bad object"), listing: Completed("", 128, lock_error)}))
+    except tool.Refused as refusal:
+        outcome = refusal
+    check("blob_at, when the listing's git error names a lock file, gives the step that waits for "
+          "that lock file instead of the misspelt-name step",
+          isinstance(outcome, tool.Refused)
+          and "Git's error names the lock file /r/.git/index.lock: " in str(outcome)
+          and "is misspelt" not in str(outcome), repr(outcome))
 
     merge_base = f"git merge-base HEAD {MAIN_COMMIT}"
     for case_name, answer, expected in [

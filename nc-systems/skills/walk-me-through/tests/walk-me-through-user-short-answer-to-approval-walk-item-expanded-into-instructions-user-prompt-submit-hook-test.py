@@ -1710,6 +1710,10 @@ def test_an_answer_counts_when_the_last_message_showing_the_item_holds_its_text_
               f"lines {lines!r}")
     lines = case.lines("a", case.transcript(SHOWN_ITEM))
     check("an answer counts when the message shows the tag lines too", counted(lines), f"lines {lines!r}")
+    no_blank_line_after_heading = SHOWN_ITEM_TEXT.replace("a filter\n\nA filter", "a filter\nA filter")
+    lines = case.lines("a", case.transcript(no_blank_line_after_heading))
+    check("an answer counts when the item's first body line follows its heading line with no blank line between",
+          no_blank_line_after_heading != SHOWN_ITEM_TEXT and counted(lines), f"lines {lines!r}")
 
 
 def test_an_answer_to_an_item_revised_after_it_was_shown_is_not_counted_and_the_new_text_is_handed_over():

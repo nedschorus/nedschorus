@@ -1109,7 +1109,9 @@ with tempfile.TemporaryDirectory() as scratch:
         check("a worktree whose owner runs is done once a pull request whose head commit is its "
               "HEAD has merged under another branch name",
               line_of(report, "other-name-merged-wt").startswith("other-name-merged-wt: done")
-              and "pull request #10 (merged)" in line_of(report, "other-name-merged-wt"), report)
+              and "pull request #10 (merged) on the branch a-name-no-worktree-has, whose head "
+                  "commit is its HEAD, is finished" in line_of(report, "other-name-merged-wt"),
+              report)
         check("a new worktree on a reused branch name, at the main commit an earlier closed pull "
               "request on that name started from, is kept though its HEAD is an ancestor of that "
               "pull request's head",
@@ -1133,10 +1135,14 @@ with tempfile.TemporaryDirectory() as scratch:
                     by_head_branch.setdefault(pull_request["headRefName"], []).append(pull_request)
                 return by_head_branch
 
-        for failing_subcommand in ("merge-base", "rev-list --first-parent"):
-            def run_git_failing_one_read(directory, *arguments, failing=failing_subcommand.split()):
+        # A git killed by a signal exits with a negative code, which is no answer either.
+        for failing_subcommand, exit_code in (("merge-base", 128), ("merge-base", -9),
+                                              ("rev-list --first-parent", 128)):
+            def run_git_failing_one_read(directory, *arguments, failing=failing_subcommand.split(),
+                                         exit_code=exit_code):
                 if list(arguments[:len(failing)]) == failing:
-                    return subprocess.CompletedProcess(arguments, 128, "", "fatal: stand-in failure\n")
+                    return subprocess.CompletedProcess(arguments, exit_code, "",
+                                                       "fatal: stand-in failure\n")
                 return real_run_git(directory, *arguments)
             in_process.run_git = run_git_failing_one_read
             try:
@@ -1146,11 +1152,11 @@ with tempfile.TemporaryDirectory() as scratch:
             finally:
                 in_process.run_git = real_run_git
             check(f"a worktree whose owner runs is kept as not checkable when `git "
-                  f"{failing_subcommand}` fails while the cleaner reads whether a finished pull "
-                  f"request holds its HEAD",
+                  f"{failing_subcommand}` exits {exit_code} while the cleaner reads whether a "
+                  f"finished pull request holds its HEAD",
                   not verdict.done and verdict.kept_for == in_process.KEPT_NOT_CHECKABLE
                   and "whether a finished pull request holds its HEAD could not be read" in verdict.reason
-                  and "exited 128: fatal: stand-in failure" in verdict.reason, verdict)
+                  and f"exited {exit_code}: fatal: stand-in failure" in verdict.reason, verdict)
         check("an agent-seat whose handoff-supervisor runs keeps its worktree",
               line_of(report, "seat-running-wt").startswith(
                   "seat-running-wt: kept — its owner, the agent-seat seat-running, runs"), report)
@@ -1515,8 +1521,27 @@ with tempfile.TemporaryDirectory() as scratch:
         check(f"a failed worktree listing{' under ' + flags[0] if flags else ''} gives the "
               "shared next steps, naming the command that was run",
               stderr_lines[1:] == load_clean_worktrees_module().next_step_lines.git_failure_next_step_lines(
-                  rerun, text_the_failure_line_contains="clean-worktrees: stopped, because").splitlines(),
+                  rerun, git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=LISTING_FAILURE_TEXT,
+                  text_the_failure_line_contains="clean-worktrees: stopped, because").splitlines(),
               failed_listing.stderr)
+
+    lock_file = checkout / ".git" / "index.lock"
+    lock_listing_stubs = scratch / "lock-file-worktree-list-git"
+    lock_listing_stubs.mkdir()
+    (lock_listing_stubs / "git").write_text(
+        "#!/bin/sh\n"
+        f'case " $* " in *" worktree list "*) echo "fatal: Unable to create \'{lock_file}\': File exists." >&2; '
+        f'exit 128 ;; esac\n'
+        f'exec {shutil.which("git")} "$@"\n', encoding="utf-8")
+    (lock_listing_stubs / "git").chmod(0o755)
+    failed_listing = subprocess.run(
+        [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout)], capture_output=True, text=True,
+        check=False, env=dict(environment, PATH=f"{lock_listing_stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
+    check("a failed worktree listing whose git error names a lock file gives the step that waits "
+          "for that lock file",
+          failed_listing.returncode == 2
+          and f"Git's error names the lock file {lock_file}: " in failed_listing.stderr,
+          failed_listing.stderr)
 
     module = load_clean_worktrees_module()
     saved_path = os.environ.get("PATH", "")

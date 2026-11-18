@@ -549,10 +549,10 @@ def run(arguments, timeout=GH_TIMEOUT_SECONDS, cwd=None, check=True):
     return completed
 
 
-def git_failure_next_steps(rerun: str, program: str) -> str:
-    """What an agent does after a git command this program ran failed."""
+def git_failure_next_steps(rerun: str, program: str, said: str) -> str:
+    """What an agent does after a git command this program ran failed, printing said."""
     return next_step_lines.git_failure_next_step_lines(
-        rerun, program, rerun_fails_when="stops again on a line naming a git command and its exit code",
+        rerun, program, git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=said, rerun_fails_when="stops again on a line naming a git command and its exit code",
         which_lines_to_quote_in_the_report=('that line and the "So" line after it, from the command that '
                                             'printed this message and from the rerun, or the corrected command'))
 
@@ -570,7 +570,7 @@ def git_failure_refusal(arguments, completed, not_done: str) -> Refused:
     return Refused(
         f"{shlex.join(arguments)} exited {completed.returncode}: {said}\n"
         f"So {not_done}.\n"
-        + git_failure_next_steps(rerun, "scripts/ghi-issue-write.py"), 1)
+        + git_failure_next_steps(rerun, "scripts/ghi-issue-write.py", said), 1)
 
 
 def head_is_unborn(repository_root: Path, runner) -> bool:

@@ -231,15 +231,21 @@ def run(root, *arguments, checkout=None, lock_file=None, rendezvous_seconds="20"
     environment[RAN_FILE_VARIABLE] = str(root / "ran.txt")
     environment[RENDEZVOUS_WAIT_VARIABLE] = rendezvous_seconds
     environment.update(environment_extra or {})
-    command = [sys.executable, *(("-c", driver) if driver else ()), str(PROGRAM),
-               "--checkout", str(checkout if checkout is not None else root / "repo"),
-               "--log-dir", str(root / "logs"),
-               "--lock-file", str(lock_file if lock_file is not None else root / "run.lock"),
-               "--recorded-inputs-directory", str(root / "recordings"),
-               "--suite-files-only-strace-saw-lists-directory", str(root / "recordings"),
-               *arguments]
+    command = [sys.executable, *(("-c", driver) if driver else ()),
+               *program_command_line(root, *arguments, checkout=checkout, lock_file=lock_file)]
     return subprocess.run(command, capture_output=True, text=True, env=environment,
                           stdin=subprocess.DEVNULL, check=False)
+
+
+def program_command_line(root, *arguments, checkout=None, lock_file=None):
+    """The program and the arguments run() gives it."""
+    return [str(PROGRAM),
+            "--checkout", str(checkout if checkout is not None else root / "repo"),
+            "--log-dir", str(root / "logs"),
+            "--lock-file", str(lock_file if lock_file is not None else root / "run.lock"),
+            "--recorded-inputs-directory", str(root / "recordings"),
+            "--suite-files-only-strace-saw-lists-directory", str(root / "recordings"),
+            *arguments]
 
 
 def ran(root):
@@ -1028,6 +1034,19 @@ def path_without_strace(root):
     return {"PATH": str(bin_dir)}
 
 
+def next_steps_for(error, command_line=None):
+    """The shared module's next steps for a run whose git printed error, naming as the rerun the
+    command_line the runner ran as, run from this test's directory by this interpreter; by
+    default, this test's own, the process a refusal raised in this test is printed by."""
+    command_line = sys.argv if command_line is None else command_line
+    rerun = (f"cd {shlex.quote(os.getcwd())} && "
+             f"{shlex.join([sys.executable, str(pathlib.Path(command_line[0]).resolve()), *command_line[1:]])}")
+    return module.next_step_lines.git_failure_next_step_lines(
+        rerun,
+        git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=error,
+        text_the_failure_line_contains="not run — git")
+
+
 def select_since(root, since, environment_extra=None):
     (root / "ran.txt").unlink(missing_ok=True)
     return run(root, CHANGED_SINCE, since, environment_extra=environment_extra)
@@ -1063,8 +1082,8 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 2 and ran(root) == []
           and "git could not list the root commits of HEAD" in result.stderr
           and result.stderr.endswith(
-              "\n" + module.git_failure_next_step_lines("run-all-test-suites.py",
-                                                      "fatal: injected git failure") + "\n")
+              "\n" + next_steps_for("fatal: injected git failure", program_command_line(root))
+              + "\n")
           and "fatal: injected git failure" in result.stderr
           and not (root / "recordings" / "no-commit").exists(),
           (result.returncode, ran(root), result.stderr))
@@ -1079,10 +1098,13 @@ with tempfile.TemporaryDirectory() as scratch:
     check("when git cannot list untracked files, a selective run exits 2 before any suite "
           "runs, rather than selecting without them",
           result.returncode == 2 and ran(root) == []
-          and "git ls-files --others failed" in result.stderr
+          and "not run — git ls-files failed in " in result.stderr
           and result.stderr.endswith(
-              "\n" + module.git_failure_next_step_lines("run-all-test-suites.py",
-                                                      "fatal: injected git failure") + "\n")
+              "\n" + next_steps_for("fatal: injected git failure",
+                                     program_command_line(root, CHANGED_SINCE, since)) + "\n")
+          and f"Run exactly `cd {shlex.quote(os.getcwd())} && "
+              f"{shlex.join([sys.executable, *program_command_line(root, CHANGED_SINCE, since)])}` "
+              f"once more." in result.stderr
           and "fatal: injected git failure" in result.stderr,
           (result.returncode, ran(root), result.stderr))
 
@@ -1099,14 +1121,6 @@ def git_answering(answers):
 
 # git's own first line when another process holds the index lock.
 GIT_INDEX_LOCK_FILE_EXISTS_ERROR = "fatal: Unable to create '/nowhere/.git/index.lock': File exists."
-
-
-def next_steps_for(error):
-    """The shared module's next steps for a run of the runner whose git printed error."""
-    return module.next_step_lines.git_failure_next_step_lines(
-        "the same run-all-test-suites.py command",
-        git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=error,
-        text_the_failure_line_contains="not run — git")
 
 
 real_program_git = module.git
@@ -2316,6 +2330,66 @@ with tempfile.TemporaryDirectory() as scratch:
           "SELECTED skips-one-test.py: its last recorded run skipped an unrecorded number "
           "of cases, so it recorded only what the cases that ran read" in lines(result.stdout),
           result.stdout)
+
+# A suite a cause outside this repository stopped, such as claude's usage limit, is NOT RUN,
+# not FAIL, and names the cause; a failing case in the same run still fails the run.
+OUTSIDE_CAUSE_EXIT = module.NC_TEST_SUITE_EXIT_CODE_FOR_NOT_RUN_BECAUSE_A_CAUSE_OUTSIDE_THIS_REPOSITORY_STOPPED_ITS_CASES
+STOPPED_BY_WEEKLY_LIMIT = ("print('PASS  a case that needs no claude')\n"
+                           "print(\"NOT RUN: the trial; claude stopped: account-limit — weekly limit · "
+                           "resets Nov 16, 8pm (America/Los_Angeles)\")\n"
+                           f"sys.exit({OUTSIDE_CAUSE_EXIT})\n")
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"claude-limit-test.py": STOPPED_BY_WEEKLY_LIMIT, "passes-test.py": PASSES})
+    base = head(repo)
+    result = run(root)
+    not_run_lines = [line for line in lines(result.stdout)
+                     if line.startswith(module.NOT_RUN_SUITE_LINE_PREFIX + "claude-limit-test.py ")]
+    check("a suite that exits the outside-cause exit code is NOT RUN, not FAIL, with its last line "
+          "as the cause, and the run exits 2 with no suite failed",
+          result.returncode == module.EXIT_COULD_NOT_RUN
+          and len(not_run_lines) == 2
+          and all("stopped by an outside cause: NOT RUN: the trial; claude stopped: account-limit — "
+                  "weekly limit · resets Nov 16, 8pm (America/Los_Angeles)" in line for line in not_run_lines)
+          and not any(line.startswith(module.FAILED_SUITE_LINE_PREFIX) for line in lines(result.stdout))
+          and any(line.startswith(module.SUMMARY_LINE_PREFIX) and " 1 passed, 0 failed, 1 not run, " in line
+                  for line in lines(result.stdout)), (result.returncode, result.stdout))
+    commit_files(repo, {"other.txt": "x\n"}, "unrelated")
+    result = select_since(root, base)
+    check("a suite NOT RUN for an outside cause is selected again by the next selective run",
+          "claude-limit-test.py" in ran(root) and "passes-test.py" not in ran(root),
+          (ran(root), result.stdout))
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"claude-limit-test.py": STOPPED_BY_WEEKLY_LIMIT, "fails-test.py": "sys.exit(1)\n"})
+    result = run(root)
+    check("beside a suite NOT RUN for an outside cause, a failing suite still makes the run exit 1",
+          result.returncode == module.EXIT_SOME_FAILED
+          and any(line.startswith(module.NOT_RUN_SUITE_LINE_PREFIX + "claude-limit-test.py ")
+                  for line in lines(result.stdout)), (result.returncode, result.stdout))
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"silent-test.py": f"sys.exit({OUTSIDE_CAUSE_EXIT})\n",
+                     "long-cause-test.py": f"print('x' * 1000)\nsys.exit({OUTSIDE_CAUSE_EXIT})\n",
+                     "passes-test.py": PASSES})
+    result = run(root, "--stop-at-first-failing-suite", "-j", "1")
+    long_line = next((line for line in lines(result.stdout)
+                      if line.startswith(module.NOT_RUN_SUITE_LINE_PREFIX + "long-cause-test.py ")), "")
+    check("a suite that exits the outside-cause exit code with no output is NOT RUN with "
+          "\"its output names no cause\", a long last line is cut to "
+          "SUITE_STOPPED_BY_AN_OUTSIDE_CAUSE_REASON_MAX_CHARACTERS, and neither stops a run "
+          "given --stop-at-first-failing-suite",
+          result.returncode == module.EXIT_COULD_NOT_RUN
+          and any(line.startswith(module.NOT_RUN_SUITE_LINE_PREFIX + "silent-test.py stopped by an "
+                                  "outside cause: its output names no cause")
+                  for line in lines(result.stdout))
+          and "x" * module.SUITE_STOPPED_BY_AN_OUTSIDE_CAUSE_REASON_MAX_CHARACTERS + " (" in long_line
+          and "x" * (module.SUITE_STOPPED_BY_AN_OUTSIDE_CAUSE_REASON_MAX_CHARACTERS + 1) not in long_line
+          and "passes-test.py" in ran(root) and "stopped at" not in result.stdout,
+          (result.returncode, result.stdout))
+    check("the last output line of a log that cannot be read is empty",
+          module.last_output_line(root / "no-such.log") == "")
 
 # A run killed by SIGKILL leaves its suites' strace directories behind. On
 # Linux a later run removes them only when the killed run's record shows that
