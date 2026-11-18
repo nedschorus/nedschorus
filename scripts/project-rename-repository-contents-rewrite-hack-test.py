@@ -284,5 +284,28 @@ check("stage 3 renames a system name inside a longer identifier, and stage 2 the
                                         "create_nn_shared_database_if_absent = old_nn_systems = 2\n"
                                         'SLICE = r"nn\\x2dtest\\x2dsuites.slice"\n'), read(checkout, "scripts/x.py"))
 
+# --- Stage 3 beside a twin the branch already renamed -------------------------------------------
+checkout = scratch_checkout({"nc-systems/x/a.py": "see nc-systems/x/b.py\n", "nn-systems/x/a.py": "see nn-systems/x/b.py\n"})
+twin = run(checkout, "--stage", "3")
+check("stage 3 removes an old path whose rewritten content equals its already-renamed twin",
+      twin.returncode == 0 and not (checkout / "nc-systems/x/a.py").exists()
+      and read(checkout, "nn-systems/x/a.py") == "see nn-systems/x/b.py\n", (twin.returncode, twin.stdout, twin.stderr))
+checkout = scratch_checkout({"nc-systems/x/c.py": "c = 1\n"})
+(checkout / "nn-systems/x/c.py").parent.mkdir(parents=True, exist_ok=True)
+(checkout / "nn-systems/x/c.py").write_text("c = 1\n", encoding="utf-8")
+run(checkout, "--stage", "3")
+check("stage 3 adds to git an untracked new path that holds the old path's content, so a commit keeps the file",
+      git(checkout, "ls-files", "--", "nn-systems/x/c.py").strip() == "nn-systems/x/c.py"
+      and git(checkout, "ls-files", "--", "nc-systems/x/c.py").strip() == "", git(checkout, "status", "--short"))
+
+# --- Stage 2 keeps the old task-list ID prefix a reader accepts -----------------------------------
+checkout = scratch_checkout({"scripts/reader.py": 'TASK_LIST_ID_PREFIX_BEFORE_PROJECT_RENAME = "nedschorus-"\nPREFIX = "nedschorus-"\n'})
+run(checkout, "--stage", "2")
+check("stage 2 leaves the value of a TASK_LIST_ID_PREFIX_BEFORE_PROJECT_RENAME constant, so a reader keeps accepting the old prefix",
+      read(checkout, "scripts/reader.py") == 'TASK_LIST_ID_PREFIX_BEFORE_PROJECT_RENAME = "nedschorus-"\nPREFIX = "nedsnodes-"\n',
+      read(checkout, "scripts/reader.py"))
+covered = run(checkout, "--residue-report")
+check("the residue report covers a TASK_LIST_ID_PREFIX_BEFORE_PROJECT_RENAME constant's value", covered.returncode == 0, covered.stdout)
+
 print(f"{len(failures)} failed" if failures else "all passed")
 sys.exit(1 if failures else 0)

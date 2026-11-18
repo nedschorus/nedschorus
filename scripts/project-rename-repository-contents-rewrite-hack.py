@@ -7,7 +7,7 @@ Usage:
 
 Each stage makes the change of one pull request of the project rename:
   1. the GitHub repository's owner and name: `nedschorus/nedschorus` becomes `nedsnodes/nedsnodes` in every file but Markdown, and the owner and name constants of the bare-number citation hook. It leaves the value of an `OLD_REPOSITORY` constant alone, through which code that reads GitHub links keeps accepting the old name.
-  2. the machine paths, env vars, task-list names, job labels and unit names the move program, scripts/project-rename-machine-state-move-hack.py, moves: the reference-checkout and worktrees directory under Projects, the log-store, ~/.config/nedschorus, Claude Code project keys, `NEDSCHORUS_*` names, `nedschorus-<seat>-tasks`, `com.nedschorus.*` labels, ~/.local/state/nedschorus, ~/.local/share/nedschorus and each ~/.cache/nedschorus-* directory, the `nc-shared-database-service.service` unit, whose file it also renames, and the test suites' slice `nc\x2dtest\x2dsuites.slice`.
+  2. the machine paths, env vars, task-list names, job labels and unit names the move program, scripts/project-rename-machine-state-move-hack.py, moves: the reference-checkout and worktrees directory under Projects, the log-store, ~/.config/nedschorus, Claude Code project keys, `NEDSCHORUS_*` names, `nedschorus-<seat>-tasks`, `com.nedschorus.*` labels, ~/.local/state/nedschorus, ~/.local/share/nedschorus and each ~/.cache/nedschorus-* directory, the `nc-shared-database-service.service` unit, whose file it also renames, and the test suites' slice `nc\x2dtest\x2dsuites.slice`. It leaves the value of an `TASK_LIST_ID_PREFIX_BEFORE_PROJECT_RENAME` constant alone, through which code that reads task-list IDs keeps accepting the old prefix.
   3. the directories nc-systems, nc-queue and docs/nedschorus-wiki, the files whose names start `nc-shared-database` or `nedschorus-`, and in contents every citation of those paths, every wiki page name, and the nc- system names in code, alone or inside a longer identifier (`nc-shared-database`, `nc_shared_database`, `NC_SHARED_DATABASE`, `NcSharedDatabase`, `nc_systems`, `NC_SYSTEMS`). A kept file moves with its directory but keeps its name and content.
 A stage changes only the names its rules match, so it can be run alone on any checkout, including one that does not hold this program, and a second invocation changes nothing. Run the stages in order 1, 2, 3 on a branch that should carry all three.
 
@@ -17,7 +17,7 @@ WHAT IT DOES NOT DO OR HANDLE. It changes only files git tracks; it does not com
 
 HARM IT CAN CAUSE. It rewrites tracked files in place; `git checkout -- .` and `git clean` on the moved paths undo an invocation whose changes were not committed. A rule that matches too much corrupts the names it touches, which the tests guard against for `sync-`, `async-`, `func-` and `SYNC_`.
 
-HOW IT CAN FAIL. Stage 3 refuses to move a path whose new name is already tracked with other content, names each such path, moves the rest, and exits 1; when the new path holds the same content, it removes the old path with `git rm` instead of moving it. A `git` command that fails prints its error and exits 1, with the changes made so far left in the working tree. --residue-report exits 1 when a match has no allowlist reason, and 0 otherwise.
+HOW IT CAN FAIL. Stage 3 refuses to move a path whose new name is already tracked with other content, names each such path, moves the rest, and exits 1; when the new path holds the same content, it removes the old path with `git rm` instead of moving it, and adds the new path to git when git does not track it. A `git` command that fails prints its error and exits 1, with the changes made so far left in the working tree. --residue-report exits 1 when a match has no allowlist reason, and 0 otherwise.
 """
 
 import argparse
@@ -79,6 +79,9 @@ class Rule:
 # Code that reads GitHub links keeps accepting the old repository name, which GitHub redirects and old text holds,
 # through a constant of this name; stage 1 leaves its value alone, so a rerun keeps the old name there.
 OLD_REPOSITORY_CONSTANT = r'(?<!OLD_REPOSITORY = ")(?<!OLD_REPOSITORY=)'
+# Code that reads task-list IDs keeps accepting the old prefix, which the task lists on disk keep, through a constant
+# of this name; stage 2 leaves its value alone.
+TASK_LIST_ID_PREFIX_BEFORE_PROJECT_RENAME_CONSTANT = r'(?<!TASK_LIST_ID_PREFIX_BEFORE_PROJECT_RENAME = ")'
 
 STAGE_RULES = {
     1: [
@@ -103,7 +106,7 @@ STAGE_RULES = {
         Rule(r"(?:(?<![A-Za-z0-9])|(?<=\\[ntr0]))NEDSCHORUS_", "NEDSNODES_"),
         Rule(B + r"com\.nedschorus\.", "com.nedsnodes."),
         Rule(BH + r"nedschorus(?=-(?:<[^>\n]*>|\{[^}\n]*\}|[^\s\"'/`<{])*-tasks" + ENDH + ")", "nedsnodes"),
-        Rule(r"""(?<=["'])nedschorus-(?=["'])""", "nedsnodes-"),
+        Rule(r"""(?<=["'])""" + TASK_LIST_ID_PREFIX_BEFORE_PROJECT_RENAME_CONSTANT + r"""nedschorus-(?=["'])""", "nedsnodes-"),
         Rule(BH + r"nc-shared-database-service(?=\.service\b)", "nn-shared-database-service"),
         Rule(r"(?<=systemctl --user status )nc-shared-database-service" + ENDH, "nn-shared-database-service"),
         # The test suites' systemd slice, made at run time and written with systemd's escape for a hyphen.
@@ -250,7 +253,11 @@ def move_paths(checkout, paths, move):
             continue
         if target in tracked or (checkout / target).exists():
             if (checkout / target).is_file() and (checkout / target).read_bytes() == (checkout / path).read_bytes():
-                git(checkout, "rm", "-q", "--", path)
+                # -f: the content rewrite has just left the old path modified and unstaged, which a plain rm refuses.
+                git(checkout, "rm", "-q", "-f", "--", path)
+                if target not in tracked:
+                    git(checkout, "add", "--", target)
+                    tracked.add(target)
                 moved += 1
             else:
                 refused.append((path, target))
@@ -322,6 +329,8 @@ ALLOWLIST = [
     ("*", r"nedschorus-ai-native-software-development\.md", "a citation of a file that is not in the repository"),
     ("*", r'(?:(?<=OLD_REPOSITORY = ")|(?<=OLD_REPOSITORY=))nedschorus/nedschorus',
      "the old repository name, which code reading GitHub links still accepts, since GitHub redirects it and old text holds it"),
+    ("*", r'(?<=TASK_LIST_ID_PREFIX_BEFORE_PROJECT_RENAME = ")nedschorus-',
+     "the old task-list ID prefix, which code reading task-list IDs still accepts, since the task lists on disk keep it"),
     ("scripts/ghi-issue-write-test.py", r'github\.com/nedschorus/"|^\s*"nedschorus/issues/',
      "test data: a GHI-MD link in the old shape, split across two string literals"),
     ("*", r'(?i:nedschorus)(?= (?:seat|agents|PR|\d))|outside nedschorus|"nedschorus"(?=[,}\n)\] ]|$)|(?<=a )nedschorus(?= )'
