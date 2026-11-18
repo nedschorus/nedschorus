@@ -70,7 +70,7 @@ The list does not reach the places for documents pending approval, where agents 
 * `-log`: a record of what a program or agent-session did, in time order.
 * `-report`: a finished account written for a reader, such as a reviewer's findings.
 * `-capture`: a verbatim copy of something seen, such as terminal output or a web page.
-* `-draft`: a document still being written, not yet put to review.
+* `-draft`: a document still being written; a cold-read-fast-read may read it, but no one has been asked to approve it yet.
 * `-candidate`: a version frozen for reviewers to read.
 * `-analysis`: a study of data, with its method and conclusions.
 
