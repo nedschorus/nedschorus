@@ -567,6 +567,27 @@ echo hello
           "cites scripts/module-under-test.py, which this change removed" in out,
           f"{code} {out!r} {err!r}")
 
+    # --- A file that keeps removed paths on purpose is not reported --------
+    git(root, "checkout", "-q", "-b", "archived-record-cites-a-moved-module", base)
+    (root / "scripts" / "renamed-module.py").write_text("# the module\n", encoding="utf-8")
+    (root / "nn-queue" / "archived").mkdir(parents=True, exist_ok=True)
+    (root / "nn-queue" / "archived" / "record.md").write_text(
+        "It ran `scripts/renamed-module.py`.\n", encoding="utf-8")
+    (root / "docs").mkdir(exist_ok=True)
+    (root / "docs" / "current.md").write_text(
+        "Run `scripts/renamed-module.py`.\n", encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "add a module, an archived record and a current page naming it")
+    kept_base = git(root, "rev-parse", "HEAD").stdout.strip()
+    git(root, "mv", "scripts/renamed-module.py", "scripts/module-under-its-new-name.py")
+    git(root, "commit", "-qm", "rename the module")
+    code, out, err = run_check(root, kept_base, "--only-citations-of-removed-paths")
+    check("an archived record's citation of a renamed path is not reported, "
+          "while a current page's still is",
+          code == 1 and "nn-queue/archived/record.md" not in out
+          and "docs/current.md:1: cites scripts/renamed-module.py" in out,
+          f"{code} {out!r} {err!r}")
+
     # --- FORWARD: a RENAMED file's base text, read at the name it had -----
     # The suppression asked git for the base text under the path as it stands
     # at HEAD. A rename destination was not at the merge base under that

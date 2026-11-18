@@ -6,6 +6,7 @@ With --only-citations-of-removed-paths, check only the citations of removed path
 Run on a clean tree: diff line numbers come from HEAD, but citation text and
 existence checks read the working tree."""
 import argparse
+import fnmatch
 import importlib.util
 import os
 import pathlib
@@ -34,6 +35,20 @@ _next_step_lines_spec.loader.exec_module(next_step_lines)
 
 EXIT_FINDINGS = 1
 EXIT_BAD_INVOCATION = 2
+
+# Recorded fixtures, archived records and the project rename's own programs
+# quote paths the rename removed, as they were; rewriting them would falsify
+# the record or break the programs that must still read the old names.
+CITING_FILES_THAT_KEEP_REMOVED_PATHS_ON_PURPOSE = (
+    "nn-queue/archived/*",
+    "nn-systems/skills/explain/tests/explain-reply-cold-read-fast-read-fixtures/*",
+    "scripts/handoff-context-threshold-hook-recorded-handoff-deferrals-replay-test-fixtures/*",
+    "scripts/unvalidated-negative-result-check-fixtures/*",
+    "scripts/project-rename-machine-state-move-hack.py",
+    "scripts/project-rename-machine-state-move-hack-test.py",
+    "scripts/project-rename-repository-contents-rewrite-hack.py",
+    "scripts/project-rename-repository-contents-rewrite-hack-test.py",
+)
 
 HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
@@ -333,6 +348,9 @@ def citations_of_removed_paths(removed: list, repository_root: pathlib.Path, lin
         citing_path = repository_root / citing
         # Frozen measurements record historical text, not current citations.
         if lint.in_frozen_measured_data(citing_path, repository_root):
+            continue
+        if any(fnmatch.fnmatchcase(citing, pattern)
+               for pattern in CITING_FILES_THAT_KEEP_REMOVED_PATHS_ON_PURPOSE):
             continue
         try:
             text = citing_path.read_text(encoding="utf-8")
