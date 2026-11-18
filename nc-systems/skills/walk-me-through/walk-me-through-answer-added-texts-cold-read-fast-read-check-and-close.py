@@ -10,7 +10,7 @@ Usage, from the agent-session's checkout:
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check
       [--obvious | --after-advisor | --disapproved | --deferred | --option N
        | --part-answer N=ANSWER ... | --moved-on-no-decision
-       | --not-asked KIND|none|weak-cost-only|weak-alters-earlier-approved-text-only
+       | --not-asked KIND|adds-nothing|none|weak-cost-only|weak-alters-earlier-approved-text-only
        | --already-decided USER_RULING | --now-over-later-already-decided
        | --moved-on REASON]
       --user-reply-as-typed REPLY    (every answer but --not-asked, --already-decided,
@@ -83,7 +83,7 @@ answer but those five, writing nothing. A
 `#case_against` line that opens with no rating is refused for every answer,
 those five included.
 
-`--not-asked KIND` settles the item without the user, as kind KIND, 1 to 6, of
+`--not-asked KIND` settles the item without the user, as kind KIND, 1 to 7, of
 the walk-me-through skill's list of items that need no answer, after checking
 what code can from the item's evidence lines, each opening with its marker:
 `#not_asked_touches` lists the files the change edits or deletes;
@@ -109,8 +109,8 @@ as for kind 4, and each marker, `#` then letters, digits, `_` or `-`, found
 in no file but Markdown, in any letter case, either whole or as a part of it
 that ends just before a `-` or ends with a `_` followed by no letter or digit,
 so that no program reads it, by name or by a pattern such as
-`#case_against_[a-z_]+`; for kinds 1 to 4
-and 6 every touched file but a kind 2 test must exist. An unused or old name is searched for as written and,
+`#case_against_[a-z_]+`; kind 7, a simplification or deletion, needs touches;
+for kinds 1 to 4, 6 and 7 every touched file but a kind 2 test must exist. An unused or old name is searched for as written and,
 when it has two or more words, with its words joined by hyphens, by underscores
 and by nothing, a run of digits both kept with the letters before it and
 split off as a word of its own; every
@@ -126,6 +126,11 @@ and judge what code cannot before running CLOSE, which records the item as
 only that the change alters text the user approved word for word on an earlier
 date, from another weak one, or a fix that matches its design from one that does not;
 the agent judges those.
+
+`--not-asked adds-nothing` settles an item whose recommendation adds and changes
+nothing, whatever its case against is rated: it checks no evidence line and no
+rating, and the minutes write the answer as `not asked, adds nothing`. The agent judges that the
+recommendation adds and changes nothing.
 
 `--not-asked none`, `--not-asked weak-cost-only` and
 `--not-asked weak-alters-earlier-approved-text-only` settle an item of none of
@@ -173,7 +178,8 @@ names each one's walk-minutes and says which to close and how to merge them,
 since an agent-seat keeps at most one approval-walk open.
 
 CHECK finds the texts the answer adds: the item's lines whose first word,
-after any list or quotation marker, outside fenced code, is a mark the answer adds;
+after any list or quotation marker and a part's opening `Part N.`, outside
+fenced code, is a mark the answer adds;
 the text is the rest of the line, without one pair of surrounding quotation
 marks. Before it reads them, CHECK refuses, writing nothing, for every answer but
 --deferred, --moved-on-no-decision and --moved-on, which add no text, when
@@ -469,7 +475,7 @@ RECORDS_DIRECTORY_NAME = "cold-read-records"
 PROGRAM = "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close"
 
 NEW_MARK, NEW_IF_D_MARK = "#new", "#new_if_d"
-NEW_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*(#new(?:_if_d)?)\b[:\s]*(.*)$")
+NEW_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>|Part \d+\.)\s+)*(#new(?:_if_d)?)\b[:\s]*(.*)$")
 QUOTE_PAIRS = (('"', '"'), ("“", "”"), ("'", "'"))
 FENCE_DELIMITER = re.compile(r"^\s*(?:>\s?)*\s*(?:`{3,}|~{3,})")
 QUOTATION_LINE = re.compile(r"^\s*>")
@@ -483,7 +489,9 @@ CASE_AGAINST_LINE = re.compile(rf"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_`]*#case_aga
 CASE_AGAINST_RATING = re.compile(r"(very strong|none|weak|medium|strong)\b", re.I)
 CASE_AGAINST_HASHTAG = " #case_against_{rating}"
 NOT_ASKED_RATINGS = ("none", "weak")
-NOT_ASKED_KINDS = (1, 2, 3, 4, 5, 6)
+NOT_ASKED_KINDS = (1, 2, 3, 4, 5, 6, 7)
+NOT_ASKED_ADDS_NOTHING = "adds-nothing"
+NOT_ASKED_ADDS_NOTHING_LABEL = "adds nothing"
 NOT_ASKED_WEAK_CASE_AGAINST_THAT_SETTLES = ("weak with a case against that names only cost, or only that the change "
                                             "alters text the user approved word for word on an earlier date")
 NOT_ASKED_RATED_NONE = "none"
@@ -671,6 +679,7 @@ _PART_VALUE = r"part \d+ " + _one_of(f"{word} {outcome}" for word, outcome in OU
 PLACEHOLDER_VALUES = {
     "answered": _one_of([APPROVED, DISAPPROVED] + [f"{APPROVED} option {number}" for number in OPTION_NUMBERS]
                         + [f"not asked, kind {kind}" for kind in NOT_ASKED_KINDS]
+                        + [f"not asked, {NOT_ASKED_ADDS_NOTHING_LABEL}"]
                         + [f"not asked, case against {NOT_ASKED_RATED_NONE}"]
                         + [f"not asked, {label}" for label in NOT_ASKED_WEAK_GROUND_LABELS.values()]),
     "outcome": _one_of(OUTCOMES.values()),
@@ -891,7 +900,7 @@ NOT_ASKED_WEAK_GROUND_FOR_RATED_NONE = (
 NOT_ASKED_RATING_PROBLEM = ("- its `#case_against` line rates the case against {rating}; only an item rated none, "
                             "or " + NOT_ASKED_WEAK_CASE_AGAINST_THAT_SETTLES + ", settles without the user.")
 NOT_ASKED_NO_LINE_PROBLEM = "- it has no `{marker}` line; {why}"
-NOT_ASKED_KINDS_NAMED = "none of the kinds 1 to 6 that `--help` lists under `--not-asked`"
+NOT_ASKED_KINDS_NAMED = "none of the kinds 1 to 7 that `--help` lists under `--not-asked`"
 NOT_ASKED_NOT_RATED_NONE_PROBLEM = ("- its `#case_against` line rates the case against {rating}; an item of "
                                     + NOT_ASKED_KINDS_NAMED + " settles without the user only when its case "
                                     "against is rated none, or " + NOT_ASKED_WEAK_CASE_AGAINST_THAT_SETTLES + ".")
@@ -936,13 +945,14 @@ NOT_ASKED_WHY = {
 NOT_ASKED_JUDGEMENT_LINES = (
     "{item} is recorded as settled without asking the user, {label}; the program checked only what code can.",
     "Before you run close, ask the advisor whether a later ruling or another open item overtakes {item}, and judge "
-    "what the program could not, such as whether the case against names nothing besides {grounds}, and whether a fix "
-    "matches its design.",
+    "what the program could not, such as {unchecked}.",
     "If the advisor objects, the advisor call fails, or your judgement is against settling, do not run close: "
     "present {item} to the user and run check with the flag for his answer, as `--help` lists it; that writes a new "
     "answer line, and close records only the last one, so this line is then set aside.",
 )
 # Code cannot see these in a change, so an item of no kind rated weak leaves them to the agent.
+NOT_ASKED_UNCHECKED = "whether the case against names nothing besides {grounds}, and whether a fix matches its design"
+NOT_ASKED_ADDS_NOTHING_UNCHECKED = "whether the item's recommendation adds and changes nothing"
 NOT_ASKED_WEAK_JUDGEMENT_LINE = (
     "{item} is of " + NOT_ASKED_KINDS_NAMED + " and its case against is rated weak: if its change "
     "widens an agent's permissions, as a settings change can, or turns off a guard, do not run close: present {item} to the user.")
@@ -1539,22 +1549,26 @@ def part_answer(value):
 
 
 def not_asked_kind(value):
-    """Return the --not-asked value: a kind, 1 to 6, or, for an item of no kind, `none` when its case against is
-    rated none, or `weak-cost-only` or `weak-alters-earlier-approved-text-only` when it is rated weak."""
-    if value.strip().lower() in NOT_ASKED_NO_KIND_VALUES:
+    """Return the --not-asked value: a kind, 1 to 7; `adds-nothing` for an item whose recommendation adds and
+    changes nothing; or, for an item of no kind, `none` when its case against is rated none, or `weak-cost-only` or
+    `weak-alters-earlier-approved-text-only` when it is rated weak."""
+    if value.strip().lower() in (NOT_ASKED_ADDS_NOTHING, *NOT_ASKED_NO_KIND_VALUES):
         return value.strip().lower()
     if value.strip() in {str(kind) for kind in NOT_ASKED_KINDS}:
         return int(value)
     kinds = ", ".join(str(kind) for kind in NOT_ASKED_KINDS)
-    raise argparse.ArgumentTypeError(f"`{value}` is not a kind: give {kinds}, or, for an item of no kind, none, "
+    raise argparse.ArgumentTypeError(f"`{value}` is not a kind: give {kinds}; adds-nothing, for an item whose "
+                                     "recommendation adds and changes nothing; or, for an item of no kind, none, "
                                      "weak-cost-only or weak-alters-earlier-approved-text-only")
 
 
 def not_asked_label(kind):
-    """How the minutes and messages name a --not-asked value: `kind 3`, `case against none`, or the label of a
-    weak case against's ground, such as `case against weak, cost only`."""
+    """How the minutes and messages name a --not-asked value: `kind 3`, `adds nothing`, `case against none`, or the
+    label of a weak case against's ground, such as `case against weak, cost only`."""
     if kind in NOT_ASKED_KINDS:
         return f"kind {kind}"
+    if kind == NOT_ASKED_ADDS_NOTHING:
+        return NOT_ASKED_ADDS_NOTHING_LABEL
     return NOT_ASKED_WEAK_GROUND_LABELS.get(kind, "case against none")
 
 
@@ -1751,7 +1765,7 @@ def not_asked_problems(kind, rating, lines, marks, top, item):
     if rating not in NOT_ASKED_RATINGS:
         problems.append(NOT_ASKED_RATING_PROBLEM.format(rating=rating))
     needed = {1: (TOUCHES, SOURCE), 2: (TOUCHES, TEST), 3: (TOUCHES,), 4: (TOUCHES, RENAME), 5: (SOURCE,),
-              6: (TOUCHES,)}[kind]
+              6: (TOUCHES,), 7: (TOUCHES,)}[kind]
     for marker in needed:
         if not words(found[marker]):
             problems.append(NOT_ASKED_NO_LINE_PROBLEM.format(marker=marker, why=NOT_ASKED_WHY[marker]))
@@ -1911,7 +1925,7 @@ def check(arguments):
     if unreadable:
         raise Failure(UNREADABLE_NEW_MARKS.format(item=item, document=document, problems="\n".join(unreadable),
                                                   command=f"python3 {program} check{check_flags(arguments)}"))
-    if arguments.not_asked is not None:
+    if arguments.not_asked is not None and arguments.not_asked != NOT_ASKED_ADDS_NOTHING:
         if arguments.not_asked == NOT_ASKED_RATED_NONE and rating == NOT_ASKED_RATED_WEAK:  # pragma: no mutate, no rating sorts after "weak" ("very strong" sorts before it), so >= matches only weak
             raise Failure(NOT_ASKED_WEAK_GROUND_NOT_NAMED.format(item=item, program=program))
         if arguments.not_asked in NOT_ASKED_WEAK_GROUND_LABELS and rating == NOT_ASKED_RATED_NONE:
@@ -1966,8 +1980,10 @@ def check(arguments):
     if had_to_be_run:
         output += [line.format(document=document, item=item) for line in CHECK_JUDGEMENT_LINES]
     if arguments.not_asked is not None:
-        output += [line.format(item=item, label=not_asked_label(arguments.not_asked),
-                               grounds=NOT_ASKED_GROUNDS.get(arguments.not_asked, NOT_ASKED_EITHER_GROUND))
+        unchecked = (NOT_ASKED_ADDS_NOTHING_UNCHECKED if arguments.not_asked == NOT_ASKED_ADDS_NOTHING
+                     else NOT_ASKED_UNCHECKED.format(grounds=NOT_ASKED_GROUNDS.get(arguments.not_asked,
+                                                                                  NOT_ASKED_EITHER_GROUND)))
+        output += [line.format(item=item, label=not_asked_label(arguments.not_asked), unchecked=unchecked)
                    for line in NOT_ASKED_JUDGEMENT_LINES]
         if arguments.not_asked in NOT_ASKED_WEAK_GROUND_LABELS:
             output.append(NOT_ASKED_WEAK_JUDGEMENT_LINE.format(item=item))
@@ -3234,9 +3250,11 @@ def main(argv=None):
     answer.add_argument("--part-answer", type=part_answer, action="append", metavar="N=ANSWER",
                         help="check: part N of the item was answered ANSWER, A, AO or D; give it once for each part")
     answer.add_argument("--not-asked", type=not_asked_kind, metavar="KIND",
-                        help="check: the user is not asked; settle the item as kind KIND, 1 to 6, of the "
-                             "walk-me-through skill's list of items that need no answer, if its evidence lines pass, "
-                             "or settle an item of no kind: as `none` when its case against is rated none; as "
+                        help="check: the user is not asked; settle the item as kind KIND, 1 to 7, of the "
+                             "walk-me-through skill's list of items that need no answer, if its evidence lines pass; "
+                             "as `adds-nothing`, whatever its case against is rated, when its recommendation adds "
+                             "and changes nothing; or settle an item of no kind: as `none` when its case against is "
+                             "rated none; as "
                              "`weak-cost-only` when it is rated weak and names only cost; as "
                              "`weak-alters-earlier-approved-text-only` when it is rated "
                              "weak and names only that the change alters text the user approved word for word on an "

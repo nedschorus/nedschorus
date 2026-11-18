@@ -584,6 +584,14 @@ def test_marks_whose_texts_are_read_whole_are_not_refused():
     result = case.run("check")
     check("a mark with a backticked `#case_against` line right below it is not refused, and its own line is read",
           result.returncode == 0 and case.calls.read_text() == "Row one.\n", described(result))
+    case = Case(document=marks_document('Part 1. #new "Row one."\n\nPart 2. #new_if_d "Row two."\n\n'
+                                        'Part 3. #new Row three.\n\nPart 4. The sentence names #new "Row four."\n'))
+    result = case.run("check", "--part-answer", "1=A", "--part-answer", "2=D", "--part-answer", "3=A",
+                      "--part-answer", "4=A")
+    check("a mark right after a part's opening `Part N.` is read as the mark of its line, and a mark further along "
+          "the line is not",
+          result.returncode == 0 and "no proposed text marked" not in result.stdout
+          and case.calls.read_text() == "Row one.\nRow two.\nRow three.\n", described(result))
     for body, read in (("#new > Keep the old logs.\n", "> Keep the old logs.\n"), ("#new >\n", ">\n")):
         case = Case(document=marks_document(body))
         result = case.run("check")
@@ -2172,6 +2180,10 @@ def test_only_a_line_the_program_writes_records_a_decision_or_a_deferral():
             ("item 3 of 9: not asked, kind 6; every text the change adds has had a fast read. <accepted>\n",
              ({"3"}, {}), "the line close writes for an item settled as kind 6 decides it"),
             ("item 3 of 9: not asked, kind 7; every text the change adds has had a fast read. <accepted>\n",
+             ({"3"}, {}), "the line close writes for an item settled as kind 7 decides it"),
+            ("item 3 of 9: not asked, adds nothing; every text the change adds has had a fast read. <accepted>\n",
+             ({"3"}, {}), "the line close writes for an item settled as adding nothing decides it"),
+            ("item 3 of 9: not asked, kind 8; every text the change adds has had a fast read. <accepted>\n",
              (set(), {}), "close's took-effect form with a kind --not-asked never accepts records nothing"),
             ("item 3 of 9: part 1 approved <rejected>; every text the change adds has had a fast read.\n",
              (set(), {}), "close's parts form pairing a part's answer with the other answer's outcome records "
@@ -3634,6 +3646,51 @@ def rated_none_case(next_to_present="item 1 of 3", touches=None, rating=None, fi
     return case
 
 
+def test_kind_7_settles_without_the_user_with_a_touches_line_and_is_refused_rated_medium_or_with_none():
+    case = rated_none_case()
+    result = case.run("check", "--not-asked", "7")
+    minutes = case.minutes.read_text()
+    check("kind 7 with a touches line is settled: the minutes say not asked, kind 7, and its rating",
+          result.returncode == 0
+          and re.search(r"\nitem 1 of 3: settled without asking the user, not asked, kind 7 #case_against_none "
+                        r"\(\d{4}-\d\d-\d\d \d\d:\d\dZ\), which makes its change\. Fast reads:\n", minutes) is not None,
+          described(result) + minutes)
+    closed = case.run("close")
+    check("close records the settled kind 7 item as accepted, with not asked and its kind, and moves on",
+          closed.returncode == 0
+          and "\nitem 1 of 3: not asked, kind 7; every text the change adds has had a fast read. <accepted>\n"
+              in case.minutes.read_text()
+          and int(re.search(r"#next_to_present item (\d+) of 3$", case.minutes.read_text().rstrip())[1]) > 1,
+          described(closed))
+    check("kind 7 rated medium is refused, writing nothing",
+          *refused(rated_none_case(rating="medium: the cut sentence may be a step."), 7,
+                   "- its `#case_against` line rates the case against medium;"))
+    check("kind 7 with no touches line is refused, writing nothing",
+          *refused(rated_none_case(touches=""), 7, "- it has no `#not_asked_touches` line;"))
+
+
+def test_an_item_whose_recommendation_adds_nothing_settles_whatever_its_case_against_is_rated():
+    case = rated_none_case(touches="", rating="strong: leaving the check out lets a bad line through.")
+    result = case.run("check", "--not-asked", "adds-nothing")
+    minutes = case.minutes.read_text()
+    check("an item rated strong whose recommendation adds nothing is settled, with no evidence line: the minutes "
+          "say not asked, adds nothing, and its rating",
+          result.returncode == 0
+          and re.search(r"\nitem 1 of 3: settled without asking the user, not asked, adds nothing "
+                        r"#case_against_strong \(\d{4}-\d\d-\d\d \d\d:\d\dZ\), which makes its change\. "
+                        r"Fast reads:\n", minutes) is not None
+          and "item 1 of 3 is recorded as settled without asking the user, adds nothing;" in result.stdout
+          and "such as whether the item's recommendation adds and changes nothing." in result.stdout
+          and "names nothing besides" not in result.stdout, described(result) + minutes)
+    closed = case.run("close")
+    check("close records the item settled as adding nothing as accepted, and moves on",
+          closed.returncode == 0
+          and "\nitem 1 of 3: not asked, adds nothing; every text the change adds has had a fast read. <accepted>\n"
+              in case.minutes.read_text()
+          and int(re.search(r"#next_to_present item (\d+) of 3$", case.minutes.read_text().rstrip())[1]) > 1,
+          described(closed))
+
+
 def test_an_item_of_no_kind_rated_none_settles_without_the_user_and_close_records_it_accepted():
     case = rated_none_case()
     result = case.run("check", "--not-asked", "none")
@@ -3670,7 +3727,7 @@ def refused_as_rated_none(case, *problems):
 def test_an_item_of_no_kind_is_refused_when_rated_above_weak_or_rated_none_and_touching_a_guarded_file():
     check("an item of no kind rated medium is refused",
           *refused_as_rated_none(rated_none_case(rating="medium: the option changes what users see."),
-                                 "rates the case against medium; an item of none of the kinds 1 to 6 that `--help` "
+                                 "rates the case against medium; an item of none of the kinds 1 to 7 that `--help` "
                                  "lists under `--not-asked` settles without the user only when its case against is "
                                  "rated none, or weak with a case against that names only cost, or only that the change "
                                  "alters text the user approved word for word on an earlier date"))
@@ -3689,7 +3746,7 @@ def test_an_item_of_no_kind_is_refused_when_rated_above_weak_or_rated_none_and_t
 
 WEAK_COST_ONLY = "weak: the option costs a few lines of code."
 WEAK_COST_ONLY_SETTLED = "item 1 of 3 is recorded as settled without asking the user, case against weak, cost only;"
-PERMISSIONS_JUDGEMENT = ("item 1 of 3 is of none of the kinds 1 to 6 that `--help` lists under `--not-asked` and "
+PERMISSIONS_JUDGEMENT = ("item 1 of 3 is of none of the kinds 1 to 7 that `--help` lists under `--not-asked` and "
                          "its case against is rated weak: if its change "
                          "widens an agent's permissions, as a settings change can, or turns off a guard, do not run "
                          "close: present item 1 of 3 to the user.")
@@ -3740,7 +3797,7 @@ def test_an_item_of_no_kind_rated_weak_settles_when_it_touches_guarded_code_but_
               result.returncode == 1
               and "cannot be settled without asking the user as case against weak, cost only, because:" in result.stderr
               and f"`#not_asked_touches` names {path}, a Markdown file the instruction-file guard protects; this item "
-                  "is of none of the kinds 1 to 6 that `--help` lists under `--not-asked` and rated weak, and it "
+                  "is of none of the kinds 1 to 7 that `--help` lists under `--not-asked` and rated weak, and it "
                   "changes such a file, so it is shown to the user."
                   in result.stderr
               and "which the instruction-file guard protects;" not in result.stderr
@@ -3876,13 +3933,14 @@ def test_walk_minutes_written_before_the_ground_was_named_are_still_read():
 
 
 def test_a_not_asked_value_other_than_a_kind_or_a_no_kind_value_is_refused_as_usage():
-    for value in ("7", "0", "weak"):
+    for value in ("8", "0", "weak", "adds"):
         case = rated_none_case()
         result = case.run("check", "--not-asked", value)
         check(f"`--not-asked {value}` is refused as usage, writing nothing",
               result.returncode == 2
-              and f"`{value}` is not a kind: give 1, 2, 3, 4, 5, 6, or, for an item of no kind, none, "
-                  "weak-cost-only or weak-alters-earlier-approved-text-only" in result.stderr
+              and f"`{value}` is not a kind: give 1, 2, 3, 4, 5, 6, 7; adds-nothing, for an item whose recommendation "
+                  "adds and changes nothing; or, for an item of no kind, none, weak-cost-only or "
+                  "weak-alters-earlier-approved-text-only" in result.stderr
               and case.minutes.read_text().rstrip().endswith("#next_to_present item 1 of 3"), described(result))
 
 
