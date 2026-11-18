@@ -3,7 +3,7 @@
 
 Usage, on ned-box: scripts/open-file-in-typora-on-mac-from-ned-box-hack.py <path>
 
-for example `scripts/open-file-in-typora-on-mac-from-ned-box-hack.py docs/nedschorus-wiki/nedschorus-glossary.md`.
+for example `scripts/open-file-in-typora-on-mac-from-ned-box-hack.py docs/nedsnodes-wiki/nedsnodes-glossary.md`.
 The path may be relative to the current directory. It must name a file under
 /home/nedlern, because the Mac sees ned-box's home through its mount
 /Volumes/nedhome and nothing else on ned-box.

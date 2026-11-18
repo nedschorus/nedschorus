@@ -79,7 +79,7 @@ exits quietly under --failures-only. Measured on ned-box over the store's
 only the 13 transcripts written in between, took 0.2 seconds.
 
 SCHEDULE. Every 10 minutes, by cron on ned-box only, installed by
-nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py from the
+nn-systems/general-tools/install-scheduled-jobs-on-this-machine.py from the
 table beside that program:
 
   ned-box: */10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/log-store-session-dialogs-refresh-hack.py --failures-only >> /home/nedlern/.claude/log-store-session-dialogs-refresh.log 2>&1

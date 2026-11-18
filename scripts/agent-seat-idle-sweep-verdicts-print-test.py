@@ -162,7 +162,7 @@ class Machine:
 
 _scratch_directory_common_spec = importlib.util.spec_from_file_location(
     "test_scratch_directory_whose_earlier_killed_runs_leftovers_are_removed_first_common",
-    Path(__file__).resolve().parent.parent / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parent.parent / "nn-systems" / "general-tools"
     / "test-scratch-directory-whose-earlier-killed-runs-leftovers-are-removed-first-common.py")
 _scratch_directory_common = importlib.util.module_from_spec(_scratch_directory_common_spec)
 _scratch_directory_common_spec.loader.exec_module(_scratch_directory_common)

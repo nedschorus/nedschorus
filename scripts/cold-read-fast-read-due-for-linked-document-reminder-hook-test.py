@@ -31,7 +31,7 @@ _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 _attendance_check_spec = importlib.util.spec_from_file_location(
     "agent_session_unattended_by_user_check_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "agent-session-unattended-by-user-check-common.py")
 attendance_check = importlib.util.module_from_spec(_attendance_check_spec)
 _attendance_check_spec.loader.exec_module(attendance_check)
@@ -831,13 +831,13 @@ def main():
     # A shared module that will not load is a fault like any other, not a traceback.
     scratch_root = SUITE_ROOT / "hook-without-its-home-module"
     (scratch_root / "scripts").mkdir(parents=True)
-    (scratch_root / "nc-systems" / "general-tools").mkdir(parents=True)
+    (scratch_root / "nn-systems" / "general-tools").mkdir(parents=True)
     shutil.copy(HOOK_SCRIPT, scratch_root / "scripts" / HOOK_SCRIPT.name)
     rule_module = "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py"
-    shutil.copy(HOOK_SCRIPT.resolve().parents[1] / "nc-systems" / "general-tools" / rule_module,
-                scratch_root / "nc-systems" / "general-tools" / rule_module)
+    shutil.copy(HOOK_SCRIPT.resolve().parents[1] / "nn-systems" / "general-tools" / rule_module,
+                scratch_root / "nn-systems" / "general-tools" / rule_module)
     completed = run_hook(scratch_root / "scripts" / HOOK_SCRIPT.name, "{}")
-    home_module_path = (scratch_root / "nc-systems" / "general-tools"
+    home_module_path = (scratch_root / "nn-systems" / "general-tools"
                         / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
     check("a shared module that is missing is a fault naming its path: exit 1, one stderr line, no output",
           completed.returncode == 1 and completed.stdout == ""
@@ -857,13 +857,13 @@ def main():
           f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
 
     # A module loaded by run(), after the import-time ones, is reported the same way.
-    shutil.copy(HOOK_SCRIPT.resolve().parents[1] / "nc-systems" / "general-tools"
+    shutil.copy(HOOK_SCRIPT.resolve().parents[1] / "nn-systems" / "general-tools"
                 / home_module_path.name, home_module_path)
     for module in ("agent-session-unattended-by-user-check-common.py",
                    "git-machine-readable-output-runner-and-parser-common.py"):
-        shutil.copy(HOOK_SCRIPT.resolve().parents[1] / "nc-systems" / "general-tools" / module,
-                    scratch_root / "nc-systems" / "general-tools" / module)
-    record_names_path = scratch_root / "nc-systems" / "cold-read" / "cold-read-record-names-common.py"
+        shutil.copy(HOOK_SCRIPT.resolve().parents[1] / "nn-systems" / "general-tools" / module,
+                    scratch_root / "nn-systems" / "general-tools" / module)
+    record_names_path = scratch_root / "nn-systems" / "cold-read" / "cold-read-record-names-common.py"
     case = Case()
     case.transcript.write_text("")
     completed = run_hook(

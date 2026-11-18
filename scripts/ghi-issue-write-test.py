@@ -593,7 +593,7 @@ def run_cases(scratch: Path):
               "holding a queue note is not sent to an operation that "
               "refuses it too",
               "docs/issues/" in str(refusal)
-              and "nc-systems/<system>/" in str(refusal)
+              and "nn-systems/<system>/" in str(refusal)
               and "edit operation" in str(refusal), str(refusal))
         check("and it says what to do with a file that is a new issue "
               "rather than one of that issue's files",
@@ -626,7 +626,7 @@ def run_cases(scratch: Path):
             ("a longer run of digits is not read as a date",
              "Ticket 12026-09-150 notes", None),
             ("a directory named from the repository root passes",
-             "Group the components under nc-systems/", None),
+             "Group the components under nn-systems/", None),
             ("a file path passes",
              "Ship the records: docs/ship-records.py and the runner", None),
             ("a path under the home directory passes",
@@ -664,7 +664,7 @@ def run_cases(scratch: Path):
     # A heading naming a path is not refused at the heading check: create
     # goes on to file it. The stubs run out past that point.
     pathed = written(scratch, "pathed.md",
-                     "# Group the components under nc-systems/\n\nBody.\n")
+                     "# Group the components under nn-systems/\n\nBody.\n")
     pathed_run = Recorder({"gh issue list": Completed("[]")})
     try:
         tool.create(pathed, REPO, scratch, pathed_run, quiet)
@@ -2101,14 +2101,14 @@ def run_cases(scratch: Path):
 
 EDIT_NAME = "570-a-statusline-that-drops-its-branch-name.md"
 EDIT_RELATIVE = f"docs/issues/{EDIT_NAME}"
-MOVED_RELATIVE = f"nc-systems/statusline/{EDIT_NAME}"
+MOVED_RELATIVE = f"nn-systems/statusline/{EDIT_NAME}"
 EDIT_TITLE = "A statusline that drops its branch name"
 BASE_REVISION = "basesha1234"
 
 # The same file moved AND renamed, which is what makes main's copy of it
 # unfindable: the moved-from path is matched by the file's name.
 RENAMED_NAME = "570-statusline-contract.md"
-RENAMED_RELATIVE = f"nc-systems/statusline/{RENAMED_NAME}"
+RENAMED_RELATIVE = f"nn-systems/statusline/{RENAMED_NAME}"
 
 # The same file moved with its first heading changed, and main's copy at
 # the old path as another seat left it.
@@ -2616,12 +2616,12 @@ def run_old_ghi_guide_agent_files_on_main_cases(scratch: Path):
         "gh issue view": issue_json(EDIT_TITLE, one_link),
         # Before the catch-all listing: the Recorder answers the first key
         # found in the command, so these two tell the directories apart.
-        f"git ls-tree --name-only -z {MAIN_COMMIT} nc-systems/statusline/":
+        f"git ls-tree --name-only -z {MAIN_COMMIT} nn-systems/statusline/":
             Completed(""),
         f"git ls-tree --name-only -z {MAIN_COMMIT} docs/issues/": listing,
         "git ls-tree": Completed(f"{EDIT_RELATIVE}\0"),
     }
-    moved_source = filed_ghi_md(scratch, directory="nc-systems/statusline")
+    moved_source = filed_ghi_md(scratch, directory="nn-systems/statusline")
     moved_lines = []
     tool.edit(moved_source, REPO, scratch, Recorder(moved_answers),
               moved_lines.append)
@@ -2780,16 +2780,16 @@ def run_edit_cases(scratch: Path):
           tool.writable_relative_path(EDIT_RELATIVE))
     check("so is one under its system's own directory",
           tool.writable_relative_path(
-              "nc-systems/main-gatekeeper/570-contract.md"))
+              "nn-systems/main-gatekeeper/570-contract.md"))
     check("a file loose in the system tree is not",
-          not tool.writable_relative_path("nc-systems/570-contract.md"))
+          not tool.writable_relative_path("nn-systems/570-contract.md"))
     check("and neither is one somewhere else entirely",
           not tool.writable_relative_path("docs/drafts/570-contract.md"))
 
     # DIRECTLY IN, the same rule ghi_md_paths_for_issue applies, because they
     # are now
     # the same function. This one took any depth under docs/issues/ and any
-    # depth from three down under nc-systems/ until 2026-09-21, so the
+    # depth from three down under nn-systems/ until 2026-09-21, so the
     # operation would land a file the issue's body cannot link — and take its
     # title from that file's heading.
 
@@ -2802,7 +2802,7 @@ def run_edit_cases(scratch: Path):
               "docs/issues/archived/43-step-2-claude-md-inputs.md"))
     check("nor is a file buried below a system's own directory",
           not tool.writable_relative_path(
-              "nc-systems/statusline/tests/570-contract-test.md"))
+              "nn-systems/statusline/tests/570-contract-test.md"))
 
     text, title, number, relative = tool.validate_edit(
         filed_ghi_md(scratch), scratch)
@@ -2813,7 +2813,7 @@ def run_edit_cases(scratch: Path):
     check("a filed GHI-MD in its system's directory validates too",
           tool.validate_edit(
               filed_ghi_md(scratch, name="570-contract.md",
-                           directory="nc-systems/statusline"),
+                           directory="nn-systems/statusline"),
               scratch)[2] == 570)
 
     for case_name, target in [
@@ -2876,18 +2876,18 @@ def run_edit_cases(scratch: Path):
 
     listing = Recorder({"git ls-tree": Completed(
         "docs/issues/570-design.md\0"
-        "nc-systems/statusline/570-contract.md\0"
+        "nn-systems/statusline/570-contract.md\0"
         "docs/issues/5700-unrelated.md\0"
         "docs/issues/571-another.md\0")})
     check("the file set spans docs/issues/ and the system directories",
           tool.ghi_md_paths_for_issue(570, scratch, listing)
           == ["docs/issues/570-design.md",
-              "nc-systems/statusline/570-contract.md"],
+              "nn-systems/statusline/570-contract.md"],
           str(tool.ghi_md_paths_for_issue(570, scratch, listing)))
     check("and git is asked for both of them, recursively, since a "
           "system's own directory is a level below the tree named",
           ran_with(listing, "git ls-tree", "-r", "docs/issues/",
-                   "nc-systems/"),
+                   "nn-systems/"),
           str(listing.calls))
 
     # --- What counts as one of the issue's files, and what does not ------
@@ -2921,7 +2921,7 @@ def run_edit_cases(scratch: Path):
         "docs/issues/queue/3-checks-note-still-waiting-in-the-queue.md\0"
         "docs/issues/queue/45-inventory-still-waiting-in-the-queue.md\0"
         "docs/issues/queue/45-riders-still-waiting-in-the-queue.md\0"
-        "nc-systems/main-gatekeeper/main-gatekeeper-design.md\0")
+        "nn-systems/main-gatekeeper/main-gatekeeper-design.md\0")
 
     main_tree = Recorder({"git ls-tree": Completed(MAIN_TREE)})
     check("issue 3's files are the four directly under docs/issues/, which "
@@ -2968,14 +2968,14 @@ def run_edit_cases(scratch: Path):
           not disagreed, str(disagreed))
 
     deeper = Recorder({"git ls-tree": Completed(
-        "nc-systems/statusline/570-contract.md\0"
-        "nc-systems/statusline/tests/570-contract-test.md\0"
-        "nc-systems/570-loose.md\0")})
+        "nn-systems/statusline/570-contract.md\0"
+        "nn-systems/statusline/tests/570-contract-test.md\0"
+        "nn-systems/570-loose.md\0")})
     check("a system's own directory is one level down, so a filed name "
           "buried deeper under it is not the issue's file, and neither is "
           "one loose in the system tree",
           tool.ghi_md_paths_for_issue(570, scratch, deeper)
-          == ["nc-systems/statusline/570-contract.md"],
+          == ["nn-systems/statusline/570-contract.md"],
           str(tool.ghi_md_paths_for_issue(570, scratch, deeper)))
 
     # --- The happy path: the file differs from main, so it lands ---------
@@ -3284,7 +3284,7 @@ def run_edit_cases(scratch: Path):
     # 128 is what git answers for a path that is not in the tree asked of,
     # measured; the older cases above say 1, which blob_at reads the same
     # way, because the listing it then asks for leaves the path out.
-    moved_source = filed_ghi_md(scratch, directory="nc-systems/statusline")
+    moved_source = filed_ghi_md(scratch, directory="nn-systems/statusline")
     moved = Recorder({
         f"git show {MAIN_COMMIT}:{MOVED_RELATIVE}": Completed("",
                                                             returncode=128),
@@ -3331,7 +3331,7 @@ def run_edit_cases(scratch: Path):
           < moved.commands().index("git worktree add"),
           str(moved.commands()))
 
-    filed_ghi_md(scratch, directory="nc-systems/statusline")
+    filed_ghi_md(scratch, directory="nn-systems/statusline")
 
     # A same-named copy in the other directory, while this run's own file
     # is where main has it, is not a move: it is an edit in place, and that
@@ -3360,7 +3360,7 @@ def run_edit_cases(scratch: Path):
     # and a deletion on suspicion would delete a file nobody moved.
 
     renamed_source = filed_ghi_md(scratch, name=RENAMED_NAME,
-                                  directory="nc-systems/statusline")
+                                  directory="nn-systems/statusline")
     renamed = Recorder({
         f"git show {MAIN_COMMIT}:{RENAMED_RELATIVE}": Completed(
             "", returncode=128),
@@ -3425,7 +3425,7 @@ def run_edit_cases(scratch: Path):
     # the file moved from.
 
     moved_heading_source = filed_ghi_md(
-        scratch, directory="nc-systems/statusline", text=MOVED_HEADING_TEXT)
+        scratch, directory="nn-systems/statusline", text=MOVED_HEADING_TEXT)
     moved_heading = Recorder({
         f"git show {MAIN_COMMIT}:{MOVED_RELATIVE}": Completed("",
                                                             returncode=128),
@@ -3461,7 +3461,7 @@ def run_edit_cases(scratch: Path):
         "gh issue view": issue_json("A title nobody derived", one_link),
         "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
-    tool.edit(filed_ghi_md(scratch, directory="nc-systems/statusline"), REPO,
+    tool.edit(filed_ghi_md(scratch, directory="nn-systems/statusline"), REPO,
               scratch, moved_same_heading, quiet)
     check("while a move that left the heading alone renames nothing, "
           "however far the issue's title is from that heading",
@@ -3561,7 +3561,7 @@ def run_edit_cases(scratch: Path):
         "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     try:
-        tool.edit(filed_ghi_md(scratch, directory="nc-systems/statusline"),
+        tool.edit(filed_ghi_md(scratch, directory="nn-systems/statusline"),
                   REPO, scratch, moved_conflict, quiet)
         check("a move whose old path another seat changed is refused", False,
               "it proceeded")
@@ -3725,7 +3725,7 @@ def run_edit_cases(scratch: Path):
         "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     try:
-        tool.edit(filed_ghi_md(scratch, directory="nc-systems/statusline"),
+        tool.edit(filed_ghi_md(scratch, directory="nn-systems/statusline"),
                   REPO, scratch, moved_second_edit, quiet)
         check("a move whose old path an open edit still holds is refused "
               "too, that path being where this run deletes main's copy",
@@ -4032,7 +4032,7 @@ def run_edit_cases(scratch: Path):
         ASK: Completed("verdict: too-similar #13\n"),
     })
     try:
-        tool.edit(filed_ghi_md(scratch, directory="nc-systems/statusline"),
+        tool.edit(filed_ghi_md(scratch, directory="nn-systems/statusline"),
                   REPO, scratch, moved_to_land, quiet)
         check("and so is a move, which main has nothing at the author's "
               "path to compare with",
@@ -4069,7 +4069,7 @@ def run_edit_cases(scratch: Path):
         f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(staged),
         "gh issue view": issue_json(EDIT_TITLE, one_link),
         "git ls-tree": Completed(
-            EDIT_RELATIVE + "\0nc-systems/statusline/570-contract.md\0"),
+            EDIT_RELATIVE + "\0nn-systems/statusline/570-contract.md\0"),
     })
     tool.edit(source, REPO, scratch, added, quiet)
     check("a file added to the issue is relinked into the body",
@@ -4656,11 +4656,11 @@ def run_stop_signal_cleanup_cases(scratch: Path):
 # (user-ruled 2026-09-30, item 3 of the walk
 # ghi-224-migration-order-and-open-questions-2026-09-30). With no number in
 # the name, the `issue:` line the tool writes is what files it. The paths
-# below are the first such move, nc-systems/handoff/docs/, and the shape a
-# subsystem's takes, nc-systems/skills/cold-read/docs/.
+# below are the first such move, nn-systems/handoff/docs/, and the shape a
+# subsystem's takes, nn-systems/skills/cold-read/docs/.
 
-LANDED_DESIGN = "nc-systems/handoff/docs/handoff-recover-crashed-seats-design.md"
-SUBSYSTEM_DESIGN = "nc-systems/skills/cold-read/docs/cold-read-design.md"
+LANDED_DESIGN = "nn-systems/handoff/docs/handoff-recover-crashed-seats-design.md"
+SUBSYSTEM_DESIGN = "nn-systems/skills/cold-read/docs/cold-read-design.md"
 LANDED_TITLE = ("Crash recovery for seats that died without a handoff: find "
                 "the last live transcript, resume it supervised")
 LANDED_TEXT = ("---\nstatus: overview\n---\n\n"
@@ -4680,17 +4680,17 @@ def run_landed_design_cases(scratch: Path):
     for case_name, relative in [
             ("a numbered name in docs/ is not a landed design, so one file "
              "cannot be filed by its name and by its issue: line",
-             "nc-systems/handoff/docs/120-recover-crashed-seats-design.md"),
+             "nn-systems/handoff/docs/120-recover-crashed-seats-design.md"),
             ("a file in docs/ that is not a design is not one",
-             "nc-systems/handoff/docs/handoff-system-overview.md"),
-            ("a docs/ directly under nc-systems/, belonging to no system, "
-             "holds none", "nc-systems/docs/loose-design.md"),
+             "nn-systems/handoff/docs/handoff-system-overview.md"),
+            ("a docs/ directly under nn-systems/, belonging to no system, "
+             "holds none", "nn-systems/docs/loose-design.md"),
             ("a design level with its system's code is not one",
-             "nc-systems/main-gatekeeper/main-gatekeeper-design.md"),
+             "nn-systems/main-gatekeeper/main-gatekeeper-design.md"),
             ("nor one level with a subsystem's code, four parts deep but "
              "not in a docs/ directory",
-             "nc-systems/skills/cold-read/cold-read-design.md"),
-            ("a docs/ directory outside nc-systems/ holds none, however "
+             "nn-systems/skills/cold-read/cold-read-design.md"),
+            ("a docs/ directory outside nn-systems/ holds none, however "
              "deep", "a/b/docs/x-design.md"),
             ("nor is a design still in docs/issues/",
              "docs/issues/116-fleet-survives-machine-restart-design.md"),
@@ -4737,13 +4737,13 @@ def run_landed_design_cases(scratch: Path):
             "docs/issues/queue/120-recovery-notes.md\0"
             f"{LANDED_DESIGN}\0"
             f"{SUBSYSTEM_DESIGN}\0"
-            "nc-systems/handoff/docs/handoff-unfiled-design.md\0"
-            "nc-systems/handoff/docs/120-numbered-design.md\0"
-            "nc-systems/handoff/handoff-supervisor.py\0"),
+            "nn-systems/handoff/docs/handoff-unfiled-design.md\0"
+            "nn-systems/handoff/docs/120-numbered-design.md\0"
+            "nn-systems/handoff/handoff-supervisor.py\0"),
         f"git show origin/main:{LANDED_DESIGN}": Completed(landed_form()),
         f"git show origin/main:{SUBSYSTEM_DESIGN}": Completed(
             landed_form(number=284, title="Cold read")),
-        "git show origin/main:nc-systems/handoff/docs/handoff-unfiled":
+        "git show origin/main:nn-systems/handoff/docs/handoff-unfiled":
             Completed(LANDED_TEXT),
     })
     found = tool.ghi_md_paths_for_issue(120, scratch, listing)
@@ -4809,7 +4809,7 @@ def run_landed_design_cases(scratch: Path):
           and title == "Crash recovery for seats — recover-crashed-seats.py",
           f"{number} {relative} {title!r}")
 
-    unfiled = scratch / "nc-systems/handoff/docs/handoff-unfiled-design.md"
+    unfiled = scratch / "nn-systems/handoff/docs/handoff-unfiled-design.md"
     unfiled.write_text(LANDED_TEXT, encoding="utf-8")
     try:
         tool.validate_edit(unfiled, scratch)
@@ -4827,16 +4827,16 @@ def run_landed_design_cases(scratch: Path):
     # the unfiled one names nothing on disk and 120 on main.
     disagreeing = Recorder({
         "git ls-tree": Completed(f"{LANDED_DESIGN}\0"
-                                 "nc-systems/handoff/docs/"
+                                 "nn-systems/handoff/docs/"
                                  "handoff-unfiled-design.md\0"),
         f"git show origin/main:{LANDED_DESIGN}": Completed(LANDED_TEXT),
-        "git show origin/main:nc-systems/handoff/docs/handoff-unfiled":
+        "git show origin/main:nn-systems/handoff/docs/handoff-unfiled":
             Completed(landed_form()),
     })
     from_main = tool.ghi_md_paths_for_issue(120, scratch, disagreeing)
     check("an issue's landed designs are the ones whose issue: line on "
           "main names it, whatever the working tree's copy says",
-          from_main == ["nc-systems/handoff/docs/handoff-unfiled-design.md"],
+          from_main == ["nn-systems/handoff/docs/handoff-unfiled-design.md"],
           str(from_main))
 
     elsewhere = scratch / "docs" / "drafts" / "handoff-notes-design.md"
@@ -4958,8 +4958,8 @@ def run_landed_design_cases(scratch: Path):
                                                    heading)
     moved_on_main = Recorder({
         GHI_MD_LISTING_CALL: Completed(""),
-        f"git ls-tree -r --name-only -z {MAIN_COMMIT} nc-systems/": Completed(
-            f"{LANDED_DESIGN}\0nc-systems/handoff/handoff-supervisor.py\0"),
+        f"git ls-tree -r --name-only -z {MAIN_COMMIT} nn-systems/": Completed(
+            f"{LANDED_DESIGN}\0nn-systems/handoff/handoff-supervisor.py\0"),
         f"git show {MAIN_COMMIT}:{LANDED_DESIGN}": Completed(
             filed_then_moved),
     })
@@ -4975,7 +4975,7 @@ def run_landed_design_cases(scratch: Path):
               and "/issues/120" in str(refusal), str(refusal))
     other_design = Recorder({
         GHI_MD_LISTING_CALL: Completed(""),
-        f"git ls-tree -r --name-only -z {MAIN_COMMIT} nc-systems/": Completed(
+        f"git ls-tree -r --name-only -z {MAIN_COMMIT} nn-systems/": Completed(
             f"{LANDED_DESIGN}\0"),
         f"git show {MAIN_COMMIT}:{LANDED_DESIGN}": Completed(
             tool.with_issue_frontmatter("# Another design\n", REPO, 120,

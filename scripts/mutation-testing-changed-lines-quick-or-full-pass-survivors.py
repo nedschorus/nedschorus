@@ -322,7 +322,7 @@ PRAGMA_NO_MUTATE_COMMENT = re.compile(r"\s*#.*pragma: no mutate.*")
 # Each checks one rule across a whole class of the repository's files, so its recording reads
 # nearly every module; the quick mutation pass leaves it out.
 REPOSITORY_WIDE_CHECKS = (
-    "nc-systems/general-tools/tests/common-module-wording-copied-into-other-test-files-scan-of-every-tracked-test-file-fails-on-any-copy-test.py",
+    "nn-systems/general-tools/tests/common-module-wording-copied-into-other-test-files-scan-of-every-tracked-test-file-fails-on-any-copy-test.py",
     "scripts/code-comments-carry-no-history-markers-test.py",
     "scripts/edited-file-path-within-checkout-root-and-git-check-ignore-defined-once-test.py",
     "scripts/every-repository-program-help-option-test.py",
@@ -377,14 +377,14 @@ TEST_SUITE_RUNNER_LOG_DIRECTORIES_PARENT_RETENTION_SECONDS = 2 * 24 * 3600
 
 _git_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
 _stop_signals_spec = importlib.util.spec_from_file_location(
     "stop_signal_sigterm_or_sighup_raises_system_exit_so_cleanup_runs_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "stop-signal-sigterm-or-sighup-raises-system-exit-so-cleanup-runs-common.py")
 stop_signals = importlib.util.module_from_spec(_stop_signals_spec)
 _stop_signals_spec.loader.exec_module(stop_signals)

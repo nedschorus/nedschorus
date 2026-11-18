@@ -270,7 +270,7 @@ def guard():
 
 def snapshots():
     return loaded("uncommitted_work_snapshots",
-                  CLONE_ROOT / "nc-systems" / "handoff" / "uncommitted-work-snapshots.py")
+                  CLONE_ROOT / "nn-systems" / "handoff" / "uncommitted-work-snapshots.py")
 
 
 # ---------------------------------------------------------------- hashes and checked lines

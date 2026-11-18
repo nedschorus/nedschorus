@@ -32,10 +32,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SCRIPT_PATH = Path(__file__).with_name("recover-crashed-seats.py")
-# The supervisor moved into nc-systems/handoff/ on 2026-09-20 and is no
+# The supervisor moved into nn-systems/handoff/ on 2026-09-20 and is no
 # longer a sibling of the recovery tool this suite tests.
 SUPERVISOR_SCRIPT = (SCRIPT_PATH.resolve().parent.parent
-                     / "nc-systems" / "handoff" / "handoff-supervisor.py")
+                     / "nn-systems" / "handoff" / "handoff-supervisor.py")
 
 _spec = importlib.util.spec_from_file_location("recover_crashed_seats", SCRIPT_PATH)
 recovery = importlib.util.module_from_spec(_spec)
@@ -512,7 +512,7 @@ def ps_confirms_supervisors(seat_supervised_by_process_id):
     """ps answers that each process id given runs the supervisor of the seat
     it maps to, and that no other process id exists."""
     recovery.supervisor.read_process_command_line = lambda process_id: (
-        (f"python3 /agents/nc-systems/handoff/handoff-supervisor.py --agent "
+        (f"python3 /agents/nn-systems/handoff/handoff-supervisor.py --agent "
          f"{seat_supervised_by_process_id[process_id]} --cd /agents/x", True)
         if process_id in seat_supervised_by_process_id else (None, True))
 
@@ -2342,7 +2342,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # recovery marker reaches the successor, never what the prompt says; and
     # it composes with an empty launch-time-git-sync report, so the branch-state
     # sentence is not in this fixture at all. The wording is pinned in
-    # nc-systems/handoff/tests/handoff-supervisor-successor-prompt-test.py, by
+    # nn-systems/handoff/tests/handoff-supervisor-successor-prompt-test.py, by
     # the boot-recovery check that pull request [the ignition prompt's sentences are constants,
     # and both branch-state call sites are pinned whole]
     # (https://github.com/nedsnodes/nedsnodes/pull/590) added. Look there,
@@ -2968,7 +2968,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # branch off macOS -- launcher_path() returns None there, which is
     # ned-box, where the seats run. The assertion resolves the path and asks
     # the disk, rather than matching the file name the cases above match: when
-    # the supervisor moved to nc-systems/handoff/ on 2026-09-20 and this
+    # the supervisor moved to nn-systems/handoff/ on 2026-09-20 and this
     # command went on composing a sibling of the recovery tool, every one of
     # those name matches still passed, because the path that no longer existed
     # ends with the same file name. tmux still created the session, so
@@ -3253,8 +3253,8 @@ with tempfile.TemporaryDirectory() as temporary:
     (checkout_b / "scripts").mkdir(parents=True)
     (checkout_b / "scripts" / "launch-claude-mac").write_text("#!/bin/sh\nexit 0\n",
                                                              encoding="utf-8")
-    (checkout_b / "nc-systems" / "handoff").mkdir(parents=True)
-    (checkout_b / "nc-systems" / "handoff" / "handoff-supervisor.py").write_text(
+    (checkout_b / "nn-systems" / "handoff").mkdir(parents=True)
+    (checkout_b / "nn-systems" / "handoff" / "handoff-supervisor.py").write_text(
         "", encoding="utf-8")
     checkout_without_launcher_or_supervisor = root / "checkout-without-launcher-or-supervisor"
     checkout_without_launcher_or_supervisor.mkdir()
@@ -3318,7 +3318,7 @@ with tempfile.TemporaryDirectory() as temporary:
         check("CHECKOUT: off macOS, a recovery run from checkout A runs checkout B's supervisor",
               exit_code == 0
               and box_supervisor
-              == str(checkout_b / "nc-systems" / "handoff" / "handoff-supervisor.py"),
+              == str(checkout_b / "nn-systems" / "handoff" / "handoff-supervisor.py"),
               (exit_code, output, box_supervisor))
 
         # The file missing from the durable checkout is never taken from this
@@ -3329,7 +3329,7 @@ with tempfile.TemporaryDirectory() as temporary:
         capture_launches(workspace)
         expected_missing_path = checkout_without_launcher_or_supervisor / (
             "scripts/launch-claude-mac" if sys.platform == "darwin"
-            else "nc-systems/handoff/handoff-supervisor.py")
+            else "nn-systems/handoff/handoff-supervisor.py")
         exit_code, output = recover_through_main_with_checkout(
             workspace, checkout_without_launcher_or_supervisor)
         check("CHECKOUT: a durable checkout without the file a launch needs refuses the seat, "

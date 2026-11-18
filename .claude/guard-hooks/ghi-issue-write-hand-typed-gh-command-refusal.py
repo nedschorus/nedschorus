@@ -101,7 +101,7 @@ WHAT IT CANNOT SEE, so nobody mistakes a choice for an oversight:
   guard, whose reading this shares.
 - A gh alias the user defined is not expanded.
 
-Commands are read with nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py,
+Commands are read with nn-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py,
 the project's shared shell module on tree-sitter-bash, as the force-push guard
 does: one reader, reviewed once.
 """
@@ -124,12 +124,12 @@ with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(
         __file__, __name__ == "__main__"):
     _shell_reader_spec = importlib.util.spec_from_file_location(
         "shell_command_tree_sitter_bash_reader_common",
-        _REPOSITORY_ROOT / "nc-systems" / "general-tools" / "shell-command-tree-sitter-bash-reader-common.py")
+        _REPOSITORY_ROOT / "nn-systems" / "general-tools" / "shell-command-tree-sitter-bash-reader-common.py")
     shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
     _shell_reader_spec.loader.exec_module(shell_reader)
     _repository_names_spec = importlib.util.spec_from_file_location(
         "github_repository_name_and_name_before_project_rename_common",
-        _REPOSITORY_ROOT / "nc-systems" / "general-tools"
+        _REPOSITORY_ROOT / "nn-systems" / "general-tools"
         / "github-repository-name-and-name-before-project-rename-common.py")
     repository_names = importlib.util.module_from_spec(_repository_names_spec)
     _repository_names_spec.loader.exec_module(repository_names)

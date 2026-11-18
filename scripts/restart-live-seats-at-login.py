@@ -109,7 +109,7 @@ from pathlib import Path
 
 _supervisor_spec = importlib.util.spec_from_file_location(
     "handoff_supervisor", Path(__file__).resolve().parent.parent
-    / "nc-systems" / "handoff" / "handoff-supervisor.py"
+    / "nn-systems" / "handoff" / "handoff-supervisor.py"
 )
 supervisor = importlib.util.module_from_spec(_supervisor_spec)
 _supervisor_spec.loader.exec_module(supervisor)
@@ -123,13 +123,13 @@ _recovery_spec.loader.exec_module(recovery)
 
 _records_reader_spec = importlib.util.spec_from_file_location(
     "agent_seat_state_records_reader", Path(__file__).resolve().parent.parent
-    / "nc-systems" / "handoff" / "agent-seat-state-records-reader.py"
+    / "nn-systems" / "handoff" / "agent-seat-state-records-reader.py"
 )
 records_reader = importlib.util.module_from_spec(_records_reader_spec)
 _records_reader_spec.loader.exec_module(records_reader)
 _tmux_error_pattern_spec = importlib.util.spec_from_file_location(
     "tmux_target_or_server_does_not_exist_error_pattern_common",
-    Path(__file__).resolve().parent.parent / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parent.parent / "nn-systems" / "general-tools"
     / "tmux-target-or-server-does-not-exist-error-pattern-common.py"
 )
 tmux_error_pattern = importlib.util.module_from_spec(_tmux_error_pattern_spec)

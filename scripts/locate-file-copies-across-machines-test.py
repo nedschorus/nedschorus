@@ -51,14 +51,14 @@ FAKE_BOX = "fake-box"
 # strips, so the suite is as safe run directly as it is under the runner.
 _git_redirecting_removal_spec = importlib.util.spec_from_file_location(
     "git_redirecting_environment_variables_removal_common",
-    SCRIPTS_DIR.parent / "nc-systems" / "general-tools"
+    SCRIPTS_DIR.parent / "nn-systems" / "general-tools"
     / "git-redirecting-environment-variables-removal-common.py")
 git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
 _git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
 GIT_REDIRECTING_ENVIRONMENT_VARIABLES = git_redirecting_removal.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
 _ned_box_home_spec = importlib.util.spec_from_file_location(
     "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
-    SCRIPTS_DIR.parent / "nc-systems" / "general-tools"
+    SCRIPTS_DIR.parent / "nn-systems" / "general-tools"
     / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
 ned_box_home_path_constants = importlib.util.module_from_spec(_ned_box_home_spec)
 _ned_box_home_spec.loader.exec_module(ned_box_home_path_constants)
@@ -931,7 +931,7 @@ check("the production plan searches ned-box's scratch worktrees, "
       box_checkouts)
 supervisor_temp_parent = re.search(
     r'^NED_BOX_CLAUDE_CODE_TMPDIR = "([^"]+)"$',
-    (pathlib.Path(__file__).resolve().parents[1] / "nc-systems" / "handoff"
+    (pathlib.Path(__file__).resolve().parents[1] / "nn-systems" / "handoff"
      / "handoff-supervisor.py").read_text(encoding="utf-8"), re.M).group(1)
 check("the production plan searches ned-box's temp folders under the "
       "handoff-supervisor's CLAUDE_CODE_TMPDIR as well as under /tmp, and "

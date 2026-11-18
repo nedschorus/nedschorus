@@ -165,14 +165,14 @@ _threshold_hook_spec.loader.exec_module(threshold_hook)
 
 _git_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
-    SCRIPT_DIRECTORY.parent / "nc-systems" / "general-tools"
+    SCRIPT_DIRECTORY.parent / "nn-systems" / "general-tools"
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
 _command_line_prefix_spec = importlib.util.spec_from_file_location(
     "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
-    SCRIPT_DIRECTORY.parent / "nc-systems" / "general-tools"
+    SCRIPT_DIRECTORY.parent / "nn-systems" / "general-tools"
     / "claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
 command_line_prefix = importlib.util.module_from_spec(_command_line_prefix_spec)
 _command_line_prefix_spec.loader.exec_module(command_line_prefix)

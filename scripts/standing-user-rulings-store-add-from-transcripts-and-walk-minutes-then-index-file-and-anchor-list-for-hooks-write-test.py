@@ -24,7 +24,7 @@ from zoneinfo import ZoneInfo
 
 PROGRAM = Path(__file__).with_name(
     "standing-user-rulings-store-add-from-transcripts-and-walk-minutes-then-index-file-and-anchor-list-for-hooks-write.py")
-WALK_CHECK_PROGRAM = (Path(__file__).resolve().parents[1] / "nc-systems" / "skills" / "walk-me-through"
+WALK_CHECK_PROGRAM = (Path(__file__).resolve().parents[1] / "nn-systems" / "skills" / "walk-me-through"
                       / "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py")
 
 
@@ -58,8 +58,8 @@ def check(case_name, condition, detail=""):
 
 
 SEAT_DIRECTORY = "/home/nedlern/agents/alpha-seat"
-REPOSITORY_FILES = ("CLAUDE.md", "scripts/tool-one.py", "nc-systems/cold-read/cold-read-fast-read.py",
-                    "nc-systems/handoff/handoff-supervisor.py", ".claude/skills/find-info/SKILL.md",
+REPOSITORY_FILES = ("CLAUDE.md", "scripts/tool-one.py", "nn-systems/cold-read/cold-read-fast-read.py",
+                    "nn-systems/handoff/handoff-supervisor.py", ".claude/skills/find-info/SKILL.md",
                     "docs/issues/2118-ruling-agent-keeps-user-rulings.md", "SKILL.md", "CLAUDE")
 
 
@@ -164,7 +164,7 @@ def described(result):
 
 
 ANSWERED = ("Item 3 asks about GHI 2118 and PR 2120, my task #127 and merge-lane-2's task #12; "
-            "the change edits /Users/el/agents/alpha-seat/.claude/worktrees/w/nc-systems/cold-read/cold-read-fast-read.py "
+            "the change edits /Users/el/agents/alpha-seat/.claude/worktrees/w/nn-systems/cold-read/cold-read-fast-read.py "
             "and scripts/tool-one.py. Approve?")
 
 # His words, a peer's message, a queued message, a claude -p prompt and a handoff opener.
@@ -208,11 +208,11 @@ with tempfile.TemporaryDirectory() as directory:
     check("GHIs, pull requests, tasks and systems in the agent message, and files in his words, become tags; "
           "a path's shorter trailing parts, such as SKILL.md, do not",
           case.tags(approve) == {"GHI 2118", "PR 2120", "task alpha-seat 127", "task merge-lane-2 12",
-                                 "nc-systems/cold-read/", "CLAUDE.md", ".claude/skills/find-info/SKILL.md",
-                                 "nc-systems/skills/"}, case.tags(approve))
+                                 "nn-systems/cold-read/", "CLAUDE.md", ".claude/skills/find-info/SKILL.md",
+                                 "nn-systems/skills/"}, case.tags(approve))
     check("a file named only in the agent message is not a tag",
           "scripts/tool-one.py" not in case.tags(approve)
-          and "nc-systems/cold-read/cold-read-fast-read.py" not in case.tags(approve), case.tags(approve))
+          and "nn-systems/cold-read/cold-read-fast-read.py" not in case.tags(approve), case.tags(approve))
     header, index = case.index()
     check("the index file starts with its build time and lists standing entries newest first",
           header["standing_entry_count"] == 3 and "index_built_at_utc" in header
@@ -225,8 +225,8 @@ with tempfile.TemporaryDirectory() as directory:
           and "/docs/issues/2118-ruling-agent-keeps-user-rulings.md" in index[1]["anchors"], index[1])
     check("the anchor list holds tagged files, system directories and GHI-MD paths, each with a leading slash",
           case.anchors() == ["/.claude/skills/find-info/SKILL.md", "/CLAUDE.md",
-                             "/docs/issues/2118-ruling-agent-keeps-user-rulings.md", "/nc-systems/cold-read/",
-                             "/nc-systems/skills/"], case.anchors())
+                             "/docs/issues/2118-ruling-agent-keeps-user-rulings.md", "/nn-systems/cold-read/",
+                             "/nn-systems/skills/"], case.anchors())
     rerun = case.run()
     check("a rerun with nothing new adds nothing",
           rerun.returncode == 0 and len(case.entries()) == 4
@@ -288,7 +288,7 @@ with tempfile.TemporaryDirectory() as directory:
     case.transcript("ned-box", "[1, 2]\nnot json\n" + lines_of([
         human("see CLAUDE.md", "2026-10-24T00:02:00Z"),
         human("see scripts/tool-one.py", "2026-10-24T00:03:00Z"),
-        agent("This touches nc-systems/handoff/ and nc-systems/new-system/plan.md."),
+        agent("This touches nn-systems/handoff/ and nn-systems/new-system/plan.md."),
         human("no time", ""),
     ]), append=True)
     result = case.run()
@@ -301,10 +301,10 @@ with tempfile.TemporaryDirectory() as directory:
           and case.tags("ok") == {"GHI 46"}, len(entries["ok"][5] or ""))
     check("a JSON line that is not a record is skipped, and the lines after it are read",
           result.returncode == 0 and entries["see CLAUDE.md"][4] == 8, described(result) + f" {entries}")
-    check("a file outside nc-systems/ and .claude/skills/ is a tag with no system",
+    check("a file outside nn-systems/ and .claude/skills/ is a tag with no system",
           case.tags("see scripts/tool-one.py") == {"scripts/tool-one.py"}, case.tags("see scripts/tool-one.py"))
     check("a system directory named by a path that is no file on origin/main is still a system tag",
-          case.tags("no time") == {"nc-systems/handoff/", "nc-systems/new-system/"}, case.tags("no time"))
+          case.tags("no time") == {"nn-systems/handoff/", "nn-systems/new-system/"}, case.tags("no time"))
     check("a message with no timestamp is stored once, and again not on a rerun",
           "no time" in entries and case.run().returncode == 0
           and [entry[1] for entry in case.entries()].count("no time") == 1, entries.get("no time"))
@@ -623,12 +623,12 @@ with tempfile.TemporaryDirectory() as directory:
 with tempfile.TemporaryDirectory() as directory:
     case = Case(directory)
     case.transcript("ned-box", [human("Edit scripts/tool-one.py.", "2026-10-26T00:00:00Z"),
-                                human("Is it nc-systems/handoff/handoff-supervisor.py?", "2026-10-26T00:01:00Z")])
+                                human("Is it nn-systems/handoff/handoff-supervisor.py?", "2026-10-26T00:01:00Z")])
     case.run()
     check("a file named at the end of a sentence is tagged without the sentence's full stop or question mark",
           case.tags("Edit scripts/tool-one.py.") == {"scripts/tool-one.py"}
-          and "nc-systems/handoff/handoff-supervisor.py" in case.tags("Is it nc-systems/handoff/handoff-supervisor.py?"),
-          f"{case.tags('Edit scripts/tool-one.py.')} {case.tags('Is it nc-systems/handoff/handoff-supervisor.py?')}")
+          and "nn-systems/handoff/handoff-supervisor.py" in case.tags("Is it nn-systems/handoff/handoff-supervisor.py?"),
+          f"{case.tags('Edit scripts/tool-one.py.')} {case.tags('Is it nn-systems/handoff/handoff-supervisor.py?')}")
 
 # A prompt crash recovery wrote reaches the transcript with human origin; it is not the user's words.
 recover = load("recover_crashed_seats", Path(__file__).with_name("recover-crashed-seats.py"))

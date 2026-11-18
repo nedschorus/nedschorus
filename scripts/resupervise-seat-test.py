@@ -31,14 +31,14 @@ import time
 from pathlib import Path
 
 RESUPERVISE_SCRIPT = Path(__file__).with_name("resupervise-seat.py")
-# The supervisor moved into nc-systems/handoff/ on 2026-09-20.
+# The supervisor moved into nn-systems/handoff/ on 2026-09-20.
 SUPERVISOR_SCRIPT = (RESUPERVISE_SCRIPT.resolve().parent.parent
-                     / "nc-systems" / "handoff" / "handoff-supervisor.py")
+                     / "nn-systems" / "handoff" / "handoff-supervisor.py")
 
 failures = []
 _tmux_error_pattern_spec = importlib.util.spec_from_file_location(
     "tmux_target_or_server_does_not_exist_error_pattern_common",
-    RESUPERVISE_SCRIPT.resolve().parent.parent / "nc-systems" / "general-tools"
+    RESUPERVISE_SCRIPT.resolve().parent.parent / "nn-systems" / "general-tools"
     / "tmux-target-or-server-does-not-exist-error-pattern-common.py")
 tmux_error_pattern = importlib.util.module_from_spec(_tmux_error_pattern_spec)
 _tmux_error_pattern_spec.loader.exec_module(tmux_error_pattern)
@@ -313,14 +313,14 @@ def run_missing_launcher_case(workspace: Path):
     copied = isolated / "resupervise-seat.py"
     copied.write_text(RESUPERVISE_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
     # resupervise-seat.py imports handoff-supervisor.py, which since 2026-09-20
-    # lives at nc-systems/handoff/ and itself imports the shared judgement of
+    # lives at nn-systems/handoff/ and itself imports the shared judgement of
     # which transcript is worth resuming from scripts/ (issue 242 change 5).
     # Both are resolved from the repository root, so the isolated copy needs
     # the repository's SHAPE around it rather than two files beside it.
     # The files the supervisor names under scripts/ are read from its own
     # source, so a new import there needs no change here, whether it loads the
     # file directly or through a path constant.
-    supervisor_home = workspace / "nc-systems" / "handoff"
+    supervisor_home = workspace / "nn-systems" / "handoff"
     supervisor_home.mkdir(parents=True)
     for supervisor_file in ("handoff-supervisor.py", "session-handoff-field-names-common.py",
                             "handoff-user-review-of-agent-memory-stores-mark.py",
@@ -335,7 +335,7 @@ def run_missing_launcher_case(workspace: Path):
     # uncommitted-work-snapshots.py reads git's output with one shared module
     # and writes a restore's task with another, and the supervisor strips the
     # variables that redirect git with a third.
-    general_tools_home = workspace / "nc-systems" / "general-tools"
+    general_tools_home = workspace / "nn-systems" / "general-tools"
     general_tools_home.mkdir(parents=True)
     # resupervise-seat.py reads tmux's absent-session answers with the shared
     # pattern module; the Stop hooks the supervisor loads from scripts/ load

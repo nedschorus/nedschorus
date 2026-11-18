@@ -142,8 +142,8 @@ GATE = Path(__file__).with_name("merge-gate.sh")
 DESCRIPTION_DEFECT_LINE_READER = Path(__file__).with_name(
     "pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py")
 NO_SANDBOX_SUITES_PROGRAM = Path(__file__).with_name("no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py")
-GIT_REDIRECTING_ENVIRONMENT_COMMON = Path("nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py")
-GIT_MACHINE_READABLE_OUTPUT_COMMON = Path("nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
+GIT_REDIRECTING_ENVIRONMENT_COMMON = Path("nn-systems/general-tools/git-redirecting-environment-variables-removal-common.py")
+GIT_MACHINE_READABLE_OUTPUT_COMMON = Path("nn-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
 FIXTURES = Path(__file__).with_name("merge-gate-test-captured-github-responses")
 BASH = shutil.which("bash")
 TEST_TOKEN = "merge-gate-test-token-not-a-credential"
@@ -491,7 +491,7 @@ NO_SANDBOX_FAILED_RUN = {
     "passing_commit": "a" * 40,
     "last_run": {"commit": "b" * 40, "compared_with": "a" * 40, "started": "2026-11-03T23:00:00Z",
                  "ended": "2026-11-03T23:05:00Z", "result": "failed", "reason": None,
-                 "failing_suites": [{"suite": "nc-systems/cold-read/tests/cold-read-grid-test.py",
+                 "failing_suites": [{"suite": "nn-systems/cold-read/tests/cold-read-grid-test.py",
                                      "log": "/home/nedlern/nedsnodes-logs/x.log"}],
                  "record": "/home/nedlern/nedsnodes-logs/x.txt", "follow_up_request_sent": None}}
 

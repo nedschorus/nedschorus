@@ -66,7 +66,7 @@ POINTER_PATTERNS = (
 EXCEPTIONS = {
     (".claude/skills/explain/SKILL.md", "a `(user-ruled …)` line in a file"):
         "tells the agent the form a recorded ruling takes in a file, so the agent can find one",
-    ("nc-systems/skills/explain/explain-how-to-write-an-identifier-instructions.md",
+    ("nn-systems/skills/explain/explain-how-to-write-an-identifier-instructions.md",
      '`ruled 2026-09-15 at "<which walk or'):
         "an example of a citation's form, which the agent copies when it cites a ruling",
     (".claude/skills/cold-read/SKILL.md", "`--user-ruled-cold-read-full-run-count-restart`"):

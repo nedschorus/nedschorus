@@ -22,7 +22,7 @@ from pathlib import Path
 
 _records_reader_spec = importlib.util.spec_from_file_location(
     "agent_seat_state_records_reader", Path(__file__).resolve().parent.parent
-    / "nc-systems" / "handoff" / "agent-seat-state-records-reader.py")
+    / "nn-systems" / "handoff" / "agent-seat-state-records-reader.py")
 records_reader = importlib.util.module_from_spec(_records_reader_spec)
 _records_reader_spec.loader.exec_module(records_reader)
 

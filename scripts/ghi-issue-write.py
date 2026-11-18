@@ -385,28 +385,28 @@ from pathlib import Path
 
 _git_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
     "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 
 _stop_signals_spec = importlib.util.spec_from_file_location(
     "stop_signal_sigterm_or_sighup_raises_system_exit_so_cleanup_runs_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "stop-signal-sigterm-or-sighup-raises-system-exit-so-cleanup-runs-common.py")
 stop_signals = importlib.util.module_from_spec(_stop_signals_spec)
 _stop_signals_spec.loader.exec_module(stop_signals)
 
 _repository_names_spec = importlib.util.spec_from_file_location(
     "github_repository_name_and_name_before_project_rename_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "github-repository-name-and-name-before-project-rename-common.py")
 repository_names = importlib.util.module_from_spec(_repository_names_spec)
 _repository_names_spec.loader.exec_module(repository_names)
@@ -428,7 +428,7 @@ pre_push_conflict_check = _load_sibling_script(
 
 DEFAULT_REPO = "nedsnodes/nedsnodes"
 GHI_MD_DIRECTORY = "docs/issues"
-SYSTEM_DIRECTORY = "nc-systems"
+SYSTEM_DIRECTORY = "nn-systems"
 # Where a design moves once its code lands: the `docs/` directory of the
 # directory its code is in, under a name ending `-design.md` that carries no
 # issue number. See `landed_design_relative_path`.
@@ -934,14 +934,14 @@ def issue_number_in_frontmatter(text):
 def landed_design_relative_path(relative: str) -> bool:
     """Whether this repository path is where a design sits once its code
     has landed: the `docs/` directory of a system's or a subsystem's
-    directory under nc-systems/, under a name ending `-design.md` that does
-    not begin with an issue number — `nc-systems/handoff/docs/
+    directory under nn-systems/, under a name ending `-design.md` that does
+    not begin with an issue number — `nn-systems/handoff/docs/
     handoff-recover-crashed-seats-design.md`, or
-    `nc-systems/skills/cold-read/docs/cold-read-design.md` for a
+    `nn-systems/skills/cold-read/docs/cold-read-design.md` for a
     subsystem.
 
     That is the file-naming page's rule for a landed design,
-    docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md §
+    docs/nedsnodes-wiki/nedsnodes-file-naming-and-location-standards.md §
     Design document: the design moves to the `docs/` subdirectory of the
     directory its code is in, and its name drops the issue number it carried
     in docs/issues/. With no number in the name, the file's `issue:`
@@ -1790,7 +1790,7 @@ def already_landed_refusal(repo: str, landed: str, title: str, number: int):
 
 
 def landed_designs_on_main(revision: str, repository_root: Path, runner):
-    """Every landed design at this revision: the files under nc-systems/
+    """Every landed design at this revision: the files under nn-systems/
     that sit where `landed_design_relative_path` says a design sits once its
     code has landed. Their names carry no number, so the caller reads each
     one's `issue:` line to learn its issue. Raises on a failed list for the
@@ -1954,7 +1954,7 @@ def ghi_md_paths_for_issue(number: int, repository_root: Path, runner,
                            revision="origin/main"):
     """Every file filed under this issue that is on main: the files named
     `<number>-*` DIRECTLY in docs/issues/, and the files named `<number>-*`
-    DIRECTLY in a system's own directory under nc-systems/. Those are the
+    DIRECTLY in a system's own directory under nn-systems/. Those are the
     two places § Where the tool may write allows a filed GHI-MD to sit —
     before a system's code starts and after — and the move between them is
     the reason the design gives for rewriting the body. The body is built
@@ -2155,7 +2155,7 @@ def writable_relative_path(relative: str) -> bool:
     rules until the review of PR [Build the GHI write tool's edit
     verb](https://github.com/nedsnodes/nedsnodes/pull/596), where this
     one took any depth under docs/issues/ and any depth from three down
-    under nc-systems/ while that one took neither, and the disagreement was
+    under nn-systems/ while that one took neither, and the disagreement was
     reproduced against a repository with a bare remote and `gh` stubbed:
     `edit` on a queue note named for an issue landed the note, wrote it an
     `issue:` line, and renamed the issue after THAT file's heading — the

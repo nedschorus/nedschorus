@@ -130,8 +130,8 @@ git("add", "-A")
 git("commit", "-q", "-m", "the suite's own commit")
 
 # A child this suite gives GIT_DIR of its own must still get it: that is the
-# fixture pattern nc-systems/cold-read/tests/cold-read-grid-test.py and
-# nc-systems/cold-read/tests/cold-read-cell-common-test.py are built on.
+# fixture pattern nn-systems/cold-read/tests/cold-read-grid-test.py and
+# nn-systems/cold-read/tests/cold-read-cell-common-test.py are built on.
 child = dict(os.environ)
 child["GIT_DIR"] = str(here / "the-child-s-own-git-directory")
 child_saw = subprocess.run(
@@ -1344,7 +1344,7 @@ with tempfile.TemporaryDirectory() as scratch:
           in lines(result.stdout), (ran(root), result.stdout))
 
 # A new directory under a listed one: the shape of a new system directory
-# under nc-systems/, which a glob of `nc-systems/*/*.py` reads.
+# under nn-systems/, which a glob of `nn-systems/*/*.py` reads.
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
     repo = make_repo(root, {"globs-systems-test.py": (

@@ -2,7 +2,7 @@
 """Tests for scripts/sanity-check-record-ship.py (nedschorus#392).
 
 The ship logic is the record shipper's and is tested by
-nc-systems/cold-read/tests/cold-read-record-ship-test.py; what is tested here is what this
+nn-systems/cold-read/tests/cold-read-record-ship-test.py; what is tested here is what this
 program adds: the store's kind is `sanity-check-records/`, the checkout's
 directory of the same name is what --all reads, and the consequences the
 runner's closing line promises — a second ship sends only the new
@@ -197,14 +197,14 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
     shutil.copytree(SCRIPTS_DIR, scratch_repo / "scripts",
                     ignore=shutil.ignore_patterns("__pycache__"))
     # The record shipper it loads lives with the cold read, not in scripts/.
-    shutil.copytree(SCRIPTS_DIR.parent / "nc-systems" / "cold-read",
-                    scratch_repo / "nc-systems" / "cold-read",
+    shutil.copytree(SCRIPTS_DIR.parent / "nn-systems" / "cold-read",
+                    scratch_repo / "nn-systems" / "cold-read",
                     ignore=shutil.ignore_patterns("__pycache__"))
     # cold-read-record-names-common.py reads ned-box's home and its Mac mount from this module.
     ned_box_home_module = "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py"
-    (scratch_repo / "nc-systems" / "general-tools").mkdir()
-    shutil.copy2(SCRIPTS_DIR.parent / "nc-systems" / "general-tools" / ned_box_home_module,
-                 scratch_repo / "nc-systems" / "general-tools" / ned_box_home_module)
+    (scratch_repo / "nn-systems" / "general-tools").mkdir()
+    shutil.copy2(SCRIPTS_DIR.parent / "nn-systems" / "general-tools" / ned_box_home_module,
+                 scratch_repo / "nn-systems" / "general-tools" / ned_box_home_module)
     scratch_ship = scratch_repo / "scripts" / SHIP.name
     all_store = str(scratch / "all-store" / "cold-read-records")
     good = make_record(scratch_repo / "sanity-check-records", "2026-09-10-good",
@@ -231,7 +231,7 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
                                 {"cut-adversarial-prompt-claude.md": CUT_REPORT})
     holder = subprocess.Popen(
         [sys.executable, "-c", COLD_READ_RECORD_BEING_WRITTEN_LOCK_HOLDER_UNTIL_STDIN_CLOSES_PYTHON_SOURCE,
-         str(scratch_repo / "nc-systems" / "cold-read" / "cold-read-record-ship.py"), str(being_written)],
+         str(scratch_repo / "nn-systems" / "cold-read" / "cold-read-record-ship.py"), str(being_written)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     try:
         held_line = holder.stdout.readline()
