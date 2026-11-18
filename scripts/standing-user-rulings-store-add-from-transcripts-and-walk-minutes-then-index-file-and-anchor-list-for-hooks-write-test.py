@@ -60,7 +60,9 @@ def check(case_name, condition, detail=""):
 SEAT_DIRECTORY = "/home/nedlern/agents/alpha-seat"
 REPOSITORY_FILES = ("CLAUDE.md", "scripts/tool-one.py", "nn-systems/cold-read/cold-read-fast-read.py",
                     "nn-systems/handoff/handoff-supervisor.py", ".claude/skills/find-info/SKILL.md",
-                    "docs/issues/2118-ruling-agent-keeps-user-rulings.md", "SKILL.md", "CLAUDE")
+                    "docs/issues/2118-ruling-agent-keeps-user-rulings.md", "SKILL.md", "CLAUDE",
+                    "nn-systems/nn-shared-database/nn-shared-database-service.py",
+                    "docs/cross-project/nedsnodes-ai-native-software-development-notes.md")
 
 
 def human(text, stamp, cwd=SEAT_DIRECTORY, **fields):
@@ -333,6 +335,27 @@ with tempfile.TemporaryDirectory() as directory:
           "/nn-systems/handoff/" in case.anchors()
           and not any(SYSTEMS_DIRECTORY_BEFORE_PROJECT_RENAME in anchor for anchor in case.anchors()),
           case.anchors())
+
+# The shared database's system and a file outside the wiki whose name had the old prefix, named by their old names in an old record.
+# The old paths are made from the rename's one list, so no line here cites a path the rename removed.
+path_names = load("project_rename_path_names_before_and_after_common",
+                  Path(__file__).resolve().with_name("project-rename-path-names-before-and-after-common.py"))
+SHARED_DATABASE_FILE_BEFORE_PROJECT_RENAME = path_names.convert_file_path_after_project_rename_to_path_before(
+    "nn-systems/nn-shared-database/nn-shared-database-service.py")
+NOTES_FILE_BEFORE_PROJECT_RENAME = path_names.convert_file_path_after_project_rename_to_path_before(
+    "docs/cross-project/nedsnodes-ai-native-software-development-notes.md")
+with tempfile.TemporaryDirectory() as directory:
+    case = Case(directory)
+    old_records = [f"see {SHARED_DATABASE_FILE_BEFORE_PROJECT_RENAME}", f"see {NOTES_FILE_BEFORE_PROJECT_RENAME}"]
+    case.transcript("ned-box", [human(old_records[0], "2026-10-24T00:00:00Z"), human(old_records[1], "2026-10-24T00:01:00Z")])
+    case.run()
+    check("a path under the shared database's old names in an old record is tagged with its system and file under their new names",
+          case.tags(old_records[0]) == {"nn-systems/nn-shared-database/",
+                                        "nn-systems/nn-shared-database/nn-shared-database-service.py"},
+          case.tags(old_records[0]))
+    check("a file outside the wiki named by its old prefixed name in an old record is tagged with the file's new name",
+          case.tags(old_records[1]) == {"docs/cross-project/nedsnodes-ai-native-software-development-notes.md"},
+          case.tags(old_records[1]))
 
 # A transcript is read on from its stored position, not from its start.
 with tempfile.TemporaryDirectory() as directory:

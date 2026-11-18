@@ -329,7 +329,7 @@ checkout = scratch_checkout({
     "docs/issues/5-a.md": ("[line 9](https://github.com/o/r/blob/29fb37b38707b03bdefed9027e4907212f3df6c8/nc-systems/x/a.py#L9) "
                            "and `git show 615a230:docs/nedschorus-wiki/nedschorus-plan.md`, now nc-systems/x/a.py\n"),
     "nc-systems/x/check.py": ('MAP = {\n    "nc-systems/x/old-hook.py":  # in git history only\n        "nc-systems/x/hook.py",\n}\n'
-                              'PATH_PARTS_BEFORE_PROJECT_RENAME = {"nc-systems": "nn-systems"}\n'),
+                              'DIRECTORY_NAMES_BY_NAME_BEFORE_PROJECT_RENAME = {"nc-systems": "nn-systems"}\n'),
     "nc-systems/x/a.py": "a = 1\n",
 })
 run(checkout, "--stage", "3")
@@ -339,7 +339,7 @@ check("stage 3 leaves a commit-pinned path, a former path marked as such, and th
           "and `git show 615a230:docs/nedschorus-wiki/nedschorus-plan.md`, now nn-systems/x/a.py\n")
       and read(checkout, "nn-systems/x/check.py") == (
           'MAP = {\n    "nc-systems/x/old-hook.py":  # in git history only\n        "nn-systems/x/hook.py",\n}\n'
-          'PATH_PARTS_BEFORE_PROJECT_RENAME = {"nc-systems": "nn-systems"}\n'),
+          'DIRECTORY_NAMES_BY_NAME_BEFORE_PROJECT_RENAME = {"nc-systems": "nn-systems"}\n'),
       (read(checkout, "docs/issues/5-a.md"), read(checkout, "nn-systems/x/check.py")))
 covered = run(checkout, "--residue-report")
 check("the residue report covers the paths stage 3 leaves as they were at a past commit", covered.returncode == 0, covered.stdout)
@@ -357,6 +357,21 @@ checkout = scratch_checkout({"docs/cross-project/nedsnodes-notes.md": "notes\n",
 missed = run(checkout, "--residue-report")
 check("the residue report names a GHI-MD citation of a file the checkout holds under its new name, and covers a retired one",
       missed.returncode == 1 and "docs/issues/2636-c.md:1:" in missed.stdout and "1 not covered" in missed.stdout, missed.stdout)
+
+checkout = scratch_checkout({"docs/nedsnodes-wiki/nedsnodes-glossary.md": "terms\n",
+                             "docs/issues/2636-c.md": "See `docs/nedschorus-wiki/` and `docs/nedschorus-wiki/nedsnodes-glossary.md`.\n"})
+missed = run(checkout, "--residue-report")
+check("the residue report names a GHI-MD citation of a directory stage 3 renamed, such as the wiki's",
+      missed.returncode == 1 and "docs/issues/2636-c.md:1:" in missed.stdout and "2 not covered" in missed.stdout, missed.stdout)
+
+# --- Stage 3 moves every name its rename list gives -----------------------------------------------
+checkout = scratch_checkout({"nc-systems/nc-shared-database/nc-shared-database-service.py": "a = 1\n",
+                             "docs/cross-project/nedschorus-notes.md": "notes\n"})
+run(checkout, "--stage", "3")
+check("stage 3 moves the shared database's directory and files and a nedschorus- file outside the wiki",
+      sorted(git(checkout, "ls-files").split()) == ["docs/cross-project/nedsnodes-notes.md",
+                                                     "nn-systems/nn-shared-database/nn-shared-database-service.py"],
+      git(checkout, "ls-files"))
 
 # --- Stage 3 gives a Bash guard it moves a former-path line in the Bash-guard check -----------------
 BASH_GUARD_CHECK = "nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py"

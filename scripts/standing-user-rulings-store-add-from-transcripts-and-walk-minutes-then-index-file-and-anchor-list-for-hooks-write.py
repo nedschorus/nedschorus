@@ -378,7 +378,7 @@ class Repository:
         """The repository files a text names, each as its path on origin/main."""
         found = set()
         for token in PATH_TOKEN.findall(text):
-            parts = [part for part in path_after_project_rename(token.strip("/")).split("/") if part]
+            parts = [part for part in convert_file_path_before_project_rename_to_path_after(token.strip("/")).split("/") if part]
             for start in range(len(parts)):
                 candidate = "/".join(parts[start:])
                 if candidate in self.files:
@@ -398,21 +398,18 @@ class Repository:
         return systems
 
 
-# Transcripts, walk minutes and stored tags written before the project rename name these directories by their old
-# names, and the move program leaves those records as they are. The rename's rewrite program leaves a line that
-# assigns a name ending _BEFORE_PROJECT_RENAME alone.
-PATH_PARTS_BEFORE_PROJECT_RENAME = {"nc-systems": "nn-systems", "nc-queue": "nn-queue", "docs/nedschorus-wiki/nedschorus-": "docs/nedsnodes-wiki/nedsnodes-", "docs/nedschorus-wiki": "docs/nedsnodes-wiki"}  # the names git history has
-# A directory name is followed by a slash or ends the path; a page-name prefix, ending in a hyphen, by the page's name.
-_PATH_PART_BEFORE_PROJECT_RENAME = re.compile(r"(?:^|(?<=/))(" + "|".join(
-    re.escape(old) + ("" if old.endswith("-") else "(?=/|$)") for old in PATH_PARTS_BEFORE_PROJECT_RENAME) + ")")
-
-
-def path_after_project_rename(path):
-    return _PATH_PART_BEFORE_PROJECT_RENAME.sub(lambda match: PATH_PARTS_BEFORE_PROJECT_RENAME[match.group(1)], path)
+# Transcripts, walk minutes and stored tags written before the project rename name files and directories by their old
+# names, and the move program leaves those records as they are.
+_path_names_spec = importlib.util.spec_from_file_location(
+    "project_rename_path_names_before_and_after_common",
+    Path(__file__).resolve().with_name("project-rename-path-names-before-and-after-common.py"))
+_path_names = importlib.util.module_from_spec(_path_names_spec)
+_path_names_spec.loader.exec_module(_path_names)
+convert_file_path_before_project_rename_to_path_after = _path_names.convert_file_path_before_project_rename_to_path_after
 
 
 def system_of_path(path):
-    path = path_after_project_rename(path)
+    path = convert_file_path_before_project_rename_to_path_after(path)
     match = re.search(r"(?:^|/)nn-systems/([\w.-]+)(?:/|$)", path)
     if match:
         return f"nn-systems/{match.group(1)}/"
@@ -452,7 +449,7 @@ def tags_named_in(text, repository, default_seat, known_seats, files_are_tags):
 def anchors_of(tags, repository):
     anchors = set()
     for tag in tags:
-        tag = path_after_project_rename(tag)
+        tag = convert_file_path_before_project_rename_to_path_after(tag)
         if tag.startswith("GHI "):
             anchors.update("/" + path for path in repository.ghi_md_paths.get(int(tag.split(" ")[1]), ()))
         elif tag.startswith(("PR ", "task ")):
@@ -703,7 +700,7 @@ def index_lines(connection, repository, built_at):
     for entry_id, tag in connection.execute(
             "SELECT entry_tags.entry_id, tag FROM entry_tags JOIN entries USING (entry_id) WHERE state = ?",
             (STATE_STANDING,)):
-        tags_by_entry.setdefault(entry_id, set()).add(path_after_project_rename(tag))
+        tags_by_entry.setdefault(entry_id, set()).add(convert_file_path_before_project_rename_to_path_after(tag))
     rows = connection.execute(
         "SELECT entry_id, kind, said_at_utc, text, source_path, source_line FROM entries WHERE state = ? "
         "ORDER BY said_at_utc DESC, entry_id DESC", (STATE_STANDING,)).fetchall()

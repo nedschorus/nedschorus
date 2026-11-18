@@ -8,10 +8,10 @@ Usage:
 Each stage makes the change of one pull request of the project rename:
   1. the GitHub repository's owner and name: `nedschorus/nedschorus` becomes `nedsnodes/nedsnodes` in every file but Markdown, and the owner and name constants of the bare-number citation hook. It leaves the value of an `OLD_REPOSITORY` constant alone, through which code that reads GitHub links keeps accepting the old name.
   2. the machine paths, env vars, task-list names, job labels and unit names the move program, scripts/project-rename-machine-state-move-hack.py, moves: the reference-checkout and worktrees directory under Projects, the log-store, ~/.config/nedschorus, Claude Code project keys, `NEDSCHORUS_*` names, `nedschorus-<seat>-tasks`, `com.nedschorus.*` labels, ~/.local/state/nedschorus, ~/.local/share/nedschorus and each ~/.cache/nedschorus-* directory, the `nc-shared-database-service.service` unit, whose file it also renames, and the test suites' slice `nc\x2dtest\x2dsuites.slice`. It leaves the value of an `TASK_LIST_ID_PREFIX_BEFORE_PROJECT_RENAME` constant alone, through which code that reads task-list IDs keeps accepting the old prefix.
-  3. the directories nc-systems, nc-queue and docs/nedschorus-wiki, the files whose names start `nc-shared-database` or `nedschorus-`, and in contents every citation of those paths, every wiki page name, and the nc- system names in code, alone or inside a longer identifier (`nc-shared-database`, `nc_shared_database`, `NC_SHARED_DATABASE`, `NcSharedDatabase`, `nc_systems`, `NC_SYSTEMS`). A kept file moves with its directory but keeps its name and content. For each Bash guard it moves, it adds the guard's former path to the map of former paths in the Bash-guard verdict check, so that check still reads a base ref's hook as the same guard.
+  3. the paths that scripts/project-rename-path-names-before-and-after-common.py's one rename list names: the directories nc-systems, nc-queue and docs/nedschorus-wiki, the directories and files whose names start `nc-shared-database` or `nedschorus-`, and in contents every citation of those paths, every wiki page name, and the nc- system names in code, alone or inside a longer identifier (`nc-shared-database`, `nc_shared_database`, `NC_SHARED_DATABASE`, `NcSharedDatabase`, `nc_systems`, `NC_SYSTEMS`). A kept file moves with its directory but keeps its name and content. For each Bash guard it moves, it adds the guard's former path to the map of former paths in the Bash-guard verdict check, so that check still reads a base ref's hook as the same guard.
 A stage changes only the names its rules match, so it can be run alone on any checkout, including one that does not hold this program, and a second invocation changes nothing. Run the stages in order 1, 2, 3 on a branch that should carry all three.
 
---residue-report lists every match of an old name left in the checkout's tracked files and paths, each with the allowlist reason that covers it, counted by reason, and prints each match no reason covers. In a GHI-MD, a `nedschorus-` name counts as kept only when no file in the checkout has its new name, so a citation stage 3 missed is reported.
+--residue-report lists every match of an old name left in the checkout's tracked files and paths, each with the allowlist reason that covers it, counted by reason, and prints each match no reason covers. In a GHI-MD, a `nedschorus-` name counts as kept only when no directory or file in the checkout has its new name, so a citation stage 3 missed is reported.
 
 WHAT IT DOES NOT DO OR HANDLE. It changes only files git tracks; it does not commit. It leaves alone a path as it was at a past commit: a commit-pinned link (`blob/<commit>/<path>`), a `<commit>:<path>`, a line marked `# in git history only`, and a line that assigns a name ending `_BEFORE_PROJECT_RENAME`. It leaves alone the files the KEPT_PATHS list names: this program and its test, the move program and its test, which hold the old names on purpose, captured GitHub responses, recorded fixtures and transcripts, and archived queue records. It does not rewrite prose: glossary terms that start nc-, such as nc-head-commit, the words NedsChorus and NC, Markdown links to github.com/nedschorus/nedschorus, which GitHub redirects, and `nedschorus#<number>` citations wait for a later pull request, and the residue report names each. It keeps names of machine state that no step of the move program renames: /etc/sudoers.d/nedschorus-* and the `user.email` `unconfigured-agent@nedschorus.invalid` that each checkout's git config pins. The residue report finds an old name only in the spellings its OLD_NAME pattern lists. A file that is not UTF-8 is skipped and named.
 
@@ -22,10 +22,17 @@ HOW IT CAN FAIL. Stage 3 refuses to move a path whose new name is already tracke
 
 import argparse
 import fnmatch
+import importlib.util
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+_path_names_spec = importlib.util.spec_from_file_location(
+    "project_rename_path_names_before_and_after_common",
+    Path(__file__).resolve().with_name("project-rename-path-names-before-and-after-common.py"))
+path_names = importlib.util.module_from_spec(_path_names_spec)
+_path_names_spec.loader.exec_module(path_names)
 
 PROGRAM = "project-rename-repository-contents-rewrite-hack"
 EXIT_OK = 0
@@ -143,24 +150,10 @@ STAGE_RULES = {
 def stage_3_path(path):
     """The path stage 3 moves a tracked file to, or the path itself. A kept file moves with its directory but keeps
     its own name."""
-    kept = kept_reason(path) is not None
-    parts = path.split("/")
-    if parts[0] == "nc-systems":
-        parts[0] = "nn-systems"
-    elif parts[0] == "nc-queue":
-        parts[0] = "nn-queue"
-    elif parts[:2] == ["docs", "nedschorus-wiki"]:
-        parts[1] = "nedsnodes-wiki"
-    renamed = []
-    for index, part in enumerate(parts):
-        if kept and index == len(parts) - 1:
-            pass
-        elif part.startswith("nc-shared-database"):
-            part = "nn-" + part[len("nc-"):]
-        elif part.startswith("nedschorus-"):
-            part = "nedsnodes-" + part[len("nedschorus-"):]
-        renamed.append(part)
-    return "/".join(renamed)
+    if kept_reason(path) is None:
+        return path_names.convert_file_path_before_project_rename_to_path_after(path)
+    directory, _, name = path.rpartition("/")
+    return path_names.convert_file_path_before_project_rename_to_path_after(directory) + "/" + name if directory else path
 
 
 def stage_2_path(path):
@@ -304,20 +297,6 @@ def move_paths(checkout, paths, move):
 BASH_GUARD_CHECK = "bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py"
 
 
-def stage_3_path_before(path):
-    """The path a stage-3 path had before stage 3 moved it, or the path itself."""
-    parts = path.split("/")
-    if parts[0] == "nn-systems":
-        parts[0] = "nc-systems"
-    elif parts[0] == "nn-queue":
-        parts[0] = "nc-queue"
-    elif parts[:2] == ["docs", "nedsnodes-wiki"]:
-        parts[1] = "nedschorus-wiki"
-    parts = ["nc-" + part[len("nn-"):] if part.startswith("nn-shared-database") else
-             "nedschorus-" + part[len("nedsnodes-"):] if part.startswith("nedsnodes-") else part for part in parts]
-    return "/".join(parts)
-
-
 def add_former_paths_of_moved_bash_guards(checkout, paths):
     """Give each Bash guard stage 3 moved a line in the Bash-guard check's map of former paths, so the check reads a
     base ref's hook at the former path as the same guard."""
@@ -332,7 +311,7 @@ def add_former_paths_of_moved_bash_guards(checkout, paths):
         return
     added = ""
     for guard in re.findall(r'^    "([^"]+)":', guards.group(1), re.MULTILINE):
-        former = stage_3_path_before(guard)
+        former = path_names.convert_file_path_after_project_rename_to_path_before(guard)
         if former != guard and f'"{former}":' not in text:
             added += f'    "{former}":  {HISTORY_ONLY_MARK}\n        "{guard}",\n'
     if added:
@@ -442,8 +421,9 @@ def residue(checkout):
     counts = {}
     uncovered = []
     paths = tracked_paths(checkout)
-    renamed_stems = {path.rsplit("/", 1)[-1].split(".", 1)[0] for path in paths
-                     if path.rsplit("/", 1)[-1].startswith("nedsnodes-")}
+    # Every directory and file name stage 3 gave a new name, a directory such as nedsnodes-wiki included.
+    renamed_stems = {part.split(".", 1)[0] for path in paths for part in path.split("/")
+                     if path_names.convert_file_path_after_project_rename_to_path_before(part) != part}
     for path in paths:
         reason = kept_reason(path)
         file = checkout / path
