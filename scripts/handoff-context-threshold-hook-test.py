@@ -1106,28 +1106,28 @@ with tempfile.TemporaryDirectory() as workspace:
               " began and is still running, so you need not add that work to your task list"
               in hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION,
               hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION)
-        check("the instruction on new work limits the subagent-or-background rule to work left running at the turn's end",
-              "Work you leave running when your turn ends must run as a subagent or a background Bash task,"
-              " never as a process you detach yourself, such as with nohup or tmux, because the handoff writer"
-              " script can name only those two kinds; a command or an edit that finishes within your turn"
-              " needs neither." in hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION,
+        check("the instruction on new work limits the subagent, background or detached rule to work left running at the turn's end",
+              "Work you leave running when your turn ends must run as a subagent, a background Bash task,"
+              " or a detached process, such as one started with setsid or systemd-run --user, that writes"
+              " its result to a file; name that file in your next-step file, since the handoff writer script"
+              " cannot name that process. A command or an edit that finishes within your turn needs none of"
+              " these." in hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION,
               hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION)
         check("the instruction on new work says what to do with a background Bash task started before the deferral",
-              "The writer script does not name a background Bash task that started before this"
-              " handoff-deferral began: if one is still running when you write your next-step file, and your"
-              " successor must run it again, name it in the next-step file with its command; otherwise leave"
-              " it, and the end of this agent-session stops it."
+              "A background Bash task started before the deferral and still running is named, with its"
+              " command, in the next-step file when the successor must run it again; otherwise it is"
+              " stopped at the session-handoff."
               in hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION,
               hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION)
-        writer_rerun_command = ("nc-systems/handoff/handoff-write-and-check-supervisor.py"
-                                " --next-step-file <new next-step file>")
+        writer_script = "nc-systems/handoff/handoff-write-and-check-supervisor.py"
         check("the instruction on new work says unlisted work means running the writer again with a new next-step file",
-              "If the writer script says it could not list some work, write that work into a new next-step"
-              f" file and run {writer_rerun_command} again."
-              in hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION,
+              "Write work the writer could not list into a new next-step file that holds your next step and"
+              " names that work, and run the writer again with --next-step-file."
+              in hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION
+              and writer_script in hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION,
               hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION)
         writer_help = subprocess.run(
-            [sys.executable, str(HOOK_SCRIPT.parents[1] / writer_rerun_command.split()[0]), "--help"],
+            [sys.executable, str(HOOK_SCRIPT.parents[1] / writer_script), "--help"],
             capture_output=True, text=True, check=False)
         check("the writer script the instruction on new work names accepts --next-step-file",
               writer_help.returncode == 0 and "--next-step-file" in writer_help.stdout,
