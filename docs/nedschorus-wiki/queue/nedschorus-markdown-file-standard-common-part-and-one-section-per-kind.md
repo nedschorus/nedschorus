@@ -14,7 +14,7 @@ This page is the standard for the project's Markdown files: a common part that e
 
 ## GHI-MDs
 
-A GHI-MD is the file under `docs/issues/` that holds a GHI's text, or one in `docs/issues/queue/` on its way there. `.claude/skills/ghi-write/SKILL.md` says how it is routed, titled, filed and edited; this section says what it holds. A GHI-MD that is a design follows the Designs section instead.
+A GHI-MD is the file under `docs/issues/` that holds a GHI's text, or one in `docs/issues/queue/` on its way there. `.claude/skills/ghi-write/SKILL.md` says how it is routed, titled, filed and edited; this section says what it holds. A GHI-MD that is a design, whose front matter carries `kind: design`, follows the Designs section instead, which the program prints for it.
 
 A GHI-MD is one of four kinds: a bug, code that does not do what its design, design-contract or documentation says; a change request, a change to what a design or design-contract promises once its code has merged; a chore, upkeep that changes no behaviour; and research, a question to answer, with no code promised. A bug whose fault turns out to be in the design is a change request.
 
@@ -35,13 +35,13 @@ A GHI-MD leaves out:
 - A record of how a decision was reached. A user-ruling the work rests on is stated as what is decided, in the section it governs, followed by its walk-minutes citation in parentheses, because an agent must verify it before it acts against it.
 - Data, measurements and working notes: they go in supporting documents that the GHI links, as `/ghi-write` step 2 says.
 
-Length: 150 to 600 words; Outcome and Provisional additions aside. A GHI-MD over 1,000 words usually holds a design, which goes in a `-design.md` file, or material for a supporting document.
+Length: 150 to 600 words; Outcome and Provisional additions aside. A GHI-MD over 1,000 words usually holds a design, which goes in a GHI-MD of its own that carries `kind: design`, or material for a supporting document.
 
 ## Designs
 
-A design is a file whose name ends `-design.md`, other than a test-design: a GHI-MD that decides how something will be built, or such a file in its code's `docs/` directory. `docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md` says where it lives and how it is named at each stage.
+A design decides how something will be built. It is a GHI-MD whose front matter carries `kind: design`, as `/ghi-write` step 4 says, or a file whose name ends `-design.md`, other than a test-design, such as a design moved to its code's `docs/` directory. `docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md` says where it lives and how it is named at each stage.
 
-A design has these eight level-2 headings, in this order. A design that does not need one of the eight keeps its heading, and the section's whole body is one line, `Not needed:` followed by the reason.
+A design has these seven level-2 headings, in this order. A design that does not need one of the seven keeps its heading, and the section's whole body is one line, `Not needed:` followed by the reason.
 
 1. `## Problem`: what is wrong or missing, who it costs, and what the design must achieve, measurable where it can be.
 2. `## Goals and non-goals`: what the design delivers, and what it deliberately does not, one line each.
@@ -50,13 +50,12 @@ A design has these eight level-2 headings, in this order. A design that does not
 5. `## Failure handling`: each failure the design handles, how the program reports it, and, for a guard, validation, retry or workaround, the failure that `CLAUDE.md`'s two conditions require.
 6. `## Testing`: how each observable promise is tested, or the test-design that says so.
 7. `## Alternatives considered`: each alternative rejected, in one or two sentences with its reason.
-8. `## Deferred-decisions`: each case the design leaves open, one line each, or `Not needed:` with the reason.
 
-These headings follow the eight when the design has them, and are left out when it does not: `## Decided elsewhere`, `## Defects fixed`, `## Relations`, and, for a design that is a GHI-MD, the GHI-MDs section's `## Next action`, `## Done when`, `## Outcome` and `## Provisional additions (not yet vetted by the user)`, as that section describes them. A design that is a GHI-MD also opens with the GHI's title heading and the front matter `/ghi-write` step 4 gives it.
+These headings follow the seven when the design has them, and are left out when it does not: `## Deferred-decisions`, one line for each case the design leaves open, in the form the design's writing instructions give; `## Decided elsewhere`; `## Defects fixed`; `## Relations`; and, for a design that is a GHI-MD, the GHI-MDs section's `## Next action`, `## Done when`, `## Outcome` and `## Provisional additions (not yet vetted by the user)`, as that section describes them. A design that is a GHI-MD also opens with the GHI's title heading and the front matter `/ghi-write` step 4 gives it.
 
 A design leaves out:
 
-- Its own revision history, such as "this revision folds in", and the dates its decisions were made. A user-ruling the design rests on is stated as what is decided, followed by its walk-minutes citation in parentheses.
+- Its own revision history, such as "this revision folds in", and the dates its decisions were made. The `**Pinned to what landed:**` lines that `docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md` asks for after each merge stay, because `scripts/stale-code-citation-check.py` reads them. A user-ruling the design rests on is stated as what is decided, followed by its walk-minutes citation in parentheses.
 - Detail the design-contract or the test-design holds.
 - Once its code has merged, any detail the code now states. From then on, a change to what the design promises goes through a GHI-MD that is a change request.
 
@@ -68,7 +67,9 @@ The project glossary is `docs/nedschorus-wiki/nedschorus-glossary.md`. Its openi
 
 Every entry has one pattern, on one line:
 
-`- **<term>** — <definition>[, such as <one example>][. <one sentence naming the document or program that holds the detail, such as "The program is `<path>`.">][ <labels>]`
+```
+- **<term>** — <definition>[, such as <one example>][. <one sentence naming the document or program that holds the detail, such as "The program is `<path>`.">][ <labels>]
+```
 
 - The definition is one sentence. It starts with the kind of thing the term names, such as "a skill", "the program" or "a filename suffix", then says what sets it apart from others of that kind. It does not use the term itself.
 - The example is one real case from this repository, given only where the definition alone leaves a reader unsure what counts.

@@ -85,6 +85,29 @@ for path in [
     got = program.kind_section_heading_for_path(path)
     check(f"no section covers {path}", got is None, got)
 
+# Real files in this checkout, so that a renamed directory fails here instead of matching nothing.
+tracked = subprocess.run(["git", "-C", str(REPOSITORY_ROOT), "ls-files", "*.md"],
+                         capture_output=True, text=True, check=True).stdout.split()
+check("the project glossary exists where its pattern looks",
+      (REPOSITORY_ROOT / "docs/nedschorus-wiki/nedschorus-glossary.md").is_file())
+covered_kinds = {program.kind_section_heading_for_path(str(REPOSITORY_ROOT / name)) for name in tracked}
+for kind in ["The project glossary", "Designs", "Wiki pages", "GHI-MDs"]:
+    check(f"a tracked file is covered by {kind}", kind in covered_kinds, sorted(map(str, covered_kinds)))
+check("the standard's own path is covered by Wiki pages",
+      program.kind_section_heading_for_path(str(program.MARKDOWN_FILE_STANDARD_PATH)) == "Wiki pages")
+
+with tempfile.TemporaryDirectory() as scratch:
+    issues = Path(scratch) / "docs" / "issues"
+    issues.mkdir(parents=True)
+    design = issues / "12-a-component-built-like-this.md"
+    design.write_text('---\nissue: "[t](u)"\nkind: design\n---\n\n# T\n', encoding="utf-8")
+    plain = issues / "13-a-bug.md"
+    plain.write_text('---\nissue: "[t](u)"\n---\n\n# T\n\nkind: design\n', encoding="utf-8")
+    check("a GHI-MD whose front matter carries kind: design is covered by Designs",
+          program.kind_section_heading_for_path(str(design)) == "Designs")
+    check("kind: design outside the front matter does not make a design",
+          program.kind_section_heading_for_path(str(plain)) == "GHI-MDs")
+
 # The real standard holds every heading the constants name.
 real_sections = program.markdown_file_standard_sections()
 for heading in [program.COMMON_PART_HEADING] + [h for h, _ in program.KIND_SECTION_HEADING_AND_PATH_PATTERNS]:

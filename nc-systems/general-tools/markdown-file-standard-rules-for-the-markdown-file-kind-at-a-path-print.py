@@ -7,7 +7,8 @@ Exits 0 if a section of the standard covers the path, and prints the common part
 section; 1 if no section covers it, and prints the common part alone; 2 if the standard
 could not be read or lacks a heading this program needs, or the program was called wrongly.
 
-The kind is picked from the path alone, so the file need not exist yet. The path may be
+The kind is picked from the path, so the file need not exist yet; a GHI-MD that already exists
+and whose front matter carries `kind: design` is a design, as /ghi-write names one. The path may be
 relative or absolute, inside any checkout or worktree, or under the Mac's /Volumes/nedhome
 mount of ned-box's home directory.
 """
@@ -44,6 +45,11 @@ KIND_SECTION_HEADING_AND_PATH_PATTERNS = [
 ]
 
 
+# ghi-issue-write.py names a GHI-MD from its title, so a design GHI-MD's name need not end
+# -design.md; /ghi-write marks it with this front matter line instead.
+DESIGN_FRONT_MATTER_PATTERN = re.compile(r"\A---\n(?:.*\n)*?kind: design\n(?:.*\n)*?---\n")
+
+
 def kind_section_heading_for_path(path):
     """The heading of the standard's section that covers the path, or None when none does."""
     normalized = Path(os.path.expanduser(path)).as_posix()
@@ -51,8 +57,19 @@ def kind_section_heading_for_path(path):
         return None
     for heading, pattern in KIND_SECTION_HEADING_AND_PATH_PATTERNS:
         if re.search(pattern, normalized):
+            if heading == "GHI-MDs" and is_design_by_front_matter(normalized):
+                return "Designs"
             return heading
     return None
+
+
+def is_design_by_front_matter(path):
+    """Whether the file at path exists and its front matter carries `kind: design`."""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return False
+    return DESIGN_FRONT_MATTER_PATTERN.match(text) is not None
 
 
 class MarkdownFileStandardUnreadable(Exception):
