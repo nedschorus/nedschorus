@@ -127,12 +127,15 @@ with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(
         _REPOSITORY_ROOT / "nc-systems" / "general-tools" / "shell-command-tree-sitter-bash-reader-common.py")
     shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
     _shell_reader_spec.loader.exec_module(shell_reader)
+    _repository_names_spec = importlib.util.spec_from_file_location(
+        "github_repository_name_and_name_before_project_rename_common",
+        _REPOSITORY_ROOT / "nc-systems" / "general-tools"
+        / "github-repository-name-and-name-before-project-rename-common.py")
+    repository_names = importlib.util.module_from_spec(_repository_names_spec)
+    _repository_names_spec.loader.exec_module(repository_names)
 is_program = shell_reader.is_program
 
-PROJECT_REPOSITORY = "nedsnodes/nedsnodes"
-# GitHub redirects the repository's old name, and text written before the rename still holds it.
-OLD_REPOSITORY = "nedschorus/nedschorus"
-PROJECT_REPOSITORY_NAMES = (PROJECT_REPOSITORY, OLD_REPOSITORY)
+PROJECT_REPOSITORY = repository_names.REPOSITORY
 
 ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 ISSUE_URL_PATTERN = re.compile(
@@ -414,7 +417,8 @@ def names_another_repository(flags, positionals, repository_from_environment):
     elif repository_from_environment is not None:
         named.append(repository_from_environment)
     named.extend(word for word in positionals if ISSUE_URL_PATTERN.match(word))
-    return any(normalized_repository(value) not in PROJECT_REPOSITORY_NAMES
+    return any(repository_names.normalize_repository_name_reading_name_before_project_rename_as_current(normalized_repository(value))
+               != PROJECT_REPOSITORY
                for value in named if value)
 
 

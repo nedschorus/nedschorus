@@ -54,6 +54,13 @@ check("a link to another repository is refused",
 check("a line with no link, or an issue link, is refused naming the line",
       "has the line `#replaces #12`" in (refusal(lambda: numbers("#replaces #12")) or "")
       and refusal(lambda: numbers("#replaces https://github.com/nedsnodes/nedsnodes/issues/12")) is not None)
+check("a link under the repository's name before the project rename, which merged descriptions keep, is read",
+      numbers(f"#replaces https://github.com/{reader.repository_names.OLD_REPOSITORY}/pull/5") == [5])
+check("a chain whose deeper description links by the repository's name before the project rename is followed",
+      reader.replaced_pull_request_chain_numbers_oldest_first(
+          20, REPOSITORY, {20: f"#replaces {LINK}10",
+                           10: f"#replaces https://github.com/{reader.repository_names.OLD_REPOSITORY}/pull/5",
+                           5: ""}.get) == [5, 10])
 check("a line naming the pull request itself is refused",
       "names pull request 9 itself" in (refusal(lambda: numbers(f"#replaces {LINK}9")) or ""))
 

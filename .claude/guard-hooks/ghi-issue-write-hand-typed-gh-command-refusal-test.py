@@ -97,7 +97,7 @@ REFUSED = [
     ("comment naming this repository", "gh issue comment 46 -R nedsnodes/nedsnodes -b x",
      COMMENT_FALLBACK),
     ("comment naming the repository's old name, which GitHub redirects",
-     f"gh issue comment 46 -R {guard.OLD_REPOSITORY} -b x", COMMENT_FALLBACK),
+     f"gh issue comment 46 -R {guard.repository_names.OLD_REPOSITORY} -b x", COMMENT_FALLBACK),
     ("comment naming this repository with a host",
      "gh issue comment 46 --repo github.com/NedSchorus/NedSchorus -b x",
      COMMENT_FALLBACK),
