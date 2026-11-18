@@ -1141,6 +1141,25 @@ def run_cases(scratch: Path):
           tool.is_ghi_md_on_main_same_as_staged_copy_reading_name_before_project_rename_as_current(old_name_copy, STAGED)
           and not tool.is_ghi_md_on_main_same_as_staged_copy_reading_name_before_project_rename_as_current(None, STAGED)
           and not tool.is_ghi_md_on_main_same_as_staged_copy_reading_name_before_project_rename_as_current(STAGED + "changed\n", STAGED))
+    land_title = "A statusline that drops its branch name"
+    land_destination = f"docs/issues/570-{tool.slug(land_title)}.md"
+    land_staged = tool.with_issue_frontmatter(source.read_text(encoding="utf-8"),
+                                              REPO, 570, land_title)
+    land_old_name_copy = land_staged.replace(
+        f"github.com/{REPO}/", f"github.com/{tool.repository_names.OLD_REPOSITORY}/")
+    land_lines = []
+    landed_on_main_before_rename = Recorder({
+        f"git show origin/main:{land_destination}": Completed(land_old_name_copy),
+    })
+    returned = tool.land_file(REPO, 570, land_title, source, scratch,
+                              landed_on_main_before_rename, land_lines.append)
+    check("land_file finds step 4 done when main's copy names the repository's name before the project rename",
+          land_old_name_copy != land_staged and returned == land_destination
+          and any(line.startswith("step 4 already done") for line in land_lines)
+          and not landed_on_main_before_rename.ran("git ls-remote")
+          and not landed_on_main_before_rename.ran("git worktree add")
+          and not landed_on_main_before_rename.ran("gh pr create"),
+          (land_lines, landed_on_main_before_rename.commands()))
 
     # The comparison is computed under the number the PATH carries. The same
     # content landed under a different issue is a different file, and must
@@ -4973,6 +4992,27 @@ def run_landed_design_cases(scratch: Path):
               "system's docs/, and sends it to edit that copy",
               refusal.code == 64 and LANDED_DESIGN in str(refusal)
               and "/issues/120" in str(refusal), str(refusal))
+    moved_before_rename = Recorder({
+        GHI_MD_LISTING_CALL: Completed(""),
+        f"git ls-tree -r --name-only -z {MAIN_COMMIT} nc-systems/": Completed(
+            f"{LANDED_DESIGN}\0"),
+        f"git show {MAIN_COMMIT}:{LANDED_DESIGN}": Completed(
+            filed_then_moved.replace(
+                f"github.com/{REPO}/",
+                f"github.com/{tool.repository_names.OLD_REPOSITORY}/")),
+    })
+    try:
+        tool.refuse_if_already_landed_on_main(REPO, LANDED_TEXT, heading,
+                                              scratch, moved_before_rename)
+        check("create refuses a source whose landed design names the "
+              "repository's name before the project rename", False,
+              "it was not refused")
+    except tool.Refused as refusal:
+        check("create refuses a source whose landed design names the "
+              "repository's name before the project rename",
+              refusal.code == 64 and LANDED_DESIGN in str(refusal)
+              and not moved_before_rename.ran("gh issue create"),
+              str(refusal))
     other_design = Recorder({
         GHI_MD_LISTING_CALL: Completed(""),
         f"git ls-tree -r --name-only -z {MAIN_COMMIT} nc-systems/": Completed(
