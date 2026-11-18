@@ -105,12 +105,13 @@ check("stage 3 moves nc-systems, nc-queue, the wiki and the nc- and nedschorus- 
                                   "docs/nedsnodes-wiki/nedsnodes-style-guide.md"} <= tracked,
       (result.stdout, result.stderr, sorted(tracked)))
 service = read(checkout, "nn-systems/nn-shared-database/nn-shared-database-service.py")
-check("stage 3 renames the nc- system names in code and keeps the shared database's names on disk",
+check("stage 3 renames the nc- system names in code and the shared database's file, token and backup names, "
+      "and leaves their directories to stage 2",
       "NN_SHARED_DATABASE_FILE_PATH" in service and "NnSharedDatabaseServiceCallFailed" in service
       and "nn_shared_database_event_send_single_attempt" in service
-      and ".local/state/nedschorus/nc-shared-database.sqlite3" in service
-      and "nedschorus/nc-shared-database-service.token" in service
-      and "f'nc-shared-database-{stamp}.sqlite3'" in service, service)
+      and ".local/state/nedschorus/nn-shared-database.sqlite3" in service
+      and "nedschorus/nn-shared-database-service.token" in service
+      and "f'nn-shared-database-{stamp}.sqlite3'" in service, service)
 check("stage 3 rewrites path citations, including a page cited by name alone and a page-name pattern",
       read(checkout, "nn-queue/README.md")
       == "See docs/nedsnodes-wiki/nedsnodes-glossary.md and `nedsnodes-glossary.md`.\n"
@@ -178,9 +179,15 @@ checkout = scratch_checkout({"scripts/jobs.py": (
     'WORKTREES = "~/Projects/nedschorus-worktrees"\n'
     'UNIT = "nc-shared-database-service.service"\n'
     'STATE = "~/.local/state/nedschorus/user-alerts"\n'
+    'STATE_PARTS = Path.home() / ".local" / "state" / "nedschorus" / "user-alerts"\n'
+    'VENV = Path.home() / ".local" / "share" / "nedschorus" / "cosmic-ray-venv"\n'
+    'SHARED = "~/.local/share/nedschorus/x"\n'
+    'CACHE = Path.home() / ".cache" / "nedschorus-markdown-commonmark-parser-install"\n'
+    'INPUTS = "~/.cache/nedschorus-test-suite-recorded-inputs"\n'
     'DOC = "~/.claude/tasks/nedschorus-<seat>-tasks/"\n')})
 run(checkout, "--stage", "2")
-check("stage 2 renames labels, task lists, project keys, checkout paths and the unit, and keeps ~/.local/state",
+check("stage 2 renames labels, task lists, project keys, checkout paths, the unit, ~/.local/state, ~/.local/share "
+      "and ~/.cache/nedschorus-*",
       read(checkout, "scripts/jobs.py") == (
           'LABEL = "com.nedsnodes.clean-worktrees"\n'
           'LIST = task_lists / f"nedsnodes-{agent_seat}-tasks"\n'
@@ -189,7 +196,12 @@ check("stage 2 renames labels, task lists, project keys, checkout paths and the 
           'CLONE = home / "Projects" / "nedsnodes"\n'
           'WORKTREES = "~/Projects/nedsnodes-worktrees"\n'
           'UNIT = "nn-shared-database-service.service"\n'
-          'STATE = "~/.local/state/nedschorus/user-alerts"\n'
+          'STATE = "~/.local/state/nedsnodes/user-alerts"\n'
+          'STATE_PARTS = Path.home() / ".local" / "state" / "nedsnodes" / "user-alerts"\n'
+          'VENV = Path.home() / ".local" / "share" / "nedsnodes" / "cosmic-ray-venv"\n'
+          'SHARED = "~/.local/share/nedsnodes/x"\n'
+          'CACHE = Path.home() / ".cache" / "nedsnodes-markdown-commonmark-parser-install"\n'
+          'INPUTS = "~/.cache/nedsnodes-test-suite-recorded-inputs"\n'
           'DOC = "~/.claude/tasks/nedsnodes-<seat>-tasks/"\n'), read(checkout, "scripts/jobs.py"))
 
 # --- The residue report ---------------------------------------------------------------------------
@@ -247,11 +259,11 @@ checkout = scratch_checkout({
 run(checkout, "--stage", "3")
 check("stage 3 moves a kept fixture with its directory and keeps its name and content",
       read(checkout, "nn-systems/x/tests/x-fixtures/nedschorus-capture.md") == "cites nc-systems/x/x.py\n")
-check("stage 3 renames a name after an escape in a string, and keeps the backups' directory and name prefix",
+check("stage 3 renames a name after an escape in a string, and the backups' directory and name prefix",
       read(checkout, "nn-systems/x/x.py") == ('ROOT = tree + b"\\tnn-systems\\0"\n'
-                                             'BACKUPS = Path.home() / "backups" / "nc-shared-database"\n'
-                                             'REMOTE = "~/backups/nc-shared-database"\n'
-                                             'NAMES = [n for n in names if n.startswith("nc-shared-database-")]\n'
+                                             'BACKUPS = Path.home() / "backups" / "nn-shared-database"\n'
+                                             'REMOTE = "~/backups/nn-shared-database"\n'
+                                             'NAMES = [n for n in names if n.startswith("nn-shared-database-")]\n'
                                              'LABEL = "LaunchAgents/com.nedsnodes.nn-shared-database-"\n'
                                              'PAGE = "nedsnodes-aardvark-architecture-overview.md"\n'
                                              'SERVICE = "the nn-shared-database service"\n'
