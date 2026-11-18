@@ -215,7 +215,7 @@ with tempfile.TemporaryDirectory() as directory:
     code, out, err = run_main(runner)
     check("a service answer other than the one the check needs fails the step",
           code == 1 and "stopped at step 10 on mac" in err and "answered 401" in err
-          and "needs 200" in err and "journalctl --user -u nc-shared-database-service" in err,
+          and "needs 200" in err and "journalctl --user -u nn-shared-database-service" in err,
           err)
 
     runner = FakeRunner({10: (0, "000", "")})

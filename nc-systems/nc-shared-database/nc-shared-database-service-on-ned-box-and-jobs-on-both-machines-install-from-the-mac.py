@@ -132,7 +132,7 @@ def sudo_advice(machine, command):
 
 
 def service_wrong_http_answer_failure_advice(machine, command):
-    log = command_text_to_run_on_the_mac_ssh_wrapped_when_for_ned_box("ned-box", "journalctl --user -u nc-shared-database-service -n 50")
+    log = command_text_to_run_on_the_mac_ssh_wrapped_when_for_ned_box("ned-box", "journalctl --user -u nn-shared-database-service -n 50")
     return ("The nc-shared-database service did not answer as this check needs. Read its log by "
             f"running on the Mac `{log}`, fix the cause it shows, then run the install again once. "
             "When it fails the same way, tell the user which step failed and the log's last "
