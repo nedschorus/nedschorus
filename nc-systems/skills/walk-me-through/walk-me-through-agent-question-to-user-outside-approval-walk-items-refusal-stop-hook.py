@@ -42,8 +42,9 @@ THE TEXT CHECKED is the reply, line by line, without:
   be told from the other items'. So is a reply line matching
   the answer line's first sentence, the walk-me-through skill's
   answer line without what the item adds after it, such as ` D: <the
-  alternative>`; and one showing a line of the item that opens with the
-  mark `#new` or `#new_if_d` as the agent shows it, the mark replaced by
+  alternative>`; and one showing a line of the item that opens, after any
+  list or quotation mark and a part's opening `Part N.`, with the mark
+  `#new` or `#new_if_d` as the agent shows it, the mark replaced by
   `If you approve, the new text:` or `If you disapprove, the new text:` and
   a `The new text:` just after the mark dropped; lines match when they are
   equal once markdown emphasis, heading and list marks, a hashtag marker
@@ -246,7 +247,10 @@ LINE_MARKS = re.compile(r"^\s*(?:(?:[-+*>]|\d+[.)])\s+)+")
 HASHTAG_MARKER = re.compile(r"^#\w+\s+")
 EMPHASIS_AND_SPACING = re.compile(r"[\s*_#>`]+")
 ANSWER_LINE_START = "answer a to approve"
-NEW_TEXT_LINE = re.compile(r"^(#new(?:_if_d)?)[:\s]+(?i:the\s+new\s+text:\s*)?(.*)$")
+# The opening before the mark, list and quotation marks and a part's `Part N.`, is the one the check program's
+# NEW_LINE reads, so both programs take the same lines as marked.
+NEW_TEXT_LINE = re.compile(r"^(\s*(?:(?:[-*+]|\d+[.)]|>|Part \d+\.)\s+)*)(#new(?:_if_d)?)[:\s]+"
+                           r"(?i:the\s+new\s+text:\s*)?(.*)$")
 NEW_TEXT_SHOWN_AS = {"#new": "If you approve, the new text: ", "#new_if_d": "If you disapprove, the new text: "}
 
 AGENT_REPLY_LINE_MODEL_LABEL_ONLY_ABOUT_WAITING_ITEM_DECISION = "concerns_only_a_waiting_item_decision"
@@ -460,8 +464,8 @@ def interruption_item_texts(document_text, units, waiting_numbers, parser):
 
 def new_text_as_shown(line):
     """The `#new` or `#new_if_d` line as the agent shows it to the user, or None for any other line."""
-    new_text = NEW_TEXT_LINE.match(LINE_MARKS.sub("", line.strip()))
-    return NEW_TEXT_SHOWN_AS[new_text[1]] + new_text[2] if new_text else None
+    new_text = NEW_TEXT_LINE.match(line.strip())
+    return new_text[1] + NEW_TEXT_SHOWN_AS[new_text[2]] + new_text[3] if new_text else None
 
 
 def shown_item_lines(reply_lines, document_lines, units, openings):
