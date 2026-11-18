@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """UserPromptSubmit hook, on ned-box only: on a prompt the user typed, claim the alerts programs wrote for him,
-and add them to his approval-walk as items right after the waiting item.
+and add them to his approval-walk as items after the whole of the waiting item.
 
 Wired as a UserPromptSubmit hook in .claude/settings.json. Off Linux, that is on the Mac, it exits 0 at once:
 Mac agent-sessions take no alerts until a renaming test over /Volumes/nedhome says they can.
@@ -22,7 +22,7 @@ then user_alerts_claim_every_pending_by_rename_into_claimed, whose docstrings sa
 Otherwise it finds the open approval-walk of the checkout the payload's cwd names with WALK_FINDER_FILE, the
 module the other walk-me-through hooks use, and its additionalContext tells the agent what it did or what to do:
 - with an approval-walk open: the hook runs INSERT_PROGRAM with the claimed ids itself, so each alert becomes
-  an item right after the waiting item, and passes on what it printed; when it fails, its exit code and stderr,
+  an item after the whole of the waiting item, and passes on what it printed; when it fails, its exit code and stderr,
   and the command to run again once its cause is fixed;
 - with none open: to answer the prompt first, then open an approval-walk with the alerts as its only items and
   write each alert's `#user_alert <id>` line into its walk-minutes;
@@ -62,26 +62,29 @@ ATTENDANCE_CHECK_FILE = CHECKOUT / "nc-systems" / "general-tools" / "agent-sessi
 NOT_TYPED_PROMPT_OPENINGS = ("<task-notification>", "<cross-session-message", "<agent-message",
                              "Another Claude session sent a message", "A peer session sent a message")
 
-CLAIMED_OPENING = ("The user-alerts hook claimed {count} alert(s) that programs on ned-box wrote for the user, "
+CLAIMED_OPENING_LINE = ("[rule walk-me-through-pending-user-alerts-added-as-walk-items] The user-alerts hook claimed {count} alert(s) that programs on ned-box wrote for the user, "
                    "each a problem he has not yet seen:")
 ALERT_LINE = "- {title} (alert {id}, file {path})"
 INSERTED_LINES = (
-    "The hook added these alerts to approval-walk {walk} as items right after its waiting item, by running "
+    "The hook added these alerts to approval-walk {walk} as items placed after the whole of its waiting item: past "
+    "that item's sub-steps and `#### Withdrawn version` sections, and before the next item below those sub-steps and sections, or at the end of the file when no item follows, by running "
     "{command}, which printed:",
     "{output}",
     "Do what those lines say, then act on the user's prompt.",
 )
 INSERT_FAILED_LINES = (
-    "The hook tried to add these alerts to approval-walk {walk} as items right after its waiting item, but the "
-    "program it ran failed, so no item was added. The program exited {code}, and printed: {error}",
+    "The hook tried to add these alerts to approval-walk {walk} as items placed after the whole of its waiting item: "
+    "past that item's sub-steps and `#### Withdrawn version` sections, and before the next item below those sub-steps and sections, or at the end of the file when no item follows, but "
+    "the program it ran failed, so no item was added. The program exited {code}, and printed: {error}",
     "Before you act on the user's prompt, fix the cause that message names, if you can, then run: {command}",
     "Then do what that command prints, and act on the user's prompt.",
     "If you cannot fix the cause now, act on the user's prompt: an alert no walk-minutes name is offered again "
     "on the user's first prompt 30 minutes or more after this one.",
 )
 WALK_OPEN_LINES = (
-    "Before you act on the user's prompt, add the alerts to approval-walk {walk} as items right after its "
-    "waiting item, by running:",
+    "Before you act on the user's prompt, add the alerts to approval-walk {walk} as items placed after the whole of "
+    "its waiting item: past that item's sub-steps and `#### Withdrawn version` sections, and before the next item "
+    "below those sub-steps and sections, or at the end of the file when no item follows, by running:",
     "  python3 {program} --cwd {cwd} {ids}",
     "That program adds each alert as an unnumbered `## <title>` item, as the walk-me-through skill's Re-planning "
     "section says, and writes each alert's `#user_alert <id>` line into the walk-minutes, which keeps the alert "
@@ -153,7 +156,7 @@ def open_walk_name(cwd):
 
 
 def context_for(alerts, claimed_directory, cwd):
-    lines = [CLAIMED_OPENING.format(count=len(alerts))]
+    lines = [CLAIMED_OPENING_LINE.format(count=len(alerts))]
     lines += [ALERT_LINE.format(title=alert.get("title"), id=alert.get("id"),
                                 path=claimed_directory / f"{alert.get('id')}.json") for alert in alerts]
     ids = " ".join(str(alert.get("id")) for alert in alerts)

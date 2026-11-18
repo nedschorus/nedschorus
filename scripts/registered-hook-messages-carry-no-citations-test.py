@@ -20,7 +20,6 @@ constant that needs one of these forms as data goes in EXEMPTIONS, named by
 hook and constant.
 """
 import importlib.util
-import json
 import re
 import sys
 from pathlib import Path
@@ -39,6 +38,13 @@ _collector_spec = importlib.util.spec_from_file_location(
     REPOSITORY / "nc-systems" / "general-tools" / "python-source-tool-message-to-agent-string-collector-common.py")
 collector = importlib.util.module_from_spec(_collector_spec)
 _collector_spec.loader.exec_module(collector)
+
+_rule_ids_spec = importlib.util.spec_from_file_location(
+    "claude_code_registered_hook_rule_id_pattern_hook_files_list_and_source_scan_common",
+    REPOSITORY / "nc-systems" / "general-tools"
+    / "claude-code-registered-hook-rule-id-pattern-hook-files-list-and-source-scan-common.py")
+rule_ids = importlib.util.module_from_spec(_rule_ids_spec)
+_rule_ids_spec.loader.exec_module(rule_ids)
 
 CITATION_PATTERNS = {
     "date": _date_pattern.DATE_MARKER_PATTERN,
@@ -61,20 +67,6 @@ def check(case_name, condition, detail=""):
     else:
         print(f"FAIL  {case_name}: {detail}")
         failures.append(case_name)
-
-
-def registered_hook_paths():
-    settings = json.loads(SETTINGS.read_text(encoding="utf-8"))
-    paths = []
-    for event_matchers in settings.get("hooks", {}).values():
-        for matcher in event_matchers:
-            for hook in matcher.get("hooks", []):
-                for word in hook.get("command", "").split():
-                    word = word.replace('"$CLAUDE_PROJECT_DIR"/', "").replace(
-                        "$CLAUDE_PROJECT_DIR/", "").strip("\"'")
-                    if word.endswith(".py") and word not in paths:
-                        paths.append(word)
-    return paths
 
 
 def is_message_name(name):
@@ -146,7 +138,7 @@ bare_probe.REFUSAL = "stopped"
 check("a hook whose only string constant is a bare REFUSAL declares no message constant",
       not declares_message_constants(constant_texts(bare_probe)), constant_texts(bare_probe))
 
-hook_paths = registered_hook_paths()
+hook_paths = rule_ids.registered_hook_paths(SETTINGS)
 check(".claude/settings.json registers hooks for this suite to read", len(hook_paths) > 5,
       hook_paths)
 for relative_path in hook_paths:

@@ -53,7 +53,7 @@ def agent_seat_task_list_new_pending_task_write(list_directory, subject, descrip
                     "status": "pending", "blocks": [], "blockedBy": []}
             if metadata is not None:
                 task["metadata"] = metadata
-            partial_path.write_text(json.dumps(task, indent=2), encoding="utf-8")
+            partial_path.write_text(json.dumps(task, indent=2), encoding="utf-8")  # pragma: no mutate, the indent only changes whitespace, and Claude Code and every program here read the task file as JSON
             try:
                 os.link(partial_path, list_directory / f"{task_id}.json")
                 break

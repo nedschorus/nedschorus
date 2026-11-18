@@ -251,6 +251,8 @@ def cases(scratch):
     check("a Bash(python3:*) rule lets each --approve command through",
           commands and all(bash_allow_rule_matches("Bash(python3:*)", command)
                            for command in commands), commands)
+    check("a Bash(python3:*) rule lets through the bare python3 command, with no arguments",
+          bash_allow_rule_matches("Bash(python3:*)", "python3"))
 
     # -- reminders repeat in the asking session, once in another, and stop once settled
     reminder = world.run()
@@ -965,6 +967,20 @@ def cases(scratch):
     check("an incomplete last line of approved is never read as an approval",
           str(claude) in message, message)
 
+    # -- a whole line of approved whose checksum was cut off is no approval
+    world = fresh(scratch, "cut-checksum")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2\n")
+    key = world.key(claude)
+    directory = world.store / str(claude).lstrip("/")
+    directory.mkdir(parents=True, exist_ok=True)
+    checksum = hashlib.sha256(key.encode()).hexdigest()[:16]
+    with open(directory / "approved", "ab") as approved:
+        approved.write(f"{key}\t{checksum[:8]}\n".encode())
+    message = world.run()
+    check("a line of approved whose checksum was cut off is never read as an approval",
+          str(claude) in message and "has not approved" in message, message)
+
     # -- a run that fails part way leaves the file looking changed
     world = fresh(scratch, "fails-part-way")
     claude = world.repo / "CLAUDE.md"
@@ -1425,6 +1441,35 @@ def cases(scratch):
     check("a live asking session's file only reminds another session",
           "Reminder" in world.run(session="third", owner="owner-third"), "")
 
+    # -- a version whose asking session has ended, seen again after a change back, is asked about
+    world = fresh(scratch, "ended-takeover-changed")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2\n")
+    world.run(session="old", owner="ended-old")
+    claude.write_text("project v3\n")
+    world.run(session="old", owner="ended-old")
+    claude.write_text("project v2\n")
+    message = world.run(session="successor", owner="owner-new")
+    check("a version whose asking session has ended, seen again after a change back, is asked "
+          "about", "A guarded file changed" in message, message)
+
+    # -- a takeover reads the file before it records the new asking session
+    world = fresh(scratch, "takeover-read-first")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2\n")
+    world.run(session="old", owner="ended-old")
+    hook = load_hook_in_this_process()
+
+    def failing_read(path):
+        raise OSError(f"cannot read {path}")
+
+    hook.read_file = failing_read
+    texts = run_hook_in_this_process(world, hook, "successor", "owner-new")
+    message = world.run(session="successor", owner="owner-new")
+    check("a takeover whose read fails records no asking line, so the next run asks",
+          any("did not run" in text for text in texts) and "A guarded file changed" in message,
+          (texts, message))
+
     # -- an unsettled deletion an older state file holds
     world = fresh(scratch, "unsettled-deletion-in-state")
     claude = world.repo / "CLAUDE.md"
@@ -1523,6 +1568,20 @@ def cases(scratch):
           and f"Put back the approved version" in result.stdout
           and f"Failed on {second}" in result.stdout and "not every file" in result.stderr,
           (result.returncode, result.stdout, result.stderr))
+    check("when a file cannot be put back, --restore says what a failed file may hold and that "
+          "the git commit --only command from the asking message would commit the declined "
+          "version",
+          "A file that failed is in one of two states. Either it is unchanged, still holding the "
+          "version the user declined; or it was put back, or deleted when it has no approved "
+          "version, but no line in the store's log records that it was." in result.stderr
+          and "a file whose name begins with the file's name and ends in .restore"
+          in result.stderr
+          and "giving the error on each file's Failed on line" in result.stderr
+          and "For a file that failed, do not run git commit --only -m \"Put back the approved "
+          "<file name>\" -- <path>, the command this hook's message asking about the change "
+          "gave" in result.stderr
+          and "the file may still hold the declined version, and the command would commit it"
+          in result.stderr, result.stderr)
 
     # -- a guarded file that cannot be read is reported, never kept as an empty version
     world = World(Path(scratch) / "unreadable-first-run")
@@ -1898,7 +1957,7 @@ def cases(scratch):
     check("a guarded file a fast-forward brings, after a first run made while a merge was stopped "
           "in a checkout with no guarded file, is not asked about", message == "", message)
 
-    # -- speed, on a copy of main
+    # -- speed, on a test fixture repository holding the checkout's guarded files
     if sys.platform != "linux":
         print("SKIP  with nothing changed, a run does no hashing, copying or store work: not on ned-box")
         return
@@ -1909,17 +1968,25 @@ def cases(scratch):
               "in no checkout to copy")
         return
     world = World(Path(scratch) / "speed")
-    copy_of_main = Path(scratch) / "speed" / "main"
-    subprocess.run(["git", "clone", "-q", "--shared", top.stdout.strip(), str(copy_of_main)],
-                   check=True, env=world.environment())
-    world.run(cwd=copy_of_main)
-    world.run(cwd=copy_of_main)
+    fixture = Path(scratch) / "speed" / "guarded-files"
+    checkout = Path(top.stdout.strip())
+    make_guarded_files_test_fixture_repository(world, fixture, checkout)
+    guarded_paths = guarded_paths_of_checkout(checkout)
+    fixture_paths = sorted(world.git("ls-files", cwd=fixture).stdout.splitlines())
+    check("the test fixture repository holds every file the hook guards in the checkout, "
+          "CLAUDE.md, guard hooks and wiki pages among them",
+          fixture_paths == guarded_paths and "CLAUDE.md" in fixture_paths
+          and any(path.startswith(".claude/guard-hooks/") for path in fixture_paths)
+          and any(path.startswith("docs/nedschorus-wiki/") for path in fixture_paths),
+          (len(fixture_paths), len(guarded_paths)))
+    world.run(cwd=fixture)
+    world.run(cwd=fixture)
     # CPU and wall time vary with machine load and tracing, so they are printed for information
     # only. What the case guards is that a run with nothing changed does no expensive work.
     times = []
     cpu_times = []
     for _ in range(5):
-        world.run(cwd=copy_of_main)
+        world.run(cwd=fixture)
         times.append(world.last_seconds)
         cpu_times.append(world.last_cpu_seconds)
     print(f"INFO  with nothing changed, wall seconds per run: {[round(t, 3) for t in times]}")
@@ -1947,22 +2014,22 @@ def cases(scratch):
     saved_environment, saved_directory = dict(os.environ), os.getcwd()
     try:
         os.environ.update(world.environment())
-        os.chdir(copy_of_main)
+        os.chdir(fixture)
         texts = hook.run_hook({"session_id": "session-a", "hook_event_name": "PostToolUse",
-                               "tool_name": "Bash", "cwd": str(copy_of_main),
+                               "tool_name": "Bash", "cwd": str(fixture),
                                "tool_input": {"command": "x"}})
     finally:
         os.chdir(saved_directory)
         os.environ.clear()
         os.environ.update(saved_environment)
-    check("with nothing changed, a run on a copy of main hashes no file, reads no file, copies "
-          "nothing and does not open the store",
+    check("with nothing changed, a run on a repository holding the checkout's guarded files "
+          "hashes no file, reads no file, copies nothing and does not open the store",
           texts == [] and not any(calls.values()) and store_listing(world.store) == store_before,
           (texts, calls))
 
     # -- a new worktree: on the Mac's SMB mount every store open is a network round trip
-    worktree = copy_of_main / ".claude" / "worktrees" / "agent-new"
-    subprocess.run(["git", "-C", str(copy_of_main), "worktree", "add", "-q", "-b",
+    worktree = fixture / ".claude" / "worktrees" / "agent-new"
+    subprocess.run(["git", "-C", str(fixture), "worktree", "add", "-q", "-b",
                     "worktree-agent-new", str(worktree)], check=True, env=world.environment())
     hook = load_hook_in_this_process()
     store = {"open": 0, "not found": 0, "make": 0, "access": 0}
@@ -2000,27 +2067,18 @@ def cases(scratch):
     def counted_run(directory):
         for name in store:
             store[name] = 0
-        saved_environment, saved_directory = dict(os.environ), os.getcwd()
-        try:
-            os.environ.update(world.environment())
-            os.chdir(directory)
-            return hook.run_hook({"session_id": "session-a", "hook_event_name": "PostToolUse",
-                                  "tool_name": "Bash", "cwd": str(directory),
-                                  "tool_input": {"command": "x"}})
-        finally:
-            os.chdir(saved_directory)
-            os.environ.clear()
-            os.environ.update(saved_environment)
+        return run_hook_in_this_process(world, hook, "session-a", "owner-a", directory)
 
     texts = counted_run(worktree)
     git_directory = subprocess.run(["git", "-C", str(worktree), "rev-parse", "--absolute-git-dir"],
                                    capture_output=True, text=True, check=True).stdout.strip()
     guarded = len(json.loads((Path(git_directory) / hook.STATE_FILE_NAME).read_text())["files"])
     print(f"INFO  the first run in a new worktree with {guarded} guarded files: {store}")
-    check("the first run in a new worktree writes nothing to the store and opens it once, to find "
-          "the worktree has no directory there",
-          texts == [] and guarded and store["access"] == 0 and store["make"] == 0
-          and store["open"] == 1, (texts, guarded, store))
+    check("the first run in a new worktree guards every file the checkout guards, writes nothing "
+          "to the store and opens it once, to find the worktree has no directory there",
+          texts == [] and guarded == len(guarded_paths) and store["access"] == 0
+          and store["make"] == 0 and store["open"] == 1,
+          (texts, guarded, len(guarded_paths), store))
     (worktree / "CLAUDE.md").write_text((worktree / "CLAUDE.md").read_text() + "changed\n")
     texts = counted_run(worktree)
     # Making the file's directory costs a failed open, a mkdir and an open per part made, and
@@ -2029,6 +2087,31 @@ def cases(scratch):
           "besides the lookups and the walk that make the file's directory",
           len(texts) == 1 and 0 < store["open"]
           <= 2 * store["access"] + 2 * store["make"] + store["not found"], (store, texts))
+
+
+def make_guarded_files_test_fixture_repository(world, directory, checkout):
+    """Make directory a repository of its own whose one commit holds this checkout's copy of
+    every file the hook guards in the checkout's HEAD, as its guarded_blobs_at lists them. A git
+    command that reads the checkout's files, such as a clone, makes the test runner select this
+    suite whenever any file changes; the files copied here select it only when one changes. A
+    guarded file deleted from the checkout's working tree stops the suite with
+    FileNotFoundError: the cases need every guarded file."""
+    hook = load_hook_in_this_process()
+    for absolute in hook.guarded_blobs_at(checkout, "HEAD"):
+        source = Path(absolute)
+        target = directory / source.relative_to(checkout)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes())
+    world.git("init", "-q", "-b", "main", cwd=directory)
+    world.git("add", ".", cwd=directory)
+    world.git("commit", "-q", "-m", "the checkout's guarded files", cwd=directory)
+
+
+def guarded_paths_of_checkout(checkout):
+    """The checkout-relative paths of the files the hook guards in the checkout's HEAD, sorted."""
+    hook = load_hook_in_this_process()
+    return sorted(str(Path(absolute).relative_to(checkout))
+                  for absolute in hook.guarded_blobs_at(checkout, "HEAD"))
 
 
 def load_hook_in_this_process():
@@ -2061,6 +2144,23 @@ def copy_in_this_process(world, hook, path, copy_hash, data):
         os.environ.clear()
         os.environ.update(saved_environment)
     return None
+
+
+def run_hook_in_this_process(world, hook, session, owner, directory=None):
+    """The texts run_hook of the loaded hook module returns for a Bash call in directory, the
+    world's repository by default, run as session and owner."""
+    directory = world.repo if directory is None else directory
+    saved_environment, saved_directory = dict(os.environ), os.getcwd()
+    try:
+        os.environ.update(world.environment(owner))
+        os.chdir(directory)
+        return hook.run_hook({"session_id": session, "hook_event_name": "PostToolUse",
+                              "tool_name": "Bash", "cwd": str(directory),
+                              "tool_input": {"command": "x"}})
+    finally:
+        os.chdir(saved_directory)
+        os.environ.clear()
+        os.environ.update(saved_environment)
 
 
 def reflog_copy_and_saved_state_cases(scratch):

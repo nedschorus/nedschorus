@@ -131,7 +131,8 @@ EXIT_DONE = 0
 EXIT_REFUSED = 1
 EXIT_BAD_INVOCATION = 64
 
-ASK_HEADER = (
+ASK_HEADER_LINE = (
+    "[rule guarded-file-changed-without-approval-ask-user-afterward] "
     "A guarded file changed, and the user has not approved the new version. The change stays in "
     "place while you ask him; this hook has kept a copy of the version.")
 ASK_FILE = "{path}, version {key}.{reason} Its change against the newest approved version:\n{diff}"
@@ -161,7 +162,8 @@ ASK_INSTRUCTIONS = (
     "If he declines, run: python3 {program} --restore {pairs}\n"
     "If he declines a version that is in a commit, also run, for each such file: "
     "git commit --only -m \"Put back the approved <file name>\" -- <path>")
-REMINDER = (
+UNAPPROVED_VERSION_REMINDER_MESSAGE = (
+    "[rule guarded-file-changed-without-approval-ask-user-afterward] "
     "Reminder: {path} still holds version {key}, which the user has not approved.\n"
     "If you are a subagent, and you wrote an obvious-fix marker and then made the change with a "
     "command other than Edit or Write, run once: python3 {program} --approve {path} {key}, then "
@@ -181,6 +183,7 @@ STORE_FAILED = (
     "Tell the user what failed, with this remedy: {remedy}\n"
     "Once the store can be reached, the next tool call checks the files again.")
 FIRST_RUN_VERSION_LOST = (
+    "[rule guarded-file-changed-without-approval-ask-user-afterward] "
     "The guarded-file backup could not approve version {blob} of {path}, the version this "
     "checkout held when the backup first ran here: git no longer holds it, most likely pruned "
     "after a reset or a rebase. {path} has no other approved version, so python3 {program} "
@@ -199,15 +202,27 @@ REMEDY_MAC = ("check that ned-box is up and that the Mac has mounted ned-box's h
 REFUSED = "{program_name} {mode}: refused, nothing was changed: {reason}"
 COMMAND_FAILED = ("{program_name} {mode} failed: {reason}. Tell the user, with this message; run "
                   "the command again once the cause is fixed.")
-RESTORE_INCOMPLETE = ("{program_name} --restore: not every file was put back; the lines above "
-                      "say what was done to each. Tell the user which files failed and why.")
+RESTORE_INCOMPLETE = ("{program_name} --restore: not every file was put back; the lines this "
+                      "command printed to standard output say what was done to each. A file that "
+                      "failed is in one of two states. Either it is unchanged, still holding the "
+                      "version the user declined; or it was put back, or deleted when it has no "
+                      "approved version, but no line in the store's log records that it was. A "
+                      "failed write may also leave, in the same directory, a file whose name "
+                      "begins with the file's name and ends in .restore. Tell the user which "
+                      "files failed and why, giving the error on each file's Failed on line.\n"
+                      "For a file that failed, do not run git commit --only -m \"Put back the "
+                      "approved <file name>\" -- <path>, the command this hook's message asking "
+                      "about the change gave for a declined version in a commit: the file may "
+                      "still hold the declined version, and the command would commit it.")
 MARKER_SURVIVED = (
     "{program_name} --approve: the approval above is recorded, but its marker {marker} could not "
-    "be deleted: {reason}. While the marker exists, a later --approve would spend the user's "
-    "words a second time.\n"
+    "be deleted: {reason}. While the marker exists, the next --approve, for any later change, "
+    "would read the same approval from it again and record that later change as approved "
+    "although no one approved it.\n"
     "Run: rm -f {quoted_marker}\n"
     "Do not ask the user again and do not run --approve again: the approval is already recorded.\n"
-    "If rm fails too, tell the user, with this message.")
+    "If rm fails too, tell the user, with this message, that he must delete {marker} himself, "
+    "on the machine that holds this checkout, before --approve runs in this checkout again.")
 
 
 class ApprovalRecordedButApprovalMarkerNotDeleted(Exception):
@@ -869,7 +884,11 @@ def entries_after(entries, position):
     the window. Neither the reflog's length nor a stored index tells two equal lines apart,
     because expiry can drop older entries and move a later equal line to the stored index; and
     when the line is gone, a guess from times can leave out a commit made in its second. A
-    position an earlier version of this hook stored is [commit, time] alone."""
+    position an earlier version of this hook stored is [commit, time] alone; when no entry, or
+    more than one, holds that pair, the window is unknown too, so nothing is approved as git's
+    own work. A version origin/main holds, or one the agent's own successful Edit wrote, is
+    still approved without asking, unless store_phase finds the Edit was made on a recorded
+    version that is not approved."""
     if not position:
         return []
     if len(position) < 4:
@@ -1259,7 +1278,7 @@ def run_hook(payload):
             window = [] if stocking else entries_after(entries, state.get("reflog"))
             # Loading the in-progress check costs more than a whole quiet run, so it is asked
             # only when there is something it could change. An unknown window (None) approves
-            # nothing as git's own work, so every changed version is asked about.
+            # nothing as git's own work.
             if changed or unsettled or window or state.get("stopped"):
                 quiet = git_operation_in_progress(checkout)
             if quiet:
@@ -1464,10 +1483,10 @@ def messages(asks, reminders):
         pairs = " ".join(f"{path} {key}" for path, key, _, _ in asks)
         files = "\n\n".join(ASK_FILE.format(path=path, key=key, reason=reason, diff=diff)
                             for path, key, diff, reason in asks)
-        out.append("\n\n".join([ASK_HEADER, files, ASK_INSTRUCTIONS.format(
+        out.append("\n\n".join([ASK_HEADER_LINE, files, ASK_INSTRUCTIONS.format(
             marker=APPROVAL_MARKER_NAME, program=program, pairs=pairs)]))
     for path, key in reminders:
-        out.append(REMINDER.format(path=path, key=key, marker=APPROVAL_MARKER_NAME,
+        out.append(UNAPPROVED_VERSION_REMINDER_MESSAGE.format(path=path, key=key, marker=APPROVAL_MARKER_NAME,
                                    program=HOOK_PATH))
     return out
 
@@ -1632,7 +1651,7 @@ def restore(pairs):
                 log_line(store, path, "restored", "command-line", "", key, restored)
             except OSError as error:
                 failed.append(path)
-                lines.append(f"Failed on {path}, which may be only part way restored: {error}")
+                lines.append(f"Failed on {path}: {error}")
                 continue
             lines.append(message)
         return lines, failed
