@@ -77,11 +77,11 @@ DECISIONS, and where they depart from the design of record:
   every spelling gh takes (`-R X`, `-RX`, `-R=X`, `--repo X`, `--repo=X`;
   each checked against gh 2.101.0 on 2026-09-24). When the flag is given
   more than once, gh uses the last one, and so does this guard. Reading it
-  only after the subcommand let `gh -R nedschorus/nedschorus issue create`
-  and `gh issue -R nedschorus/nedschorus comment` through while naming this
+  only after the subcommand let `gh -R nedsnodes/nedsnodes issue create`
+  and `gh issue -R nedsnodes/nedsnodes comment` through while naming this
   repository, and agents do write `gh --repo X issue ...`. Found in the
   review of PR "Hand-typed gh issue comments, creates and body edits are
-  refused" (https://github.com/nedschorus/nedschorus/pull/708), where Codex
+  refused" (https://github.com/nedsnodes/nedsnodes/pull/708), where Codex
   also raised it.
 - `gh api` writes to issue endpoints are out of scope: the design's accepted
   residual (user-ruled 2026-08-07, reaffirmed 2026-08-09), "the enumeration
@@ -129,7 +129,7 @@ with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(
     _shell_reader_spec.loader.exec_module(shell_reader)
 is_program = shell_reader.is_program
 
-PROJECT_REPOSITORY = "nedschorus/nedschorus"
+PROJECT_REPOSITORY = "nedsnodes/nedsnodes"
 
 ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 ISSUE_URL_PATTERN = re.compile(

@@ -225,7 +225,7 @@ def main():
               and "merged: merge program last line" in output and scratch.messages() == [],
               f"exit {code}\n{output}\n{approval}\n{merges}")
         check("the file is read at the nc-head-commit",
-              any(call["argv"][-1] == f"repos/nedschorus/nedschorus/contents/docs/issues/9-x.md"
+              any(call["argv"][-1] == f"repos/nedsnodes/nedsnodes/contents/docs/issues/9-x.md"
                   f"?ref={HEAD}" for call in scratch.gh_calls()), scratch.gh_calls())
         check("every gh call carries the merge account's token",
               all(call["gh_token"] == TOKEN for call in scratch.gh_calls()), scratch.gh_calls())
@@ -459,7 +459,7 @@ def main():
                   f"merged, exit 0",
                   code == 0 and scratch.messages() == [message_name]
                   and why in scratch.message(message_name)
-                  and "https://github.com/nedschorus/nedschorus/pull/9" in scratch.message(
+                  and "https://github.com/nedsnodes/nedsnodes/pull/9" in scratch.message(
                       message_name)
                   and approvals(scratch) == [] and scratch.merge_calls() == []
                   and scratch.record() == {"9": HEAD}, f"exit {code}\n{output}")

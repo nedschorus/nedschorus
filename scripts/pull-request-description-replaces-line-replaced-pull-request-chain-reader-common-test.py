@@ -14,8 +14,8 @@ _spec = importlib.util.spec_from_file_location(
 reader = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(reader)
 
-REPOSITORY = "nedschorus/nedschorus"
-LINK = "https://github.com/nedschorus/nedschorus/pull/"
+REPOSITORY = "nedsnodes/nedsnodes"
+LINK = "https://github.com/nedsnodes/nedsnodes/pull/"
 failures = []
 
 
@@ -49,11 +49,11 @@ check("prose that mentions #replaces mid-line, a longer hashtag, and no descript
       numbers(f"This one replaces {LINK}12 by its #replaces line.\n#replaces_not {LINK}3") == []
       and numbers(None) == [])
 check("a link to another repository is refused",
-      "does not name, after #replaces, a full https://github.com/nedschorus/nedschorus/pull/<number>"
+      "does not name, after #replaces, a full https://github.com/nedsnodes/nedsnodes/pull/<number>"
       in (refusal(lambda: numbers("#replaces https://github.com/other/repo/pull/12")) or ""))
 check("a line with no link, or an issue link, is refused naming the line",
       "has the line `#replaces #12`" in (refusal(lambda: numbers("#replaces #12")) or "")
-      and refusal(lambda: numbers("#replaces https://github.com/nedschorus/nedschorus/issues/12")) is not None)
+      and refusal(lambda: numbers("#replaces https://github.com/nedsnodes/nedsnodes/issues/12")) is not None)
 check("a line naming the pull request itself is refused",
       "names pull request 9 itself" in (refusal(lambda: numbers(f"#replaces {LINK}9")) or ""))
 

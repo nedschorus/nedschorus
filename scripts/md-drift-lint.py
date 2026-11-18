@@ -51,7 +51,7 @@ only by asking):
           order; a line naming no such file is not checked
         - each list item, and each line linking an issue, under
           "## Planned work" is written
-          "- GHI [<title>](https://github.com/nedschorus/nedschorus/issues/<number>)",
+          "- GHI [<title>](https://github.com/nedsnodes/nedsnodes/issues/<number>)",
           and the GHI is open on GitHub with that title
         and, as a note that is not a finding, each program (.py, .sh, or a
         file starting "#!") under nc-systems/<system>/, outside tests/, whose
@@ -459,7 +459,7 @@ def check_overview_lock_and_environment_variable_sources(line: str, md_path: Pat
             yield f"{claim} does not appear in the source of {names}"
 
 
-GITHUB_REPOSITORY = "nedschorus/nedschorus"
+GITHUB_REPOSITORY = "nedsnodes/nedsnodes"
 PLANNED_WORK_HEADING = "## Planned work"
 PLANNED_WORK_GHI_LINE = re.compile(
     r"\s*(?:[-*+]|\d+[.)]) GHI \[(?P<title>.+)\]\(https://github\.com/"

@@ -731,7 +731,7 @@ with tempfile.TemporaryDirectory() as overview_workspace:
 
     lint.github_issue_states_and_titles = answering_query
     try:
-        url = "https://github.com/nedschorus/nedschorus/issues/"
+        url = "https://github.com/nedsnodes/nedsnodes/issues/"
         findings = problems_for(
             "# Demo\n\n## Planned work\n\n"
             f"- GHI [Open one]({url}1)\n"
@@ -808,7 +808,7 @@ def run_lint_with_fake_gh(gh_source):
         (root / "nc-systems" / "demo" / "unnamed-program.py").write_text("", encoding="utf-8")
         (root / OVERVIEW_NAME).write_text(
             "## Planned work\n\n"
-            "- GHI [Open one](https://github.com/nedschorus/nedschorus/issues/1)\n",
+            "- GHI [Open one](https://github.com/nedsnodes/nedsnodes/issues/1)\n",
             encoding="utf-8")
         fake_bin = root / "fake-bin"
         fake_bin.mkdir()

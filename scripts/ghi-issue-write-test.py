@@ -71,7 +71,7 @@ A file whose `issue:` line was built from its own heading rather than from
 the issue's title — the fixed tool's run landed a line citing the issue by
 the title GitHub holds, with the heading left where the author wrote it,
 and the Reader cases read that line back out of the staged file. The issue
-and number counts a case quotes were read from nedschorus/nedschorus the
+and number counts a case quotes were read from nedsnodes/nedsnodes the
 same week.
 
 Produced the same way on 2026-09-21, for the cases added that day: a main
@@ -257,7 +257,7 @@ class Recorder:
 
 
 FILE_TEXT = "---\nstatus: draft\n---\n\n# A statusline that drops its branch name\n\nBody.\n"
-REPO = "nedschorus/nedschorus"
+REPO = "nedsnodes/nedsnodes"
 ASK = "ghi-guide-agent-ask.py"   # how a case names the adjudication call
 
 
@@ -487,7 +487,7 @@ def run_cases(scratch: Path):
           tool.slug("Hooks that don't exit") == "hooks-that-dont-exit",
           repr(tool.slug("Hooks that don't exit")))
     linked_slug = tool.slug("Notes from issue [Build draft-md]"
-                            "(https://github.com/nedschorus/nedschorus/issues/142)")
+                            "(https://github.com/nedsnodes/nedsnodes/issues/142)")
     check("a Markdown link in the title gives its text, not its address",
           linked_slug == "notes-from-issue-build-draft-md", repr(linked_slug))
     bracketed_label_slug = tool.slug(
@@ -558,8 +558,8 @@ def run_cases(scratch: Path):
           tool.pairing_key(FILE_TEXT) in tool.placeholder_body(tool.pairing_key(FILE_TEXT)))
     check("the body is links and nothing else, in filename order",
           tool.links_body(REPO, ["docs/issues/9-b.md", "docs/issues/9-a.md"])
-          == ("- [9-a.md](https://github.com/nedschorus/nedschorus/blob/main/docs/issues/9-a.md)\n"
-              "- [9-b.md](https://github.com/nedschorus/nedschorus/blob/main/docs/issues/9-b.md)"),
+          == ("- [9-a.md](https://github.com/nedsnodes/nedsnodes/blob/main/docs/issues/9-a.md)\n"
+              "- [9-b.md](https://github.com/nedsnodes/nedsnodes/blob/main/docs/issues/9-b.md)"),
           repr(tool.links_body(REPO, ["docs/issues/9-b.md", "docs/issues/9-a.md"])))
 
     # --- What the caller is refused for, before anything is written ------
@@ -680,7 +680,7 @@ def run_cases(scratch: Path):
           f"{pathed_refusal}; {pathed_run.commands()}")
 
     # --- The heading is judged after the refusals the key cannot see -----
-    # Review of PR [GHI titles name the work](https://github.com/nedschorus/nedschorus/pull/829):
+    # Review of PR [GHI titles name the work](https://github.com/nedsnodes/nedsnodes/pull/829):
     # judged first, a rerun on a source whose filing is in flight, or
     # already on main, was told to change its heading, and the changed
     # heading matched neither check, so the next rerun filed a second issue.
@@ -764,7 +764,7 @@ def run_cases(scratch: Path):
     first = Recorder({
         "gh issue list": Completed("[]"),
         "gh issue create": Completed(
-            "https://github.com/nedschorus/nedschorus/issues/570\n"),
+            "https://github.com/nedsnodes/nedsnodes/issues/570\n"),
         "git show": Completed("", returncode=1),
         "git ls-remote": Completed(""),
         "git ls-tree": Completed(""),
@@ -849,7 +849,7 @@ def run_cases(scratch: Path):
 
     line = tool.issue_frontmatter_line(REPO, 570, "A title")
     check("the issue line cites by title and link, never a bare number",
-          line == 'issue: "[A title](https://github.com/nedschorus/nedschorus/issues/570)"',
+          line == 'issue: "[A title](https://github.com/nedsnodes/nedsnodes/issues/570)"',
           repr(line))
 
     # The value is quoted because unquoted it is not YAML: it opens with `[`,
@@ -862,7 +862,7 @@ def run_cases(scratch: Path):
           and not value.startswith("["), repr(value))
     check("and it parses back to the link it carries",
           parsed_issue_value(line)
-          == "[A title](https://github.com/nedschorus/nedschorus/issues/570)",
+          == "[A title](https://github.com/nedsnodes/nedsnodes/issues/570)",
           repr(value))
 
     awkward = tool.issue_frontmatter_line(
@@ -870,7 +870,7 @@ def run_cases(scratch: Path):
     check("a title holding a quote or a backslash is escaped inside them",
           parsed_issue_value(awkward)
           == '[He said "no" \\ then left]'
-             '(https://github.com/nedschorus/nedschorus/issues/570)',
+             '(https://github.com/nedsnodes/nedsnodes/issues/570)',
           repr(awkward))
 
     accented = tool.issue_frontmatter_line(REPO, 570, "Naïve café")
@@ -931,7 +931,7 @@ def run_cases(scratch: Path):
     reader = Reader({
         "gh issue list": Completed("[]"),
         "gh issue create": Completed(
-            "https://github.com/nedschorus/nedschorus/issues/570\n"),
+            "https://github.com/nedsnodes/nedsnodes/issues/570\n"),
         # A file main has under a filed name, and not this source. Read
         # as a failure — which is what this answered until 2026-09-22 — the
         # listed path below cannot be read at all, and the run stops.
@@ -957,7 +957,7 @@ def run_cases(scratch: Path):
     tracked = Recorder({
         "gh issue list": Completed("[]"),
         "gh issue create": Completed(
-            "https://github.com/nedschorus/nedschorus/issues/570\n"),
+            "https://github.com/nedsnodes/nedsnodes/issues/570\n"),
         "git show": Completed("", returncode=1),
         "git ls-remote": Completed(""),
         GHI_MD_LISTING_CALL: Completed(""),
@@ -971,7 +971,7 @@ def run_cases(scratch: Path):
     untracked = Recorder({
         "gh issue list": Completed("[]"),
         "gh issue create": Completed(
-            "https://github.com/nedschorus/nedschorus/issues/570\n"),
+            "https://github.com/nedsnodes/nedsnodes/issues/570\n"),
         "git show": Completed("", returncode=1),
         "git ls-remote": Completed(""),
         "git ls-tree": Completed(""),
@@ -988,7 +988,7 @@ def run_cases(scratch: Path):
     failed_tracking = Recorder({
         "gh issue list": Completed("[]"),
         "gh issue create": Completed(
-            "https://github.com/nedschorus/nedschorus/issues/570\n"),
+            "https://github.com/nedsnodes/nedsnodes/issues/570\n"),
         "git show": Completed("", returncode=1),
         "git ls-remote": Completed(""),
         "origin/main for-frontmatter.md": Completed(
@@ -1061,7 +1061,7 @@ def run_cases(scratch: Path):
     unlanded = Recorder({
         "gh issue list": Completed("[]"),
         "gh issue create": Completed(
-            "https://github.com/nedschorus/nedschorus/issues/571\n"),
+            "https://github.com/nedsnodes/nedsnodes/issues/571\n"),
         "git show": Completed("", returncode=1),
         "git ls-remote": Completed(""),
         "git ls-tree": Completed(""),
@@ -1125,7 +1125,7 @@ def run_cases(scratch: Path):
     landed_elsewhere = Recorder({
         "gh issue list": Completed("[]"),
         "gh issue create": Completed(
-            "https://github.com/nedschorus/nedschorus/issues/572\n"),
+            "https://github.com/nedsnodes/nedsnodes/issues/572\n"),
         "git ls-tree": Completed(LISTING),
         "git show": Completed(
             tool.with_issue_frontmatter(FILE_TEXT, REPO, 999, TITLE)),
@@ -1144,7 +1144,7 @@ def run_cases(scratch: Path):
     queue_only = Recorder({
         "gh issue list": Completed("[]"),
         "gh issue create": Completed(
-            "https://github.com/nedschorus/nedschorus/issues/572\n"),
+            "https://github.com/nedsnodes/nedsnodes/issues/572\n"),
         "git ls-tree": Completed("docs/issues/queue/statusline.md\0"),
         "git show": Completed(STAGED),
         "git ls-remote": Completed(""),
@@ -1165,7 +1165,7 @@ def run_cases(scratch: Path):
     nested_number = Recorder({
         "gh issue list": Completed("[]"),
         "gh issue create": Completed(
-            "https://github.com/nedschorus/nedschorus/issues/572\n"),
+            "https://github.com/nedsnodes/nedsnodes/issues/572\n"),
         "git ls-tree": Completed(
             "docs/issues/queue/570-a-statusline-drops-its-branch.md\0"
             "docs/issues/archived/570-an-older-copy.md\0"),
@@ -1189,7 +1189,7 @@ def run_cases(scratch: Path):
     unreadable = Recorder({
         "gh issue list": Completed("[]"),
         "gh issue create": Completed(
-            "https://github.com/nedschorus/nedschorus/issues/572\n"),
+            "https://github.com/nedsnodes/nedsnodes/issues/572\n"),
         "git ls-tree": Completed(LISTING),
         "git show": Completed("", returncode=128,
                               stderr="fatal: path does not exist"),
@@ -1236,7 +1236,7 @@ def run_cases(scratch: Path):
               refusal.code == 64, f"code {refusal.code}")
         check("and the refusal names the issue and the pull request to wait "
               "for",
-              "https://github.com/nedschorus/nedschorus/issues/570"
+              "https://github.com/nedsnodes/nedsnodes/issues/570"
               in str(refusal)
               and "https://github.com/x/y/pull/9" in str(refusal),
               str(refusal))
@@ -1297,7 +1297,7 @@ def run_cases(scratch: Path):
             '[{"number": 570, "title": "' + TITLE + '", '
             '"body": "- [570-a.md](https://github.com/x/y/blob/main/a.md)"}]'),
         "gh issue create": Completed(
-            "https://github.com/nedschorus/nedschorus/issues/572\n"),
+            "https://github.com/nedsnodes/nedsnodes/issues/572\n"),
         "git ls-tree": Completed(""),
         "git show": Completed("", returncode=1),
         "git ls-remote": Completed(""),
@@ -1315,7 +1315,7 @@ def run_cases(scratch: Path):
             '[{"number": 570, "title": "Some other heading", '
             '"body": "Filing in progress, pairing key ghipairOTHER."}]'),
         "gh issue create": Completed(
-            "https://github.com/nedschorus/nedschorus/issues/572\n"),
+            "https://github.com/nedsnodes/nedsnodes/issues/572\n"),
         "git ls-tree": Completed(""),
         "git show": Completed("", returncode=1),
         "git ls-remote": Completed(""),
@@ -1610,7 +1610,7 @@ def run_cases(scratch: Path):
                   "Key of the GHI-MD text ghi-guide-agent reviewed: ghipair1234\n\n"
                   "## E1 — possible problem: the GHI-MD's proposal may go "
                   "against a user-ruling held in GHI [Closed issues are "
-                  "frozen](https://github.com/nedschorus/nedschorus/"
+                  "frozen](https://github.com/nedsnodes/nedsnodes/"
                   "issues/46)\n"
                   "ghi-guide-agent's question: the ruling may not hold\n"
                   "Goes wrong when: the proposal is carried out while that "
@@ -1702,7 +1702,7 @@ def run_cases(scratch: Path):
             "gh issue view 46": Completed("Closed issues are frozen\n"),
             "gh issue list": Completed("[]"),
             "gh issue create": Completed(
-                "https://github.com/nedschorus/nedschorus/issues/571\n"),
+                "https://github.com/nedsnodes/nedsnodes/issues/571\n"),
             "git show": Completed("", returncode=1),
             "git ls-remote": Completed(""),
             "git ls-tree": Completed(""),
@@ -1795,7 +1795,7 @@ def run_cases(scratch: Path):
             "gh issue view 46": Completed("Closed issues are frozen\n"),
             "gh issue list": Completed("[]"),
             "gh issue create": Completed(
-                "https://github.com/nedschorus/nedschorus/issues/572\n"),
+                "https://github.com/nedsnodes/nedsnodes/issues/572\n"),
             "git show": Completed("", returncode=1),
             "git ls-remote": Completed(""),
             "git ls-tree": Completed(""),
@@ -1841,7 +1841,7 @@ def run_cases(scratch: Path):
             "gh issue view 46": Completed("Closed issues are frozen\n"),
             "gh issue list": Completed("[]"),
             "gh issue create": Completed(
-                "https://github.com/nedschorus/nedschorus/issues/571\n"),
+                "https://github.com/nedsnodes/nedsnodes/issues/571\n"),
             "git show": Completed("", returncode=1),
             "git ls-remote": Completed(""),
             "git ls-tree": Completed(""),
@@ -1905,7 +1905,7 @@ def run_cases(scratch: Path):
                     "#46 closed issues are frozen")),
                 "gh issue list": Completed("[]"),
                 "gh issue create": Completed(
-                    "https://github.com/nedschorus/nedschorus/issues/575\n"),
+                    "https://github.com/nedsnodes/nedsnodes/issues/575\n"),
                 "git show": Completed("", returncode=1),
                 "git ls-remote": Completed(""),
                 "git ls-tree": Completed(""),
@@ -1927,7 +1927,7 @@ def run_cases(scratch: Path):
             ASK: Completed("verdict: unrelated\n"),
             "gh issue list": Completed("[]"),
             "gh issue create": Completed(
-                "https://github.com/nedschorus/nedschorus/issues/574\n"),
+                "https://github.com/nedsnodes/nedsnodes/issues/574\n"),
             "git show": Completed("", returncode=1),
             "git ls-remote": Completed(""),
             "git ls-tree": Completed(""),
@@ -2103,7 +2103,7 @@ ISSUE_TITLE_ON_GITHUB = "Statusline: branch name lost after a rebase"
 # its own; the name below stands for the first one's.
 EARLIER_EDIT_BRANCH = "ghi-570-edit-ghi-md-sha256-0123456789abcdef"
 EARLIER_EDIT_TITLE = f"GHI-MD edit for issue 570: {EDIT_TITLE}"
-EARLIER_EDIT_URL = "https://github.com/nedschorus/nedschorus/pull/21"
+EARLIER_EDIT_URL = "https://github.com/nedsnodes/nedsnodes/pull/21"
 
 
 def expected_edit_branch(number: int, staged: str) -> str:
@@ -4203,7 +4203,7 @@ def run_edit_cases(scratch: Path):
     # repository on 2026-09-21: the frozen head exited 1 with the branch on
     # the remote and the pull request open. gh's answer to such a number was
     # read from the repository itself the same day — `gh issue view 999999
-    # --repo nedschorus/nedschorus --json title,body`, exit 1, nothing on
+    # --repo nedsnodes/nedsnodes --json title,body`, exit 1, nothing on
     # stdout, this line on stderr with 999999 where this case's own number
     # stands.
 
@@ -4261,7 +4261,7 @@ def run_edit_cases(scratch: Path):
         "gh issue view": Completed(json.dumps({
             "title": "Build the GHI write tool's edit verb",
             "body": "",
-            "url": "https://github.com/nedschorus/nedschorus/pull/570"}))})
+            "url": "https://github.com/nedsnodes/nedsnodes/pull/570"}))})
     try:
         tool.edit(source, REPO, scratch, numbered_for_a_pull_request, quiet)
         check("a file named for a number a pull request has is refused",
@@ -4587,7 +4587,7 @@ def run_stop_signal_cleanup_cases(scratch: Path):
         recorder = StopSignalOnPush(stop_signal, {
             "gh issue list": Completed("[]"),
             "gh issue create": Completed(
-                "https://github.com/nedschorus/nedschorus/issues/570\n"),
+                "https://github.com/nedsnodes/nedsnodes/issues/570\n"),
             "git show": Completed("", returncode=1),
             "git ls-remote": Completed(""),
             "git ls-tree": Completed(""),
@@ -5055,7 +5055,7 @@ def run_edit_landing_real_git_cases(scratch: Path):
                                   tool.links_body(REPO, [relative]))
             if "pr list" in joined:
                 return Completed("[]")
-            return Completed("https://github.com/nedschorus/nedschorus/pull/1\n")
+            return Completed("https://github.com/nedsnodes/nedsnodes/pull/1\n")
         return tool.run(arguments, timeout=timeout or tool.GH_TIMEOUT_SECONDS,
                         cwd=cwd, check=check)
 
@@ -5221,7 +5221,7 @@ def run_whole_file_set_cases(scratch: Path):
             "gh issue view 46": Completed("Closed issues are frozen\n"),
             "gh issue list": Completed("[]"),
             "gh issue create": Completed(
-                "https://github.com/nedschorus/nedschorus/issues/571\n"),
+                "https://github.com/nedsnodes/nedsnodes/issues/571\n"),
             "git show": Completed("", returncode=1),
             "git ls-remote": Completed(""),
             "git ls-tree": Completed(""),

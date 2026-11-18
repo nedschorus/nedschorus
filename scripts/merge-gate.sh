@@ -88,11 +88,11 @@
 # WHY AN INLINE COMMENT POSTED WITH A REVIEW THE CALLER WROTE OR READ IS READ AT
 # THAT REVIEW'S TIME. GHI "The merge gate refuses a merge when the merge
 # account's own review carries inline comments stamped a second later",
-# https://github.com/nedschorus/nedschorus/issues/729. GitHub stamps an inline
+# https://github.com/nedsnodes/nedsnodes/issues/729. GitHub stamps an inline
 # comment posted as part of a review with its own clock, which can read one
 # second after the review's submitted_at. On PR "A handoff's worktree cleaner
 # stopped at its time bound is counted and leaves no process running"
-# (https://github.com/nedschorus/nedschorus/pull/722) the merge account's
+# (https://github.com/nedsnodes/nedsnodes/pull/722) the merge account's
 # COMMENTED review read 20:43:02Z and its three inline comments 20:43:03Z. F2
 # bounds SINCE at that review, so no accepted SINCE was later than the
 # comments, they always counted as new, and the merge could never pass.
@@ -132,7 +132,7 @@
 # rebuild's. Recorded so the next reader knows it was seen and left.
 set -u
 
-REPO=nedschorus/nedschorus
+REPO=nedsnodes/nedsnodes
 MERGE_ACCOUNT=ned-review-merge
 TOKEN_FILE=$HOME/.config/nedschorus/$MERGE_ACCOUNT.token
 
