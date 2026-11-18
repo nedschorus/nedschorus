@@ -159,12 +159,14 @@ checkout = scratch_checkout({
 os.chmod(checkout / "scripts/run.sh", 0o755)
 for stage in ("1", "2", "3"):
     run(checkout, "--stage", stage)
-check("stage 1 leaves Markdown, captured responses, GHI-MD mirrors, the move program and non-UTF-8 files alone",
+check("stage 1 leaves Markdown, captured responses, the move program and non-UTF-8 files alone",
       read(checkout, "README.md") == "gh pr list --repo nedschorus/nedschorus\n"
       and "nedschorus/nedschorus" in read(checkout, "scripts/merge-gate-test-captured-github-responses/x.json")
       and "nedschorus/nedschorus" in read(checkout, "scripts/project-rename-machine-state-move-hack.py")
-      and read(checkout, "docs/issues/1-a.md") == "nc-systems/x and /home/nedlern/nedschorus-logs\n"
       and (checkout / "scripts/binary.bin").read_bytes() == b"\xff\xfe nedschorus/nedschorus\n")
+check("stages 2 and 3 rewrite a GHI-MD file's paths like any other file's",
+      read(checkout, "docs/issues/1-a.md") == "nn-systems/x and /home/nedlern/nedsnodes-logs\n",
+      read(checkout, "docs/issues/1-a.md"))
 check("a rewritten executable stays executable",
       read(checkout, "scripts/run.sh") == "gh pr list --repo nedsnodes/nedsnodes\n"
       and os.stat(checkout / "scripts/run.sh").st_mode & stat.S_IXUSR)

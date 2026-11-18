@@ -13,7 +13,7 @@ A stage changes only the names its rules match, so it can be run alone on any ch
 
 --residue-report lists every match of an old name left in the checkout's tracked files and paths, each with the allowlist reason that covers it, counted by reason, and prints each match no reason covers.
 
-WHAT IT DOES NOT DO OR HANDLE. It changes only files git tracks; it does not commit. It leaves alone the files the KEPT_PATHS list names: this program and its test, the move program and its test, which hold the old names on purpose, captured GitHub responses, recorded fixtures and transcripts, the GHI-MD mirrors in docs/issues and archived queue records. It does not rewrite prose: glossary terms that start nc-, such as nc-head-commit, the words NedsChorus and NC, Markdown links to github.com/nedschorus/nedschorus, which GitHub redirects, and `nedschorus#<number>` citations wait for a later pull request, and the residue report names each. It keeps names of machine state that no step of the move program renames: /etc/sudoers.d/nedschorus-* and the `user.email` `unconfigured-agent@nedschorus.invalid` that each checkout's git config pins. The residue report finds an old name only in the spellings its OLD_NAME pattern lists. A file that is not UTF-8 is skipped and named.
+WHAT IT DOES NOT DO OR HANDLE. It changes only files git tracks; it does not commit. It leaves alone the files the KEPT_PATHS list names: this program and its test, the move program and its test, which hold the old names on purpose, captured GitHub responses, recorded fixtures and transcripts, and archived queue records. It does not rewrite prose: glossary terms that start nc-, such as nc-head-commit, the words NedsChorus and NC, Markdown links to github.com/nedschorus/nedschorus, which GitHub redirects, and `nedschorus#<number>` citations wait for a later pull request, and the residue report names each. It keeps names of machine state that no step of the move program renames: /etc/sudoers.d/nedschorus-* and the `user.email` `unconfigured-agent@nedschorus.invalid` that each checkout's git config pins. The residue report finds an old name only in the spellings its OLD_NAME pattern lists. A file that is not UTF-8 is skipped and named.
 
 HARM IT CAN CAUSE. It rewrites tracked files in place; `git checkout -- .` and `git clean` on the moved paths undo an invocation whose changes were not committed. A rule that matches too much corrupts the names it touches, which the tests guard against for `sync-`, `async-`, `func-` and `SYNC_`.
 
@@ -47,7 +47,6 @@ KEPT_PATHS = {
     "scripts/merge-gate-test-captured-github-responses/*": "captured GitHub responses, which tests name by literal file name",
     "*-fixtures/*": "recorded fixtures",
     "*.jsonl": "recorded transcripts and streams",
-    "docs/issues/*": "GHI-MD files, edited only through ghi-write; whether rename pull request 3 rewrites their path citations is open",
     "nc-queue/archived/*": "archived queue records",
     "nn-queue/archived/*": "archived queue records",
     "cold-read-reviewer-test-cases/*": "frozen documents the cold-read reviewer tests read",
