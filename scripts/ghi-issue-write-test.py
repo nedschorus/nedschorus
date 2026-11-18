@@ -4994,7 +4994,7 @@ def run_landed_design_cases(scratch: Path):
               and "/issues/120" in str(refusal), str(refusal))
     moved_before_rename = Recorder({
         GHI_MD_LISTING_CALL: Completed(""),
-        f"git ls-tree -r --name-only -z {MAIN_COMMIT} nc-systems/": Completed(
+        f"git ls-tree -r --name-only -z {MAIN_COMMIT} nn-systems/": Completed(
             f"{LANDED_DESIGN}\0"),
         f"git show {MAIN_COMMIT}:{LANDED_DESIGN}": Completed(
             filed_then_moved.replace(
