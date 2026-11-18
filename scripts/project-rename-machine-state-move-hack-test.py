@@ -166,6 +166,22 @@ class Fixture:
             (log_store_tree / "log").write_text("entry\n")
         (self.config / "nedschorus").mkdir(parents=True)
         (self.config / "nedschorus" / "token").write_text("secret\n")
+        (self.config / "nedschorus" / "nc-shared-database-service.token").write_text("service token\n")
+        (self.config / "nedschorus" / "nc-shared-database-service-accepted-tokens").write_text("a\nb\n")
+        state = self.home / ".local" / "state" / "nedschorus"
+        (state / "user-alerts" / "pending").mkdir(parents=True)
+        (state / "user-alerts" / "pending" / "alert.json").write_text("{}\n")
+        (state / "nc-shared-database.sqlite3").write_text("database\n")
+        (state / "nc-shared-database.sqlite3-wal").write_text("wal\n")
+        (state / "other.json").write_text("{}\n")
+        (self.home / ".local" / "share" / "nedschorus" / "cosmic-ray-venv").mkdir(parents=True)
+        for cache in ("nedschorus-markdown-commonmark-parser-install", "nedschorus-test-suite-recorded-inputs", "pip"):
+            (self.home / ".cache" / cache).mkdir(parents=True)
+            (self.home / ".cache" / cache / "x").write_text("x\n")
+        backups = self.home / "backups" / "nc-shared-database"
+        backups.mkdir(parents=True)
+        (backups / "nc-shared-database-20261101T021500Z.sqlite3").write_text("backup\n")
+        (backups / "nc-shared-database-20261102T021500Z.sqlite3.failed-integrity-check").write_text("bad\n")
         self.claude_json = self.home / ".claude.json"
         self.claude_json.write_text(json.dumps({
             "projects": {str(checkout): {"allowedTools": []}, str(self.worktrees["outside"]): {},
@@ -243,6 +259,8 @@ def run_apply_check_rollback_on_ned_box():
         before = fixture.snapshot()
         code, output = fixture.run("--check")
         expect("ned-box: --check before --apply says it would proceed", code == 0 and "--apply would proceed" in output, output)
+        expect("ned-box: --check counts step 6a's renames: two directories, two caches, the backups directory, "
+               "two database files, two backups and two tokens", "step 6a: 11" in output, output)
         expect("ned-box: --check changes nothing", fixture.snapshot() == before,
                snapshot_difference(before, fixture.snapshot()))
         code, output = fixture.run("--apply")
@@ -297,6 +315,29 @@ def run_apply_check_rollback_on_ned_box():
                and (claude / "tasks" / "other-tasks").is_dir())
         expect("step 6: ~/.config/nedschorus is renamed and a symlink left",
                (fixture.config / "nedsnodes" / "token").is_file() and os.readlink(fixture.config / "nedschorus") == "nedsnodes")
+        state = home / ".local" / "state" / "nedsnodes"
+        expect("step 6a: ~/.local/state is renamed, a symlink left, and the database file and its -wal take nn- names",
+               os.readlink(home / ".local" / "state" / "nedschorus") == "nedsnodes"
+               and (state / "nn-shared-database.sqlite3").read_text() == "database\n"
+               and (state / "nn-shared-database.sqlite3-wal").is_file() and (state / "other.json").is_file()
+               and (state / "user-alerts" / "pending" / "alert.json").is_file()
+               and not (state / "nc-shared-database.sqlite3").exists())
+        expect("step 6a: ~/.local/share and each ~/.cache/nedschorus-* are renamed; another cache stays",
+               (home / ".local" / "share" / "nedsnodes" / "cosmic-ray-venv").is_dir()
+               and not os.path.lexists(home / ".local" / "share" / "nedschorus")
+               and (home / ".cache" / "nedsnodes-markdown-commonmark-parser-install" / "x").is_file()
+               and (home / ".cache" / "nedsnodes-test-suite-recorded-inputs" / "x").is_file()
+               and (home / ".cache" / "pip" / "x").is_file()
+               and not os.path.lexists(home / ".cache" / "nedschorus-test-suite-recorded-inputs"))
+        expect("step 6a: the backups directory and each backup take nn- names",
+               sorted(path.name for path in (home / "backups" / "nn-shared-database").iterdir())
+               == ["nn-shared-database-20261101T021500Z.sqlite3",
+                   "nn-shared-database-20261102T021500Z.sqlite3.failed-integrity-check"]
+               and not os.path.lexists(home / "backups" / "nc-shared-database"))
+        expect("step 6a: the shared database's two token files in ~/.config/nedsnodes take nn- names",
+               (fixture.config / "nedsnodes" / "nn-shared-database-service.token").read_text() == "service token\n"
+               and (fixture.config / "nedsnodes" / "nn-shared-database-service-accepted-tokens").is_file()
+               and not (fixture.config / "nedsnodes" / "nc-shared-database-service.token").exists())
         rewritten = json.loads(fixture.claude_json.read_text())
         backups = list(home.glob(".claude.json.before-project-rename-*"))
         expect("step 7: ~/.claude.json's paths and repository are rewritten; a lookalike path is not",
@@ -325,7 +366,7 @@ def run_apply_check_rollback_on_ned_box():
         code, output = fixture.run("--check")
         expect("--check after --apply: refuses a second --apply, and every worktree works",
                code == 0 and "a journal already exists" in output and "git lists 5; `git status` works in 5, fails in 0, and 0 have no directory" in output
-               and "step 1: 0" in output and "step 4: 0" in output, output)
+               and "step 1: 0" in output and "step 4: 0" in output and "step 6a: 0" in output, output)
         code, output = fixture.run("--rollback")
         expect("--rollback succeeds", code == 0 and "rolled back" in output, output)
         after = fixture.snapshot()
@@ -416,6 +457,12 @@ def with_variable(environment_function, name, value):
 
 
 def run_refusal_cases():
+    refusal_case("the new name of a shared database file already exists",
+                 lambda f: (f.home / ".local" / "state" / "nedschorus" / "nn-shared-database.sqlite3").write_text("x\n"),
+                 "nn-shared-database.sqlite3 already exists, and step 6a would create it")
+    refusal_case("~/.local/state/nedsnodes already exists",
+                 lambda f: (f.home / ".local" / "state" / "nedsnodes").mkdir(),
+                 "/.local/state/nedsnodes already exists, and step 6a would create it")
     refusal_case("a crontab line names the checkout",
                  lambda f: append(f.fakes / "crontab.txt", f"* * * * * python3 {f.checkout}/scripts/x.py\n"),
                  "1 crontab line(s) run from a moving path")
