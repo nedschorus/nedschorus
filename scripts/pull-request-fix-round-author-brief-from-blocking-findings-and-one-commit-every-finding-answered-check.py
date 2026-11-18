@@ -990,7 +990,8 @@ def commits_since(frozen_head, commit):
 def commit_changes_only_architecture_overviews(commit):
     changed = git_output.nul_separated_fields(git(["diff", "-z", "--name-only", "--no-renames", f"{commit}^", commit]))
     return bool(changed) and all(
-        review_plan.overview_claim_check.nc_architecture_overview_described_system_name_from_page_path(path)
+        review_plan.overview_path_reader.architecture_overview_level_and_described_code_directory_from_path(
+            path, lambda directory: bool(git(["ls-tree", "-d", "--name-only", commit, directory]).strip()))
         for path in changed)
 
 
