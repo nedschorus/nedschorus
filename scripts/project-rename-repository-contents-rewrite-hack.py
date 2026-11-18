@@ -108,7 +108,8 @@ STAGE_RULES = {
         Rule(BH + r"nedschorus(?=-(?:<[^>\n]*>|\{[^}\n]*\}|[^\s\"'/`<{])*-tasks" + ENDH + ")", "nedsnodes"),
         Rule(r"""(?<=["'])""" + TASK_LIST_ID_PREFIX_BEFORE_PROJECT_RENAME_CONSTANT + r"""nedschorus-(?=["'])""", "nedsnodes-"),
         Rule(BH + r"nc-shared-database-service(?=\.service\b)", "nn-shared-database-service"),
-        Rule(r"(?<=systemctl --user status )nc-shared-database-service" + ENDH, "nn-shared-database-service"),
+        # The unit as a systemctl or journalctl argument, where it may go without its .service suffix.
+        Rule(r"(?:(?<=--user status )|(?<=-u ))nc-shared-database-service" + ENDH, "nn-shared-database-service"),
         # The test suites' systemd slice, made at run time and written with systemd's escape for a hyphen.
         Rule(r"(?<![A-Za-z0-9_])nc(?=\\x2dtest\\x2dsuites\.slice)", "nn"),
     ],
