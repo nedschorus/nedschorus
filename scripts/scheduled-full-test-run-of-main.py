@@ -11,7 +11,7 @@ Usage:
                 is made from; default, the clone this file is in
   --log-store-root
                 the log-store's root, a path on ned-box; default
-                /home/nedlern/nedschorus-logs
+                /home/nedlern/nedsnodes-logs
   --test-suite-runner-program
                 the program run in place of the worktree's
                 scripts/run-all-test-suites.py, by the same interpreter with
@@ -72,7 +72,7 @@ WHAT ONE RUN DOES, in order.
 
 THE RECORD is one text file per machine and day in the log-store:
 
-  nedlern@ned-box:/home/nedlern/nedschorus-logs/scheduled-full-test-runs-of-main/<machine>/<YYYY-MM-DD>.txt
+  nedlern@ned-box:/home/nedlern/nedsnodes-logs/scheduled-full-test-runs-of-main/<machine>/<YYYY-MM-DD>.txt
 
 <machine> is `ned-box` or `mac`, the spellings the log-store's agent-session-files-by-machine/
 directory uses. The date is the date in America/Los_Angeles when the run
@@ -136,7 +136,7 @@ a machine has installed with the table.
   ned-box: one cron line, run from the reference clone with the system's
   Python. ned-box's clock is America/Los_Angeles.
 
-    0 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/scheduled-full-test-run-of-main.py >> /home/nedlern/.claude/scheduled-full-test-run-of-main.log 2>&1
+    0 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/scheduled-full-test-run-of-main.py >> /home/nedlern/.claude/scheduled-full-test-run-of-main.log 2>&1
 
   Both streams are appended to that file because ned-box has no mail
   transfer agent, so cron discards what a job prints: a refusal that writes
@@ -201,7 +201,7 @@ git_output = module_loaded_by_path(
     REPOSITORY_ROOT / "nc-systems" / "general-tools"
     / "git-machine-readable-output-runner-and-parser-common.py")
 
-SCHEDULED_FULL_TEST_RUN_DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
+SCHEDULED_FULL_TEST_RUN_DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedsnodes-logs"
 # Use the log-store’s established machine and kind names.
 SCHEDULED_FULL_TEST_RUNS_KIND_DIRECTORY_NAME = "scheduled-full-test-runs-of-main"
 SCHEDULED_FULL_TEST_RUN_MACHINE_NAME_ON_NED_BOX = "ned-box"

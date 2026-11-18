@@ -165,7 +165,7 @@ equals that pull request's `refs/pull/<number>/head`, as GitHub reports just
 before, and that no open task on that machine names in its `branches` field.
 When GitHub cannot be reached, it deletes no branch with `-D`. It names each
 deleted branch in the report modes. origin/main is read as fetched; a stale
-ref only keeps more. A task list under ~/.claude/tasks/nedschorus-*-tasks
+ref only keeps more. A task list under ~/.claude/tasks/nedsnodes-*-tasks
 that cannot be read in full, or a ~/.claude/tasks that exists but cannot be
 listed, stops every `-D` deletion, as GitHub out of reach does. GitHub out of
 reach is named on a line of its own outside --only-done, and is no failure.
@@ -241,7 +241,7 @@ id. --only-done prints only the ones --remove would delete.
 A live owner's work-snapshot is never touched.
 
 Last, it closes the tasks that `uncommitted-work-snapshots.py restore` opens,
-in every task list on the machine, ~/.claude/tasks/nedschorus-*-tasks, or under
+in every task list on the machine, ~/.claude/tasks/nedsnodes-*-tasks, or under
 the directory CLEAN_WORKTREES_TASK_LISTS_DIRECTORY_OVERRIDE names, which is how
 the tests keep out of the machine's task lists. Each
 task not marked completed whose subject starts with
@@ -281,7 +281,7 @@ and each branch it deletes to its machine's file in the log-store, whichever
 program ran it, so a removal can be traced afterwards without the caller's
 output:
 
-  nedlern@ned-box:/home/nedlern/nedschorus-logs/clean-worktrees-removed-worktrees-and-deleted-branches-log/<machine>.txt
+  nedlern@ned-box:/home/nedlern/nedsnodes-logs/clean-worktrees-removed-worktrees-and-deleted-branches-log/<machine>.txt
 
 <machine> is `ned-box` or `mac`. Each line is tab-separated: the UTC time,
 the machine, `removed-worktree` or `deleted-branch`, then key=value fields:
@@ -310,7 +310,7 @@ with nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py: on
 the Mac a launchd job at 06:30, so a run missed while the Mac sleeps starts at
 the next wake; on ned-box the cron line
 
-    30 6 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/clean-worktrees.py --remove >> /home/nedlern/.claude/clean-worktrees.log 2>&1
+    30 6 * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/clean-worktrees.py --remove >> /home/nedlern/.claude/clean-worktrees.log 2>&1
 
 It does not fetch, apart from the fetch before it judges the restored branches'
 tasks; a stale origin/main only keeps more.
@@ -402,7 +402,7 @@ AGENT_HOME_MARKER_FILE_NAME = "agent-home-marker"
 MERGE_LANE_REVIEW_CHECKOUT_NAME_PULL_REQUEST_NUMBER_PART = re.compile(r"(?:pr)?(\d+)(?:r\d*)?[a-z]?")
 
 REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_DIRECTORY = (
-    "/home/nedlern/nedschorus-logs/clean-worktrees-removed-worktrees-and-deleted-branches-log")
+    "/home/nedlern/nedsnodes-logs/clean-worktrees-removed-worktrees-and-deleted-branches-log")
 REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_FILE_OVERRIDE_VARIABLE = (
     "CLEAN_WORKTREES_REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_FILE_OVERRIDE")
 REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_WRITE_TIMEOUT_SECONDS = 30
@@ -1987,7 +1987,7 @@ def task_lists_directory_from_override_or_home_claude_tasks():
     return Path(override) if override else Path.home() / ".claude" / "tasks"
 
 
-NEDSCHORUS_TASK_LISTS_GLOB = "nedschorus-*-tasks"
+NEDSNODES_TASK_LISTS_GLOB = "nedsnodes-*-tasks"
 
 
 def agent_seat_task_list_directory_paths_in_claude_code_tasks_directory_collect(task_lists_directory):
@@ -2000,7 +2000,7 @@ def agent_seat_task_list_directory_paths_in_claude_code_tasks_directory_collect(
     except FileNotFoundError:
         return []
     return [path for path in sorted(Path(task_lists_directory) / name for name in names
-                                    if fnmatch.fnmatchcase(name, NEDSCHORUS_TASK_LISTS_GLOB))
+                                    if fnmatch.fnmatchcase(name, NEDSNODES_TASK_LISTS_GLOB))
             if stat.S_ISDIR(os.stat(path).st_mode)]
 RESTORED_BRANCH_TASKS_CLOSE_GIT_FETCH_TIMEOUT_SECONDS = 300
 

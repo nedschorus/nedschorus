@@ -50,10 +50,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 NC_SHARED_DATABASE_SERVICE_URL = "http://ned-box.local:8765"
-NC_SHARED_DATABASE_SERVICE_TOKEN_FILE_PATH = (Path.home() / ".config" / "nedschorus"
+NC_SHARED_DATABASE_SERVICE_TOKEN_FILE_PATH = (Path.home() / ".config" / "nedsnodes"
                                                / "nc-shared-database-service.token")
 NC_SHARED_DATABASE_SERVICE_ACCEPTED_TOKENS_FILE_ON_NED_BOX = (
-    "~/.config/nedschorus/nc-shared-database-service-accepted-tokens")
+    "~/.config/nedsnodes/nc-shared-database-service-accepted-tokens")
 NC_SHARED_DATABASE_SERVICE_CALL_TIMEOUT_SECONDS = 2
 NC_SHARED_DATABASE_SERVICE_CALL_AGAIN_AFTER_SECONDS = 30
 THIS_MACHINE = "mac" if sys.platform == "darwin" else "ned-box"
@@ -82,10 +82,10 @@ SUBAGENT_PASSES_IT_TO_DISPATCHING_AGENT_LINE = (
     "If you are a subagent, on either machine, and a line above says to tell the user, send "
     "the words that line quotes to the agent that dispatched you instead.")
 NC_SHARED_DATABASE_SERVICE_ON_NED_BOX_AND_JOBS_ON_BOTH_MACHINES_INSTALL_FROM_THE_MAC_COMMAND = (
-    "python3 ~/Projects/nedschorus/nc-systems/nc-shared-database/"
+    "python3 ~/Projects/nedsnodes/nc-systems/nc-shared-database/"
     "nc-shared-database-service-on-ned-box-and-jobs-on-both-machines-install-from-the-mac.py")
 NC_SHARED_DATABASE_SERVICE_STATUS_COMMAND_ON_NED_BOX = (
-    "systemctl --user status nc-shared-database-service")
+    "systemctl --user status nn-shared-database-service")
 
 
 def _not_reached(method, url, what_happened, sent_event=None):

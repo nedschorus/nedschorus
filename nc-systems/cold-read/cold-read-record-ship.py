@@ -8,12 +8,12 @@ Usage:
 WHAT THE LOG-STORE IS (user-ruled 2026-09-07, walk
 docs/walk/cold-read-records-branch-and-agent-instructions-queue.md): the
 repository is the system and a reviewer report is a log, so cold-read-records
-never enter git. They go to the log-store, `/home/nedlern/nedschorus-logs/` on
+never enter git. They go to the log-store, `/home/nedlern/nedsnodes-logs/` on
 ned-box, one subdirectory per kind of byproduct; cold-read-records are the kind
 `cold-read-records/`, keeping their directory names. A cold-read-record
 there is cited with its host in scp form, so an agent on either machine
 knows the command:
-`nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-05-SKILL/dispositions.md` (a record from before triage.md took that file's name).
+`nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/2026-09-05-SKILL/dispositions.md` (a record from before triage.md took that file's name).
 The cold-read-record in the checkout stays what it was: a
 gitignored directory under cold-read-records/, written by the cold-read-grid
 and by the agent.
@@ -81,7 +81,7 @@ with the design:
      reviewers' findings into it, and it is written again with the user's
      rulings once the approval-walk closes. Rules 1 and 2 refused that second
      write. What made the defect visible: the post-walk triage of
-     `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-14-nedschorus-file-naming-and-location-standards-3/`
+     `nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/2026-09-14-nedschorus-file-naming-and-location-standards-3/`
      reached the store on 2026-09-20 ONLY because the file had also been
      renamed dispositions.md -> triage.md on 2026-09-18, so the shipper saw a
      name it did not hold and a new name is an add; under its old name that
@@ -249,7 +249,7 @@ PROGRAM = "cold-read-record-ship"
 
 # The one constant. Host and path in scp form; the path's parent is the
 # store's root, where the README lives.
-LOG_STORE_RECORDS_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records"
+LOG_STORE_RECORDS_DESTINATION = "nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records"
 LOG_STORE_HOSTNAME = "ned-box"
 DESTINATION_ENVIRONMENT_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
 
@@ -309,14 +309,14 @@ EXIT_BAD_INVOCATION = 64
 # owner changes far less often than a naming rule, and the naming rule stays
 # with the owner.
 STORE_README = """\
-# nedschorus-logs
+# nedsnodes-logs
 
 The log-store: the byproducts of the nedschorus project's work that are not
 the system. Good data, never part of the repository. One subdirectory per
 kind.
 
 Cite a file here with its host, in the form scp takes:
-`nedlern@ned-box:/home/nedlern/nedschorus-logs/<kind>/<path>`.
+`nedlern@ned-box:/home/nedlern/nedsnodes-logs/<kind>/<path>`.
 
 What each kind holds and how its files are named is decided by its owner,
 in the nedschorus repository, which this machine also clones:

@@ -1771,15 +1771,15 @@ def test_the_log_store_is_found_on_ned_box_or_through_the_macs_mount():
     root = SUITE_ROOT / "log-store-lookup"
 
     class Shipper:
-        LOG_STORE_RECORDS_DESTINATION = f"nedlern@ned-box:{root}/box-home/nedschorus-logs/cold-read-records"
+        LOG_STORE_RECORDS_DESTINATION = f"nedlern@ned-box:{root}/box-home/nedsnodes-logs/cold-read-records"
 
         @staticmethod
         def split_destination(destination):
             host, _, path = destination.partition(":")
             return host, Path(path)
 
-    on_box, on_mac = root / "box-home" / "nedschorus-logs" / "cold-read-records", \
-        root / "mac-mount" / "nedschorus-logs" / "cold-read-records"
+    on_box, on_mac = root / "box-home" / "nedsnodes-logs" / "cold-read-records", \
+        root / "mac-mount" / "nedsnodes-logs" / "cold-read-records"
     found, tried = program.reachable_log_store_records(Shipper, str(root / "box-home"), str(root / "mac-mount"))
     check("with neither path a directory, the log-store is not found, and both paths are named as tried",
           found is None and tried == [on_box, on_mac], repr((found, tried)))
@@ -1791,8 +1791,8 @@ def test_the_log_store_is_found_on_ned_box_or_through_the_macs_mount():
     check("on ned-box, the log-store is found at its own path", found == on_box, repr(found))
     found, tried = program.reachable_log_store_records()
     check("by default the path comes from cold-read-record-ship.py's LOG_STORE_RECORDS_DESTINATION",
-          tried[0] == Path("/home/nedlern/nedschorus-logs/cold-read-records")
-          and tried[1] == Path("/Volumes/nedhome/nedschorus-logs/cold-read-records"), repr(tried))
+          tried[0] == Path("/home/nedlern/nedsnodes-logs/cold-read-records")
+          and tried[1] == Path("/Volumes/nedhome/nedsnodes-logs/cold-read-records"), repr(tried))
 
 
 def test_an_excerpt_keeps_a_text_of_60_characters_whole_and_cuts_a_longer_one_to_57_and_dots():

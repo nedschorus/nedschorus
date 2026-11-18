@@ -36,7 +36,7 @@ WHAT ONE RUN DOES, in order.
      claude; and that its transcript trailer names claude's session id.
   4. Writes the record, a header line, step 3's PASS and FAIL lines and a
      VERDICT line, to the log-store:
-     nedlern@ned-box:/home/nedlern/nedschorus-logs/uncommitted-work-snapshot-hook-scheduled-checks-that-real-claude-session-is-recorded-as-owner/<machine>/<YYYY-MM-DD>.txt,
+     nedlern@ned-box:/home/nedlern/nedsnodes-logs/uncommitted-work-snapshot-hook-scheduled-checks-that-real-claude-session-is-recorded-as-owner/<machine>/<YYYY-MM-DD>.txt,
      where <machine> is ned-box or mac and the date is in America/Los_Angeles;
      from the Mac it is written over ssh.
   5. Prints the record and its citation, removes the scratch clone, and exits
@@ -54,7 +54,7 @@ schedule is made.
 
   ned-box: one cron line.
 
-    30 4 * * 0 /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py >> /home/nedlern/.claude/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.log 2>&1
+    30 4 * * 0 /usr/bin/python3 /home/nedlern/Projects/nedsnodes/nc-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py >> /home/nedlern/.claude/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.log 2>&1
 
   the Mac: a launchd job at the same time; a run missed while the Mac
   sleeps starts at the next wake.
@@ -95,7 +95,7 @@ LIVE_CHECK_PROMPT = (f"Run this one shell command and nothing else: "
 LIVE_CHECK_MODEL = "haiku"
 LIVE_CHECK_AGENT_SEAT = PROGRAM
 DEFAULT_TIMEOUT_SECONDS = 300
-LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
+LOG_STORE_ROOT = "/home/nedlern/nedsnodes-logs"
 RECORDS_KIND_DIRECTORY_NAME = "uncommitted-work-snapshot-hook-scheduled-checks-that-real-claude-session-is-recorded-as-owner"
 RECORD_WRITE_TIMEOUT_SECONDS = 60
 EXIT_PASSED, EXIT_CHECK_FAILED, EXIT_RECORD_NOT_WRITTEN = 0, 1, 2

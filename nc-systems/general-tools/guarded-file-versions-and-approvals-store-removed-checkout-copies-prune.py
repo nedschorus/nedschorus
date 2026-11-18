@@ -79,7 +79,7 @@ beside it, scheduled-jobs-on-each-machine.json, where a change to the schedule i
 
   ned-box: one cron line.
 
-    0 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.py >> /home/nedlern/.claude/guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.log 2>&1
+    0 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/nc-systems/general-tools/guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.py >> /home/nedlern/.claude/guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.log 2>&1
 
   the Mac: a launchd job at the same time; a run missed while the Mac sleeps starts at the next
   wake.

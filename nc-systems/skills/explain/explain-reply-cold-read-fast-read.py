@@ -33,9 +33,9 @@ FAST_READ_PROGRAM = REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-fast-rea
 FAST_READ_PROGRAM_OVERRIDE_VARIABLE = "EXPLAIN_REPLY_COLD_READ_FAST_READ_PROGRAM_OVERRIDE"
 FAST_READ_TIMEOUT_SECONDS = 540
 DRAFT_FILE_STEM = "explain-reply-draft"
-# The handoff-supervisor sets nedschorus-<seat name>-tasks in each seat's environment.
+# The handoff-supervisor sets nedsnodes-<seat name>-tasks in each seat's environment.
 SEAT_NAME_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_TASK_LIST_ID"
-SEAT_NAME_PREFIX = "nedschorus-"
+SEAT_NAME_PREFIX = "nedsnodes-"
 SEAT_NAME_SUFFIX = "-tasks"
 NO_SEAT_NAME = "no-seat"
 USER_WORDS_LABEL = "The user wrote:"

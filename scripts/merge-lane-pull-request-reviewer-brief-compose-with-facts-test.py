@@ -108,9 +108,9 @@ def run_program(scratch, helpers, specs, *extra, gh_routes=None, token=TEST_TOKE
     (scratch / "gh-calls.jsonl").write_text("")
     home = scratch / "home"
     shutil.rmtree(home, ignore_errors=True)
-    (home / ".config" / "nedschorus").mkdir(parents=True)
+    (home / ".config" / "nedsnodes").mkdir(parents=True)
     if token is not None:
-        (home / ".config" / "nedschorus" / "ned-review-merge.token").write_text(token + "\n")
+        (home / ".config" / "nedsnodes" / "ned-review-merge.token").write_text(token + "\n")
     return subprocess.run(
         [sys.executable, str(PROGRAM), str(specs_file),
          "--merge-lane-worktrees-and-outputs-directory", str(helpers),
@@ -263,7 +263,7 @@ def main():
         program_spec = importlib.util.spec_from_file_location("brief_compose", PROGRAM)
         program = importlib.util.module_from_spec(program_spec)
         program_spec.loader.exec_module(program)
-        log_store = Path("/home/nedlern/nedschorus-logs")
+        log_store = Path("/home/nedlern/nedsnodes-logs")
         default_parent = program.DEFAULT_MERGE_LANE_PULL_REQUEST_REVIEWER_SCRATCH_DIRECTORIES_PARENT_DIRECTORY
         check("the default reviewer scratch parent is outside the log-store, which the "
               "standing text forbids the reviewer to write to",

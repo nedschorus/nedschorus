@@ -39,7 +39,7 @@ On macOS the sandbox is `sandbox-exec`, started by the command prefix that
 the program that runs agy for cold reads. The sandbox-exec profile, built by
 `sandbox_exec_profile()` in the same file, denies reading and writing only the
 credential paths, which that function assembles from the lists in
-nc-systems/cold-read/cold-read-cell-common.py: ~/.config/nedschorus,
+nc-systems/cold-read/cold-read-cell-common.py: ~/.config/nedsnodes,
 ~/.config/gh, ~/.ssh, ~/.steam and ~/nedsmessenger, Claude's and Codex's login files, and files named
 *.token or .env. The
 rest of the home stays readable and writable, and agy stays on PATH, so a plain `agy`

@@ -1,6 +1,6 @@
 # Proposed improvements or changes: nedschorus-handoff-architecture-overview.md (overview claim check, 2026-11-05)
 
-Assertions of the overview that the claim check against commit d08dc058fd63a331f346678ce36f067e533aa856 found contradicted or unsupported and ranked fix later: loose, incomplete or badly worded, but no agent would act wrongly on them. Its report is /home/nedlern/nedschorus-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/4f1e208f47643e513f48ee18957408dc1df2de05-2026-11-05T22-27-21-827479Z.md. Regular maintenance fixes them in the overview.
+Assertions of the overview that the claim check against commit d08dc058fd63a331f346678ce36f067e533aa856 found contradicted or unsupported and ranked fix later: loose, incomplete or badly worded, but no agent would act wrongly on them. Its report is /home/nedlern/nedsnodes-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/4f1e208f47643e513f48ee18957408dc1df2de05-2026-11-05T22-27-21-827479Z.md. Regular maintenance fixes them in the overview.
 
 ## E1 — possible problem: an assertion of the overview is contradicted
 
@@ -32,7 +32,7 @@ State: open
 
 ## E5 — possible problem: an assertion of the overview is contradicted
 
-Claim: The reference-checkout, `~/Projects/nedschorus` on each machine: fast-forwarded to main by `launch-claude-ubuntu` on ned-box, by `launch-claude-mac` on the Mac, at each non-consulting handoff by every supervisor running from it, and by the restart program; put back on main by the leftovers program.
+Claim: The reference-checkout, `~/Projects/nedsnodes` on each machine: fast-forwarded to main by `launch-claude-ubuntu` on ned-box, by `launch-claude-mac` on the Mac, at each non-consulting handoff by every supervisor running from it, and by the restart program; put back on main by the leftovers program.
 Goes wrong when: a reader takes the assertion as exact.
 The claim check's evidence:
 > - A writer is missing: the Stop hook checkout-freshness-catch-up.py also fast-forwards the reference-checkout at each turn end.
@@ -43,7 +43,7 @@ State: open
 
 ## E6 — possible problem: an assertion of the overview is contradicted
 
-Claim: `NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER`: set by `scripts/ghi-guide-agent-ask.py` for the `claude` it starts; silences `handoff-context-threshold-hook.py`; removed by the supervisor from every agent-session it starts.
+Claim: `NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER`: set by `scripts/ghi-guide-agent-ask.py` for the `claude` it starts; silences `handoff-context-threshold-hook.py`; removed by the supervisor from every agent-session it starts.
 Goes wrong when: a reader takes the assertion as exact.
 The claim check's evidence:
 > - The setter, the threshold-hook read and the removal hold: ghi-guide-agent-ask.py:575; handoff-context-threshold-hook.py:513-514 `if os.environ.get(REINCARNATION_OWNED_BY_CALLER_VARIABLE): return 0`; handoff-supervisor.py:325.

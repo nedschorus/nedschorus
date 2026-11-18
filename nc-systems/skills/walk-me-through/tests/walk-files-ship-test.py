@@ -35,8 +35,8 @@ import traceback
 SHIPPER_DIR = pathlib.Path(__file__).resolve().parents[1]
 SHIP = SHIPPER_DIR / "walk-files-ship.py"
 DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
-RULED_RECORDS_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records"
-RULED_WALK_PATH = "/home/nedlern/nedschorus-logs/walk"
+RULED_RECORDS_DESTINATION = "nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records"
+RULED_WALK_PATH = "/home/nedlern/nedsnodes-logs/walk"
 
 # What a stub `ssh` answers to the two calls that put the copied files in
 # place, as a store no other shipment is writing to answers: every placed file
@@ -246,7 +246,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           "REPLACED" not in result.stdout)
     check("the replacement tells the agent to match the displaced digest across the snapshots at the file's full path in the store on ned-box, not to search by path: a replaced file keeps its path, so the newest snapshots holding it hold the replacement",
           ("sha256sum /mnt/backup/timeshift/snapshots/*/localhost"
-           f"/home/nedlern/nedschorus-logs/walk/{WALK}-minutes.md") in result.stderr
+           f"/home/nedlern/nedsnodes-logs/walk/{WALK}-minutes.md") in result.stderr
           and "find-deleted-path-across-backups" not in result.stderr
           and "sudo timeshift --list" not in result.stderr
           and "every ten minutes" not in result.stderr, result.stderr)
@@ -1523,13 +1523,13 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-left-behind-") as 
 
     remote_sentences = left.staging_directory_left_behind_failed_line_sentences_with_path_reason_and_rm_command(
         "nedlern@ned-box",
-        pathlib.PurePosixPath("/home/nedlern/nedschorus-logs/walk/.ship-staging-w-0123456789ab"),
+        pathlib.PurePosixPath("/home/nedlern/nedsnodes-logs/walk/.ship-staging-w-0123456789ab"),
         "ssh exit 255")
     check("from another machine the staging directory is named with its host, and the "
           "command that deletes it runs over ssh, quoted for the remote shell",
-          "directory nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/.ship-staging-w-0123456789ab "
+          "directory nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/.ship-staging-w-0123456789ab "
           in remote_sentences
-          and "`ssh nedlern@ned-box 'rm -rf -- /home/nedlern/nedschorus-logs/walk/.ship-staging-w-0123456789ab'`"
+          and "`ssh nedlern@ned-box 'rm -rf -- /home/nedlern/nedsnodes-logs/walk/.ship-staging-w-0123456789ab'`"
           in remote_sentences, remote_sentences)
 
     def rerun_line_for(directory, walk="named-walk-2026-10-31"):

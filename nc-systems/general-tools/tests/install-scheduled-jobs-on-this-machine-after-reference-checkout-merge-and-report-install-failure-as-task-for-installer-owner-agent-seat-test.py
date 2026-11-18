@@ -71,7 +71,7 @@ with tempfile.TemporaryDirectory() as scratch:
     stand_in = scratch / "stand-in-installer.py"
     stand_in.write_text(STAND_IN_INSTALLER, encoding="utf-8")
     task_lists = scratch / "tasks"
-    list_directory = task_lists / "nedschorus-reboot-test-tasks"
+    list_directory = task_lists / "nedsnodes-reboot-test-tasks"
     repository = scratch / "clone"
     elsewhere = scratch / "elsewhere"
     os.environ.update(GIT_AUTHOR_NAME="test", GIT_AUTHOR_EMAIL="test@test.invalid",
@@ -238,7 +238,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and "writing the task into the task list directory" in errors
           and "NotADirectoryError" in errors
           and "\nIf you are reboot-test, put right, on ned-box, what stopped that write, "
-              f"such as the permissions of {not_a_directory}/nedschorus-reboot-test-tasks" in errors
+              f"such as the permissions of {not_a_directory}/nedsnodes-reboot-test-tasks" in errors
           and f"Then run `cd {repository} && python3 {after_merge.PROGRAM}` on ned-box, which runs "
               "the install again.\nIf that install fails again, the program writes the failure as a "
               "task on your task list and exits 0 with nothing printed" in errors

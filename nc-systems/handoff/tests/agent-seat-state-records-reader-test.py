@@ -252,11 +252,11 @@ with tempfile.TemporaryDirectory() as scratch:
           handoff("session-handoff-sequence-number: 4\nask-user-before-restart: pause\n", consumed=4) is None)
 
     # seat_of
-    for list_id, expected in (("nedschorus-reboot-test-tasks", "reboot-test"),
+    for list_id, expected in (("nedsnodes-reboot-test-tasks", "reboot-test"),
                               ("nedschorus-merge-lane-2", "merge-lane-2"),
                               ("merge-lane-2-tasks", "merge-lane-2"),
                               ("some-other-list", "some-other-list"),
-                              ("nedschorus--tasks", "nedschorus--tasks")):
+                              ("nedsnodes--tasks", "nedsnodes--tasks")):
         got = reader.seat_of(list_id)
         check(f"seat_of: {list_id} names {expected}", got == expected, got)
 

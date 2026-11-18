@@ -89,7 +89,7 @@ def test_hook_alone():
         (home / "agents" / SEAT).mkdir(parents=True)
         (root / "empty-gitconfig").write_text("")
         environment = {key: value for key, value in os.environ.items()
-                       if not key.startswith(("GIT_", "CLAUDE_", "NEDSCHORUS_"))}
+                       if not key.startswith(("GIT_", "CLAUDE_", "NEDSNODES_"))}
         environment.update(HOME=str(home), GIT_CONFIG_NOSYSTEM="1",
                            GIT_CONFIG_GLOBAL=str(root / "empty-gitconfig"), GIT_AUTHOR_NAME=SEAT)
         origin, clone = root / "origin.git", root / "clone"

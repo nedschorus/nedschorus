@@ -302,7 +302,7 @@ EXIT_SUITE_FAILS_ON_UNMUTATED_HEAD = 3
 
 COSMIC_RAY_TOOLS = ("cosmic-ray", "cr-filter-git", "cr-filter-pragma", "cr-filter-lines")
 # In a home directory, not /tmp, so the venv outlasts a reboot or a /tmp clean-up.
-DEFAULT_COSMIC_RAY_VENV = Path.home() / ".local" / "share" / "nedschorus" / "cosmic-ray-venv"
+DEFAULT_COSMIC_RAY_VENV = Path.home() / ".local" / "share" / "nedsnodes" / "cosmic-ray-venv"
 COSMIC_RAY_VERSION = "8.7.0"
 
 QUICK_MUTATION_PASS_COMMAND_LINE_FLAG = "--quick-mutation-pass"

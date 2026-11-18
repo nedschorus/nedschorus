@@ -948,7 +948,7 @@ def test_supervisor_appends_the_list():
 # ---------------------------------------------------------------- restore
 
 
-RESTORE_TASK_LIST_ID = "nedschorus-seat-five-tasks"
+RESTORE_TASK_LIST_ID = "nedsnodes-seat-five-tasks"
 RESTORE_ENVIRONMENT = {"CLAUDE_CODE_TASK_LIST_ID": RESTORE_TASK_LIST_ID, "GIT_AUTHOR_NAME": "seat-five"}
 
 
@@ -1174,8 +1174,8 @@ def git_client_side_hooks_installed_for_agent_seat(main, agent_seat):
     identity = {"GIT_AUTHOR_NAME": agent_seat, "GIT_COMMITTER_NAME": agent_seat,
                 "GIT_AUTHOR_EMAIL": f"{agent_seat}@nedschorus.invalid",
                 "GIT_COMMITTER_EMAIL": f"{agent_seat}@nedschorus.invalid",
-                # The Mac's own NEDSCHORUS_AGENTS_ROOT would point the hook past HOME's agents.
-                "NEDSCHORUS_AGENTS_ROOT": str(home / "agents")}
+                # The Mac's own NEDSNODES_AGENTS_ROOT would point the hook past HOME's agents.
+                "NEDSNODES_AGENTS_ROOT": str(home / "agents")}
     real = {name: os.environ.get(name) for name in identity}
     os.environ.update(identity)
 
@@ -1732,7 +1732,7 @@ def test_the_cleaner_reports_each_task_it_cannot_judge():
           and not list(restore_task_list().glob("*.partial")),
           "a task file whose rewrite fails after its partial file is written leaves no partial file",
           lines + [str(path) for path in restore_task_list().iterdir()])
-    later_list =restore_task_list().with_name("nedschorus-seat-six-tasks")
+    later_list =restore_task_list().with_name("nedsnodes-seat-six-tasks")
     later_list.mkdir()
     unreferenced = git(main, "commit-tree", "HEAD^{tree}", "-m", "held by no ref")
     (later_list / "1.json").write_text(json.dumps({

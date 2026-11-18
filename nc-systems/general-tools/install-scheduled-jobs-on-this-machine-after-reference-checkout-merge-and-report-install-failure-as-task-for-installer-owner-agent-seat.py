@@ -57,7 +57,7 @@ which runs no real install:
   - AGENT_SEAT_TASK_LISTS_DIRECTORY_TEST_OVERRIDE_ENVIRONMENT_VARIABLE: the
     directory that holds every agent-seat's task list, in place of
     ~/.claude/tasks; OWNING_AGENT_SEAT's list is the directory
-    nedschorus-<OWNING_AGENT_SEAT>-tasks in it.
+    nedsnodes-<OWNING_AGENT_SEAT>-tasks in it.
 """
 
 # Messages here follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
@@ -82,11 +82,11 @@ EXIT_DONE = 0
 EXIT_FAILED = 1
 
 SCHEDULED_JOBS_INSTALLER_PATH_TEST_OVERRIDE_ENVIRONMENT_VARIABLE = (
-    "NEDSCHORUS_SCHEDULED_JOBS_INSTALLER_PATH_TEST_OVERRIDE")
+    "NEDSNODES_SCHEDULED_JOBS_INSTALLER_PATH_TEST_OVERRIDE")
 NED_BOX_REFERENCE_CHECKOUT_PATH_TEST_OVERRIDE_ENVIRONMENT_VARIABLE = (
-    "NEDSCHORUS_NED_BOX_REFERENCE_CHECKOUT_PATH_TEST_OVERRIDE")
+    "NEDSNODES_NED_BOX_REFERENCE_CHECKOUT_PATH_TEST_OVERRIDE")
 AGENT_SEAT_TASK_LISTS_DIRECTORY_TEST_OVERRIDE_ENVIRONMENT_VARIABLE = (
-    "NEDSCHORUS_AGENT_SEAT_TASK_LISTS_DIRECTORY_TEST_OVERRIDE")
+    "NEDSNODES_AGENT_SEAT_TASK_LISTS_DIRECTORY_TEST_OVERRIDE")
 
 
 def _load(module_name, file_name):
@@ -107,7 +107,7 @@ agent_seat_task_file = _load("agent_seat_task_list_task_file_rewrite_common",
                              "agent-seat-task-list-task-file-rewrite-common.py")
 
 REFERENCE_CHECKOUT_PATH_BY_MACHINE_NAME = {
-    NED_BOX: f"{ned_box_paths.NED_BOX_HOME}/Projects/nedschorus",
+    NED_BOX: f"{ned_box_paths.NED_BOX_HOME}/Projects/nedsnodes",
     MAC: str(Path(mac_reference_checkout.MAC_REFERENCE_CHECKOUT_LAUNCHER_SCRIPTS_DIRECTORY_PATH).parent),
 }
 SCHEDULED_JOBS_INSTALLER_FAILURE_TASK_SUBJECT_FOR_OWNING_AGENT_SEAT_TASK_LIST = (
@@ -208,7 +208,7 @@ def main(environment=None, argv=None):
     task_lists_directory = Path(
         environment.get(AGENT_SEAT_TASK_LISTS_DIRECTORY_TEST_OVERRIDE_ENVIRONMENT_VARIABLE)
         or Path.home() / ".claude" / "tasks")
-    list_directory = task_lists_directory / f"nedschorus-{OWNING_AGENT_SEAT}-tasks"
+    list_directory = task_lists_directory / f"nedsnodes-{OWNING_AGENT_SEAT}-tasks"
     subject = SCHEDULED_JOBS_INSTALLER_FAILURE_TASK_SUBJECT_FOR_OWNING_AGENT_SEAT_TASK_LIST
     if installed.returncode == 0:
         if list_directory.is_dir():

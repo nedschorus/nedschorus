@@ -28,20 +28,20 @@ same way it is found locally, apart from the seat-briefs, which go to
 `seat-briefs/` because `~/.claude/agents/` is Claude Code's own directory of
 subagent definitions:
 
-  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/projects/<project-key>/<session-id>.jsonl
-  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/handoffs/<file>
-  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/tasks/<list-name>/<task-id>.json
-  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/seat-briefs/<seat>/CLAUDE.local.md
-  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/CLAUDE.md
-  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/<REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM>/<REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM>-decisions.jsonl
-  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/ned-box/projects/...
+  /home/nedlern/nedsnodes-logs/agent-session-files-by-machine/mac/projects/<project-key>/<session-id>.jsonl
+  /home/nedlern/nedsnodes-logs/agent-session-files-by-machine/mac/handoffs/<file>
+  /home/nedlern/nedsnodes-logs/agent-session-files-by-machine/mac/tasks/<list-name>/<task-id>.json
+  /home/nedlern/nedsnodes-logs/agent-session-files-by-machine/mac/seat-briefs/<seat>/CLAUDE.local.md
+  /home/nedlern/nedsnodes-logs/agent-session-files-by-machine/mac/CLAUDE.md
+  /home/nedlern/nedsnodes-logs/agent-session-files-by-machine/mac/<REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM>/<REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM>-decisions.jsonl
+  /home/nedlern/nedsnodes-logs/agent-session-files-by-machine/ned-box/projects/...
 
 `mac` and `ned-box` are the names CLAUDE.md uses for the two machines; this
 program tells them apart by hostname. On ned-box the copy is local -- its
 transcripts are already on that disk inside Timeshift's coverage, and the
 copy makes the store the one place to look for any session from either
 machine. A file there is cited with its host in scp form, like everything in
-the store: `nedlern@ned-box:/home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/handoffs/<file>`.
+the store: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/agent-session-files-by-machine/mac/handoffs/<file>`.
 
 HOW. `rsync -a` of each source into its place, over ssh in batch mode with a
 connect timeout from the Mac, never `--delete`: a transcript that vanishes
@@ -129,8 +129,8 @@ main, are installed by
 nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py from the
 table beside that program, which is where a change to them is made:
 
-  Mac:     * * * * * /opt/homebrew/bin/python3 /Users/el/Projects/nedschorus/scripts/transcript-mirror-to-log-store.py --failures-only >> /Users/el/.claude/transcript-mirror.log 2>&1
-  ned-box: * * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/transcript-mirror-to-log-store.py --failures-only >> /home/nedlern/.claude/transcript-mirror.log 2>&1
+  Mac:     * * * * * /opt/homebrew/bin/python3 /Users/el/Projects/nedsnodes/scripts/transcript-mirror-to-log-store.py --failures-only >> /Users/el/.claude/transcript-mirror.log 2>&1
+  ned-box: * * * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/transcript-mirror-to-log-store.py --failures-only >> /home/nedlern/.claude/transcript-mirror.log 2>&1
 
 Cron's environment has no ssh agent; the Mac's key to ned-box carries no
 passphrase, checked 2026-09-07 with `env -i HOME=/Users/el PATH=/usr/bin:/bin
@@ -157,7 +157,7 @@ import time
 
 PROGRAM = "transcript-mirror-to-log-store"
 
-LOG_STORE_AGENT_SESSION_FILES_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/agent-session-files-by-machine"
+LOG_STORE_AGENT_SESSION_FILES_DESTINATION = "nedlern@ned-box:/home/nedlern/nedsnodes-logs/agent-session-files-by-machine"
 LOG_STORE_HOSTNAME = "ned-box"
 MACHINE_NAME_ON_STORE_HOST = "ned-box"
 MACHINE_NAME_ELSEWHERE = "mac"

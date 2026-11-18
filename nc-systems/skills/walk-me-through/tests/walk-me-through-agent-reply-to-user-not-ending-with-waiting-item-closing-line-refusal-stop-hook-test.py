@@ -192,7 +192,7 @@ class Case:
             payload["last_assistant_message"] = last_assistant_message
         environment = attendance_check.environment_without_agent_session_attendance_variables(os.environ)
         # The machine's real emergency-stop folder must not decide a case.
-        environment["NEDSCHORUS_EMERGENCY_STOP_FOLDER"] = str(self.checkout / "no-emergency-stop")
+        environment["NEDSNODES_EMERGENCY_STOP_FOLDER"] = str(self.checkout / "no-emergency-stop")
         environment.update(environment_extra or {})
         return subprocess.run(
             [sys.executable, str(HOOK_SCRIPT)],
@@ -1381,13 +1381,13 @@ def test_silent_during_an_emergency_stop():
     stop_file = stop_folder / "2026-10-30T01-00-00Z.md"
     stop_file.write_text("# Emergency stop\ncoordinating agent-seat: reboot-test\n")
     check_silent("a reply leaving out the waiting item passes while an emergency stop is in force",
-                 case.run(environment_extra={"NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(stop_folder)}))
+                 case.run(environment_extra={"NEDSNODES_EMERGENCY_STOP_FOLDER": str(stop_folder)}))
     stop_file.write_bytes(b"\xff\xfe")
     check_silent("an unreadable emergency-stop file counts as a stop in force",
-                 case.run(environment_extra={"NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(stop_folder)}))
+                 case.run(environment_extra={"NEDSNODES_EMERGENCY_STOP_FOLDER": str(stop_folder)}))
     stop_file.write_text("started\n#emergency_stop_lifted all clear\n")
     check_reminded("after the lift the waiting item is checked again",
-                   case.run(environment_extra={"NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(stop_folder)}), "`Item 2 of 9`")
+                   case.run(environment_extra={"NEDSNODES_EMERGENCY_STOP_FOLDER": str(stop_folder)}), "`Item 2 of 9`")
 
 
 def main():

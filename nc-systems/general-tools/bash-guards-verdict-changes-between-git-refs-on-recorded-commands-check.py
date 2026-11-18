@@ -144,7 +144,7 @@ CHECKOUTS_NOT_REMOVED_MESSAGE = (
     "Run the command each line ends with, which removes that line's worktree; if the command fails, its own error "
     "says why.\n  ")
 DEFAULT_LOG_STORE_RUNS_DIRECTORY = (
-    "/home/nedlern/nedschorus-logs/bash-guards-replay-changed-verdict-or-failed-run-log-directories")
+    "/home/nedlern/nedsnodes-logs/bash-guards-replay-changed-verdict-or-failed-run-log-directories")
 VERDICT_CHANGED_MESSAGE = (
     "VERDICT CHANGED: a recorded command gets a different verdict at the head, so this check exits 1.\n"
     "The pull request's reviewer answers each difference under a \"rows whose verdict differs\" line above, in "

@@ -57,7 +57,7 @@ DECISIONS, and where they depart from the design of record:
   edits (labels, title-only, milestones) pass through". The user approved it
   with "Y" on 2026-09-29, item 6 of the walk
   ghi-write-skill-link-only-rewalk-2026-09-28 (minutes:
-  nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/ghi-write-skill-link-only-rewalk-2026-09-28-minutes.md).
+  nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/ghi-write-skill-link-only-rewalk-2026-09-28-minutes.md).
   edit-GHI retitles an issue from its GHI-MD's first heading, so a title
   changed by hand no longer matches the file, and the next edit-GHI run that
   changes that heading sets the title from the file again; merge-lane-2

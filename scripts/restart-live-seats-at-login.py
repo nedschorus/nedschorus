@@ -256,7 +256,7 @@ def ned_box_running_agent_seats_list_command_marking_clients_attached_since_mac_
 
 def agent_box() -> str:
     """Return the SSH destination using the launcher’s resolution rules."""
-    return os.environ.get("NEDSCHORUS_AGENT_BOX", "ned")
+    return os.environ.get("NEDSNODES_AGENT_BOX", "ned")
 
 
 def box_seat_query_command(mac_booted_at: datetime, box: str = None) -> list:

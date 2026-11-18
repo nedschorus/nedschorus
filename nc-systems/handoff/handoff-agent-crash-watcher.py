@@ -52,7 +52,7 @@ seat running; after a failed attempt the poll is recorded again, so the
 attempt's own brief run is part of the death it was handling.
 
 A failure an agent can fix becomes a task on an agent-seat's task list,
-~/.claude/tasks/nedschorus-<seat>-tasks/, written with
+~/.claude/tasks/nedsnodes-<seat>-tasks/, written with
 nc-systems/general-tools/agent-seat-task-list-new-pending-task-write-common.py;
 the task's subject names the failure's kind and what to fix, and its
 description tells the agent-seat to find the cause and fix it, telling the
@@ -105,13 +105,13 @@ nc-systems/general-tools/scheduled-jobs-on-each-machine.json and installed
 with nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py
 --install --job handoff-agent-crash-watcher,
 on ned-box only, as the cron line
-    * * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/handoff-agent-crash-watcher.py >> /home/nedlern/.claude/handoff-agent-crash-watcher.log 2>&1
+    * * * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/nc-systems/handoff/handoff-agent-crash-watcher.py >> /home/nedlern/.claude/handoff-agent-crash-watcher.log 2>&1
 Cron starts it with cron's own short environment, so no agent-session's
 variables reach a seat it restarts.
 
-NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_STATE_DIRECTORY,
-NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_LOG_DIRECTORY and
-NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_TASK_LISTS_DIRECTORY
+NEDSNODES_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_STATE_DIRECTORY,
+NEDSNODES_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_LOG_DIRECTORY and
+NEDSNODES_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_TASK_LISTS_DIRECTORY
 override where the state, the log and the task lists go: the seams the
 nc-test-suite uses.
 """
@@ -156,13 +156,13 @@ _agent_seat_task_list_specification = importlib.util.spec_from_file_location(
 agent_seat_task_list = importlib.util.module_from_spec(_agent_seat_task_list_specification)
 _agent_seat_task_list_specification.loader.exec_module(agent_seat_task_list)
 
-LOG_DIRECTORY = Path(ned_box_home_path_constants.NED_BOX_HOME) / "nedschorus-logs" / PROGRAM
+LOG_DIRECTORY = Path(ned_box_home_path_constants.NED_BOX_HOME) / "nedsnodes-logs" / PROGRAM
 AGENT_CRASH_WATCHER_DECISIONS_FILE_NAME = "handoff-agent-seat-died-without-session-handoff-restart-watcher-decisions.jsonl"
-STATE_DIRECTORY = Path("~/.local/state/nedschorus").expanduser()
-STATE_DIRECTORY_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_STATE_DIRECTORY"
-LOG_DIRECTORY_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_LOG_DIRECTORY"
+STATE_DIRECTORY = Path("~/.local/state/nedsnodes").expanduser()
+STATE_DIRECTORY_ENVIRONMENT_VARIABLE = "NEDSNODES_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_STATE_DIRECTORY"
+LOG_DIRECTORY_ENVIRONMENT_VARIABLE = "NEDSNODES_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_LOG_DIRECTORY"
 TASK_LISTS_DIRECTORY_ENVIRONMENT_VARIABLE = (
-    "NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_TASK_LISTS_DIRECTORY")
+    "NEDSNODES_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_TASK_LISTS_DIRECTORY")
 
 CRASHED_VERDICTS = ("resume", "fresh-session-from-conversation-tail")
 RUNNING_VERDICT = "seat-already-running"
@@ -224,7 +224,7 @@ RECORDED_EXIT_NOTICE_TEMPLATE = (
     "Recommendation: read the end of its last conversation, the newest .jsonl file in "
     "{transcripts}, before you restart it.\n"
     "To restart it, run in a Terminal on your Mac:\n"
-    "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 scripts/recover-crashed-seats.py {seat}'\n"
+    "  ssh -t nedlern@ned-box 'cd ~/Projects/nedsnodes && python3 scripts/recover-crashed-seats.py {seat}'\n"
     "It asks \"{question}\". Answer y, and it {restart_effect}. Answer n, and it starts "
     "nothing and prints the commands to bring {seat} back by hand later.\n"
     "When recovery restarts {seat}, it opens {seat}'s window on your Mac itself. If "
@@ -315,7 +315,7 @@ DOWN_AGENT_SEAT_RESTART_BY_OWNER_TEMPLATE = (
     "{seat} another way yourself, though the refusal says to: tell the user that only his yes "
     "at a terminal restarts {seat}, and give him this command to run in a Terminal on his "
     "Mac:\n"
-    "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 scripts/recover-crashed-seats.py {seat}'\n")
+    "  ssh -t nedlern@ned-box 'cd ~/Projects/nedsnodes && python3 scripts/recover-crashed-seats.py {seat}'\n")
 AGENT_SEAT_TASK_DESCRIPTION_CLOSING_TEMPLATE = (
     "Find the cause and fix it going forward. A fix to code, settings or instructions goes in a "
     "pull request.\n"
@@ -330,7 +330,7 @@ OWNER_AGENT_SEAT_DOWN_NOTICE_TEMPLATE = (
     "{seat} is down, and the crash watcher left it down. {seat} is the agent-seat that restarts "
     "the agent-seats the crash watcher leaves down, so no agent-seat can restart it.\n"
     "To restart it, run in a Terminal on your Mac:\n"
-    "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 scripts/recover-crashed-seats.py {seat}'\n"
+    "  ssh -t nedlern@ned-box 'cd ~/Projects/nedsnodes && python3 scripts/recover-crashed-seats.py {seat}'\n"
     "When recovery restarts {seat}, it opens {seat}'s window on your Mac itself. If "
     "instead the last line recovery prints in your Terminal says WINDOW NOT OPENED, open "
     "the window, also in a Terminal on your Mac, with:\n"
@@ -1118,7 +1118,7 @@ def report_run_failure(error_text, state_directory: Path, log_directory: Path,
 def agent_seat_task_list_new_pending_task_writer_function_factory_for_task_lists_directory(task_lists_directory: Path):
     """Return the Watcher's agent_seat_task_write, for the task lists under task_lists_directory."""
     def agent_seat_task_write(agent_seat, subject, description):
-        task_list = task_lists_directory / f"nedschorus-{agent_seat}-tasks"
+        task_list = task_lists_directory / f"nedsnodes-{agent_seat}-tasks"
         return (agent_seat_task_list.agent_seat_task_list_new_pending_task_write(
             task_list, subject, description), task_list)
     return agent_seat_task_write

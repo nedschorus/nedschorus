@@ -149,7 +149,7 @@ def write_stand_in(directory: pathlib.Path) -> pathlib.Path:
 
 
 def run_program(directory: pathlib.Path, plan: dict, stdin_text: str, arguments=(),
-                seat_task_list_id="nedschorus-test-seat-tasks"):
+                seat_task_list_id="nedsnodes-test-seat-tasks"):
     """Run the program with the stand-in for the fast read. The seat's
     task-list id is set rather than inherited, so the cases do not depend on
     which seat runs them; None leaves the variable unset."""
@@ -376,7 +376,7 @@ def main() -> int:
         record_lines = {}
         for seat in ("seat-one", "seat-two"):
             _, seat_logged = run_program(scratch, success_plan, GOOD_INPUT,
-                                         seat_task_list_id=f"nedschorus-{seat}-tasks")
+                                         seat_task_list_id=f"nedsnodes-{seat}-tasks")
             record_name = record_names.record_directory_name_for_target(
                 pathlib.Path(seat_logged["target_name"]), today)
             record_directory = scratch / seat / "cold-read-records" / record_name
@@ -427,7 +427,7 @@ def main() -> int:
               misshapen_logged is not None and re.fullmatch(
                   r"explain-reply-draft-no-seat-\d{6}\.md", misshapen_logged["target_name"]),
               str(misshapen_logged))
-        # A misshapen id shorter than "nedschorus-" and "-tasks" together, 17
+        # A misshapen id shorter than "nedsnodes-" and "-tasks" together, 17
         # characters, slices to nothing and reads no-seat even with the shape
         # check gone. One of 18 or more characters does not: without the
         # check, this one would name the seat "task-l".

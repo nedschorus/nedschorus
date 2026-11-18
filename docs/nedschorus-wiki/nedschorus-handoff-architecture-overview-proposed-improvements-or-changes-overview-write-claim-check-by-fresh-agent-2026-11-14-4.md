@@ -1,6 +1,6 @@
 # Proposed improvements or changes: nedschorus-handoff-architecture-overview.md (overview claim check, 2026-11-14)
 
-Assertions of the overview that the claim check against commit 679d9a2a881f3bbe08cdb0db0b96532e1f347ef3 found contradicted or unsupported and ranked fix later: loose, incomplete or badly worded, but no agent would act wrongly on them. Its report is /home/nedlern/nedschorus-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/7ffa7a73a4c9377f84501627c7a50ad9bae58f89-2026-11-14T11-05-28-042311Z.md. Regular maintenance fixes them in the overview.
+Assertions of the overview that the claim check against commit 679d9a2a881f3bbe08cdb0db0b96532e1f347ef3 found contradicted or unsupported and ranked fix later: loose, incomplete or badly worded, but no agent would act wrongly on them. Its report is /home/nedlern/nedsnodes-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/7ffa7a73a4c9377f84501627c7a50ad9bae58f89-2026-11-14T11-05-28-042311Z.md. Regular maintenance fixes them in the overview.
 
 ## E1 — possible problem: an assertion of the overview is contradicted
 
@@ -36,7 +36,7 @@ State: open
 
 ## E4 — possible problem: an assertion of the overview is contradicted
 
-Claim: The reference-checkout `~/Projects/nedschorus` is fast-forwarded by the launchers, by every supervisor running from it at each non-consulting session-handoff, and by the restart program. It is put back on main by the leftovers program, "which pushes any leftovers in it to a reference-checkout-leftovers-<date> branch first".
+Claim: The reference-checkout `~/Projects/nedsnodes` is fast-forwarded by the launchers, by every supervisor running from it at each non-consulting session-handoff, and by the restart program. It is put back on main by the leftovers program, "which pushes any leftovers in it to a reference-checkout-leftovers-<date> branch first".
 Goes wrong when: a reader takes the assertion as exact.
 The claim check's evidence:
 > Two problems:

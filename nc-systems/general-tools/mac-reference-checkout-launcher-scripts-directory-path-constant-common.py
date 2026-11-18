@@ -11,7 +11,7 @@ Load it by path, under the snake_case form of its file name:
         "mac_reference_checkout_launcher_scripts_directory_path_constant_common", <path>)
 """
 
-MAC_REFERENCE_CHECKOUT_LAUNCHER_SCRIPTS_DIRECTORY_PATH = "/Users/el/Projects/nedschorus/scripts"
+MAC_REFERENCE_CHECKOUT_LAUNCHER_SCRIPTS_DIRECTORY_PATH = "/Users/el/Projects/nedsnodes/scripts"
 
 
 def mac_reference_checkout_launcher_path_agent_seat_start_command_text_for_user_to_type(

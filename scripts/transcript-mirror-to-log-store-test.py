@@ -25,7 +25,7 @@ SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 MIRROR = SCRIPTS_DIR / "transcript-mirror-to-log-store.py"
 DESTINATION_VARIABLE = "TRANSCRIPT_MIRROR_DESTINATION"
 SOURCE_HOME_VARIABLE = "TRANSCRIPT_MIRROR_SOURCE_HOME"
-RULED_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/agent-session-files-by-machine"
+RULED_DESTINATION = "nedlern@ned-box:/home/nedlern/nedsnodes-logs/agent-session-files-by-machine"
 RSYNC_SSH_TRANSPORT = ("ssh -o BatchMode=yes -o ConnectTimeout=10"
                        " -o ServerAliveInterval=15 -o ServerAliveCountMax=4")
 SERVER_ALIVE_OPTIONS = ("ServerAliveInterval=15", "ServerAliveCountMax=4")
@@ -97,7 +97,7 @@ def make_home(root: pathlib.Path) -> pathlib.Path:
     handoffs = home / ".claude" / "handoffs"
     handoffs.mkdir()
     (handoffs / "MD-skills-dialog-0001.md").write_text("# dialog\n")
-    task_list = home / ".claude" / "tasks" / "nedschorus-MD-skills-tasks"
+    task_list = home / ".claude" / "tasks" / "nedsnodes-MD-skills-tasks"
     task_list.mkdir(parents=True)
     (task_list / "1.json").write_text('{"id": "1"}\n')
     (task_list / ".highwatermark").write_text("1")
@@ -153,8 +153,8 @@ with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_na
     check("handoffs land under agent-session-files-by-machine/<machine>/handoffs/",
           (store / machine / "handoffs" / "MD-skills-dialog-0001.md").is_file())
     check("task lists land under agent-session-files-by-machine/<machine>/tasks/ in Claude Code's own layout, dotfiles included",
-          (store / machine / "tasks" / "nedschorus-MD-skills-tasks" / "1.json").is_file()
-          and (store / machine / "tasks" / "nedschorus-MD-skills-tasks" / ".highwatermark").is_file())
+          (store / machine / "tasks" / "nedsnodes-MD-skills-tasks" / "1.json").is_file()
+          and (store / machine / "tasks" / "nedsnodes-MD-skills-tasks" / ".highwatermark").is_file())
     check("a seat-brief lands under agent-session-files-by-machine/<machine>/seat-briefs/<seat>/CLAUDE.local.md",
           text_or_none(store / machine / "seat-briefs" / "MD-skills" / "CLAUDE.local.md")
           == "# MD-skills seat-brief\n")
@@ -362,7 +362,7 @@ os.execv({shutil.which("rsync")!r}, ["rsync", *sys.argv[1:]])
     rsync_calls = [c for c in calls if c[0].endswith("rsync")]
     ssh_calls = [c for c in calls if c[0].endswith("ssh")]
     stamp_calls = [c for c in ssh_calls if STAMP_NAME in " ".join(c)]
-    remote_stamp = f"/home/nedlern/nedschorus-logs/agent-session-files-by-machine/{machine}/{STAMP_NAME}"
+    remote_stamp = f"/home/nedlern/nedsnodes-logs/agent-session-files-by-machine/{machine}/{STAMP_NAME}"
     check("remote mode writes the stamp on ned-box once, after every rsync, through a .partial file renamed over it",
           len(stamp_calls) == 1 and calls[-1] == stamp_calls[0]
           and stamp_calls[0][-2] == "nedlern@ned-box"
@@ -522,9 +522,9 @@ os.execv({shutil.which("rsync")!r}, ["rsync", *sys.argv[1:]])
           result.returncode == 1 and result.stdout.count("FAILED:") == 6
           and "rsync exit 23" in result.stdout, result.stdout)
     check("the documented cron lines run every minute with --failures-only, the Mac's under Homebrew python3",
-          "  Mac:     * * * * * /opt/homebrew/bin/python3 /Users/el/Projects/nedschorus/scripts/"
+          "  Mac:     * * * * * /opt/homebrew/bin/python3 /Users/el/Projects/nedsnodes/scripts/"
           "transcript-mirror-to-log-store.py --failures-only >>" in MIRROR.read_text()
-          and "  ned-box: * * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+          and "  ned-box: * * * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/"
           "transcript-mirror-to-log-store.py --failures-only >>" in MIRROR.read_text())
     check("the destination constant in the script is the ruled one",
           f'LOG_STORE_AGENT_SESSION_FILES_DESTINATION = "{RULED_DESTINATION}"' in MIRROR.read_text())

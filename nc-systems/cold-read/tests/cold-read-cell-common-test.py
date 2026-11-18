@@ -811,9 +811,9 @@ with tempfile.TemporaryDirectory() as scratch:
     # --- Every failed attempt names its cause (nedschorus#413) ---------------
     # The classifier's fixtures are real lines (the fixture rule,
     # nedschorus#18): the weekly limit is line 1 of
-    # nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2384-each-round-of-a-pull-request-runs-its-2026-11-02-2/claude-hunt-deep.md.attempt-1.stderr.log,
+    # nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/2384-each-round-of-a-pull-request-runs-its-2026-11-02-2/claude-hunt-deep.md.attempt-1.stderr.log,
     # from the grid launching the Claude cell on ned-box; the Fable limit is line 2 of
-    # nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-11-SKILL-2/2026-09-11-SKILL-2--claude-hunt-floor.md.stderr.log,
+    # nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/2026-09-11-SKILL-2/2026-09-11-SKILL-2--claude-hunt-floor.md.stderr.log,
     # from the grid launching the Claude cell on the Mac; the logged-out
     # line is the 2026-09-18 capture on ned-box, Claude Code 2.1.272,
     # `CLAUDE_CONFIG_DIR=$(mktemp -d) claude -p "say hi"` from a scratch
@@ -1542,7 +1542,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- The Claude cell denies Bash; the Codex `deep` tier runs at xhigh ----
     # Both settled 2026-09-15 on the union analysis in the log-store at
-    # nedlern@ned-box:/home/nedlern/nedschorus-logs/analysis/2026-09-15-cold-read-grid-union-and-effort-analysis.md
+    # nedlern@ned-box:/home/nedlern/nedsnodes-logs/analysis/2026-09-15-cold-read-grid-union-and-effort-analysis.md
     #
     # Bash first. A cell inherits the machine's permission mode, and under
     # "auto" every tool is already approved, so --allowedTools ADDS rather
@@ -1603,7 +1603,7 @@ with tempfile.TemporaryDirectory() as scratch:
     passed_deny_rules = (json.loads(passed_settings).get("permissions", {}).get("deny", [])
                          if passed_settings.startswith("{") else [])
     check("the Claude cell denies reading every credential path",
-          set(passed_deny_rules) >= {"Read(~/.config/nedschorus/**)", "Read(~/.config/gh/**)",
+          set(passed_deny_rules) >= {"Read(~/.config/nedsnodes/**)", "Read(~/.config/gh/**)",
                                      "Read(~/.ssh/**)",
                                      "Read(//**/*.token)", "Read(//**/.env)"},
           repr(passed_deny_rules))
@@ -1621,7 +1621,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # The Codex cell, the same rule in Codex's terms: a named permission
     # profile extending :workspace, which Codex will not combine with
     # --sandbox. The cell runs with HOME at a scratch home holding
-    # .config/nedschorus, .config/gh, .steam and nedsmessenger and no .ssh,
+    # .config/nedsnodes, .config/gh, .steam and nedsmessenger and no .ssh,
     # and three credential-named canaries, in the repository, in the home and
     # in neither, which no profile names by path: a named path its owner
     # deletes before Codex starts makes Codex stop or recreate it on the real
@@ -1630,7 +1630,7 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "codex-denies-credentials", "codex")
     scratch_home = scratch / "codex-scratch-home"
-    (scratch_home / ".config" / "nedschorus").mkdir(parents=True, exist_ok=True)
+    (scratch_home / ".config" / "nedsnodes").mkdir(parents=True, exist_ok=True)
     (scratch_home / ".config" / "gh").mkdir(parents=True, exist_ok=True)
     (scratch_home / ".steam").mkdir(parents=True, exist_ok=True)
     (scratch_home / "nedsmessenger" / "secrets").mkdir(parents=True, exist_ok=True)
@@ -1662,7 +1662,7 @@ with tempfile.TemporaryDirectory() as scratch:
                          if override.startswith("permissions.cold-read-no-credentials.filesystem=")),
                         "")
     home = str(scratch_home)
-    expected_denials = [f'"{home}/.config/nedschorus"="deny"', f'"{home}/.config/gh"="deny"',
+    expected_denials = [f'"{home}/.config/nedsnodes"="deny"', f'"{home}/.config/gh"="deny"',
                         f'"{home}/.steam"="deny"', f'"{home}/nedsmessenger"="deny"']
     expected_denials += [f'"{login}"="deny"' for login in login_canaries]
     if not sys.platform.startswith("linux"):
@@ -1730,7 +1730,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the macOS profile leaves /tmp and $TMPDIR writable",
           '":slash_tmp"' not in profile_tables["darwin"]
           and '":tmpdir"' not in profile_tables["darwin"], profile_tables["darwin"])
-    scratch_credential_directory_denial = f'"{home}/.config/nedschorus"="deny"'
+    scratch_credential_directory_denial = f'"{home}/.config/nedsnodes"="deny"'
     check("the Linux profile denies the credential directory and names no credential-named file",
           scratch_credential_directory_denial in profile_tables["linux"]
           and str(home_canary) not in profile_tables["linux"]

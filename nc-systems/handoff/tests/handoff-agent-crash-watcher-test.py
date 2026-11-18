@@ -143,7 +143,7 @@ class Harness:
     def agent_seat_task_write(self, agent_seat, subject, description):
         if self.task_write_error is not None and agent_seat in self.task_write_error_agent_seats:
             raise self.task_write_error
-        (self.task_lists_directory / f"nedschorus-{agent_seat}-tasks").mkdir(parents=True,
+        (self.task_lists_directory / f"nedsnodes-{agent_seat}-tasks").mkdir(parents=True,
                                                                              exist_ok=True)
         return watcher_module.agent_seat_task_list_new_pending_task_writer_function_factory_for_task_lists_directory(self.task_lists_directory)(
             agent_seat, subject, description)
@@ -152,9 +152,9 @@ class Harness:
         """The tasks written, each with its agent-seat as "owner"; of one kind when kind is given,
         on one agent-seat's list when owner is given."""
         found = []
-        for task_file in sorted(self.task_lists_directory.glob("nedschorus-*-tasks/*.json")):
+        for task_file in sorted(self.task_lists_directory.glob("nedsnodes-*-tasks/*.json")):
             task = json.loads(task_file.read_text(encoding="utf-8"))
-            task["owner"] = task_file.parent.name[len("nedschorus-"):-len("-tasks")]
+            task["owner"] = task_file.parent.name[len("nedsnodes-"):-len("-tasks")]
             if ((kind is None or task["subject"].startswith(f"agent-crash-watcher, {kind}:"))
                     and (owner is None or task["owner"] == owner)):
                 found.append(task)
@@ -337,7 +337,7 @@ def run_decision_cases(root: Path):
           and "merge-lane-2 is down, and no other program restarts it" in owner_text
           and "  python3 scripts/recover-crashed-seats.py merge-lane-2\n" in owner_text
           and "If recovery prints REFUSED, run the same command with --dry-run added" in owner_text
-          and "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
+          and "  ssh -t nedlern@ned-box 'cd ~/Projects/nedsnodes && python3 "
               "scripts/recover-crashed-seats.py merge-lane-2'\n" in owner_text
           and "had restarted it at 2026-10-12 03:16 UTC" in owner_text, owner_text)
     check("the owner task's leftover-shell condition is met by what recovery really prints: its "
@@ -362,7 +362,7 @@ def run_decision_cases(root: Path):
     check("the task written is logged with its id and task list",
           any(entry["decision"] == "task written for the agent-seat to find the cause and fix it"
               and entry["kind"] == "second-crash" and entry["task"] == 1
-              and entry["task_list"].endswith("nedschorus-merge-lane-2-tasks")
+              and entry["task_list"].endswith("nedsnodes-merge-lane-2-tasks")
               for entry in harness.decisions()), repr(harness.decisions()))
 
     harness = Harness(root / "after-the-hour")
@@ -738,7 +738,7 @@ def run_down_for_the_user_cases(root: Path):
     check("the recorded-exit notice's restart command comes right after the line that "
           "introduces it, not after the answer n",
           "To restart it, run in a Terminal on your Mac:\n  ssh -t nedlern@ned-box "
-          "'cd ~/Projects/nedschorus && python3 scripts/recover-crashed-seats.py "
+          "'cd ~/Projects/nedsnodes && python3 scripts/recover-crashed-seats.py "
           "merge-lane-2'\nIt asks" in text, text)
     check("the recorded-exit notice says what answering n does",
           "Answer n, and it starts nothing and prints the commands to bring merge-lane-2 "
@@ -1049,8 +1049,8 @@ def run_stopped_on_purpose_cases(root: Path):
 def run_path_on_the_mac_cases():
     check("a ned-box home path is given in the form the Mac mounts",
           watcher_module.path_on_the_mac(
-              "/home/nedlern/nedschorus-logs/x/decisions.jsonl")
-          == "/Volumes/nedhome/nedschorus-logs/x/decisions.jsonl")
+              "/home/nedlern/nedsnodes-logs/x/decisions.jsonl")
+          == "/Volumes/nedhome/nedsnodes-logs/x/decisions.jsonl")
     check("a path outside ned-box's home is left as it is",
           watcher_module.path_on_the_mac("/tmp/x/decisions.jsonl") == "/tmp/x/decisions.jsonl")
     check("a path that only starts with the same letters as the home is left as it is",
@@ -1059,12 +1059,12 @@ def run_path_on_the_mac_cases():
     harness.log_directory = None
     watcher = watcher_module.Watcher(
         state=harness.state, now=SEEN_RUNNING, boot_at=BOOT,
-        log_directory=Path("/home/nedlern/nedschorus-logs") / watcher_module.PROGRAM,
+        log_directory=Path("/home/nedlern/nedsnodes-logs") / watcher_module.PROGRAM,
         assess=None, died_at_about=None, transcripts_directory=None, recover=None,
         open_window=None, show_notice_words=None, agent_seat_task_write=None)
     check("the record a notice names is the Mac's form of the log-store path",
           watcher_module.path_on_the_mac(watcher.decisions_path).startswith(
-              "/Volumes/nedhome/nedschorus-logs/"), str(watcher.decisions_path))
+              "/Volumes/nedhome/nedsnodes-logs/"), str(watcher.decisions_path))
 
 
 def run_environment_cases():
@@ -1088,7 +1088,7 @@ def run_window_words_cases(root: Path):
     notice = (watcher_module.LOG_DIRECTORY / "notices"
               / "20261012T031600Z-merge-lane-2-recovery-failed.txt")
     notice_words = ["/usr/bin/python3",
-                    "/home/nedlern/Projects/nedschorus/nc-systems/handoff/"
+                    "/home/nedlern/Projects/nedsnodes/nc-systems/handoff/"
                     "handoff-agent-crash-watcher.py",
                     "--show-notice", str(notice)]
     built_words = watcher_module.show_notice_words_for_window(str(notice))
@@ -1154,7 +1154,7 @@ def run_command_line_cases(root: Path):
 def run_run_failure_cases(root: Path):
     """A run that fails before it can assess any seat: the login restart's module is missing."""
     task_lists = root / "failed-task-lists"
-    (task_lists / f"nedschorus-{watcher_module.AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME}-tasks").mkdir(parents=True)
+    (task_lists / f"nedsnodes-{watcher_module.AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME}-tasks").mkdir(parents=True)
     environment = {watcher_module.STATE_DIRECTORY_ENVIRONMENT_VARIABLE: str(root / "failed-state"),
                    watcher_module.LOG_DIRECTORY_ENVIRONMENT_VARIABLE: str(root / "failed-log"),
                    watcher_module.TASK_LISTS_DIRECTORY_ENVIRONMENT_VARIABLE: str(task_lists)}
@@ -1181,7 +1181,7 @@ def run_run_failure_cases(root: Path):
     check("a failed run becomes one task on the crash watcher's owner's list, in three failing "
           "runs with the same error",
           [path.parent.name for path in task_files]
-          == [f"nedschorus-{watcher_module.AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME}-tasks"]
+          == [f"nedsnodes-{watcher_module.AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME}-tasks"]
           and task.get("subject", "").startswith("agent-crash-watcher, run-failed:"), repr(task_files))
     check("the run-failed task says the watcher is watching no agent-seat, with the error",
           "watching no agent-seat" in task.get("description", "")
@@ -1270,7 +1270,7 @@ def run_report_run_failure_state_cases(root: Path):
         corrupt.mkdir()
         (corrupt / f"{watcher_module.PROGRAM}-state.json").write_text("{not json", encoding="utf-8")
         raised = None
-        pending_alerts = Path.home() / ".local/state/nedschorus/user-alerts/pending"
+        pending_alerts = Path.home() / ".local/state/nedsnodes/user-alerts/pending"
         alerts_before = set(pending_alerts.glob("*.json"))
         try:
             watcher_module.report_run_failure("ValueError: bad state", corrupt, root / "corrupt-log",
@@ -1299,7 +1299,7 @@ def run_report_run_failure_state_cases(root: Path):
               repr(sorted(set(pending_alerts.glob("*.json")) - alerts_before)))
 
         listed = root / "listed-task-lists"
-        owner_list = listed / f"nedschorus-{watcher_module.AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME}-tasks"
+        owner_list = listed / f"nedsnodes-{watcher_module.AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME}-tasks"
         owner_list.mkdir(parents=True)
         unread = root / "corrupt-state-listed"
         unread.mkdir()
@@ -1419,7 +1419,7 @@ def run_notice_page_cases(root: Path):
     page = pages[0].read_text(encoding="utf-8") if pages else ""
     check("the page shows each command in a block that says it runs on the Mac, with a Copy button",
           page.count("Run in a Terminal on your Mac") == 2 and page.count('data-copy="') == 2
-          and "ssh -t nedlern@ned-box &#x27;cd ~/Projects/nedschorus &amp;&amp; python3 "
+          and "ssh -t nedlern@ned-box &#x27;cd ~/Projects/nedsnodes &amp;&amp; python3 "
               "scripts/recover-crashed-seats.py merge-lane-2&#x27;" in page, page)
 
     log_directory = root / "page-unwritable"
@@ -1607,11 +1607,11 @@ def run_watch_wiring_cases(root: Path):
           and built[0].get("user_alert_write_to_pending") is watcher_module.user_alerts.user_alert_write_to_pending,
           repr(built))
     task_write = built[0].get("agent_seat_task_write") if len(built) == 1 else None
-    (root / "watch-wiring-task-lists" / "nedschorus-seat-a-tasks").mkdir(parents=True)
+    (root / "watch-wiring-task-lists" / "nedsnodes-seat-a-tasks").mkdir(parents=True)
     written = task_write("seat-a", "the subject", "the description") if task_write else None
-    task_file = root / "watch-wiring-task-lists" / "nedschorus-seat-a-tasks" / "1.json"
+    task_file = root / "watch-wiring-task-lists" / "nedsnodes-seat-a-tasks" / "1.json"
     check("watch() passes the Watcher a task writer into the task lists directory it was given",
-          written == (1, root / "watch-wiring-task-lists" / "nedschorus-seat-a-tasks")
+          written == (1, root / "watch-wiring-task-lists" / "nedsnodes-seat-a-tasks")
           and json.loads(task_file.read_text(encoding="utf-8"))["subject"] == "the subject",
           repr(written))
     records = built[0].get("down_agent_seat_records_stopped_on_purpose") if len(built) == 1 else None
@@ -1700,8 +1700,8 @@ def run_user_alert_cases(root: Path):
     check("an agent-seat with no task list gets no list made for it: each of the failure's two "
           "tasks becomes a notice of its own, naming its missing list",
           len(notices) == 2 and text.count("FileNotFoundError") == 2
-          and str(root / "task-list-missing" / "no-task-lists" / "nedschorus-merge-lane-2-tasks") in text
-          and str(root / "task-list-missing" / "no-task-lists" / "nedschorus-fleet-restart-at-login-tasks") in text
+          and str(root / "task-list-missing" / "no-task-lists" / "nedsnodes-merge-lane-2-tasks") in text
+          and str(root / "task-list-missing" / "no-task-lists" / "nedsnodes-fleet-restart-at-login-tasks") in text
           and not (root / "task-list-missing" / "no-task-lists").exists(), [n.name for n in notices])
 
     owner = watcher_module.AGENT_CRASH_WATCHER_PROGRAM_OWNER_AGENT_SEAT_NAME
@@ -1722,7 +1722,7 @@ def run_user_alert_cases(root: Path):
           "the restart command run from his Mac, and the task the owner finds once restarted",
           len(notices) == 1 and "recovery-failed" in notices[0].name
           and f"{owner} is the agent-seat that restarts the agent-seats the crash watcher leaves down" in text
-          and f"  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
+          and f"  ssh -t nedlern@ned-box 'cd ~/Projects/nedsnodes && python3 "
               f"scripts/recover-crashed-seats.py {owner}'\n" in text
           and f"  {watcher_module.MAC_LAUNCHER} {owner}\n" in text
           and "Task subject: agent-crash-watcher, recovery-failed:" in text, text)
@@ -1734,7 +1734,7 @@ def run_user_alert_cases(root: Path):
           repr(written))
 
     def unwritable(title, text, action):
-        raise PermissionError(13, "Permission denied", "/home/nedlern/.local/state/nedschorus/user-alerts")
+        raise PermissionError(13, "Permission denied", "/home/nedlern/.local/state/nedsnodes/user-alerts")
     harness = Harness(root / "alert-not-written")
     harness.user_alert_write_to_pending = unwritable
     refused_after_running(harness, "defer-to-boot-ignition", "an unconsumed handoff waits")

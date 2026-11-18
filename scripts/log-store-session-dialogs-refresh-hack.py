@@ -10,14 +10,14 @@ transcript mirror (scripts/transcript-mirror-to-log-store.py) copies each
 machine's session transcripts into the store every minute, so both machines'
 sessions are already on ned-box's disk:
 
-  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/<machine>/projects/<project-key>/<session-id>.jsonl
+  /home/nedlern/nedsnodes-logs/agent-session-files-by-machine/<machine>/projects/<project-key>/<session-id>.jsonl
 
 For each of those transcripts that changed since its dialog was written, this
 program writes the session's complete filtered dialog, the form the handoff
 extractor (scripts/handoff-extract-conversation.py) writes as
 `<seat>-dialog-NNNN-complete.md`, subagent tasks and reports included, to
 
-  /home/nedlern/nedschorus-logs/session-dialogs/<machine>/<project-key>/<session-id>-dialog-complete.md
+  /home/nedlern/nedsnodes-logs/session-dialogs/<machine>/<project-key>/<session-id>-dialog-complete.md
 
 overwriting the earlier one, so a running session's dialog is never more than
 one pass behind its transcript, and an ended session's dialog is there whether
@@ -82,7 +82,7 @@ SCHEDULE. Every 10 minutes, by cron on ned-box only, installed by
 nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py from the
 table beside that program:
 
-  ned-box: */10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/log-store-session-dialogs-refresh-hack.py --failures-only >> /home/nedlern/.claude/log-store-session-dialogs-refresh.log 2>&1
+  ned-box: */10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/log-store-session-dialogs-refresh-hack.py --failures-only >> /home/nedlern/.claude/log-store-session-dialogs-refresh.log 2>&1
 
 LOG_STORE_SESSION_DIALOGS_REFRESH_LOG_STORE_ROOT_OVERRIDE in the environment overrides the
 store's root for the tests, which point it at a scratch directory.
@@ -97,7 +97,7 @@ import pathlib
 import sys
 
 PROGRAM = "log-store-session-dialogs-refresh"
-LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
+LOG_STORE_ROOT = "/home/nedlern/nedsnodes-logs"
 STORE_ROOT_ENVIRONMENT_VARIABLE = "LOG_STORE_SESSION_DIALOGS_REFRESH_LOG_STORE_ROOT_OVERRIDE"
 LOCK_FILE_NAME = ".log-store-session-dialogs-refresh.lock"
 STALE_DIALOG_WARNING_OPENING = "This dialog could not be refreshed since "

@@ -123,7 +123,7 @@ command_line_prefix = _load(
     "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
     "nc-systems/general-tools/claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
 
-LOG_STORE_DIRECTORY = Path(ned_box_home_path_constants.NED_BOX_HOME) / "nedschorus-logs"
+LOG_STORE_DIRECTORY = Path(ned_box_home_path_constants.NED_BOX_HOME) / "nedsnodes-logs"
 OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_REPORT_DIRECTORY = LOG_STORE_DIRECTORY / "overview-write-architecture-overview-claim-check-reports"
 HOW_TO_PAGE = "docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md"
 

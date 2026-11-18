@@ -44,7 +44,7 @@ PROGRAM = "ned-box-tmpfiles-tmp-cleanup-rule-dry-run-or-install-and-clean-once"
 DRY_RUN_COMMAND_LINE = f"python3 {Path(__file__).resolve()}"
 # The program may fail on the Mac, whose path to this file does not exist on ned-box.
 DRY_RUN_ON_NED_BOX_COMMAND_LINE = (
-    "ssh nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
+    "ssh nedlern@ned-box 'cd ~/Projects/nedsnodes && python3 "
     "scripts/ned-box-tmpfiles-tmp-cleanup-rule-dry-run-or-install-and-clean-once.py'")
 DAILY_CLEANER = "systemd-tmpfiles-clean.timer"
 INSTALL_COMMAND_LINE = f"{DRY_RUN_COMMAND_LINE} --install-and-clean-once"
@@ -53,9 +53,9 @@ INSTALL_COMMAND_LINE = f"{DRY_RUN_COMMAND_LINE} --install-and-clean-once"
 # git pull rejects --no-overwrite-ignore, and without it the merge replaces an ignored file at a path main tracks.
 # git merge fast-forwards whatever branch is checked out, so the command stops unless it is main.
 USER_INSTALL_COMMAND_LINE = (
-    "ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && "
+    "ssh -t nedlern@ned-box 'cd ~/Projects/nedsnodes && "
     "{ [ \"$(git branch --show-current)\" = main ] || "
-    "{ echo \"~/Projects/nedschorus is not on main, so nothing was fast-forwarded or installed; "
+    "{ echo \"~/Projects/nedsnodes is not on main, so nothing was fast-forwarded or installed; "
     "tell an agent on ned-box.\" >&2; false; }; } && git fetch origin && "
     "git merge --ff-only --no-overwrite-ignore origin/main && python3 "
     "scripts/ned-box-tmpfiles-tmp-cleanup-rule-dry-run-or-install-and-clean-once.py "

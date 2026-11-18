@@ -198,7 +198,7 @@ retired, the owner is merge-lane-2, the agent-seat
 SURVIVOR_TASK_AGENT_SEAT_WHEN_LINE_AUTHOR_IS_RETIRED_OR_UNKNOWN names. Before
 a task is opened or rewritten, each new mutant's diff file is written. A task
 is a Claude Code task file, `<id>.json` in the task list directory
-`nedschorus-<owner>-tasks` under --task-lists-directory, with the keys id,
+`nedsnodes-<owner>-tasks` under --task-lists-directory, with the keys id,
 subject, description, status, blocks and blockedBy. Its id is one more than
 the highest of the list's task ids and its `.highwatermark`, as Claude Code
 numbers a new task; the file is linked into place only where no file of that
@@ -291,7 +291,7 @@ merge is not recorded as tested.
 
 THE RECORD is one text file per run in the log-store:
 
-  nedlern@ned-box:/home/nedlern/nedschorus-logs/scheduled-full-mutation-pass-runs-of-merged-pull-requests/<UTC start>.txt
+  nedlern@ned-box:/home/nedlern/nedsnodes-logs/scheduled-full-mutation-pass-runs-of-merged-pull-requests/<UTC start>.txt
 
 It holds origin/main, the commit the run started after, a line per survivor
 task rechecked with its verdicts and what was done to the task, a line per
@@ -318,11 +318,11 @@ streams appended to its log, which, with the record, is where its failures
 are read. Run by hand on ned-box, from an agent's shell too, as a unit of the
 user's systemd, which outlives the shell, with its output in the same log:
 
-    systemd-run --user --unit=scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open-by-hand --collect -p StandardOutput=append:/home/nedlern/.claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.log -p StandardError=append:/home/nedlern/.claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.log /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py
+    systemd-run --user --unit=scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open-by-hand --collect -p StandardOutput=append:/home/nedlern/.claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.log -p StandardError=append:/home/nedlern/.claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.log /usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py
 
 The cron line, at 00:30 in ned-box's local time, America/Los_Angeles (Pacific):
 
-    30 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py >> /home/nedlern/.claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.log 2>&1
+    30 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py >> /home/nedlern/.claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.log 2>&1
 
 Exit codes: 0 every survivor task was rechecked and every merge since the last
 run had its first pass and its survivors and ERRORED mutants given tasks, or
@@ -374,16 +374,16 @@ JOB_LOG_FILE = f"/home/nedlern/.claude/{PROGRAM}.log"
 # user's systemd outlives it.
 RUN_BY_HAND = (f"systemd-run --user --unit={PROGRAM}-by-hand --collect "
                f"-p StandardOutput=append:{JOB_LOG_FILE} -p StandardError=append:{JOB_LOG_FILE} "
-               f"/usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/{PROGRAM}.py")
+               f"/usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/{PROGRAM}.py")
 HAND_RUNS_DIRECTORY_NAME = "scheduled-full-mutation-pass-hand-runs"
 
 MUTATION_TESTING_PROGRAM = Path(__file__).resolve().with_name(
     "mutation-testing-changed-lines-quick-or-full-pass-survivors.py")
-DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
+DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedsnodes-logs"
 RECORDS_DIRECTORY_NAME = "scheduled-full-mutation-pass-runs-of-merged-pull-requests"
 SURVIVING_MUTANT_DIFFS_DIRECTORY_NAME = "surviving-mutant-diffs"
 LOG_STORE_HOST = "nedlern@ned-box"
-DEFAULT_STATE_DIRECTORY = (Path.home() / ".local" / "state" / "nedschorus"
+DEFAULT_STATE_DIRECTORY = (Path.home() / ".local" / "state" / "nedsnodes"
                            / "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open")
 STATE_FILE_NAME = "state.json"
 UNTESTABLE_MERGES_STATE_KEY = "untestable_merges"
@@ -538,7 +538,7 @@ def mutant_key(mutant):
 
 def task_list_owner(author, task_lists_directory, agent_seats_directory):
     """(agent-seat whose list gets the task, why, when not the author)."""
-    if (task_lists_directory / f"nedschorus-{author}-tasks").is_dir() \
+    if (task_lists_directory / f"nedsnodes-{author}-tasks").is_dir() \
             and (agent_seats_directory / author).is_dir():
         return author, None
     return (SURVIVOR_TASK_AGENT_SEAT_WHEN_LINE_AUTHOR_IS_RETIRED_OR_UNKNOWN,
@@ -608,7 +608,7 @@ def lost_tasks_reported(state, arguments, record):
     file on the list cannot be read."""
     lost = []
     for key, given in list(state["tasks_opened"].items()):
-        list_directory = arguments.task_lists_directory / f"nedschorus-{given['agent_seat']}-tasks"
+        list_directory = arguments.task_lists_directory / f"nedsnodes-{given['agent_seat']}-tasks"
         task_file = list_directory / f"{given['task_id']}.json"
         completed = False
         open_task = False
@@ -810,7 +810,7 @@ def job_failure_task_opened_unless_open(subject, description, arguments,
     description, keeping what an agent-seat wrote there. Return (its id, True when opened
     now). Raises OSError."""
     list_directory = (arguments.task_lists_directory
-                      / f"nedschorus-{JOB_FAILURE_TASK_AGENT_SEAT}-tasks")
+                      / f"nedsnodes-{JOB_FAILURE_TASK_AGENT_SEAT}-tasks")
     if list_directory.is_dir():
         for path in sorted(list_directory.iterdir(), key=lambda path: path.name):
             if not TASK_FILE_NAME_PATTERN.fullmatch(path.name):
@@ -859,7 +859,7 @@ def survivor_tasks_rechecked(state, state_file, arguments, main_commit, record, 
     not_rechecked = []
     for (agent_seat, task_id), keys in tasks.items():
         named = f"task #{task_id} on {agent_seat}'s task list"
-        task_file = (arguments.task_lists_directory / f"nedschorus-{agent_seat}-tasks"
+        task_file = (arguments.task_lists_directory / f"nedsnodes-{agent_seat}-tasks"
                      / f"{task_id}.json")
         diff_files = {key: mutant_diff_file_path(arguments.log_store_root, key) for key in keys}
         verdicts_file = scratch / f"{agent_seat}-{task_id}-verdicts.json"
@@ -1203,7 +1203,7 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
                        if blame_line.startswith("author ")), "")
         owner, owner_reason = task_list_owner(author, arguments.task_lists_directory,
                                               arguments.agent_seats_directory)
-        list_directory = arguments.task_lists_directory / f"nedschorus-{owner}-tasks"
+        list_directory = arguments.task_lists_directory / f"nedsnodes-{owner}-tasks"
         mutants_and_diff_files = [
             (mutant, mutant_diff_file_path(arguments.log_store_root, mutant_key(mutant)))
             for mutant in not_given]
@@ -1666,7 +1666,7 @@ def main_under_lock(arguments):
                   f"Fix what both errors name: the record's, in the line that begins "
                   f"\"{PROGRAM}: the record above was not written\", and the task's, in the "
                   f"first line of this message, such as the task list directory "
-                  f"{arguments.task_lists_directory / f'nedschorus-{JOB_FAILURE_TASK_AGENT_SEAT}-tasks'} "
+                  f"{arguments.task_lists_directory / f'nedsnodes-{JOB_FAILURE_TASK_AGENT_SEAT}-tasks'} "
                   f"not existing.\n"
                   f"Nothing this run found is lost: the tasks it opened for surviving mutants "
                   f"stay open, and {state_file} records the merges it tested, so the next run "

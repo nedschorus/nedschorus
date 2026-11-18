@@ -412,7 +412,7 @@ with tempfile.TemporaryDirectory() as scratch:
     answer = caller.nc_shared_database_event_send_single_attempt(
         "agent-seat-created", "seat-1", {"seat_name": "merge-lane-2",
                                          "seat_directory": "/home/nedlern/agents/merge-lane-2",
-                                         "task_list_name": "nedschorus-merge-lane-2-tasks"},
+                                         "task_list_name": "nedsnodes-merge-lane-2-tasks"},
         **real_options)
     listed = caller.nc_shared_database_service_http_request_single_attempt("/agent-seats",
                                                                             **real_options)

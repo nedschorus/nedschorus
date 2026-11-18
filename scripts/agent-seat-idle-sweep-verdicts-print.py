@@ -16,7 +16,7 @@ What it reads, for each agent-seat that has a handoff-supervisor state file
   under `subagents/workflows/` of the agents a Workflow-tool run starts (Claude Code's Workflow
   tool runs a script that starts several subagents in the background);
 - the walk-minutes in the agent-seat's `docs/walk/`, the handoff deferral marker file, the task
-  list `<tasks root>/nedschorus-<seat>-tasks/`, and, for a usage limit, `oauthAccount.accountUuid`
+  list `<tasks root>/nedsnodes-<seat>-tasks/`, and, for a usage limit, `oauthAccount.accountUuid`
   in `~/.claude.json`;
 - GitHub, through `gh`, for the prerequisites of open tasks, only when rule 4 needs the answer.
 
@@ -736,7 +736,7 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
             return verdict
 
         verdict[fields.LAST_TURN_ENDING_MESSAGE] = last_message_of(facts)
-        task_directory = paths.tasks_root / f"nedschorus-{seat}-tasks"
+        task_directory = paths.tasks_root / f"nedsnodes-{seat}-tasks"
         open_waiting_tasks = open_tasks_with_prerequisites_or_blocked_by(task_directory)
         verdict["sentences"] = matched_sentences(facts, since, open_waiting_tasks)
         sentences_by_code_reading = fields.verdict_sentences_grouped_by_code_reading(

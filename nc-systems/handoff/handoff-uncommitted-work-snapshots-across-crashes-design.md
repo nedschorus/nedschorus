@@ -1,6 +1,6 @@
 # Work-snapshots of uncommitted changes, for recovery after a crash: design
 
-Status: approved by the user in the approval-walk uncommitted-work-snapshots-across-crashes-design-2026-10-05-2 (minutes: `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/uncommitted-work-snapshots-across-crashes-design-2026-10-05-2-minutes.md`); built by the pull request that moved it here.
+Status: approved by the user in the approval-walk uncommitted-work-snapshots-across-crashes-design-2026-10-05-2 (minutes: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/uncommitted-work-snapshots-across-crashes-design-2026-10-05-2-minutes.md`); built by the pull request that moved it here.
 
 ## The problem
 
@@ -123,7 +123,7 @@ When a step fails, `restore` prints what failed and exits nonzero:
 
 The task's subject is `Restored branch <branch name>: open its pull request or delete it`. Its first words, `Restored branch `, are the constant `RESTORED_BRANCH_TASK_SUBJECT_PREFIX` in `nc-systems/handoff/uncommitted-work-snapshots.py`, and the branch name is the text between them and the first colon; a git branch name cannot hold a colon. Its description names the work-snapshot's ref, the worktree and transcript the entry named, the kept files and the restored worktree, and the commit `restore` made, by its SHA, on a line of its own that opens `Restore commit: `. It tells the agent: carry the branch on to a pull request, or delete it; and leave the task open, because `scripts/clean-worktrees.py` marks it completed once that commit is on main or no branch holds it any more. The task is a Claude Code task file, written as `scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py` writes a survivor task: its id is one more than the highest of the list's task ids and its `.highwatermark`, and the file is linked into place only where no file of that name exists, so a task Claude Code creates at the same moment is not overwritten.
 
-`scripts/clean-worktrees.py` closes these tasks with `--remove`, at its daily run and at every session-handoff, after its worktree and branch removals. So a task closes at the cleaner's next such run, not at the moment of the merge or the deletion. The cleaner reads every task list on its machine, `~/.claude/tasks/nedschorus-*-tasks`. Each task not marked completed whose subject starts with `RESTORED_BRANCH_TASK_SUBJECT_PREFIX` is marked completed, with a line at the end of its description saying why, when, after `git fetch --prune origin`, the commit its `Restore commit: ` line names is either:
+`scripts/clean-worktrees.py` closes these tasks with `--remove`, at its daily run and at every session-handoff, after its worktree and branch removals. So a task closes at the cleaner's next such run, not at the moment of the merge or the deletion. The cleaner reads every task list on its machine, `~/.claude/tasks/nedsnodes-*-tasks`. Each task not marked completed whose subject starts with `RESTORED_BRANCH_TASK_SUBJECT_PREFIX` is marked completed, with a line at the end of its description saying why, when, after `git fetch --prune origin`, the commit its `Restore commit: ` line names is either:
 
 - reachable from `origin/main`, because the branch's pull request merged, whatever the branch is called by then; or
 - held by no ref at all, `git for-each-ref --contains <sha>` printing nothing, because the branch was deleted, in the clone and on origin, by whatever command.
@@ -148,7 +148,7 @@ A replaced work-snapshot's commit is no longer referenced by any ref; git's auto
 
 ## Machines
 
-Each machine has its own clone and its own work-snapshots: on ned-box the clone at `/home/nedlern/Projects/nedschorus`, on the Mac the clone at `/Users/el/Projects/nedschorus`. All of a clone's worktrees share its refs, so an agent-session can see work-snapshots from any worktree of that clone. Work-snapshots are refs on disk, so they survive a reboot. An ordinary `git push` sends branches and tags, not `refs/work-snapshots/`, so work-snapshots stay on the machine, apart from the machine's own disk backups, which copy the whole clone.
+Each machine has its own clone and its own work-snapshots: on ned-box the clone at `/home/nedlern/Projects/nedsnodes`, on the Mac the clone at `/Users/el/Projects/nedsnodes`. All of a clone's worktrees share its refs, so an agent-session can see work-snapshots from any worktree of that clone. Work-snapshots are refs on disk, so they survive a reboot. An ordinary `git push` sends branches and tags, not `refs/work-snapshots/`, so work-snapshots stay on the machine, apart from the machine's own disk backups, which copy the whole clone.
 
 ## What this design does not do
 

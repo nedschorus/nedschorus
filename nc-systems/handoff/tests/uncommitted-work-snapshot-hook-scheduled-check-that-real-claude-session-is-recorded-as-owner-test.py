@@ -318,7 +318,7 @@ def test_the_record_goes_to_the_log_store_by_default():
     mark = owner_check.mark
     real = mark.this_machine_is_ned_box, mark.run_on_ned_box_or_here
     now = datetime(2026, 10, 12, 18, 0, tzinfo=timezone.utc)
-    store = f"/home/nedlern/nedschorus-logs/{owner_check.RECORDS_KIND_DIRECTORY_NAME}"
+    store = f"/home/nedlern/nedsnodes-logs/{owner_check.RECORDS_KIND_DIRECTORY_NAME}"
     try:
         for on_ned_box, machine, ssh_target in ((True, "ned-box", None),
                                                 (False, "mac", "nedlern@ned-box")):

@@ -6,7 +6,7 @@ Usage:
   scripts/standing-user-rulings-store-add-from-transcripts-and-walk-minutes-then-index-file-and-anchor-list-for-hooks-write.py
       [--log-store DIR] [--agents-directory DIR] [--repository-checkout DIR]
 
-  --log-store            default /home/nedlern/nedschorus-logs, the log-store on ned-box
+  --log-store            default /home/nedlern/nedsnodes-logs, the log-store on ned-box
   --agents-directory     default /home/nedlern/agents, whose agent-seats' docs/walk/*-minutes.md are read
   --repository-checkout  default the checkout this file is in; its origin/main, as last fetched, resolves the
                          repository paths and GHI-MD paths that become tags and anchors. Nothing is fetched.
@@ -129,7 +129,7 @@ GIT_ENVIRONMENT_FILE = (HERE.parent / "nc-systems" / "general-tools"
                         / "git-redirecting-environment-variables-removal-common.py")
 RUN_AGAIN_COMMAND = f"python3 {Path(__file__).resolve()}"
 
-DEFAULT_LOG_STORE = Path("/home/nedlern/nedschorus-logs")
+DEFAULT_LOG_STORE = Path("/home/nedlern/nedsnodes-logs")
 DEFAULT_AGENTS_DIRECTORY = Path("/home/nedlern/agents")
 STORE_DIRECTORY_NAME = "user-rulings"
 STORE_FILE_NAME = "standing-user-rulings-decided-by-the-user-full-text-searchable.sqlite3"
@@ -260,8 +260,8 @@ TASK_REFERENCE = re.compile(r"(?:\b([a-z][a-z0-9-]*[a-z0-9])(?:'s|’s)\s+)?\bta
                             re.IGNORECASE)
 # Each part ends on a word character, @ or -, so a path at a sentence's end leaves its full stop out.
 PATH_TOKEN = re.compile(r"[\w.~@-]*(?:/[\w.@-]*[\w@-])+/?")
-NEDSCHORUS_SESSION_DIRECTORY = re.compile(
-    r"^/(?:home/nedlern|Users/el)/(?:agents/(?P<seat>[^/]+)|Projects/nedschorus)(?:/|$)")
+NEDSNODES_SESSION_DIRECTORY = re.compile(
+    r"^/(?:home/nedlern|Users/el)/(?:agents/(?P<seat>[^/]+)|Projects/nedsnodes)(?:/|$)")
 AGENT_SEAT_DIRECTORY = re.compile(r"/agents/(?P<seat>[^/]+)/docs/walk/[^/]+$")
 # The answer line walk-me-through's check program writes (its CHECK_MINUTES); "deferred" has no such line.
 ANSWER_LINE_WITH_TIME = re.compile(
@@ -290,7 +290,7 @@ REPOSITORY_UNREADABLE_INSTRUCTIONS = (
     "Nothing was added: tags are fixed when an entry is added, so no entry is added without origin/main's files.",
     "Run `git -C {checkout} fetch origin main`, then `" + RUN_AGAIN_COMMAND + "` again.",
     "If origin/main still cannot be read, run it again with --repository-checkout naming another nedschorus "
-    "checkout on ned-box, such as /home/nedlern/Projects/nedschorus; if that fails too, send prime-intellect, "
+    "checkout on ned-box, such as /home/nedlern/Projects/nedsnodes; if that fails too, send prime-intellect, "
     "the agent-seat that owns this program, the FAILED line above with SendMessage.",
 )
 STORE_UNOPENABLE_INSTRUCTIONS = (
@@ -542,7 +542,7 @@ def record_reading(connection, path, status, size_read, lines_read, reader_state
 
 def session_context(cwd):
     """(whether the agent-session ran in a nedschorus checkout, its agent-seat or None)."""
-    match = NEDSCHORUS_SESSION_DIRECTORY.match(cwd or "")
+    match = NEDSNODES_SESSION_DIRECTORY.match(cwd or "")
     if not match:
         return False, None
     return True, match.group("seat")

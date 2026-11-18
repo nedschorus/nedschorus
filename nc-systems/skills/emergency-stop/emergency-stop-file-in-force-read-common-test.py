@@ -77,11 +77,11 @@ def main():
                 folder.chmod(0o755)
 
     check("override variable wins",
-          common.emergency_stop_folder({"NEDSCHORUS_EMERGENCY_STOP_FOLDER": "/x"}, "linux") == Path("/x"))
+          common.emergency_stop_folder({"NEDSNODES_EMERGENCY_STOP_FOLDER": "/x"}, "linux") == Path("/x"))
     check("ned-box folder", common.emergency_stop_folder({}, "linux")
-          == Path("/home/nedlern/nedschorus-logs/emergency-stop"))
+          == Path("/home/nedlern/nedsnodes-logs/emergency-stop"))
     check("Mac folder through the mount", common.emergency_stop_folder({}, "darwin")
-          == Path("/Volumes/nedhome/nedschorus-logs/emergency-stop"))
+          == Path("/Volumes/nedhome/nedsnodes-logs/emergency-stop"))
     print(f"{len(failures)} failure(s)")
     return 1 if failures else 0
 

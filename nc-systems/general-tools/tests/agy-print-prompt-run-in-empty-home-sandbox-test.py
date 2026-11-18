@@ -74,10 +74,10 @@ def check(case_name, condition, detail=""):
 
 def scratch_home(root: pathlib.Path) -> pathlib.Path:
     home = root / "home"
-    for directory in (".gemini", ".ssh", ".config/nedschorus", ".local/bin"):
+    for directory in (".gemini", ".ssh", ".config/nedsnodes", ".local/bin"):
         (home / directory).mkdir(parents=True)
     (home / ".bashrc").write_text("export SECRET=1\n")
-    (home / ".config/nedschorus/gemini-api.key").write_text("key\n")
+    (home / ".config/nedsnodes/gemini-api.key").write_text("key\n")
     return home
 
 

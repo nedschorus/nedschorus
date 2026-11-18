@@ -218,7 +218,7 @@ def seat_of(list_id):
     # scripts/seat-shared-file-ship.py's seat_name_from_environment reads the same IDs
     # but returns None for an unfamiliar one; the two are kept apart on purpose.
     name = list_id
-    for prefix in ("nedschorus-", TASK_LIST_ID_PREFIX_BEFORE_PROJECT_RENAME):
+    for prefix in ("nedsnodes-", TASK_LIST_ID_PREFIX_BEFORE_PROJECT_RENAME):
         if name.startswith(prefix):
             name = name[len(prefix):]
             break

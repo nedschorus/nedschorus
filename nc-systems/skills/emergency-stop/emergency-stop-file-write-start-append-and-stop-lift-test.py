@@ -3,7 +3,7 @@
 adding to the one in force, naming a coordinating agent-seat, recording the
 push notification, handing the lift over, lifting, and each FAILED path.
 
-Every case drives run() in-process with NEDSCHORUS_EMERGENCY_STOP_FOLDER set to
+Every case drives run() in-process with NEDSNODES_EMERGENCY_STOP_FOLDER set to
 a temporary folder; one runs the file as a subprocess. None touches the
 log-store. Run: python3 nc-systems/skills/emergency-stop/emergency-stop-file-write-start-append-and-stop-lift-test.py
 Prints one line per case and exits non-zero if any case fails."""
@@ -36,7 +36,7 @@ def check(case_name, condition, detail=""):
 
 
 def run(folder, *arguments, agent_seat="prime-intellect"):
-    environment = {"NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(folder)}
+    environment = {"NEDSNODES_EMERGENCY_STOP_FOLDER": str(folder)}
     if agent_seat:
         environment["GIT_AUTHOR_NAME"] = agent_seat
     out = io.StringIO()
@@ -222,7 +222,7 @@ def main():
         check("status prints the state", status == 0 and out.strip() == "Lifted", out)
 
         result = subprocess.run([sys.executable, str(PROGRAM), "status"], capture_output=True, text=True,
-                                env={**os.environ, "NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(folder)})
+                                env={**os.environ, "NEDSNODES_EMERGENCY_STOP_FOLDER": str(folder)})
         check("runs as a program", result.returncode == 0 and result.stdout.strip() == "Lifted", result)
 
     print(f"{len(failures)} failure(s)")

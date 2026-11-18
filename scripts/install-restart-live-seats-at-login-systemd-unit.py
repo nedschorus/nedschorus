@@ -24,7 +24,7 @@ What the unit says, and why:
     RemainAfterExit was rejected: it keeps the unit active, so a later stop
     or restart of the unit would kill every seat it launched.
   - The program is run from the durable checkout (--checkout, default
-    ~/Projects/nedschorus), never from a worktree that is removed when its
+    ~/Projects/nedsnodes), never from a worktree that is removed when its
     topic lands.
   - PATH is set explicitly, as the Mac plist does: the recovery tool needs
     tmux, and the supervisor needs claude in ~/.local/bin. The user manager's
@@ -242,9 +242,9 @@ def main(argv=None, platform: str = sys.platform, unit_directory: Path = None,
                     "at boot on the box.",
         formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
     parser.add_argument("--checkout", type=Path,
-                        default=Path("~/Projects/nedschorus").expanduser(),
+                        default=Path("~/Projects/nedsnodes").expanduser(),
                         help="the durable checkout whose scripts/ the unit runs "
-                             "(default ~/Projects/nedschorus)")
+                             "(default ~/Projects/nedsnodes)")
     parser.add_argument("--unit-name", default=DEFAULT_UNIT_NAME,
                         help=f"the unit's name (default {DEFAULT_UNIT_NAME}); a throwaway "
                              "name for a test install")

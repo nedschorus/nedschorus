@@ -37,7 +37,7 @@ def fresh_home(root, name):
     home = root / name
     home.mkdir()
     os.environ["HOME"] = str(home)
-    return home / ".local/state/nedschorus/user-alerts"
+    return home / ".local/state/nedsnodes/user-alerts"
 
 
 class RenameRacedByAnotherAgentSession:
@@ -175,7 +175,7 @@ def run_release_cases(root):
     open_walk = home / "agents/merge-lane-2/docs/walk"
     open_walk.mkdir(parents=True)
     (open_walk / "a-walk-minutes.md").write_text(f"- Re-planned.\n#user_alert {in_open_walk}\n", encoding="utf-8")
-    closed_walk = home / "nedschorus-logs/walk"
+    closed_walk = home / "nedsnodes-logs/walk"
     closed_walk.mkdir(parents=True)
     (closed_walk / "b-walk-minutes.md").write_text(f"#user_alert {in_closed_walk}\n", encoding="utf-8")
     (closed_walk / "b-walk.md").write_text(f"#user_alert {unrecorded}\n", encoding="utf-8")
@@ -235,7 +235,7 @@ def run_release_cases(root):
           "still returned", raised is None and pending == [alert_id], repr((raised, pending)))
 
     home = Path(fresh_home(root, "minutes-vanished")).parents[3]
-    minutes = home / "nedschorus-logs/walk"
+    minutes = home / "nedsnodes-logs/walk"
     minutes.mkdir(parents=True)
     (minutes / "b-walk-minutes.md").write_text("#user_alert recorded-id\n", encoding="utf-8")
     real_walk_minutes_files = alerts.walk_minutes_files

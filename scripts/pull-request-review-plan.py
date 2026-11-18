@@ -63,7 +63,7 @@ system temporary directory, named after the source file and a digest of the
 text. A listed string whose cold-read-record the pull request's description names, and whose text matches that record's target file, gets the record's path instead of a cold-read-fast-read command; every other string keeps its command.
 The description names a record by an absolute path that ends
 /cold-read-records/<record name>, as in
-nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/<record name>;
+nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/<record name>;
 the program drops any text before the path's first slash and reads the path on
 the machine it runs on, so a record kept on ned-box is used only when the
 program runs on ned-box. A string's new text as the agent reads it, the text its

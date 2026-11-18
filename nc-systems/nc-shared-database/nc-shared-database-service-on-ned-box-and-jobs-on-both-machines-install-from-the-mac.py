@@ -15,7 +15,7 @@ Run it on the Mac: only the Mac can open an ssh session to ned-box. It runs
 these steps in order, each as one shell command on one machine, and stops at the
 first that fails:
 
-  1-2. both reference-checkouts, ~/Projects/nedschorus, hold main's commit that
+  1-2. both reference-checkouts, ~/Projects/nedsnodes, hold main's commit that
        named the files nc-shared-database (MAIN_COMMIT_EACH_REFERENCE_CHECKOUT_MUST_HOLD);
   3.   the Mac's token file is made, unless it already holds a token;
   4.   ned-box's token file is made, unless it already holds a token;
@@ -59,13 +59,13 @@ _rerun_once_lines = importlib.util.module_from_spec(_rerun_once_lines_spec)
 _rerun_once_lines_spec.loader.exec_module(_rerun_once_lines)
 
 NED_BOX_SSH_TARGET = "nedlern@ned-box"
-REFERENCE_CHECKOUT = "~/Projects/nedschorus"
+REFERENCE_CHECKOUT = "~/Projects/nedsnodes"
 MAIN_COMMIT_EACH_REFERENCE_CHECKOUT_MUST_HOLD = "35c291170664bb6b7d70b7511550f5ebf7bf4ccb"
-TOKEN_DIRECTORY = "~/.config/nedschorus"
+TOKEN_DIRECTORY = "~/.config/nedsnodes"
 TOKEN_FILE = f"{TOKEN_DIRECTORY}/nc-shared-database-service.token"
 ACCEPTED_TOKENS_FILE = f"{TOKEN_DIRECTORY}/nc-shared-database-service-accepted-tokens"
 NC_SHARED_DATABASE_SERVICE_TOKEN_FILE_PATH = Path(TOKEN_FILE).expanduser()
-NC_SHARED_DATABASE_SERVICE_SYSTEMD_UNIT_FILE_PATH = f"{REFERENCE_CHECKOUT}/nc-systems/nc-shared-database/nc-shared-database-service.service"
+NC_SHARED_DATABASE_SERVICE_SYSTEMD_UNIT_FILE_PATH = f"{REFERENCE_CHECKOUT}/nc-systems/nc-shared-database/nn-shared-database-service.service"
 SERVICE_URL = "http://ned-box.local:8765"
 HOME_NETWORK = "10.0.1.0/24"
 PORT = 8765

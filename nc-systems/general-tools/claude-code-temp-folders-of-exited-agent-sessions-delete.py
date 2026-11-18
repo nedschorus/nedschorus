@@ -63,7 +63,7 @@ reads /proc.
 
   ned-box: one cron line.
 
-    30 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/claude-code-temp-folders-of-exited-agent-sessions-delete.py --then-tmp-and-reviewer-scratch-folders-unchanged-a-day-and-unused-delete >> /home/nedlern/.claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log 2>&1
+    30 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/nc-systems/general-tools/claude-code-temp-folders-of-exited-agent-sessions-delete.py --then-tmp-and-reviewer-scratch-folders-unchanged-a-day-and-unused-delete >> /home/nedlern/.claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log 2>&1
 
 
 Exit status: 0 when done; 1 when a failure stopped a deletion or the whole run. When the live set
@@ -89,7 +89,7 @@ import time
 from pathlib import Path
 
 # Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
-PROGRAM_PATH_ON_NED_BOX = ("/home/nedlern/Projects/nedschorus/nc-systems/general-tools/"
+PROGRAM_PATH_ON_NED_BOX = ("/home/nedlern/Projects/nedsnodes/nc-systems/general-tools/"
                            "claude-code-temp-folders-of-exited-agent-sessions-delete.py")
 FAILURES_INSTRUCTION = (
     "Each failure above left its folder in place, whole or in part; after \"nothing was "

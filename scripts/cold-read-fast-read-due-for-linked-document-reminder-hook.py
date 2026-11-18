@@ -112,7 +112,7 @@ nc-systems/general-tools/claude-code-stop-hooks-stay-silent-while-agent-answers-
 headless `claude -p` child (its last words are its caller's answer), when the
 transcript file does not exist, and when the log-store's cold-read-records
 directory does not exist, as on the Mac, because without it every document
-would look due. NEDSCHORUS_LOG_STORE_COLD_READ_RECORDS_DIRECTORY overrides
+would look due. NEDSNODES_LOG_STORE_COLD_READ_RECORDS_DIRECTORY overrides
 that directory; the log-store is its parent directory.
 
 OUTPUT: {"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": ...}},
@@ -185,8 +185,8 @@ try:
 except Exception as error:
     sys.exit(fault_exit(error))
 
-LOG_STORE_DIRECTORY = Path(ned_box_home_path_constants.NED_BOX_HOME) / "nedschorus-logs"
-LOG_STORE_COLD_READ_RECORDS_ENVIRONMENT_VARIABLE = "NEDSCHORUS_LOG_STORE_COLD_READ_RECORDS_DIRECTORY"
+LOG_STORE_DIRECTORY = Path(ned_box_home_path_constants.NED_BOX_HOME) / "nedsnodes-logs"
+LOG_STORE_COLD_READ_RECORDS_ENVIRONMENT_VARIABLE = "NEDSNODES_LOG_STORE_COLD_READ_RECORDS_DIRECTORY"
 MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home_path_constants.MAC_MOUNT_OF_NED_BOX_HOME + "/"
 NED_BOX_HOME = ned_box_home_path_constants.NED_BOX_HOME + "/"
 WALK_DIRECTORY_PARTS = ("docs", "walk")

@@ -49,24 +49,24 @@ def check(case_name, condition, detail=""):
 # The cron lines the table must give each machine, byte for byte, in the form
 # `crontab -l` prints them.
 NED_BOX_MIRROR_LINE = (
-    "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/"
     "transcript-mirror-to-log-store.py --failures-only >> "
     "/home/nedlern/.claude/transcript-mirror.log 2>&1")
 NED_BOX_FULL_TEST_RUN_LINE = (
-    "0 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "0 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/"
     "scheduled-full-test-run-of-main.py >> "
     "/home/nedlern/.claude/scheduled-full-test-run-of-main.log 2>&1")
 MAC_MIRROR_LINE = (
-    "* * * * * /opt/homebrew/bin/python3 /Users/el/Projects/nedschorus/scripts/"
+    "* * * * * /opt/homebrew/bin/python3 /Users/el/Projects/nedsnodes/scripts/"
     "transcript-mirror-to-log-store.py --failures-only >> "
     "/Users/el/.claude/transcript-mirror.log 2>&1")
 NED_BOX_FOREIGN_COMMENT = (
     "# nedsmessenger stopped 2026-09-30 at the user's word: 15 3 * * * "
     "/home/nedlern/agent/nedsmessenger/scripts/nightly-backup.sh")
 MAC_FULL_TEST_RUN_PLIST = {
-    "Label": "com.nedschorus.scheduled-full-test-run-of-main",
+    "Label": "com.nedsnodes.scheduled-full-test-run-of-main",
     "ProgramArguments": ["/opt/homebrew/bin/python3",
-                         "/Users/el/Projects/nedschorus/scripts/scheduled-full-test-run-of-main.py"],
+                         "/Users/el/Projects/nedsnodes/scripts/scheduled-full-test-run-of-main.py"],
     "EnvironmentVariables": {
         "PATH": "/Users/el/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:"
                 "/usr/sbin:/sbin"},
@@ -75,31 +75,31 @@ MAC_FULL_TEST_RUN_PLIST = {
     "StandardErrorPath": "/Users/el/.claude/scheduled-full-test-run-of-main.log",
 }
 NED_BOX_SESSION_DIALOGS_LINE = (
-    "*/10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "*/10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/"
     "log-store-session-dialogs-refresh-hack.py --failures-only >> "
     "/home/nedlern/.claude/log-store-session-dialogs-refresh.log 2>&1")
 # The worktree cleanup, added to the table after the two jobs above; no
 # machine had it installed by hand.
 NED_BOX_CLEAN_LINE = (
-    "30 6 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "30 6 * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/"
     "clean-worktrees.py --remove >> /home/nedlern/.claude/clean-worktrees.log 2>&1")
 NED_BOX_CRASH_RESTART_WATCHER_LINE = (
-    "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
+    "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/nc-systems/handoff/"
     "handoff-agent-crash-watcher.py >> "
     "/home/nedlern/.claude/handoff-agent-crash-watcher.log 2>&1")
 NED_BOX_IDLE_SWEEP_LINE = (
-    "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/"
     "agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write.py >> "
     "/home/nedlern/.claude/agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-"
     "write.log 2>&1")
 NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE = (
-    "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
+    "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/nc-systems/handoff/"
     "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py >> "
     "/home/nedlern/.claude/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.log 2>&1")
 MAC_CLEAN_PLIST = {
-    "Label": "com.nedschorus.clean-worktrees",
+    "Label": "com.nedsnodes.clean-worktrees",
     "ProgramArguments": ["/opt/homebrew/bin/python3",
-                         "/Users/el/Projects/nedschorus/scripts/clean-worktrees.py", "--remove"],
+                         "/Users/el/Projects/nedsnodes/scripts/clean-worktrees.py", "--remove"],
     "EnvironmentVariables": {
         "PATH": "/Users/el/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:"
                 "/usr/sbin:/sbin"},
@@ -109,14 +109,14 @@ MAC_CLEAN_PLIST = {
 }
 # The scheduled owner check of the work-snapshot hook in a real claude session, added after the daily jobs.
 NED_BOX_OWNER_CHECK_LINE = (
-    "30 4 * * 0 /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
+    "30 4 * * 0 /usr/bin/python3 /home/nedlern/Projects/nedsnodes/nc-systems/handoff/"
     "uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py >> "
     "/home/nedlern/.claude/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.log "
     "2>&1")
 MAC_OWNER_CHECK_PLIST = {
-    "Label": "com.nedschorus.uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner",
+    "Label": "com.nedsnodes.uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner",
     "ProgramArguments": ["/opt/homebrew/bin/python3",
-                         "/Users/el/Projects/nedschorus/nc-systems/handoff/"
+                         "/Users/el/Projects/nedsnodes/nc-systems/handoff/"
                          "uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py"],
     "EnvironmentVariables": {
         "PATH": "/Users/el/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:"
@@ -128,54 +128,54 @@ MAC_OWNER_CHECK_PLIST = {
         "/Users/el/.claude/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.log",
 }
 MAC_REMOTE_CONTROL_RECONNECT_WATCHER_LINE = (
-    "* * * * * /opt/homebrew/bin/python3 /Users/el/Projects/nedschorus/nc-systems/handoff/"
+    "* * * * * /opt/homebrew/bin/python3 /Users/el/Projects/nedsnodes/nc-systems/handoff/"
     "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py >> "
     "/Users/el/.claude/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.log 2>&1")
 # The prune of the guarded-file hook's copies of removed checkouts, last in the table.
 NED_BOX_GUARDED_FILE_PRUNE_LINE = (
-    "0 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/"
+    "0 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/nc-systems/general-tools/"
     "guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.py >> "
     "/home/nedlern/.claude/guarded-file-versions-and-approvals-store-removed-checkout-"
     "copies-prune.log 2>&1")
 # The deletion of exited agent-sessions' Claude Code temp folders, on ned-box alone.
 NED_BOX_TEMP_FOLDERS_DELETE_LINE = (
-    "30 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/"
+    "30 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/nc-systems/general-tools/"
     "claude-code-temp-folders-of-exited-agent-sessions-delete.py "
     "--then-tmp-and-reviewer-scratch-folders-unchanged-a-day-and-unused-delete >> "
     "/home/nedlern/.claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log 2>&1")
 # The daily search for credential files no cold-read-cell is denied, on ned-box alone.
 NED_BOX_CREDENTIAL_FILES_CHECK_LINE = (
-    "45 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/cold-read/"
+    "45 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/nc-systems/cold-read/"
     "cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write.py >> "
     "/home/nedlern/.claude/cold-read-cell-credential-files-outside-denied-directories-daily-check-"
     "user-alert-write.log 2>&1")
 # The weekly count of each hook rule ID in both machines' transcripts, on ned-box alone.
 NED_BOX_HOOK_RULE_IDS_WEEKLY_COUNT_LINE = (
-    "30 5 * * 1 /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/"
+    "30 5 * * 1 /usr/bin/python3 /home/nedlern/Projects/nedsnodes/nc-systems/general-tools/"
     "claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report.py >> "
     "/home/nedlern/.claude/claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-"
     "never-seen-rules-report.log 2>&1")
 # The no-sandbox test suites' run on main in a quiet gap, on ned-box alone.
 NED_BOX_NO_SANDBOX_SUITES_LINE = (
-    "*/10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "*/10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/"
     "no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py >> "
     "/home/nedlern/.claude/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.log 2>&1")
 # The GHI-MD edit pull requests' check, approval and merge, on ned-box alone.
 NED_BOX_GHI_MD_EDIT_PULL_REQUESTS_MERGE_LINE = (
-    "*/5 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "*/5 * * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/"
     "merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge.py >> "
     "/home/nedlern/.claude/merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge.log 2>&1")
 # The scheduled full mutation pass of merged pull requests, on ned-box alone.
 NED_BOX_SCHEDULED_FULL_MUTATION_PASS_LINE = (
-    "30 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "30 0 * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/"
     "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py >> "
     "/home/nedlern/.claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-"
     "tasks-open.log 2>&1")
 MAC_GUARDED_FILE_PRUNE_PLIST = {
-    "Label": "com.nedschorus.guarded-file-versions-and-approvals-store-removed-checkout-"
+    "Label": "com.nedsnodes.guarded-file-versions-and-approvals-store-removed-checkout-"
              "copies-prune",
     "ProgramArguments": ["/opt/homebrew/bin/python3",
-                         "/Users/el/Projects/nedschorus/nc-systems/general-tools/"
+                         "/Users/el/Projects/nedsnodes/nc-systems/general-tools/"
                          "guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.py"],
     "EnvironmentVariables": {
         "PATH": "/Users/el/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:"
@@ -188,13 +188,13 @@ MAC_GUARDED_FILE_PRUNE_PLIST = {
 }
 # The nc-shared-database's nightly backup on ned-box and its copy to the Mac.
 NED_BOX_NC_SHARED_DATABASE_BACKUP_LINE = (
-    "15 2 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/nc-shared-database/"
+    "15 2 * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/nc-systems/nc-shared-database/"
     "nc-shared-database-nightly-backup-with-integrity-check.py >> "
     "/home/nedlern/.claude/nc-shared-database-nightly-backup-with-integrity-check.log 2>&1")
 MAC_NC_SHARED_DATABASE_BACKUP_COPY_PLIST = {
-    "Label": "com.nedschorus.nc-shared-database-newest-backup-copy-to-mac",
+    "Label": "com.nedsnodes.nc-shared-database-newest-backup-copy-to-mac",
     "ProgramArguments": ["/opt/homebrew/bin/python3",
-                         "/Users/el/Projects/nedschorus/nc-systems/nc-shared-database/"
+                         "/Users/el/Projects/nedsnodes/nc-systems/nc-shared-database/"
                          "nc-shared-database-newest-backup-copy-to-mac.py"],
     "EnvironmentVariables": {
         "PATH": "/Users/el/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:"
@@ -506,10 +506,10 @@ with redirect_stdout(printed), redirect_stderr(errors):
     exit_code = installer.main(["--print"], platform="darwin", home=Path("/Users/el"), run=stub)
 mac_printed = printed.getvalue()
 clean_heading = ("clean-worktrees — launchd job, /Users/el/Library/LaunchAgents/"
-                 "com.nedschorus.clean-worktrees.plist:\n")
+                 "com.nedsnodes.clean-worktrees.plist:\n")
 owner_check_heading = (
     "uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner — launchd job, "
-    "/Users/el/Library/LaunchAgents/com.nedschorus.uncommitted-work-snapshot-hook-"
+    "/Users/el/Library/LaunchAgents/com.nedsnodes.uncommitted-work-snapshot-hook-"
     "scheduled-check-that-real-claude-session-is-recorded-as-owner.plist:\n")
 remote_control_watcher_heading = (
     "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher — cron line:\n")
@@ -518,11 +518,11 @@ clean_and_watcher_part, _, owner_check_and_prune_part = clean_and_owner_check_pa
 clean_part, _, remote_control_watcher_part = clean_and_watcher_part.partition(
     remote_control_watcher_heading)
 prune_heading = ("guarded-file-versions-and-approvals-store-removed-checkout-copies-prune — "
-                 "launchd job, /Users/el/Library/LaunchAgents/com.nedschorus.guarded-file-"
+                 "launchd job, /Users/el/Library/LaunchAgents/com.nedsnodes.guarded-file-"
                  "versions-and-approvals-store-removed-checkout-copies-prune.plist:\n")
 owner_check_part, _, prune_and_backup_copy_part = owner_check_and_prune_part.partition(prune_heading)
 backup_copy_heading = ("nc-shared-database-newest-backup-copy-to-mac — launchd job, "
-                       "/Users/el/Library/LaunchAgents/com.nedschorus.nc-shared-database-"
+                       "/Users/el/Library/LaunchAgents/com.nedsnodes.nc-shared-database-"
                        "newest-backup-copy-to-mac.plist:\n")
 prune_part, _, backup_copy_part = prune_and_backup_copy_part.partition(backup_copy_heading)
 check("--print as the Mac prints the mirror's cron line, the full test run's and the worktree "
@@ -532,7 +532,7 @@ check("--print as the Mac prints the mirror's cron line, the full test run's and
       and full_test_run_part.startswith(
           "machine: mac (darwin, /Users/el)\ntranscript-mirror-to-log-store — cron line:\n"
           f"{MAC_MIRROR_LINE}\nscheduled-full-test-run-of-main — launchd job, /Users/el/Library/"
-          "LaunchAgents/com.nedschorus.scheduled-full-test-run-of-main.plist:\n<?xml")
+          "LaunchAgents/com.nedsnodes.scheduled-full-test-run-of-main.plist:\n<?xml")
       and plistlib.loads(full_test_run_part[full_test_run_part.index("<?xml"):].encode("utf-8"))
       == MAC_FULL_TEST_RUN_PLIST
       and plistlib.loads(clean_part.encode("utf-8")) == MAC_CLEAN_PLIST
@@ -586,7 +586,7 @@ with tempfile.TemporaryDirectory() as temporary:
                                                 "scheduled-full-test-run-of-main")]
     for machine_name in ("mac", "ned-box"):
         machine_home = root / f"{machine_name}-home"
-        clone = machine_home / "Projects" / "nedschorus"
+        clone = machine_home / "Projects" / "nedsnodes"
         (clone / "scripts").mkdir(parents=True)
         for job in fixture_table["jobs"]:
             (clone / job["program"]).write_text("# program\n")
@@ -599,7 +599,7 @@ with tempfile.TemporaryDirectory() as temporary:
         "name": "runs-on-ned-box-alone", "program": "scripts/runs-on-ned-box-alone.py",
         "arguments": [], "output": ".claude/runs-on-ned-box-alone.log",
         "on": {"ned-box": {"scheduler": "cron", "schedule": "5 4 * * 0"}}})
-    (root / "ned-box-home" / "Projects" / "nedschorus" / "scripts"
+    (root / "ned-box-home" / "Projects" / "nedsnodes" / "scripts"
      / "runs-on-ned-box-alone.py").write_text("# program\n")
     FIXTURE_TABLE_PATH.write_text(json.dumps(fixture_table), encoding="utf-8")
 
@@ -969,7 +969,7 @@ with tempfile.TemporaryDirectory() as temporary:
     exit_code, printed, errors = run_main(["--print"], ("linux", root / "mac-home"), stub)
     check("the Mac's home directory on another platform is not the Mac",
           exit_code == 2 and "names no machine" in errors, (exit_code, errors))
-    alone_program = root / "ned-box-home" / "Projects" / "nedschorus" / "scripts" \
+    alone_program = root / "ned-box-home" / "Projects" / "nedsnodes" / "scripts" \
         / "runs-on-ned-box-alone.py"
     alone_program.unlink()
     stub = MachineStub(crontab=as_installed_today)
@@ -1056,7 +1056,7 @@ with tempfile.TemporaryDirectory() as temporary:
     full_test_run_job = jobs["scheduled-full-test-run-of-main"]
     full_test_run_placement = full_test_run_job["on"]["mac"]
     expected_plist = installer.launch_agent_plist(mac_machine, full_test_run_job, full_test_run_placement)
-    LABEL = "com.nedschorus.scheduled-full-test-run-of-main"
+    LABEL = "com.nedsnodes.scheduled-full-test-run-of-main"
     TARGET = f"{DOMAIN}/{LABEL}"
     plist_path = LAUNCH_AGENTS / f"{LABEL}.plist"
     mac_mirror_line = installer.cron_line(
@@ -1096,7 +1096,7 @@ with tempfile.TemporaryDirectory() as temporary:
           "03:30 calendar interval, and both streams to the job's output file",
           expected_plist["ProgramArguments"]
           == ["/opt/homebrew/bin/python3",
-              f"{root}/mac-home/Projects/nedschorus/scripts/scheduled-full-test-run-of-main.py"]
+              f"{root}/mac-home/Projects/nedsnodes/scripts/scheduled-full-test-run-of-main.py"]
           and expected_plist["EnvironmentVariables"] == {
               "PATH": f"{root}/mac-home/.local/bin:/usr/bin:/bin"}
           and expected_plist["StartCalendarInterval"] == {"Hour": 3, "Minute": 30}
@@ -1516,23 +1516,23 @@ with tempfile.TemporaryDirectory() as temporary:
           (exit_code, printed))
 
     LAUNCH_AGENTS.mkdir(parents=True, exist_ok=True)
-    retired_plist = dict(expected_plist, Label="com.nedschorus.a-retired-job")
-    retired_plist_path = LAUNCH_AGENTS / "com.nedschorus.a-retired-job.plist"
+    retired_plist = dict(expected_plist, Label="com.nedsnodes.a-retired-job")
+    retired_plist_path = LAUNCH_AGENTS / "com.nedsnodes.a-retired-job.plist"
     retired_plist_path.write_bytes(plistlib.dumps(retired_plist, sort_keys=False).replace(
         b"<plist ", installer.PLIST_WRITTEN_BY_THIS_PROGRAM + b"\n<plist ", 1))
-    other_installer_path = LAUNCH_AGENTS / "com.nedschorus.restart-live-seats-at-login.plist"
+    other_installer_path = LAUNCH_AGENTS / "com.nedsnodes.restart-live-seats-at-login.plist"
     other_installer_path.write_bytes(plistlib.dumps(dict(
-        expected_plist, Label="com.nedschorus.restart-live-seats-at-login", RunAtLoad=True)))
+        expected_plist, Label="com.nedsnodes.restart-live-seats-at-login", RunAtLoad=True)))
     unrelated_path = LAUNCH_AGENTS / "com.example.updater.plist"
     unrelated_path.write_bytes(plistlib.dumps({"Label": "com.example.updater"}))
     stub = MachineStub(crontab=f"{mac_mirror_line}\n".encode(),
-                       loaded=[f"{DOMAIN}/com.nedschorus.a-retired-job"])
+                       loaded=[f"{DOMAIN}/com.nedsnodes.a-retired-job"])
     exit_code, printed, errors = run_main(["--install"] + FULL_TEST_RUN_JOB, MAC, stub)
     exit_code, printed, errors = run_main(["--check"], MAC, stub)
     check("--check reports a plist this program wrote whose label the table does not name, "
           "exit 1",
           exit_code == 1 and f"NOT IN THE TABLE: {retired_plist_path}, label "
-                             f"com.nedschorus.a-retired-job — no job of the table names it for "
+                             f"com.nedsnodes.a-retired-job — no job of the table names it for "
                              f"this machine.\n" in printed
           and printed.count("NOT IN THE TABLE: ") == 1 and printed.count("matches: ") == 2,
           (exit_code, printed))
@@ -1545,20 +1545,20 @@ with tempfile.TemporaryDirectory() as temporary:
           exit_code == 0 and not retired_plist_path.exists() and plist_path.is_file()
           and other_installer_path.is_file() and unrelated_path.is_file()
           and stub.crontab_writes == []
-          and ["launchctl", "bootout", f"{DOMAIN}/com.nedschorus.a-retired-job"] in stub.commands
-          and f"{DOMAIN}/com.nedschorus.a-retired-job" not in stub.loaded
+          and ["launchctl", "bootout", f"{DOMAIN}/com.nedsnodes.a-retired-job"] in stub.commands
+          and f"{DOMAIN}/com.nedsnodes.a-retired-job" not in stub.loaded
           and f"removed: not in the table — deleted {retired_plist_path}.\n" in printed,
           (exit_code, printed, stub.commands))
 
     retired_plist_path.write_bytes(plistlib.dumps(retired_plist, sort_keys=False).replace(
         b"<plist ", installer.PLIST_WRITTEN_BY_THIS_PROGRAM + b"\n<plist ", 1))
-    stub.loaded.add(f"{DOMAIN}/com.nedschorus.a-retired-job")
+    stub.loaded.add(f"{DOMAIN}/com.nedsnodes.a-retired-job")
     stub.exit_codes["bootout"] = 5
     exit_code, printed, errors = run_main(["--remove-not-in-table"], MAC, stub)
     check("in --remove-not-in-table, a bootout that fails with the job still loaded is "
           "FAILED, exit 1, and the plist is kept",
           exit_code == 1 and retired_plist_path.is_file() and "removed:" not in printed
-          and (f"FAILED: com.nedschorus.a-retired-job — launchctl bootout exited 5, so the job "
+          and (f"FAILED: com.nedsnodes.a-retired-job — launchctl bootout exited 5, so the job "
                f"may still be loaded; {retired_plist_path} was kept.\n"
                "Read what launchctl printed above, and run this again after that cause is "
                "removed.\n") in errors, (exit_code, printed, errors))
@@ -1567,7 +1567,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("in --remove-not-in-table, a bootout that fails while launchctl print fails with "
           "other than service-not-found is FAILED, exit 1, and the plist is kept",
           exit_code == 1 and retired_plist_path.is_file() and "removed:" not in printed
-          and "FAILED: com.nedschorus.a-retired-job — launchctl bootout exited 5" in errors,
+          and "FAILED: com.nedsnodes.a-retired-job — launchctl bootout exited 5" in errors,
           (exit_code, printed, errors))
     retired_plist_path.unlink()
     del stub.exit_codes["bootout"], stub.exit_codes["print"]
@@ -1577,19 +1577,19 @@ with tempfile.TemporaryDirectory() as temporary:
     # is looked for.
     marked_dir = root / "LaunchAgents-of-a-table-with-no-launchd-job"
     marked_dir.mkdir()
-    last_retired_path = marked_dir / "com.nedschorus.the-last-launchd-job.plist"
+    last_retired_path = marked_dir / "com.nedsnodes.the-last-launchd-job.plist"
     last_retired_path.write_bytes(plistlib.dumps(
-        dict(expected_plist, Label="com.nedschorus.the-last-launchd-job"), sort_keys=False)
+        dict(expected_plist, Label="com.nedsnodes.the-last-launchd-job"), sort_keys=False)
         .replace(b"<plist ", installer.PLIST_WRITTEN_BY_THIS_PROGRAM + b"\n<plist ", 1))
-    unmarked_path = marked_dir / "com.nedschorus.written-before-the-marker.plist"
+    unmarked_path = marked_dir / "com.nedsnodes.written-before-the-marker.plist"
     unmarked_path.write_bytes(plistlib.dumps(
-        dict(expected_plist, Label="com.nedschorus.written-before-the-marker"), sort_keys=False))
+        dict(expected_plist, Label="com.nedsnodes.written-before-the-marker"), sort_keys=False))
     mac_without_launchd_path = {key: value for key, value in table["machines"]["mac"].items()
                                 if key != "launchd_path"}
     check("a plist this program wrote is found when the table names no launchd job and no "
           "launchd_path; a plist written before the marker line is not",
           installer.plists_not_in_table(mac_without_launchd_path, [], marked_dir)
-          == [(last_retired_path, "com.nedschorus.the-last-launchd-job")])
+          == [(last_retired_path, "com.nedsnodes.the-last-launchd-job")])
     no_launchd_table = json.loads(FIXTURE_TABLE_PATH.read_text(encoding="utf-8"))
     for job in no_launchd_table["jobs"]:
         job["on"] = {machine_name: placement for machine_name, placement
@@ -1600,7 +1600,7 @@ with tempfile.TemporaryDirectory() as temporary:
     no_launchd_table_path.write_text(json.dumps(no_launchd_table), encoding="utf-8")
     saved_launch_agents, LAUNCH_AGENTS = LAUNCH_AGENTS, marked_dir
     stub = MachineStub(crontab=f"{mac_mirror_line}\n".encode(),
-                       loaded=[f"{DOMAIN}/com.nedschorus.the-last-launchd-job"])
+                       loaded=[f"{DOMAIN}/com.nedsnodes.the-last-launchd-job"])
     exit_code, printed, errors = run_main(["--remove-not-in-table"], MAC, stub,
                                           no_launchd_table_path)
     LAUNCH_AGENTS = saved_launch_agents

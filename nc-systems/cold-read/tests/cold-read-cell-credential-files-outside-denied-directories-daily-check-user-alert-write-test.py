@@ -47,7 +47,7 @@ def run(home):
 
 
 def pending_alerts(home):
-    pending = home / ".local" / "state" / "nedschorus" / "user-alerts" / "pending"
+    pending = home / ".local" / "state" / "nedsnodes" / "user-alerts" / "pending"
     return [json.loads(path.read_text(encoding="utf-8")) for path in sorted(pending.glob("*.json"))]
 
 
@@ -70,9 +70,9 @@ def home_environment(home):
 with scratch_home() as home:
     reported = [make_file(home, "project/.env"), make_file(home, "a/b/github.token"),
                 make_file(home, ".ssh-old/.env")]
-    for relative in (".ssh/id.token", ".config/gh/hosts.token", ".config/nedschorus/x.token",
+    for relative in (".ssh/id.token", ".config/gh/hosts.token", ".config/nedsnodes/x.token",
                      ".steam/steam.token", "nedsmessenger/.env", "nedsmessenger/secrets/a.token",
-                     "nedschorus-logs/seats/test/.env", "project/.env.local", "project/token",
+                     "nedsnodes-logs/seats/test/.env", "project/.env.local", "project/token",
                      "other/.env/inside"):
         make_file(home, relative)
     result = run(home)
@@ -106,7 +106,7 @@ if os.geteuid() != 0:
 
 with scratch_home() as home:
     make_file(home, "project/.env")
-    make_file(home, ".local/state/nedschorus/user-alerts")
+    make_file(home, ".local/state/nedsnodes/user-alerts")
     result = run(home)
     check("when the user-alert naming the files cannot be written, the error is printed and the exit is 1",
           result.returncode == 1 and "could not be written" in result.stderr

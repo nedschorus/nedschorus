@@ -2,7 +2,7 @@
 """Restart an agent-seat's old handoff-supervisor onto main's code, from the reference-checkout.
 
 Usage, on the machine the agent-seat runs on:
-  python3 ~/Projects/nedschorus/nc-systems/handoff/handoff-supervisor-restart-onto-main-code-by-relaunch-from-reference-checkout.py <seat>
+  python3 ~/Projects/nedsnodes/nc-systems/handoff/handoff-supervisor-restart-onto-main-code-by-relaunch-from-reference-checkout.py <seat>
 
 Run it for a handoff-supervisor that is running and will not restart itself, as
 docs/nedschorus-wiki/nedschorus-handoff-supervisor-restart-onto-main-code-when-it-will-not-restart-itself.md
@@ -16,7 +16,7 @@ result file this program prints, and stops working. On ned-box it runs this prog
 handoff-supervisor.
 
 In the foreground, the program:
-- step 0: fast-forwards the reference-checkout ~/Projects/nedschorus to origin/main and checks
+- step 0: fast-forwards the reference-checkout ~/Projects/nedsnodes to origin/main and checks
   that its HEAD is origin/main and that no tracked file is changed;
 - step 2: reads the handoff-supervisor's process ID from <handoff dir>/<seat>-supervisor.lock,
   checks with ps that the process runs `handoff-supervisor.py --agent <seat>` followed by a
@@ -81,7 +81,7 @@ Exit status, foreground: 0 frozen and the second half started, so the agent-seat
 session-handoff now; 1 not restarted, and the agent-seat carries on; 2 bad invocation.
 Second half: 0 restarted and the successor replied; 1 a failure, shown to the user as a notice.
 
-NEDSCHORUS_HANDOFF_SUPERVISOR_RESTART_LOG_DIRECTORY overrides where the log directories go: the
+NEDSNODES_HANDOFF_SUPERVISOR_RESTART_LOG_DIRECTORY overrides where the log directories go: the
 seam the nc-test-suite uses.
 """
 
@@ -130,7 +130,7 @@ REFERENCE_CHECKOUT = reference_checkout_steps.REFERENCE_CHECKOUT
 HANDOFF_DIRECTORY = Path("~/.claude/handoffs").expanduser()
 AGENTS_ROOT = Path("~/agents").expanduser()
 PROJECTS_ROOT = Path("~/.claude/projects").expanduser()
-LOG_DIRECTORY_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_SUPERVISOR_RESTART_LOG_DIRECTORY"
+LOG_DIRECTORY_ENVIRONMENT_VARIABLE = "NEDSNODES_HANDOFF_SUPERVISOR_RESTART_LOG_DIRECTORY"
 MAC_PAGE_OPENER = REPOSITORY / "scripts" / "open-html-page-in-mac-browser-from-ned-box.py"
 PROCESS_TABLE_DIRECTORY = Path("/proc")
 
@@ -161,7 +161,7 @@ def default_log_directory() -> Path:
         return Path(override)
     home = (ned_box_home_path_constants.MAC_MOUNT_OF_NED_BOX_HOME if on_the_mac()
             else ned_box_home_path_constants.NED_BOX_HOME)
-    return Path(home) / "nedschorus-logs" / PROGRAM
+    return Path(home) / "nedsnodes-logs" / PROGRAM
 
 
 def clean_environment() -> dict:

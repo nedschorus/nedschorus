@@ -61,7 +61,7 @@ class CellRefusal(Exception):
 
 # The keychain remains accessible because masking it logs the agent-binaries out.
 CREDENTIAL_DIRECTORIES = (
-    pathlib.Path.home() / ".config" / "nedschorus",
+    pathlib.Path.home() / ".config" / "nedsnodes",
     pathlib.Path.home() / ".config" / "gh",
     pathlib.Path.home() / ".ssh",
     pathlib.Path.home() / ".steam",

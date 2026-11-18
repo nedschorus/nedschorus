@@ -60,7 +60,7 @@ Operating rules:
   with a stated reason.
 - The review agents read a copy, not the checkout. When a run starts, the
   runner makes a local clone of the repository at the checkout's last commit
-  (under `~/.cache/nedschorus-sanity-check-review-copies/`, with the whole
+  (under `~/.cache/nedsnodes-sanity-check-review-copies/`, with the whole
   history and no remote pointing back at the checkout), every agent runs in
   it, and the runner removes it when the run ends, a run that fails and a
   run a stop signal ends included (WHEN A RUN IS STOPPED, below). So the
@@ -459,7 +459,7 @@ CELL_SCRATCH_DIRECTORY_NAME = "scratch"
 # the requester's own work there is never a cell's; and outside /tmp, which the
 # Codex cells' permission profile makes read-only on Linux, where the copy must
 # stay writable for the scratch directories inside it.
-REVIEW_COPIES_ROOT = pathlib.Path.home() / ".cache" / "nedschorus-sanity-check-review-copies"
+REVIEW_COPIES_ROOT = pathlib.Path.home() / ".cache" / "nedsnodes-sanity-check-review-copies"
 
 # What the run saves in its record beside the reports: everything it printed,
 # and the request the fresh-eyes cells were given, so neither depends on an

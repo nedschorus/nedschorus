@@ -79,14 +79,14 @@ def walk_checkout(root, name, waiting="item 4 of 9", document=WALK_DOCUMENT):
     (walk / f"{WALK}.md").write_text(document, encoding="utf-8")
     (walk / f"{WALK}-minutes.md").write_text(f"# Minutes\n#next_to_present {waiting}\n", encoding="utf-8")
     home = root / name / "home"
-    (home / ".local/state/nedschorus/user-alerts/claimed").mkdir(parents=True)
+    (home / ".local/state/nedsnodes/user-alerts/claimed").mkdir(parents=True)
     return checkout, home
 
 
 def claimed_alert(home, alert_id, title):
     alert = {"id": alert_id, "written_at": "2026-10-27T12:00:00+00:00", "title": title,
              "alert_text": "merge-lane-2 is down.\n  ssh -t nedlern@ned-box 'recover'", "action": "Restart it."}
-    (home / ".local/state/nedschorus/user-alerts/claimed" / f"{alert_id}.json").write_text(
+    (home / ".local/state/nedsnodes/user-alerts/claimed" / f"{alert_id}.json").write_text(
         json.dumps(alert), encoding="utf-8")
 
 
@@ -394,7 +394,7 @@ def run_unnumbered_item_count_cases(root):
 
     checkout, home = walk_checkout(root, "heading-in-action")
     claimed_alert(home, "alert-a", "first")
-    path = home / ".local/state/nedschorus/user-alerts/claimed" / "alert-a.json"
+    path = home / ".local/state/nedsnodes/user-alerts/claimed" / "alert-a.json"
     alert = json.loads(path.read_text(encoding="utf-8"))
     path.write_text(json.dumps({**alert, "action": "Restart it.\n\n## a second heading"}), encoding="utf-8")
     before = files(checkout)
@@ -450,7 +450,7 @@ def run_refusal_cases(root):
           in result.stderr, result.stderr)
 
     checkout, home = walk_checkout(root, "not-an-object")
-    (home / ".local/state/nedschorus/user-alerts/claimed" / "alert-list.json").write_text("[]", encoding="utf-8")
+    (home / ".local/state/nedsnodes/user-alerts/claimed" / "alert-list.json").write_text("[]", encoding="utf-8")
     before = files(checkout)
     result = run(checkout, home, "alert-list")
     check("an alert file that holds no JSON object makes the program exit 1, naming it in its refusal, and "
@@ -539,7 +539,7 @@ def run_walk_order_cases(root):
           placing)
 
     checkout, home = walk_checkout(root, "unreadable-written-at")
-    (home / ".local/state/nedschorus/user-alerts/claimed" / "alert-t.json").write_text(
+    (home / ".local/state/nedsnodes/user-alerts/claimed" / "alert-t.json").write_text(
         json.dumps({"id": "alert-t", "written_at": "yesterday", "title": "t", "alert_text": "x", "action": "y"}),
         encoding="utf-8")
     before = files(checkout)

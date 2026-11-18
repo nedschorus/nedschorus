@@ -46,7 +46,7 @@
 # window reconnects on its own when the connection drops (see the attach
 # loop below); a detached launch does not, it is one ssh command.
 #
-# Requires on the box: tmux, claude on ~/.local/bin, ~/Projects/nedschorus.
+# Requires on the box: tmux, claude on ~/.local/bin, ~/Projects/nedsnodes.
 
 set -eu
 
@@ -67,7 +67,7 @@ fi
 
 # NO AGENTS ROOT IS READ HERE. The box seat's directory is ~/agents/<name> on
 # the box, always: this Mac sends only the seat name, and the box expands its
-# own $HOME. NEDSCHORUS_AGENTS_ROOT names a path on the machine that reads it,
+# own $HOME. NEDSNODES_AGENTS_ROOT names a path on the machine that reads it,
 # and a MAC-side value carried to the box names nothing there:
 # recover-crashed-seats.py exports the Mac default into launch-claude-mac's
 # environment, and every Mac seat inherits it. The cross-machine override is
@@ -80,7 +80,7 @@ fi
 # needed, it goes in a box-side FILE that both paths read; nothing needs one
 # today, and every box seat lives in /home/nedlern/agents. Agent names stay
 # charset-checked: they ride in more places than paths do.
-AGENT_BOX="${NEDSCHORUS_AGENT_BOX:-ned}"
+AGENT_BOX="${NEDSNODES_AGENT_BOX:-ned}"
 
 usage_line() {
     echo "usage: launch-claude-ubuntu <name> [--no-attach] [--first-prompt-file <box-path>]" >&2
@@ -164,9 +164,9 @@ esac
 # handoff-supervisor, which sets GH_TOKEN for every agent-session it starts
 # (agent_seat_github_account_lookup_and_token_file_read in
 # nc-systems/handoff/handoff-supervisor.py), so this launcher takes no account.
-if [ -n "${NEDSCHORUS_SEAT_GITHUB_ACCOUNT:-}" ]; then
-    echo "launch-claude-ubuntu: refused, because NEDSCHORUS_SEAT_GITHUB_ACCOUNT is set, but this launcher does not choose the GitHub account an agent-seat acts as: the handoff-supervisor does, from AGENT_SEAT_GITHUB_ACCOUNTS_OTHER_THAN_THE_MACHINE_DEFAULT in nc-systems/handoff/handoff-supervisor.py." >&2
-    echo "launch-claude-ubuntu: unset NEDSCHORUS_SEAT_GITHUB_ACCOUNT and launch again; if this agent-seat must act as an account other than ubuntu-claude, add an entry for it, agent-seat name to account, to that table in a pull request, and put that account's token in ~/.config/nedschorus/<account>.token on the machine the agent-seat runs on." >&2
+if [ -n "${NEDSNODES_SEAT_GITHUB_ACCOUNT:-}" ]; then
+    echo "launch-claude-ubuntu: refused, because NEDSNODES_SEAT_GITHUB_ACCOUNT is set, but this launcher does not choose the GitHub account an agent-seat acts as: the handoff-supervisor does, from AGENT_SEAT_GITHUB_ACCOUNTS_OTHER_THAN_THE_MACHINE_DEFAULT in nc-systems/handoff/handoff-supervisor.py." >&2
+    echo "launch-claude-ubuntu: unset NEDSNODES_SEAT_GITHUB_ACCOUNT and launch again; if this agent-seat must act as an account other than ubuntu-claude, add an entry for it, agent-seat name to account, to that table in a pull request, and put that account's token in ~/.config/nedsnodes/<account>.token on the machine the agent-seat runs on." >&2
     exit 2
 fi
 
@@ -209,7 +209,7 @@ AGENT_DIRECTORY_SUPERVISOR="~/agents/$AGENT_NAME"
 # ~/Projects/nedlern/tasks/sessions/.agent-wrapper.sh:341.
 #
 # Warning 1 — the store is ONE copy on ONE disk outside the repository, here
-# $HOME/.claude/tasks/nedschorus-<name>-tasks/ ON THE BOX. It is not committed and not
+# $HOME/.claude/tasks/nedsnodes-<name>-tasks/ ON THE BOX. It is not committed and not
 # shared with the Mac, so the same seat name on both machines keeps two
 # unrelated lists.
 #
@@ -239,11 +239,11 @@ AGENT_DIRECTORY_SUPERVISOR="~/agents/$AGENT_NAME"
 # exactly as the task-list id beside them does, and AGENT_NAME needs no
 # escaping at either parse (charset-checked above).
 SUPERVISOR_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
-if [ -d \"\$HOME/.claude/tasks/$AGENT_NAME-tasks\" ] && [ ! -e \"\$HOME/.claude/tasks/nedschorus-$AGENT_NAME-tasks\" ]; then mv \"\$HOME/.claude/tasks/$AGENT_NAME-tasks\" \"\$HOME/.claude/tasks/nedschorus-$AGENT_NAME-tasks\"; fi; \
-export CLAUDE_CODE_TASK_LIST_ID='nedschorus-$AGENT_NAME-tasks'; \
+if [ -d \"\$HOME/.claude/tasks/$AGENT_NAME-tasks\" ] && [ ! -e \"\$HOME/.claude/tasks/nedsnodes-$AGENT_NAME-tasks\" ]; then mv \"\$HOME/.claude/tasks/$AGENT_NAME-tasks\" \"\$HOME/.claude/tasks/nedsnodes-$AGENT_NAME-tasks\"; fi; \
+export CLAUDE_CODE_TASK_LIST_ID='nedsnodes-$AGENT_NAME-tasks'; \
 export CLAUDE_CODE_ENABLE_TODO_TOOLS=1; \
 export GIT_AUTHOR_NAME='$AGENT_NAME' GIT_AUTHOR_EMAIL='$AGENT_NAME@nedschorus.invalid' GIT_COMMITTER_NAME='$AGENT_NAME' GIT_COMMITTER_EMAIL='$AGENT_NAME@nedschorus.invalid'; \
-python3 \$HOME/Projects/nedschorus/nc-systems/handoff/handoff-supervisor.py \
+python3 \$HOME/Projects/nedsnodes/nc-systems/handoff/handoff-supervisor.py \
 --agent '$AGENT_NAME' --cd '$AGENT_DIRECTORY_SUPERVISOR'"
 
 # A first-prompt file (box-side path) is for the founding boot. The supervisor
@@ -299,7 +299,7 @@ fi
 # The twin does the same locally, at scripts/launch-claude-mac.
 UPDATE_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
 echo 'launch-claude-ubuntu: checking for a Claude Code update'; \
-{ python3 \$HOME/Projects/nedschorus/scripts/agent-binary-update-under-lock.py \
+{ python3 \$HOME/Projects/nedsnodes/scripts/agent-binary-update-under-lock.py \
 --program-name launch-claude-ubuntu \
 --timeout-seconds \${LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS:-120} \
 -- claude update || true; }"
@@ -321,8 +321,8 @@ PREPARE_COMMAND="$UPDATE_COMMAND && mkdir -p \"$AGENT_DIRECTORY_REMOTE\""
 # owner file, whichever agent-seat runs this launcher.
 PREPARE_COMMAND="$PREPARE_COMMAND && \
 if ! git -C \"$AGENT_DIRECTORY_REMOTE\" rev-parse --show-toplevel >/dev/null 2>&1; then \
-  git -C \$HOME/Projects/nedschorus fetch --quiet origin || true; \
-  if GIT_AUTHOR_NAME='$AGENT_NAME' git -C \$HOME/Projects/nedschorus worktree add --detach \"$AGENT_DIRECTORY_REMOTE\" origin/main; then \
+  git -C \$HOME/Projects/nedsnodes fetch --quiet origin || true; \
+  if GIT_AUTHOR_NAME='$AGENT_NAME' git -C \$HOME/Projects/nedsnodes worktree add --detach \"$AGENT_DIRECTORY_REMOTE\" origin/main; then \
     agent_home_git_directory=\$(git -C \"$AGENT_DIRECTORY_REMOTE\" rev-parse --absolute-git-dir) \
     && touch \"\$agent_home_git_directory/agent-home-marker\" \
     || echo \"launch-claude-ubuntu: could not write agent-home-marker into the git directory of $AGENT_DIRECTORY_REMOTE on ned-box, so git does not refuse commits made there; git's or touch's error is just above this line. Tell the user this line.\" >&2; \
@@ -334,10 +334,10 @@ fi"
 # Launch-time worktree report on ned-box — the twin of the same step in
 # launch-claude-mac: names any finished session worktree and the command
 # that removes it. Report only, and never blocks the launch.
-PREPARE_COMMAND="$PREPARE_COMMAND && { python3 \$HOME/Projects/nedschorus/scripts/clean-worktrees.py --only-done \
-|| { status=\$?; echo \"launch-claude-ubuntu: the launch-time worktree report on ned-box (python3 \$HOME/Projects/nedschorus/scripts/clean-worktrees.py --only-done), which lists the finished worktrees, failed with exit \$status, and the launch goes on, because the agent-seat does not need the report.\"; \
+PREPARE_COMMAND="$PREPARE_COMMAND && { python3 \$HOME/Projects/nedsnodes/scripts/clean-worktrees.py --only-done \
+|| { status=\$?; echo \"launch-claude-ubuntu: the launch-time worktree report on ned-box (python3 \$HOME/Projects/nedsnodes/scripts/clean-worktrees.py --only-done), which lists the finished worktrees, failed with exit \$status, and the launch goes on, because the agent-seat does not need the report.\"; \
 echo \"launch-claude-ubuntu: any error the report printed is above these lines; if none is there, the report ended without printing one, for example because it was killed.\"; \
-echo \"launch-claude-ubuntu: if you are an agent that ran this launch, tell the user these lines and any error above them, change nothing in \$HOME/Projects/nedschorus yourself, and go on with your work.\"; \
+echo \"launch-claude-ubuntu: if you are an agent that ran this launch, tell the user these lines and any error above them, change nothing in \$HOME/Projects/nedsnodes yourself, and go on with your work.\"; \
 echo \"launch-claude-ubuntu: if you are the user, run the command in the first of these lines on ned-box: if it succeeds, nothing more is needed; if it fails and prints an error, fix the cause that error names; if it fails and prints nothing, ask an agent to find out why the report fails on ned-box without printing an error, and give it that command and its exit code.\"; \
 } >&2; }"
 
@@ -345,10 +345,10 @@ echo \"launch-claude-ubuntu: if you are the user, run the command in the first o
 # launch-claude-mac: fast-forward the reference checkout to origin/main
 # (ff-only, never a merge). A stale copy of this script freshens the
 # checkout that carries its replacement, so the next launch runs current.
-PREPARE_COMMAND="$PREPARE_COMMAND && { python3 \$HOME/Projects/nedschorus/scripts/checkout-freshness-catch-up.py --reference-pull --repo \$HOME/Projects/nedschorus \
-|| { status=\$?; echo \"launch-claude-ubuntu: the launch-time fast-forward of the reference checkout on ned-box, \$HOME/Projects/nedschorus, to origin/main (python3 \$HOME/Projects/nedschorus/scripts/checkout-freshness-catch-up.py --reference-pull --repo \$HOME/Projects/nedschorus) failed with exit \$status, so that checkout may be behind origin/main, and the launch goes on with it as it is.\"; \
+PREPARE_COMMAND="$PREPARE_COMMAND && { python3 \$HOME/Projects/nedsnodes/scripts/checkout-freshness-catch-up.py --reference-pull --repo \$HOME/Projects/nedsnodes \
+|| { status=\$?; echo \"launch-claude-ubuntu: the launch-time fast-forward of the reference checkout on ned-box, \$HOME/Projects/nedsnodes, to origin/main (python3 \$HOME/Projects/nedsnodes/scripts/checkout-freshness-catch-up.py --reference-pull --repo \$HOME/Projects/nedsnodes) failed with exit \$status, so that checkout may be behind origin/main, and the launch goes on with it as it is.\"; \
 echo \"launch-claude-ubuntu: any error the fast-forward printed is above these lines; if none is there, the fast-forward ended without printing one, for example because it was killed.\"; \
-echo \"launch-claude-ubuntu: if you are an agent that ran this launch, tell the user these lines and any error above them, change nothing in \$HOME/Projects/nedschorus yourself, and go on with your work.\"; \
+echo \"launch-claude-ubuntu: if you are an agent that ran this launch, tell the user these lines and any error above them, change nothing in \$HOME/Projects/nedsnodes yourself, and go on with your work.\"; \
 echo \"launch-claude-ubuntu: if you are the user, run the command in the first of these lines on ned-box: if it succeeds, nothing more is needed; if it fails and prints an error, fix the cause that error names; if it fails and prints nothing, ask an agent to find out why the fast-forward fails on ned-box without printing an error, and give it that command and its exit code.\"; \
 } >&2; }"
 
@@ -362,7 +362,7 @@ echo \"launch-claude-ubuntu: if you are the user, run the command in the first o
 # touching a file it cannot parse, which stops the launch here.
 # The twin does the same locally, at scripts/launch-claude-mac.
 PREPARE_COMMAND="$PREPARE_COMMAND && \
-python3 \$HOME/Projects/nedschorus/scripts/claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py \"$AGENT_DIRECTORY_REMOTE\""
+python3 \$HOME/Projects/nedsnodes/scripts/claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py \"$AGENT_DIRECTORY_REMOTE\""
 
 # Per-seat tmux servers on the box: every seat runs on its OWN
 # tmux server, socket `-L <name>`, because a machine's single shared server
@@ -495,7 +495,7 @@ fi
 # token file stops this launch with the supervisor's refusal and its exit 5.
 # It runs after PREPARE_COMMAND, whose fast-forward gives an old box checkout
 # the flag.
-GITHUB_TOKEN_CHECK_COMMAND="python3 \$HOME/Projects/nedschorus/nc-systems/handoff/handoff-supervisor.py --agent '$AGENT_NAME' --agent-seat-github-token-file-readable-check-only"
+GITHUB_TOKEN_CHECK_COMMAND="python3 \$HOME/Projects/nedsnodes/nc-systems/handoff/handoff-supervisor.py --agent '$AGENT_NAME' --agent-seat-github-token-file-readable-check-only"
 # The trailing `exit $?` stops the pane's shell from exec'ing into the
 # supervisor: with tmux as its direct parent, tmux wakes it at once after a
 # `kill -STOP`. Its `$` is escaped twice, so the pane shell, not P1, expands it.

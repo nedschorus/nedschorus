@@ -5,13 +5,13 @@ Usage:
   nc-systems/nc-shared-database/nc-shared-database-service.py
       [--database PATH] [--accepted-tokens-file PATH] [--host HOST] [--port N]
 
-  --database              default ~/.local/state/nedschorus/nc-shared-database.sqlite3,
+  --database              default ~/.local/state/nedsnodes/nc-shared-database.sqlite3,
                           made with its schema when absent
-  --accepted-tokens-file  default ~/.config/nedschorus/nc-shared-database-service-accepted-tokens,
+  --accepted-tokens-file  default ~/.config/nedsnodes/nc-shared-database-service-accepted-tokens,
                           one token per line, read at every request
   --host, --port          default every address, port 8765
 
-On ned-box the systemd user unit nc-shared-database-service.service, beside
+On ned-box the systemd user unit nn-shared-database-service.service, beside
 this file, runs it. Callers never see the tables: they send named operations.
 
 EVERY REQUEST carries `Authorization: Bearer <token>`. A token that is no line
@@ -65,8 +65,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-NC_SHARED_DATABASE_FILE_PATH = Path.home() / ".local" / "state" / "nedschorus" / "nc-shared-database.sqlite3"
-ACCEPTED_TOKENS_FILE_PATH = (Path.home() / ".config" / "nedschorus"
+NC_SHARED_DATABASE_FILE_PATH = Path.home() / ".local" / "state" / "nedsnodes" / "nc-shared-database.sqlite3"
+ACCEPTED_TOKENS_FILE_PATH = (Path.home() / ".config" / "nedsnodes"
                              / "nc-shared-database-service-accepted-tokens")
 PORT = 8765
 MACHINES = ("mac", "ned-box")

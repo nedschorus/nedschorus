@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write, claim and release the user's alerts: one JSON file per alert under ~/.local/state/nedschorus/user-alerts/
+"""Write, claim and release the user's alerts: one JSON file per alert under ~/.local/state/nedsnodes/user-alerts/
 on ned-box, the home directory read from HOME when each function runs.
 
 A program that must tell the user something calls user_alert_write_to_pending, which writes the alert into
@@ -23,19 +23,19 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-USER_ALERTS_RELATIVE_TO_HOME = Path(".local") / "state" / "nedschorus" / "user-alerts"
+USER_ALERTS_RELATIVE_TO_HOME = Path(".local") / "state" / "nedsnodes" / "user-alerts"
 CLAIM_LIMIT_SECONDS = 30 * 60
 USER_ALERT_LINE = re.compile(r"#user_alert\s+(\S+)")
 # Walk-minutes on ned-box, relative to the home directory: closed ones in the log-store, open ones under
 # docs/walk/ of each checkout, which are agent-homes, the worktrees beside or inside them, and the
 # reference-checkout and its worktrees.
 WALK_MINUTES_PATTERNS = (
-    "nedschorus-logs/walk/*-minutes.md",
+    "nedsnodes-logs/walk/*-minutes.md",
     "agents/*/docs/walk/*-minutes.md",
     "agents/*/*/docs/walk/*-minutes.md",
     "agents/*/.claude/worktrees/*/docs/walk/*-minutes.md",
-    "Projects/nedschorus/docs/walk/*-minutes.md",
-    "Projects/nedschorus/.claude/worktrees/*/docs/walk/*-minutes.md",
+    "Projects/nedsnodes/docs/walk/*-minutes.md",
+    "Projects/nedsnodes/.claude/worktrees/*/docs/walk/*-minutes.md",
 )
 
 

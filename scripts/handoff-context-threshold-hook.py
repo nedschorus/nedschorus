@@ -78,7 +78,7 @@ def deferred_marker_path(session_id: str) -> Path:
         HANDOFF_DIRECTORY, session_id)
 
 # Caller-owned reincarnation must not replace the caller's answer with a handoff.
-REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"
+REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER"
 
 # Unknown models use the default, and the handoff instruction names the model id so the table gets updated.
 CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX = {

@@ -2658,7 +2658,7 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
     stand_in_ssh.chmod(0o755)
     ssh_arguments_file = over_ssh_scratch / "ssh-arguments"
     remote_record = over_ssh_scratch / "remote-record.json"
-    log_store_citation = f"nedlern@ned-box:{ned_box_home}/nedschorus-logs/x/"
+    log_store_citation = f"nedlern@ned-box:{ned_box_home}/nedsnodes-logs/x/"
 
     attributes_before = {name: getattr(warning_module, name) for name in
                          ("MAC_MOUNT_OF_NED_BOX_HOME", "NED_BOX_HOME", "SSH_PROGRAM",
@@ -2857,7 +2857,7 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
         check("the report place named for a walk draft's frozen copy read over ssh is "
               "its cold-read-record in the log-store",
               place == "cold-read-fast-read.md in the newest directory whose name starts item-draft- in "
-                       "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/",
+                       "nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/",
               repr(place))
         place = warning_module.cold_read_fast_read_report_location_seen_from_mac_for_target_sent_over_ssh(str(ned_box_draft))
         check("the report place named for a walk draft read over ssh is its suggestions "
@@ -2871,7 +2871,7 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
         exit_code, stdout, stderr = read_from_mac(mac_frozen_copy, ssh_mode="hangs",
                                                   timeout_seconds=0.5)
         records_place = ("cold-read-fast-read.md in the newest directory whose name starts item-draft- in "
-                         "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/")
+                         "nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/")
         check("when the read of a walk draft's frozen copy outlasts the time limit, the "
               "message names its cold-read-record in the log-store, not a suggestions file",
               exit_code == 1 and f"report, which this Mac sees at {records_place}." in stderr

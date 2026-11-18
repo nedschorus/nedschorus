@@ -204,10 +204,10 @@ with tempfile.TemporaryDirectory() as directory:
     code, out, err = run_main(runner)
     check("a ned-box reference-checkout without main's commit gets the fast-forward command, "
           "through ssh",
-          code == 1 and "`ssh nedlern@ned-box '{ [ \"$(git -C ~/Projects/nedschorus branch "
+          code == 1 and "`ssh nedlern@ned-box '{ [ \"$(git -C ~/Projects/nedsnodes branch "
           "--show-current)\" = main ] || " in err
-          and "git -C ~/Projects/nedschorus fetch origin && "
-          "git -C ~/Projects/nedschorus merge --ff-only --no-overwrite-ignore origin/main'`"
+          and "git -C ~/Projects/nedsnodes fetch origin && "
+          "git -C ~/Projects/nedsnodes merge --ff-only --no-overwrite-ignore origin/main'`"
           in err, err)
     fast_forward_command_over_an_ignored_file_cases()
 
@@ -253,7 +253,7 @@ with tempfile.TemporaryDirectory() as home:
         return subprocess.run(["sh", "-c", command], input=standard_input, capture_output=True,
                               text=True, env=environment)
 
-    token_path = Path(home) / ".config" / "nedschorus" / "nc-shared-database-service.token"
+    token_path = Path(home) / ".config" / "nedsnodes" / "nc-shared-database-service.token"
     first = shell(installer.service_token_file_create_unless_present_shell_command())
     made = token_path.read_text(encoding="utf-8").strip() if token_path.exists() else ""
     second = shell(installer.service_token_file_create_unless_present_shell_command())
@@ -264,7 +264,7 @@ with tempfile.TemporaryDirectory() as home:
           and (token_path.stat().st_mode & 0o077) == 0, (first, second, made))
 
     written = shell(installer.service_accepted_tokens_file_rewrite_shell_command(), "mac-secret-token")
-    accepted_path = (Path(home) / ".config" / "nedschorus"
+    accepted_path = (Path(home) / ".config" / "nedsnodes"
                      / "nc-shared-database-service-accepted-tokens")
     lines = accepted_path.read_text(encoding="utf-8").splitlines() if accepted_path.exists() else []
     check("the accepted-tokens command writes both tokens, one per line, private to the user",

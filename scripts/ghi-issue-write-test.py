@@ -394,7 +394,7 @@ def run_remote_ghi_guide_agent_log_store_cases(scratch: Path):
         check("the citation of a file names the host, so it opens from "
               "either machine",
               tool.ghi_guide_agent_log_store_citation(first)
-              == ("nedlern@ned-box:/home/nedlern/nedschorus-logs/"
+              == ("nedlern@ned-box:/home/nedlern/nedsnodes-logs/"
                   "ghi-guide-agent-proposed-improvements-or-changes/" + first))
         unreachable = Recorder({"ssh": Completed(
             "", returncode=255, stderr="ssh: connect to host ned-box: "

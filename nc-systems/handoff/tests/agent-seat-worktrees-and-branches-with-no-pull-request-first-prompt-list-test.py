@@ -690,7 +690,7 @@ def test_supervisor_appends_the_list():
 def task_list(agent_seat, tasks):
     """Write tasks, {id: (status, metadata or None) or raw text}, as the agent-seat's task list."""
     # Path.home(), not HOME: the handoff-supervisor case loads a module that moves HOME.
-    directory = Path.home() / ".claude" / "tasks" / f"nedschorus-{agent_seat}-tasks"
+    directory = Path.home() / ".claude" / "tasks" / f"nedsnodes-{agent_seat}-tasks"
     shutil.rmtree(directory, ignore_errors=True)
     directory.mkdir(parents=True)
     for task_id, task in tasks.items():

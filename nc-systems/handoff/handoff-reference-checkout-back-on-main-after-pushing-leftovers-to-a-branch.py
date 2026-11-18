@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Put the reference-checkout ~/Projects/nedschorus back on main, first saving any leftovers to a pushed branch.
+"""Put the reference-checkout ~/Projects/nedsnodes back on main, first saving any leftovers to a pushed branch.
 
 Usage, on the machine whose reference-checkout will not fast-forward to main:
-  python3 ~/Projects/nedschorus/nc-systems/handoff/handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py
+  python3 ~/Projects/nedsnodes/nc-systems/handoff/handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py
 
 The handoff-supervisor restarts itself on main's code at a session-handoff only when its checkout
 fast-forwards to main or is current with it. When the reference-checkout is that checkout and does
@@ -29,7 +29,7 @@ The program:
   push succeeded, because every agent-seat's git hooks and the cron jobs run from this checkout;
   and then runs the clone's post-merge hook, with ORIG_HEAD at the commit HEAD left, as a merge
   would have, since the switch runs none. Until the hook succeeds, the pending file
-  ~/Projects/nedschorus/.git/handoff-reference-checkout-failed-post-merge-hook-orig-head-to-rerun,
+  ~/Projects/nedsnodes/.git/handoff-reference-checkout-failed-post-merge-hook-orig-head-to-rerun,
   in the clone's git directory, keeps that commit, and each later run runs the hook again with it;
 - fast-forwards to origin/main and checks that HEAD is origin/main with no changed tracked file,
   with the same shared function as step 0 of the restart program,

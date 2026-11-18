@@ -328,11 +328,11 @@ DEFAULT_APPENDED_SYSTEM_PROMPT_PATH = (
 )
 
 # The writer needs the launch directory after a cd; the session ID prevents a child session from handing off its parent.
-HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME"
+HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE = "NEDSNODES_HANDOFF_SUPERVISOR_AGENT_NAME"
 HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE = (
-    "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY"
+    "NEDSNODES_HANDOFF_SUPERVISOR_WORKING_DIRECTORY"
 )
-HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID"
+HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE = "NEDSNODES_HANDOFF_SUPERVISOR_SESSION_ID"
 
 # Claude Code (2.1.296) sets these for every command an agent-session runs, and they name that
 # agent-session. An agent that launches or recovers another agent-seat from its own shell would
@@ -357,7 +357,7 @@ CLAUDE_CODE_AGENT_SESSION_IDENTITY_ENVIRONMENT_VARIABLE_NAMES = frozenset({
 def handoff_supervisor_environment_copy_without_calling_agent_session_variables(environment) -> dict:
     # The reincarnation variable is this project's own, set for a claude a program starts.
     calling_only = {*CLAUDE_CODE_AGENT_SESSION_IDENTITY_ENVIRONMENT_VARIABLE_NAMES,
-                    "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"}
+                    "NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER"}
     return {name: value for name, value in environment.items() if name not in calling_only}
 
 
@@ -1057,7 +1057,7 @@ class AgentSeatGithubTokenUnreadableError(Exception):
 def agent_seat_github_account_lookup_and_token_file_read(agent_seat_name: str):
     """Return (account, token): the GitHub account the agent-seat acts as, and its token.
 
-    Raises AgentSeatGithubTokenUnreadableError when ~/.config/nedschorus/<account>.token
+    Raises AgentSeatGithubTokenUnreadableError when ~/.config/nedsnodes/<account>.token
     is missing, unreadable or empty.
     """
     account = AGENT_SEAT_GITHUB_ACCOUNTS_OTHER_THAN_THE_MACHINE_DEFAULT.get(agent_seat_name)
@@ -1065,7 +1065,7 @@ def agent_seat_github_account_lookup_and_token_file_read(agent_seat_name: str):
         account = ("ubuntu-claude"
                    if handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box()
                    else "mac-claude")
-    token_file = Path.home() / ".config" / "nedschorus" / f"{account}.token"
+    token_file = Path.home() / ".config" / "nedsnodes" / f"{account}.token"
     try:
         lines = token_file.read_text(encoding="utf-8").splitlines()
     except FileNotFoundError as error:
@@ -2316,7 +2316,7 @@ HANDOFF_SUPERVISOR_NOT_RESTARTED_ON_MAIN_CODE_TEMPLATE = (
     "Its reason: \"{report}\". Tell the user now that the handoff-supervisor did not "
     "restart itself on main's code, quote its reason, and name the checkout {checkout}. "
 )
-HANDOFF_PROGRAMS_PATH_FROM_HOME = "~/Projects/nedschorus/nc-systems/handoff/"
+HANDOFF_PROGRAMS_PATH_FROM_HOME = "~/Projects/nedsnodes/nc-systems/handoff/"
 RESTART_PROGRAM_PATH_FROM_HOME = (
     f"{HANDOFF_PROGRAMS_PATH_FROM_HOME}"
     "handoff-supervisor-restart-onto-main-code-by-relaunch-from-reference-checkout.py")

@@ -16,8 +16,8 @@
 # Installed by the same per-clone core.hooksPath as prepare-commit-msg, an
 # absolute path into the clone's reference checkout, which stays on main, so
 # every seat's worktree runs main's copy:
-#   Mac:      /Users/el/Projects/nedschorus/scripts/git-client-side-hooks
-#   ned-box:  /home/nedlern/Projects/nedschorus/scripts/git-client-side-hooks
+#   Mac:      /Users/el/Projects/nedsnodes/scripts/git-client-side-hooks
+#   ned-box:  /home/nedlern/Projects/nedsnodes/scripts/git-client-side-hooks
 # (both set in the clone's own .git/config, not globally).
 #
 # A pre-push hook that exits non-zero stops the push, and this one runs on

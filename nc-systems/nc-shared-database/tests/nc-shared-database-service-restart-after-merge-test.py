@@ -60,7 +60,7 @@ fi
 echo "$@" >> "$FAKE_SYSTEMCTL_LOG"
 echo "$XDG_RUNTIME_DIR" >> "$FAKE_SYSTEMCTL_LOG.runtime"
 if [ -n "$FAKE_SYSTEMCTL_FAIL" ]; then
-  echo "Failed to restart nc-shared-database-service.service: Unit nc-shared-database-service.service not found." >&2
+  echo "Failed to restart nn-shared-database-service.service: Unit nn-shared-database-service.service not found." >&2
   exit 5
 fi
 """
@@ -115,11 +115,11 @@ with tempfile.TemporaryDirectory() as scratch:
           "and nothing restarted",
           code == 1 and calls == [] and "git diff --name-only ORIG_HEAD HEAD" in errors
           and f"Restart the service: `XDG_RUNTIME_DIR=/run/user/{os.getuid()} systemctl --user "
-              "restart nc-shared-database-service.service`." in errors
+              "restart nn-shared-database-service.service`." in errors
           and f"`XDG_RUNTIME_DIR=/run/user/{os.getuid()} journalctl --user" in errors
           and "$(id -u)" not in errors
           and "If the restart succeeds, you are done; report nothing." in errors
-          and "Unit nc-shared-database-service.service not found." in errors
+          and "Unit nn-shared-database-service.service not found." in errors
           and "If the merge changed" not in errors
           and "service was not restarted: fatal:" in errors,
           (code, errors))
@@ -137,7 +137,7 @@ with tempfile.TemporaryDirectory() as scratch:
           code == 0 and calls == [] and printed == "", (code, calls))
     code, calls, printed, errors = run()
     check("a fast-forward that changes the service restarts the unit",
-          code == 0 and calls == ["--user restart nc-shared-database-service.service"]
+          code == 0 and calls == ["--user restart nn-shared-database-service.service"]
           and "restarted" in printed, (code, calls, errors))
     saved_runtime_directory = os.environ.pop("XDG_RUNTIME_DIR", None)
     runtime_log = Path(f"{systemctl_log}.runtime")
@@ -148,7 +148,7 @@ with tempfile.TemporaryDirectory() as scratch:
             os.environ["XDG_RUNTIME_DIR"] = saved_runtime_directory
     check("a caller without XDG_RUNTIME_DIR, as an agent's Stop hook can be, still restarts "
           "the unit, with systemctl given /run/user/<uid>",
-          code == 0 and calls == ["--user restart nc-shared-database-service.service"]
+          code == 0 and calls == ["--user restart nn-shared-database-service.service"]
           and runtime_log.read_text().splitlines()[-1] == f"/run/user/{os.getuid()}",
           (code, calls, errors))
     os.environ["XDG_RUNTIME_DIR"] = str(scratch / "runtime")
@@ -165,7 +165,7 @@ with tempfile.TemporaryDirectory() as scratch:
     code, calls, printed, errors = run(fail=True)
     check("a failed restart prints systemctl's error and exits 1",
           code == 1 and "systemctl said: Failed to restart nc-shared-database-service."
-          "service: Unit nc-shared-database-service.service not found" in errors
+          "service: Unit nn-shared-database-service.service not found" in errors
           and "exited 5" in errors, (code, errors))
 
     outside = scratch / "not-a-repository"
@@ -179,7 +179,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("outside any git checkout nothing is done", code == 0, code)
 
     check("the reference-checkout by default is ned-box's",
-          restarter.NED_BOX_REFERENCE_CHECKOUT == "/home/nedlern/Projects/nedschorus")
+          restarter.NED_BOX_REFERENCE_CHECKOUT == "/home/nedlern/Projects/nedsnodes")
 
     trigger_files = restarter.NC_SHARED_DATABASE_SERVICE_RESTART_AFTER_MERGE_TRIGGER_FILES
     check("the merge restarts the service when the service file changes: the trigger files "
@@ -189,7 +189,7 @@ with tempfile.TemporaryDirectory() as scratch:
           trigger_files)
 
     unit_text = (REPOSITORY_ROOT / "nc-systems" / "nc-shared-database"
-                 / "nc-shared-database-service.service").read_text(encoding="utf-8")
+                 / "nn-shared-database-service.service").read_text(encoding="utf-8")
     exec_start = [line for line in unit_text.splitlines() if line.startswith("ExecStart=")]
     check("the unit's ExecStart runs the service file in ned-box's reference-checkout",
           exec_start == [f"ExecStart=/usr/bin/python3 {restarter.NED_BOX_REFERENCE_CHECKOUT}/"

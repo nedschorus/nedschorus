@@ -1,6 +1,6 @@
 # Proposed improvements or changes: nedschorus-handoff-architecture-overview.md (overview claim check, 2026-11-08)
 
-Assertions of the overview that the claim check against commit 31905b3dea48908baf818723090b23b5388cfa49 found contradicted or unsupported and ranked fix later: loose, incomplete or badly worded, but no agent would act wrongly on them. Its report is /home/nedlern/nedschorus-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/827a7befcb763718932936563f8664e9bd99ebad-2026-11-08T23-20-02-417909Z.md. Regular maintenance fixes them in the overview.
+Assertions of the overview that the claim check against commit 31905b3dea48908baf818723090b23b5388cfa49 found contradicted or unsupported and ranked fix later: loose, incomplete or badly worded, but no agent would act wrongly on them. Its report is /home/nedlern/nedsnodes-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/827a7befcb763718932936563f8664e9bd99ebad-2026-11-08T23-20-02-417909Z.md. Regular maintenance fixes them in the overview.
 
 ## E1 — possible problem: an assertion of the overview is contradicted
 
@@ -34,7 +34,7 @@ State: open
 
 ## E4 — possible problem: an assertion of the overview is contradicted
 
-Claim: The reference-checkout `~/Projects/nedschorus` is "fast-forwarded to main by launch-claude-ubuntu on ned-box, by launch-claude-mac on the Mac, and, at each session-handoff …, by every handoff-supervisor that runs from it, and by the restart program".
+Claim: The reference-checkout `~/Projects/nedsnodes` is "fast-forwarded to main by launch-claude-ubuntu on ned-box, by launch-claude-mac on the Mac, and, at each session-handoff …, by every handoff-supervisor that runs from it, and by the restart program".
 Goes wrong when: a reader takes the assertion as exact.
 The claim check's evidence:
 > - scripts/checkout-freshness-catch-up.py:11 `Wired as a Stop hook, so it runs at every turn boundary.`; :61-62 `6. The machine's reference checkout — the main worktree of the same repository, parked on main — gets a fast-forward-only pull on the same rhythm`; .claude/settings.json:73

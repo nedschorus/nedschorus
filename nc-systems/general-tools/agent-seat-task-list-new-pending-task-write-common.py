@@ -2,7 +2,7 @@
 """Write a new pending task into an agent-seat's Claude Code task list, for a program that hands
 an agent-seat work.
 
-An agent-seat's task list is the directory `~/.claude/tasks/nedschorus-<seat>-tasks/`; each task
+An agent-seat's task list is the directory `~/.claude/tasks/nedsnodes-<seat>-tasks/`; each task
 is `<id>.json` there, and `.highwatermark` holds the highest id Claude Code has used, deleted
 tasks included.
 
