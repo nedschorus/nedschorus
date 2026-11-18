@@ -929,6 +929,10 @@ old_pull = program.PULL_REQUEST_REFERENCE.search(f"see https://github.com/{progr
 check("a GHI or pull request link with the repository's old name, which GitHub redirects, is read",
       old_issue is not None and "12" in old_issue.groups() and old_pull is not None and "34" in old_pull.groups(),
       f"{old_issue!r} {old_pull!r}")
+check("an agent-session in the reference-checkout under its name before the project rename is one of this project's",
+      program.session_context(f"/Users/el/Projects/{program.OLD_REFERENCE_CHECKOUT_DIRECTORY_NAME}/scripts")
+      == (True, None) and program.session_context("/Users/el/Projects/nedsnodes") == (True, None)
+      and program.session_context("/Users/el/Projects/other") == (False, None))
 
 print(f"{'FAILED' if failures else 'all cases passed'}: {len(failures)} failure(s)")
 sys.exit(1 if failures else 0)

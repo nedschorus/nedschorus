@@ -260,8 +260,12 @@ TASK_REFERENCE = re.compile(r"(?:\b([a-z][a-z0-9-]*[a-z0-9])(?:'s|’s)\s+)?\bta
                             re.IGNORECASE)
 # Each part ends on a word character, @ or -, so a path at a sentence's end leaves its full stop out.
 PATH_TOKEN = re.compile(r"[\w.~@-]*(?:/[\w.@-]*[\w@-])+/?")
+# Transcripts written before the project rename record the reference-checkout under its old directory name, and a
+# transcript is read again from its start once the rename moves the copy it is read from.
+OLD_REFERENCE_CHECKOUT_DIRECTORY_NAME = "nedschorus"
 NEDSNODES_SESSION_DIRECTORY = re.compile(
-    r"^/(?:home/nedlern|Users/el)/(?:agents/(?P<seat>[^/]+)|Projects/nedsnodes)(?:/|$)")
+    r"^/(?:home/nedlern|Users/el)/(?:agents/(?P<seat>[^/]+)|Projects/(?:nedsnodes|"
+    + re.escape(OLD_REFERENCE_CHECKOUT_DIRECTORY_NAME) + r"))(?:/|$)")
 AGENT_SEAT_DIRECTORY = re.compile(r"/agents/(?P<seat>[^/]+)/docs/walk/[^/]+$")
 # The answer line walk-me-through's check program writes (its CHECK_MINUTES); "deferred" has no such line.
 ANSWER_LINE_WITH_TIME = re.compile(
