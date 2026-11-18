@@ -234,14 +234,32 @@ def record_directory_being_written_lock_pass_fds_for_child_writers(record_dir: p
     return tuple(sorted(descriptors))
 
 
-def text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths(text: str) -> str:
-    """Return text with each file:///Volumes/nedhome/ link prefix replaced by /home/nedlern/.
+# A fenced code block or a code span, matched first so its text is kept, or the start of an inline
+# link's target, "](" or "](<", followed by the file:///Volumes/nedhome/ prefix.
+_CODE_OR_MAC_MOUNT_LINK_TARGET_PATTERN = re.compile(
+    r"(?P<code>^[ \t]*(?P<fence>`{3,}|~{3,}).*?(?:^[ \t]*(?P=fence)[ \t]*$|\Z)"
+    r"|(?P<ticks>`+).+?(?<!`)(?P=ticks)(?!`))"
+    r"|(?P<target_start>\]\(<?)" + re.escape(MAC_MOUNT_OF_NED_BOX_HOME_LINK_PREFIX),
+    re.MULTILINE | re.DOTALL)
 
-    A bare /Volumes/nedhome/ path without file:// is left alone. This is the
-    rewrite on every machine; a program that compares a frozen copy with its
+
+def text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths(text: str) -> str:
+    """Return text with the file:///Volumes/nedhome/ prefix of each inline Markdown link's target,
+    as in [text](file:///Volumes/nedhome/x) or ![alt](<file:///Volumes/nedhome/x>), replaced by
+    /home/nedlern/.
+
+    Every other file:///Volumes/nedhome/ is left alone: in prose, in a code span or in a fenced code
+    block it names the link form rather than linking a file, and rewriting it would change what the
+    sentence says. Autolinks and reference-style link definitions are not rewritten, because the
+    repository's Markdown holds none. A bare /Volumes/nedhome/ path without file:// is left alone.
+    This is the rewrite on every machine; a program that compares a frozen copy with its
     document applies it whichever machine made the copy.
     """
-    return text.replace(MAC_MOUNT_OF_NED_BOX_HOME_LINK_PREFIX, NED_BOX_HOME_PATH_PREFIX)
+    def rewritten(match: re.Match) -> str:
+        if match.group("code") is not None:
+            return match.group("code")
+        return match.group("target_start") + NED_BOX_HOME_PATH_PREFIX
+    return _CODE_OR_MAC_MOUNT_LINK_TARGET_PATTERN.sub(rewritten, text)
 
 
 def cold_read_reviewer_copy_text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths_where_mac_mount_absent(
@@ -250,7 +268,8 @@ def cold_read_reviewer_copy_text_with_mac_mount_of_ned_box_home_file_links_rewri
 
     Reviewers run on the machine that runs the cold read. Where the Mac's mount
     of ned-box's home is not a directory, as on ned-box, a file:///Volumes/nedhome/
-    link does not open, so it is rewritten to the /home/nedlern/ path that does;
+    link target does not open, so it is rewritten to the /home/nedlern/ path that does,
+    as text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths says;
     where the mount is a directory, as on the Mac, the text is returned unchanged.
     Apply it only to the copy a reviewer reads, never to the user's document.
     """
