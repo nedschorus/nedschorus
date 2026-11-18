@@ -1141,6 +1141,10 @@ with tempfile.TemporaryDirectory() as directory:
     check("a note record that is not an object is reported without Python's type name",
           read == ({}, "it holds JSON, but not an object"), read)
 
+old_name_link = hook.REPOSITORY_ITEM_URL_PATTERN.match(f"https://github.com/{hook.OLD_REPOSITORY}/pull/12")
+check("a link with the repository's old name, which GitHub redirects, is read as this repository's item",
+      old_name_link is not None and old_name_link.group("number") == "12", repr(old_name_link))
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")

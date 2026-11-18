@@ -861,6 +861,11 @@ check("a GHI GitHub reports NOT_FOUND is a finding, not a stopped check",
       f"{returncode} {stdout!r} {stderr!r}")
 
 
+old_name_line = lint.PLANNED_WORK_GHI_LINE.fullmatch(
+    f"- GHI [A title](https://github.com/{lint.OLD_REPOSITORY}/issues/12)")
+check("a Planned work line linking with the repository's old name, which GitHub redirects, is read",
+      old_name_line is not None and old_name_line.group("number") == "12", repr(old_name_line))
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")

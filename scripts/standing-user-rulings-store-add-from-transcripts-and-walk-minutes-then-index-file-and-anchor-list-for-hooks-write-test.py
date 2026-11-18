@@ -924,5 +924,11 @@ with tempfile.TemporaryDirectory() as directory:
           and case.query("SELECT name FROM sqlite_master WHERE name = 'entries_schema_version_2'") == [],
           f"exit {exit_code}: {stderr.getvalue()} {case.entries()}")
 
+old_issue = program.GHI_REFERENCE.search(f"see https://github.com/{program.OLD_REPOSITORY}/issues/12 now")
+old_pull = program.PULL_REQUEST_REFERENCE.search(f"see https://github.com/{program.OLD_REPOSITORY}/pull/34 now")
+check("a GHI or pull request link with the repository's old name, which GitHub redirects, is read",
+      old_issue is not None and "12" in old_issue.groups() and old_pull is not None and "34" in old_pull.groups(),
+      f"{old_issue!r} {old_pull!r}")
+
 print(f"{'FAILED' if failures else 'all cases passed'}: {len(failures)} failure(s)")
 sys.exit(1 if failures else 0)

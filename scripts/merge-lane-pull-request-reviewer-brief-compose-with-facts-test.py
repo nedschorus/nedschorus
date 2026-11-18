@@ -356,6 +356,13 @@ def main():
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
+    class MergedWithOldName:
+        def all(self):
+            return [{"number": 5, "title": "Kept with an old link", "url": "https://github.com/nedsnodes/nedsnodes/pull/5",
+                     "body": f"#root_cause_not_fixed it stays. #follow_up https://github.com/{program.OLD_REPOSITORY}/pull/7"}]
+    old_name_fact = program.follow_up_pull_requests_text(7, [], MergedWithOldName())
+    check("a not-fixed line linking this pull request by the repository's old name, which GitHub redirects, is found",
+          "#5 " in old_name_fact, old_name_fact)
     if failures:
         print(f"\n{len(failures)} case(s) failed")
         return 1
