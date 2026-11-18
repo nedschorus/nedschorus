@@ -1119,6 +1119,29 @@ def run_cases(scratch: Path):
           < ordered.index("git rev-parse --verify"),
           str(ordered))
 
+    # A copy that landed before the project rename names the repository's old
+    # name in its `issue:` line, while this run builds the line under the new
+    # default; the two differ only there, and are the same filing.
+    old_name_copy = STAGED.replace(f"github.com/{REPO}/",
+                                   f"github.com/{tool.repository_names.OLD_REPOSITORY}/")
+    landed_before_rename = Recorder({
+        "gh issue list": Completed("[]"),
+        "git ls-tree": Completed(LISTING),
+        "git show": Completed(old_name_copy),
+    })
+    try:
+        tool.create(source, REPO, scratch, landed_before_rename, quiet)
+        check("a source on main under the repository's name before the project rename is refused",
+              old_name_copy != STAGED and False, "it was accepted")
+    except tool.Refused as refusal:
+        check("a source on main under the repository's name before the project rename is refused",
+              old_name_copy != STAGED and refusal.code == 64
+              and not landed_before_rename.ran("gh issue create"), f"code {refusal.code}")
+    check("land_file counts main's copy under the repository's name before the project rename as this file",
+          tool.is_ghi_md_on_main_same_as_staged_copy_reading_name_before_project_rename_as_current(old_name_copy, STAGED)
+          and not tool.is_ghi_md_on_main_same_as_staged_copy_reading_name_before_project_rename_as_current(None, STAGED)
+          and not tool.is_ghi_md_on_main_same_as_staged_copy_reading_name_before_project_rename_as_current(STAGED + "changed\n", STAGED))
+
     # The comparison is computed under the number the PATH carries. The same
     # content landed under a different issue is a different file, and must
     # not stop this one being filed.

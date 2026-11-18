@@ -404,6 +404,13 @@ _stop_signals_spec = importlib.util.spec_from_file_location(
 stop_signals = importlib.util.module_from_spec(_stop_signals_spec)
 _stop_signals_spec.loader.exec_module(stop_signals)
 
+_repository_names_spec = importlib.util.spec_from_file_location(
+    "github_repository_name_and_name_before_project_rename_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "github-repository-name-and-name-before-project-rename-common.py")
+repository_names = importlib.util.module_from_spec(_repository_names_spec)
+_repository_names_spec.loader.exec_module(repository_names)
+
 
 def _load_sibling_script(module_name, file_name):
     spec = importlib.util.spec_from_file_location(
@@ -1752,16 +1759,26 @@ def refuse_if_already_landed_on_main(repo: str, text: str, title: str,
         number = issue_number_in_file_name(Path(landed))
         read = runner(["git", "show", f"{revision}:{landed}"],
                       cwd=str(repository_root))
-        if read.stdout == with_issue_frontmatter(text, repo, number, title):
+        if is_ghi_md_on_main_same_as_staged_copy_reading_name_before_project_rename_as_current(read.stdout,
+                                with_issue_frontmatter(text, repo, number, title)):
             raise already_landed_refusal(repo, landed, title, number)
     for landed in landed_designs_on_main(revision, repository_root, runner):
         read = runner(["git", "show", f"{revision}:{landed}"],
                       cwd=str(repository_root))
         number = issue_number_in_frontmatter(read.stdout)
         if (number is not None
-                and read.stdout == with_issue_frontmatter(text, repo, number,
-                                                          title)):
+                and is_ghi_md_on_main_same_as_staged_copy_reading_name_before_project_rename_as_current(
+                    read.stdout, with_issue_frontmatter(text, repo, number, title))):
             raise already_landed_refusal(repo, landed, title, number)
+
+
+def is_ghi_md_on_main_same_as_staged_copy_reading_name_before_project_rename_as_current(on_main, staged) -> bool:
+    """Whether main's copy is the document this run would land, a link to the
+    repository's name before the project rename counting as a link to its name:
+    a copy that landed before the rename holds the old name in its `issue:` line."""
+    return (on_main is not None and
+            repository_names.rewrite_github_links_from_repository_name_before_project_rename(on_main)
+            == repository_names.rewrite_github_links_from_repository_name_before_project_rename(staged))
 
 
 def already_landed_refusal(repo: str, landed: str, title: str, number: int):
@@ -1843,8 +1860,8 @@ def land_file(repo: str, number: int, title: str, source: Path,
     staged = with_issue_frontmatter(source_text, repo, number, title)
 
     runner(["git", "fetch", "origin", "main"], cwd=str(repository_root))
-    if blob_at("origin/main", destination, repository_root,
-               runner) == staged:
+    if is_ghi_md_on_main_same_as_staged_copy_reading_name_before_project_rename_as_current(blob_at("origin/main", destination,
+                                    repository_root, runner), staged):
         report(f"step 4 already done: main's copy of {destination} is this "
                "file")
         return destination
