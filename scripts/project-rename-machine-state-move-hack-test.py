@@ -322,9 +322,11 @@ def run_apply_check_rollback_on_ned_box():
                and (state / "nn-shared-database.sqlite3-wal").is_file() and (state / "other.json").is_file()
                and (state / "user-alerts" / "pending" / "alert.json").is_file()
                and not (state / "nc-shared-database.sqlite3").exists())
-        expect("step 6a: ~/.local/share and each ~/.cache/nedschorus-* are renamed; another cache stays",
+        expect("step 6a: ~/.local/share and each ~/.cache/nedschorus-* are renamed, a symlink left at the old ~/.local/share "
+               "path so the venv's shebang lines still resolve; another cache stays",
                (home / ".local" / "share" / "nedsnodes" / "cosmic-ray-venv").is_dir()
-               and not os.path.lexists(home / ".local" / "share" / "nedschorus")
+               and os.readlink(home / ".local" / "share" / "nedschorus") == "nedsnodes"
+               and (home / ".local" / "share" / "nedschorus" / "cosmic-ray-venv").is_dir()
                and (home / ".cache" / "nedsnodes-markdown-commonmark-parser-install" / "x").is_file()
                and (home / ".cache" / "nedsnodes-test-suite-recorded-inputs" / "x").is_file()
                and (home / ".cache" / "pip" / "x").is_file()
