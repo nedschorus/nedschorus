@@ -2269,7 +2269,7 @@ try:
     link_directory = scratch / "mac-link-freeze"
     link_directory.mkdir()
     link_original = link_directory / "document.md"
-    link_original.write_text("See file:///Volumes/nedhome/agents/x/log.md now.\n", encoding="utf-8")
+    link_original.write_text("See [the log](file:///Volumes/nedhome/agents/x/log.md) now.\n", encoding="utf-8")
     link_record = link_directory / "record"
     link_record.mkdir()
     saved_mount_override = os.environ.get(mount_override)
@@ -2284,7 +2284,7 @@ try:
     link_frozen = grid_module.record_names.frozen_target_path(link_original, link_record)
     check("the frozen copy holds the link as a /home/nedlern/ path",
           link_frozen.is_file()
-          and link_frozen.read_text(encoding="utf-8") == "See /home/nedlern/agents/x/log.md now.\n",
+          and link_frozen.read_text(encoding="utf-8") == "See [the log](/home/nedlern/agents/x/log.md) now.\n",
           repr(link_frozen.read_bytes() if link_frozen.is_file() else None))
     check("the document keeps its link and the digest returned is the document's",
           "file:///Volumes/nedhome/" in link_original.read_text(encoding="utf-8")
