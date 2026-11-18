@@ -579,27 +579,74 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
           "rest after the pinned line: "
           + repr(synced_prompt.split("branch from origin/main.", 1)[-1])
           + "; expected: " + repr(expected_rest_after_the_branch_state_line))
-    pushed_prompt = supervisor.build_ignition_prompt(
+    # A report that the fetch succeeded and the checkout is synced with main asks nothing of the
+    # successor, so both prompt shapes leave it out and keep only the branch-state instruction.
+    pushed_instruction_text = ("This branch is pushed: leave its head as it is, and start new "
+                               "work on a branch from origin/main.")
+    boot_recovery_opening = (
+        "(Recovered at supervisor boot: the previous session's conversation-tail is "
+        "unavailable; this next-step and the repository are your whole context.) "
+        + supervisor.ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION)
+    for synced_report in (
+            "launch-time-git-sync: fixture-branch is current with main",
+            "launch-time-git-sync: fixture-branch fast-forwarded to main (abc1234)",
+            "launch-time-git-sync: fixture-branch is 2 commit(s) ahead of main and has all of it "
+            "— nothing to pull"):
+        for instruction, expected_line in (
+                (supervisor.BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION, " " + pushed_instruction_text),
+                ("", "")):
+            dialog_prompt = supervisor.build_ignition_prompt(
+                Path("/tmp/dialog-0002.md"),
+                {"written-at": "2026-08-30T17:20:00Z", "next-step": "finish the supervisor"},
+                launch_time_git_sync_report=synced_report,
+                branch_state_instruction=instruction)
+            check(f"after a fetch that succeeded, the dialog prompt leaves out the report "
+                  f"{synced_report!r} and carries {'only the branch-state instruction' if instruction else 'nothing'} in its place",
+                  nothing_is_appended_to(
+                      dialog_prompt, "to a background subagent or Codex." + expected_line,
+                      expected_rest_after_the_branch_state_line)
+                  and "launch-time-git-sync" not in dialog_prompt, dialog_prompt)
+            boot_prompt = supervisor.IgnitionPlanWithoutConversationTail(
+                "finish the supervisor").compose(synced_report, branch_state_instruction=instruction)
+            check(f"after a fetch that succeeded, the boot-recovery prompt leaves out the report "
+                  f"{synced_report!r} and carries {'only the branch-state instruction' if instruction else 'nothing'} in its place",
+                  boot_prompt == (boot_recovery_opening + expected_line
+                                  + supervisor.NEXT_STEP_HEADING + "finish the supervisor"),
+                  repr(boot_prompt))
+        # A failed fetch compares against what is on disk, so the successor is told the report.
+        unfetched_report = synced_report + " (fetch failed, comparing against what is on disk)"
+        dialog_prompt = supervisor.build_ignition_prompt(
+            Path("/tmp/dialog-0002.md"),
+            {"written-at": "2026-08-30T17:20:00Z", "next-step": "finish the supervisor"},
+            launch_time_git_sync_report=unfetched_report,
+            branch_state_instruction=supervisor.BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION)
+        check(f"after a failed fetch, the dialog prompt keeps the report {unfetched_report!r} "
+              f"with the branch-state instruction after it",
+              nothing_is_appended_to(
+                  dialog_prompt,
+                  "to a background subagent or Codex. " + unfetched_report + " — "
+                  + pushed_instruction_text,
+                  expected_rest_after_the_branch_state_line), dialog_prompt)
+        boot_prompt = supervisor.IgnitionPlanWithoutConversationTail(
+            "finish the supervisor").compose(unfetched_report)
+        check(f"after a failed fetch, the boot-recovery prompt keeps the report {unfetched_report!r}",
+              boot_prompt == (boot_recovery_opening + " " + unfetched_report
+                              + supervisor.NEXT_STEP_HEADING + "finish the supervisor"),
+              repr(boot_prompt))
+    # With no report there is no sync to speak for, so no branch-state instruction either.
+    dialog_prompt = supervisor.build_ignition_prompt(
         Path("/tmp/dialog-0002.md"),
         {"written-at": "2026-08-30T17:20:00Z", "next-step": "finish the supervisor"},
-        launch_time_git_sync_report="launch-time-git-sync: fixture-branch is current with main",
+        launch_time_git_sync_report="",
         branch_state_instruction=supervisor.BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION)
-    check("a pushed branch's prompt carries only the pushed instruction, after the sync result",
-          nothing_is_appended_to(
-              pushed_prompt,
-              "launch-time-git-sync: fixture-branch is current with main — This branch is "
-              "pushed: leave its head as it is, and start new work on a branch from origin/main.",
-              expected_rest_after_the_branch_state_line)
-          and "never been pushed" not in pushed_prompt, pushed_prompt)
-    on_main_prompt = supervisor.build_ignition_prompt(
-        Path("/tmp/dialog-0002.md"),
-        {"written-at": "2026-08-30T17:20:00Z", "next-step": "finish the supervisor"},
-        launch_time_git_sync_report="launch-time-git-sync: main is current with main")
-    check("a checkout on main gets the sync result and no branch-state instruction",
-          nothing_is_appended_to(
-              on_main_prompt,
-              "to a background subagent or Codex. launch-time-git-sync: main is current with main",
-              expected_rest_after_the_branch_state_line), on_main_prompt)
+    check("without a sync report the dialog prompt carries no branch-state instruction",
+          nothing_is_appended_to(dialog_prompt, "to a background subagent or Codex.",
+                                 expected_rest_after_the_branch_state_line), dialog_prompt)
+    boot_prompt = supervisor.IgnitionPlanWithoutConversationTail("finish the supervisor").compose(
+        "", branch_state_instruction=supervisor.BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION)
+    check("without a sync report the boot-recovery prompt carries no branch-state instruction",
+          boot_prompt == (boot_recovery_opening + supervisor.NEXT_STEP_HEADING
+                          + "finish the supervisor"), repr(boot_prompt))
     # The supervisor's other ignition shape composes the same instruction at a
     # second call site (`IgnitionPlanWithoutConversationTail.compose`). The
     # whole prompt is pinned, so an append anywhere in it -- inside a constant
@@ -785,6 +832,8 @@ def run_launch_time_git_sync_cases(workspace: Path):
     report = supervisor.launch_time_git_sync(root)
     check("a directory that is not a checkout syncs to nothing",
           report.startswith("launch-time-git-sync: ") and "nothing to sync" in report, report)
+    check("the prompt keeps the report of a directory that is not a checkout",
+          supervisor.launch_time_git_sync_report_in_prompt(report) == report, report)
 
     remote = root / "remote.git"
     git_in(["init", "--quiet", "--bare", "--initial-branch=main", str(remote)], root)
@@ -807,6 +856,9 @@ def run_launch_time_git_sync_cases(workspace: Path):
     report = supervisor.launch_time_git_sync(home)
     check("a branch level with main reports current",
           report.startswith("launch-time-git-sync: ") and "current with main" in report, report)
+    check("the prompt leaves out the report of a branch current with main, keeping the branch-state instruction",
+          supervisor.launch_time_git_sync_report_in_prompt(report, "the instruction") == "the instruction"
+          and supervisor.launch_time_git_sync_report_in_prompt(report) == "", report)
 
     # Main moves ahead; the agent's clean branch must fast-forward onto it.
     (seed / "README.md").write_text("seed\nfrom main\n", encoding="utf-8")
@@ -817,6 +869,8 @@ def run_launch_time_git_sync_cases(workspace: Path):
     report = supervisor.launch_time_git_sync(home)
     check("a clean branch behind main fast-forwards",
           report.startswith("launch-time-git-sync: ") and "fast-forwarded to main" in report, report)
+    check("the prompt leaves out the report of a branch fast-forwarded to main",
+          supervisor.launch_time_git_sync_report_in_prompt(report) == "", report)
     check("the fast-forward really moved the files",
           (home / "README.md").read_text(encoding="utf-8") == "seed\nfrom main\n")
 
@@ -1007,6 +1061,8 @@ def run_launch_time_git_sync_cases(workspace: Path):
     report = supervisor.launch_time_git_sync(home)
     check("a branch ahead of main with all of main reports nothing to pull",
           report.startswith("launch-time-git-sync: ") and "nothing to pull" in report, report)
+    check("the prompt leaves out the report of a branch ahead of main with nothing to pull",
+          supervisor.launch_time_git_sync_report_in_prompt(report) == "", report)
 
     no_remote = root / "no-remote"
     git_in(["init", "--quiet", "--initial-branch=main", str(no_remote)], root)
@@ -1210,6 +1266,9 @@ def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: P
           "fast-forwarded to main (its new commit could not be read" in report
           and "fatal: stub failure" in report
           and launch_time_git_sync_next_steps(f"git -C {home} rev-parse --short HEAD") in report, report)
+    check("the prompt keeps the report of a fast-forward whose new commit cannot be read, "
+          "since it carries git's error and next steps",
+          supervisor.launch_time_git_sync_report_in_prompt(report) == f"\n\n{report}\n\n", report)
 
     (home / "agent-note.txt").write_text("own work\n", encoding="utf-8")
     git_in(["add", "-A"], home)

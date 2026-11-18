@@ -31,8 +31,7 @@ reader (scripts/agent-seat-due-task-raise-hook.py), may name in the
 An entry is left out when an open task (status pending or in_progress) names
 it: a branch by its name, a worktree by its path or by the branch it has
 checked out. A branch left out is never deleted as a cherry-picked copy, since
-its task still names it. In place of the entries left out the list prints one
-line counting them and naming their tasks. A task file that cannot be read,
+its task still names it. A task file that cannot be read,
 or whose `branches` is not a list of strings, hides nothing, and the list
 says once that the task list could not be read in full; so does a task list
 directory that cannot be read.
@@ -324,21 +323,18 @@ def deleted_branch_entry(repo, branch, tip):
 
 
 def branch_entries(repo, branches, by_head_branch, by_head_commit, deleted,
-                   delete_cherry_picked_copies=False, holding=None, hidden=None):
+                   delete_cherry_picked_copies=False, holding=None):
     """Return the entry text of each branch that no pull request has as its head. The entry text
     of each such branch deleted because origin/main holds a copy of its every commit is appended
     to deleted, the caller's list, at once, so that the deletion and its restore command are
     still reported when a later git call raises. Each branch an open task holds, as holding
-    reads it, is neither listed nor deleted: its holders are appended to hidden, the caller's
-    list."""
+    reads it, is neither listed nor deleted."""
     origin_tips = origin_branch_tips(repo)
     entries = []
     for branch, tip, date in branches:
         if pull_request_for(branch, tip, by_head_branch, by_head_commit) is not None:
             continue
-        holders = holding.holders(branch) if holding is not None else set()
-        if holders:
-            hidden.append(("branch", holders))
+        if holding is not None and holding.holders(branch):
             continue
         deletion_failure = ""
         if delete_cherry_picked_copies and every_commit_is_a_cherry_picked_copy_on_origin_main(
@@ -375,31 +371,6 @@ def section(heading, entries, agent_seat, entries_at_most):
     return lines
 
 
-def counted(count, singular, plural):
-    return f"{count} {singular if count == 1 else plural}"
-
-
-def task_id_sort_key(task_id):
-    return (0, int(task_id), "") if task_id.isdigit() else (1, 0, task_id)
-
-
-def hidden_line(hidden):
-    """The one line that stands for the entries open tasks hold; "" when none is hidden."""
-    if not hidden:
-        return ""
-    worktrees = sum(1 for kind, _ in hidden if kind == "worktree")  # pragma: no mutate, kind is "worktree" or "branch", and "branch" sorts before "worktree", so >= acts as ==
-    branches = len(hidden) - worktrees
-    parts = []
-    if worktrees:
-        parts.append(counted(worktrees, "worktree", "worktrees"))
-    if branches:
-        parts.append(counted(branches, "branch", "branches"))
-    task_ids = sorted(set().union(*(holders for _, holders in hidden)), key=task_id_sort_key)
-    tasks = f"{'task' if len(task_ids) == 1 else 'tasks'} {', '.join(task_ids)}"
-    return (f"This agent-seat also has {' and '.join(parts)} that open tasks hold ({tasks}); "
-            f"they are not listed.")
-
-
 def unreadable_task_list_line(holding):
     if holding is None or not holding.unreadable:
         return ""
@@ -425,7 +396,6 @@ def list_text_and_failure(repo, agent_seat, skip_worktree=None, entries_at_most=
     whose open tasks' entries are left out; None reads the agent-seat's own."""
     cleaner = None
     deleted = []
-    hidden = []
     holding = None
     try:
         cleaner = clean_worktrees_module()
@@ -445,22 +415,19 @@ def list_text_and_failure(repo, agent_seat, skip_worktree=None, entries_at_most=
         for worktree, branch, tip in owned:
             if has_open_pull_request(branch, tip, by_head_branch):
                 continue
-            holders = holding.holders(worktree, Path(worktree).resolve(), branch)
-            if holders:
-                hidden.append(("worktree", holders))
+            if holding.holders(worktree, Path(worktree).resolve(), branch):
                 continue
             worktrees.append(worktree_entry(repo, worktree, branch, tip, by_head_branch,
                                             by_head_commit))
         branches = ([] if pull_request_failure else
                     branch_entries(repo, authored, by_head_branch, by_head_commit, deleted,
-                                   delete_cherry_picked_copies, holding, hidden))
+                                   delete_cherry_picked_copies, holding))
     except Exception as error:
         failure = (f"This agent-seat's worktrees and branches with no pull request could not be "
                    f"listed ({type(error).__name__}: {error}). Work an earlier agent-session left "
                    f"may be waiting; list it with: {list_command_text(agent_seat)}")
         return "\n".join([failure] + deleted_section(deleted)), True
-    if not worktrees and not branches and not deleted and not pull_request_failure \
-            and not hidden:
+    if not worktrees and not branches and not deleted and not pull_request_failure:
         return "", False
     lines = []
     if worktrees:
@@ -475,7 +442,9 @@ def list_text_and_failure(repo, agent_seat, skip_worktree=None, entries_at_most=
                          branches, agent_seat, entries_at_most)
     if worktrees or branches:
         lines.append(INSTRUCTIONS)
-    lines += [line for line in (hidden_line(hidden), unreadable_task_list_line(holding)) if line]
+    unreadable = unreadable_task_list_line(holding)
+    if unreadable:
+        lines.append(unreadable)
     lines += deleted_section(deleted)
     return "\n".join(lines), bool(pull_request_failure)
 

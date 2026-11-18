@@ -431,9 +431,15 @@ def branch_state_instruction_after(launch_time_git_sync_report: str, branch_stat
 
 def launch_time_git_sync_report_in_prompt(launch_time_git_sync_report: str,
                                           branch_state_instruction: str = "") -> str:
-    """The report as the prompt carries it: a report of several lines, such as a git
-    failure's next steps, stands as its own paragraph instead of running on from the
-    sentence before it."""
+    """The report as the prompt carries it, with the branch-state instruction after it; "" when
+    there is no report. A report that the checkout is synced with main asks nothing of the
+    agent-session, so only the instruction stands in its place. A report of several lines,
+    such as a git failure's next steps, stands as its own paragraph instead of running on
+    from the sentence before it."""
+    if not launch_time_git_sync_report:
+        return ""
+    if launch_time_git_sync_report_says_checkout_synced_with_main(launch_time_git_sync_report):
+        return branch_state_instruction
     text = launch_time_git_sync_report + branch_state_instruction_after(
         launch_time_git_sync_report, branch_state_instruction)
     return f"\n\n{text}\n\n" if "\n" in launch_time_git_sync_report else text
@@ -1207,9 +1213,10 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
         + written_at_wariness_sentence(handoff_fields.get(session_handoff_field_names.WRITTEN_AT_FIELD, "")),
         ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION,
     ]
-    if launch_time_git_sync_report:
-        lines.append(launch_time_git_sync_report_in_prompt(launch_time_git_sync_report,
-                                                           branch_state_instruction))
+    launch_time_git_sync_text = launch_time_git_sync_report_in_prompt(
+        launch_time_git_sync_report, branch_state_instruction)
+    if launch_time_git_sync_text:
+        lines.append(launch_time_git_sync_text)
     lines.extend(overview_refresh_due)
     lines.extend(memory_review_due)
     roster = spawned_subagent_roster_from(handoff_fields)
@@ -1310,9 +1317,10 @@ class IgnitionPlanWithoutConversationTail:
                              "this next-step and the repository are your whole context.")
         prompt = (f"(Recovered at {self.occasion}: {recovery_note}) "
                   + ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION)
-        if launch_time_git_sync_report:
-            prompt += " " + launch_time_git_sync_report_in_prompt(launch_time_git_sync_report,
-                                                                  branch_state_instruction)
+        launch_time_git_sync_text = launch_time_git_sync_report_in_prompt(
+            launch_time_git_sync_report, branch_state_instruction)
+        if launch_time_git_sync_text:
+            prompt += " " + launch_time_git_sync_text
         for line in overview_refresh_due:
             prompt += " " + line
         for line in memory_review_due:
@@ -1360,9 +1368,22 @@ def run_git_here(arguments: list, working_directory: Path, timeout: int = 60):
         return subprocess.CompletedProcess(arguments, 1, "", f"{type(error).__name__}: {error}")
 
 
-# The handoff-supervisor restarts itself on main's code only after a report holding one of these.
+# The handoff-supervisor restarts itself on main's code only after a report holding one of the first two.
 LAUNCH_TIME_GIT_SYNC_REPORT_PHRASE_CURRENT_WITH_MAIN = " is current with main"
 LAUNCH_TIME_GIT_SYNC_REPORT_PHRASE_FAST_FORWARDED_TO_MAIN = " fast-forwarded to main"
+LAUNCH_TIME_GIT_SYNC_REPORT_PHRASE_NOTHING_TO_PULL = " — nothing to pull"
+LAUNCH_TIME_GIT_SYNC_REPORT_PHRASE_FETCH_FAILED = " (fetch failed, comparing against what is on disk)"
+
+
+def launch_time_git_sync_report_says_checkout_synced_with_main(report: str) -> bool:
+    """Whether the report says the fetch of origin succeeded and the checkout is current with
+    main, fast-forwarded to it, or ahead of it with nothing to pull. A report of several lines
+    carries a git failure's next steps, so it never says so."""
+    return ("\n" not in report and LAUNCH_TIME_GIT_SYNC_REPORT_PHRASE_FETCH_FAILED not in report
+            and any(phrase in report for phrase in (
+                LAUNCH_TIME_GIT_SYNC_REPORT_PHRASE_CURRENT_WITH_MAIN,
+                LAUNCH_TIME_GIT_SYNC_REPORT_PHRASE_FAST_FORWARDED_TO_MAIN,
+                LAUNCH_TIME_GIT_SYNC_REPORT_PHRASE_NOTHING_TO_PULL)))
 
 
 def launch_time_git_sync(working_directory: Path) -> str:
@@ -1383,7 +1404,7 @@ def launch_time_git_sync(working_directory: Path) -> str:
         return "launch-time-git-sync: not a git checkout, nothing to sync"
 
     fetched = run_git_here(["fetch", "--quiet", "origin"], working_directory)
-    fetch_note = "" if fetched.returncode == 0 else " (fetch failed, comparing against what is on disk)"
+    fetch_note = "" if fetched.returncode == 0 else LAUNCH_TIME_GIT_SYNC_REPORT_PHRASE_FETCH_FAILED
 
     def answer(arguments, timeout, accepted_exit_codes=(0,)):
         return git.run_git(working_directory, arguments, timeout_seconds=timeout,
@@ -1445,7 +1466,7 @@ def launch_time_git_sync(working_directory: Path) -> str:
             if ahead == "0":
                 return f"launch-time-git-sync: {branch}{LAUNCH_TIME_GIT_SYNC_REPORT_PHRASE_CURRENT_WITH_MAIN}{fetch_note}"
             return (f"launch-time-git-sync: {branch} is {ahead} commit(s) ahead of main and has all of "
-                    f"it — nothing to pull{fetch_note}")
+                    f"it{LAUNCH_TIME_GIT_SYNC_REPORT_PHRASE_NOTHING_TO_PULL}{fetch_note}")
 
         if not is_ancestor("HEAD", "origin/main"):
             ahead = answer(["rev-list", "--count", "origin/main..HEAD"], 30)
