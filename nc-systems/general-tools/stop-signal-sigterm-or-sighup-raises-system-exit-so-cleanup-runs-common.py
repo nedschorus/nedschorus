@@ -12,8 +12,8 @@ What it does not handle: SIGKILL, which no handler can catch; a block run outsid
 where signal.signal raises ValueError; and children of the program, which get the signal only when it is
 sent to their process group. A second signal during cleanup raises again, interrupting that cleanup.
 
-Unlike the Bash guards replay's stop_deferred(), the SystemExit is not deferred around subprocess calls:
-the replay polls Popen.wait() in a loop and so meets the gap in Popen._wait() where a raise leaves the
+Unlike stop_deferred() in nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py, the SystemExit is not
+deferred around subprocess calls: that program polls Popen.wait() in a loop and so meets the gap in Popen._wait() where a raise leaves the
 wait lock held, while a caller blocked once in subprocess.run() almost never does. If the raise does hit
 that gap, the program hangs in subprocess.run() until it is killed, and its cleanup does not run.
 """

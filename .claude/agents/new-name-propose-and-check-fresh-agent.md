@@ -1,6 +1,6 @@
 ---
 name: new-name-propose-and-check-fresh-agent
-description: Checks new shared names (file paths, scripts, branches, functions, classes or constants used from other files, glossary terms) against the project's naming page, or proposes a name for a thing described in a sentence. Send each name with one sentence saying what it names. Run it in the background.
+description: Checks new shared names (file paths, scripts, functions, classes or constants used from other files, glossary terms) against the project's naming page, or proposes a name for a thing described in a sentence. Send each name with one sentence saying what it names. Run it in the background.
 tools: Bash, Read, Grep, Glob
 ---
 

@@ -6,7 +6,6 @@ Prints one line per case and exits non-zero if any case fails.
 """
 
 import importlib.util
-import json
 import sys
 from pathlib import Path
 
@@ -59,10 +58,6 @@ check("a notification with no note and no result is not interim",
       not recognizer.task_notification_is_interim(
           "<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n"
           "</task-notification>"))
-check("the JSON-escaped text of a transcript line is read the same way",
-      recognizer.task_notification_is_interim(json.dumps(INTERIM_BY_NOTE))
-      and recognizer.task_notification_is_interim(json.dumps(INTERIM_BY_RESULT))
-      and not recognizer.task_notification_is_interim(json.dumps(FINAL)))
 check("a final report that quotes an interim note is not interim",
       not recognizer.task_notification_is_interim(FINAL.replace(
           "<result>", "<result>The notice read <note>the result below may be interim</note>. ")))

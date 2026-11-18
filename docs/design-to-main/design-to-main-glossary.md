@@ -5,14 +5,14 @@ Terms that belong to the design-to-main workflow alone, for agents working on th
 The state names of the machine are in the design, `docs/design-to-main/design-to-main-state-machine-design.md`, §3.1, and are not repeated here.
 
 - **acceptance-check** — a check of one finished artifact against its acceptance criteria, which passes or fails, made by a program, an agent or the user.
-- **can-not-be-tested** — a `no-tests` reason: no machine or safe way to exercise the requirement here.
-- **code-based-test**, **prompt-based-test**, **CPC-based-test**, **user-based-test** — a test named in prose by what it is based on: coverage-type `script`, `prompt` (agent-instructions run by a single-purpose agent that reports pass or fail), `script-and-prompt`, and a clause's by-hand demonstration.
+- **can-not-be-tested** — a `no-tests` reason: no way to test the requirement here, by machine or by hand.
+- **code-based-test**, **prompt-based-test**, **CPC-based-test**, **user-based-test** — a test named in prose by what it is based on: coverage-type `script`, `prompt` (agent-instructions run by a single-purpose agent that reports pass or fail), `script-and-prompt`, and a test-requirement of coverage-type `user`, a design-requirement's by-hand demonstration.
 - **component-consumer** — anything that invokes a component or reads what it leaves. A script's component-consumers are whoever runs it and whatever reads the files, branches or output it leaves behind.
 - **component-consumer-receives** — the design-contract group holding the postconditions on what a component-consumer gets back, per case, and how each outcome is observed.
 - **component-consumer-supplies** — the design-contract group holding the preconditions on what a component-consumer passes in, each with what makes it invalid and what the component does then.
 - **contract-revision** — a re-write of the design-contract in `contract-revising` after a rejection or a failed check against it, once the design is approved.
 - **could-not-run** — the test suite's third outcome, beside pass and fail: the runner or a launched test agent produced no result at all.
-- **coverage-type** — the word on an implementation or a test saying what kind of thing it is: `script`, `prompt` (agent-instructions; for a test, a prompt-based-test), or `script-and-prompt`. A test-requirement in the test-design carries the same field for the test that will cover it and may instead be `no-tests`.
+- **coverage-type** — the word on an implementation or a test saying what kind of thing it is: `script`, `prompt` (agent-instructions; for a test, a prompt-based-test), or `script-and-prompt`. A test-requirement in the test-design carries the same field for the test that will cover it and may instead be `user`, for a test-requirement a person tests by hand, or `no-tests`.
 - **do-not-know-how-to-test** — a `no-tests` reason: an open question, which reaches the user.
 - **escalate-to-user** — the state-exit an agent takes for a problem it believes is in the design or the test-design, when it needs the user; it opens an investigation.
 - **flaky-test** — the arbitrator's verdict that a test gives different results on the same inputs while the implementation does not; routes to `test-writing`. The standard term.
@@ -31,7 +31,7 @@ The state names of the machine are in the design, `docs/design-to-main/design-to
 - **per-run-text** — what one agent writes during a run for another agent: a reviewer's notes, an input-quick-check-failed report, a contract-revision. The user does not review it, except a contract-revision at `contract-acceptance-by-user`.
 - **ready-for-test-suite** — the position a work-stream holds at when its last reviewing state has advanced and the other work-stream has not yet; recorded per work-stream in the run-state file.
 - **redesign-ordered-by-user-after-contract-failed-twice** — the user's verdict at `contract-acceptance-by-user`, after the design-contract has failed review twice, that the trouble lies in the design itself: it opens a redesign through an investigation, counted against redesigns.
-- **refusal-clause-pair** — how a refusal is written in a design-contract: one `world-requires` clause and one `component-consumer-receives` clause sharing a number, with suffixes `a` and `b`.
+- **refusal-design-requirement-pair** — how a refusal is written in a design-contract: one `world-requires` design-requirement and one `component-consumer-receives` design-requirement sharing a number, with suffixes `a` and `b`.
 - **standard-package** — the files every agent after the design receives in every state-package: the design, the design-contract, the component's user-rulings file, and on a re-entry the notes or failed-check report that caused it and the version being corrected.
 - **standing-agent-instructions** — agent-instructions that will be followed again and again: a skill, the instructions a state launches its agent with, an implementation or a test that is agent-instructions.
 - **state-exit** — the one structured record a state's work emits and the machine routes on: a verdict, a destination, and the commit of the state-package it was built from.

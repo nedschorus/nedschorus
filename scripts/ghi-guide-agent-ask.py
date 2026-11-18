@@ -267,7 +267,7 @@ Boundaries:
 - A draft-body request gets a verdict line, except that a draft that conflicts with a ruling the user made gets the ruling question: whether the ruling still binds, or still binds this draft, is the user's to settle. A question beyond the corpus gets not-about-issues even when it touches a ruling."""
 
 
-ASK_PROMPT_ISSUES_WHOSE_DESIGN_A_PLAN_SHOULD_REUSE_REQUEST_SENTENCE = (
+GHI_GUIDE_AGENT_ASK_PROMPT_SENTENCE_ASKING_THE_AGENT_TO_NAME_ISSUES_WHOSE_DESIGN_A_PLAN_SHOULD_REUSE = (
     "If the question describes a plan, also name any issue whose design built "
     "something the plan should reuse instead of building its own.")
 
@@ -276,7 +276,8 @@ def compose_resume_ask_prompt(question: str, include_closed: bool, changed_numbe
                               is_resume: bool) -> str:
     """§ Prompts: Resume ask prompt. The changed-entries preamble appears only
     on a resumed session whose refresh actually changed entries; the
-    asker's question rides through unrewritten, and ASK_PROMPT_ISSUES_WHOSE_DESIGN_A_PLAN_SHOULD_REUSE_REQUEST_SENTENCE
+    asker's question rides through unrewritten, and
+    GHI_GUIDE_AGENT_ASK_PROMPT_SENTENCE_ASKING_THE_AGENT_TO_NAME_ISSUES_WHOSE_DESIGN_A_PLAN_SHOULD_REUSE
     follows it in every ask."""
     parts = []
     if is_resume and changed_numbers:
@@ -287,7 +288,7 @@ def compose_resume_ask_prompt(question: str, include_closed: bool, changed_numbe
             "moved to issues-closed.md."
         )
     parts.append(f"You are asked for a reading list. {question}")
-    parts.append(ASK_PROMPT_ISSUES_WHOSE_DESIGN_A_PLAN_SHOULD_REUSE_REQUEST_SENTENCE)
+    parts.append(GHI_GUIDE_AGENT_ASK_PROMPT_SENTENCE_ASKING_THE_AGENT_TO_NAME_ISSUES_WHOSE_DESIGN_A_PLAN_SHOULD_REUSE)
     if include_closed:
         parts.append(
             "Closed history is wanted for this request: grep issues-closed.md "
@@ -699,11 +700,11 @@ def fast_forward_seat_checkout(seat_dir: Path) -> str:
     the remaining half of nedschorus#334.
 
     NOT checkout-freshness-catch-up.py's fast_forward_reference_checkout.
-    That one requires the checkout to be parked on main and treats any other
-    branch as a blocker — which is exactly the guarantee a REFERENCE copy
-    needs, and this checkout sits on its own `ghi-guide-agent` branch. Loosening it
-    for this caller would weaken it for the reference copy, so this is a
-    second, narrower function rather than a shared one.
+    That one requires the checkout to be parked on main and treats a detached
+    HEAD as a blocker — which is exactly the guarantee a REFERENCE copy needs,
+    and this checkout is an agent-home, resting detached at origin/main.
+    Loosening it for this caller would weaken it for the reference copy, so
+    this is a second, narrower function rather than a shared one.
 
     FRESHNESS MUST NEVER FAIL AN ASK. Every failure path here returns a line
     and lets the ask proceed against whatever is on disk. A slightly stale
@@ -735,8 +736,8 @@ def fast_forward_seat_checkout(seat_dir: Path) -> str:
     tracked_changes = [entry for entry in git_output.status_entries(status.stdout)
                        if entry.code != "??"]
     if tracked_changes:
-        # ghi-guide-agent's document-side link repairs go through ghi-issue-write.py's
-        # pull requests, so uncommitted tracked changes here are real work, not debris.
+        # The ask writes no tracked file here, so a tracked change is work
+        # someone left in the agent-home, not debris to move past.
         return (f"ghi-guide-agent-ask: the seat checkout has {len(tracked_changes)} uncommitted "
                 f"tracked change(s); not refreshing it")
 
@@ -753,7 +754,7 @@ def fast_forward_seat_checkout(seat_dir: Path) -> str:
     if count == 0:
         return ""
 
-    merged = git(["merge", "--ff-only", "--no-overwrite-ignore", "origin/main"], timeout=120)
+    merged = git(["merge", "--ff-only", "--no-overwrite-ignore", "origin/main"], timeout=120)  # pragma: no mutate, a limit a second longer or shorter on a fast-forward changes nothing a test can see without a git merge that runs for two minutes
     if merged.returncode != 0:
         return (f"ghi-guide-agent-ask: the seat checkout is {count} behind origin/main and would "
                 f"not fast-forward ({merged.stderr.strip() or 'no detail'}); answering from "

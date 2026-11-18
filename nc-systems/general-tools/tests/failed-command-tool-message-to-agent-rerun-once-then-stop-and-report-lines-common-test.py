@@ -42,49 +42,53 @@ def check(name, condition, detail=None):
 WHO = "the user, or, if you are a subagent, the agent that dispatched you,"
 
 lines = next_step_lines.git_failure_next_step_lines(
-    "`p --x`", "p", text_the_failure_line_contains="p: could not",
-    include_the_misspelt_branch_commit_or_path_line=True).splitlines()
-check("a git failure in a program that takes names on its command line gets four lines: "
-      "two cases, the unchanged rerun when no case applies, and the stop naming "
-      "the text to look for, who is told, and which lines",
-      lines == [
-          "If git's error names a lock file, such as .git/index.lock, do not delete the lock file "
-          "yourself, because a git command still running may hold it; wait up to one minute for git "
-          "to remove it by running `i=0; while [ -e \"<lock file path>\" ] && [ $i -lt 30 ]; do "
-          "sleep 2; i=$((i+1)); done` with <lock file path> replaced by the path git's error names, "
-          "without the quotes git puts around it (Claude Code refuses a plain `sleep 60`), then run exactly `p --x`, whether or not the "
-          "lock file is gone.",
-          "If a branch, commit or path you gave p on its command line is misspelt or does "
-          "not exist, correct it in your command, then run the corrected command.",
-          "If none of the cases above applies, run exactly `p --x` once more.",
-          'If the rerun, or the corrected command, prints a line containing "p: could not" '
-          f'again, stop, and tell {WHO} word for word, the line containing "p: could not" '
-          "from the command that printed this message and from the rerun, or the corrected command."], lines)
-
-lines = next_step_lines.git_failure_next_step_lines(
-    "`git -C d status`", include_the_misspelt_branch_commit_or_path_line=False,
+    "git -C d status", git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path="fatal: bad object HEAD",
     rerun_fails_when="prints an error again", which_lines_to_quote_in_the_report="the sync line and the error",
     read_by_a_subagent=False,
     next_step_to_skip_when_the_rerun_fails_too="act on the rest of this prompt").splitlines()
-check("a program that takes no names gets one case; a line no subagent reads names only "
-      "the user; the stop holds back the work that follows; free text replaces the marker",
-      lines[1:] == [
-          "If git's error names no lock file, run exactly `git -C d status` once more.",
+check("a line no subagent reads names only the user; the stop holds back the work that follows; "
+      "free text replaces the marker",
+      lines == [
+          "Run exactly `git -C d status` once more.",
           "If the rerun prints an error again, stop, do not act on the rest of this prompt, "
           "and tell the user word for word, the sync line and the error."], lines)
 
-try:
+LOCK_ERROR = ("fatal: Unable to create '/r/.git/index.lock': File exists.")
+STOP = (f'If the rerun prints a line containing "p: could not" again, stop, and tell {WHO} word for word, '
+        'the line containing "p: could not" from the command that printed this message and from the rerun.')
+for case_name, program, error, expected in [
+        ("an error naming a lock file gets the lock-file step as a fact, with the path filled "
+         "into the wait command, and no misspelt-name line, since git stopped at the lock", "p", LOCK_ERROR,
+         ["Git's error names the lock file /r/.git/index.lock: do not delete the lock file yourself, "
+          "because a git command still running may hold it; wait up to one minute for git to remove "
+          "it by running `i=0; while [ -e /r/.git/index.lock ] && [ $i -lt 30 ]; do sleep 2; "
+          "i=$((i+1)); done` (Claude Code refuses a plain `sleep 60`), then run exactly `p --x`, "
+          "whether or not the lock file is gone.", STOP]),
+        ("an error naming no lock file, in a call given no name of the agent's, gets only the "
+         "rerun", None, "fatal: bad object HEAD",
+         ["Run exactly `p --x` once more.", STOP]),
+        ("an error naming no lock file, in a call given a name of the agent's, gets the "
+         "misspelt-name case and otherwise the rerun", "p", "git printed no error",
+         ["If a branch, commit or path you gave p on its command line is misspelt or does "
+          "not exist, correct it in your command, then run the corrected command.",
+          "Otherwise, run exactly `p --x` once more.",
+          'If the rerun, or the corrected command, prints a line containing "p: could not" '
+          f'again, stop, and tell {WHO} word for word, the line containing "p: could not" '
+          "from the command that printed this message and from the rerun, or the corrected command."]),
+        ("an error naming the lock file of a ref gets the lock-file step for that file", None,
+         "error: cannot lock ref 'refs/heads/t': Unable to create '/r/.git/refs/heads/t.lock': File exists.",
+         ["Git's error names the lock file /r/.git/refs/heads/t.lock: do not delete the lock file "
+          "yourself, because a git command still running may hold it; wait up to one minute for git "
+          "to remove it by running `i=0; while [ -e /r/.git/refs/heads/t.lock ] && [ $i -lt 30 ]; do "
+          "sleep 2; i=$((i+1)); done` (Claude Code refuses a plain `sleep 60`), then run exactly "
+          "`p --x`, whether or not the lock file is gone.", STOP]),
+        ("a quoted pathspec that is not a lock file is no lock file", None,
+         "fatal: pathspec 'a-test.py' did not match any files",
+         ["Run exactly `p --x` once more.", STOP])]:
     lines = next_step_lines.git_failure_next_step_lines(
-        "`p --x`", text_the_failure_line_contains="p: could not",
-        include_the_misspelt_branch_commit_or_path_line=True)
-except TypeError as error:
-    lines = None
-    said = str(error)
-check("the misspelt-name line without the program it names is refused, naming the argument and both "
-      "values of the flag",
-      lines is None and "needs program" in said
-      and "include_the_misspelt_branch_commit_or_path_line=True" in said
-      and "include_the_misspelt_branch_commit_or_path_line=False" in said, lines)
+        "p --x", program, text_the_failure_line_contains="p: could not",
+        git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=error).splitlines()
+    check(case_name, lines == expected, lines)
 
 for case_name, arguments in [
         ("neither the failure text nor the free-text pair", {}),
@@ -102,6 +106,18 @@ for case_name, arguments in [
     check(f"a call giving {case_name} is refused, naming the arguments",
           line is None and "text_the_failure_line_contains" in said
           and "which_lines_to_quote_in_the_report" in said, line)
+
+try:
+    line = next_step_lines.git_failure_next_step_lines("p --x", "p", "p: could not",
+                                                       git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path="fatal: x")
+    said = None
+except TypeError as error:
+    line = None
+    said = str(error)
+check("the failure text, given third by position, is refused by the signature: every argument after "
+      "program is text, so one given by position could land in another's role unnoticed",
+      line is None and "positional" in said
+      and "which_lines_to_quote_in_the_report" not in said, (line, said))
 
 line = next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
     "at your next Edit", "h:")
@@ -122,7 +138,16 @@ check("a hook that hands over a rerun command says to look inside the JSON's add
               "above needs no report.", line)
 
 
-def run_lock_file_wait_command(directory, lock_file_present, removed_at_poll=0):
+def wait_command_as_a_reader_takes_it_from_the_line(lock_file):
+    """The wait command the lock-file line gives for lock_file, cut out as a reader would: from
+    the backtick after "running" to the backtick before "(Claude Code refuses"."""
+    line = next_step_lines.git_error_names_a_lock_file_wait_then_rerun_line_or_none(
+        f"fatal: Unable to create '{lock_file}': File exists.", "p --x")
+    return line.split("by running `", 1)[1].split("` (Claude Code refuses", 1)[0]
+
+
+def run_lock_file_wait_command(directory, lock_file_present, removed_at_poll=0,
+                               lock_file_name="index.lock"):
     """Run the wait command the lock-file line gives, by sh, with a sleep stub first on PATH.
 
     The stub returns at once and records each call; at call removed_at_poll it removes the lock
@@ -132,17 +157,18 @@ def run_lock_file_wait_command(directory, lock_file_present, removed_at_poll=0):
     stub_directory = Path(directory) / "bin"
     stub_directory.mkdir()
     calls = Path(directory) / "sleep-calls"
-    lock_file = Path(directory) / "index.lock"
+    lock_file = Path(directory) / lock_file_name
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
     if lock_file_present:
         lock_file.write_text("")
     (stub_directory / "sleep").write_text(
-        f'#!/bin/sh\necho "$1" >> "{calls}"\n'
-        f'if [ "$(wc -l < "{calls}")" -eq {removed_at_poll} ]; then rm -f "{lock_file}"; fi\n')
+        '#!/bin/sh\necho "$1" >> "$SLEEP_CALLS"\n'
+        f'if [ "$(wc -l < "$SLEEP_CALLS")" -eq {removed_at_poll} ]; then rm -f "$LOCK_FILE"; fi\n')
     (stub_directory / "sleep").chmod(0o755)
-    command = next_step_lines.WAIT_UP_TO_ONE_MINUTE_FOR_LOCK_FILE_TO_GO_COMMAND.replace(
-        next_step_lines.LOCK_FILE_PATH_PLACEHOLDER, str(lock_file))
-    completed = subprocess.run(["sh", "-c", command], check=False, timeout=30,
-                               env={"PATH": f"{stub_directory}:/usr/bin:/bin"})
+    completed = subprocess.run(["sh", "-c", wait_command_as_a_reader_takes_it_from_the_line(lock_file)],
+                               check=False, timeout=30,
+                               env={"PATH": f"{stub_directory}:/usr/bin:/bin",
+                                    "SLEEP_CALLS": str(calls), "LOCK_FILE": str(lock_file)})
     polls = calls.read_text().splitlines() if calls.exists() else []
     return completed.returncode, polls, lock_file.exists()
 
@@ -160,6 +186,13 @@ with tempfile.TemporaryDirectory() as directory:
     check("the lock-file wait command, against a lock file that stays, stops after exactly 30 polls of "
           "2 seconds, one minute in all",
           outcome == (0, ["2"] * 30, True), outcome)
+with tempfile.TemporaryDirectory() as directory:
+    outcome = run_lock_file_wait_command(
+        directory, lock_file_present=True, removed_at_poll=1,
+        lock_file_name="a \"$HOME\" `x` it's {dir}/.git/index.lock")
+    check("the wait command, cut from the line and run by sh, polls git's lock file though its "
+          "path holds a double quote, a $, backticks, a space, a single quote and braces",
+          outcome == (0, ["2"], False), outcome)
 
 with tempfile.TemporaryDirectory() as directory:
     hook_script_path = Path(directory) / "a hook's copy.py"

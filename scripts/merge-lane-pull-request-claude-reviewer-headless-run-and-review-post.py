@@ -247,7 +247,7 @@ def hand_over_note(note, record, number):
 
 
 def claude_code_project_settings_read_from_review_tools_worktree_at_main_with_claude_project_dir_replaced_by_its_path(
-        review_tools_worktree_at_main):
+        review_tools_worktree_at_main, number):
     """Return its project settings with each project directory reference naming it."""
     settings_file = review_tools_worktree_at_main / PROJECT_SETTINGS_FILE
     text = read_text(settings_file)
@@ -255,30 +255,55 @@ def claude_code_project_settings_read_from_review_tools_worktree_at_main_with_cl
         settings = json.loads(text)
     except ValueError as error:
         raise Refused(f"main's project settings file {settings_file} is not JSON ({error}), so "
-                      f"the reviewer could not be given main's hooks")
+                      f"the reviewer was not started, since the reviewer must run with the Claude Code "
+                      f"hooks in main's settings file.\n"
+                      f"Fix {PROJECT_SETTINGS_FILE} through a pull request to main, then review pull "
+                      f"request {number} again; until that fix merges, every Claude review is refused "
+                      f"this way")
     if not isinstance(settings, dict):
         raise Refused(f"main's project settings file {settings_file} is JSON but not a JSON "
-                      f"object, so the reviewer could not be given main's hooks")
+                      f"object, so the reviewer was not started, since the reviewer must run with the "
+                      f"Claude Code hooks in main's settings file.\n"
+                      f"Fix {PROJECT_SETTINGS_FILE} through a pull request to main, then review pull "
+                      f"request {number} again; until that fix merges, every Claude review is refused "
+                      f"this way")
 
     def rewritten(value):
         if isinstance(value, dict):
-            return {key: rewritten(item) for key, item in value.items()}
+            return {rewritten(key): rewritten(item) for key, item in value.items()}
         if isinstance(value, list):
             return [rewritten(item) for item in value]
         if isinstance(value, str):
             return PROJECT_DIRECTORY_REFERENCE.sub(
                 lambda _: str(review_tools_worktree_at_main), value)
         return value
+
+    def strings_still_naming_project_directory(value, path):
+        if isinstance(value, dict):
+            return [found for key, item in value.items()
+                    for found in ([f"  {path}: key {key}"] if "CLAUDE_PROJECT_DIR" in key else [])
+                    + strings_still_naming_project_directory(item, f"{path}.{key}")]
+        if isinstance(value, list):
+            return [found for index, item in enumerate(value)
+                    for found in strings_still_naming_project_directory(item, f"{path}[{index}]")]
+        if isinstance(value, str) and "CLAUDE_PROJECT_DIR" in value:
+            return [f"  {path}: {value}"]
+        return []
     settings = rewritten(settings)
-    if "CLAUDE_PROJECT_DIR" in json.dumps(settings):
+    still_naming = strings_still_naming_project_directory(settings, "$")
+    if still_naming:
         raise Refused(f"main's project settings file {settings_file} still names "
                       f"CLAUDE_PROJECT_DIR after each $CLAUDE_PROJECT_DIR, ${{CLAUDE_PROJECT_DIR}} "
                       f"and ${{CLAUDE_PROJECT_DIR:-...}} in it was replaced by "
                       f"{review_tools_worktree_at_main}, "
-                      f"so a command would run the head worktree's script.\n"
-                      f"Write each such command with one of those three forms, in "
-                      f"{PROJECT_SETTINGS_FILE} on main, or add its form to "
-                      f"PROJECT_DIRECTORY_REFERENCE in {Path(__file__).resolve()}")
+                      f"so a command would run the head worktree's script; the reviewer was not started.\n"
+                      f"Each string that still names it, by its JSON path:\n"
+                      + "\n".join(still_naming) + "\n"
+                      f"Through a pull request to main, either change each one listed so it names "
+                      f"CLAUDE_PROJECT_DIR only in one of those three forms, in {PROJECT_SETTINGS_FILE}, "
+                      f"or add its form to the regular expression PROJECT_DIRECTORY_REFERENCE in "
+                      f"{Path(__file__).resolve()}; once that pull request merges, review pull request "
+                      f"{number} again")
     return settings
 
 
@@ -412,7 +437,7 @@ def main(argv=None):
                 f"would fail after the reviewer ran.\nAdd each key named above to the schema's "
                 f"top-level \"required\" list, making the list if the schema has none")
         main_project_settings = claude_code_project_settings_read_from_review_tools_worktree_at_main_with_claude_project_dir_replaced_by_its_path(
-            arguments.review_tools_worktree_at_main)
+            arguments.review_tools_worktree_at_main, number)
         if not (here / POST_SCRIPT_NAME).is_file():
             raise Refused(f"the posting script {here / POST_SCRIPT_NAME} is missing")
         at = git(head_worktree, "rev-parse", "HEAD")

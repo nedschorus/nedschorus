@@ -60,8 +60,8 @@ WHAT IS PINNED HERE.
     runtime=agy, gemini-3.8-flash-medium, effort medium, tier fast.
 
   - The reviewer's instructions the model receives are the template embedded
-    in the script -- not the skill's prompt file -- with both paths
-    substituted and no placeholder left.
+    in the script -- not the skill's prompt file -- with both paths and
+    the edit substituted and no placeholder left.
 
   - That embedded template is current: it is byte-for-byte the text of
     .claude/skills/cold-read/prompts/fast-clarify-prompt.md, the editable source of
@@ -105,7 +105,9 @@ launches and succeed after.
 Run: python3 nc-systems/cold-read/tests/cold-read-fast-read-test.py
 """
 
+import contextlib
 import hashlib
+import io
 import importlib.util
 import json
 import os
@@ -115,6 +117,7 @@ import pathlib
 import shutil
 import signal
 import subprocess
+import threading
 import sys
 import tempfile
 import time
@@ -163,6 +166,9 @@ FIXED_RECORD_CLOCK_FOR_TESTS = "2026-09-16T10:42"
 FIXED_RECORD_STAMP_FOR_TESTS = "2026-09-16"
 STDOUT_RECOVERY_PHRASE = cell_common.STDOUT_RECOVERY_PHRASE
 LONG_CHAT_REVIEW = " ".join(f"word{index}" for index in range(150)) + "\n"
+# agy prints stream-json, and the cell takes the chat answer only from its result line.
+AGY_SUCCESS_RESULT_LINE_ANSWERING_LONG_CHAT_REVIEW = json.dumps({"event": "result", "result": {
+    "conversation_id": "", "status": "SUCCESS", "response": LONG_CHAT_REVIEW, "error": ""}}) + "\n"
 
 # The script under test, imported so the cases below read the constants it
 # actually carries instead of restating them. A fixed phrase was used until
@@ -255,10 +261,11 @@ sys.exit(step.get("exit", 0))
 # plan, counts in a counter of its own and writes the report path its prompt
 # names; otherwise, with no plan it fails, so a case that does not plan the
 # backup sees it fail. "report" writes the report and succeeds; "fail_stderr"
-# is what a failure prints; "dump_prompt" saves the prompt; "pid_file" saves
+# is what a failure prints; "dump_prompt" saves the prompt; "dump_settings"
+# saves the value of --settings; "pid_file" saves
 # the stub's process ID, first thing; "wait_for_file" fails unless that file
-# appears within 20 s; "hang" sleeps past any deadline a case sets;
-# "concurrent_read_answer" exits 0 without writing its own report, after
+# appears within 20 s; "sleep_seconds" sleeps that long after it; "hang"
+# sleeps past any deadline a case sets; "concurrent_read_answer" exits 0 without writing its own report, after
 # writing that text where a concurrent fast read, in a temporary directory of
 # its own, would write its Question 4 answer; it saves that directory, then
 # that file, one per line, to the file "concurrent_read_answer_path_file" names;
@@ -281,6 +288,8 @@ if "pid_file" in plan:
     pathlib.Path(plan["pid_file"]).write_text(str(os.getpid()), encoding="utf-8")
 if "dump_prompt" in plan:
     pathlib.Path(plan["dump_prompt"]).write_text(prompt, encoding="utf-8")
+if "dump_settings" in plan:
+    pathlib.Path(plan["dump_settings"]).write_text(argv[argv.index("--settings") + 1], encoding="utf-8")
 if "wait_for_file" in plan:
     for _ in range(200):
         if pathlib.Path(plan["wait_for_file"]).exists():
@@ -289,6 +298,7 @@ if "wait_for_file" in plan:
     else:
         sys.stderr.write("stub claude: %s never appeared\\n" % plan["wait_for_file"])
         sys.exit(1)
+time.sleep(plan.get("sleep_seconds", 0))
 if plan.get("hang"):
     time.sleep(300)
 own_report = (pathlib.Path(re.search(r"Write your report to (\\S+), once", prompt).group(1))
@@ -398,11 +408,12 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
                   counter_path, ship_destination=None,
                   record_clock=FIXED_RECORD_CLOCK_FOR_TESTS, agent_session_id=None,
                   current_directory=None, claude_plan=None, question_4_plan=None,
-                  environment_overrides=None, sigterm_once_file_exists=None):
+                  environment_overrides=None, signal_once_file_exists=None,
+                  stop_signal=signal.SIGTERM):
     """The read as a subprocess, with the stub agy first on PATH, run from
     `current_directory`, by default `repository`. With
-    `sigterm_once_file_exists`, the read is sent SIGTERM once that file
-    exists, or after 60 s if it never does.
+    `signal_once_file_exists`, the read is sent `stop_signal` once that
+    file exists, or after 60 s if it never does.
 
     `expected_report` is where the stub writes -- the path the case expects
     the rule to choose. If the read chooses another, the cell finds no report
@@ -418,8 +429,8 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
     scratch_repository_fixture.install_fake_sandbox_programs(stub_directory)
     counter_path.unlink(missing_ok=True)
     claude_counter_path(counter_path).unlink(missing_ok=True)
-    # The agy cell scans HOME for credential files at launch, and the real
-    # home takes seconds to walk.
+    # A scratch HOME, so the agy cell's sandbox masks paths in it, not the
+    # real home's.
     scratch_home = repository.parent / "scratch-home"
     scratch_home.mkdir(exist_ok=True)
     environment = dict(os.environ)
@@ -444,17 +455,17 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
     environment.update(environment_overrides or {})
     command = [sys.executable, str(repository / "nc-systems" / "cold-read" / "cold-read-fast-read.py"),
                "--target", str(target_argument)]
-    if sigterm_once_file_exists is None:
+    if signal_once_file_exists is None:
         return subprocess.run(command, capture_output=True, text=True, check=False,
                               env=environment, cwd=current_directory or repository)
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                text=True, env=environment, cwd=current_directory or repository)
     for _ in range(600):
-        if pathlib.Path(sigterm_once_file_exists).exists() or process.poll() is not None:
+        if pathlib.Path(signal_once_file_exists).exists() or process.poll() is not None:
             break
         time.sleep(0.1)
     if process.poll() is None:
-        process.send_signal(signal.SIGTERM)
+        process.send_signal(stop_signal)
     stdout, stderr = process.communicate(timeout=120)
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
@@ -806,6 +817,36 @@ with tempfile.TemporaryDirectory() as scratch:
           and "cold-read-fast-read: #cold_read_fast_read_sonnet_backup_ran " in result.stderr,
           repr(result.stderr))
 
+    # The Gemini cell runs agy, not Claude Code, so its run has no Claude Code settings to check.
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
+    sonnet_backup_settings = scratch / "sonnet-backup-settings.json"
+    question_4_settings = scratch / "question-4-settings.json"
+    sonnet_backup_settings.unlink(missing_ok=True)
+    question_4_settings.unlink(missing_ok=True)
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_stderr": "stub agy: the gemini cause\n"}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: of the walk item\n",
+                     "dump_settings": str(sonnet_backup_settings)},
+        question_4_plan={"report": QUESTION_4_STUB_ANSWER,
+                         "dump_settings": str(question_4_settings)},
+    )
+    sonnet_backup_settings_read = (json.loads(sonnet_backup_settings.read_text(encoding="utf-8"))
+                                   if sonnet_backup_settings.is_file() else None)
+    question_4_settings_read = (json.loads(question_4_settings.read_text(encoding="utf-8"))
+                                if question_4_settings.is_file() else None)
+    check("Question 4's claude run, and no other claude run of the same fast read, "
+          'gets "promptCacheTtl": "5m" in its --settings',
+          result.returncode == 0
+          and question_4_settings_read is not None
+          and question_4_settings_read.get("promptCacheTtl") == "5m"
+          and sonnet_backup_settings_read is not None
+          and "promptCacheTtl" not in sonnet_backup_settings_read,
+          f"exit {result.returncode}; Question 4 settings={question_4_settings_read!r}; "
+          f"Sonnet backup settings={sonnet_backup_settings_read!r}; stderr={result.stderr!r}")
+
     repository = build_scratch_repository(scratch)
     suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
@@ -1033,6 +1074,29 @@ with tempfile.TemporaryDirectory() as scratch:
 
     repository = build_scratch_repository(scratch)
     suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
+    copied_agy_cell = repository / "nc-systems" / "cold-read" / "cold-read-agy-cell.py"
+    copied_agy_cell.write_text(
+        copied_agy_cell.read_text(encoding="utf-8").replace(launcher_entry, (
+            'if __name__ == "__main__":\n'
+            '    counter = pathlib.Path(os.environ["COLD_READ_AGY_CELL_TEST_STUB_COUNTER_PATH"])\n'
+            '    counter.write_text(str((int(counter.read_text()) if counter.is_file() else 0) + 1))\n'
+            '    sys.exit(common.EXIT_BAD_INVOCATION + 6)\n')),
+        encoding="utf-8")
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: never\n"}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: after the launcher's exit 70\n"},
+    )
+    check("an agy launcher exit above 64 is retried like any failure other than its "
+          "refusal: two Gemini launches, then the backup",
+          result.returncode == 0 and launches_counted(counter) == 2
+          and launches_counted(claude_counter_path(counter)) == 1,
+          f"exit {result.returncode}; launches={launches_counted(counter)}, "
+          f"claude launches={launches_counted(claude_counter_path(counter))}; "
+          f"stderr={result.stderr!r}")
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
         repository, stubs,
         {"*": {"fail_first_attempts": 99, "fail_stderr": "stub agy: the gemini cause\n"}},
@@ -1089,7 +1153,7 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch)
     suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
     result = run_fast_read(
-        repository, stubs, {"*": {"stdout": LONG_CHAT_REVIEW}},
+        repository, stubs, {"*": {"stdout": AGY_SUCCESS_RESULT_LINE_ANSWERING_LONG_CHAT_REVIEW}},
         suggestions, walk_draft_relative, counter,
     )
     suggestions_text = suggestions.read_text(encoding="utf-8") if suggestions.is_file() else ""
@@ -1212,6 +1276,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and "Question 4 was not answered" in report_text
           and f"no answer within {5 / 60:g} minutes" in report_text
           and f"for up to {5 / 60:g} minutes" in result.stderr
+          and f"or is still running {5 / 60:g} minutes from its start" in result.stderr
           and QUESTION_4_STUB_ANSWER.strip() not in report_text,
           f"exit {result.returncode}; report={report_text!r}; stderr={result.stderr!r}")
     hanging_stub_pid = (int(hanging_stub_pid_file.read_text())
@@ -1231,6 +1296,75 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the model the Question 4 cell started is killed with it at the time limit",
           hanging_stub_pid is not None and not process_is_running(hanging_stub_pid),
           f"pid {hanging_stub_pid}")
+
+    # Questions 1 to 3 outlast Question 4's time limit: the fast-clarify stub
+    # waits for a file that this case writes only once the hanging Question 4
+    # stub has died, or after 15 s if it never does.
+    repository = build_scratch_repository(scratch)
+    copied_fast_read = repository / "nc-systems" / "cold-read" / "cold-read-fast-read.py"
+    copied_fast_read.write_text(
+        copied_fast_read.read_text(encoding="utf-8").replace(
+            "COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60\n",
+            "COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 2\n"),
+        encoding="utf-8")
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
+    slow_read_stub_pid_file = scratch / "slow-questions-1-to-3-question-4-stub.pid"
+    slow_read_stub_pid_file.unlink(missing_ok=True)
+    question_4_stopped_file = scratch / "question-4-stub-stopped-while-questions-1-to-3-ran"
+    question_4_stopped_file.unlink(missing_ok=True)
+    question_4_died_while_questions_1_to_3_ran = []
+
+    def release_questions_1_to_3_once_question_4_stub_dies():
+        started = time.monotonic()
+        while time.monotonic() - started < 15:
+            if slow_read_stub_pid_file.is_file():
+                pid = int(slow_read_stub_pid_file.read_text())
+                if not process_is_running(pid):
+                    question_4_died_while_questions_1_to_3_ran.append(True)
+                    break
+            time.sleep(0.1)
+        question_4_stopped_file.write_text("released", encoding="utf-8")
+
+    releaser = threading.Thread(target=release_questions_1_to_3_once_question_4_stub_dies)
+    releaser.start()
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"wait_for_file": str(question_4_stopped_file),
+               "report": "STUB FAST READ: questions 1 to 3\n"}},
+        suggestions, walk_draft_relative, counter,
+        question_4_plan={"hang": True, "report": QUESTION_4_STUB_ANSWER,
+                         "pid_file": str(slow_read_stub_pid_file)},
+    )
+    releaser.join()
+    report_text = suggestions.read_text(encoding="utf-8") if suggestions.is_file() else ""
+    check("a Question 4 cell is stopped at its time limit while Questions 1 to 3 are "
+          "still running, not only once the read waits for it, and its section says it "
+          "gave no answer within the limit",
+          question_4_died_while_questions_1_to_3_ran == [True]
+          and result.returncode == 0
+          and f"no answer within {2 / 60:g} minutes" in report_text
+          and QUESTION_4_STUB_ANSWER.strip() not in report_text,
+          f"died while 1 to 3 ran: {question_4_died_while_questions_1_to_3_ran}; "
+          f"exit {result.returncode}; report={report_text!r}; stderr={result.stderr!r}")
+
+    # On a machine up for hours, deadline / now is about 1, so a wait given
+    # that ratio instead of the time left gives up after about a second.
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
+    fast_clarify_started = scratch / "fast-clarify-cell-started"
+    fast_clarify_started.unlink(missing_ok=True)
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: questions 1 to 3\n",
+                                  "started_file": str(fast_clarify_started)}},
+        suggestions, walk_draft_relative, counter,
+        question_4_plan={"report": QUESTION_4_STUB_ANSWER,
+                         "wait_for_file": str(fast_clarify_started), "sleep_seconds": 4},
+    )
+    report_text = suggestions.read_text(encoding="utf-8") if suggestions.is_file() else ""
+    check("a Question 4 cell still answering seconds after Questions 1 to 3 are done is "
+          "waited for, within its time limit, and its answer is the report's",
+          result.returncode == 0 and QUESTION_4_STUB_ANSWER.strip() in report_text,
+          f"exit {result.returncode}; report={report_text!r}; stderr={result.stderr!r}")
 
     repository = build_scratch_repository(scratch)
     suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
@@ -1310,42 +1444,94 @@ with tempfile.TemporaryDirectory() as scratch:
           abandoned_stub_pid is not None and not process_is_running(abandoned_stub_pid),
           f"pid {abandoned_stub_pid}")
 
-    # A session-handoff stops a background read with SIGTERM while the
-    # fast-clarify cell runs; the Question 4 cell, in a session of its own,
-    # must not outlive it, nor must the read's temporary directory.
+    # Questions 1 to 3 fail only after the time limit has stopped the Question
+    # 4 cell, which leaves the cell's exit code set though no section took it.
     repository = build_scratch_repository(scratch)
+    copied_fast_read = repository / "nc-systems" / "cold-read" / "cold-read-fast-read.py"
+    copied_fast_read.write_text(
+        copied_fast_read.read_text(encoding="utf-8").replace(
+            "COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60\n",
+            "COLD_READ_FAST_READ_WHAT_SHOULD_BE_CODE_QUESTION_MODEL_RUN_TIMEOUT_SECONDS = 2\n"),
+        encoding="utf-8")
     suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
-    signalled_stub_pid_file = scratch / "signalled-question-4-stub.pid"
-    signalled_stub_pid_file.unlink(missing_ok=True)
-    signalled_prompt_file = scratch / "signalled-question-4-prompt.txt"
-    signalled_prompt_file.unlink(missing_ok=True)
+    reaped_stub_pid_file = scratch / "reaped-question-4-stub.pid"
+    reaped_stub_pid_file.unlink(missing_ok=True)
+    questions_1_to_3_released_file = scratch / "questions-1-to-3-released-to-fail"
+    questions_1_to_3_released_file.unlink(missing_ok=True)
+    question_4_died_before_questions_1_to_3_failed = []
+
+    def release_questions_1_to_3_to_fail_once_question_4_stub_dies():
+        started = time.monotonic()
+        while time.monotonic() - started < 15:
+            if reaped_stub_pid_file.is_file():
+                pid = int(reaped_stub_pid_file.read_text())
+                if not process_is_running(pid):
+                    question_4_died_before_questions_1_to_3_failed.append(True)
+                    break
+            time.sleep(0.1)
+        # The timer reaps the launcher a moment after the stub dies.
+        time.sleep(1)
+        questions_1_to_3_released_file.write_text("released", encoding="utf-8")
+
+    releaser = threading.Thread(target=release_questions_1_to_3_to_fail_once_question_4_stub_dies)
+    releaser.start()
     result = run_fast_read(
-        repository, stubs, {"*": {"hang": True}},
+        repository, stubs,
+        {"*": {"wait_for_file": str(questions_1_to_3_released_file),
+               "fail_first_attempts": 99}},
         suggestions, walk_draft_relative, counter,
         question_4_plan={"hang": True, "report": QUESTION_4_STUB_ANSWER,
-                         "pid_file": str(signalled_stub_pid_file),
-                         "dump_prompt": str(signalled_prompt_file)},
-        sigterm_once_file_exists=signalled_prompt_file,
+                         "pid_file": str(reaped_stub_pid_file)},
     )
-    signalled_stub_pid = (int(signalled_stub_pid_file.read_text())
-                          if signalled_stub_pid_file.is_file() else None)
-    for _ in range(50):
-        if signalled_stub_pid is None or not process_is_running(signalled_stub_pid):
-            break
-        time.sleep(0.1)
-    signalled_prompt = (signalled_prompt_file.read_text(encoding="utf-8")
-                        if signalled_prompt_file.is_file() else "")
-    signalled_answer_path = re.search(r"Write your report to (\S+), once", signalled_prompt)
-    signalled_scratch = (next((parent for parent in pathlib.Path(signalled_answer_path.group(1)).parents
-                               if parent.name.startswith("cold-read-fast-read-")), None)
-                         if signalled_answer_path else None)
-    check("a read sent SIGTERM while the fast-clarify cell runs exits 128 plus SIGTERM, "
-          "kills the model the Question 4 cell started, and removes its temporary directory",
-          result.returncode == 128 + signal.SIGTERM
-          and signalled_stub_pid is not None and not process_is_running(signalled_stub_pid)
-          and signalled_scratch is not None and not signalled_scratch.exists(),
-          f"exit {result.returncode}; pid {signalled_stub_pid}; scratch {signalled_scratch}; "
-          f"stderr={result.stderr!r}")
+    releaser.join()
+    check("when Questions 1 to 3 fail after the time limit has stopped the Question 4 "
+          "cell, the read still says Question 4 was abandoned, and that its cell was "
+          "stopped at its time limit",
+          question_4_died_before_questions_1_to_3_failed == [True]
+          and result.returncode == 1 and result.stdout.startswith("FAILED")
+          and "Question 4 was abandoned" in result.stderr
+          and "its cell was stopped at its time limit" in result.stderr,
+          f"died before 1 to 3 failed: {question_4_died_before_questions_1_to_3_failed}; "
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
+    # A session-handoff stops a background read with SIGTERM, and a closing
+    # terminal stops a read run in it with SIGHUP, while the fast-clarify cell
+    # runs; the Question 4 cell, in a session of its own, must not outlive it,
+    # nor must the read's temporary directory.
+    for stop_signal in (signal.SIGTERM, signal.SIGHUP):
+        repository = build_scratch_repository(scratch)
+        suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
+        signalled_stub_pid_file = scratch / "signalled-question-4-stub.pid"
+        signalled_stub_pid_file.unlink(missing_ok=True)
+        signalled_prompt_file = scratch / "signalled-question-4-prompt.txt"
+        signalled_prompt_file.unlink(missing_ok=True)
+        result = run_fast_read(
+            repository, stubs, {"*": {"hang": True}},
+            suggestions, walk_draft_relative, counter,
+            question_4_plan={"hang": True, "report": QUESTION_4_STUB_ANSWER,
+                             "pid_file": str(signalled_stub_pid_file),
+                             "dump_prompt": str(signalled_prompt_file)},
+            signal_once_file_exists=signalled_prompt_file, stop_signal=stop_signal,
+        )
+        signalled_stub_pid = (int(signalled_stub_pid_file.read_text())
+                              if signalled_stub_pid_file.is_file() else None)
+        for _ in range(50):
+            if signalled_stub_pid is None or not process_is_running(signalled_stub_pid):
+                break
+            time.sleep(0.1)
+        signalled_prompt = (signalled_prompt_file.read_text(encoding="utf-8")
+                            if signalled_prompt_file.is_file() else "")
+        signalled_answer_path = re.search(r"Write your report to (\S+), once", signalled_prompt)
+        signalled_scratch = (next((parent for parent in pathlib.Path(signalled_answer_path.group(1)).parents
+                                   if parent.name.startswith("cold-read-fast-read-")), None)
+                             if signalled_answer_path else None)
+        check(f"a read sent {stop_signal.name} while the fast-clarify cell runs exits 128 "
+              f"plus that signal's number, kills the model the Question 4 cell started, and removes its temporary directory",
+              result.returncode == 128 + stop_signal
+              and signalled_stub_pid is not None and not process_is_running(signalled_stub_pid)
+              and signalled_scratch is not None and not signalled_scratch.exists(),
+              f"exit {result.returncode}; pid {signalled_stub_pid}; scratch {signalled_scratch}; "
+              f"stderr={result.stderr!r}")
 
     repository = build_scratch_repository(scratch)
     records_report = (repository / "cold-read-records" / f"a-design-{record_stamp}"
@@ -1362,7 +1548,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- The embedded instructions: two cases, and why both are needed ---
     # The case below and the one after it are a pair. The first proves the
-    # runtime uses the text embedded in the script: that text, and not the
+    # agent-binary uses the text embedded in the script: that text, and not the
     # skill's prompt file, is what the model receives. The second proves that
     # embedded text is current: still byte-for-byte the user's editable
     # source. Neither covers the other. The first compares the prompt the
@@ -1401,7 +1587,9 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(str(cell_report_path)))
     expected_prompt = (script_under_test_module().FAST_CLARIFY_PROMPT_TEMPLATE
                        .replace("{TARGET_PATH}", "{TARGET_PATH}")
-                       .replace("{REPORT_PATH}", str(cell_report_path)))
+                       .replace("{REPORT_PATH}", str(cell_report_path))
+                       .replace("{CHANGED_SENTENCE_IDS}", "none")
+                       .replace("{REMOVED_TEXT}", "none"))
     check("the model receives the template embedded in the script",
           result.returncode == 0
           and received_prompt.strip().replace(
@@ -1412,10 +1600,12 @@ with tempfile.TemporaryDirectory() as scratch:
           marked_copy_name in received_prompt
           and str(repository / walk_draft_relative) not in received_prompt,
           repr(received_prompt[:300]))
-    check("both paths are substituted and no placeholder remains",
+    check("both paths and the edit are substituted and no placeholder remains",
           named_cell_report is not None
           and "{TARGET_PATH}" not in received_prompt
-          and "{REPORT_PATH}" not in received_prompt,
+          and "{REPORT_PATH}" not in received_prompt
+          and "{CHANGED_SENTENCE_IDS}" not in received_prompt
+          and "{REMOVED_TEXT}" not in received_prompt,
           repr(received_prompt[:300]))
     # The scratch checkout has no .claude/skills/cold-read/prompts/ tree at
     # all, so the case above also proves the read did not need the skill's
@@ -2822,6 +3012,281 @@ with tempfile.TemporaryDirectory() as changed_scratch:
 check("on the walk route the changed-during-read line says the reviewer's copy is gone",
       "(since removed)" in walk_route_line and "kept at" not in walk_route_line,
       repr(walk_route_line))
+
+# The cell's process can exit while the time-limit timer is still stopping its
+# group, whose other members can still write to the launcher output; the
+# section must wait for the timer before it reads that output.
+with tempfile.TemporaryDirectory() as still_stopping_scratch:
+    still_stopping_module = script_under_test_module()
+    still_stopping_answer = Path(still_stopping_scratch) / "answer.md"
+    still_stopping_answer.write_text("STUB ANSWER\n", encoding="utf-8")
+    still_stopping_output = Path(still_stopping_scratch) / "launcher-output.txt"
+    still_stopping_output.write_text("", encoding="utf-8")
+    timer_started_stopping = threading.Event()
+
+    def stop_group_slowly():
+        timer_started_stopping.set()
+        time.sleep(0.3)
+        with still_stopping_output.open("a", encoding="utf-8") as output:
+            output.write("LAST LINE FROM THE GROUP\n")
+
+    class ProcessExitingOnceTimerStartsStopping:
+        returncode = 0
+
+        def wait(self):
+            timer_started_stopping.wait()
+
+    still_stopping_timer = threading.Timer(0, stop_group_slowly)
+    still_stopping_timer.start()
+    still_stopping_stderr = io.StringIO()
+    with contextlib.redirect_stderr(still_stopping_stderr):
+        still_stopping_module.what_should_be_code_section(
+            still_stopping_module.WhatShouldBeCodeQuestionCell(
+                ProcessExitingOnceTimerStartsStopping(), still_stopping_answer,
+                still_stopping_output, Path(still_stopping_scratch) / "target.md",
+                still_stopping_timer, threading.Event(), threading.Event()))
+check("when the Question 4 cell exits while its time-limit timer is still stopping its group, "
+      "the section waits for the timer and re-emits the output the group wrote meanwhile",
+      "LAST LINE FROM THE GROUP" in still_stopping_stderr.getvalue(),
+      repr(still_stopping_stderr.getvalue()))
+
+# --- The edit: what changed against origin/main --------------------------
+# Called in-process: the comparison is a pure function of the two texts.
+edit_comparison = _fast_read.cold_read_target_compare_with_base_text_returning_added_or_changed_sentence_ids_and_removed_text_units
+EDIT_COMPARISON_CASES = (
+    ("a changed sentence is named, and its old text is removed",
+     "One. Two changed.\n", "One. Two.\n", (["s2"], ["Two."])),
+    ("a sentence rewrapped across lines is not changed",
+     "One sentence\nwrapped here.\n", "One sentence wrapped here.\n", ([], [])),
+    ("a change on a wrapped sentence's second line is seen",
+     "One sentence\nwrapped there.\n", "One sentence\nwrapped here.\n",
+     (["s1"], ["One sentence wrapped here."])),
+    ("a sentence moved unchanged is not changed",
+     "Two. One.\n", "One. Two.\n", ([], [])),
+    ("a duplicated sentence is an addition",
+     "One. Two. One.\n", "One. Two.\n", (["s3"], [])),
+    ("a sentence replaced by a copy of another is a change",
+     "One. One.\n", "One. Two.\n", (["s2"], ["Two."])),
+    ("a literal sentence id in the text is text, not a boundary",
+     "Use [s12] there.\n", "Use [s12] here.\n", (["s1"], ["Use [s12] here."])),
+    ("a heading's level is part of the heading",
+     "One.\n\n## Title\n", "One.\n\n# Title\n", (["s2"], ["# Title"])),
+    ("a list marker is part of its item",
+     "1. Item.\n", "- Item.\n", (["s1"], ["- Item."])),
+    ("a code fence's language is part of the block",
+     "```js\nx = 1\n```\n", "```py\nx = 1\n```\n", (["s1"], ["```py\nx = 1\n```"])),
+    ("whitespace inside a code block is compared exactly",
+     "```\nprint('a  b')\n```\n", "```\nprint('a b')\n```\n",
+     (["s1"], ["```\nprint('a b')\n```"])),
+    ("a table's separator row belongs to the row above it",
+     "| a |\n|:-|\n", "| a |\n|-|\n", (["s1"], ["| a | |-|"])),
+    ("a deletion alone is reported as removed text",
+     "One.\n", "One. Two.\n", ([], ["Two."])),
+    ("one of two identical sentences deleted is one removal",
+     "Two.\n", "Two. Two.\n", ([], ["Two."])),
+    ("a change on a folded frontmatter value's continuation line changes its field",
+     "---\nname: x\ndescription: >\n  new words\n---\nBody.\n",
+     "---\nname: x\ndescription: >\n  old words\n---\nBody.\n",
+     (["s1"], ["name: x description: > old words"])),
+    ("a change to a frontmatter list that opens the document changes the first unit",
+     "---\ntags:\n  - b\nname: x\n---\nBody.\n",
+     "---\ntags:\n  - a\nname: x\n---\nBody.\n",
+     (["s1"], ["tags: - a name: x"])),
+    ("a change in a frontmatter-only document's folded value is seen",
+     "---\ndescription: >\n new words\n---\n",
+     "---\ndescription: >\n old words\n---\n",
+     (["s1"], ["description: > old words"])),
+    ("a change to a frontmatter-only block scalar line that ends in a colon is seen",
+     "---\ndescription: |\n  Danger:\n---\n",
+     "---\ndescription: |\n  Warning:\n---\n",
+     (["s1"], ["description: | Warning:"])),
+    ("a change to a frontmatter-only block scalar line shaped like a field is seen",
+     "---\ndescription: |\n  Danger: ***\n---\n",
+     "---\ndescription: |\n  Warning: ***\n---\n",
+     (["s1"], ["description: | Warning: ***"])),
+)
+for case_name, text, base_text, expected in EDIT_COMPARISON_CASES:
+    found = edit_comparison(text, base_text)
+    check(case_name, found == expected, f"{found!r}")
+
+block_scalar_marked, _ = sentence_id_markup("---\ndescription: |\n  Note: words here\n---\n")
+check("a block scalar's line shaped like a field gets no id inside the scalar's text; the id goes after the field's key",
+      block_scalar_marked == "---\ndescription: [s1] |\n  Note: words here\n---\n",
+      repr(block_scalar_marked))
+
+for case_name, scalar_ended_by_field in (
+        ("a field at the block scalar's own indent ends the scalar and gets its own id",
+         "---\ndescription: |\n  words here\nname: x\n---\n"),
+        ("a field indented less than a nested block scalar's field ends the scalar and gets its own id",
+         "---\nmeta:\n  description: |\n    words here\nname: x\n---\n")):
+    scalar_ended_marked = sentence_id_markup(scalar_ended_by_field)
+    check(case_name,
+          scalar_ended_marked == (scalar_ended_by_field.replace("name: x", "name: [s1] x"),
+                                  {"s1": "x"}),
+          repr(scalar_ended_marked))
+
+worded_before_first_unit = sentence_id_markup("---\ntags:\n  - Foo\n---\nBody.\n")
+check("frontmatter words before the first unit join that unit and make no unit of their own",
+      worded_before_first_unit == ("---\ntags:\n  - Foo\n---\n[s1] Body.\n", {"s1": "Body."}),
+      repr(worded_before_first_unit))
+
+frontmatter_only_marked, _ = sentence_id_markup("---\ndescription: >\n new words\n---\n")
+check("a frontmatter-only document's unit gets its id after the field's key, so the reviewer "
+      "can find the id the edit names",
+      frontmatter_only_marked == "---\ndescription: [s1] >\n new words\n---\n",
+      repr(frontmatter_only_marked))
+
+for wordless_document in ("***\n", "---\n\n---\n", "---\ntitle: ***\n---\n", "---\ntags:\n---\n",
+                          "---\ndescription: |\n  ***\ntags:\n---\n"):
+    wordless_found = sentence_id_markup(wordless_document)
+    check(f"a document of text with no words, {wordless_document!r}, makes no unit",
+          wordless_found == (wordless_document, {}), repr(wordless_found))
+
+for worded_document, worded_sentence in (("---\ndescription: |\n  Warning:\n---\n", "description: | Warning:"),
+                                         ("---\ntitle:***\n---\n", "title:***"),
+                                         ("---\ndescription: |\n  Warning: ***\n---\n",
+                                          "description: | Warning: ***"),
+                                         ("---\ndescription: |\n  ***\n\n  Warning:\n---\n",
+                                          "description: | *** Warning:")):
+    worded_found = sentence_id_markup(worded_document)
+    check(f"a frontmatter-only document whose only words look like a key, {worded_document!r}, "
+          "makes one unit",
+          worded_found[1] == {"s1": worded_sentence}, repr(worded_found))
+
+with tempfile.TemporaryDirectory() as placeholder_scratch:
+    placeholder_template = Path(placeholder_scratch) / "prompt.md"
+    placeholder_template.write_text(
+        _fast_read.fast_clarify_prompt_with_edit_placeholders_filled(
+            [], ["Read {TARGET_PATH} and write {REPORT_PATH}."]), encoding="utf-8")
+    placeholder_prompt = cell_common.compose_prompt(
+        placeholder_template, Path("/the/target.md"), Path("/the/report.md"))
+    check("removed text that holds {TARGET_PATH} or {REPORT_PATH} reaches the reviewer as "
+          "the base held it, not with the launcher's paths filled in",
+          '"Read \\u007bTARGET_PATH} and write \\u007bREPORT_PATH}."' in placeholder_prompt
+          and json.loads('"Read \\u007bTARGET_PATH} and write \\u007bREPORT_PATH}."')
+          == "Read {TARGET_PATH} and write {REPORT_PATH}.",
+          placeholder_prompt[-400:])
+
+with tempfile.TemporaryDirectory() as edit_scratch:
+    edit_scratch = Path(edit_scratch).resolve()
+    edit_stubs = edit_scratch / "stub-bin"
+    edit_counter = edit_scratch / "stub-launch-counter"
+    edit_prompt = edit_scratch / "received-prompt.txt"
+    design_relative = "docs/drafts/a-design.md"
+    edit_report = (edit_scratch / "scratch-checkout" / "cold-read-records"
+                   / f"a-design-{FIXED_RECORD_STAMP_FOR_TESTS}" / "cold-read-fast-read.md")
+
+    # A tracked document changed since origin/main: the reviewer is told what changed.
+    repository = build_scratch_repository(edit_scratch)
+    (repository / design_relative).write_text(
+        "# A design\n\nOne committed line.\n\nOne added line.\n", encoding="utf-8")
+    result = run_fast_read(
+        repository, edit_stubs,
+        {"*": {"report": "STUB FAST READ\n", "dump_prompt": str(edit_prompt)}},
+        edit_report, design_relative, edit_counter)
+    received = edit_prompt.read_text(encoding="utf-8") if edit_prompt.is_file() else ""
+    check("an edit of a document on origin/main names its added sentence, and only that one, "
+          "in the reviewer's prompt",
+          result.returncode == 0
+          and "Sentences the edit added or changed: [s3]." in received
+          and "no longer holds: none." in received,
+          f"exit {result.returncode}; stderr={result.stderr[-300:]!r}")
+    check("the report's coverage section says what the reviewer was told about the edit",
+          edit_report.is_file()
+          and "sentences added or changed, 1; text removed or replaced, 0."
+          in edit_report.read_text(encoding="utf-8"))
+
+    # A tracked document identical to its origin/main text: no edit, so no labels.
+    repository = build_scratch_repository(edit_scratch)
+    edit_prompt.unlink(missing_ok=True)
+    result = run_fast_read(
+        repository, edit_stubs,
+        {"*": {"report": "STUB FAST READ\n", "dump_prompt": str(edit_prompt)}},
+        edit_report, design_relative, edit_counter)
+    received = edit_prompt.read_text(encoding="utf-8") if edit_prompt.is_file() else ""
+    check("an unchanged document gives the reviewer none for both, and the report no edit line",
+          result.returncode == 0
+          and "Sentences the edit added or changed: none." in received
+          and "no longer holds: none." in received
+          and edit_report.is_file()
+          and "told what the edit did" not in edit_report.read_text(encoding="utf-8"),
+          f"exit {result.returncode}; stderr={result.stderr[-300:]!r}")
+
+    # A document committed on the branch after origin/main: absent at the
+    # merge base, so it is read whole.
+    repository = build_scratch_repository(edit_scratch)
+    new_relative = "docs/drafts/a-new-design.md"
+    (repository / new_relative).write_text("# A new design\n\nOne line.\n", encoding="utf-8")
+    scratch_repository_fixture.git(repository, "add", new_relative)
+    scratch_repository_fixture.git(repository, "commit", "-q", "-m", "new design")
+    new_report = (repository / "cold-read-records"
+                  / f"a-new-design-{FIXED_RECORD_STAMP_FOR_TESTS}" / "cold-read-fast-read.md")
+    edit_prompt.unlink(missing_ok=True)
+    result = run_fast_read(
+        repository, edit_stubs,
+        {"*": {"report": "STUB FAST READ\n", "dump_prompt": str(edit_prompt)}},
+        new_report, new_relative, edit_counter)
+    received = edit_prompt.read_text(encoding="utf-8") if edit_prompt.is_file() else ""
+    check("a tracked document absent at the merge base is read with none for both",
+          result.returncode == 0
+          and "Sentences the edit added or changed: none." in received
+          and "no longer holds: none." in received,
+          f"exit {result.returncode}; stderr={result.stderr[-300:]!r}")
+
+    # A file git does not track needs no merge-base, so a missing origin/main
+    # does not stop its read.
+    repository = build_scratch_repository(edit_scratch)
+    scratch_repository_fixture.git(repository, "update-ref", "-d", "refs/remotes/origin/main")
+    untracked_relative = "docs/drafts/untracked-notes.md"
+    (repository / untracked_relative).write_text("# Notes\n\nNot committed.\n", encoding="utf-8")
+    untracked_report = (repository / "cold-read-records"
+                        / f"untracked-notes-{FIXED_RECORD_STAMP_FOR_TESTS}" / "cold-read-fast-read.md")
+    edit_prompt.unlink(missing_ok=True)
+    result = run_fast_read(
+        repository, edit_stubs,
+        {"*": {"report": "STUB FAST READ\n", "dump_prompt": str(edit_prompt)}},
+        untracked_report, untracked_relative, edit_counter)
+    received = edit_prompt.read_text(encoding="utf-8") if edit_prompt.is_file() else ""
+    check("an untracked document is read with none for both, even without origin/main",
+          result.returncode == 0
+          and "Sentences the edit added or changed: none." in received
+          and "no longer holds: none." in received,
+          f"exit {result.returncode}; stderr={result.stderr[-300:]!r}")
+
+    # Without origin/main a tracked document's edit cannot be found: the read
+    # stops before it creates a record or launches a cell.
+    result = run_fast_read(
+        repository, edit_stubs, {"*": {"report": "STUB FAST READ\n"}},
+        edit_report, design_relative, edit_counter)
+    check("when git cannot find the edit, the read prints FAILED, creates no record "
+          "and launches nothing",
+          result.returncode == 1 and result.stdout.startswith("FAILED")
+          and "git merge-base HEAD origin/main failed" in result.stdout
+          and f"\nFirst, run `git -C {repository} fetch origin main`.\nThen, " in result.stderr
+          and "and the fetch's own error output if it failed" in result.stderr
+          and not edit_report.parent.exists()
+          and launches_counted(edit_counter) == 0
+          and launches_counted(question_4_counter_path(edit_counter)) == 0,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr[-400:]!r}")
+
+    # origin/main with no commit in common with HEAD: merge-base exits 1 with
+    # no message, and a fetch would not fix it, so none is offered.
+    repository = build_scratch_repository(edit_scratch)
+    unrelated_root = scratch_repository_fixture.git(
+        repository, "commit-tree", "HEAD^{tree}", "-m", "unrelated root").strip()
+    scratch_repository_fixture.git(repository, "update-ref", "refs/remotes/origin/main",
+                                   unrelated_root)
+    result = run_fast_read(
+        repository, edit_stubs, {"*": {"report": "STUB FAST READ\n"}},
+        edit_report, design_relative, edit_counter)
+    check("when HEAD and origin/main share no commit, the read prints FAILED and hands the "
+          "message on without offering a fetch",
+          result.returncode == 1 and result.stdout.startswith("FAILED")
+          and "git merge-base HEAD origin/main failed" in result.stdout
+          and "fetch origin main" not in result.stderr
+          and "Give this whole message to the user" in result.stderr
+          and launches_counted(edit_counter) == 0,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr[-400:]!r}")
 
 print()
 if failures:

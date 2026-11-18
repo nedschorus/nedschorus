@@ -35,10 +35,11 @@ agent-session's `claude` process, and unlocks it when the subagent finishes;
 when the hook wrote no owner file there,
 scripts/uncommitted-work-snapshot-hook.py writes the agent-session's owner
 file after the subagent's Edit, Write, NotebookEdit or Bash calls there,
-while that lock still names the process. The cleaner never removes a
-worktree with no owner file, except a merge-lane review checkout, a worktree in
-~/.cache/merge-lane-review-worktrees, which it removes once its pull request has
-been merged or closed for 24 hours.
+while that lock still names the process. The cleaner removes a worktree with
+no owner file only once nothing in it has changed for 2 days and it holds no
+uncommitted or untracked file, or, for a merge-lane review checkout, a worktree
+in ~/.cache/merge-lane-review-worktrees, once its pull request has been merged
+or closed for 24 hours.
 
 It refuses to write into the reference-checkout, whose git directory is the
 clone's common one, and over an existing owner file.
@@ -110,10 +111,11 @@ WORKTREE_OWNER_FILE_COMMAND_FAILED_NEXT_STEP_LINES = (
     "scripts/worktree-owner-file-read-and-write.py command again once, with the same "
     "arguments.\n"
     "If it fails the same way again, give the FAILED line to the agent that dispatched you, or to "
-    "the user if no agent did, and say that scripts/clean-worktrees.py never removes a worktree "
-    "that has no owner file, apart from a merge-lane review checkout in "
-    "~/.cache/merge-lane-review-worktrees, so the worktree stays on disk until someone runs "
-    "git worktree remove <the worktree's path>.")
+    "the user if no agent did, and say that scripts/clean-worktrees.py removes a worktree "
+    "that has no owner file only once nothing in it has changed for 2 days and it holds no "
+    "uncommitted or untracked file, apart from a merge-lane review checkout in "
+    "~/.cache/merge-lane-review-worktrees, so the worktree stays on disk until then, or until "
+    "someone runs git worktree remove <the worktree's path>.")
 
 _work_snapshots = None
 _handoff_supervisor = None
@@ -386,6 +388,18 @@ def agent_seats_whose_claude_code_transcripts_name_subagent(agent_id, agents_roo
     return found
 
 
+def nearest_claude_parent_process_owner_key():
+    """The owner_key of the nearest process named claude among this process's parent processes;
+    raise WorktreeOwnerFileError when there is none."""
+    snapshots = load_uncommitted_work_snapshots_module_once()
+    process_id = snapshots.claude_owner_process_id(os.getppid())
+    if process_id is None:
+        raise WorktreeOwnerFileError(
+            "no process named claude is among this program's parent processes, "
+            "so there is no agent-session to name")
+    return snapshots.owner_key_of_process(process_id)
+
+
 def worktree_lock_reason_read(worktree):
     """The worktree's `git worktree lock` reason, "" for a lock with none, or None when unlocked."""
     own, _ = git_directories(worktree)
@@ -434,15 +448,10 @@ def main(argv=None):
             path = worktree_owner_file_write(worktree, OWNER_AGENT_SEAT, arguments[2])
         elif arguments == ["write", "--agent-session"]:
             worktree = worktree or worktree_of_current_directory()
-            snapshots = load_uncommitted_work_snapshots_module_once()
-            process_id = snapshots.claude_owner_process_id(os.getppid())
-            if process_id is None:
-                raise WorktreeOwnerFileError(
-                    "no process named claude is among this program's parent processes, "
-                    "so there is no agent-session to name")
-            agent_seat = os.environ.get(snapshots.AGENT_SEAT_ENVIRONMENT_VARIABLE, "")
+            agent_seat = os.environ.get(
+                load_uncommitted_work_snapshots_module_once().AGENT_SEAT_ENVIRONMENT_VARIABLE, "")
             path = worktree_owner_file_write(worktree, OWNER_AGENT_SESSION, agent_seat,
-                                             snapshots.owner_key_of_process(process_id))
+                                             nearest_claude_parent_process_owner_key())
         else:
             print(__doc__, file=sys.stderr)
             return 2

@@ -65,9 +65,8 @@ with the design:
   4. THE TRIAGE FILE IS REPLACED, AND EACH DISPLACED COPY'S sha256 IS ANNOUNCED
      (user-ruled 2026-09-20, item 4 of the walk
      md-skills-seat-open-decisions-2026-09-20). The triage file is
-     cold-read-triage.md; an older record, and a sanity-check record, names
-     it triage.md. The shipper replaces whichever of the two the record
-     holds; when it holds both, it replaces cold-read-triage.md and leaves
+     cold-read-triage.md; an older record names it triage.md. The shipper
+     replaces whichever of the two the record holds; when it holds both, it replaces cold-read-triage.md and leaves
      triage.md as it is. The store treats the two names as two separate
      files. When the store holds the triage file under one name and the
      record holds it only under the other, rule 2's check for a store file
@@ -91,7 +90,7 @@ with the design:
      differ is overwritten, and the sha256 of the copy it displaced is
      announced on its own stderr line: a triage shipped three times leaves a
      trace of each displaced version rather than one silent overwrite.
-     This is what scripts/walk-files-ship.py already does for a walk's minutes
+     This is what nc-systems/skills/walk-me-through/walk-files-ship.py already does for a walk's minutes
      and dispositions -- same digest announcement, same stderr form -- ruled by
      the user on 2026-09-18 at item 5 of the walk
      skill-sentences-and-shipper-questions-2026-09-18 and landed in PR
@@ -113,7 +112,7 @@ with the design:
      machines on one day rule 2 was written for -- and that read's triage
      belongs beside that read's own reports, under the -2 name the refusal
      asks for. Landing it here would file one read's rulings with another
-     read's reports. scripts/walk-files-ship.py ships a walk's remaining
+     read's reports. nc-systems/skills/walk-me-through/walk-files-ship.py ships a walk's remaining
      files through such a refusal because a reopened walk's second run exists
      to deliver the minutes and there is only ever one walk of that name; a
      record's -2 rename gives the second read a directory of its own, and
@@ -261,6 +260,10 @@ DESTINATION_ENVIRONMENT_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
 TRIAGE_FILE_REPLACED_IN_THE_STORE = record_names.COLD_READ_TRIAGE_FILE_NAME
 
 SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
+# Seconds the store inventory's ssh call may take: the 10-second connect and
+# a sha256sum of one cold-read-record, well inside the 240 seconds the
+# git-worktree-remove guard waits for the whole shipment.
+COLD_READ_RECORD_LOG_STORE_FILE_HASH_LISTING_SSH_CALL_TIMEOUT_SECONDS = 60
 # Seconds rsync waits on a silent connection before giving up.
 RSYNC_IO_TIMEOUT_SECONDS = "120"
 # ssh's exit code when it could not connect, which rsync passes through.
@@ -323,17 +326,17 @@ in the nedschorus repository, which this machine also clones:
 - `sanity-check-records/` -- the /sanity-check skill's records, shipped by
   `scripts/sanity-check-record-ship.py`
 - `walk/` -- approval-walk files, named by the walk-me-through skill, shipped
-  by `scripts/walk-files-ship.py`
+  by `nc-systems/skills/walk-me-through/walk-files-ship.py`
 - `agent-session-files-by-machine/` -- each machine's session transcripts, handoffs,
   task lists, seat-briefs and global CLAUDE.md, mirrored by
   `scripts/transcript-mirror-to-log-store.py`
 - `session-dialogs/` -- each mirrored session's complete filtered dialog,
-  kept current by `scripts/log-store-session-dialogs-refresh-nbd.py`
+  kept current by `scripts/log-store-session-dialogs-refresh-hack.py`
 - `seats/` -- a seat's shared files, shipped by
   `scripts/seat-shared-file-ship.py`
 - `analysis/` -- analyses, placed by hand
-- `daily-full-test-runs/` -- each machine's daily run of every nc-test-suite on
-  main, written by `scripts/daily-full-test-run-of-main.py`
+- `scheduled-full-test-runs-of-main/` -- each machine's scheduled run of every nc-test-suite on
+  main, written by `scripts/scheduled-full-test-run-of-main.py`
 - `pull-request-head-test-runs/` -- each machine's test log of a pull request's
   head, one per commit, written by `scripts/pull-request-head-test-run.py`
 - `daily-memory-review-marks/` -- the daily memory review's started and done
@@ -341,10 +344,10 @@ in the nedschorus repository, which this machine also clones:
 - `handoff-agent-seat-died-without-session-handoff-restart-watcher/` -- each decision of ned-box's
   crash watcher and the notices it showed the user, written by
   `nc-systems/handoff/handoff-agent-crash-watcher.py`
-- `uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-checks/` -- each
-  machine's weekly check that the work-snapshot hook finds a real claude
+- `uncommitted-work-snapshot-hook-scheduled-checks-that-real-claude-session-is-recorded-as-owner/` -- each
+  machine's scheduled check that the work-snapshot hook finds a real claude
   session, written by
-  `nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py`
+  `nc-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py`
 - `ghi-guide-agent-proposed-improvements-or-changes/` -- ghi-guide-agent's ruling questions
   about GHI-MDs, each a proposed-improvements-or-changes-file settled in
   place, written by `scripts/ghi-issue-write.py`
@@ -354,9 +357,9 @@ in the nedschorus repository, which this machine also clones:
   of which versions the user approved, written by
   `.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py`
 - `bash-guards-replay-changed-verdict-or-failed-run-log-directories/` -- the
-  Bash guards replay's step logs and differences files, one directory per
-  replay that exited 1 or 2, written by
-  `nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py`
+  step logs and differences files of each invocation that exited 1 or 2, one
+  directory per invocation, written by
+  `nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py`
 - `clean-worktrees-removed-worktrees-and-deleted-branches-log/` -- each
   machine's log of every worktree `scripts/clean-worktrees.py --remove`
   removed and every branch it deleted, one line each, written by that program
@@ -364,6 +367,10 @@ in the nedschorus repository, which this machine also clones:
   -- one log per run of the waiter that removes a worktree once no record in
   it is being written, written by
   `nc-systems/general-tools/git-worktree-remove-deferred-until-cold-read-record-and-sanity-check-record-being-written-locks-release-then-ship-to-log-store-waiter.py`
+- `maintenance-job-reports/` -- one report per maintenance-job per run, each
+  written by the program the job runs; today the weekly count of each hook
+  rule ID,
+  `nc-systems/general-tools/claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report.py`
 
 To change this file, edit STORE_README in
 nc-systems/cold-read/cold-read-record-ship.py. The next shipment rewrites this file
@@ -529,7 +536,7 @@ def record_directory_being_written_lock_is_held_by_any_process(record_dir: pathl
     descriptor = os.open(record_dir, os.O_RDONLY)
     try:
         # Exclusive, since every writer holds the lock shared.
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)  # pragma: no mutate, the two flags are distinct bits, so + and ^ give the same as |
     except BlockingIOError:
         return True
     finally:
@@ -571,7 +578,7 @@ def local_store_step_wrapper_returning_completed_process_and_value_or_os_error_a
                                            f"{failed}\n"), None
 
 
-def failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+def failed_log_store_step_reason_text_build_from_local_stdout_or_log_store_host_unreachable_or_ssh_exit(
         host, completed: subprocess.CompletedProcess) -> str:
     """The reason a FAILED line gives for a store step that returned the
     failed result. A local store's step carries the OS's reason in stdout
@@ -579,8 +586,17 @@ def failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh
     if host is None:
         return completed.stdout
     if completed.returncode == RSYNC_EXIT_CONNECTION_FAILED:
-        return "ned-box unreachable"
+        return f"{host} unreachable"
     return f"ssh exit {completed.returncode}"
+
+
+def failed_log_store_rsync_step_reason_text_build_from_log_store_host_unreachable_or_rsync_exit(
+        host, completed: subprocess.CompletedProcess) -> str:
+    """The reason a FAILED line gives for an rsync into the store that failed.
+    A local store's rsync runs no ssh, so its exit 255 is rsync's own."""
+    if host is not None and completed.returncode == RSYNC_EXIT_CONNECTION_FAILED:
+        return f"{host} unreachable"
+    return f"rsync exit {completed.returncode}"
 
 
 class FirstLineUnreadable(Exception):
@@ -783,8 +799,10 @@ def local_inventory(record_dir: pathlib.Path) -> dict:
 def store_inventory(host, store_dir: pathlib.PurePosixPath):
     """{relative path: sha256} of the store's copy of this cold-read-record,
     and the process that produced it. An absent directory is an empty
-    inventory with exit 0; an unreachable host is ssh's exit 255 and an
-    inventory of None, and a local read that fails is exit 1 and None.
+    inventory with exit 0; an unreachable host, or an ssh call that runs past
+    COLD_READ_RECORD_LOG_STORE_FILE_HASH_LISTING_SSH_CALL_TIMEOUT_SECONDS, is
+    ssh's exit 255 and an inventory of None, and a local read that fails is
+    exit 1 and None.
 
     sha256 on both sides -- Python's hashlib here, sha256sum on ned-box -- is
     the digest the cold-read-grid already records for the cold-read-target, so
@@ -799,8 +817,14 @@ def store_inventory(host, store_dir: pathlib.PurePosixPath):
             lambda: local_inventory(directory) if directory.is_dir() else {})
     script = (f"if [ -d '{store_dir}' ]; then cd '{store_dir}' && "
               f"find . -type f -exec sha256sum {{}} +; fi")
-    completed = subprocess.run(SSH_COMMAND + [host, script],
-                               capture_output=True, text=True, check=False)
+    command = SSH_COMMAND + [host, script]
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, check=False,
+                                   timeout=COLD_READ_RECORD_LOG_STORE_FILE_HASH_LISTING_SSH_CALL_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(
+            command, RSYNC_EXIT_CONNECTION_FAILED, "",
+            f"ssh {host} timed out after {COLD_READ_RECORD_LOG_STORE_FILE_HASH_LISTING_SSH_CALL_TIMEOUT_SECONDS} seconds\n"), None
     if completed.returncode != 0:
         return completed, None
     inventory = {}
@@ -942,7 +966,7 @@ def link_staged_files_never_over_existing(host, staging_dir: pathlib.PurePosixPa
 
     A link is never made over an existing file: a name already taken is left
     as it is, and placing goes on past it, so the caller judges each file by
-    the digest read back. This is scripts/walk-files-ship.py's add-only
+    the digest read back. This is nc-systems/skills/walk-me-through/walk-files-ship.py's add-only
     placing, which refuses a walk's files one by one while the rest still
     ship; a cold-read-record is placed by place_staged_files instead.
 
@@ -1071,7 +1095,7 @@ def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
                               replacements: list):
     """Rename staged files over the store's, for the files a shipper REPLACES
     by design: the walk's minutes and dispositions, a walk text the walk only
-    added to (scripts/walk-files-ship.py) and a seat's own files
+    added to (nc-systems/skills/walk-me-through/walk-files-ship.py) and a seat's own files
     (scripts/seat-shared-file-ship.py). Returns the process and
     {store relative path: StagedReplacement}, or None, as store_inventory
     returns for an unreachable host, when the host is unreachable or a step
@@ -1086,7 +1110,7 @@ def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
     which is how the walk text's APPENDED TO rule is held to the stored copy
     it was tested against. A path that must not exist makes it conditional
     too: it runs only while that path is absent, which is how the walk text
-    is held to being the store's latest copy (scripts/walk-files-ship.py's
+    is held to being the store's latest copy (nc-systems/skills/walk-me-through/walk-files-ship.py's
     REVISED COPIES). None for both replaces whatever is there.
 
     WHY A RENAME OF A STAGED COPY, AND NOT rsync STRAIGHT ONTO THE NAME. A
@@ -1318,7 +1342,7 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
     # placing step takes the inventory again.
     listed, in_store = store_inventory(host, store_dir)
     if in_store is None:
-        reason = failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+        reason = failed_log_store_step_reason_text_build_from_local_stdout_or_log_store_host_unreachable_or_ssh_exit(
             host, listed)
         print(f"FAILED: {name} — {reason}; the record stays on disk, unshipped.")
         sys.stderr.write(listed.stderr)
@@ -1419,8 +1443,8 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
         capture_output=True, text=True, check=False)
     if transferred.returncode != 0:
         left_behind = remove_staging_directory(host, staging_dir)
-        reason = ("ned-box unreachable" if transferred.returncode == RSYNC_EXIT_CONNECTION_FAILED
-                  else f"rsync exit {transferred.returncode}")
+        reason = failed_log_store_rsync_step_reason_text_build_from_log_store_host_unreachable_or_rsync_exit(
+            host, transferred)
         staging_note = (f"; removing the staging directory then failed "
                         f"({left_behind}). {deletion}" if left_behind else ".")
         print(f"FAILED: {name} — {reason} during the copy{staging_note} {rerun}")
@@ -1428,7 +1452,7 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
         return EXIT_FAILED
     placed, outcome = place_staged_files(host, staging_dir, store_dir, local, triage_name)
     if outcome is None:
-        reason = failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+        reason = failed_log_store_step_reason_text_build_from_local_stdout_or_log_store_host_unreachable_or_ssh_exit(
             host, placed)
         print(f"FAILED: {name} — {reason} while placing the copied files. "
               f"{deletion} {rerun}")
@@ -1498,9 +1522,10 @@ def ship_from_command_line(description: str, records_dir: pathlib.Path,
     holding a second copy, so the two cannot drift on what --all skips or what
     each exit code means.
 
-    RULE 4 REACHES THAT KIND ONLY THROUGH THE NAME triage.md, which a
-    sanity-check record does not use: its twice-written file is
-    finding-dispositions.md, written at the run's close and updated as the
+    RULE 4 REACHES THAT KIND ONLY THROUGH THE NAMES cold-read-triage.md AND
+    triage.md, which a sanity-check record written today does not use: its
+    twice-written file is
+    sanity-check-finding-dispositions.md, written at the run's close and updated as the
     findings' status moves, and it stays add-only and refused on difference.
     That is the same defect rule 4 fixes here, left open in that kind.
 

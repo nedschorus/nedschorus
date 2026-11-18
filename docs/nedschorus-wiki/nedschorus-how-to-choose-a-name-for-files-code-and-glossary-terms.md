@@ -24,7 +24,7 @@ A fresh-reader here has the name, the glossaries, and what the glossaries refere
 
 ### Who judges whether a name meets the criterion
 
-You cannot judge your own name, because you already know what it means. So for a name that will be used beyond the place it is defined, such as a file name, a script name, a function or class used from other files, or a branch name, ask a fresh subagent what it thinks the name means, giving it the name and nothing else. If its answer is wrong, or vague where your meaning is specific, add the words its answer lacked and ask again. A name used only inside one file needs no such check.
+You cannot judge your own name, because you already know what it means. So for a name that will be used beyond the place it is defined and will last longer than a month, such as a file name, a script name, a function or class used from other files, or a glossary term, ask a fresh subagent what it thinks the name means, giving it the name and nothing else. A branch name or a scratch file's name needs no check and is not changed once chosen. If its answer is wrong, or vague where your meaning is specific, add the words its answer lacked and ask again. A name used only inside one file needs no such check.
 
 For a new project-term or system-term, the user rules on the name, as Step 5 says.
 
@@ -102,7 +102,7 @@ Do not put the history of the thing in its name. Words such as `new-`, `old-`, `
 
 When a change makes a name untrue, rename the thing, and in the same commit update every reference to the old name in the repository: callers, imports, paths in scripts, and mentions in documents. Leave the references outside the repository as they are: git history, the log-store, the frozen copies inside cold-read-records, and text already written on GitHub. A change that leaves the name true, such as a bug fix, needs no rename.
 
-Do not abbreviate, except with abbreviations the glossary lists, such as GHI and PR, or that any programmer reads without decoding, such as `id` and `url`. Write them in lowercase inside a name, as in `ghi-issue-write.py` or `pr-reviewer-instructions.md`. Use the abbreviation or the full words for a thing, not both: once `pull-request-` names one family of files, a new file in it does not start `pr-`.
+Do not abbreviate, except with abbreviations the glossary lists, such as GHI and PR, or that any programmer reads without decoding, such as `id` and `url`. Write them in lowercase inside a name, as in `ghi-issue-write.py` or `pr-reviewer-instructions.md`. Write `pr` in a new file or directory name, never `pull-request`, as in `pr-reviewer-instructions.md`, even beside older files whose names start `pull-request-`, except that a test file keeps the name of the program it tests; a function name keeps `pull_request`, a branch name `pull-request` and a glossary term `pull request`. For any other thing, use its abbreviation or its full words, not both.
 
 ## Step 5: use the same words everywhere, and coin new terms with the user
 

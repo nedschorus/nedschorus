@@ -103,16 +103,17 @@ def run_check(root: Path, base: str, *arguments):
 INJECTED_GIT_ERROR = "fatal: injected git failure"
 
 
-def run_check_with_git_failing(root: Path, failing_arguments: str, base: str):
-    """Run the check with a stand-in git first on PATH: it exits 128 when its
-    arguments contain failing_arguments, and runs the real git otherwise."""
+def run_check_with_git_failing(root: Path, failing_arguments: str, base: str,
+                               git_error: str = INJECTED_GIT_ERROR):
+    """Run the check with a stand-in git first on PATH: it prints git_error and exits 128 when
+    its arguments contain failing_arguments, and runs the real git otherwise."""
     stand_in_directory = root.parent / "stand-in-git-bin"
     stand_in_directory.mkdir(exist_ok=True)
     stand_in_git = stand_in_directory / "git"
     stand_in_git.write_text(
         f"#!{sys.executable}\nimport os, sys\n"
         f"if {failing_arguments!r} in ' '.join(sys.argv[1:]):\n"
-        f"    sys.stderr.write({INJECTED_GIT_ERROR!r} + '\\n')\n"
+        f"    sys.stderr.write({git_error!r} + '\\n')\n"
         f"    sys.exit(128)\n"
         f"os.execv({shutil.which('git')!r}, ['git', *sys.argv[1:]])\n",
         encoding="utf-8")
@@ -193,6 +194,10 @@ A backticked path that is absent: `scripts/absent-program.py`.
 
 A backticked path that is present: `scripts/already-here.py`.
 
+An absent path cited with a line range: `scripts/absent-ranged.py:40-44`.
+
+A present path cited with a line range: `scripts/already-here.py:40-44`.
+
 A bare name with no directory: `dispositions.md`, which the user ruled on
 2026-09-17 is not checked at all.
 
@@ -205,6 +210,10 @@ scripts/inside-a-fence.py
           "scripts/absent-program.py" in out, out)
     check("a present backticked path is not reported",
           "already-here" not in out, out)
+    check("an absent path cited with a line range is reported",
+          "scripts/absent-ranged.py" in out, out)
+    check("a present path cited with a line range is not reported",
+          "already-here.py:40" not in out, out)
     check("a bare name with no directory is not reported (user-ruled 2026-09-17)",
           "dispositions.md" not in out, out)
     check("a path inside a code fence is not reported",
@@ -498,6 +507,20 @@ echo hello
     check("a stem ending -tested, not -test, is still reported",
           code == 1 and "absent-under-a-name-ending-tested" in out,
           f"{code} {out!r} {err!r}")
+
+    # A GHI-MD's name comes from its issue's title, so it can end -test
+    # without being a test: docs/issues/2263-the-test-runner-s-history-of-failing-test.md.
+    commit_change(root, "docs/issues/9999-a-title-ending-in-failing-test.md",
+                  "# a GHI-MD\n\nSee `scripts/absent-under-a-markdown-name-ending-test.py`.\n")
+    code, out, err = run_check(root, base)
+    check("a Markdown file whose stem ends -test is not a test file, and is still reported",
+          code == 1 and "absent-under-a-markdown-name-ending-test" in out,
+          f"{code} {out!r} {err!r}")
+    commit_change(root, "scripts/subsystem/tests/fixture-page.md",
+                  "# a fixture\n\nSee `scripts/absent-under-a-markdown-fixture.py`.\n")
+    code, out, err = run_check(root, base)
+    check("a Markdown file in a tests directory is still exempt forward",
+          "absent-under-a-markdown-fixture" not in out, f"{code} {out!r} {err!r}")
 
     # --- BACKWARD: a citation carrying a leading or dotted slash --------
     # The six hook commands in .claude/settings.json are written
@@ -1095,8 +1118,8 @@ with tempfile.TemporaryDirectory() as workspace:
         return (code == 2 and INJECTED_GIT_ERROR in err and "a git command failed" in err
                 and "finding(s)" not in err
                 and next_step_lines.git_failure_next_step_lines(
-                    rerun, "dangling-path-citation-check", text_the_failure_line_contains="could not check, because a git command failed",
-                    include_the_misspelt_branch_commit_or_path_line=True) in err)
+                    rerun, "dangling-path-citation-check", git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=INJECTED_GIT_ERROR,
+                    text_the_failure_line_contains="could not check, because a git command failed") in err)
 
     for failing_arguments, what in (
             ("ls-tree -z HEAD --name-only -d", "listing the root directories"),
@@ -1105,6 +1128,13 @@ with tempfile.TemporaryDirectory() as workspace:
         code, out, err = run_check_with_git_failing(root, failing_arguments, base)
         check(f"the check exits 2 with git's error when {what} fails",
               reports_the_git_failure_and_no_result(base, code, err), f"{code} {out!r} {err!r}")
+    lock_file = root / ".git" / "index.lock"
+    code, out, err = run_check_with_git_failing(
+        root, "ls-tree -z HEAD --name-only -d", base, f"fatal: Unable to create '{lock_file}': File exists.")
+    check("a git error naming a lock file gives the step that waits for that lock file, "
+          "and no misspelt-name step",
+          code == 2 and f"Git's error names the lock file {lock_file}: " in err
+          and "is misspelt" not in err, f"{code} {out!r} {err!r}")
 
     # A file the base holds, so its base text is read.
     base_with_launcher = git(root, "rev-parse", "HEAD").stdout.strip()

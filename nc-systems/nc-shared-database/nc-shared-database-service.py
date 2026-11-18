@@ -6,7 +6,7 @@ Usage:
       [--database PATH] [--accepted-tokens-file PATH] [--host HOST] [--port N]
 
   --database              default ~/.local/state/nedschorus/nc-shared-database.sqlite3,
-                          made with its schema and a new generation ID when absent
+                          made with its schema when absent
   --accepted-tokens-file  default ~/.config/nedschorus/nc-shared-database-service-accepted-tokens,
                           one token per line, read at every request
   --host, --port          default every address, port 8765
@@ -14,11 +14,8 @@ Usage:
 On ned-box the systemd user unit nc-shared-database-service.service, beside
 this file, runs it. Callers never see the tables: they send named operations.
 
-EVERY REQUEST carries `Authorization: Bearer <token>` and the header
-Nc-Shared-Database-Generation-Id, the generation ID the caller's local events
-file holds. A token that is no line of the accepted-tokens file is answered 401.
-A generation ID that differs from the database's, or none, is answered 412 with
-{"generation_id": <the database's>}, and nothing is stored.
+EVERY REQUEST carries `Authorization: Bearer <token>`. A token that is no line
+of the accepted-tokens file is answered 401.
 
   POST /events             store one event; the body is a JSON object with
                            exactly the keys event_id, machine, operation,
@@ -41,32 +38,29 @@ POST /events answers:
        infinity, which the body may hold as NaN, Infinity or a number too large
        for a float, are numbers SQLite cannot store, and a string holding a
        lone surrogate, which the body may hold as \\udc80, is a string SQLite
-       cannot store; a seat ID with no agent-seat row; or an agent-seat name
-       another agent-seat not retired holds
-  409  an unknown operation, or keys or fields other than the operation's; the
-       caller leaves the event queued until the service knows the operation
+       cannot store; a seat ID with no agent-seat row; an agent-seat name
+       another agent-seat not retired holds; an unknown operation; keys or
+       fields other than the operation's; or a seat_id on an operation that
+       names no agent-seat, or none on one that does
   500  any other error, as {"error": "<its type>: <its message>"}; nothing is
        stored
-Every 200 answer also carries "generation_id" and "newest_backup", which is
-{"generation_id", "highest_sequence"} of the newest backup that passed its
-integrity check, or null before the first.
 
 An agent-seat's state is its events applied in sequence-number order, as each
 is stored. An agent-seat stops being parked at its next handoff-supervisor-began,
-paused or retired event, and stops being paused at its next
-handoff-supervisor-began or retired event; the end clears the column.
+agent-seat-paused or agent-seat-retired event, and stops being paused at its next
+handoff-supervisor-began or agent-seat-retired event; when either state stops,
+its column, parked_at or paused_at, is set to null.
 
 Exit codes: 2 a bad invocation; otherwise the program runs until stopped.
 """
 
 import argparse
-import importlib.util
 import json
 import math
 import os
 import sqlite3
 import sys
-import uuid
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -77,12 +71,6 @@ ACCEPTED_TOKENS_FILE_PATH = (Path.home() / ".config" / "nedschorus"
 PORT = 8765
 MACHINES = ("mac", "ned-box")
 BUSY_TIMEOUT_SECONDS = 5
-
-_events_file_spec = importlib.util.spec_from_file_location(
-    "nc_shared_database_local_events_file_common",
-    Path(__file__).resolve().with_name("nc-shared-database-local-events-file-common.py"))
-events_file = importlib.util.module_from_spec(_events_file_spec)
-_events_file_spec.loader.exec_module(events_file)
 
 EVENT_KEYS = {"event_id", "machine", "operation", "occurred_at", "seat_id", "fields"}
 OPERATION_FIELDS = {
@@ -108,8 +96,6 @@ OPERATIONS_THAT_NAME_NO_AGENT_SEAT = {"machine-booted"}
 OPERATIONS_THAT_MAY_NAME_A_NEW_AGENT_SEAT = {"agent-seat-created", "agent-seat-seen"}
 
 SCHEMA = """
-CREATE TABLE database_generation (generation_id TEXT NOT NULL);
-CREATE TABLE newest_backup (generation_id TEXT NOT NULL, highest_sequence INTEGER);
 CREATE TABLE event (
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id TEXT NOT NULL UNIQUE,
@@ -208,7 +194,6 @@ def create_nc_shared_database_if_absent(database_path):
         for statement in SCHEMA.split(";"):
             if statement.strip():
                 connection.execute(statement)
-        connection.execute("INSERT INTO database_generation VALUES (?)", (str(uuid.uuid4()),))
         connection.execute("COMMIT")
     finally:
         connection.close()
@@ -222,15 +207,8 @@ def accepted_tokens(accepted_tokens_path):
     return {line.strip() for line in lines if line.strip()}
 
 
-def database_generation(connection):
-    return connection.execute("SELECT generation_id FROM database_generation").fetchone()[0]
-
-
-def answer_footer(connection):
-    backup = connection.execute(
-        "SELECT generation_id, highest_sequence FROM newest_backup").fetchone()
-    return {"generation_id": database_generation(connection),
-            "newest_backup": dict(backup) if backup else None}
+def utc_now():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def parse_event(raw_body):
@@ -269,11 +247,11 @@ def check_event_fits_its_operation(connection, event):
         raise Answer(422, {"error": f"unknown machine {event.get('machine')!r}"})
     operation = event.get("operation")
     if operation not in OPERATION_FIELDS:
-        raise Answer(409, {"error": f"unknown operation {operation!r}"})
+        raise Answer(422, {"error": f"unknown operation {operation!r}"})
     fields = event.get("fields")
     if set(event) != EVENT_KEYS or not isinstance(fields, dict) \
             or set(fields) != OPERATION_FIELDS[operation]:
-        raise Answer(409, {"error": f"the keys or fields differ from {operation}'s: event keys "
+        raise Answer(422, {"error": f"the keys or fields differ from {operation}'s: event keys "
                                     f"{sorted(EVENT_KEYS)}, fields "
                                     f"{sorted(OPERATION_FIELDS[operation])}"})
     wrong = [key for key in ("occurred_at", "seat_id")
@@ -296,15 +274,10 @@ def check_event_fits_its_operation(connection, event):
                                     f"UTF-8. Only "
                                     f"{', '.join(sorted(OPERATIONS_THAT_NAME_NO_AGENT_SEAT))} "
                                     f"takes a null seat_id; every other operation takes a string. "
-                                    f"nc-shared-database-local-events-file-sender.py "
-                                    f"keeps this answer in the event's rejected column of the "
-                                    f"outbox_event table in that machine's local events file, "
-                                    f"and does not send the event again. Correct the program "
-                                    f"that wrote it; a {operation} event written afterwards is "
-                                    f"sent as usual."})
+                                    f"Correct the program that sent it."})
     names_no_seat = operation in OPERATIONS_THAT_NAME_NO_AGENT_SEAT
     if names_no_seat != (event["seat_id"] is None):
-        raise Answer(409, {"error": f"{operation} takes "
+        raise Answer(422, {"error": f"{operation} takes "
                                     f"{'no' if names_no_seat else 'a'} seat_id"})
     if not names_no_seat and operation not in OPERATIONS_THAT_MAY_NAME_A_NEW_AGENT_SEAT \
             and connection.execute("SELECT 1 FROM agent_seat WHERE seat_id = ?",
@@ -401,20 +374,20 @@ def store_event(connection, raw_body):
                               (event["event_id"],)).fetchone()
     if held is not None:
         connection.execute("ROLLBACK")
-        return {"sequence": held[0], **answer_footer(connection)}
+        return {"sequence": held[0]}
     check_event_fits_its_operation(connection, event)
     sequence = connection.execute(
         "INSERT INTO event (event_id, machine, operation, occurred_at, received_at, body) "
         "VALUES (?, ?, ?, ?, ?, ?)",
         (event["event_id"], event["machine"], event["operation"], event["occurred_at"],
-         events_file.utc_now(), json.dumps(event, sort_keys=True))).lastrowid
+         utc_now(), json.dumps(event, sort_keys=True))).lastrowid
     try:
         apply_event(connection, event)
     except sqlite3.IntegrityError:
         raise Answer(422, {"error": "another agent-seat not retired holds the name "
                                     f"{event['fields'].get('seat_name')!r}"})
     connection.execute("COMMIT")
-    return {"sequence": sequence, **answer_footer(connection)}
+    return {"sequence": sequence}
 
 
 def rows(connection, query, parameters):
@@ -428,7 +401,7 @@ def list_agent_seats(connection, query_string):
                      (machines[0],))
     else:
         seats = rows(connection, "SELECT * FROM agent_seat ORDER BY seat_name", ())
-    return {"agent_seats": seats, **answer_footer(connection)}
+    return {"agent_seats": seats}
 
 
 def get_agent_seat(connection, seat_id):
@@ -444,8 +417,7 @@ def get_agent_seat(connection, seat_id):
         "session_handoffs": rows(connection, "SELECT * FROM handoff_event WHERE seat_id = ? "
                                              "ORDER BY written_at", (seat_id,)),
         "restart_attempts": rows(connection, "SELECT * FROM restart_attempt WHERE seat_id = ? "
-                                             "ORDER BY began_at", (seat_id,)),
-        **answer_footer(connection)}
+                                             "ORDER BY began_at", (seat_id,))}
 
 
 def make_request_handler(database_path, accepted_tokens_path):
@@ -480,9 +452,6 @@ def make_request_handler(database_path, accepted_tokens_path):
                 raise Answer(401, {"error": "no accepted token: send `Authorization: Bearer "
                                             "<token>` with a line of the service's "
                                             "accepted-tokens file"})
-            generation = database_generation(connection)
-            if self.headers.get(events_file.NC_SHARED_DATABASE_GENERATION_ID_HTTP_HEADER) != generation:
-                raise Answer(412, {"generation_id": generation})
             path = urlsplit(self.path)
             if raw_body is not None and path.path == "/events":
                 return store_event(connection, raw_body)

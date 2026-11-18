@@ -89,7 +89,8 @@ def commit_seeded_cold_read_scratch_repository(repository):
 
     Call it AFTER writing this suite's own seed files into `repository`:
     it copies nc-systems/cold-read/ in, writes the ignore file, and commits the whole
-    tree, seed files included, as `seed`. Returns `repository`.
+    tree, seed files included, as `seed`, which origin/main points at.
+    Returns `repository`.
     """
     # The whole nc-systems/cold-read/ directory, __pycache__ aside, so a shared module
     # added tomorrow needs no edit here (user-ruled 2026-09-20, walk
@@ -118,14 +119,20 @@ def commit_seeded_cold_read_scratch_repository(repository):
     git(repository, "config", "user.name", SEED_COMMIT_AUTHOR_NAME)
     git(repository, "add", "-A")
     git(repository, "commit", "-m", "seed")
+    # The fast read compares a tracked cold-read-target with its text at
+    # `git merge-base HEAD origin/main`; the seed commit stands in for main.
+    git(repository, "update-ref", "refs/remotes/origin/main", "HEAD")
     return repository
 
 
 # A stub `agy` that answers in chat, long enough for the cell to keep the
 # answer as the report, and a stub `claude` that fails, so no model starts.
+# agy prints stream-json, and the cell takes the chat answer only from its result line.
 STUB_AGY_ANSWERING_IN_CHAT = """#!/usr/bin/env python3
-import sys
-sys.stdout.write(" ".join(f"word{index}" for index in range(150)) + "\\n")
+import json, sys
+answer = " ".join(f"word{index}" for index in range(150)) + "\\n"
+sys.stdout.write(json.dumps({"event": "result", "result": {
+    "conversation_id": "", "status": "SUCCESS", "response": answer, "error": ""}}) + "\\n")
 """
 STUB_CLAUDE_FAILING = """#!/usr/bin/env python3
 import sys
@@ -152,7 +159,7 @@ def cold_read_fast_read_scratch_repository_whose_stub_agy_answers_in_chat(scratc
         (stubs / name).write_text(text, encoding="utf-8")
         (stubs / name).chmod(0o755)
     install_fake_sandbox_programs(stubs)
-    # The agy cell scans HOME for credential files at launch, and the real home takes seconds to walk.
+    # A scratch HOME, so the agy cell's sandbox masks paths in it, not the real home's.
     home = scratch / "fast-read-scratch-home"
     home.mkdir()
     environment = dict(os.environ, HOME=str(home),
@@ -234,14 +241,15 @@ os.execvpe(command[0], command, environment)
 
 def install_fake_sandbox_programs(directory):
     """Write the pass-through stand-ins for bwrap and sandbox-exec into
-    `directory`, which the caller puts on PATH ahead of the real ones.
+    `directory`, made if absent under a parent that exists, which the caller
+    puts on PATH ahead of the real ones.
     Returns `directory`. The first line names this Python by its full path,
     so a stand-in started with a PATH that holds no python3 still runs."""
     directory = Path(directory)
-    directory.mkdir(parents=True, exist_ok=True)
+    directory.mkdir(exist_ok=True)
     for name in ("bwrap", "sandbox-exec"):
         (directory / name).write_text(
             f"#!{sys.executable}\n" + FAKE_SANDBOX_PROGRAM_PASSING_THE_COMMAND_THROUGH,
             encoding="utf-8")
-        (directory / name).chmod(0o755)
+        (directory / name).chmod(0o755)  # pragma: no mutate, 0o754 and 0o756 differ only in other users' bits, and the tests start the stand-ins as their owner
     return directory
