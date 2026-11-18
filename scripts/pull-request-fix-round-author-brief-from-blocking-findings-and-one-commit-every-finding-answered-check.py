@@ -1002,7 +1002,7 @@ def fix_commit_range(frozen_head, commits):
         return frozen_head, commits[0][0]
     # An overview in a pull request that changes the code it describes names a commit earlier than the overview
     # edit, which the round's own fix commit can only be when the edit is a commit of its own.
-    if (len(commits) == 2 and commits[0][1] == [frozen_head] and commits[1][1] == [commits[0][0]]
+    if (len(commits) == 2 and commits[0][1] == [frozen_head] and commits[1][1] == [commits[0][0]]  # pragma: no mutate, a one-commit round reaches this line only when commits[0][1] is not [frozen_head], so `<= 2` stops at that test as `== 2` does; and commits_since lists by --first-parent, so commits[1][1] starts with commits[0][0] and never sorts before [commits[0][0]], so `<=` there says what `==` says
             and commit_changes_only_architecture_overviews(commits[1][0])):
         return frozen_head, commits[1][0]
     described = ", ".join(f"{sha[:12]} ({len(parents)} parent{'' if len(parents) == 1 else 's'})"
@@ -1234,8 +1234,8 @@ def origin_branch_head(url, branch):
 
 
 def check_round(number, reviewer_login, answers_path, commit_name,
-                confirm_dispatching_agent_checked_new_shared_names=False,
-                overview_claim_check_report_directory=None):
+                confirm_dispatching_agent_checked_new_shared_names,
+                overview_claim_check_report_directory):
     (url, _github_head, branch, review_link, frozen_head, blocking, nits,
      _fix_round_number, unrecorded_review_ids, review_submitted_at) = round_facts(number, reviewer_login)
     findings = blocking + nits
@@ -1293,7 +1293,7 @@ def check_round(number, reviewer_login, answers_path, commit_name,
                   "for merge-lane-2."]
         print("\n".join(lines))
         return
-    pushed = (f"New head {commit}, the round's {len(round_commits)} commit{'' if len(round_commits) == 1 else 's'} "
+    pushed = (f"New head {commit}, the round's {len(round_commits)} commit{'' if len(round_commits) == 1 else 's'} "  # pragma: no mutate, this text is built only when commit is not the frozen-head, where the round has one or two commits, so `<= 1` says what `== 1` says
               f"on top of the frozen-head {frozen_head}."
               if commit != frozen_head else
               f"Nothing pushed; the head stays the frozen-head {frozen_head}.")
