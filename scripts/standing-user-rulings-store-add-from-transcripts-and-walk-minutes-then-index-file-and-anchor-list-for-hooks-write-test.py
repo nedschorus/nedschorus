@@ -970,6 +970,51 @@ with tempfile.TemporaryDirectory() as directory:
           and case.query("SELECT name FROM sqlite_master WHERE name = 'entries_schema_version_2'") == [],
           f"exit {exit_code}: {stderr.getvalue()} {case.entries()}")
 
+# The project rename moves the log-store and the project-key directory a transcript is read from.
+with tempfile.TemporaryDirectory() as directory:
+    case = Case(directory)
+    old_name = program.OLD_REFERENCE_CHECKOUT_DIRECTORY_NAME
+    case.log_store = case.top / f"{old_name}-logs"
+    case.mirror = case.log_store / "agent-session-files-by-machine"
+    moved = case.transcript("mac", [human("the moved one", "2026-10-22T00:00:00Z")],
+                            key=f"-Users-el-Projects-{old_name}")
+    kept = case.transcript("mac", [human("the kept one", "2026-10-22T00:01:00Z")],
+                           key=f"-Users-el-Projects-{old_name}--claude-worktrees-gone")
+    first = case.run()
+    (case.top / f"{old_name}-logs").rename(case.top / "nedsnodes-logs")
+    case.log_store = case.top / "nedsnodes-logs"
+    case.mirror = case.log_store / "agent-session-files-by-machine"
+    (case.mirror / "mac" / "projects" / f"-Users-el-Projects-{old_name}").rename(
+        case.mirror / "mac" / "projects" / "-Users-el-Projects-nedsnodes")
+    second = case.run()
+    paths = dict(case.query("SELECT text, source_path FROM entries"))
+    check("after the project rename moves the log-store and a project-key directory, an entry's source path moves "
+          "with them, and one whose project-key directory kept its old name moves with the log-store only",
+          first.returncode == 0 and second.returncode == 0
+          and paths == {"the moved one": str(case.mirror / "mac/projects/-Users-el-Projects-nedsnodes/session-one.jsonl"),
+                        "the kept one": str(case.mirror / f"mac/projects/-Users-el-Projects-{old_name}--claude-worktrees-gone/session-one.jsonl")},
+          described(second) + f" {paths}")
+
+with tempfile.TemporaryDirectory() as directory:
+    case = Case(directory)
+    case.transcript("mac", [human("one", "2026-10-22T00:00:00Z")])
+    real_update = program.source_paths_moved_by_project_rename_update
+
+    def failing_update(connection):
+        raise sqlite3.OperationalError("database is locked")
+
+    program.source_paths_moved_by_project_rename_update = failing_update
+    stdout, stderr = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            exit_code = program.run(case.log_store, case.agents, case.checkout)
+    finally:
+        program.source_paths_moved_by_project_rename_update = real_update
+    check("when moving stored source paths fails, the run still adds his words, then prints FAILED and exits nonzero",
+          exit_code == program.EXIT_SOURCE_OR_OUTPUT_FAILED and len(case.entries()) == 1
+          and "moving stored source paths to the names the project rename gave them" in stderr.getvalue()
+          and "database is locked" in stderr.getvalue(), f"exit {exit_code}: {stderr.getvalue()}")
+
 old_issue = program.GHI_REFERENCE.search(f"see https://github.com/{program.repository_names.OLD_REPOSITORY}/issues/12 now")
 old_pull = program.PULL_REQUEST_REFERENCE.search(f"see https://github.com/{program.repository_names.OLD_REPOSITORY}/pull/34 now")
 check("a GHI or pull request link with the repository's old name, which GitHub redirects, is read",

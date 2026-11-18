@@ -267,6 +267,13 @@ PATH_TOKEN = re.compile(r"[\w.~@-]*(?:/[\w.@-]*[\w@-])+/?")
 # Transcripts written before the project rename record the reference-checkout under its old directory name, and a
 # transcript is read again from its start once the rename moves the copy it is read from.
 OLD_REFERENCE_CHECKOUT_DIRECTORY_NAME = "nedschorus"
+# The project rename moves the log-store, the checkouts and the mirror's project-key directories made from them. An
+# entry keeps the path it was first read from, since a second read of the moved copy skips it as a duplicate, so a
+# stored path is moved to its new name once that new path exists; a project-key directory the rename left under its
+# old name, such as one of a worktree since removed, keeps its path.
+STORED_PATH_PARTS_RENAMED_BY_PROJECT_RENAME = (
+    re.compile(r"(?<=/)" + re.escape(OLD_REFERENCE_CHECKOUT_DIRECTORY_NAME) + r"(?=(?:-logs|-worktrees)?(?:/|$))"),
+    re.compile(r"(?<=-Projects-)" + re.escape(OLD_REFERENCE_CHECKOUT_DIRECTORY_NAME) + r"(?=-|/|$)"))
 NEDSNODES_SESSION_DIRECTORY = re.compile(
     r"^/(?:home/nedlern|Users/el)/(?:agents/(?P<seat>[^/]+)|Projects/(?:nedsnodes|"
     + re.escape(OLD_REFERENCE_CHECKOUT_DIRECTORY_NAME) + r"))(?:/|$)")
@@ -545,6 +552,20 @@ def add_entry(connection, entry, tags_by_source):
     return True
 
 
+def source_paths_moved_by_project_rename_update(connection):
+    """Point each entry whose source file the project rename moved at the file's new path; return how many moved."""
+    moved = 0
+    for (old_path,) in connection.execute("SELECT DISTINCT source_path FROM entries").fetchall():
+        log_store_and_checkouts_only = STORED_PATH_PARTS_RENAMED_BY_PROJECT_RENAME[0].sub("nedsnodes", old_path)
+        every_part = STORED_PATH_PARTS_RENAMED_BY_PROJECT_RENAME[1].sub("nedsnodes", log_store_and_checkouts_only)
+        new_path = next((path for path in (every_part, log_store_and_checkouts_only)
+                         if path != old_path and os.path.exists(path)), None)
+        if new_path:
+            moved += connection.execute("UPDATE entries SET source_path = ? WHERE source_path = ?",
+                                        (new_path, old_path)).rowcount
+    return moved
+
+
 def previous_reading(connection, path):
     return connection.execute("SELECT device, inode, size_read, mtime_ns, lines_read, reader_state "
                               "FROM source_files_read WHERE path = ?", (str(path),)).fetchone()
@@ -748,9 +769,15 @@ def run(log_store, agents_directory, repository_checkout):
         print("\n".join(error.instructions), file=sys.stderr)
         return EXIT_COULD_NOT_RUN
     started = utc_now_text()
+    source_failures, output_failures = [], []
+    try:
+        with connection:
+            source_paths_moved_by_project_rename_update(connection)
+    except sqlite3.Error as error:
+        source_failures.append(FAILED_LINE.format(
+            what="moving stored source paths to the names the project rename gave them", error=error))
     mirror_directory = log_store / MIRROR_DIRECTORY_NAME
     known_seats = known_agent_seats(agents_directory, mirror_directory)
-    source_failures, output_failures = [], []
     user_words_added = walk_added = 0
     for machine, pattern in TRANSCRIPT_GLOBS:
         for path in sorted(mirror_directory.glob(pattern)):
