@@ -4,7 +4,9 @@ A, `approved`, `37.4 r` or `1 a 2 d`, into context naming what the answer
 means and the approval-walk item it answers.
 
 Each case runs the hook as a subprocess, its real stdin-to-stdout path, in a
-scratch checkout this suite made. The exit code is asserted on every case.
+scratch checkout this suite made. The exit code is asserted on every case. The
+model call is never real: a fake `claude` first on PATH records each call and
+answers as the case's model mode sets it.
 """
 
 import importlib.util
@@ -42,6 +44,36 @@ ONE_ITEM_AT_A_TIME_LINE = (
     "walk-me-through skill has that line name one item, or one part such as `item 4.1 of 9`. Present the item "
     "that `close` names only after the last answer is recorded.")
 failures = []
+
+# The fake's answer for every pair the prompt numbers: `same` judges each meaning unchanged, `changed` judges each
+# changed; the other modes are failures of the call.
+FAKE_CLAUDE = """#!/usr/bin/env python3
+import json, os, re, sys, time
+prompt = sys.stdin.read()
+with open(os.environ["FAKE_CLAUDE_CALLS"], "a") as calls:
+    calls.write(json.dumps({"argv": sys.argv[1:], "stdin": prompt}) + "\\n")
+mode = os.environ.get("FAKE_CLAUDE_MODE", "same")
+count = len(re.findall(r"(?m)^Pair \\d+, ", prompt))
+pairs = [{"pair_number": number, "meaning_changed": mode == "changed",
+          "reason": "FAKE: meaning changed." if mode == "changed" else "FAKE: same meaning."}
+         for number in range(1, count + 1)]
+if mode == "sleep":
+    time.sleep(30)
+if mode == "fail":
+    print(json.dumps({"type": "result", "is_error": True, "result": "Not logged in"}))
+    sys.exit(1)
+if mode == "garbage":
+    print("not json")
+    sys.exit(0)
+if mode == "pair-missing":
+    pairs = pairs[1:]
+print(json.dumps({"type": "result", "is_error": False, "structured_output": {"pairs": pairs}}))
+"""
+FAKE_BIN = SUITE_ROOT / "fake-bin"
+FAKE_BIN.mkdir()
+(FAKE_BIN / "claude").write_text(FAKE_CLAUDE)
+(FAKE_BIN / "claude").chmod(0o755)
+os.environ["PATH"] = f"{FAKE_BIN}{os.pathsep}{os.environ['PATH']}"
 
 WALK_DOCUMENT = """# A walk
 
@@ -110,9 +142,11 @@ class Case:
 
     counter = 0
 
-    def __init__(self, next_to_present=None, document=WALK_DOCUMENT):
+    def __init__(self, next_to_present=None, document=WALK_DOCUMENT, model="same"):
         Case.counter += 1
+        self.model, self.path = model, os.environ["PATH"]
         self.checkout = SUITE_ROOT / f"case-{Case.counter}" / "checkout"
+        self.calls = self.checkout.parent / "model-calls.jsonl"
         self.checkout.mkdir(parents=True)
         subprocess.run(["git", "init", "-q", str(self.checkout)], check=True)
         self.walk = self.checkout / "docs" / "walk"
@@ -147,7 +181,13 @@ class Case:
         return subprocess.run(
             [sys.executable, str(HOOK_SCRIPT)],
             input=json.dumps(payload) if stdin_text is None else stdin_text,
-            capture_output=True, text=True, cwd=self.checkout)
+            capture_output=True, text=True, cwd=self.checkout,
+            env={**os.environ, "PATH": self.path, "FAKE_CLAUDE_MODE": self.model,
+                 "FAKE_CLAUDE_CALLS": str(self.calls)})
+
+    def model_calls(self):
+        """The fake model's calls so far, oldest first, each as {"argv": ..., "stdin": ...}."""
+        return [json.loads(line) for line in self.calls.read_text().splitlines()] if self.calls.is_file() else []
 
     def lines(self, prompt, transcript_path=None):
         """The additionalContext's lines, or None when the hook printed nothing or failed."""
@@ -1668,16 +1708,36 @@ def not_shown_lines(answer, reason):
             "BEGIN", *SHOWN_ITEM_TEXT.split("\n"), "END"]
 
 
-def shown_different_reason(minute, item="item 4 of 9"):
-    return (f"The words after the heading of {item} in your last message that showed it, written at "
-            f"2026-11-13T20:{minute:02}:00Z, do not hold the item's current walk-document text after its heading as "
-            "one unbroken run of words. Other words before or after that run are allowed and are not the fault. Either "
-            "that message misquoted the item, or the walk-document changed after that message. Only words, runs of "
-            "letters, digits and underscores, count, wherever they stand: in the text the user reads rendered, in code, in an image's alt text, in HTML, tags "
-            "included, and in `<!-- -->` comments. Punctuation, code's operators and HTML's angle brackets included, "
-            "letter case, whitespace, line breaks, Markdown markup, a link's target (its text counts), "
-            "`#approval_walk_item_` lines and the `of M` in a running count do not count, so a word changed, added or "
-            "dropped is a fault, but a comma made a full stop is not.")
+def changed_reason(*findings, minute=0, item="item 4 of 9"):
+    """The refusal's reason when the message that showed the item, written at minute, did not show its decision-bearing
+    lines as findings say."""
+    return (f"Your last message that showed {item}, written at 2026-11-13T20:{minute:02}:00Z, did not show the user "
+            f"what the item now decides. {' '.join(findings)} The hook compares only the item's decision-bearing "
+            "lines: the text after a `#new` or `#new_if_d` mark, the `#case_against` line, the text after `The "
+            "alternative:` and after `Recommendation:`, and, in an item with parts, the text after each `Part N.`. A "
+            "line passes when a line of the same kind in the message holds the same words, punctuation, letter case "
+            "and the marks `#new`, `#new_if_d`, `#case_against` and `[advisor]` aside, or, for a line other than a "
+            "recommendation or an alternative that the message shows without its mark, when a paragraph of the "
+            "message ends with those words; for any other line a model judges whether the message's "
+            "closest paragraph means the same, so a change made only for clarity passes, and so does any change "
+            "outside those lines, such as in the explanation or an example.")
+
+
+def meaning_changed(line, current, shown):
+    return (f"Its {line} now reads \"{current}\", and the model judged that this means something other than what the "
+            f"message showed, \"{shown}\": FAKE: meaning changed.")
+
+
+def check_failed(line, current, shown, why):
+    return (f"Its {line} now reads \"{current}\", in other words than the message's \"{shown}\", and the hook's "
+            "`claude -p` call that has a model judge whether that changes the meaning failed, so the hook cannot tell "
+            f"whether the user saw what he answered: {why}. Showing the item's current text unchanged lets his next "
+            "answer pass with no model call.")
+
+
+RECOMMENDATION_CHANGED = meaning_changed("`Recommendation:` line", "leave the filter out.",
+                                         "Recommendation: add the filter.")
+NEW_CHANGED = meaning_changed("`#new` line", "Hide rows older than a year.", "#new Hide rows older than a month.")
 
 
 def never_shown_reason(item="item 4 of 9"):
@@ -1720,14 +1780,15 @@ def test_an_answer_to_an_item_revised_after_it_was_shown_is_not_counted_and_the_
     old_recommendation = SHOWN_DOCUMENT.replace("leave the filter out", "add the filter")
     old_new_line = SHOWN_DOCUMENT.replace("older than a year", "older than a month")
     for changed, shown in (("Recommendation", old_recommendation), ("#new", old_new_line)):
-        case = Case(next_to_present="item 4 of 9", document=SHOWN_DOCUMENT)
+        case = Case(next_to_present="item 4 of 9", document=SHOWN_DOCUMENT, model="changed")
         transcript = case.transcript(shown, ITEM_4_CLOSING_LINE)
         for prompt in ("a", "AO", "Aa", "D"):
             result = case.run(prompt, transcript_path=transcript)
             context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"] if not_blocked(result) else ""
             check(f"{prompt!r} after only the item's {changed} line changed is not counted, and the agent is handed "
                   "the item's current text, with no check command and no reply line",
-                  context.split("\n") == not_shown_lines(prompt, shown_different_reason(0)),
+                  context.split("\n") == not_shown_lines(prompt, changed_reason(
+                      RECOMMENDATION_CHANGED if changed == "Recommendation" else NEW_CHANGED)),
                   f"exit {result.returncode}, context {context!r}, stderr {result.stderr!r}")
 
 
@@ -1800,20 +1861,168 @@ def test_an_answer_counts_when_the_item_was_shown_with_only_its_punctuation_or_l
               f"lines {lines!r}")
 
 
-def test_an_answer_is_refused_when_the_item_was_shown_with_a_word_changed_added_dropped_split_or_joined():
+def test_an_answer_counts_with_no_model_call_when_only_the_items_explanation_was_shown_in_other_words():
     for name, shown in (
             ("the real showing, which adds \"These are\" and drops \"as\"", ITEM_47_2_REAL_SHOWING),
             ("a word added", ITEM_47_2.replace("as candidates", "as good candidates")),
             ("a word dropped", ITEM_47_2.replace("rare, permanent harm", "rare harm")),
             ("a word changed", ITEM_47_2.replace("once a week", "twice a week")),
             ("two words swapped", ITEM_47_2.replace("question, not verdicts", "verdicts, not question")),
-            ("two words joined where only punctuation parted them", ITEM_47_2.replace("ned-box", "nedbox")),
-            ("one word split in two", ITEM_47_2.replace("weekly report", "week ly report"))):
-        lines = item_47_2_lines("Ao", shown)
-        check(f"'Ao' to item 47.2 is refused when it was shown with {name}", shown != ITEM_47_2
-              and lines is not None and lines[1:3] == [
-                  f"{ANSWER_DISCARDED}, because the user may not have seen item 47.2 of 68 as the walk-document now "
-                  "has it.", shown_different_reason(0, "item 47.2 of 68")], f"lines {lines!r}")
+            ("the [advisor] line dropped", ITEM_47_2.replace("[advisor] The advisor was called", "The advisor was"))):
+        case = Case(next_to_present="item 47.2 of 68", document=ITEM_47_2_DOCUMENT, model="changed")
+        lines = case.lines("Ao", case.transcript(f"{shown}\n\n{ITEM_47_2_CLOSING_LINE}"))
+        check(f"'Ao' to item 47.2 counts with no model call when the explanation was shown with {name}",
+              shown != ITEM_47_2 and counted(lines) and not case.model_calls(), f"lines {lines!r}")
+
+
+DECISION_ITEM = """## Item 4 of 9: a filter
+
+A filter would hide old rows. For example, a row from 2024 would vanish.
+
+#new Hide rows older than a year.
+
+#new_if_d Show every row.
+
+[advisor] #case_against weak: old rows confuse readers.
+
+The alternative: add the filter.
+
+**Recommendation: leave the filter out.**"""
+DECISION_DOCUMENT = "# A walk\n\n" + DECISION_ITEM + """
+
+## Item 5 of 9: the next item
+
+Recommendation: do the next thing.
+"""
+
+
+def decision_case(model="same"):
+    return Case(next_to_present="item 4 of 9", document=DECISION_DOCUMENT, model=model)
+
+
+def decision_refusal(case, prompt, *findings):
+    return [NOT_SHOWN_RULE_ID_OPENING + f"The user answered \"{prompt}\" to item 4 of 9 of approval-walk {WALK_NAME}.",
+            f"{ANSWER_DISCARDED}, because the user may not have seen item 4 of 9 as the walk-document now has it.",
+            changed_reason(*findings),
+            "Record nothing in the walk-minutes and act on none of the answer.",
+            "Show the user item 4 of 9 as the walk-document now has it, the text between the BEGIN and END lines "
+            f"below, unchanged and not inside a code block, then end your message with {CLOSING_LINE_NAMED}, and "
+            "wait for him to type his answer again, because only an answer typed after he has seen that text counts.",
+            "BEGIN", *DECISION_ITEM.split("\n"), "END"]
+
+
+def test_an_answer_counts_with_no_model_call_when_the_message_dropped_only_marks():
+    # The case that set this rule: the message dropped only the `#new` mark, and the hook refused "ao".
+    case = decision_case(model="changed")
+    shown = (DECISION_ITEM.replace("#new Hide", "Hide").replace("#new_if_d Show", "If you disapprove, the new text: Show")
+             .replace("[advisor] #case_against weak", "Case against (weak)"))
+    lines = case.lines("ao", case.transcript(f"{shown}\n\n{ITEM_4_CLOSING_LINE}"))
+    check("'ao' counts with no model call when the message dropped the `#new`, `#new_if_d`, `#case_against` and "
+          "`[advisor]` marks", counted(lines) and not case.model_calls(), f"lines {lines!r}")
+    explained = DECISION_ITEM.replace("For example, a row from 2024 would vanish.", "Rows from 2024 would go.")
+    lines = case.lines("a", case.transcript(f"{explained}\n\n{ITEM_4_CLOSING_LINE}"))
+    check("an answer counts with no model call when only the explanation's example was reworded",
+          counted(lines) and not case.model_calls(), f"lines {lines!r}")
+
+
+def test_a_decision_bearing_line_shown_in_other_words_counts_when_the_model_judges_the_meaning_unchanged():
+    case = decision_case(model="same")
+    shown = DECISION_ITEM.replace("leave the filter out", "do not add the filter, and leave it out")
+    lines = case.lines("a", case.transcript(f"{shown}\n\n{ITEM_4_CLOSING_LINE}"))
+    calls = case.model_calls()
+    check("a recommendation reworded for clarity counts when the model judges its meaning unchanged",
+          counted(lines) and len(calls) == 1, f"lines {lines!r}, calls {calls!r}")
+    check("the model call is the haiku model with the pair's shown and current texts, through the common prefix",
+          calls and calls[0]["argv"][:3] == ["-p", "--strict-mcp-config", "--permission-mode"]
+          and calls[0]["argv"][calls[0]["argv"].index("--model") + 1] == "claude-haiku-5-5"
+          and "Pair 1, the item's `Recommendation:` line.\nShown: Recommendation: do not add the filter, and leave it "
+              "out.\nCurrent: leave the filter out." in calls[0]["stdin"] and "Pair 2" not in calls[0]["stdin"],
+          f"calls {calls!r}")
+
+
+def test_a_changed_decision_bearing_line_refuses_and_names_the_line_and_the_models_reason():
+    for name, shown, finding in (
+            ("Recommendation", DECISION_ITEM.replace("leave the filter out", "add the filter"),
+             meaning_changed("`Recommendation:` line", "leave the filter out.", "Recommendation: add the filter.")),
+            ("alternative", DECISION_ITEM.replace("The alternative: add the filter.", "The alternative: drop the rows."),
+             meaning_changed("`The alternative:` line", "add the filter.", "The alternative: drop the rows.")),
+            ("case-against rating", DECISION_ITEM.replace("#case_against weak", "#case_against strong"),
+             meaning_changed("`#case_against` line", "weak: old rows confuse readers.",
+                             "[advisor] #case_against strong: old rows confuse readers.")),
+            ("#new text", DECISION_ITEM.replace("older than a year", "older than a month"),
+             meaning_changed("`#new` line", "Hide rows older than a year.", "#new Hide rows older than a month."))):
+        case = decision_case(model="changed")
+        lines = case.lines("a", case.transcript(f"{shown}\n\n{ITEM_4_CLOSING_LINE}"))
+        check(f"an answer is refused when the {name} was shown with another meaning, naming the line and the model's "
+              "reason", lines == decision_refusal(case, "a", finding) and len(case.model_calls()) == 1,
+              f"lines {lines!r}")
+
+
+def test_a_failed_model_call_refuses_and_says_the_check_could_not_run_and_why():
+    shown = DECISION_ITEM.replace("leave the filter out", "do not add the filter")
+    git_only = SUITE_ROOT / "git-only-bin"
+    git_only.mkdir(exist_ok=True)
+    if not (git_only / "git").exists():
+        (git_only / "git").symlink_to(shutil.which("git"))
+    for mode, why in (("fail", "claude exited 1 without a verdict (KeyError('structured_output')): {\"type\": \"result\", "
+                               "\"is_error\": true, \"result\": \"Not logged in\"}"),
+                      ("garbage", "claude exited 0 without a verdict (JSONDecodeError("),
+                      ("pair-missing", "claude's verdict does not give each of the 1 numbered pairs exactly one entry"),
+                      ("sleep", "claude gave no answer within 7 seconds"),
+                      ("no claude", "claude could not be run: ")):
+        case = decision_case(model=mode)
+        if mode == "no claude":
+            case.path = str(git_only)
+        lines = case.lines("a", case.transcript(f"{shown}\n\n{ITEM_4_CLOSING_LINE}"))
+        expected = check_failed("`Recommendation:` line", "leave the filter out.",
+                                "Recommendation: do not add the filter.", why)
+        opening, _, rest = expected.partition(why)
+        reason = lines[2] if lines else ""
+        check(f"a model call that fails ({mode}) refuses the answer, saying the check could not run and why",
+              lines is not None and lines[:2] == decision_refusal(case, "a")[:2] and opening in reason
+              and why in reason and rest in reason and lines[3:] == decision_refusal(case, "a")[3:],
+              f"lines {lines!r}")
+
+
+def test_a_decision_bearing_line_found_only_under_another_label_or_inside_a_longer_line_goes_to_the_model():
+    swapped = (DECISION_ITEM.replace("The alternative: add the filter.", "The alternative: SWAP")
+               .replace("leave the filter out.", "add the filter.").replace("SWAP", "leave the filter out."))
+    narrower = DECISION_ITEM.replace("leave the filter out.", "leave the filter out for admins only.")
+    rated_none = DECISION_DOCUMENT.replace("[advisor] #case_against weak: old rows confuse readers.",
+                                           "#case_against none.")
+    shown_weak = DECISION_ITEM.replace("For example,", "None of them is new. For example,")
+    for name, document, shown, refused_line in (
+            ("the recommendation and the alternative swapped", DECISION_DOCUMENT, swapped, "`The alternative:` line"),
+            ("a qualifier dropped from the recommendation", DECISION_DOCUMENT, narrower, "`Recommendation:` line"),
+            ("the case against rated none, when the message rated it weak and its explanation says none",
+             rated_none, shown_weak, "`#case_against` line")):
+        case = Case(next_to_present="item 4 of 9", document=document, model="changed")
+        lines = case.lines("a", case.transcript(f"{shown}\n\n{ITEM_4_CLOSING_LINE}"))
+        check(f"an answer goes to the model and is refused when the message showed {name}",
+              len(case.model_calls()) == 1 and lines is not None and f"Its {refused_line} now reads" in lines[2],
+              f"lines {lines!r}")
+    case = decision_case(model="changed")
+    shown = DECISION_ITEM.replace("**Recommendation: leave the filter out.**", "Recommendation: Leave the filter out!")
+    lines = case.lines("a", case.transcript(f"{shown}\n\n{ITEM_4_CLOSING_LINE}"))
+    check("an answer counts with no model call when the recommendation was shown with only its punctuation and "
+          "letter case changed", counted(lines) and not case.model_calls(), f"lines {lines!r}")
+
+
+def test_a_changed_part_line_refuses_and_every_waiting_item_goes_to_one_model_call():
+    parts_item = DECISION_ITEM.replace("#new Hide rows older than a year.",
+                                       "Part 1. Hide rows older than a year.\n\nPart 2. Hide empty rows.")
+    case = Case(next_to_present="item 4 of 9", document="# A walk\n\n" + parts_item + "\n", model="changed")
+    lines = case.lines("a", case.transcript(parts_item.replace("Hide empty rows", "Hide every row") + "\n"))
+    check("an answer is refused when a `Part N.` line was shown with another meaning, naming that part",
+          lines is not None and "Its `Part 2.` line now reads \"Hide empty rows.\"" in lines[2], f"lines {lines!r}")
+    two_items = DECISION_DOCUMENT.replace("## Item 5 of 9: the next item", "## Item 5 of 9: the next item\n\nMore.")
+    case = Case(next_to_present="items 4 and 5 of 9", document=two_items, model="changed")
+    shown = two_items.replace("leave the filter out", "add the filter").replace("do the next thing", "do nothing")
+    lines = case.lines("all a", case.transcript(shown))
+    calls = case.model_calls()
+    check("'all a' sends the changed lines of both waiting items to one model call and refuses both",
+          len(calls) == 1 and "Pair 2" in calls[0]["stdin"] and lines is not None
+          and sum(line.startswith(ANSWER_DISCARDED) for line in lines) == 2, f"lines {lines!r}, calls {calls!r}")
 
 
 def test_closing_lines_alone_after_the_item_was_shown_do_not_hide_the_message_that_showed_it():
@@ -1825,9 +2034,10 @@ def test_closing_lines_alone_after_the_item_was_shown_do_not_hide_the_message_th
     check("an answer after ten messages holding only the item's closing line counts by the message that showed the "
           "item in full", counted(lines), f"lines {lines!r}")
     stale = SHOWN_DOCUMENT.replace("leave the filter out", "add the filter")
+    case.model = "changed"
     lines = case.lines("a", case.transcript(stale, *[ITEM_4_CLOSING_LINE] * 10))
     check("an answer after closing lines is still refused when the message that showed the item showed an old "
-          "version", lines == not_shown_lines("a", shown_different_reason(0)), f"lines {lines!r}")
+          "version", lines == not_shown_lines("a", changed_reason(RECOMMENDATION_CHANGED)), f"lines {lines!r}")
 
 
 def test_a_deferred_item_shown_word_for_word_counts():
@@ -1838,9 +2048,10 @@ def test_a_deferred_item_shown_word_for_word_counts():
     check("an answer to a deferred item whose heading, deferred note included, was shown word for word counts",
           counted(lines), f"lines {lines!r}")
     stale = deferred.replace("leave the filter out", "add the filter")
+    case.model = "changed"
     lines = case.lines("a", case.transcript(stale, ITEM_4_CLOSING_LINE))
     check("an answer to a deferred item shown in an old version is still refused",
-          lines == not_shown_lines("a", shown_different_reason(0)), f"lines {lines!r}")
+          lines == not_shown_lines("a", changed_reason(RECOMMENDATION_CHANGED)), f"lines {lines!r}")
 
 
 OLDER_FORM_DOCUMENT = """# A walk
@@ -2077,6 +2288,7 @@ def test_an_item_under_a_range_heading_counts_when_the_range_was_shown():
     check("an answer to item 11 counts when the range heading `Items 10 to 12 of 20` and its text were shown",
           counted(lines), f"lines {lines!r}")
     stale = RANGE_HEADING_DOCUMENT.replace("make the three renames", "make two renames")
+    case.model = "changed"
     lines = case.lines("a", case.transcript(stale.split("## Item 13")[0], closing))
     check("an answer to item 11 is refused when the range was shown in an old version",
           lines is not None and not counted(lines), f"lines {lines!r}")
