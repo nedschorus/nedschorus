@@ -387,9 +387,12 @@ DEFAULT_FOUND_COPIES_ROOT = "~/Downloads/nedschorus-found-copies"
 
 DEFAULT_BOX_SSH_HOST = "nedlern@ned-box"
 DEFAULT_TIMESHIFT_SNAPSHOT_ROOT = "/mnt/backup/timeshift/snapshots"
+# Snapshots taken before the project rename hold the reference-checkout under this name.
+REFERENCE_CHECKOUT_DIRECTORY_NAME_BEFORE_PROJECT_RENAME = "nedschorus"
 # Each seat has its own directory, so a repo-relative path may exist under several roots.
 DEFAULT_BOX_SEARCH_ROOTS = (
     "/home/nedlern/Projects/nedsnodes",
+    "/home/nedlern/Projects/" + REFERENCE_CHECKOUT_DIRECTORY_NAME_BEFORE_PROJECT_RENAME,
     "/home/nedlern/agents/*",
 )
 DEFAULT_TRANSCRIPTS_DIR = "~/.claude/projects"

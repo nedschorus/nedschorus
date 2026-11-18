@@ -1745,6 +1745,12 @@ check("a seat-directory root keeps its glob unquoted so the shell expands it",
       "/home/nedlern/agents/*" in generated and "'/home/nedlern/agents/*" not in generated
       and "agents/*'" not in generated,
       generated)
+check("the snapshots are searched under the reference-checkout's name before the project rename too, which "
+      "snapshots taken before the rename hold",
+      '"$snap/localhost"/home/nedlern/Projects/nedsnodes ' in generated
+      and '"$snap/localhost"/home/nedlern/Projects/'
+      + finder.REFERENCE_CHECKOUT_DIRECTORY_NAME_BEFORE_PROJECT_RENAME + " " in generated,
+      generated)
 check("the suffix pattern reaches find as one quoted word, so the shell cannot expand its '*'",
       "-path '*/a/b.md'" in generated, generated)
 check("the suffix search's find is not piped, so a find that fails is reported",
