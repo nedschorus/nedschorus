@@ -223,8 +223,9 @@ MOVE_CHANGE_TO_OWN_PULL_REQUEST_INSTRUCTION = (
     "--move-change-to-own-pull-request-cut-new-topic-branch <new topic branch> [<path> ...]\n"
     "   naming as <path> each file whose every change belongs to the moved change, its tests included. "
     "It puts you on <new topic branch>, cut from origin/main, with those files as the frozen-head has "
-    "them. Then make by hand the moved part of each file that is only partly moved; you need "
-    "not stage or commit it, because the finish step does both. Write the new pull request's description "
+    "them. Then make by hand the moved part of each file that is only partly moved; do not stage or "
+    "commit it: the finish step does both, and refuses when the new topic branch already holds a commit. "
+    "Write the new pull request's description "
     "as CLAUDE.md says in a file outside this worktree, and run: cd {worktree} && python3 {program} "
     "{number} --move-change-to-own-pull-request-finish --title <title> --body-file <description file>\n"
     "   --move-change-to-own-pull-request-finish runs the nc-test-suites, commits, pushes and opens the new pull request, then puts "
@@ -267,7 +268,7 @@ ANSWERS_FILE_NAME_PATTERN = re.compile(r"fix-round-answers-pull-request-\d+\.md"
 # git-ignored answers file, when its subagent stops; the topic-worktree is neither.
 TOPIC_WORKTREE_DISPATCH_INSTRUCTION = (
     "For the author: dispatch the fix-round subagent with the Agent tool, as a fork (subagent_type: "
-    "\"fork\") with run_in_background: true and without isolation, so that it works in pull request "
+    "\"fork\") with run_in_background: true and no isolation parameter at all, so that it works in pull request "
     "{number}'s own topic-worktree, {worktree}. Edit nothing in that worktree until the subagent has "
     "finished, so that its commit holds only the round's changes. Give it this whole brief, and tell it "
     "that the paragraphs starting \"For the author\" are yours, not its.")
@@ -703,8 +704,8 @@ def topic_worktree_made_by_creator(branch):
         completed = subprocess.run(command, cwd=top_level, capture_output=True, text=True,
                                    stdin=subprocess.DEVNULL, timeout=WORKTREE_CREATOR_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
-        raise StepFailed(f"{shlex.join(command)} did not finish in {WORKTREE_CREATOR_TIMEOUT_SECONDS} seconds, "
-                         f"so no topic-worktree for {branch} was made") from None
+        raise StepFailed(f"{shlex.join(command)} did not finish in {WORKTREE_CREATOR_TIMEOUT_SECONDS} seconds "
+                         f"and was stopped, so a topic-worktree for {branch} may be half made") from None
     if completed.returncode != 0:
         raise StepFailed(f"no worktree of this clone has {branch} checked out, and {shlex.join(command)}, run to "
                          f"make one, exited {completed.returncode}. Do what its message says, then run this "

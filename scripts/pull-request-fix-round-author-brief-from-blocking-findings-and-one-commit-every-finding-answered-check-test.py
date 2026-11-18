@@ -385,6 +385,8 @@ def brief_cases(root, repository, base, frozen_head):
           and f"{NUMBER} --move-change-to-own-pull-request-cut-new-topic-branch <new topic branch> [<path> ...]" in out
           and f"{NUMBER} --move-change-to-own-pull-request-finish --title <title> --body-file <description file>" in out
           and f"puts you back on {BRANCH}." in out
+          and "only partly moved; do not stage or commit it: the finish step does both, and refuses when the new "
+              "topic branch already holds a commit." in out
           and f"run: {in_worktree}python3 scripts/{PROGRAM.name} {NUMBER} --move-change-to-own-pull-request-cut" in out
           and f"run: {in_worktree}python3 scripts/{PROGRAM.name} {NUMBER} --move-change-to-own-pull-request-finish" in out
           and "git switch" not in out.split("3. Change nothing else")[1].split("4. Put every change")[0], out)
@@ -416,7 +418,7 @@ def brief_cases(root, repository, base, frozen_head):
           and out.index("For the author: dispatch") < out.index(f"`{HEADING}`")
           < out.index("For the author, when the subagent has finished"), out)
     check("brief: tells the author to dispatch a fork without worktree isolation, to work in the topic-worktree",
-          "subagent_type: \"fork\") with run_in_background: true and without isolation" in out
+          "subagent_type: \"fork\") with run_in_background: true and no isolation parameter at all" in out
           and f"own topic-worktree, {repository}." in out and "isolation: \"worktree\"" not in out, out)
     check("brief: the subagent works on the pull request's branch, every command starting in the topic-worktree",
           f"run in the pull request's topic-worktree {repository}, on its branch {BRANCH} at the frozen-head" in out
@@ -1690,7 +1692,8 @@ def gh_timeout_case():
             check("topic-worktree: a worktree creator that times out raises StepFailed", False, "no exception")
         except program.StepFailed as failure:
             check("topic-worktree: a worktree creator that times out raises StepFailed naming the limit and branch",
-                  "did not finish in 300 seconds" in str(failure) and BRANCH in str(failure), str(failure))
+                  f"did not finish in 300 seconds and was stopped, so a topic-worktree for {BRANCH} may be half made"
+                  in str(failure), str(failure))
         finally:
             program.subprocess.run = original_run
             os.chdir(original_directory)
