@@ -37,12 +37,12 @@ def guard_hook_crash_notice_hook_output_json_text(guard_file, error):
         f"The guard hook {guard_name} crashed on {host} ({crash}), so this tool call went ahead "
         f"without being checked, and the call has run. A crashed guard lets the call go ahead "
         f"so that the crash does not stop work; the user has been shown that the guard crashed.\n"
-        f"Check, from the call's input and its result, whether the call did what {guard_name} "
-        f"exists to stop; the docstring at the top of {guard_file} says what that is.\n"
-        f"If the call did, or you cannot tell, tell the user what the call did, or, if you are a "
-        f"subagent, tell the agent that dispatched you; do not undo the call before that answer "
-        f"comes, because an undo can do further damage.\n"
-        f"If the call did not, go on with your task.")
+        f"Check whether this call is one {guard_name} would have refused; the docstring at the "
+        f"top of {guard_file} says which calls it refuses.\n"
+        f"If it is, or you cannot tell, report what the call did and ask whether to undo it: a "
+        f"subagent asks the agent that dispatched it, any other agent asks the user. Do not undo "
+        f"the call before you have the answer, because an undo can do further damage.\n"
+        f"If it is not, go on with your task.")
     user_notice = (
         f"The guard hook {guard_name} crashed on {host} and let a tool call through unchecked "
         f"({crash}). The agent has been told to check what the call did.")

@@ -127,9 +127,14 @@ if notices is not None:
           all("some-guard.py" in notice and "ValueError: injected value" in notice
               and "guard-hook-crash-fail-open-with-notice-common-test.py:" in notice
               for notice in notices), notices)
-    check("the agent notice says what to check, with the guard's path, and gives a subagent line",
-          "/x/.claude/guard-hooks/some-guard.py says what that is" in notices[0]
-          and "subagent" in notices[0] and "dispatched" in notices[0], notices[0])
+    check("the agent notice asks whether the guard would have refused the call, with the guard's "
+          "path, and says whom to ask whether to undo it",
+          "Check whether this call is one some-guard.py would have refused" in notices[0]
+          and "/x/.claude/guard-hooks/some-guard.py says which calls it refuses" in notices[0]
+          and "report what the call did and ask whether to undo it" in notices[0]
+          and "a subagent asks the agent that dispatched it, any other agent asks the user"
+          in notices[0]
+          and "Do not undo the call before you have the answer" in notices[0], notices[0])
 
 try:
     raise_inside(True, SystemExit(2))
