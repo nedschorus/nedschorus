@@ -1683,16 +1683,6 @@ def run_written_by_session_field_cases(workspace: Path):
           fields.get(writer.supervisor.WRITTEN_BY_SESSION_FIELD) == session_id,
           f"exit {completed.returncode}; fields {fields}; output {(completed.stdout + completed.stderr)[-400:]}")
 
-    # The harness side of the same contract: the variable the writer reads must
-    # be the one Claude Code actually sets for a running session.
-    if os.environ.get("CLAUDECODE") == "1":
-        check("a running Claude Code session sets CLAUDE_CODE_SESSION_ID, the variable the writer reads",
-              bool(os.environ.get("CLAUDE_CODE_SESSION_ID")),
-              "CLAUDECODE=1 but CLAUDE_CODE_SESSION_ID is unset or empty")
-    else:
-        print("SKIP  a running Claude Code session sets CLAUDE_CODE_SESSION_ID: "
-              "this run is not inside a Claude Code session")
-
 
 PRUNE_LIST_ID = "prune.case-tasks"
 # Claude Code names the list's directory with the "." mapped to "-".

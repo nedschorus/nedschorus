@@ -153,7 +153,7 @@ symbolic link to a directory beside it, as macOS's /var is a link to
 resolved form fails here as it would on the Mac; a private /dev and System V IPC; the home directory, an empty
 tmpfs the suite may write, into which only the paths in
 TEST_SANDBOX_HOME_PATHS_SHOWN_READ_ONLY are bound, read-only, each with the
-reason suites need it, so no credential in the home directory is there; the
+reason suites need it, so no credential file in the home directory is there; the
 checkout under test, a copy-on-write overlay the suite may write, so nothing
 it writes there survives the suite;
 and the suite's own input record and strace traces, which this program reads
@@ -921,6 +921,9 @@ TEST_SANDBOX_HOME_PATHS_SHOWN_READ_ONLY = {
     ".local/bin/ruff": "the Ruff binary pip installs for this account, which `python3 -m ruff` "
                        "looks for here",
     ".gitconfig": "git's settings for this account, which suites that run git read",
+    ".claude/projects": "Claude Code's session transcripts, against the five largest of which "
+                        "scripts/claude-code-session-transcript-records-read-backward-common-test.py "
+                        "checks the transcript reader; a transcript can hold a secret the user pasted",
     "nedschorus-logs/seats/ned-box-helper/absence-claim-trigger-phrases-2026-10-05/out/"
     "precision/labels.csv": "the labelled replies scripts/absence-claim-locator-reminder-"
                             "hook-test.py measures the reminder's precision against",
