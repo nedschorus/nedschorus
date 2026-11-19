@@ -36,7 +36,7 @@ A test run writes its whole report to `test-run-report.txt` in its log directory
 
 ## An nc-test-suite that measures something
 
-An nc-test-suite that measures something, such as a duration or how often a hook's reminder is right, prints the number and the threshold, and passes or fails against the threshold, which its author may set by judgement, saying why in a comment beside it. Work whose result is a number with no pass or fail is not an nc-test-suite; it is a check, and reports as the exit-code page, `docs/nedschorus-wiki/nedschorus-how-a-program-reports-success-failure-and-findings-with-its-exit-code.md`, says.
+An nc-test-suite that measures something, such as a duration or how often a hook's reminder is right, prints the number and the threshold, and passes or fails against the threshold, which its author may set by judgement, saying why in a comment beside it. Work whose result is a number with no pass or fail is not an nc-test-suite; it is a program that does work, and reports as the section "A program that does work" of the exit-code page, `docs/nedschorus-wiki/nedschorus-how-a-program-reports-success-failure-and-findings-with-its-exit-code.md`, says.
 
 ## Canary tests: decided, not yet built
 
