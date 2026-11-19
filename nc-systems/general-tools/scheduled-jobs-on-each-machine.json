@@ -17,6 +17,7 @@
   "jobs": [
     {
       "name": "transcript-mirror-to-log-store",
+      "owner": "reboot-test",
       "program": "scripts/transcript-mirror-to-log-store.py",
       "arguments": ["--failures-only"],
       "output": ".claude/transcript-mirror.log",
@@ -27,6 +28,7 @@
     },
     {
       "name": "log-store-session-dialogs-refresh",
+      "owner": "cold-read-research",
       "program": "scripts/log-store-session-dialogs-refresh-hack.py",
       "arguments": ["--failures-only"],
       "output": ".claude/log-store-session-dialogs-refresh.log",
@@ -36,6 +38,7 @@
     },
     {
       "name": "scheduled-full-test-run-of-main",
+      "owner": "reboot-test",
       "program": "scripts/scheduled-full-test-run-of-main.py",
       "arguments": [],
       "output": ".claude/scheduled-full-test-run-of-main.log",
@@ -50,6 +53,7 @@
     },
     {
       "name": "no-sandbox-test-suites-run-on-main-in-a-quiet-gap",
+      "owner": "reboot-test",
       "program": "scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py",
       "arguments": [],
       "output": ".claude/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.log",
@@ -59,6 +63,7 @@
     },
     {
       "name": "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open",
+      "owner": "fleet-restart-at-login",
       "program": "scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py",
       "arguments": [],
       "output": ".claude/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.log",
@@ -68,6 +73,7 @@
     },
     {
       "name": "clean-worktrees",
+      "owner": "MD-skills",
       "program": "scripts/clean-worktrees.py",
       "arguments": ["--remove"],
       "output": ".claude/clean-worktrees.log",
@@ -82,6 +88,7 @@
     },
     {
       "name": "handoff-agent-crash-watcher",
+      "owner": "fleet-restart-at-login",
       "program": "nc-systems/handoff/handoff-agent-crash-watcher.py",
       "arguments": [],
       "output": ".claude/handoff-agent-crash-watcher.log",
@@ -91,6 +98,7 @@
     },
     {
       "name": "agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write",
+      "owner": "reboot-test",
       "program": "scripts/agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write.py",
       "arguments": [],
       "output": ".claude/agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write.log",
@@ -100,6 +108,7 @@
     },
     {
       "name": "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher",
+      "owner": "MD-skills",
       "program": "nc-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py",
       "arguments": [],
       "output": ".claude/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.log",
@@ -110,6 +119,7 @@
     },
     {
       "name": "uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner",
+      "owner": "MD-skills",
       "program": "nc-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py",
       "arguments": [],
       "output": ".claude/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.log",
@@ -124,6 +134,7 @@
     },
     {
       "name": "guarded-file-versions-and-approvals-store-removed-checkout-copies-prune",
+      "owner": "reboot-test",
       "program": "nc-systems/general-tools/guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.py",
       "arguments": [],
       "output": ".claude/guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.log",
@@ -138,6 +149,7 @@
     },
     {
       "name": "nc-shared-database-nightly-backup-with-integrity-check",
+      "owner": "fleet-restart-at-login",
       "program": "nc-systems/nc-shared-database/nc-shared-database-nightly-backup-with-integrity-check.py",
       "arguments": [],
       "output": ".claude/nc-shared-database-nightly-backup-with-integrity-check.log",
@@ -147,6 +159,7 @@
     },
     {
       "name": "nc-shared-database-newest-backup-copy-to-mac",
+      "owner": "fleet-restart-at-login",
       "program": "nc-systems/nc-shared-database/nc-shared-database-newest-backup-copy-to-mac.py",
       "arguments": [],
       "output": ".claude/nc-shared-database-newest-backup-copy-to-mac.log",
@@ -160,6 +173,7 @@
     },
     {
       "name": "claude-code-temp-folders-of-exited-agent-sessions-delete",
+      "owner": "cold-read-improvement",
       "program": "nc-systems/general-tools/claude-code-temp-folders-of-exited-agent-sessions-delete.py",
       "arguments": ["--then-tmp-and-reviewer-scratch-folders-unchanged-a-day-and-unused-delete"],
       "output": ".claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log",
@@ -169,6 +183,7 @@
     },
     {
       "name": "merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge",
+      "owner": "merge-lane-2",
       "program": "scripts/merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge.py",
       "arguments": [],
       "output": ".claude/merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge.log",
@@ -178,6 +193,7 @@
     },
     {
       "name": "cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write",
+      "owner": "cold-read-research",
       "program": "nc-systems/cold-read/cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write.py",
       "arguments": [],
       "output": ".claude/cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write.log",
@@ -187,6 +203,7 @@
     },
     {
       "name": "claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report",
+      "owner": "reboot-test",
       "program": "nc-systems/general-tools/claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report.py",
       "arguments": [],
       "output": ".claude/claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report.log",
