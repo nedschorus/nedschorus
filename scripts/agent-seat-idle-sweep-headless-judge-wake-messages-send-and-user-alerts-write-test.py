@@ -562,6 +562,138 @@ check("rule 5: a stopped subagent whose only running command is inside that comm
       "is work under way, and the judge is not asked",
       machine.claude_calls() == [], machine.events())
 
+
+def answered_with_a_tool_call_and_idle_again(machine, minutes):
+    """The agent-seat answers a nudge with a tool call, which ends the wait, and its turn ends."""
+    machine.append("alpha", assistant(tool=("Read", {"file_path": "x"}), when=at(minutes)),
+                   assistant("Still waiting.", when=at(minutes)), turn_end(at(minutes)))
+
+
+def ids_handed_to_judge(judge_facts):
+    return sorted(entry["id"] for key in ("running_background_commands", "running_subagents",
+                                          "running_workflows")
+                  for entry in judge_facts.get(key, []))
+
+
+ASKED_ABOUT_ALL = ("Your background command \"Check the mutants\" (bk1) started 29 minutes ago, your "
+                   "subagent a1b2 started 20 minutes ago and your workflow wn6fctb8y started 10 "
+                   "minutes ago. Are they taking longer than expected?")
+machine = Machine()
+machine.seat("alpha", [
+    user("go"),
+    *background_bash_launch("bk1", "python3 scripts/mutants.py", at(-29), "tb1",
+                            description="Check the mutants"),
+    dict(user("", when=at(-20)), toolUseResult={"status": "async_launched", "agentId": "a1b2"}),
+    dict(user("", when=at(-10)), toolUseResult={
+        "status": "async_launched", "taskId": "wn6fctb8y", "taskType": "local_workflow"}),
+    assistant("Waiting."), turn_end()])
+machine.script(judged(True, ASKED_ABOUT_ALL), sent_ok())
+machine.run(0)
+check("rule 5: a message that asks about running work logs the ids it names",
+      [event.get("running_work_asked_about") for event in machine.events("judge_answer")]
+      == [["a1b2", "bk1", "wn6fctb8y"]] and len(machine.events("message_sent")) == 1,
+      machine.events())
+answered_with_a_tool_call_and_idle_again(machine, 1)
+machine.script(judged(True, "m"), sent_ok())
+machine.run(8)
+check("rule 5: once a message has asked about everything still running, the next sweep neither asks "
+      "the judge nor nudges",
+      machine.claude_calls() == [] and len(machine.events("judge_answer")) == 1
+      and len(machine.events("message_sent")) == 1, machine.events())
+machine.append("alpha", *background_bash_launch("bk2", "python3 scripts/x-test.py", at(9), "tb2",
+                                                description="Run the x test suite"),
+               assistant("Waiting.", when=at(9)), turn_end(at(9)))
+machine.script(judged(True, "Your background command \"Run the x test suite\" (bk2) started 7 "
+                            "minutes ago. Is it taking longer than expected?"), sent_ok())
+machine.run(16)
+calls, judge_facts = rule_five_judge_facts(machine)
+check("rule 5: a command started after the others were asked about is handed to the judge alone",
+      ids_handed_to_judge(judge_facts) == ["bk2"]
+      and machine.events("judge_answer")[-1]["running_work_asked_about"] == ["bk2"], calls)
+
+machine = Machine()
+machine.seat("alpha", [
+    user("go"),
+    *background_bash_launch("bk1", "python3 scripts/a.py", at(-30), "tb1", description="A"),
+    assistant("Waiting."), turn_end()])
+machine.log.parent.mkdir(parents=True)
+machine.log.write_text(json.dumps({
+    "at": at(-20), "event": "judge_answer", "agent_seat": "alpha", "rule": 5, "session_id": "s-1",
+    "last_activity": at(-25), "send": True, "reason": "r", "failed": False}) + "\n")
+machine.script(judged(False, reason="r"))
+code, output = machine.run(0)
+calls, judge_facts = rule_five_judge_facts(machine)
+check("rule 5: a judge_answer logged before running_work_asked_about was logged asks about nothing",
+      code == 0 and ids_handed_to_judge(judge_facts) == ["bk1"], (code, output, calls))
+
+machine = Machine()
+machine.seat("alpha", [
+    user("go"),
+    *background_bash_launch("bk1", "python3 scripts/a.py", at(-30), "tb1", description="A"),
+    *background_bash_launch("bk2", "python3 scripts/b.py", at(-30), "tb2", description="B"),
+    assistant("Waiting."), turn_end()])
+machine.script(judged(True, "Your background command \"A\" (bk1) started 30 minutes ago. Is it "
+                            "taking longer than expected?"), sent_ok())
+machine.run(0)
+answered_with_a_tool_call_and_idle_again(machine, 1)
+machine.script(judged(False, reason="r"))
+machine.run(8)
+calls, judge_facts = rule_five_judge_facts(machine)
+check("rule 5: of two running commands, the one the message left out is handed to the judge at the "
+      "next sweep, and the one it asked about is not",
+      machine.events("judge_answer")[0]["running_work_asked_about"] == ["bk1"]
+      and ids_handed_to_judge(judge_facts) == ["bk2"], calls)
+check("rule 5: a verdict not to send asks about nothing",
+      machine.events("judge_answer")[-1]["running_work_asked_about"] == [], machine.events())
+answered_with_a_tool_call_and_idle_again(machine, 9)
+machine.script(judged(False, reason="r"))
+machine.run(16)
+calls, judge_facts = rule_five_judge_facts(machine)
+check("rule 5: a command a verdict not to send was handed is handed to the judge again",
+      ids_handed_to_judge(judge_facts) == ["bk2"], calls)
+
+machine = Machine()
+machine.seat("alpha", [
+    user("go"),
+    *background_bash_launch("bk1", "python3 scripts/a.py", at(-30), "tb1", description="A"),
+    assistant("Waiting."), turn_end()])
+machine.script(judged(True, "Your background command \"A\" (bk1) started 30 minutes ago. Is it "
+                            "taking longer than expected?"), sent_ok())
+machine.run(0)
+machine.append("alpha", *background_bash_launch("bk2", "timeout 1h python3 scripts/b.py", at(1),
+                                                "tb2", description="B"),
+               assistant("Waiting.", when=at(1)), turn_end(at(1)))
+machine.script(judged(True, "m"), sent_ok())
+machine.run(8)
+check("rule 5: a command already asked about beside one inside its own timeout: the judge is not "
+      "asked", machine.claude_calls() == [] and len(machine.events("judge_answer")) == 1,
+      machine.events())
+
+machine = Machine()
+transcript = machine.seat("alpha", [
+    user("go"),
+    dict(user("", when=at(-60)), toolUseResult={"status": "async_launched", "agentId": "a1b2"}),
+    user("<task-notification>\n<task-id>a1b2</task-id>\n<status>completed</status>\n<note>the "
+         "result below may be interim.</note>\n<result>Started the check.</result>\n"
+         "</task-notification>", when=at(-40)),
+    assistant("Waiting on the subagent."), turn_end()])
+(transcript.with_suffix("") / "subagents").mkdir(parents=True)
+(transcript.with_suffix("") / "subagents" / "agent-a1b2.jsonl").write_text("".join(
+    json.dumps(record) + "\n" for record in [
+        *background_bash_launch("b3c4", "python3 scripts/surviving-mutants-check.py", at(-50),
+                                "tb1"),
+        assistant("Started the check.", when=at(-41))]))
+machine.script(judged(True, "Your subagent a1b2 reported 40 minutes ago. Your subagent's background "
+                            "command (b3c4) started 50 minutes ago. Is it still needed?"), sent_ok())
+machine.run(0)
+answered_with_a_tool_call_and_idle_again(machine, 1)
+machine.script(judged(True, "m"), sent_ok())
+machine.run(8)
+check("rule 5: a stopped subagent whose own running command was asked about is not asked about "
+      "again",
+      machine.events("judge_answer")[0]["running_work_asked_about"] == ["b3c4"]
+      and machine.claude_calls() == [], machine.events())
+
 # --- rule 2: promises and announced actions -------------------------------------------------------
 PROMISE = "I'll report when PR 927 merges."
 machine = Machine()
