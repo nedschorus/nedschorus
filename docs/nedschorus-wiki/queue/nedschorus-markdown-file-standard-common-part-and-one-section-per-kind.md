@@ -9,7 +9,7 @@ This page is the standard for the project's Markdown files: a common part that e
 - **One canonical location for each fact.** Link to the document or file that holds a fact instead of restating it. Leave to the code what the code states, such as flags, exit codes, message texts and file formats: name the file and stop.
 - **A reason is one clause**, attached to the statement it explains, and only where it helps the reader act. Do not defend a decision or list rejected alternatives, unless the kind's section asks for them.
 - **Headings.** Where a kind's section lists headings, the file has each one that section does not make optional or conditional, and keeps that section's order. A heading or line that a program reads, such as `## Provisional additions (not yet vetted by the user)` or a front matter line, keeps its exact text.
-- **Length.** Where a kind's section gives a range, it is in words as `wc -w` counts them. A file over its range usually holds something its section leaves out: cut that first.
+- **Length.** Where a kind's section gives a length, it is a cap in words as `wc -w` counts them, not a target. A file or entry over its cap usually holds something its section leaves out: cut that first.
 - **Kept true.** When the thing a file describes changes, change the sentence that describes it. Do not append a dated note, an "Update:" paragraph or an "as of" line beside the old sentence.
 - **Exemptions and precedence.** A file whose job is to record what happened, such as a log, walk-minutes, a report, a commit message or a pull request description, is exempt from the rules State what is and Kept true, and a word-for-word copy, such as a frozen-copy, follows none of this standard. Where a kind's section asks for something a common-part rule tells writers to leave out, such as the exact command in a bug's `## Reproduction`, the kind's section wins.
 
@@ -36,7 +36,7 @@ A GHI-MD leaves out:
 - A record of how a decision was reached. A user-ruling the work rests on is stated as what is decided, in the section it governs, followed by its walk-minutes citation in parentheses, because an agent must verify it before it acts against it.
 - Data, measurements and working notes: they go in supporting-documents that the GHI links, as `/ghi-write` step 2 says.
 
-Length: 150 to 600 words; Outcome and Provisional additions aside. A GHI-MD over 1,000 words usually holds a design, which goes in a GHI-MD of its own that carries `kind: design`, or material for a supporting-document.
+Length: at most 600 words; Outcome and Provisional additions aside. A GHI-MD over 1,000 words usually holds a design, which goes in a GHI-MD of its own that carries `kind: design`, or material for a supporting-document.
 
 ## Designs
 
@@ -60,7 +60,7 @@ A design leaves out:
 - Detail the design-contract or the test-design holds.
 - Once its code has merged, any detail the code now states. From then on, a change to what the design promises goes through a GHI-MD that is a change request.
 
-Length: 800 to 3,000 words for a system, 300 to 1,200 for a single program. A design over 4,000 words usually holds two designs, or detail that belongs in the design-contract, the test-design or the code.
+Length: at most 3,000 words for a system, at most 1,200 for a single program. A design over 4,000 words usually holds two designs, or detail that belongs in the design-contract, the test-design or the code.
 
 ## The project glossary
 
@@ -78,7 +78,7 @@ Every entry follows one template, on one line, in which `[…]` marks an optiona
 
 An entry leaves out history, user-rulings, quotations of the user, the reasons for the term or the thing it names, how-to steps, design detail, a list of the term's cases, and anything the linked document says.
 
-Length: 15 to 50 words an entry. An entry over 60 words holds detail that belongs in the linked document.
+Length: at most 50 words an entry. An entry over 60 words holds detail that belongs in the linked document.
 
 ## Seat-briefs
 
@@ -98,7 +98,7 @@ A seat-brief leaves out:
 - How the agent-seat was started, who asked for it, and the incidents behind its rules.
 - Facts about another agent-seat or a machine that change on their own, such as which agent-seat merges pull requests; the seat-brief names the document that holds them.
 
-Length: 150 to 800 words. A seat-brief over 1,000 words holds procedures that belong in a skill or a program. When a skill or a program takes over a rule, the rule leaves the seat-brief in the same change.
+Length: at most 800 words. A seat-brief over 1,000 words holds procedures that belong in a skill or a program. When a skill or a program takes over a rule, the rule leaves the seat-brief in the same change.
 
 ## Handoff next step files
 
@@ -112,7 +112,7 @@ It contains, in this order:
 
 A next step file leaves out what this agent-session did, the text of an approval-walk item or a task, which their files hold, the times and wording of the user's replies unless the successor acts on them, and the reasons behind the first action unless the successor would otherwise act differently.
 
-Length: 100 to 400 words. A next step file over 500 words holds work that belongs in tasks.
+Length: at most 400 words. A next step file over 500 words holds work that belongs in tasks.
 
 ## Wiki pages
 
@@ -128,4 +128,4 @@ A page contains, in this order:
 
 A wiki page leaves out front matter or opening lines that say which approval-walk or user-ruling produced the page, status lines such as "status: ruled" or "streamlined on", the approval-walk or user-ruling behind each rule, and examples taken from past events when a current file or command would serve.
 
-Length: a reference page as long as its content, one line or row for each rule; a how-to or explanation page 300 to 2,000 words. A page over 3,000 words usually holds two pages.
+Length: a reference page as long as its content, one line or row for each rule; a how-to or explanation page at most 2,000 words. A page over 3,000 words usually holds two pages.
