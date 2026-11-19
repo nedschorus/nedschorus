@@ -168,3 +168,6 @@ Each one-shot canary test's directory, and each scheduled canary test's run log,
 - Where whoever investigates a failed scheduled canary test finds what the canary runner printed once the next daily full test run has replaced the test runner's log, to be settled with open question 2.
 - How an author finds which scheduled canary tests protect the code a change touches, such as a constant in each test's file naming that code, to be settled when the canary runner is built.
 - How rule 9's start-of-run cleanup tells a leftover from an object of a run of the same test still going on, to be settled with the first unsandboxed canary test that makes remote objects.
+- Whether "one at a time" means one canary test at a time within one test run or on the whole machine, to be settled when the canary runner is built.
+- Where a scheduled canary test lives when the code of two nc-systems, or of an nc-system and `scripts/`, relies on the behaviour, to be settled when the first such canary test is written.
+- How a canary test of `gh` reaches gh's real sign-in, which gh reads from `~/.config/gh/`, where the canary runner plants a fake file, or from `GH_TOKEN`, which the test runner removes from every nc-test-suite's environment, to be settled with the first canary test of `gh`, together with open question 12.
