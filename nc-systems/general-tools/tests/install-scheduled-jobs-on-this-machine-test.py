@@ -1349,7 +1349,8 @@ with tempfile.TemporaryDirectory() as temporary:
               f"{FIXTURE_TABLE_PATH} through a pull request.")
           and printed.splitlines()[-2] == (
               "When a job NOT IN THE TABLE should still run, add its entry to "
-              f"{FIXTURE_TABLE_PATH} through a pull request.")
+              f"{FIXTURE_TABLE_PATH} through a pull request, before the next pull into this "
+              "machine's reference-checkout, which takes off every job NOT IN THE TABLE.")
           and printed.splitlines()[-1] == (
               "To learn whether a job was retired on purpose, run "
               f"`git log -p -- {FIXTURE_TABLE_PATH}` in the clone."), printed)

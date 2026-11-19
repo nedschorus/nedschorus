@@ -2,8 +2,9 @@
 # Each program does nothing outside a reference-checkout. The first restarts
 # the nc-shared-database service when a merge into ned-box's reference-checkout
 # changes the service; the second runs the scheduled-jobs installer with
-# --install in either machine's reference-checkout, and hands a failed install
-# to the agent-seat that owns the installer. Both run whatever the other
+# --install, then --remove-not-in-table, in either machine's reference-checkout,
+# and hands a failed step to the agent-seat that owns the installer. Both
+# programs run whatever the other
 # exits, and the hook exits 1 when either failed: git ignores the status, but
 # handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py
 # runs this hook and keeps it for a rerun only on a nonzero status. Git passes

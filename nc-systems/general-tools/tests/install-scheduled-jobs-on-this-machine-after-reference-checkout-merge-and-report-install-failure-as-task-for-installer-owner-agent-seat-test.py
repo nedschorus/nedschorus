@@ -3,7 +3,8 @@
 and scripts/git-client-side-hooks/post-merge, which runs it.
 
 No case runs the real installer or touches a crontab or launchd: a stand-in
-installer records each call and exits as the case asks, and the task lists
+installer records each call and exits as the case asks for each of --install
+and --remove-not-in-table, and the task lists
 are under a temporary directory. Each case runs in a temporary repository
 that the case names as ned-box's or the Mac's reference-checkout, or as
 neither. The last cases merge through the real post-merge hook.
@@ -53,6 +54,16 @@ def check(name, condition, detail=None):
 STAND_IN_INSTALLER = """import os, sys
 with open(os.environ["STAND_IN_INSTALLER_LOG"], "a") as log:
     log.write(" ".join(sys.argv[1:]) + "\\n")
+if sys.argv[1:] == ["--remove-not-in-table"]:
+    code = int(os.environ.get("STAND_IN_REMOVE_NOT_IN_TABLE_EXIT", "0"))
+    if code == 1:
+        print("KEPT: not in the table — the crontab line 0 3 * * * /usr/bin/python3 "
+              "/clone/scripts/retired.py; /usr/bin/other also runs a job that is not a program "
+              "of the clone, so this program left the line in place.")
+    elif code:
+        print("install-scheduled-jobs-on-this-machine: not run — the crontab could not be read.",
+              file=sys.stderr)
+    sys.exit(code)
 code = int(os.environ.get("STAND_IN_INSTALLER_EXIT", "0"))
 if code == 0:
     print("unchanged: transcript-mirror-to-log-store — the crontab holds the table's line.")
@@ -101,9 +112,10 @@ with tempfile.TemporaryDirectory() as scratch:
                 path.unlink()
 
     def run(ned_box_reference=None, installer_exit=0, task_lists_directory=None,
-            mac_reference=None, failed_line=None, keep_tasks=False):
+            mac_reference=None, failed_line=None, keep_tasks=False, remove_exit=0):
         reset(keep_tasks)
         os.environ["STAND_IN_INSTALLER_EXIT"] = str(installer_exit)
+        os.environ["STAND_IN_REMOVE_NOT_IN_TABLE_EXIT"] = str(remove_exit)
         environment = {**os.environ, **seams, NED_BOX_OVERRIDE: str(ned_box_reference or elsewhere)}
         # The installer inherits this process's environment, not the one main() reads.
         os.environ.pop("STAND_IN_INSTALLER_FAILED_LINE", None)
@@ -137,24 +149,28 @@ with tempfile.TemporaryDirectory() as scratch:
           (code, calls, printed, errors))
 
     code, calls, printed, errors = run(ned_box_reference=repository)
-    check("in ned-box's reference-checkout the installer runs with --install; its success "
-          "prints nothing and opens no task",
-          code == 0 and calls == ["--install"] and printed == errors == "" and tasks() == [],
+    check("in ned-box's reference-checkout the installer runs with --install, then with "
+          "--remove-not-in-table; their success prints nothing and opens no task",
+          code == 0 and calls == ["--install", "--remove-not-in-table"] and printed == errors == "" and tasks() == [],
           (code, calls, printed, errors))
 
     code, calls, printed, errors = run(ned_box_reference=repository, installer_exit=1)
     written = tasks()
-    check("a failed install on ned-box becomes one pending task for reboot-test, with the exit "
-          "code and the installer's output, and nothing on stderr for the user's display",
+    check("a failed install on ned-box is not followed by --remove-not-in-table, and becomes one "
+          "pending task for reboot-test naming the --install step, with the exit code and the "
+          "installer's output, and nothing on stderr for the user's display",
           code == 0 and calls == ["--install"] and errors == "" and printed == ""
           and len(written) == 1 and written[0]["status"] == "pending"
           and written[0]["subject"] == SUBJECT
-          and "exited 1" in written[0]["description"]
+          and "the --install step failed: it exited 1, so ned-box may not run every job"
+              in written[0]["description"]
           and "FAILED: the crontab write did not hold" in written[0]["description"]
           and f"then run `python3 {repository}/nc-systems/general-tools/"
-              "install-scheduled-jobs-on-this-machine.py --install` on ned-box"
-              in written[0]["description"]
-          and "once it exits 0 it marks this task completed" in written[0]["description"],
+              "install-scheduled-jobs-on-this-machine.py --install && python3 "
+              f"{repository}/nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py "
+              "--remove-not-in-table` on ned-box" in written[0]["description"]
+          and "once both exit 0 it marks this task completed" in written[0]["description"]
+          and "KEPT line" not in written[0]["description"],
           (code, errors, written))
 
     code, calls, printed, errors = run(ned_box_reference=repository, installer_exit=1,
@@ -191,7 +207,7 @@ with tempfile.TemporaryDirectory() as scratch:
     written = tasks()
     check("when the open task cannot be rewritten, the FAILED message goes to stderr with exit "
           "1, and the task keeps its earlier description",
-          code == 1 and "FAILED — after a merge into ned-box's reference-checkout" in errors
+          code == 1 and "FAILED — after the latest merge into ned-box's reference-checkout" in errors
           and "writing the task into the task list directory" in errors
           and "PermissionError" in errors and "FAILED: cannot reach the task" in errors
           and len(written) == 1 and "FAILED: with several open" in written[0]["description"],
@@ -199,7 +215,46 @@ with tempfile.TemporaryDirectory() as scratch:
 
     code, calls, printed, errors = run(ned_box_reference=repository, keep_tasks=True)
     written = tasks()
-    check("a successful install marks the open task completed, and prints nothing",
+    check("when --install and --remove-not-in-table both succeed, the open task is marked "
+          "completed, and nothing is printed",
+          code == 0 and errors == printed == "" and calls == ["--install", "--remove-not-in-table"] and len(written) == 1
+          and written[0]["status"] == "completed", (code, errors, written))
+
+    code, calls, printed, errors = run(ned_box_reference=repository, remove_exit=1)
+    written = tasks()
+    check("--remove-not-in-table failing after --install succeeds, with no task open, raises a "
+          "pending task naming the --remove-not-in-table step, its KEPT line and what to do "
+          "about the line",
+          code == 0 and errors == printed == "" and calls == ["--install", "--remove-not-in-table"]
+          and len(written) == 1 and written[0]["status"] == "pending"
+          and written[0]["subject"] == SUBJECT
+          and "which it runs only after `--install` exits 0, and the --remove-not-in-table step "
+              "failed: it exited 1, so ned-box may still run a job" in written[0]["description"]
+          and "KEPT: not in the table — the crontab line" in written[0]["description"]
+          and "ask the user to edit that line by hand in ned-box's crontab"
+              in written[0]["description"]
+          and "the --install step failed" not in written[0]["description"],
+          (code, errors, written))
+
+    code, calls, printed, errors = run(ned_box_reference=repository, installer_exit=1,
+                                       keep_tasks=True)
+    code, calls, printed, errors = run(ned_box_reference=repository, remove_exit=2,
+                                       keep_tasks=True)
+    written = tasks()
+    check("--remove-not-in-table failing after --install succeeds leaves the open --install "
+          "task open, not completed, with its description replaced by the "
+          "--remove-not-in-table failure",
+          code == 0 and errors == printed == "" and calls == ["--install", "--remove-not-in-table"]
+          and len(written) == 1 and written[0]["status"] == "pending"
+          and "the --remove-not-in-table step failed: it exited 2" in written[0]["description"]
+          and "not run — the crontab could not be read" in written[0]["description"]
+          and "the --install step failed" not in written[0]["description"],
+          (code, errors, written))
+
+    code, calls, printed, errors = run(ned_box_reference=repository, keep_tasks=True)
+    written = tasks()
+    check("once both steps succeed again, the task the --remove-not-in-table failure kept open "
+          "is marked completed",
           code == 0 and errors == printed == "" and len(written) == 1
           and written[0]["status"] == "completed", (code, errors, written))
 
@@ -234,28 +289,50 @@ with tempfile.TemporaryDirectory() as scratch:
                                        task_lists_directory=not_a_directory)
     check("when the task cannot be written, a FAILED message with the installer's output goes "
           "to stderr, which checkout-freshness-catch-up.py shows the user, and the exit is 1",
-          code == 1 and "FAILED — after a merge into ned-box's reference-checkout" in errors
+          code == 1 and "FAILED — after the latest merge into ned-box's reference-checkout" in errors
           and "writing the task into the task list directory" in errors
           and "NotADirectoryError" in errors
           and "\nIf you are reboot-test, put right, on ned-box, what stopped that write, "
               f"such as the permissions of {not_a_directory}/nedschorus-reboot-test-tasks" in errors
           and f"Then run `cd {repository} && python3 {after_merge.PROGRAM}` on ned-box, which runs "
-              "the install again.\nIf that install fails again, the program writes the failure as a "
+              "both steps again.\nIf a step fails again, the program writes the failure as a "
               "task on your task list and exits 0 with nothing printed" in errors
-          and "\nIf that install exits 0, the program prints nothing, writes no task and exits 0"
+          and "\nIf both steps exit 0, the program prints nothing, writes no task and exits 0"
               in errors
           and "If you are any other agent, send this whole message to reboot-test with Claude Code's "
               "SendMessage tool, addressed to reboot-test" in errors
           and "If you are the user, paste this whole message into reboot-test's session." in errors
           and "FAILED: the crontab write did not hold" in errors, (code, errors))
 
+    code, calls, printed, errors = run(ned_box_reference=repository, remove_exit=1,
+                                       task_lists_directory=not_a_directory)
+    check("when a --remove-not-in-table failure cannot be written as a task, the FAILED message "
+          "on stderr names the --remove-not-in-table step and the KEPT line, and the exit is 1",
+          code == 1 and calls == ["--install", "--remove-not-in-table"]
+          and "FAILED — after the latest merge into ned-box's reference-checkout" in errors
+          and "the --remove-not-in-table step failed: it exited 1" in errors
+          and "NotADirectoryError" in errors
+          and "If you are reboot-test and the installer printed a KEPT line, that crontab line "
+              "runs a job the table does not give ned-box" in errors
+          and "KEPT: not in the table — the crontab line" in errors, (code, errors))
+
     code, calls, printed, errors = run(mac_reference=repository)
-    check("in the Mac's reference-checkout the installer runs with --install too",
-          code == 0 and calls == ["--install"] and errors == "", (code, calls, errors))
+    check("in the Mac's reference-checkout the installer runs with --install and "
+          "--remove-not-in-table too",
+          code == 0 and calls == ["--install", "--remove-not-in-table"] and errors == "", (code, calls, errors))
+    code, calls, printed, errors = run(mac_reference=repository, remove_exit=1)
+    check("a failed --remove-not-in-table on the Mac writes no task and prints the FAILED "
+          "message naming the --remove-not-in-table step",
+          code == 1 and tasks() == [] and "FAILED — after the latest merge into the Mac's" in errors
+          and "the --remove-not-in-table step failed: it exited 1, so the Mac may still run a job"
+              in errors
+          and "tell the user that the scheduled-jobs installer's --remove-not-in-table step "
+              "failed on the Mac" in errors, (code, errors))
     code, calls, printed, errors = run(mac_reference=repository, installer_exit=1)
     check("a failed install on the Mac writes no task, since reboot-test's task list is on "
           "ned-box, and prints the FAILED message",
-          code == 1 and tasks() == [] and "FAILED — after a merge into the Mac's" in errors
+          code == 1 and tasks() == [] and "FAILED — after the latest merge into the Mac's" in errors
+          and "the --install step failed" in errors
           and "reboot-test's task list is on ned-box" in errors, (code, errors))
 
     outside = scratch / "not-a-repository"
