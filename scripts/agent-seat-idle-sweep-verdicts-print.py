@@ -7,7 +7,10 @@ due-time-passes.md, § The idle sweep). It decides only what code decides, and i
 it sends no message, starts no headless agent-session, writes no alert and keeps no log, so a
 verdict here changes nothing on the machine. The second build-slice,
 scripts/agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write.py, calls
-verdict_for_seat itself, judges the cases marked "judge", sends, and runs on a schedule.
+verdict_for_seat itself, judges the cases marked "judge", sends, and runs on a schedule; before it
+escalates a wait a rule 2 message was sent on, it calls
+transcript_tool_calls_and_assistant_texts_since for what the agent-seat did since the sentences
+that wait's messages named.
 
 What it reads, for each agent-seat that has a handoff-supervisor state file
 (`<handoff directory>/<seat>-supervisor-state.json`):
@@ -20,9 +23,9 @@ What it reads, for each agent-seat that has a handoff-supervisor state file
   in `~/.claude.json`;
 - GitHub, through `gh`, for the prerequisites of open tasks, only when rule 4 needs the answer.
 
-It prints one JSON object per agent-seat, one per line. Each holds what the later slice needs
-without reading anything again: the session id, the transcript path, the last time a token was
-spent and the file that showed it, what is running and since when, Workflow-tool runs included (a subagent that reported and
+It prints one JSON object per agent-seat, one per line. Each holds what the later slice needs to
+decide the agent-seat's rule without reading anything again: the session id, the transcript path,
+the last time a token was spent and the file that showed it, what is running and since when, Workflow-tool runs included (a subagent that reported and
 stopped while background commands it launched still run gets the time of its report under
 `stopped_at` and a list of those commands under `own_running_background_commands`), the matched sentences with the code's reading of each, the agent-seat's last message, the tool calls a judge of the sentences
 looks through, the rule that applies and its decision.
@@ -620,6 +623,24 @@ def tool_calls_since_start_of_earliest_turn_with_sentence_to_judge(facts, judged
     return [{"time": iso(moment), "name": name,
              "input": json.dumps(tool_input, ensure_ascii=False)[:fields.TOOL_CALL_INPUT_CHARACTERS_KEPT]}
             for moment, name, tool_input in facts.tool_calls if moment and moment >= earliest]
+
+
+def transcript_tool_calls_and_assistant_texts_since(path, since):
+    """Every tool call, its input cut as the judge's other tool calls are, and every assistant text
+    in the transcript written after since: what the agent-seat did, a reply in text included.
+    Raises ReadFailure as transcript_records does."""
+    tool_calls, texts = [], []
+    for record in transcript_records(path):
+        moment = parse_time(record.get("timestamp"))
+        if moment is None or moment <= since:
+            continue
+        for block in tool_uses(record):
+            tool_calls.append({"time": iso(moment), "name": block.get("name"),
+                               "input": json.dumps(block.get("input") or {}, ensure_ascii=False)[
+                                   :fields.TOOL_CALL_INPUT_CHARACTERS_KEPT]})
+        if record.get("type") == "assistant" and message_text(record).strip():
+            texts.append({"time": iso(moment), "text": message_text(record)})
+    return {"tool_calls": tool_calls, "assistant_texts": texts}
 
 
 def rules_three_to_five(verdict, put_off_at, checker, task_directory):

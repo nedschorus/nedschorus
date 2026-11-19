@@ -143,6 +143,14 @@ def judged(send, message="", reason="r"):
     return {"answer": {"send": send, "message": message, "reason": reason}}
 
 
+def rechecked(*backed):
+    """The re-check judge's answer at a rule 2 wait's escalation step: backed or not for each
+    sentence the wait's messages named, in order."""
+    return {"answer": {"sentences": [{"index": index, "backed": is_backed,
+                                      "reason": f"sentence {index} {'backed' if is_backed else 'not backed'}"}
+                                     for index, is_backed in enumerate(backed)]}}
+
+
 DO_NOT_REPLY = "Do not reply to this message: its sender has exited, so a reply fails."
 KEEP_IT = (f'The text ends with the sentence "{DO_NOT_REPLY}" That sentence is written to the '
            "agent-seat, not to you, and is part of the message: keep it.")
@@ -491,11 +499,12 @@ machine.run(3)
 check("rule 2: a sentence is raised once only", not machine.claude_calls(), machine.claude_calls())
 check("rule 2: nothing to do does not end the wait a promise message started",
       not machine.events("wait_ended"), machine.events("wait_ended"))
-machine.script(sent_ok())
+machine.script(rechecked(False), sent_ok())
 machine.run(16)
 calls = machine.claude_calls()
-check("rule 2: still idle 15 minutes after the promise message: the escalation is sent",
-      len(calls) == 1 and "please check" in calls[0]["prompt"]
+check("rule 2: still idle 15 minutes after the promise message, the re-check finding the promise "
+      "unbacked: the escalation is sent",
+      len(calls) == 2 and "please check" in calls[1]["prompt"]
       and [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"],
       machine.events("wait_step"))
 machine.script()
@@ -518,10 +527,11 @@ check("rule 2: a promise given in answer to the message is raised on the open wa
       len(machine.claude_calls()) == 1 and SECOND_PROMISE in machine.claude_calls()[0]["prompt"]
       and [event["step"] for event in machine.events("wait_step")] == ["nudge"]
       and machine.events("wait_step")[0]["at"] == at(0), machine.events("wait_step"))
-machine.script(sent_ok())
+machine.script(rechecked(False, False), sent_ok())
 machine.run(16)
 check("rule 2: the second promise did not put off the escalation",
-      [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"],
+      [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"]
+      and machine.events("message_sent")[-1]["step"] == "escalate",
       machine.events("wait_step"))
 
 machine = Machine()
@@ -533,12 +543,13 @@ machine.append("alpha", cross_session("You promised", at(0.5)),
                assistant(SECOND_PROMISE, at(1)), turn_end(at(1)))
 machine.script(sent_ok())
 machine.run(7)
-machine.script(sent_ok())
+machine.script(rechecked(False, False), sent_ok())
 machine.run(16)
 check("rule 2: a tool call and a fresh promise in answer to the message do not end the wait, "
       "and the escalation is sent",
       not machine.events("wait_ended")
-      and [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"],
+      and [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"]
+      and machine.events("message_sent")[-1]["step"] == "escalate",
       (machine.events("wait_step"), machine.events("wait_ended")))
 
 # A promise sent on a wait a rule 5 or rule 3 message opened keeps that wait going through rule 4.
@@ -566,13 +577,14 @@ for opener in ("rule 5", "rule 3"):
           not machine.events("wait_ended")
           and [event["step"] for event in machine.events("wait_step")] == ["nudge", "promise"],
           machine.events())
-    machine.script(sent_ok())
+    machine.script(rechecked(False), sent_ok())
     machine.run(16)
     machine.script()
     machine.run(32)
     check(f"a promise sent on a {opener} wait: the escalation, then the user is told",
           [event["step"] for event in machine.events("wait_step")]
           == ["nudge", "promise", "escalate", "tell_user"]
+          and machine.events("message_sent")[-1]["step"] == "escalate"
           and any("after a nudge and an escalation" in alert["title"] for alert in machine.alerts()),
           (machine.events("wait_step"), machine.alerts()))
 
@@ -619,14 +631,17 @@ def promise_wait_after(transcript, *answer_records):
                    *answer_records, assistant("Recorded.", at(1)), turn_end(at(1)))
     machine.script()
     machine.run(7)
-    machine.script(sent_ok())
+    machine.script(rechecked(*[False] * sum(len(event["sentences"])
+                                            for event in machine.events("promise_message"))),
+                   sent_ok())
     machine.run(16)
     return machine
 
 
 def waited_on_to_escalation(machine):
     return (not machine.events("wait_ended")
-            and [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"])
+            and [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"]
+            and machine.events("message_sent")[-1]["step"] == "escalate")
 
 
 # A task call made in an earlier turn, before the promise message, backs nothing that message asks.
@@ -699,7 +714,8 @@ machine.run(7)
 machine.script(sent_ok())
 machine.run(16)
 check("rule 2: a task call does not end a wait whose promise message was logged without its "
-      "sentences", waited_on_to_escalation(machine),
+      "sentences, and with no sentences to re-check the escalation is sent without the re-check",
+      waited_on_to_escalation(machine) and len(machine.claude_calls()) == 1,
       (machine.events("wait_step"), machine.events("wait_ended")))
 machine = Machine()
 machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
@@ -803,13 +819,178 @@ machine.append("alpha", cross_session(machine.events("message_sent")[-1]["text"]
                assistant("Recorded.", at(1)), turn_end(at(1)))
 machine.script()
 machine.run(7)
-machine.script(sent_ok())
+check("rule 2: task calls do not end a wait whose message also named an announced action, which "
+      "only the judge can find done", not machine.events("wait_ended"), machine.events("wait_ended"))
+machine.script(rechecked(True, False), sent_ok())
 machine.run(16)
-check("rule 2: a task call does not end a wait whose message also named an announced action, "
-      "which only the judge can find done",
-      not machine.events("wait_ended")
-      and [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"],
-      (machine.events("wait_step"), machine.events("wait_ended")))
+check("rule 2: the re-check finds the promise backed by its task and the announced action not "
+      "done: the escalation is sent",
+      not machine.events("wait_ended") and len(machine.claude_calls()) == 2
+      and [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"]
+      and machine.events("message_sent")[-1]["step"] == "escalate"
+      and [answer["backed"] for answer in machine.events("judge_answer")[-1]["answers"]]
+      == [True, False],
+      (machine.events("wait_step"), machine.events("wait_ended"), machine.events("judge_answer")))
+
+# --- rule 2: the re-check at the escalation step --------------------------------------------------
+# An agent-seat that announced an action, then deferred it correctly: it told the user the change
+# waits on another approval-walk item, and recorded a task whose prerequisites name that item.
+EDITOR_SENTENCE = ("I'll start its change together with item 59.3's, because all three edits land "
+                   "on the same line of the skill and go in one topic branch.")
+EDITOR_SECOND_SENTENCE = "Next I'm opening the pull request for item 58."
+EDITOR_REPLY = ("The skill change for item 59.2 starts when you answer item 59.3, because both items "
+                "edit the same line of the skill and go on one branch. I logged it as task #389, so "
+                "the idle sweep can see what it waits on.")
+EDITOR_DEFERRAL = [
+    assistant(tool=("TaskCreate", {"subject": "Items 59.2 and 59.3: edit the skill on one topic "
+                                              "branch"}), when=at(0.3), tool_id="t-389"),
+    task_result("t-389", "Task #389 created successfully: Items 59.2 and 59.3: edit the skill on "
+                "one topic branch", at(0.31)),
+    assistant(tool=("TaskUpdate", {"taskId": "389", "metadata": {"prerequisites": [
+        {"approval_walk_item_decided": {
+            "approval_walk_minutes_file_path": "docs/walk/backlog-decisions-minutes.md",
+            "approval_walk_item_heading": "Item 59.3 of 117"}}]}}), when=at(0.4),
+              tool_id="t-389-update"),
+    task_result("t-389-update", "Updated task #389 metadata", at(0.41)),
+    assistant(EDITOR_REPLY, at(0.5)), turn_end(at(0.5))]
+
+
+def first_judge_facts(calls):
+    """The JSON facts that end the first call's prompt, or {} when that prompt is not a judge's."""
+    prompt = calls[0]["prompt"] if calls else ""
+    return json.loads(prompt[prompt.rindex("\n{") + 1:]) if "\n{" in prompt else {}
+
+
+def editor_deferred_machine(message):
+    """A machine whose agent-seat was nudged at minute 0 about the sentences of message, and
+    answered by deferring them as task #389 and telling the user so."""
+    machine = Machine()
+    machine.seat("alpha", [user("present item 59.3"), assistant(message), turn_end()])
+    sentence_count = len([sentence for sentence in (EDITOR_SENTENCE, EDITOR_SECOND_SENTENCE)
+                          if sentence in message])
+    machine.script(rechecked(*[False] * sentence_count), sent_ok())
+    machine.run(0)
+    machine.append("alpha", cross_session(machine.events("message_sent")[-1]["text"], at(0.2)),
+                   *EDITOR_DEFERRAL)
+    return machine
+
+
+machine = editor_deferred_machine(f"Item 59.2 is approved as obvious. {EDITOR_SENTENCE}")
+machine.script()
+machine.run(7)
+check("re-check: before the escalation step, the deferral ends no wait whose message named an "
+      "announced action", not machine.events("wait_ended") and not machine.claude_calls(),
+      (machine.events("wait_ended"), machine.claude_calls()))
+machine.script(rechecked(True))
+machine.run(16)
+calls = machine.claude_calls()
+recheck_facts = first_judge_facts(calls)
+check("re-check: the judge is handed the raised sentence, the deferral's task calls and the text "
+      "telling the user, and no tool",
+      len(calls) == 1 and calls[0]["argv"][calls[0]["argv"].index("--tools") + 1] == ""
+      and [item["sentence"] for item in recheck_facts.get("sentences", [])] == [EDITOR_SENTENCE]
+      and [call["name"] for call in recheck_facts.get("tool_calls_since", [])]
+      == ["TaskCreate", "TaskUpdate"]
+      and "approval_walk_item_decided" in recheck_facts["tool_calls_since"][-1]["input"]
+      and [call["task"] for call in recheck_facts.get(
+          "successful_task_tool_calls_setting_prerequisites_or_blocked_by_since", [])] == ["389"]
+      and EDITOR_REPLY in [item["text"] for item in recheck_facts.get("text_messages_since", [])],
+      calls)
+check("re-check backs every sentence: the wait ends with the judge's reasons, and no escalation is "
+      "sent",
+      [(event["why"], event.get("sentences"), event.get("judge_reasons"))
+       for event in machine.events("wait_ended")]
+      == [("the judge found every sentence its promise messages named backed", [EDITOR_SENTENCE],
+           ["sentence 0 backed"])]
+      and [event["step"] for event in machine.events("wait_step")] == ["nudge"]
+      and [event["step"] for event in machine.events("message_sent")] == ["nudge"],
+      (machine.events("wait_ended"), machine.events("wait_step"), machine.events("message_sent")))
+machine.script()
+machine.run(32)
+check("re-check backs every sentence: no user-alert follows, and the re-check is not asked again",
+      not machine.alerts() and not machine.claude_calls(), (machine.alerts(), machine.claude_calls()))
+
+machine = editor_deferred_machine(
+    f"Item 59.2 is approved as obvious. {EDITOR_SENTENCE} {EDITOR_SECOND_SENTENCE}")
+machine.script(rechecked(True, False), sent_ok())
+machine.run(16)
+calls = machine.claude_calls()
+check("re-check finds one sentence of two unbacked: the escalation is sent after it",
+      len(calls) == 2 and "please check" in calls[1]["prompt"] and not machine.events("wait_ended")
+      and [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"]
+      and machine.events("message_sent")[-1]["step"] == "escalate",
+      (calls, machine.events("wait_step"), machine.events("wait_ended")))
+machine.script()
+machine.run(31.5)
+check("an escalated wait reaches the user-alert without another re-check",
+      not machine.claude_calls()
+      and [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate", "tell_user"]
+      and any("after a nudge and an escalation" in alert["title"] for alert in machine.alerts()),
+      (machine.claude_calls(), machine.events("wait_step"), machine.alerts()))
+
+machine = editor_deferred_machine(f"Item 59.2 is approved as obvious. {EDITOR_SENTENCE}")
+machine.script({"exit": 2, "stderr": "the re-check judge failed"}, sent_ok())
+code, _ = machine.run(16)
+check("the re-check judge fails: alerted as a failed headless agent-session, and the escalation is "
+      "sent as it was before the re-check",
+      code == 1 and len(machine.claude_calls()) == 2
+      and [event["purpose"] for event in machine.events("headless_failed")]
+      == ["re-check whether the sentences its promise messages named are backed"]
+      and any("headless agent-session for alpha failed" in alert["title"]
+              for alert in machine.alerts())
+      and not machine.events("wait_ended")
+      and [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"]
+      and machine.events("message_sent")[-1]["step"] == "escalate",
+      (machine.events("headless_failed"), machine.events("wait_step"), machine.alerts()))
+machine.script()
+machine.run(17)
+check("the re-check judge failed: the next run asks no re-check again",
+      not machine.claude_calls(), machine.claude_calls())
+
+# An agent-seat that promised a report and gave it in a text-only reply, after its turn ended and
+# before the nudge.
+REPORT_SENTENCE = "I'll tell you what it finds."
+REPORT_TEXT = ("The subagent found that my second explanation was also wrong, so there is no simple "
+               "bug to fix.")
+machine = Machine()
+machine.seat("alpha", [user("go", "2026-11-02T11:30:00Z"), assistant("Started.", "2026-11-02T11:31:00Z"),
+                       turn_end("2026-11-02T11:31:00Z")])
+machine.run(-20)
+machine.append(
+    "alpha", user("file it", "2026-11-02T11:44:00Z"),
+    assistant(tool=("Agent", {"description": "Find the idle sweep's miss"}),
+              when="2026-11-02T11:44:30Z", tool_id="t-agent"),
+    assistant(f"I haven't filed the GHI. {REPORT_SENTENCE}", "2026-11-02T11:45:00Z"),
+    turn_end("2026-11-02T11:45:00Z"),
+    user("<task-notification>\n<task-id>a8063202</task-id>\n<status>completed</status>\n"
+         "</task-notification>", "2026-11-02T11:52:00Z"),
+    assistant(REPORT_TEXT, "2026-11-02T11:53:00Z"),
+    assistant("Task #743 is waiting for your answer on the judge re-check.", "2026-11-02T11:54:00Z"),
+    turn_end("2026-11-02T11:54:00Z"))
+machine.script(rechecked(False), sent_ok())
+machine.run(0)
+check("re-check: the promised report is raised as an announced action and nudged",
+      [event["sentences"] for event in machine.events("promise_message")] == [[REPORT_SENTENCE]]
+      and machine.events("promise_message")[0].get("earliest_sentence_at")
+      == "2026-11-02T11:45:00Z", machine.events())
+machine.append("alpha", cross_session(machine.events("message_sent")[-1]["text"], at(0.2)),
+               assistant("I had already done it: my message before last gives you the subagent's "
+                         "findings.", at(0.3)), turn_end(at(0.3)))
+machine.script(rechecked(True))
+machine.run(16)
+calls = machine.claude_calls()
+recheck_facts = first_judge_facts(calls)
+check("re-check: the text reply written after the sentence and before the nudge is handed to the "
+      "judge, and the sentence's own message is not",
+      len(calls) == 1
+      and REPORT_TEXT in [item["text"] for item in recheck_facts.get("text_messages_since", [])]
+      and not any(REPORT_SENTENCE in item["text"]
+                  for item in recheck_facts.get("text_messages_since", [])), calls)
+check("re-check backs a promise kept in a text-only reply: the wait ends, and no escalation is sent",
+      [event["why"] for event in machine.events("wait_ended")]
+      == ["the judge found every sentence its promise messages named backed"]
+      and [event["step"] for event in machine.events("message_sent")] == ["nudge"],
+      (machine.events("wait_ended"), machine.events("message_sent")))
 
 machine = Machine()
 machine.seat("alpha", [user("go"), assistant(ANNOUNCED), turn_end()])
@@ -1409,11 +1590,11 @@ check("a promise after the user was told: the old wait ends and the promise mess
       == ["it spent tokens after the user was told"]
       and [event["step"] for event in machine.events("wait_step")]
       == ["nudge", "escalate", "tell_user", "nudge"], machine.events("wait_step"))
-machine.script(sent_ok())
+machine.script(rechecked(False), sent_ok())
 machine.run(63)
 calls = machine.claude_calls()
 check("a promise after the user was told: still idle 15 minutes later, the escalation is sent",
-      len(calls) == 1 and "please check" in calls[0]["prompt"]
+      len(calls) == 2 and "please check" in calls[1]["prompt"]
       and [event["step"] for event in machine.events("wait_step")][-2:] == ["nudge", "escalate"],
       (calls, machine.events("wait_step")))
 machine.script()
@@ -1435,11 +1616,11 @@ machine.script(sent_ok())
 machine.run(7)
 machine.append("alpha", cross_session("You promised", at(7.5)), assistant(THIRD_PROMISE, at(8)),
                turn_end(at(8)))
-machine.script(sent_ok(), sent_ok())
+machine.script(rechecked(False, False), sent_ok(), sent_ok())
 machine.run(16)
 calls = machine.claude_calls()
 check("a fresh promise at every run does not put off the escalation 15 minutes after the nudge",
-      len(calls) == 2 and "please check" in calls[0]["prompt"] and THIRD_PROMISE in calls[1]["prompt"]
+      len(calls) == 3 and "please check" in calls[1]["prompt"] and THIRD_PROMISE in calls[2]["prompt"]
       and [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"],
       (calls, machine.events("wait_step")))
 
@@ -1662,7 +1843,7 @@ machine.seat("alpha", [user("go"), assistant(f"{PROMISE} {SECOND_PROMISE}"), tur
 machine.script(sent_ok())
 machine.run(0)
 nudge_text = machine.events("wait_step")[0]["text"]
-machine.script(sent_ok())
+machine.script(rechecked(False, False), sent_ok())
 machine.run(16)
 escalation = machine.events("message_sent")[-1]["text"]
 quote = escalation.split("which you have not acted on:\n\n", 1)[-1].rsplit("\n\n", 1)[0]
