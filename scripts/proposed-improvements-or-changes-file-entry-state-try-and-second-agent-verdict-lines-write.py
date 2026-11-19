@@ -18,14 +18,14 @@ Subcommands, each on one file:
                   Refused for an entry that already has MAXIMUM_TRIES tries
                   since its last user-ruling line; says so when a try
                   brings an entry to that number.
-  second-agent-input
-                  prints what the handler gives the second agent:
+  second-agent-verdict
+                  runs the second agent through `claude -p`, giving it
                   SECOND_AGENT_PROMPT, the entry's text without its State,
                   Try and "Second agent:" lines, which carry the handler's
-                  conclusion, and the sources the handler names.
-  second-agent-verdict
-                  adds "Second agent: agrees (or disagrees) that it is not
-                  worth doing, <who>, <time>". One verdict per try: refused
+                  conclusion, and the sources the handler names; prints its
+                  reply, and adds "Second agent: agrees (or disagrees) that it
+                  is not worth doing, <who>, <time>" as the reply's last line
+                  says. One verdict per try: refused, before the agent runs,
                   when no Try line follows the entry's last verdict, so a
                   disagreement spends the try it answers, and asking again
                   takes a new try.
@@ -44,7 +44,7 @@ Lines are recognised by how they open, as handlers have written them:
 which rule 4 counts tries again. An entry runs from its "## E<n>" heading to
 the next heading of level one or two. New lines go after the entry's last line that is not blank.
 
-Every subcommand but show and second-agent-input is refused on an entry whose
+Every subcommand but show is refused on an entry whose
 State line is not "State: open": a settled entry is never changed, and an
 entry that needs the user waits until his decision is recorded and the
 entry is set open again.
@@ -58,22 +58,50 @@ Does not handle: two handlers changing one file at the same time (that
 design's open question 2): the file is read, changed and replaced whole, so the later
 writer's replacement drops the earlier writer's lines.
 
-Failures: a value holding a line break, a refused change, a missing file or entry, or a file that cannot be
-read or written is printed to stderr with what to do, and the program exits 1
-without changing the file. Exit 0: done.
+Failures: a value holding a line break, a refused change, a missing file or entry, a file that cannot be
+read or written, or a second agent that cannot be run, exits nonzero, runs past
+SECOND_AGENT_TIMEOUT_SECONDS or ends its reply with a line other than
+"VERDICT: agrees" or "VERDICT: disagrees", is printed to stderr with what to
+do, and the program exits 1 without changing the file. Exit 0: done.
 """
 
 import argparse
 import datetime
+import importlib.util
 import os
 import re
 import shlex
 import socket
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
+REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _load(module_name, relative_path):
+    specification = importlib.util.spec_from_file_location(module_name, REPOSITORY_ROOT / relative_path)
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+command_line_prefix = _load(
+    "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
+    "nc-systems/general-tools/claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
+
 SECOND_AGENT_PROMPT = "docs/agents/queue/proposed-improvements-or-changes-file-entry-not-worth-doing-second-agent-prompt.md"
+SECOND_AGENT_MODEL = "claude-opus-5-5"
+SECOND_AGENT_EFFORT = "high"
+# Bash is kept because the agent reads its sources with git, gh and ssh. --tools is the whole tool set,
+# so the agent has no Agent, Write or Edit tool; --allowedTools alone would leave them.
+SECOND_AGENT_TOOLS = "Bash,Read,Grep,Glob"
+# Reading one entry's few sources; well past what that takes, short of a stuck run holding the handler for long.
+SECOND_AGENT_TIMEOUT_SECONDS = 1800
+# The repository's hooks are written for interactive agent-sessions and can block or redirect a headless one.
+SECOND_AGENT_SETTINGS = {"disableAllHooks": True}
+SECOND_AGENT_VERDICTS = {"VERDICT: agrees": True, "VERDICT: disagrees": False}
 MAXIMUM_TRIES = 3
 
 ENTRY_HEADING_PATTERN = re.compile(r"^## (E\d+)\b")
@@ -228,23 +256,62 @@ def second_agent_input(lines, entry, sources) -> str:
             if not line.startswith(STATE_LINE_OPENING)
             and not TRY_LINE_PATTERN.match(line)
             and not line.startswith(SECOND_AGENT_LINE_OPENING)]
-    prompt = (Path(__file__).resolve().parent.parent / SECOND_AGENT_PROMPT).read_text(encoding="utf-8")
+    prompt = (REPOSITORY_ROOT / SECOND_AGENT_PROMPT).read_text(encoding="utf-8")
     listed = "\n".join(f"- {source}" for source in sources)
     return (f"{prompt.rstrip()}\n\n## The entry\n\n" + "\n".join(kept).strip()
             + f"\n\n## The sources the handler cites\n\n{listed}\n")
 
 
-def add_verdict(lines, entry, agrees, who):
-    spans = entry_spans(lines)
-    block = entry_lines(lines, spans, entry)
+def refuse_unless_a_try_awaits_a_verdict(lines, entry):
+    block = entry_lines(lines, entry_spans(lines), entry)
     refuse_unless_open(block, entry)
     attempt = last_index(block, lambda line: bool(TRY_LINE_PATTERN.match(line)))
     verdict = last_index(block, lambda line: line.startswith(SECOND_AGENT_LINE_OPENING))
     if attempt < 0 or verdict > attempt:
         raise Refused(
-            f"Entry {entry} has no Try line after its last verdict, so the verdict was not recorded.\n"
+            f"Entry {entry} has no Try line after its last verdict, so no second agent was run and no verdict was recorded.\n"
             "Each verdict answers one try: record the try that shows the entry is not worth doing with the try subcommand first,\n"
-            "then start a new second agent on it.")
+            "then run the second-agent-verdict subcommand again.")
+
+
+class SecondAgentFailed(Exception):
+    pass
+
+
+def second_agent_reply(prompt) -> str:
+    command = [*command_line_prefix.claude_code_headless_run_command_line_prefix_build(
+                   "dontAsk", caller_claude_code_session_settings=SECOND_AGENT_SETTINGS),
+               "--model", SECOND_AGENT_MODEL, "--effort", SECOND_AGENT_EFFORT,
+               "--output-format", "text", "--tools", SECOND_AGENT_TOOLS, "--allowedTools", SECOND_AGENT_TOOLS]
+    try:
+        # The prompt goes on stdin: variadic --allowedTools can swallow a trailing positional argument.
+        result = subprocess.run(command, input=prompt, cwd=REPOSITORY_ROOT, capture_output=True, text=True,
+                                timeout=SECOND_AGENT_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        raise SecondAgentFailed(f"the second agent did not finish within {SECOND_AGENT_TIMEOUT_SECONDS} s.")
+    except OSError as failure:
+        raise SecondAgentFailed(f"`claude` could not be started: {failure}.\n"
+                                "If `claude` is missing on this machine, report that.")
+    if result.returncode:
+        raise SecondAgentFailed(
+            f"`claude -p` exited {result.returncode}.\nIts stderr: {result.stderr.strip()[-2000:] or 'empty'}\n"
+            f"Its stdout: {result.stdout.strip()[-2000:] or 'empty'}\n"
+            "If it says `claude` is logged out or a usage limit is reached, report what it said.")
+    return result.stdout
+
+
+def verdict_of(reply) -> bool:
+    lines = [line.strip() for line in reply.splitlines() if line.strip()]
+    if not lines or lines[-1] not in SECOND_AGENT_VERDICTS:
+        raise SecondAgentFailed(
+            "the second agent's reply does not end with the line \"VERDICT: agrees\" or \"VERDICT: disagrees\".\n"
+            f"Its reply: {reply.strip()[-4000:] or 'empty'}")
+    return SECOND_AGENT_VERDICTS[lines[-1]]
+
+
+def add_verdict(lines, entry, agrees, who):
+    spans = entry_spans(lines)
+    refuse_unless_a_try_awaits_a_verdict(lines, entry)
     word = "agrees" if agrees else "disagrees"
     lines.insert(insertion_index(lines, spans, entry),
                  f"Second agent: {word} that it is not worth doing, {who}, {now()}")
@@ -260,7 +327,7 @@ def settle(lines, entry, kind, by, how):
         if verdict is None or not answers or not verdict.startswith(SECOND_AGENT_AGREES_OPENING):
             raise Refused(
                 f"Entry {entry} cannot be settled as not worth doing: its last try has no agreement from a second agent, so the entry stays open.\n"
-                "Rule 5 of GHI 1132 needs that agreement: start a second agent with the input the second-agent-input subcommand prints, and record its verdict with the second-agent-verdict subcommand.")
+                "Rule 5 of GHI 1132 needs that agreement: run the second-agent-verdict subcommand on the entry.")
     replace_state(lines, spans, entry, f"State: settled, {SETTLED_KINDS[kind]} — {by}, {now()}: {how}")
     return lines
 
@@ -312,17 +379,11 @@ def parser():
     command.add_argument("entries", nargs="+")
     command.add_argument("--by", required=True)
     command.add_argument("--found", required=True)
-    command = commands.add_parser("second-agent-input")
-    command.add_argument("file")
-    command.add_argument("entry")
-    command.add_argument("--source", action="append", required=True)
     command = commands.add_parser("second-agent-verdict")
     command.add_argument("file")
     command.add_argument("entry")
-    answer = command.add_mutually_exclusive_group(required=True)
-    answer.add_argument("--agrees", action="store_true")
-    answer.add_argument("--disagrees", action="store_true")
-    command.add_argument("--who", required=True)
+    command.add_argument("--source", action="append", required=True)
+    command.add_argument("--by", required=True)
     command = commands.add_parser("settle")
     command.add_argument("file")
     command.add_argument("entry")
@@ -341,9 +402,10 @@ def parser():
 def main(argv=None) -> int:
     arguments = parser().parse_args(argv)
     try:
-        for name in ("found", "how", "why", "by", "who"):
+        for name in ("found", "how", "why", "by", "source"):
             value = getattr(arguments, name, None)
-            if value is not None and ("\n" in value or "\r" in value):
+            if value is not None and any("\n" in part or "\r" in part
+                                         for part in (value if isinstance(value, list) else [value])):
                 raise Refused(
                     f"--{name} holds a line break, so nothing was changed: each value is written as part of one line,\n"
                     "and a second line could be read as a State, Try or Second agent line. Give it on one line.")
@@ -354,13 +416,18 @@ def main(argv=None) -> int:
         if arguments.command == "show":
             print(show(lines))
             return 0
-        if arguments.command == "second-agent-input":
-            print(second_agent_input(lines, arguments.entry, arguments.source), end="")
-            return 0
         if arguments.command == "try":
             lines = add_try(lines, arguments.entries, arguments.by, arguments.found)
         elif arguments.command == "second-agent-verdict":
-            lines = add_verdict(lines, arguments.entry, arguments.agrees, arguments.who)
+            refuse_unless_a_try_awaits_a_verdict(lines, arguments.entry)
+            reply = second_agent_reply(second_agent_input(lines, arguments.entry, arguments.source))
+            agrees = verdict_of(reply)
+            print(reply.rstrip())
+            # The agent runs for minutes; the file may have changed meanwhile.
+            text = path.read_text(encoding="utf-8")
+            ending = "\n" if text.endswith("\n") else ""
+            lines = add_verdict(text.splitlines(), arguments.entry, agrees,
+                                f"{SECOND_AGENT_MODEL} run through `claude -p` for {arguments.by}")
         elif arguments.command == "settle":
             lines = settle(lines, arguments.entry, arguments.kind, arguments.by, arguments.how)
         else:
@@ -368,6 +435,9 @@ def main(argv=None) -> int:
         write_replacing(path, lines, ending)
     except Refused as refusal:
         print(f"REFUSED: {refusal}", file=sys.stderr)
+        return 1
+    except SecondAgentFailed as failure:
+        print(f"FAILED: {failure}\nNo verdict was recorded, and the file was left as it was.", file=sys.stderr)
         return 1
     except OSError as failure:
         print(f"FAILED: {arguments.file} could not be read or written, and was left as it was: {failure}\n"

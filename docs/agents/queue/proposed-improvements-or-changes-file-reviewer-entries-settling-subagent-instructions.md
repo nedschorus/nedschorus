@@ -13,7 +13,7 @@ Change the file only with `scripts/proposed-improvements-or-changes-file-entry-s
 - Name the file as the agent that dispatched you named it, such as `nedlern@ned-box:/home/nedlern/nedschorus-logs/ghi-guide-agent-proposed-improvements-or-changes/<name>.md`.
 - When you are not on ned-box, the program refuses and prints an `ssh nedlern@ned-box` command with your arguments already quoted; run that command as printed.
 - When the program prints `REFUSED:`, do what the message says; do not get around it by editing the file.
-- When the program prints `FAILED:`, stop, leave the file as it is, and put what it printed in your report.
+- When the program prints `FAILED:`, stop, leave the file as it is, and put what it printed in your report; for `second-agent-verdict`, step 4 of "Not worth doing" says what to do instead.
 - Give `--by` as the name of the agent-seat that dispatched you followed by "handler", such as `ned-box-helper handler`; when no agent-seat dispatched you, use the name of the program or job that did.
 
 ## 1. Read every file of the GHI-MD first
@@ -43,10 +43,9 @@ An entry is not worth doing when the problem is not real, or the improvement doe
 A second, independent agent must agree:
 
 1. Record your try with `try`, ending `--found` with your conclusion.
-2. Run `second-agent-input` on the entry, with one `--source` for each source your try cites: a path in this repository, a log-store path, `PR <number>` or `GHI <number>`.
-3. Start a new general-purpose subagent with the Agent tool, not a fork, since a fork would see your conclusion, and give it exactly the text `second-agent-input` printed, adding nothing.
-4. Record the verdict its last line gives with `second-agent-verdict`: `--agrees` for `VERDICT: agrees`, and `--disagrees` for `VERDICT: disagrees`, for a reply that ends with neither line, and for no reply. Give `--who` as "fresh general-purpose subagent of" followed by your `--by` name.
-5. If it agrees, mark the entry with `settle --kind not-worth-doing`, giving in `--how` the reason in one sentence. If it disagrees, the try is spent and the entry stays open: read the reasons in its reply, and start another try if the program allows one; when it does not, run `needs-the-user` on the entry with `--because three-tries`.
+2. Run `second-agent-verdict` on the entry, with one `--source` for each source your try cites: a path in this repository, a log-store path, `PR <number>` or `GHI <number>`. Run it in the background, with the Bash tool's `run_in_background`, and wait for it to finish, because the agent it runs can take longer than a foreground command may. The program runs the second agent, gives it the entry and the sources but not your conclusion, writes its verdict under the entry, and prints its reply.
+3. If it agrees, mark the entry with `settle --kind not-worth-doing`, giving in `--how` the reason in one sentence. If it disagrees, the try is spent and the entry stays open: read the reasons in its reply, and start another try if the program allows one; when it does not, run `needs-the-user` on the entry with `--because three-tries`.
+4. If `second-agent-verdict` prints `FAILED:`, no verdict was written and the entry stays open: go on with the other entries, and put what it printed in your report.
 
 ### Worth doing, and doable now
 
