@@ -1475,17 +1475,17 @@ with tempfile.TemporaryDirectory() as workspace:
 
         marker_file.unlink(missing_ok=True)
         result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(loud)},
-                          ("--threshold-used-percentage", "75"))
+                          ("--threshold-used-percentage", "75", "--get-ready-used-percentage", "70"))
         check("threshold is configurable", result.returncode == 0, f"code {result.returncode}")
 
-        # The default threshold is a third of the window: 35% fires, 30% does not.
+        # The default threshold is a third of the window: 35% fires, 29% does not.
         just_over = transcript_with_usage(workspace, "just-over-a-third.jsonl", 100_000,
                                           cache_read=250_000)
         just_under = transcript_with_usage(workspace, "just-under-a-third.jsonl", 100_000,
-                                           cache_read=200_000)
+                                           cache_read=190_000)
         marker_file.unlink(missing_ok=True)
         result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(just_under)})
-        check("by default the hook stays silent at 30% of the window",
+        check("by default the hook stays silent at 29% of the window",
               result.returncode == 0 and not result.stderr.strip(),
               f"code {result.returncode}, stderr {result.stderr[:120]}")
         result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(just_over)})
@@ -1502,8 +1502,13 @@ with tempfile.TemporaryDirectory() as workspace:
             compaction_record(130_000), usage_record(200_000)])  # 20% + 13% = 33%
         marker_file.unlink(missing_ok=True)
         result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(compacted_under)})
-        check("a compacted session stays silent at 32% counting the dropped tokens",
-              result.returncode == 0 and not result.stderr.strip() and not marker_file.exists(),
+        check("a compacted session at 32% counting the dropped tokens gets the get-ready notice"
+              " with both shares, not the handoff instruction",
+              result.returncode == 2 and not marker_file.exists()
+              and result.stderr.startswith(
+                  "[rule handoff-context-threshold-get-ready-hold-back-long-work] Context at 20% "
+                  "(32% counting the tokens its compactions dropped, the figure compared with the "
+                  "threshold and the ceiling): at 33% this agent-session is asked to hand off"),
               f"code {result.returncode}, stderr {result.stderr[:160]}")
         result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(compacted_at)})
         check("a compacted session at 20% fires at 33% counting the dropped tokens",
@@ -1532,6 +1537,170 @@ with tempfile.TemporaryDirectory() as workspace:
         check("the compacted handoff rounds the context used alone, not truncates it",
               "used 91% (92% counting the tokens its compactions dropped" in result.stderr,
               result.stderr[:200])
+
+        # --- The one-time get-ready notice below the threshold --------------
+        # Each case has a session id of its own, so a record one case leaves cannot silence another.
+        get_ready_at = {percentage: transcript_with_usage(
+            workspace, f"get-ready-at-{percentage}.jsonl", percentage * 10_000)
+            for percentage in (29, 30, 31, 33, 34)}
+
+        def get_ready_files(session_id):
+            return (hook.HANDOFF_DIRECTORY / f"{session_id}-handoff-get-ready-notice-sent",
+                    hook.HANDOFF_DIRECTORY / f"{session_id}-handoff-asked",
+                    hook.HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred")
+
+        def get_ready_run(session_id, percentage, extra_arguments=(), extra_environment=None,
+                          **payload):
+            return run_hook({"session_id": session_id, "transcript_path": str(get_ready_at[percentage]),
+                             **payload}, extra_arguments, extra_environment)
+
+        def get_ready_notice_text(share, threshold="33"):
+            return (
+                "[rule handoff-context-threshold-get-ready-hold-back-long-work] Context at "
+                f"{share}: at {threshold}% this agent-session is asked to hand off, and a subagent "
+                "or background Bash task still running then can delay the handoff by an hour or "
+                "more; a detached program that writes its result to a file does not. From now on, "
+                "start no subagent or background Bash task that usually runs 10 minutes or longer, "
+                "such as a cold-read-full-run: add that work to your task list for your successor. "
+                "If such work is the next thing to do and nothing shorter is left, run the /handoff "
+                "skill now instead, so that your successor starts it. Work that usually takes under "
+                "10 minutes may still start.")
+
+        get_ready_sessions = []
+        try:
+            session = "handoff-threshold-hook-test-get-ready-once"
+            get_ready_sessions.append(session)
+            sent, asked, _ = get_ready_files(session)
+            result = get_ready_run(session, 31)
+            check("at 31% the hook tells the agent once to start no long work",
+                  result.returncode == 2 and result.stderr.strip() == get_ready_notice_text("31%")
+                  and sent.read_text(encoding="utf-8") == "31.0\n" and not asked.exists(),
+                  f"code {result.returncode}, stderr {result.stderr!r}")
+            result = get_ready_run(session, 31)
+            check("at the second turn's end at 31% the hook stays silent",
+                  result.returncode == 0 and not result.stderr.strip(),
+                  f"code {result.returncode}, stderr {result.stderr!r}")
+            result = get_ready_run(session, 34)
+            check("after the get-ready notice, the threshold brings the handoff instruction",
+                  result.returncode == 2 and is_handoff_instruction(result.stderr) and asked.exists(),
+                  f"code {result.returncode}, stderr {result.stderr!r}")
+
+            session = "handoff-threshold-hook-test-get-ready-bounds"
+            get_ready_sessions.append(session)
+            sent, asked, _ = get_ready_files(session)
+            result = get_ready_run(session, 29)
+            check("at 29% the hook sends no get-ready notice",
+                  result.returncode == 0 and not result.stderr.strip() and not sent.exists(),
+                  f"code {result.returncode}, stderr {result.stderr!r}")
+            result = get_ready_run(session, 30)
+            check("at exactly 30% the hook sends the get-ready notice",
+                  result.returncode == 2 and result.stderr.strip() == get_ready_notice_text("30%"),
+                  f"code {result.returncode}, stderr {result.stderr!r}")
+
+            session = "handoff-threshold-hook-test-get-ready-jump"
+            get_ready_sessions.append(session)
+            sent, asked, _ = get_ready_files(session)
+            get_ready_run(session, 29)
+            result = get_ready_run(session, 34)
+            check("a jump from 29% to 34% in one turn skips the get-ready notice",
+                  result.returncode == 2 and is_handoff_instruction(result.stderr)
+                  and not sent.exists(),
+                  f"code {result.returncode}, stderr {result.stderr!r}")
+
+            session = "handoff-threshold-hook-test-get-ready-at-threshold"
+            get_ready_sessions.append(session)
+            sent, asked, _ = get_ready_files(session)
+            result = get_ready_run(session, 33)
+            check("at exactly the 33% threshold the hook asks for the handoff, not get-ready",
+                  result.returncode == 2 and is_handoff_instruction(result.stderr)
+                  and not sent.exists(),
+                  f"code {result.returncode}, stderr {result.stderr!r}")
+
+            session = "handoff-threshold-hook-test-get-ready-while-deferred"
+            get_ready_sessions.append(session)
+            sent, asked, deferred = get_ready_files(session)
+            hook.handoff_deferred_marker_and_refused_commands_files_common.handoff_deferred_marker_write(
+                hook.HANDOFF_DIRECTORY, session,
+                hook.handoff_deferred_marker_and_refused_commands_files_common.HandoffDeferredMarker(
+                    used_percentage=33.0, deferral_began_at=datetime.now(timezone.utc),
+                    awaited_subagent_ids=[], awaited_background_task_ids=[],
+                    awaited_work_is_unknown=False))
+            result = get_ready_run(session, 31)
+            check("while the handoff-deferral marker file exists, 31% brings no get-ready notice",
+                  "get-ready" not in result.stderr and not sent.exists(),
+                  f"code {result.returncode}, stderr {result.stderr!r}")
+
+            session = "handoff-threshold-hook-test-get-ready-after-ask"
+            get_ready_sessions.append(session)
+            sent, asked, _ = get_ready_files(session)
+            asked.write_text("34.0\n", encoding="utf-8")
+            result = get_ready_run(session, 31)
+            check("once the handoff was asked for, 31% brings no get-ready notice",
+                  result.returncode == 0 and not result.stderr.strip() and not sent.exists(),
+                  f"code {result.returncode}, stderr {result.stderr!r}")
+
+            session = "handoff-threshold-hook-test-get-ready-flag"
+            get_ready_sessions.append(session)
+            sent, asked, _ = get_ready_files(session)
+            result = get_ready_run(session, 31, ("--get-ready-used-percentage", "32"))
+            check("--get-ready-used-percentage 32 keeps 31% silent",
+                  result.returncode == 0 and not result.stderr.strip() and not sent.exists(),
+                  f"code {result.returncode}, stderr {result.stderr!r}")
+            result = get_ready_run(session, 31, ("--threshold-used-percentage", "40"))
+            check("the get-ready notice names the threshold flag's value",
+                  result.returncode == 2
+                  and result.stderr.strip() == get_ready_notice_text("31%", threshold="40"),
+                  f"code {result.returncode}, stderr {result.stderr!r}")
+
+            session = "handoff-threshold-hook-test-get-ready-early-returns"
+            get_ready_sessions.append(session)
+            sent, asked, _ = get_ready_files(session)
+            result = get_ready_run(session, 31, stop_hook_active=True)
+            check("at 31% the hook stays silent while the agent answers a Stop hook",
+                  result.returncode == 0 and not result.stderr.strip() and not sent.exists(),
+                  f"code {result.returncode}, stderr {result.stderr!r}")
+            result = get_ready_run(session, 31, extra_environment={
+                hook.REINCARNATION_OWNED_BY_CALLER_VARIABLE: "scripts/ghi-guide-agent-ask.py"})
+            check("at 31% the hook stays silent when the caller reincarnates the session",
+                  result.returncode == 0 and not result.stderr.strip() and not sent.exists(),
+                  f"code {result.returncode}, stderr {result.stderr!r}")
+
+            # A link into a missing directory makes the write fail, as a full or read-only disk
+            # would, while the record still reads as not there.
+            session = "handoff-threshold-hook-test-get-ready-unwritable"
+            get_ready_sessions.append(session)
+            sent, asked, _ = get_ready_files(session)
+            sent.symlink_to(SUITE_HOME / "no-such-directory" / "record")
+            result = get_ready_run(session, 31)
+            problem = f"[Errno 2] No such file or directory: '{sent}'"
+            check("when the get-ready record cannot be written, the notice says so and what to tell the user",
+                  result.returncode == 2 and result.stderr.strip() == (
+                      get_ready_notice_text("31%") + "\n"
+                      f"The threshold-hook could not write {sent} ({problem}), so it repeats this "
+                      "notice and this line at each turn's end until the context reaches 33%. The second time you "
+                      "see this line, tell the user once: \"On "
+                      f"{socket.gethostname()}, the threshold-hook cannot write {sent}: {problem}.\""),
+                  f"code {result.returncode}, stderr {result.stderr!r}")
+        finally:
+            for session in get_ready_sessions:
+                for path in get_ready_files(session):
+                    path.unlink(missing_ok=True)
+
+        # The first notice can come before anything has created the handoff directory.
+        saved_handoff_directory = hook.HANDOFF_DIRECTORY
+        with tempfile.TemporaryDirectory() as fresh_home:
+            hook.HANDOFF_DIRECTORY = Path(fresh_home) / "not-yet-made"
+            try:
+                code, stderr = run_hook_in_process(
+                    {"session_id": "handoff-threshold-hook-test-get-ready-fresh",
+                     "transcript_path": str(get_ready_at[31])})
+                check("the get-ready notice creates the handoff directory to record itself",
+                      code == 2 and (hook.HANDOFF_DIRECTORY
+                                     / "handoff-threshold-hook-test-get-ready-fresh-handoff-get-ready-notice-sent").exists()
+                      and "could not write" not in stderr,
+                      f"code {code}, stderr {stderr!r}")
+            finally:
+                hook.HANDOFF_DIRECTORY = saved_handoff_directory
 
         # --- A session its caller reincarnates is left alone ---------------
         # 2026-09-16: ghi-guide-agent, run by scripts/ghi-guide-agent-ask.py as `claude -p`
@@ -2886,10 +3055,12 @@ check("--help exits 0", help_result.returncode == 0, help_result.stderr)
 help_text = " ".join(help_result.stdout.split())
 help_flags = [flag for flag in re.findall(r"^\s+(--[a-z][a-z-]*)", help_result.stdout, re.MULTILINE)
               if flag != "--help"]
-check("--help lists the hook's two flags",
-      help_flags == ["--threshold-used-percentage", "--ceiling-used-percentage"], help_flags)
+check("--help lists the hook's three flags",
+      help_flags == ["--threshold-used-percentage", "--ceiling-used-percentage",
+                     "--get-ready-used-percentage"], help_flags)
 for flag, default in (("--threshold-used-percentage", 33.0),
-                      ("--ceiling-used-percentage", 65.0)):
+                      ("--ceiling-used-percentage", 65.0),
+                      ("--get-ready-used-percentage", 30.0)):
     flag_entry = re.search(re.escape(flag) + r" [A-Z_]+ (.*?)(?= --[a-z]|$)", help_text)
     check(f"--help shows {flag}'s default, {default}",
           flag_entry is not None and flag_entry.group(1).endswith(f"(default: {default})"),

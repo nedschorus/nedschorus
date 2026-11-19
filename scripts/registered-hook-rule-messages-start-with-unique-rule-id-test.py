@@ -208,6 +208,7 @@ CONSTANTS_THAT_OPEN_NO_RULE_MESSAGE = {
     ("scripts/cold-read-fast-read-due-for-linked-document-reminder-hook.py", "UNCHECKED_INSTRUCTION"): LATER_PART,
     ("scripts/cold-read-fast-read-due-for-linked-document-reminder-hook.py", "UNCHECKED_STDERR_LINE"): HOOK_FAILED,
     ("scripts/file-name-collision-warning-hook.py", "GIT_FAILURE_TEMPLATE"): HOOK_FAILED,
+    ("scripts/handoff-context-threshold-hook.py", "HANDOFF_GET_READY_NOTICE_NOT_RECORDED_LINE"): LATER_PART,
     ("scripts/handoff-context-threshold-hook.py", "MARKER_NOT_WRITTEN_LINE"): LATER_PART,
     ("scripts/handoff-context-threshold-hook.py", "MODEL_ID_NOT_IN_CONTEXT_WINDOW_TABLE_LINE"): LATER_PART,
     ("scripts/handoff-context-threshold-hook.py", "NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION"): LATER_PART,
