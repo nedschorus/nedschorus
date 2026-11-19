@@ -14,7 +14,7 @@ This page is the standard for the project's Markdown files: a common part that e
 
 ## GHI-MDs
 
-This section covers each GHI-MD in `docs/issues/`, and each MD in `docs/issues/queue/` on its way to becoming one. `.claude/skills/ghi-write/SKILL.md` says how it is routed, titled, filed and edited; this section says what it holds. A GHI-MD that is a design, whose front matter carries `kind: design`, follows the Designs section instead. The program prints the Designs section for it only once the file exists with that line; for a new design GHI-MD, it prints this section, and the Designs section is the one to follow.
+This section covers each GHI-MD in `docs/issues/`, and each MD in `docs/issues/queue/` on its way to becoming one. `.claude/skills/ghi-write/SKILL.md` says how it is routed, titled, filed and edited; this section says what it holds. A GHI-MD that is a design, whose front matter carries `kind: design`, follows the Designs section instead. The program prints the Designs section for it only once the file exists with that line; for a new design GHI-MD, it prints this section, so read the Designs section on this page and follow it instead.
 
 A GHI-MD that is not a design is one of four kinds: a bug, code that does not do what its design, design-contract or documentation says; a change request, a change to what a design or design-contract promises once its code has merged; a chore, upkeep that changes no behaviour; and research, a question to answer, with no code promised. A bug whose fault turns out to be in the design is a change request.
 
@@ -51,7 +51,7 @@ A design has these seven level-2 headings, in this order. A design that does not
 6. `## Testing`: how each design-requirement is tested, or the test-design that says so.
 7. `## Alternatives considered`: each alternative rejected, in one or two sentences with its reason.
 
-These headings follow the seven when the design has them, and are left out when it does not: `## Deferred-decisions`, one line for each case the design leaves open, and `## Decided elsewhere`, one line for each decision another component, document or agent-seat makes, naming that owner, each in the form `docs/design-to-main/design-to-main-state-machine-design.md` gives; `## Defects fixed`, the lines `scripts/merge-gate.sh` requires, one for each defect the design's code fixes or the one line for no defect fixed; `## Relations`; and, for a design that is a GHI-MD, the GHI-MDs section's `## Next action`, `## Done when`, `## Outcome` and `## Provisional additions (not yet vetted by the user)`, as that section describes them. A design that is a GHI-MD also opens with the front matter `/ghi-write` step 4 gives it, then the GHI's title heading.
+These headings follow the seven when the design has them, and are left out when it does not: `## Deferred-decisions`, one line for each case the design leaves open, and `## Decided elsewhere`, one line for each decision another component, document or agent-seat makes, naming that owner, each line in the form the paragraph headed `initiate-design-to-main` in `docs/design-to-main/design-to-main-state-machine-design.md` gives, such as a deferred line marked `#not_in_this_run` with its reason; `## Defects fixed`, a `#root_cause` or `#root_cause_not_fixed` line for each defect the design's code fixes, or the line `#no_defect_fixed`, as `CLAUDE.md` gives them for a pull request description and `scripts/merge-gate.sh` checks them; `## Relations`; and, for a design that is a GHI-MD, the GHI-MDs section's `## Next action`, `## Done when`, `## Outcome` and `## Provisional additions (not yet vetted by the user)`, as that section describes them. A design that is a GHI-MD also opens with the front matter `/ghi-write` step 4 gives it, then the GHI's title heading.
 
 A design leaves out:
 
@@ -85,7 +85,7 @@ A seat-brief is in context for the whole of every agent-session of its agent-sea
 
 It contains, in this order:
 
-1. A heading naming the agent-seat.
+1. A level-1 heading naming the agent-seat.
 2. What the agent-seat owns, in one paragraph.
 3. Its first job, or the standing work it does when no task is open.
 4. Where its work goes: nc-topic-branches and pull requests, the log-store directory, and which agent-seat it reports to, if any.
@@ -121,7 +121,7 @@ Each page is one of three kinds, and keeps to its kind: a reference page lists r
 
 A page contains, in this order:
 
-1. A heading naming its subject.
+1. A level-1 heading naming its subject.
 2. A first paragraph saying what the page covers and when a reader needs it, so a reader can tell from that paragraph alone whether to read on. A page whose content a program reads as data names that program here, as the rule for prose a program reads in `docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md` says.
 3. The body: for a reference page, one rule or fact to an item, ordered for lookup; for a how-to page, numbered steps, each an action; for an explanation page, the parts and how they fit together, with a reason where it helps.
 
