@@ -483,7 +483,10 @@ NEW_ACTIVITY_LINES = (
     "the inline comments, the issue comments and the reviews.\n",
     "\nIf any raises a finding, do not merge until the finding is fixed, or answered with a reason "
     "that shows it does not hold; a fix moves the nc-head-commit, which then needs its own approving review.\n",
-    "\nWhen nothing is left open, post a review as the merge account saying what you read, check that "
+    "\nWhen nothing is left open, post a review as the merge account saying what you read, with a review "
+    "file holding only {\"body\": <what you read>} and the command python3 "
+    "scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py --pull-request ",
+    " --github-account ned-review-merge <review file>. Check that "
     "nothing was posted between your reading and that review; if something was, read it and repeat "
     "from the first line. Then run the gate again with the review's submitted_at as reviewed-since.\n")
 
@@ -507,6 +510,65 @@ def case_gate_run_from_another_directory_finds_its_reader(gate):
     elsewhere = Path(tempfile.mkdtemp(dir=scratch))
     run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes(), cwd=elsewhere)
     return run.code == 0 and "gate passed" in run.stdout, run.summary()
+
+
+NEW_ACTIVITY_COUNT_OPTION = "--print-new-activity-count-after-reviewed-since-bound"
+
+
+def new_activity_count_run(gate, routes, pr=BASE_PR):
+    return run_gate(gate, pr, None, None, routes, arguments=[NEW_ACTIVITY_COUNT_OPTION, pr])
+
+
+def case_new_activity_count_quiet(gate):
+    """The count mode reads no pull request state and finds nothing after the pin on quiet channels."""
+    routes = base_routes()
+    del routes["state"]
+    run = new_activity_count_run(gate, routes)
+    return run.code == 0 and run.stdout == "0\n" and not run.stderr, run.summary()
+
+
+def issue_comments_at(*times):
+    return channel_routes("issue", scratch_file("-channel.json", json.dumps(
+        [{"id": index, "created_at": time, "updated_at": time} for index, time in enumerate(times, 1)])))
+
+
+def case_new_activity_count_matches_the_gates_refusal(gate):
+    """With issue comments after the pin, the count mode prints the number the gate's own refusal names
+    for reviewed-since at the pin."""
+    routes = base_routes()
+    # One comment before the pin, two after it.
+    routes.update(issue_comments_at("2026-09-23T02:00:00Z", "2026-09-23T03:00:00Z", "2026-09-24T09:00:00Z"))
+    refusal = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], routes)
+    counted = [line.split(" issue comment(s)")[0].rsplit(" ", 1)[-1] for line in refusal.stderr.splitlines()
+               if " issue comment(s) posted or edited since " in line]
+    run = new_activity_count_run(gate, routes)
+    return (refusal.code == 1 and counted == ["2"]
+            and run.code == 0 and run.stdout == f"{counted[0]}\n", f"{refusal.summary()}; {run.summary()}")
+
+
+def case_new_activity_count_without_a_pin_counts_everything(gate):
+    """With no approval and no review by the merge account, every comment on the pull request is new."""
+    routes = base_routes()
+    routes.update(channel_routes("reviews", scratch_file("-channel.json", "[]")))
+    routes.update(issue_comments_at("2020-01-01T00:00:00Z", "2026-09-23T03:00:00Z"))
+    run = new_activity_count_run(gate, routes)
+    return run.code == 0 and run.stdout == "2\n", run.summary()
+
+
+def case_new_activity_count_not_a_number(gate):
+    run = run_gate(gate, BASE_PR, None, None, base_routes(), arguments=[NEW_ACTIVITY_COUNT_OPTION, "6x7"])
+    return (run.code == 2 and not run.calls
+            and f"GATE COULD NOT RUN: {NEW_ACTIVITY_COUNT_OPTION} takes a pull request number and was given: 6x7\n"
+            in run.stderr), run.summary()
+
+
+def case_new_activity_count_reviews_unreadable(gate):
+    routes = base_routes()
+    routes["reviews:paginated"] = {"stdout_file": str(scratch_file("-channel.json", "")), "exit": 1,
+                                   "stderr": "gh: HTTP 502\n"}
+    run = new_activity_count_run(gate, routes)
+    return (run.code == 2 and not run.stdout
+            and f"GATE COULD NOT RUN: could not read the reviews of pull request {BASE_PR}" in run.stderr), run.summary()
 
 
 def case_a1_pass_control(gate):
@@ -1755,6 +1817,14 @@ def case_marks_check_program_fails(gate):
 
 CASES = [
     ("A1 everything in order passes, pinned to the approval's commit", case_a1_pass_control),
+    ("COUNT the new-activity count mode prints 0 on quiet channels and reads no state", case_new_activity_count_quiet),
+    ("COUNT the new-activity count mode prints the number the gate's refusal names",
+     case_new_activity_count_matches_the_gates_refusal),
+    ("COUNT with no pin and no merge-account review, every comment counts",
+     case_new_activity_count_without_a_pin_counts_everything),
+    ("COUNT a pull request argument that is not a number could not run, exit 2, no gh call",
+     case_new_activity_count_not_a_number),
+    ("COUNT an unreadable review channel could not run, exit 2", case_new_activity_count_reviews_unreadable),
     ("NO-SANDBOX a failed run on main is noticed on stderr, and the gate still passes",
      case_no_sandbox_notice_for_a_failed_run_and_the_gate_still_passes),
     ("NO-SANDBOX the notice leaves a refusal a refusal, exit 1",
@@ -1949,6 +2019,9 @@ TOKEN_BLOCK = (
 SINCE_REAL_TIME_CHECK = """jq -n --arg since "$SINCE" '$since | fromdateiso8601' >/dev/null 2>&1 || cannot"""
 
 MUTATIONS = [
+    ("the new-activity count mode counting from the start of the pull request, not the bound",
+     [("  SINCE=$bound_at\n", "  SINCE=1970-01-01T00:00:00Z\n")],
+     [case_new_activity_count_matches_the_gates_refusal]),
     ("without the verdict review marks refusal",
      [("       fail \"$MERGE_ACCOUNT's latest review with a verdict", "       : \"$MERGE_ACCOUNT's latest review with a verdict")],
      [case_marks_hand_typed_approval_refused, case_marks_hand_typed_request_for_changes_refused,

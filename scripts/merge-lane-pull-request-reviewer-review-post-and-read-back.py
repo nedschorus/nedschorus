@@ -32,9 +32,12 @@ four categories of the goals and philosophy page, and may carry "nit": true, whi
 fix-in-maintenance finding as a nit for the fix-round program to carry; "nit" with any other
 value, or on a comment of any other category, is refused. It is posted with the merge
 account's token, read as
-merge-lane-pull-request-helpers-common-options-paths-and-token.py reads it,
-and its event is always the verdict; GitHub refuses that review on a pull
-request ned-review-merge opened, and the post fails. For this file, this
+merge-lane-pull-request-helpers-common-options-paths-and-token.py reads it.
+Its event is the verdict, except on a pull request ned-review-merge opened,
+where GitHub refuses an approving or changes-requesting review from the
+author: there the event is COMMENT, the body still opens with the verdict line
+and carries every mark below, and the fix-round program reads such a review
+that opens with REQUEST_CHANGES as a round. For this file, this
 program alone writes what the fix-round program,
 pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py,
 reads blocking findings by, using that program's BLOCKING_MARKER_PATTERN,
@@ -55,6 +58,15 @@ reads non-blocking findings by:
 - the posted verdict is REQUEST_CHANGES when any comment is must-fix-now and
   APPROVE otherwise. A file whose verdict is REQUEST_CHANGES with no
   must-fix-now comment is refused rather than posted as an approval.
+
+merge-lane-2's review file may instead be exactly {"body": ...}, a review with
+no verdict, posted as COMMENT with the body as written, for the review
+scripts/merge-gate.sh asks for when the pull request has activity after
+reviewed-since: one saying what merge-lane-2 read. The program asks the gate's
+own check, merge-gate.sh --print-new-activity-count-after-reviewed-since-bound,
+how much was posted or edited after the latest time the gate accepts as
+reviewed-since, and refuses the file when the answer is nothing, since a verdict
+review is then what is due.
 
 GitHub refuses a whole review when one inline comment is on a line outside the
 pull request's diff, so each comment whose path and line are not on the new
@@ -105,6 +117,8 @@ REPOSITORY = "nedsnodes/nedsnodes"
 MAC_CLAUDE_ACCOUNT = "mac-claude"
 MERGE_LANE_ACCOUNT = "ned-review-merge"
 POSTED_VERDICTS = ("APPROVE", "REQUEST_CHANGES")
+MERGE_GATE = Path(__file__).resolve().with_name("merge-gate.sh")
+NEW_ACTIVITY_COUNT_OPTION = "--print-new-activity-count-after-reviewed-since-bound"
 # The goals and philosophy page's four categories of a finding; only the first blocks.
 FINDING_CATEGORIES = ("must-fix-now", "fix-next", "fix-in-maintenance", "file-for-later")
 BLOCKING_CATEGORY = "must-fix-now"
@@ -135,6 +149,15 @@ REVIEW_FILE_UNUSABLE = (
     "scripts/merge-lane-pull-request-claude-reviewer-headless-run-and-review-post.py again, for "
     "any pull request, until the user answers.\n"
     "Tell the user this whole message.")
+NO_NEW_ACTIVITY = (
+    "review not posted: the review file {path} holds a review with no verdict, which answers only the "
+    "gate's refusal for activity after reviewed-since, and scripts/merge-gate.sh finds nothing posted or "
+    "edited on pull request {number} after {account}'s latest review or the pin.\n"
+    "Do not post the review any other way.\n"
+    "If you have reviewed the nc-head-commit, give the file your verdict and findings, in the form this "
+    "program's docstring describes, and run the same command again.\n"
+    "If the gate refused for new activity, run the gate again: what it counted may have been your own "
+    "review.")
 NOT_POSTED = (
     "review not posted: {reason}.\n"
     "Do not post the review any other way.\n"
@@ -180,16 +203,22 @@ class GhFailed(Exception):
 
 
 def read_review_file(path, account):
-    """Return (verdict, body, comments) from the account's review file, or raise ReviewFileUnusable."""
+    """Return (verdict, body, comments) from the account's review file, verdict None for merge-lane-2's
+    review with no verdict, or raise ReviewFileUnusable."""
     try:
         review = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError) as error:
         raise ReviewFileUnusable(f"could not be read: {error}")
     except ValueError as error:
         raise ReviewFileUnusable(f"is not JSON: {error}")
+    if account == MERGE_LANE_ACCOUNT and isinstance(review, dict) and set(review) == {"body"}:  # pragma: no mutate, --github-account allows only mac-claude and ned-review-merge, and mac-claude sorts before ned-review-merge, so >= gives what == gives
+        if not isinstance(review["body"], str) or not review["body"].strip():
+            raise ReviewFileUnusable("has no \"body\" text")
+        return None, review["body"], []
     if not isinstance(review, dict) or set(review) != {"verdict", "body", "comments"}:
         raise ReviewFileUnusable(
-            "must hold one JSON object with exactly \"verdict\", \"body\" and \"comments\"")
+            "must hold one JSON object with exactly \"verdict\", \"body\" and \"comments\""
+            + (", or, for a review with no verdict, exactly \"body\"" if account == MERGE_LANE_ACCOUNT else ""))
     verdict, body, comments = review["verdict"], review["body"], review["comments"]
     if verdict not in POSTED_VERDICTS:
         raise ReviewFileUnusable(
@@ -380,6 +409,17 @@ def reason_of(error):
     return f"GitHub's reply was not in the expected shape: {type(error).__name__}: {error}"
 
 
+def new_activity_count_after_reviewed_since_bound(number):
+    """What scripts/merge-gate.sh counts as posted or edited on the pull request after the latest
+    reviewed-since it accepts, or raise GhFailed naming why the gate could not count it."""
+    completed = subprocess.run(["bash", str(MERGE_GATE), NEW_ACTIVITY_COUNT_OPTION, str(number)],
+                               capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    if completed.returncode != 0 or not completed.stdout.strip().isdigit():
+        raise GhFailed(f"{MERGE_GATE} {NEW_ACTIVITY_COUNT_OPTION} {number} exited {completed.returncode}, "
+                       f"printing {completed.stdout.strip()!r} and on standard error: {completed.stderr.strip()}")
+    return int(completed.stdout)
+
+
 def gh_json(token, arguments, input_text=None):
     completed = subprocess.run(
         ["gh", "api", *arguments], input=input_text, capture_output=True, text=True,
@@ -449,21 +489,36 @@ def main(argv=None):
         print(NOT_POSTED.format(reason=f"reading the pull request's diff failed: {reason_of(error)}"),
               file=sys.stderr)
         return EXIT_NOT_POSTED
-    if account == MERGE_LANE_ACCOUNT:  # pragma: no mutate, --github-account allows only mac-claude and ned-review-merge, and mac-claude sorts before ned-review-merge, so >= gives what == gives
+    if verdict is None:
+        try:
+            new_activity = new_activity_count_after_reviewed_since_bound(number)
+        except GhFailed as error:
+            print(NOT_POSTED.format(reason=f"counting the pull request's activity failed: {error}"),
+                  file=sys.stderr)
+            return EXIT_NOT_POSTED
+        if not new_activity:
+            print(NO_NEW_ACTIVITY.format(path=arguments.review_file, number=number, account=account),
+                  file=sys.stderr)
+            return EXIT_NOT_POSTED
+    elif account == MERGE_LANE_ACCOUNT:  # pragma: no mutate, --github-account allows only mac-claude and ned-review-merge, and mac-claude sorts before ned-review-merge, so >= gives what == gives
         verdict, body, comments = with_finding_category_marks(body, comments)
     body, inline_comments = with_outside_comments_in_body(body, comments, lines)
     moved_count = len(comments) - len(inline_comments)
     comments = inline_comments
-    event = (verdict if account == MERGE_LANE_ACCOUNT  # pragma: no mutate, --github-account allows only mac-claude and ned-review-merge, and mac-claude sorts before ned-review-merge, so >= gives what == gives
-             or author == MERGE_LANE_ACCOUNT
-             else "COMMENT")
+    # GitHub refuses an approving or changes-requesting review from the pull request's author.
+    if verdict is None:
+        event = "COMMENT"
+    elif account == MERGE_LANE_ACCOUNT:  # pragma: no mutate, --github-account allows only mac-claude and ned-review-merge, and mac-claude sorts before ned-review-merge, so >= gives what == gives
+        event = "COMMENT" if author == MERGE_LANE_ACCOUNT else verdict
+    else:
+        event = verdict if author == MERGE_LANE_ACCOUNT else "COMMENT"
     review_id = None
     try:
         try:
             posted = gh_json(token, ["-X", "POST", f"repos/{REPOSITORY}/pulls/{number}/reviews",
                                      "--input", "-"],
                              input_text=json.dumps({"commit_id": head, "event": event,
-                                                    "body": f"{verdict}\n\n{body}",
+                                                    "body": f"{verdict}\n\n{body}" if verdict else body,
                                                     "comments": comments}))
             review_id = posted["id"]
         except (GhFailed, KeyError, TypeError) as error:
@@ -489,8 +544,8 @@ def main(argv=None):
                   file=sys.stderr)
             return EXIT_NOT_POSTED
         moved = f"; {moved_count} comment(s) moved into the body" if moved_count else ""
-        print(f"review {review_id} posted on pull request {number} by {account} as {event}, verdict "
-              f"{verdict}, on commit {head}; GitHub's copy reads back as {EVENT_STATES[event]}"
+        print(f"review {review_id} posted on pull request {number} by {account} as {event}, "
+              f"{f'verdict {verdict}' if verdict else 'no verdict'}, on commit {head}; GitHub's copy reads back as {EVENT_STATES[event]}"
               f"{moved}")
         return EXIT_POSTED
     except (KeyboardInterrupt, SystemExit):
