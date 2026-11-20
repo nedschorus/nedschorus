@@ -304,10 +304,10 @@ def main():
                 ("an added link reference definition is named with the one it adds",
                  "See [x].\n\n" + HEADING + "\n- a\n",
                  "See [x].\n\n" + HEADING + "\n- a\n\n[x]: https://example.com\n",
-                 f"it adds, removes or changes a Markdown link reference definition, such as "
-                 f"\"[x]: https://example.com\", which renders as nothing and can change where "
-                 f"other links in the file point: definition 1 is 'none' at the merge base and "
-                 f"('X', 'https://example.com', '') at the nc-head-commit"),
+                 "it adds, removes or changes a Markdown link reference definition, such as "
+                 "\"[x]: https://example.com\", which renders as nothing and can change where "
+                 "other links in the file point: definition 1 is 'none' at the merge base and "
+                 "('X', 'https://example.com', '') at the nc-head-commit"),
                 ("a moved section is named with the line its heading moved from and to",
                  "## A\na\n\n" + HEADING + "\n- x\n\n## B\nb\n",
                  "## A\na\n\n## B\nb\n\n" + HEADING + "\n- x\n",

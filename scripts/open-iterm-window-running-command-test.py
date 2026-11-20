@@ -167,4 +167,4 @@ print()
 if failures:
     print(f"{len(failures)} case(s) failed")
     sys.exit(1)
-print(f"all cases passed")
+print("all cases passed")

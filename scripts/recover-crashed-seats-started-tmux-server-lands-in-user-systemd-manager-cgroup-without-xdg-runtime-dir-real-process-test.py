@@ -18,7 +18,6 @@ Run: python3 scripts/recover-crashed-seats-started-tmux-server-lands-in-user-sys
 import importlib.util
 import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 

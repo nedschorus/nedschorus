@@ -40,7 +40,7 @@ the box this job asks the Mac for no windows itself: recovery opens a window
 on the Mac after each seat it brings up, and a window that does not open
 makes this run exit nonzero, with the seat counted as come up.
 
-The rule, from docs/issues/116-fleet-survives-machine-restart-design.md
+The rule, from docs/issues/116-fleet-survives-machine-restart.system.design.md
 § Ruled 2026-08-31 and its amendments:
 
   - Every supervisor stamps last_poll_at into

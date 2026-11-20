@@ -28,7 +28,7 @@ WHAT IS PINNED HERE.
 
   - A failed cell is retried once, with the same model, and no cell is
     special (user-ruled 2026-09-11; the design is
-    nn-systems/cold-read/cold-read-grid-cell-failure-handling-design.md, whose
+    nn-systems/cold-read/cold-read-grid-cell-failure-handling.tool.design.md, whose
     section 8 lists the cases below). The first failure prints RETRYING:
     with the attempt's cause and keeps the attempt-1 log; a retry that
     lands prints saved: and its log is deleted; a retry that fails prints
@@ -839,7 +839,7 @@ try:
           and "Stopped before finishing" not in result.stdout, repr(result.stdout))
 
     # --- Every failure case below, in the design's terms ---------------------
-    # nn-systems/cold-read/cold-read-grid-cell-failure-handling-design.md, section
+    # nn-systems/cold-read/cold-read-grid-cell-failure-handling.tool.design.md, section
     # 8. The real limit texts (section 4) are the fixtures: the lines of the
     # kept logs it cites, and the 2026-09-18 logged-out capture on ned-box.
     WEEKLY_LIMIT_LINE = "You've hit your weekly limit · resets Nov 7, 3am (America/Los_Angeles)"
@@ -1475,7 +1475,7 @@ try:
           f"exit {result.returncode}; stdout={result.stdout!r}")
     check("the closing text gives the account limit as why Question 4 was not answered",
           "Question 4, What should be code, was not answered: account-limit — weekly limit · resets "
-          f"Nov 7, 3am (America/Los_Angeles) (log: " in result.stdout
+          "Nov 7, 3am (America/Los_Angeles) (log: " in result.stdout
           and f"{QUESTION_4_REPORT_NAME}.stderr.log). The other reports do not depend on it: "
           "go on without its answer." in result.stdout, repr(result.stdout))
 

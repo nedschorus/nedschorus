@@ -10,7 +10,7 @@ its GHI-MD and nothing else: one copy of every fact, GitHub
 holding the state and the file holding the content. Nothing could build that
 rule by hand, because a body of links needs its files on main first and main
 takes no direct push. This is the program that does it. Designed in
-docs/issues/46-ghi-guide-agent-design.md § The GHI write path; that design is
+docs/issues/46-ghi-guide-agent.system.design.md § The GHI write path; that design is
 the authority and this docstring does not restate it.
 
 WHAT IS AND IS NOT IN THIS SLICE. `create`, `edit` and `close`. There is no comment
@@ -430,10 +430,10 @@ DEFAULT_REPO = "nedsnodes/nedsnodes"
 GHI_MD_DIRECTORY = "docs/issues"
 SYSTEM_DIRECTORY = "nn-systems"
 # Where a design moves once its code lands: the `docs/` directory of the
-# directory its code is in, under a name ending `-design.md` that carries no
+# directory its code is in, under a name ending `.design.md` that carries no
 # issue number. See `landed_design_relative_path`.
 LANDED_DESIGN_DIRECTORY_NAME = "docs"
-LANDED_DESIGN_NAME_ENDING = "-design.md"
+LANDED_DESIGN_NAME_ENDING = ".design.md"
 PAIRING_KEY_PREFIX = "ghipair"
 RECONSIDERED_MARKER_NAME = ".ghi-issue-write-reconsidered"
 # What gh's stderr carries when the number names no issue, lowercased for
@@ -934,10 +934,10 @@ def issue_number_in_frontmatter(text):
 def landed_design_relative_path(relative: str) -> bool:
     """Whether this repository path is where a design sits once its code
     has landed: the `docs/` directory of a system's or a subsystem's
-    directory under nn-systems/, under a name ending `-design.md` that does
+    directory under nn-systems/, under a name ending `.design.md` that does
     not begin with an issue number — `nn-systems/handoff/docs/
-    handoff-recover-crashed-seats-design.md`, or
-    `nn-systems/skills/cold-read/docs/cold-read-design.md` for a
+    handoff-recover-crashed-seats.system.design.md`, or
+    `nn-systems/skills/cold-read/docs/cold-read.system.design.md` for a
     subsystem.
 
     That is the file-naming page's rule for a landed design,
@@ -2249,7 +2249,7 @@ def validate_edit(path: Path, repository_root: Path):
                 f"lives directly in {GHI_MD_DIRECTORY}/ before its system's "
                 f"code starts and directly in {SYSTEM_DIRECTORY}/<system>/ "
                 "after, and in neither a queue nor an archive below them "
-                "(docs/issues/46-ghi-guide-agent-design.md § Where the tool "
+                "(docs/issues/46-ghi-guide-agent.system.design.md § Where the tool "
                 "may write). A design whose code has landed lives in the "
                 f"{LANDED_DESIGN_DIRECTORY_NAME}/ directory of its code's "
                 "directory, under a name with no number.\n"
