@@ -128,7 +128,7 @@ REMOVE_NOT_IN_TABLE = "--remove-not-in-table"
 INSTALLER_STEPS = (INSTALL, REMOVE_NOT_IN_TABLE)
 SCHEDULED_JOBS_TABLE = "nn-systems/general-tools/scheduled-jobs-on-each-machine.json"
 BOTH_INSTALLER_STEPS = f"both installer steps, `{INSTALL}` and then `{REMOVE_NOT_IN_TABLE}`,"
-PRINT_OUTCOME_OPTION = "--print-outcome"
+PRINT_OUTCOME_COMMAND_LINE_FLAG = "--print-outcome"
 WHAT_A_FAILED_STEP_MAY_LEAVE_ON_THE_MACHINE = {
     INSTALL: f"may not run every job that {SCHEDULED_JOBS_TABLE} gives it",
     REMOVE_NOT_IN_TABLE: f"may still run a job that {SCHEDULED_JOBS_TABLE} does not give it",
@@ -141,7 +141,7 @@ def step_command_text(reference_checkout, step):
 
 
 def rerun_command_text(reference_checkout):
-    return f"cd {reference_checkout} && python3 {PROGRAM} {PRINT_OUTCOME_OPTION}"
+    return f"cd {reference_checkout} && python3 {PROGRAM} {PRINT_OUTCOME_COMMAND_LINE_FLAG}"
 
 
 def failed_step_sentence(machine, reference_checkout, step, exit_code):
@@ -257,7 +257,7 @@ def main(environment=None, argv=None):
         description=__doc__.split("\n\n")[0],
         epilog="Git runs this from scripts/git-client-side-hooks/post-merge after every merge, "
                "with no options.")
-    parser.add_argument(PRINT_OUTCOME_OPTION, action="store_true",
+    parser.add_argument(PRINT_OUTCOME_COMMAND_LINE_FLAG, action="store_true",
                         help="for a run by hand: print one line saying how the run ended, "
                              "where the hook's run prints nothing")
     print_outcome = parser.parse_args(argv).print_outcome

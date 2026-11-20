@@ -344,7 +344,7 @@ with tempfile.TemporaryDirectory() as scratch:
               "cannot run commands on, and to paste what it prints into your session" in errors
           and "what stopped the task write" not in errors, (code, errors))
 
-    outcome = after_merge.PRINT_OUTCOME_OPTION
+    outcome = after_merge.PRINT_OUTCOME_COMMAND_LINE_FLAG
     code, calls, printed, errors = run(ned_box_reference=repository, installer_exit=1,
                                        argv=[outcome])
     check("--print-outcome after a failure written as a task prints the failed step and the "
