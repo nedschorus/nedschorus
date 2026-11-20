@@ -59,7 +59,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-PROGRAM_PATH = "nc-systems/skills/emergency-stop/emergency-stop-file-write-start-append-and-stop-lift.py"
+PROGRAM_PATH = "nn-systems/skills/emergency-stop/emergency-stop-file-write-start-append-and-stop-lift.py"
 _spec = importlib.util.spec_from_file_location(
     "emergency_stop_file_in_force_read_common", HERE / "emergency-stop-file-in-force-read-common.py")
 common = importlib.util.module_from_spec(_spec)
