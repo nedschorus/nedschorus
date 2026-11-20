@@ -48,7 +48,7 @@ _rule_failure_lines_spec.loader.exec_module(RULE_FAILURE_LINES)
 
 FAST_READ_PULL_REQUEST = {
     "title": "Fast read: say when the cold-read-full-run is still required",
-    "url": "https://github.com/nedschorus/nedschorus/pull/466",
+    "url": "https://github.com/nedsnodes/nedsnodes/pull/466",
 }
 SESSION_WORKTREE = "/a/session/worktree"
 

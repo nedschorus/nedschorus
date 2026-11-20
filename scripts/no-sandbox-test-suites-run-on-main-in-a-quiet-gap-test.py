@@ -454,7 +454,7 @@ with tempfile.TemporaryDirectory() as directory:
     def fetch_fails_after_progress(clone, *arguments, **options):
         if arguments[:1] == ("fetch",):
             return subprocess.CompletedProcess(
-                arguments, 1, "", "From https://github.com/nedschorus/nedschorus\n"
+                arguments, 1, "", "From https://github.com/nedsnodes/nedsnodes\n"
                 "error: cannot lock ref 'refs/remotes/origin/main': is at 1 but expected 2\n"
                 " ! 1..3  main -> origin/main  (unable to update local ref)\n"
                 "error: some local refs could not be updated\n")

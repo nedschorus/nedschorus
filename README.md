@@ -11,7 +11,7 @@ NedsNodes rebuilds SDLC the way UNIX rebuilt the operating system: many modular 
 * **Code** runs everything mechanical. Code is fast, precise and testable.  
 * **AIs** handle the steps that need flexibility.   
 * **CPC** wraps bespoke prompts in code, so rules or prompts can scale like code.   
-* **Humans** supply wisdom, judgment and common sense. Humans have the first and last say, **as we react instantly to the unforeseen (first line of defense),** and **only humans can be (legally) responsible (last line of defense).**
+* **Humans** supply wisdom, judgment and common sense. Humans have the first and last say, **as we can react immediately to the unforeseen (first line of defense),** and **only humans can be legally responsible (last line of defense).**
 
 Two new, and two old ideas, now powered by AIs, keep the system humming. **Cold-read** supplies the theory of mind AIs lack, so every prompt makes sense to a reader with minimal context. **Detect-instruct-correct** swaps unsolvable precognition for post-cognition: watch, revert, insert the right prompt, try again. And half our time and tokens are for **maintenance** and **data-driven internal improvements**, not visible progress, to replace slow decay with steady progress. 
 
