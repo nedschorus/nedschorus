@@ -1,3 +1,7 @@
+---
+issue: "[Adversarial whole-package review — two runtimes, blind first passes, threaded Q&A (doc: docs/issues/8-adversarial-package-review.md)](https://github.com/nedschorus/nedschorus/issues/8)"
+---
+
 Issue: https://github.com/nedschorus/nedschorus/issues/8
 
 # Adversarial package review — reviewer instructions
@@ -18,9 +22,9 @@ Repository `github.com/nedschorus/nedschorus` at the commit named when you were 
 - `docs/cross-project/nedschorus-founding-plan.md` — the boot-up plan and rulings register (retired 2026-09-03; `git show 615a230:docs/cross-project/nedschorus-founding-plan.md`).
 - `nc-systems/handoff/handoff-design.md` — the session-handoff specification.
 - `nc-systems/main-gatekeeper/main-gatekeeper-design.md` — the check-in gate specification (renamed from fast-pr-to-prod-design 2026-07-24).
-- `docs/cross-project/comms-bridge-spec.md` — the two-log coordination channel.
+- [comms-bridge-spec.md](https://github.com/nedschorus/nedschorus/blob/295c9f35/docs/cross-project/comms-bridge-spec.md) — the two-log coordination channel.
 - `docs/issues/4-open-source-publishing-community-strategy.md` — the publishing strategy.
-- `entry-manifest.md` — the import ledger (empty is its correct current state).
+- [entry-manifest.md](https://github.com/nedschorus/nedschorus/blob/295c9f35/entry-manifest.md) — the import ledger (empty is its correct current state).
 - Open issues [Founding program — boot up nedschorus (plan of record: docs/cross-project/nedschorus-founding-plan.md)](https://github.com/nedschorus/nedschorus/issues/1), issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nc-systems/handoff/handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2), issue [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3), issue [Open-source publishing and community strategy — Ned's Chorus (doc: docs/issues/4-open-source-publishing-community-strategy.md)](https://github.com/nedschorus/nedschorus/issues/4), issue [Low priority: handoff-quality instrumentation (deferred — ladder not earned; interim = narrated correction summary)](https://github.com/nedschorus/nedschorus/issues/6), issue [Backup strategy for state outside git (Time Machine covers today; inventory + restore drill when the boss teaches it)](https://github.com/nedschorus/nedschorus/issues/7) for context on in-flight work.
 
 ## Fixed rulings — do not relitigate
@@ -48,3 +52,7 @@ For each package document, report which of these it carries, which are MISSING, 
 ## Independence
 
 Two reviewers run this brief in parallel from different runtimes. You do not see the other reviewer's output, and yours is not shown to them until both have delivered. Do not hedge toward consensus — your value is what only you catch.
+
+## Outcome
+
+Closed as completed on 2026-09-21. The two-reviewer review of the founding package ran in July 2026; the user's dispositions of its finding clusters were recorded on the issue, and on 2026-07-22 the last of them, items 6 to 10, were written into the specifications on main, one commit per item: `0d57855`, `28c92ec`, `8922f53`, `65cf03d` and `be036ab`. The review was a one-off; GHI [cold-read: one merged report per read — findings grouped by passage, with each cell's wording and the count of cells that raised it](https://github.com/nedschorus/nedschorus/issues/166) cites it as the nearest precedent for merging two reviewers' reports.

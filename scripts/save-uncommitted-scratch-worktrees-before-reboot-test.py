@@ -269,6 +269,27 @@ with tempfile.TemporaryDirectory(prefix="pre-reboot-saver-test-") as scratch_nam
           and (restore_two / "nested" / "inner.txt").read_text() == "nested work\n"
           and (restore_two / "loose.txt").exists(), extracted.stderr)
 
+    # --- the manifest names files as stored, renames included ----------------
+    clone_three = scratch / "clone-three-parent"
+    clone_three.mkdir()
+    clone_three = make_clone(clone_three)
+    tmp_three = scratch / "tmp-three"
+    named = add_worktree(clone_three, tmp_three / "-home-nedlern-agents-delta" / "wt-named",
+                         "named-branch")
+    git("mv", "tracked.txt", "my notes.txt", cwd=named)
+    (named / 'café "q".md').write_text("new\n")
+    result = run_saver(clone_three, str(scratch / "store-three"), [tmp_three])
+    delta_saves = saves_under(scratch / "store-three" / "delta")
+    delta_dir = next(delta_saves[0].iterdir()) if delta_saves else scratch / "missing"
+    delta_manifest = (json.loads((delta_dir / "manifest.json").read_text())
+                      if (delta_dir / "manifest.json").exists() else {})
+    check("the manifest's status names a non-ASCII, quoted name and a rename as stored",
+          sorted(delta_manifest.get("status", [])) == sorted(
+              ['?? café "q".md', "R  tracked.txt -> my notes.txt"]),
+          result.stdout + str(delta_manifest.get("status")))
+    check("the manifest records the worktree's branch from the -z listing",
+          delta_manifest.get("branch") == "refs/heads/named-branch", str(delta_manifest))
+
     # --- which destination is local --------------------------------------
     saver_spec = importlib.util.spec_from_file_location("pre_reboot_saver", SAVER)
     saver = importlib.util.module_from_spec(saver_spec)
@@ -291,8 +312,11 @@ with tempfile.TemporaryDirectory(prefix="pre-reboot-saver-test-") as scratch_nam
           result.returncode == 2 and "could not list the worktrees" in result.stdout, result.stdout)
     help_text = subprocess.run([sys.executable, str(SAVER), "--help"], capture_output=True,
                                text=True).stdout
-    check("--help carries the restart procedure",
-          "THE RESTART PROCEDURE" in help_text and "pgrep -fl 'git push|codex exec'" in help_text
+    check("--help carries the restart procedure, with each pgrep in the form that prints "
+          "command lines on its machine: -af on ned-box's Linux, -lf on the Mac",
+          "THE RESTART PROCEDURE" in help_text
+          and "pgrep -af 'git push|codex exec'" in help_text
+          and "pgrep -fl 'git push|codex exec'" not in help_text
           and "scripts/restart-live-seats-at-login.py" in help_text
           and "-supervisor-state.json" in help_text, help_text[:300])
     check("the restart program --help names exists",

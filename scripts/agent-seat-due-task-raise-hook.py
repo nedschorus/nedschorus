@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Raise an agent-seat's own tasks when they come due, at the end of each turn.
+"""Raise an agent-seat's own tasks when what they wait on is done, at the end of each turn,
+and keep an idle agent-seat from stopping with nothing for the user to answer.
 
 Wired as a Stop hook in .claude/settings.json.
 
@@ -9,35 +10,68 @@ activeForm, blockedBy, blocks, description, id, metadata, status and subject
 (activeForm and metadata are optional, and a few files carry `owner`). An
 agent-seat's list id is `nedschorus-<seat>-tasks`, read from the environment
 variable CLAUDE_CODE_TASK_LIST_ID, which the hook inherits from the session;
-a session without one prints nothing. Only `*.json` files are read, because
+a session without one prints nothing. A list whose directory does not exist
+yet holds no tasks, and its session can still get the next-action prompt.
+Only `*.json` files are read, because
 the list directory also holds the harness's `.lock`. Task files are never
 written.
 
-WHAT MAKES A TASK DUE. Two optional keys in a task's `metadata`:
+WHAT MAKES A TASK DUE. One optional key in a task's `metadata`:
 
-  due_utc   an ISO 8601 time in UTC, such as "2026-10-03T09:00:00Z". A time
-            with no offset is read as UTC. Passed means at or before now.
-  waits_on  a non-empty list of conditions on the repository
-            nedschorus/nedschorus, each {"pr_merged": <number>} or
-            {"issue_closed": <number>}. Met means every condition is met. An
-            empty list is never met: "every one of nothing" would raise a
-            task nobody set a prerequisite on. A list with any entry this
-            hook cannot read is never met.
+  prerequisites  a non-empty list of conditions, each {"pr_merged": <number>}
+                 or {"issue_closed": <number>} on the repository
+                 nedsnodes/nedsnodes, or
+                 {"approval_walk_item_decided": {"approval_walk_minutes_file_path":
+                 <absolute path of a docs/walk/<name>-minutes.md file>,
+                 "approval_walk_item_heading":
+                 <the item's heading in the walk-document>}}. Met means every
+                 condition is met. An empty list is never met: "every one of
+                 nothing" would raise a task nobody set a prerequisite on. A
+                 list this hook cannot read is never met, and the hook names
+                 its fault to the agent once, as RAISED ONCE says, so the task
+                 is not held in silence for good.
 
-An open task (status pending or in_progress) is raised when its due time has
-passed or its waits_on is met, and only when every task in its blockedBy is
+APPROVAL-WALK ITEMS. An item is named by its heading, because its number and
+count can change while the walk runs. The walk-document is the walk-minutes'
+path with `-minutes.md` replaced by `.md`. Its item headings are compared with
+the given heading as the answer program's heading_title reads both, so a
+running count, a deferred note, backticks, spaces and case do not matter. The
+item is decided when the answer program's
+approval_walk_minutes_read_returning_decided_item_numbers counts its number
+as decided; the hook asks that function rather than keeping a rule of its own,
+so it never disagrees with the walk. A walk-minutes file that does not exist
+is not decided, since the walk may not have written it yet; nor is an item not
+yet numbered. A walk-document that
+does not exist, or that holds no item with the heading, or more than one, is
+a fault the hook names as it names an unreadable list: the walk-document
+holds the item before its heading can be named, so its absence means a wrong
+path. The files are read on this machine only, with no cache.
+
+An open task (status pending or in_progress) is raised when its
+prerequisites are met, and only when every task in its blockedBy is
 completed. A blockedBy id with no task file does not hold the task: a deleted
 task can never complete, and holding on it would silence the task for good.
 A blocker file that exists but cannot be read does hold it, because its
-status is unknown.
+status is unknown. An open task with no prerequisites, or one already
+raised for its current prerequisites, whose blockedBy is a non-empty list of
+tasks that all exist and are completed, is raised too: an agent told to
+record a prerequisite task with addBlockedBy, at TaskCreate or after a
+raise, is told this hook raises the task when that prerequisite is done. A
+raise for prerequisites also records the completed blockedBy list, so the
+same blockers do not raise the task a second time. A deleted blocker frees such
+a task without raising it, because nothing it waited on was done.
 
-RAISED ONCE. The hook records, per task, the due_utc and waits_on values it
-raised the task for, and does not raise the task again for the same value;
-changing either lets the task be raised again. The Stop hook's
+RAISED ONCE. The hook records, per task, the prerequisites list it raised
+the task for, or for a task raised because its blockers completed, its
+blockedBy list, and does not raise the task again for the same value;
+changing either lets the task be raised again. A prerequisites list the
+hook cannot read, or whose approval-walk item it cannot find, is named to the
+agent once per value of the list, recorded the same way. The Stop hook's
 additionalContext continues the conversation, so a hook that said the same
 thing at every turn boundary would never let the agent stop. The record is
-written atomically BEFORE anything is printed, and nothing is printed if the
-write fails, so a raise whose record was lost cannot happen.
+written atomically BEFORE anything is printed, and no raise is printed if the
+write fails, so a raise whose record was lost cannot happen; the failed write
+is reported as a fault instead, as OUTPUT says.
 
 THE STATE FILE is
 `~/.local/state/claude/agent-seat-due-task-raise-state/<list id>.json`,
@@ -50,54 +84,98 @@ silence on any fault would mute the hook for good after one torn file. Two
 sessions sharing one list id that stop at the same instant could each raise
 the same task once; that is not locked against.
 
-GITHUB, and only for waits_on. A condition is checked with `gh pr view` or
+GITHUB, and only for prerequisites. A condition is checked with `gh pr view` or
 `gh issue view` (read-only), GH_TOKEN removed from the environment so gh
 uses its keyring login, stdin closed, each call bounded by
-GH_CALL_TIMEOUT_SECONDS and all of a run's calls together by
-GH_CALLS_TOTAL_BUDGET_SECONDS. A condition checked within
-CONDITION_RECHECK_INTERVAL_SECONDS is answered from the state file. A failed,
-timed-out or unparsable check is "not met", recorded with its time so it too
-waits the interval, and is never reported. No condition is checked for a
-task already raised for its current waits_on, or held by blockedBy, so an
-agent-seat whose tasks have no waits_on makes no network call. The same call
+GH_CALL_TIMEOUT_SECONDS and all of a run's calls together, the due-task
+pass's and the next-action prompt's, by GH_CALLS_TOTAL_BUDGET_SECONDS, which
+leaves the rest of the run room inside the hook's 30-second timeout in
+.claude/settings.json. A condition checked within
+CONDITION_RECHECK_INTERVAL_SECONDS is answered from the state file. A check
+gh could not answer, because gh is missing, failed, timed out or printed no
+JSON object, is not an answer: no task waiting on it is raised, it is
+recorded as a failure with its time so it too waits the interval, and the
+stop that asked reports it, as OUTPUT says. No condition is checked for a
+task already raised for its current prerequisites, or held by blockedBy, so
+an agent-seat whose tasks have no prerequisites makes no network call. The same call
 fetches the title and URL the raise line cites; a condition gh never
 answered is cited by its number alone.
 
-OUTPUT. Something to raise: one JSON object,
+THE NEXT-ACTION PROMPT. At a stop that raises no task, the hook hands the
+agent NEXT_ACTION_INSTRUCTIONS, which tell it to start subagents on ready
+work and build an approval-walk, when every one of these holds; otherwise it
+says nothing about it:
+  - the payload names a session, a transcript that exists, and a cwd inside
+    a git checkout that has docs/walk/;
+  - no walk-minutes there has an unclosed `#next_to_present` line, paused
+    or not, as the walk-me-through finder module reads it;
+  - neither the handoff hook's asked marker nor its deferred marker exists
+    for the session, and the context used plus the tokens compactions
+    dropped, as a share of the context window, is below the reincarnation
+    threshold, read with the handoff hook's own reader and its
+    DEFAULT_THRESHOLD_USED_PERCENTAGE: Claude Code
+    runs the hooks of one Stop group in parallel, so at the stop that first
+    reaches the threshold the asked marker may not be written yet;
+  - the payload's background_tasks list, read with the handoff hook's
+    work_in_flight_from_background_tasks, holds no running subagent,
+    workflow or background task; a payload without the list counts as no
+    work running, and a transcript the reader cannot fully read counts as
+    work running;
+  - the session has run a tool since this hook last handed it the prompt.
+    The state file's `next_action_prompt` entry holds the session id and the
+    id of the newest tool call the transcript held when the prompt was
+    handed; a stop that finds both unchanged is silent, so an agent that
+    stops again without running a tool is let stop, and the hook never
+    loops.
+Code gathers what it can for the agent: the open tasks no blockedBy or
+unmet prerequisite holds back (prerequisites are answered by the same gh
+checker, and one gh could not answer holds its task), the count of the
+held ones, and every walk-minutes line marked `<open>`, each list cut at a
+limit with a count of the rest. Which listed task is ready, which needs the
+user, and what the walk holds is the agent's judgment. The entry is written
+with the rest of the state, before the prompt is printed. A fault while
+deciding, such as a walk-minutes file that cannot be read, is reported on
+stderr with exit 1, saying the tasks were checked, and writes no state.
+
+OUTPUT. Something to raise, or the next-action prompt: one JSON object,
 {"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": ...}},
 which Claude Code delivers to the model as non-error feedback while the
 conversation continues. No `decision` field and no `systemMessage`: the text
-is for the agent. The text is one instruction per due task, then the
-instruction for a task that cannot be acted on yet. Nothing to raise, or any
-fault: nothing printed, exit 0. The hook never exits nonzero: a fault here
-must not stop a turn ending.
+is for the agent. The text is one instruction per due task, then, when any
+task was raised, the instruction for a task that cannot be acted on yet,
+then two lines per prerequisites list the hook cannot use, then the
+next-action prompt's lines, then one line per condition gh could not answer
+at this stop. Nothing to raise or name and no next-action prompt:
+nothing printed, exit 0. A fault, such as a payload
+that is not a JSON object, a state file that cannot be written, a condition
+gh could not answer at a stop with nothing else to print, or any exception:
+one line on stderr naming the hook and the fault, nothing on stdout, exit 1.
+The line for a failed state write says how many due tasks went unraised, or
+that none was due, and that the first stop after the state file can be
+written raises them; the line for a condition gh could not answer quotes
+gh's failure; the line for any other fault says no task was checked. Claude Code records a
+Stop hook's exit 1 as a non-blocking error and still ends the turn. Exit 2 and additionalContext would both continue the conversation, and a
+fault that recurs at every stop would then never let the agent stop.
 
 ONLY THE AGENT-SEAT'S OWN SESSION IS RAISED, never a headless `claude -p`
 child an agent-seat's program starts. A child inherits the agent-seat's
 environment, CLAUDE_CODE_TASK_LIST_ID included, and the raise text would be
-the last thing the child says, which its caller reads as the answer. Two
-signals silence the hook:
-
-  NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER set, the variable
-      scripts/ghi-info-ask.py sets for its child and the handoff hook also
-      honours.
-  CLAUDE_CODE_SESSION_ATTENDED == "0". Claude Code sets this for every hook
-      it runs: "1" in an interactive session, "0" in a `claude -p` child,
-      even when the child inherited "1" from the agent-seat. The Stop payload
-      carries no field that tells the two apart. A missing variable does not
-      silence the hook, so a Claude Code that stops setting it costs the
-      headless guard, not the agent-seat's reminders.
+the last thing the child says, which its caller reads as the answer. The
+hook stays silent when
+nc-systems/general-tools/agent-session-unattended-by-user-check-common.py
+says no user attends the agent-session; the Stop payload carries no field
+that tells an attended agent-session from a headless child.
 
 The project's own headless Claude callers run no project hook at all: the
 cold-read Claude cell, and the restater-judge cell through it, pass
-`--settings` with disableAllHooks; scripts/ghi-info-ask.py and
-scripts/sanity-check-attacks.py pass `--setting-sources user`. The two
-signals cover a child started any other way.
+`--settings` with disableAllHooks; scripts/ghi-guide-agent-ask.py and
+scripts/sanity-check-adversarial-prompts.py pass `--setting-sources user`. The attendance
+check covers a child started any other way.
 """
 
+import importlib.util
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -105,19 +183,41 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Every Stop hook obeys this rule first: see the module's docstring.
+_stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_location(
+    "claude_code_stop_hooks_stay_silent_while_agent_answers_a_stop_hook_rule_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
+stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
+_stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
+
+_agent_session_unattended_by_user_check_common_specification = importlib.util.spec_from_file_location(
+    "agent_session_unattended_by_user_check_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "agent-session-unattended-by-user-check-common.py")
+agent_session_unattended_by_user_check_common = importlib.util.module_from_spec(
+    _agent_session_unattended_by_user_check_common_specification)
+_agent_session_unattended_by_user_check_common_specification.loader.exec_module(
+    agent_session_unattended_by_user_check_common)
+
+_HOOK_DIRECTORY = Path(__file__).resolve().parent
+
+
+def _load_module_by_path(module_name: str, path: Path):
+    specification = importlib.util.spec_from_file_location(module_name, path)
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
 TASK_LIST_ID_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_TASK_LIST_ID"
-REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"
-SESSION_ATTENDED_VARIABLE = "CLAUDE_CODE_SESSION_ATTENDED"
-SESSION_UNATTENDED_VALUE = "0"
 TASKS_ROOT_UNDER_HOME = Path(".claude") / "tasks"
 STATE_DIRECTORY_UNDER_HOME = (Path(".local") / "state" / "claude"
                               / "agent-seat-due-task-raise-state")
 OPEN_TASK_STATUSES = ("pending", "in_progress")
 COMPLETED_TASK_STATUS = "completed"
 
-FRACTIONAL_SECONDS_PATTERN = re.compile(r"^(.*T\d{2}:\d{2}:\d{2})\.(\d+)(.*)$")
-
-GITHUB_REPOSITORY = "nedschorus/nedschorus"
+GITHUB_REPOSITORY = "nedsnodes/nedsnodes"
 CONDITION_RECHECK_INTERVAL_SECONDS = 300
 GH_CALL_TIMEOUT_SECONDS = 8
 GH_CALLS_TOTAL_BUDGET_SECONDS = 20
@@ -129,10 +229,32 @@ CONDITION_KINDS = {
     "issue_closed": ("issue", "CLOSED", "GHI", "closed"),
 }
 
+APPROVAL_WALK_ITEM_KIND = "approval_walk_item_decided"
+WALK_MINUTES_FIELD = "approval_walk_minutes_file_path"
+ITEM_HEADING_FIELD = "approval_walk_item_heading"
+WALK_MINUTES_SUFFIX = "-minutes.md"
+PREREQUISITES_KEY = "prerequisites"
+PREREQUISITES_PROBLEM_RECORD_KEY = "prerequisites_problem"
+PREREQUISITE_FORMS = (
+    '{"pr_merged": <number>}, {"issue_closed": <number>} or {"' + APPROVAL_WALK_ITEM_KIND
+    + '": {"' + WALK_MINUTES_FIELD + '": "<absolute path of the walk-minutes file>", "'
+    + ITEM_HEADING_FIELD + '": "<the item\'s heading in the walk-document>"}}')
+
+RAISE_LINE_TEMPLATE = ('[rule due-task-raise-when-prerequisites-met] Act on task {task_id} "{subject}" '
+                       "now: {reasons}.")
 DEFER_INSTRUCTION = (
-    "If a task above cannot be acted on yet, give it a later metadata.due_utc, "
-    "a new metadata.waits_on, or both, with TaskUpdate instead."
+    "If a task above cannot be acted on yet, record what it now waits on with TaskUpdate "
+    "instead: a pull request, a GHI or an approval-walk item in a new "
+    "metadata.prerequisites, or a task with addBlockedBy."
 )
+PREREQUISITES_PROBLEM_LINE_TEMPLATE = (
+    '[rule due-task-prerequisites-unusable-correct-them] Task {task_id} "{subject}" is never raised as its metadata.prerequisites stand, because '
+    "{problem}.")
+PREREQUISITES_CORRECTION_INSTRUCTION = (
+    'Correct the task with TaskUpdate, giving its metadata a "prerequisites" list whose entries '
+    "are each one of " + PREREQUISITE_FORMS + '; if the task waits on no pull request, GHI or '
+    'approval-walk item, set "prerequisites" to null, and record any task on your own task list '
+    "it waits on with addBlockedBy.")
 
 
 def single_line(text) -> str:
@@ -151,18 +273,26 @@ def state_file_path(home: Path, list_id: str) -> Path:
     return home / STATE_DIRECTORY_UNDER_HOME / f"{list_id}.json"
 
 
-def read_tasks(directory: Path) -> dict:
-    """Every readable task in the list, by id; a malformed file is skipped."""
+def read_tasks(directory: Path, unreadable: "list | None" = None) -> dict:
+    """Every readable task in the list, by id; a missing directory holds none, and one that
+    exists but cannot be listed raises OSError.
+
+    A malformed file is skipped, and its path is appended to `unreadable` when one is given."""
+    # Not Path.glob: it answers a directory it cannot list, even on EIO, as an empty one.
+    try:
+        names = os.listdir(directory)
+    except FileNotFoundError:
+        return {}
     tasks = {}
-    for path in sorted(directory.glob("*.json")):
+    for path in sorted(directory / name for name in names if name.endswith(".json")):
         try:
             task = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            continue
-        if not isinstance(task, dict):
-            continue
-        task_id = task.get("id")
+            task = None
+        task_id = task.get("id") if isinstance(task, dict) else None
         if not isinstance(task_id, str) or not task_id:
+            if unreadable is not None:
+                unreadable.append(path)
             continue
         tasks[task_id] = task
     return tasks
@@ -179,6 +309,20 @@ def blocker_holds(blocker_id, tasks: dict, directory: Path) -> bool:
     return (directory / f"{blocker_id}.json").exists()
 
 
+def completed_blockers(task: dict, tasks: dict) -> "list | None":
+    """The blockedBy ids, sorted, when every one names a completed task; else None.
+
+    Called only for a task is_held_by_blockers let through, so every blocker
+    that exists is completed and only a deleted one is left to rule out.
+    """
+    blocked_by = task.get("blockedBy")
+    if not isinstance(blocked_by, list) or not blocked_by:
+        return None
+    if not all(blocker in tasks for blocker in blocked_by):
+        return None
+    return sorted(set(blocked_by), key=lambda text: (len(text), text))
+
+
 def is_held_by_blockers(task: dict, tasks: dict, directory: Path) -> bool:
     blocked_by = task.get("blockedBy") or []
     if not isinstance(blocked_by, list):
@@ -186,50 +330,102 @@ def is_held_by_blockers(task: dict, tasks: dict, directory: Path) -> bool:
     return any(blocker_holds(blocker, tasks, directory) for blocker in blocked_by)
 
 
-def parse_due_utc(text) -> "datetime | None":
-    """The instant a due_utc string names, or None when it names none."""
-    if not isinstance(text, str) or not text.strip():
-        return None
-    normalized = text.strip()
-    if normalized[-1] in "Zz":
-        normalized = normalized[:-1] + "+00:00"
-    # Python 3.9's fromisoformat, the Mac's system Python, takes a fraction
-    # of exactly three or six digits; written times use any number.
-    fraction = FRACTIONAL_SECONDS_PATTERN.match(normalized)
-    if fraction:
-        normalized = (fraction.group(1) + "." + fraction.group(2)[:6].ljust(6, "0")
-                      + fraction.group(3))
-    try:
-        instant = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if instant.tzinfo is None:
-        instant = instant.replace(tzinfo=timezone.utc)
-    return instant
+class UnreadablePrerequisites(ValueError):
+    """A prerequisites list this hook cannot use; the argument says why, as a clause."""
 
 
-def parse_waits_on(value) -> "list | None":
-    """The waits_on list as [(kind, number), ...], or None if any entry is unreadable."""
-    if not isinstance(value, list) or not value:
-        return None
+def parse_prerequisites(value) -> list:
+    """The prerequisites list as [(kind, number or approval-walk item object), ...].
+
+    Raises UnreadablePrerequisites naming the first entry it cannot read."""
+    if not isinstance(value, list):
+        raise UnreadablePrerequisites(f"it is {json.dumps(value)}, not a list")
+    if not value:
+        raise UnreadablePrerequisites("it is an empty list, which names nothing to wait on")
     conditions = []
     for entry in value:
+        shown = json.dumps(entry, ensure_ascii=False)
         if not isinstance(entry, dict) or len(entry) != 1:
-            return None
-        (kind, number), = entry.items()
-        if kind not in CONDITION_KINDS:
-            return None
-        if isinstance(number, bool) or not isinstance(number, int) or number <= 0:
-            return None
-        conditions.append((kind, number))
+            raise UnreadablePrerequisites(f"its entry {shown} is not an object with one key")
+        (kind, condition), = entry.items()
+        if kind == APPROVAL_WALK_ITEM_KIND:
+            if (not isinstance(condition, dict)
+                    or set(condition) != {WALK_MINUTES_FIELD, ITEM_HEADING_FIELD}
+                    or not isinstance(condition[WALK_MINUTES_FIELD], str)
+                    or not os.path.isabs(condition[WALK_MINUTES_FIELD])
+                    or not condition[WALK_MINUTES_FIELD].endswith(WALK_MINUTES_SUFFIX)
+                    or not isinstance(condition[ITEM_HEADING_FIELD], str)
+                    or not condition[ITEM_HEADING_FIELD].strip()):
+                raise UnreadablePrerequisites(
+                    f'its entry {shown} does not give "{WALK_MINUTES_FIELD}" as the absolute path '
+                    f'of a file whose name ends {WALK_MINUTES_SUFFIX} and "{ITEM_HEADING_FIELD}" '
+                    f"as the item's heading, and no other key")
+        elif kind not in CONDITION_KINDS:
+            raise UnreadablePrerequisites(
+                f'its entry {shown} names the kind "{kind}", which this hook does not know')
+        elif isinstance(condition, bool) or not isinstance(condition, int) or condition <= 0:
+            raise UnreadablePrerequisites(f"its entry {shown} does not give a positive whole number")
+        conditions.append((kind, condition))
     return conditions
+
+
+_walk_modules = []
+
+
+def walk_finder_and_answer_program():
+    """The walk-me-through finder module and answer program, loaded on first use only."""
+    if not _walk_modules:
+        _walk_modules.extend((
+            _load_module_by_path(
+                "walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
+                WALK_FINDER_FILE),
+            _load_module_by_path(
+                "walk_me_through_answer_added_texts_cold_read_fast_read_check_and_close",
+                WALK_ANSWER_PROGRAM_FILE)))
+    return _walk_modules
+
+
+def approval_walk_item_decided_or_problem(condition: dict) -> dict:
+    """{"met": bool}, with "problem", a clause saying why, when the item cannot be found."""
+    walk_finder, answer_program = walk_finder_and_answer_program()
+    minutes = Path(condition[WALK_MINUTES_FIELD])
+    document = minutes.with_name(minutes.name[:-len(WALK_MINUTES_SUFFIX)] + ".md")
+    heading = condition[ITEM_HEADING_FIELD]
+    try:
+        document_text = document.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        # The walk-document holds the item before anyone can name its heading, so a missing one
+        # means a wrong path, which would otherwise hold the task in silence for good.
+        return {"met": False, "problem": f"the walk-document {document}, which the walk-minutes "
+                                         f"path {minutes} names, does not exist"}
+    parser = walk_finder.markdown_parser()
+    lines = document_text.split("\n")
+    title = answer_program.heading_title(walk_finder, heading)
+    units = walk_finder.item_unit_spans(document_text, parser)
+    matching = [unit for unit in units
+                if answer_program.heading_title(walk_finder, lines[unit[3]]) == title]
+    if len(matching) != 1:
+        found = "no item heading that reads" if not matching else f"{len(matching)} item headings that read"
+        return {"met": False, "problem": f'the walk-document {document} holds {found} '
+                                         f'"{single_line(heading)}" once its running count is left out'}
+    numbers = matching[0][0]
+    if not numbers or not minutes.exists():
+        return {"met": False}
+    decided = answer_program.approval_walk_minutes_read_returning_decided_item_numbers(walk_finder, minutes, parser)
+    return {"met": all(number in decided for number in numbers)}
+
+
+def condition_answer(kind: str, condition, checker) -> dict:
+    if kind == APPROVAL_WALK_ITEM_KIND:
+        return approval_walk_item_decided_or_problem(condition)
+    return checker.answer(kind, condition)
 
 
 def condition_key(kind: str, number: int) -> str:
     return f"{kind}:{number}"
 
 
-def canonical_waits_on(value) -> str:
+def canonical_prerequisites(value) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
@@ -242,14 +438,17 @@ def read_state(path: Path) -> dict:
         state = {}
     raised = state.get("raised")
     checks = state.get("checks")
-    return {
+    result = {
         "raised": raised if isinstance(raised, dict) else {},
         "checks": checks if isinstance(checks, dict) else {},
     }
+    if isinstance(state.get(NEXT_ACTION_STATE_KEY), dict):
+        result[NEXT_ACTION_STATE_KEY] = state[NEXT_ACTION_STATE_KEY]
+    return result
 
 
-def write_state_atomically(path: Path, state: dict) -> bool:
-    """Replace the state file in one rename; True only when it landed."""
+def write_state_atomically(path: Path, state: dict) -> None:
+    """Replace the state file in one rename; raises OSError when it did not land."""
     temporary_name = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -259,26 +458,40 @@ def write_state_atomically(path: Path, state: dict) -> bool:
             json.dump(state, handle, indent=2, sort_keys=True)
             handle.write("\n")
         os.replace(temporary_name, str(path))
-        return True
     except OSError:
         if temporary_name is not None:
             try:
                 os.unlink(temporary_name)
             except OSError:
                 pass
-        return False
+        raise
 
 
 class GitHubConditionChecker:
-    """Answers waits_on conditions from the cache or from gh, within a budget."""
+    """Answers prerequisite conditions from the cache or from gh, within a budget.
+
+    `gh_failures` gets a (kind, number, cause) entry for every failed answer `answer` returns,
+    fresh or cached, so one condition answered twice is listed twice; a caller that answers
+    for several agent-seats reads the entries its own calls appended.
+    """
+
+    # The budget's clock; the test replaces it so its budget cases do not depend on machine speed.
+    clock = staticmethod(time.monotonic)
 
     def __init__(self, checks: dict, now_epoch: float):
         self.checks = checks
         self.now_epoch = now_epoch
-        self.started = time.monotonic()
+        self.started = self.clock()
         self.changed = False
+        self.gh_failures = []
 
     def answer(self, kind: str, number: int) -> dict:
+        answer = self.cached_or_fresh_answer(kind, number)
+        if "gh_failure" in answer:
+            self.gh_failures.append((kind, number, answer["gh_failure"]))
+        return answer
+
+    def cached_or_fresh_answer(self, kind: str, number: int) -> dict:
         key = condition_key(kind, number)
         cached = self.checks.get(key)
         if (isinstance(cached, dict)
@@ -286,7 +499,7 @@ class GitHubConditionChecker:
                 and 0 <= self.now_epoch - cached["checked_at_epoch"]
                 < CONDITION_RECHECK_INTERVAL_SECONDS):
             return cached
-        remaining = GH_CALLS_TOTAL_BUDGET_SECONDS - (time.monotonic() - self.started)
+        remaining = GH_CALLS_TOTAL_BUDGET_SECONDS - (self.clock() - self.started)
         if remaining <= 0:
             # Out of budget: not met this run, and not recorded, so the next
             # run checks it.
@@ -303,25 +516,31 @@ class GitHubConditionChecker:
 
     @staticmethod
     def ask_gh(kind: str, number: int, timeout_seconds: float) -> dict:
+        """Return {"met": ..., "title": ..., "url": ...}, or {"gh_failure": <cause>} when gh did not answer."""
         subcommand, met_state, _, _ = CONDITION_KINDS[kind]
         environment = dict(os.environ)
         environment.pop("GH_TOKEN", None)
+        command = ["gh", subcommand, "view", str(number), "--repo", GITHUB_REPOSITORY,
+                   "--json", "state,title,url"]
+        command_text = f"`{' '.join(command)}`"
         try:
             completed = subprocess.run(
-                ["gh", subcommand, "view", str(number), "--repo", GITHUB_REPOSITORY,
-                 "--json", "state,title,url"],
-                stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                command, stdin=subprocess.DEVNULL, capture_output=True, text=True,
                 timeout=timeout_seconds, env=environment, check=False)
-        except (OSError, subprocess.SubprocessError):
-            return {"met": False}
+        except subprocess.TimeoutExpired:
+            return {"gh_failure": f"{command_text} did not answer within "
+                                  f"{timeout_seconds:g} seconds"}
+        except (OSError, subprocess.SubprocessError) as error:
+            return {"gh_failure": f"{command_text} could not be run: {error}"}
         if completed.returncode != 0:
-            return {"met": False}
+            return {"gh_failure": f"{command_text} exited {completed.returncode}: "
+                                  f"{single_line(completed.stderr) or 'with nothing on stderr'}"}
         try:
             answer = json.loads(completed.stdout)
         except ValueError:
-            return {"met": False}
+            answer = None
         if not isinstance(answer, dict):
-            return {"met": False}
+            return {"gh_failure": f"{command_text} exited 0 without printing a JSON object"}
         result = {"met": answer.get("state") == met_state}
         for citation_field in ("title", "url"):
             if isinstance(answer.get(citation_field), str):
@@ -329,7 +548,10 @@ class GitHubConditionChecker:
         return result
 
 
-def condition_citation(kind: str, number: int, answer: dict) -> str:
+def condition_citation(kind: str, number, answer: dict) -> str:
+    if kind == APPROVAL_WALK_ITEM_KIND:
+        return (f'the approval-walk item "{single_line(number[ITEM_HEADING_FIELD])}" is decided '
+                f"in {number[WALK_MINUTES_FIELD]}")
     _, _, id_type, met_word = CONDITION_KINDS[kind]
     title = answer.get("title")
     url = answer.get("url")
@@ -338,25 +560,38 @@ def condition_citation(kind: str, number: int, answer: dict) -> str:
     return f"{id_type} {number} is {met_word}"
 
 
-def raise_line(task: dict, due_text, met_citations) -> str:
+def gh_failure_line(kind: str, number: int, cause: str) -> str:
+    _, _, id_type, met_word = CONDITION_KINDS[kind]
+    return (f"This hook could not ask GitHub whether {id_type} {number} is {met_word}, so no "
+            f"task waiting on it was raised: {cause}. It asks again at the first stop at least "
+            f"{CONDITION_RECHECK_INTERVAL_SECONDS // 60} minutes after the failed call. If gh's error says "
+            f"{id_type} {number} does not exist, correct the metadata.prerequisites that names it "
+            f"with TaskUpdate. If it says gh is not logged in or its credentials are bad, ask "
+            f"the user to run `gh auth login` on this machine.")
+
+
+def raise_line(task: dict, met_citations, done_blockers=None) -> str:
     reasons = []
-    if due_text is not None:
-        reasons.append(f"its due time {single_line(due_text)} has passed")
     if met_citations is not None:
         reasons.append("its prerequisites are met: " + "; ".join(met_citations))
-    return (f'Act on task {task["id"]} "{single_line(task.get("subject", ""))}" '
-            f"now: {', and '.join(reasons)}.")
+    if done_blockers is not None:
+        reasons.append("the tasks it waited on are completed: "
+                       + ", ".join(f"task {single_line(blocker)}" for blocker in done_blockers))
+    return RAISE_LINE_TEMPLATE.format(task_id=task["id"], subject=single_line(task.get("subject", "")),
+                                      reasons=", and ".join(reasons))
 
 
-def due_task_lines(tasks: dict, directory: Path, state: dict, now: datetime) -> "tuple[list, bool]":
-    """The raise lines for this run, and whether the state changed.
+def due_task_lines(tasks: dict, directory: Path, state: dict,
+                   checker: "GitHubConditionChecker") -> "tuple[list, list, bool]":
+    """The raise lines, the lines naming prerequisites the hook cannot use, and whether the
+    state changed apart from `checker`'s cache.
 
-    Mutates `state` to record every raise it returns and to prune entries
+    Mutates `state` to record every raise and every named fault it returns, and to prune entries
     for tasks and conditions that no longer need them.
     """
     raised = state["raised"]
-    checker = GitHubConditionChecker(state["checks"], now.timestamp())
     lines = []
+    problem_lines = []
     state_changed = False
     conditions_still_named = set()
 
@@ -365,44 +600,71 @@ def due_task_lines(tasks: dict, directory: Path, state: dict, now: datetime) -> 
         if task.get("status") not in OPEN_TASK_STATUSES:
             continue
         metadata = task.get("metadata")
+        if metadata is None:
+            metadata = {}
         if not isinstance(metadata, dict):
             continue
-        due_text = metadata.get("due_utc")
-        waits_on_value = metadata.get("waits_on")
-        conditions = parse_waits_on(waits_on_value)
-        if conditions is not None:
-            conditions_still_named.update(condition_key(k, n) for k, n in conditions)
-        if is_held_by_blockers(task, tasks, directory):
-            continue
         record = raised.get(task_id) if isinstance(raised.get(task_id), dict) else {}
+        new_record = dict(record)
 
-        due_reason = None
-        due_instant = parse_due_utc(due_text)
-        if (due_instant is not None and due_instant <= now
-                and record.get("due_utc") != due_text):
-            due_reason = due_text
+        prerequisites_value = metadata.get(PREREQUISITES_KEY)
+        problem = None
+        conditions = None
+        if prerequisites_value is not None:
+            try:
+                conditions = parse_prerequisites(prerequisites_value)
+            except UnreadablePrerequisites as unreadable:
+                problem = str(unreadable)
+        if conditions is not None:
+            conditions_still_named.update(condition_key(k, n) for k, n in conditions
+                                          if k in CONDITION_KINDS)
 
         prerequisite_citations = None
-        if conditions is not None:
-            waits_on_record = canonical_waits_on(waits_on_value)
-            if record.get("waits_on") != waits_on_record:
-                answers = [(kind, number, checker.answer(kind, number))
-                           for kind, number in conditions]
-                if all(answer.get("met") is True for _, _, answer in answers):
-                    prerequisite_citations = [
-                        condition_citation(kind, number, answer)
-                        for kind, number, answer in answers]
+        done_blockers = None
+        if not is_held_by_blockers(task, tasks, directory):
+            blockers = completed_blockers(task, tasks)
+            already_raised_for_prerequisites = False
+            if conditions is not None:
+                prerequisites_record = canonical_prerequisites(prerequisites_value)
+                recorded = record.get(PREREQUISITES_KEY)
+                already_raised_for_prerequisites = recorded == prerequisites_record
+                if not already_raised_for_prerequisites:
+                    answers = [(kind, number, condition_answer(kind, number, checker))
+                               for kind, number in conditions]
+                    problem = next((answer["problem"] for _, _, answer in answers
+                                    if "problem" in answer), None)
+                    if all(answer.get("met") is True for _, _, answer in answers):
+                        prerequisite_citations = [
+                            condition_citation(kind, number, answer)
+                            for kind, number, answer in answers]
+                        new_record[PREREQUISITES_KEY] = prerequisites_record
+                        if blockers is not None:
+                            new_record["blocked_by"] = blockers
+            if ((prerequisites_value is None or already_raised_for_prerequisites)
+                    and blockers is not None and record.get("blocked_by") != blockers):
+                done_blockers = blockers
+                new_record["blocked_by"] = blockers
+            if prerequisite_citations is not None or done_blockers is not None:
+                lines.append(raise_line(task, prerequisite_citations, done_blockers))
+        # Kept while the list is unchanged, so a stop that does not look at the list, such as one
+        # where a blocker holds the task, does not name the same fault again later.
+        problem_record = canonical_prerequisites(prerequisites_value)
+        if problem is not None and record.get(PREREQUISITES_PROBLEM_RECORD_KEY) != problem_record:
+            new_record[PREREQUISITES_PROBLEM_RECORD_KEY] = problem_record
+            problem_lines += [
+                PREREQUISITES_PROBLEM_LINE_TEMPLATE.format(
+                    task_id=task["id"], subject=single_line(task.get("subject", "")),
+                    problem=problem),
+                PREREQUISITES_CORRECTION_INSTRUCTION]
+        elif problem is None and record.get(PREREQUISITES_PROBLEM_RECORD_KEY) != problem_record:
+            new_record.pop(PREREQUISITES_PROBLEM_RECORD_KEY, None)
 
-        if due_reason is None and prerequisite_citations is None:
-            continue
-        new_record = dict(record)
-        if due_reason is not None:
-            new_record["due_utc"] = due_text
-        if prerequisite_citations is not None:
-            new_record["waits_on"] = canonical_waits_on(waits_on_value)
-        raised[task_id] = new_record
-        state_changed = True
-        lines.append(raise_line(task, due_reason, prerequisite_citations))
+        if new_record != record:
+            if new_record:
+                raised[task_id] = new_record
+            else:
+                del raised[task_id]
+            state_changed = True
 
     for task_id in list(raised):
         if task_id not in tasks:
@@ -412,33 +674,253 @@ def due_task_lines(tasks: dict, directory: Path, state: dict, now: datetime) -> 
         if key not in conditions_still_named:
             del state["checks"][key]
             state_changed = True
-    return lines, state_changed or checker.changed
+    return lines, problem_lines, state_changed
+
+
+WALK_FINDER_FILE = (_HOOK_DIRECTORY.parent / "nc-systems" / "skills" / "walk-me-through"
+                    / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py")
+WALK_ANSWER_PROGRAM_FILE = WALK_FINDER_FILE.with_name(
+    "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py")
+HANDOFF_THRESHOLD_HOOK_FILE = _HOOK_DIRECTORY / "handoff-context-threshold-hook.py"
+TRANSCRIPT_RECORDS_FILE = _HOOK_DIRECTORY / "claude-code-session-transcript-records-read-backward-common.py"
+NEXT_ACTION_STATE_KEY = "next_action_prompt"
+OPEN_OUTCOME_MARK = "<open>"
+NEXT_ACTION_LISTED_TASKS_LIMIT = 40
+NEXT_ACTION_LISTED_OPEN_ITEMS_LIMIT = 15
+NEXT_ACTION_LISTED_LINE_CHARACTERS = 160
+
+NEXT_ACTION_INSTRUCTIONS = (
+    "[rule due-task-idle-agent-seat-start-ready-tasks-and-next-approval-walk] No approval-walk is open and none of "
+    "your work is running, so do not stop here.",
+    "Tell the user in one line that you are building a new approval-walk.",
+    "Start subagents now on every ready task that needs no review or approval from the user.",
+    "Build an approval-walk of 8 to 16 items, more than 16 only for one large thing with many "
+    "parts, from your loose-ends, open questions, concerns, suggestions and tasks that need the "
+    "user; put first the items that block work, then what makes the user's interaction easier "
+    "and what makes agents or the process faster or cheaper, then the rest, the oldest first "
+    "among equals.",
+    "If you have none of these at all, ask ghi-guide-agent for 3 to 5 GHIs to work on, with "
+    "`python3 scripts/ghi-guide-agent-ask.py \"Which 3 to 5 open GHIs would most improve how "
+    "easy the user's interaction with agents is, or how fast or cheap agents and the "
+    "development process are?\"`, choose among them the same way, and make them the walk's "
+    "items.",
+)
+NEXT_ACTION_UNHELD_TASKS_HEADER = (
+    "Your open tasks that no recorded prerequisite or blocker holds back; which of them are "
+    "ready, and which need the user, is yours to judge:")
+NEXT_ACTION_HELD_TASKS_LINE = (
+    "{count} more open task(s) are not listed: each waits on a blocker task, a pull request or "
+    "GHI that is not done, an approval-walk item not yet decided, or a pull request or GHI whose "
+    "state this hook could not read from GitHub at this stop; or its metadata.prerequisites "
+    "cannot be used, as this hook said when it first found them.")
+NEXT_ACTION_OPEN_ITEMS_HEADER = (
+    "Lines your walk-minutes mark <open>; each is a loose-end unless a task, GHI, pull request "
+    "or later walk now holds it:")
+NEXT_ACTION_MORE_LINE = "and {count} more."
+NEXT_ACTION_STOP_AGAIN_LINE = (
+    "If you end your turn again without running a tool, this hook lets the turn end.")
+
+
+def shortened(text: str) -> str:
+    text = single_line(text)
+    if len(text) <= NEXT_ACTION_LISTED_LINE_CHARACTERS:
+        return text
+    return text[:NEXT_ACTION_LISTED_LINE_CHARACTERS - 3] + "..."
+
+
+def newest_tool_use_id(records) -> "str | None":
+    """The id of the newest tool call the transcript records, or None when it records none."""
+    for record in records:
+        message = record.get("message")
+        if record.get("type") != "assistant" or not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in reversed(content):
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                return str(block.get("id"))
+    return None
+
+
+def open_outcome_lines(walk_directory: Path) -> list:
+    """`<file>:<line>: <text>` for each walk-minutes line marked <open>, oldest file first."""
+    found = []
+    minutes_files = sorted(walk_directory.glob("*-minutes.md"),
+                           key=lambda path: (path.stat().st_mtime, path.name))
+    for minutes in minutes_files:
+        for number, line in enumerate(minutes.read_text(encoding="utf-8").splitlines(), 1):
+            if OPEN_OUTCOME_MARK in line:
+                found.append(f"{minutes.name}:{number}: {shortened(line)}")
+    return found
+
+
+def unheld_and_held_tasks(tasks: dict, directory: Path, checker) -> "tuple[list, int]":
+    """The ids of open tasks nothing recorded holds back, oldest first, and the count of those held."""
+    unheld = []
+    held = 0
+    for task_id in sorted(tasks, key=lambda text: (len(text), text)):
+        task = tasks[task_id]
+        if task.get("status") not in OPEN_TASK_STATUSES:
+            continue
+        if is_held_by_blockers(task, tasks, directory):
+            held += 1
+            continue
+        metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+        prerequisites_value = metadata.get(PREREQUISITES_KEY)
+        if prerequisites_value is not None:
+            try:
+                conditions = parse_prerequisites(prerequisites_value)
+            except UnreadablePrerequisites:
+                conditions = None  # due_task_lines names it to the agent
+            if conditions is None or not all(
+                    condition_answer(kind, number, checker).get("met") is True
+                    for kind, number in conditions):
+                held += 1
+                continue
+        unheld.append(task_id)
+    return unheld, held
+
+
+def listed_with_limit(header: str, entries: list, limit: int) -> list:
+    if not entries:
+        return []
+    lines = [header] + [f"- {entry}" for entry in entries[:limit]]
+    if len(entries) > limit:
+        lines.append(NEXT_ACTION_MORE_LINE.format(count=len(entries) - limit))
+    return lines
+
+
+def next_action_prompt_lines(payload: dict, tasks: dict, directory: Path, state: dict,
+                             checker: "GitHubConditionChecker", now: datetime) -> "list | None":
+    """The next-action prompt's lines, or None when the hook stays silent about it.
+
+    Silent when the session cannot be told idle: no readable transcript, no
+    checkout with a walk directory, an approval-walk open or paused, a
+    handoff asked or deferred, work in flight or work that cannot be counted,
+    or no tool run since this hook last gave the prompt in this session.
+    Records the prompt in `state` when it returns lines.
+    """
+    session_id = payload.get("session_id")
+    transcript_path = payload.get("transcript_path")
+    cwd = payload.get("cwd")
+    if not session_id or not transcript_path or not cwd:
+        return None
+    transcript = Path(transcript_path).expanduser()
+    if not transcript.is_file():
+        return None
+    walk_finder = _load_module_by_path(
+        "walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
+        WALK_FINDER_FILE)
+    top = walk_finder.checkout_top(Path(cwd))
+    if top is None or not (top / walk_finder.WALK_DIRECTORY).is_dir():
+        return None
+    walk_directory = top / walk_finder.WALK_DIRECTORY
+    if walk_finder.unclosed_approval_walks_including_paused(
+            walk_directory, walk_finder.markdown_parser()):
+        return None
+    handoff = _load_module_by_path("handoff_context_threshold_hook", HANDOFF_THRESHOLD_HOOK_FILE)
+    if (handoff.handoff_asked_marker_path(session_id).exists()
+            or handoff.deferred_marker_path(session_id).exists()):
+        return None
+    used_percentage = handoff.context_used_plus_compaction_dropped_percentage_from_transcript(
+        str(transcript))
+    if used_percentage is not None and used_percentage >= handoff.DEFAULT_THRESHOLD_USED_PERCENTAGE:
+        return None
+    background_tasks = payload.get(handoff.BACKGROUND_TASKS_PAYLOAD_KEY)
+    try:
+        if isinstance(background_tasks, list) and handoff.work_in_flight_from_background_tasks(
+                background_tasks, str(transcript), now=now):
+            return None
+    except handoff.TranscriptCouldNotBeFullyRead:
+        return None  # running work that cannot be counted is not idleness
+    records = _load_module_by_path("claude_code_session_transcript_records_read_backward_common",
+                                   TRANSCRIPT_RECORDS_FILE).records_newest_first(transcript)
+    tool_use_id = newest_tool_use_id(records)
+    recorded = state.get(NEXT_ACTION_STATE_KEY)
+    this_prompt = {"session_id": session_id, "newest_tool_use_id": tool_use_id}
+    if recorded == this_prompt:
+        return None
+    state[NEXT_ACTION_STATE_KEY] = this_prompt
+
+    unheld, held = unheld_and_held_tasks(tasks, directory, checker)
+    unheld = [f'task {task_id} "{shortened(tasks[task_id].get("subject", ""))}"' for task_id in unheld]
+    lines = list(NEXT_ACTION_INSTRUCTIONS)
+    lines += listed_with_limit(NEXT_ACTION_UNHELD_TASKS_HEADER, unheld,
+                               NEXT_ACTION_LISTED_TASKS_LIMIT)
+    if held:
+        lines.append(NEXT_ACTION_HELD_TASKS_LINE.format(count=held))
+    lines += listed_with_limit(NEXT_ACTION_OPEN_ITEMS_HEADER, open_outcome_lines(walk_directory),
+                               NEXT_ACTION_LISTED_OPEN_ITEMS_LIMIT)
+    lines.append(NEXT_ACTION_STOP_AGAIN_LINE)
+    return lines
+
+
+class HookFault(Exception):
+    """A fault the hook reports on stderr instead of raising anything."""
 
 
 def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None":
-    """The JSON to print, or None for silence."""
+    """The JSON to print, or None for silence; raises on a fault."""
     payload = json.loads(stdin_text)
     if not isinstance(payload, dict):
+        raise HookFault("the payload Claude Code sent on stdin is JSON, but not an object, "
+                        "so no task was checked")
+    if stop_hooks_stay_silent_rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
         return None
-    if environment.get(REINCARNATION_OWNED_BY_CALLER_VARIABLE):
-        return None  # a caller's headless child: the raise would replace its answer
-    if environment.get(SESSION_ATTENDED_VARIABLE) == SESSION_UNATTENDED_VALUE:
-        return None  # a `claude -p` child, not the agent-seat's own session
+    if agent_session_unattended_by_user_check_common.agent_session_unattended_by_user(environment):
+        return None  # a headless child: the raise would replace the answer its caller reads
     directory = task_list_directory(home, environment)
-    if directory is None or not directory.is_dir():
+    if directory is None:
         return None
     tasks = read_tasks(directory)
     state_path = state_file_path(home, directory.name)
     state = read_state(state_path)
-    lines, state_changed = due_task_lines(tasks, directory, state, now)
-    if state_changed and not write_state_atomically(state_path, state):
-        return None
+    # One checker for the whole run, so its GitHub budget bounds every gh call the run makes.
+    checker = GitHubConditionChecker(state["checks"], now.timestamp())
+    lines, problem_lines, state_changed = due_task_lines(tasks, directory, state, checker)
+    next_action_lines = []
     if not lines:
+        try:
+            next_action_lines = next_action_prompt_lines(payload, tasks, directory, state,
+                                                         checker, now) or []
+        except Exception as error:
+            raise HookFault(f"every task was checked and none was due, but the check whether to "
+                            f"hand the next-action prompt failed, so none was handed at this "
+                            f"stop: {type(error).__name__}: {error}. The next-action prompt "
+                            f"tells an idle agent-seat to start its ready work and build its "
+                            f"next approval-walk. Until this hook hands that prompt again, "
+                            f"start your ready work and build your next approval-walk yourself "
+                            f"whenever no approval-walk is open and none of your work is "
+                            f"running. Tell the user this whole message, since the fault is in "
+                            f"scripts/agent-seat-due-task-raise-hook.py or in a file it "
+                            f"reads.") from error
+        state_changed = state_changed or bool(next_action_lines)
+    state_changed = state_changed or checker.changed
+    gh_failure_lines = [gh_failure_line(kind, number, cause)
+                        for kind, number, cause in dict.fromkeys(checker.gh_failures)]
+    if state_changed:
+        try:
+            write_state_atomically(state_path, state)
+        except OSError as error:
+            if lines:
+                outcome = (f"so {len(lines)} due task(s) were not raised at this stop; the "
+                           f"first stop after the state file can be written raises them")
+            else:
+                outcome = "no task was due at this stop, so none went unraised"
+            raise HookFault(f"the state file {state_path} could not be written, and {outcome}. "
+                            f"Make {state_path.parent} a directory this user can write to: "
+                            f"{error}") from error
+    if not lines and not problem_lines and not next_action_lines:
+        if gh_failure_lines:
+            raise HookFault(" ".join(gh_failure_lines))
         return None
+    defer_lines = [DEFER_INSTRUCTION] if lines else []
     return json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "Stop",
-            "additionalContext": "\n".join(lines + [DEFER_INSTRUCTION]),
+            "additionalContext": "\n".join(lines + defer_lines + problem_lines
+                                           + next_action_lines + gh_failure_lines),
         }
     }, ensure_ascii=False)
 
@@ -447,13 +929,16 @@ def main() -> int:
     try:
         output = run(sys.stdin.read(), os.environ, Path.home(),
                      datetime.now(timezone.utc))
-    except Exception:
-        return 0
-    if output is not None:
-        try:
+        if output is not None:
             print(output)
-        except Exception:
-            return 0
+    except HookFault as error:
+        print(f"agent-seat-due-task-raise-hook: {error}", file=sys.stderr)
+        return 1
+    except Exception as error:
+        print(f"agent-seat-due-task-raise-hook: the hook failed, so no task was checked at "
+              f"this stop; the first stop without this fault raises any task that is due: "
+              f"{type(error).__name__}: {error}", file=sys.stderr)
+        return 1
     return 0
 
 

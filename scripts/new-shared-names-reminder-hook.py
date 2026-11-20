@@ -6,8 +6,9 @@ the worktree is on, so a later agent-session of the same agent-seat is not told 
 that branch, a new branch that adds the same name is told it, and each other worktree keeps its
 own record. Entries for branches that no longer exist are dropped when the record is written.
 The content cache and the once-per-session failure reports stay per agent-session.
+A branch's own name is never reported, because the naming page needs no check of it.
 """
-# The hook never blocks: any failure leaves the agent's turn as it was, apart from one line saying the check failed.
+# The hook never blocks: a failure leaves the agent's turn as it was, apart from a message saying the check failed.
 
 import fcntl
 import hashlib
@@ -15,8 +16,6 @@ import importlib.util
 import json
 import os
 import re
-import shlex
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -30,27 +29,42 @@ SHELL_TOOL_NAME = "Bash"
 STATE_DIRECTORY = Path(tempfile.gettempdir()) / "new-shared-names-reminder-hook-state"
 SESSION_ID_SAFE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 LISTER_PATH = Path(__file__).resolve().parent / "new-shared-names-in-changed-files-list.py"
+
+_git_machine_readable_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_machine_readable_output = importlib.util.module_from_spec(_git_machine_readable_output_spec)
+_git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
+
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
 NAMING_PAGE_PATH = "docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md"
 NAMING_FRESH_AGENT_NAME = "new-name-propose-and-check-fresh-agent"
 REPORTED_NAMES_FILE_NAME = "new-shared-names-reported.json"
 
 REMINDER_TEMPLATE = (
-    "new-shared-names-reminder: your branch now adds these shared names, which other files "
+    "[rule new-shared-names-naming-check-reminder] new-shared-names-reminder: your branch now adds these shared names, which other files "
     "or agents will meet:\n{names}\n"
     "Send them, with one sentence on what each names, to the {agent} subagent, run in the "
     "background, and keep working.\n"
-    "If you are a subagent and cannot start one, run the same check through Codex instead, in "
-    "the background, and act on its report the same way.\n"
-    "First run `git fetch` yourself; Codex's sandbox cannot write the git directory.\n"
-    "Then run: `codex exec -m gpt-6.1-sol -c model_reasoning_effort=medium --disable memories "
-    "--sandbox workspace-write -c sandbox_workspace_write.network_access=true -c {writable_roots} "
-    "-C {checkout} \"git fetch has already been run; skip that step and use origin/main as it is. "
-    "Read .claude/agents/{agent}.md and do exactly what it says, for these entries, one per line: "
-    "<name>: <one sentence saying what it names>\" < /dev/null`\n"
-    "Keep the `< /dev/null`: Codex hangs when stdin is left open.\n"
-    "When it flags a name, rename it everywhere your branch uses it, in one commit.\n"
-    "If it flags a new project-term or system-term, put the new term to the user before you "
-    "use it.\n"
+    "If you are a subagent and cannot start one, do not run the check yourself. In your final "
+    "report, put a heading `{heading}` and under it "
+    "one line per name: <name>: <one sentence saying what it names and which file it is in>, "
+    "leaving out the parentheses that follow each name above. The agent that dispatched you "
+    "runs the check and makes any renames.\n"
+    "If you sent the names to the {agent} subagent yourself:\n"
+    "- When its report lists a name under its Rename: heading, rename that name everywhere "
+    "your branch uses it.\n"
+    "- Check each name it lists under Not checked: by hand against the naming page named on "
+    "this reminder's last line, and rename any name that breaks the page.\n"
+    "- Make every rename, from its report and from your own check, in one single commit.\n"
+    "If a suggested name under Rename: is a new project-term or system-term, put the new term "
+    "to the user before you use it.\n"
     "If a listed name is not one you chose, such as quoted text or an existing name written "
     "differently, do not send it and do not rename it.\n"
     "How names are chosen: {page}."
@@ -63,6 +77,13 @@ FAILURE_TEMPLATE = (
     "edit.\n"
     "Until it works, check new names by hand against {page}."
 )
+GIT_FAILURE_TEMPLATE = (
+    "new-shared-names-reminder: git {command} failed ({outcome}), so the new shared names on "
+    "this branch were not listed.\n"
+    "Nothing needs rerunning: this check runs again at your next file edit or shell command.\n"
+    + next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
+        "at your next file edit or shell command", "new-shared-names-reminder:")
+)
 
 
 def load_lister():
@@ -72,15 +93,20 @@ def load_lister():
     return module
 
 
-def git_output(arguments, cwd: Path):
-    try:
-        finished = subprocess.run(["git", *arguments], cwd=str(cwd), capture_output=True,
-                                  text=True, check=False, timeout=GIT_CALL_TIMEOUT_SECONDS)
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        return None
-    if finished.returncode != 0:
-        return None
-    return finished.stdout
+def git_output(arguments, cwd: Path, accepted_exit_codes=(0,)) -> str:
+    """Return git stdout; raises GitCommandFailed when git fails."""
+    return os.fsdecode(git_machine_readable_output.run_git(
+        cwd, arguments, accepted_exit_codes=accepted_exit_codes,
+        timeout_seconds=GIT_CALL_TIMEOUT_SECONDS))
+
+
+def git_failure_text(failure) -> str:
+    """Return the stderr text for a git failure; its first line, the one Claude Code shows the user, carries the cause."""
+    if failure.returncode is None:
+        outcome = failure.stderr
+    else:
+        outcome = f"exit {failure.returncode}: {' '.join(failure.stderr.split()) or 'no error text'}"
+    return GIT_FAILURE_TEMPLATE.format(command=" ".join(failure.arguments), outcome=outcome)
 
 
 def state_path_for(session_id: str) -> Path:
@@ -109,14 +135,6 @@ def write_state(session_id: str, state: dict) -> None:
         temporary.replace(state_path_for(session_id))
     except OSError:
         pass
-
-
-def reported_names_path(checkout: Path):
-    """Return the worktree's record of reported names, in its own git directory, or None when git cannot answer."""
-    git_directory = git_output(["rev-parse", "--absolute-git-dir"], checkout)
-    if not git_directory or not git_directory.strip():
-        return None
-    return Path(git_directory.strip()) / REPORTED_NAMES_FILE_NAME
 
 
 DETACHED_HEAD_REPORTED_NAMES_RECORD_KEY = "HEAD"
@@ -162,10 +180,31 @@ class UnreadableReportedNamesRecordNotMoved(ReportedNamesRecordFailure):
         self.move_reason = move_reason
 
 
-def reported_names_record_key_for(checkout: Path) -> str:
-    """Return the branch the worktree is on, or the detached-HEAD key when HEAD is detached or unreadable."""
-    branch = git_output(["symbolic-ref", "--short", "-q", "HEAD"], checkout)
-    return branch.strip() if branch and branch.strip() else DETACHED_HEAD_REPORTED_NAMES_RECORD_KEY
+def worktree_head_branch_untracked_and_status_text(checkout: Path):
+    """Return (HEAD's commit, or "" when the repository has no commit yet; the branch the worktree is
+    on, or the detached-HEAD key; the untracked files; the status text). Raises GitCommandFailed when git fails.
+
+    One status call stands in for several git calls, because this hook runs after every tool call.
+    git refuses a branch named HEAD, so the detached-HEAD key cannot be mistaken for a branch.
+    """
+    status = git_output(["status", "--porcelain=v2", "--branch", "--no-ahead-behind", "-z",
+                         "--untracked-files=all"], checkout)
+    head, branch, untracked = "", DETACHED_HEAD_REPORTED_NAMES_RECORD_KEY, []
+    fields = iter(git_machine_readable_output.nul_separated_fields(status))
+    for field in fields:
+        if field.startswith("# branch.oid "):
+            oid = field[len("# branch.oid "):]
+            head = "" if oid == "(initial)" else oid
+        elif field.startswith("# branch.head "):
+            name = field[len("# branch.head "):]
+            if name != "(detached)":
+                branch = name
+        elif field.startswith("? "):
+            untracked.append(field[2:])
+        elif field.startswith("2 "):
+            # A rename or copy entry is followed by a field holding the path it came from.
+            next(fields, None)
+    return head, branch, untracked, status
 
 
 def read_reported_names_record(record_path: Path) -> dict:
@@ -252,68 +291,27 @@ def reported_names_record_merge_prune_and_write(record_path: Path, key: str, ent
 
 def local_branches(checkout: Path):
     """Return the names of the local branches, or None when git cannot list them."""
-    listing = git_output(["for-each-ref", "--format=%(refname:short)", "refs/heads"], checkout)
-    return listing.splitlines() if listing is not None else None
-
-
-def worktree_fingerprint(checkout: Path):
-    """Return a digest of HEAD, the uncommitted changes and the untracked files, or None when git cannot answer."""
-    head = git_output(["rev-parse", "HEAD"], checkout)
-    status = git_output(["status", "--porcelain", "--untracked-files=all"], checkout)
-    diff = git_output(["diff", "HEAD"], checkout)
-    untracked = git_output(["ls-files", "--others", "--exclude-standard"], checkout)
-    if head is None or status is None or diff is None or untracked is None:
+    try:
+        return git_output(["for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads"], checkout).splitlines()
+    except git_machine_readable_output.GitCommandFailed:
         return None
-    parts = [head, status, diff]
-    for path in untracked.splitlines():
+
+
+def worktree_fingerprint(checkout: Path, status=None):
+    """Return a digest of HEAD, the uncommitted changes and the untracked files; raises GitCommandFailed when git fails.
+
+    status is worktree_head_branch_untracked_and_status_text(checkout) when the caller has it already; HEAD must name a commit.
+    """
+    head, _, untracked, status_text = status or worktree_head_branch_untracked_and_status_text(checkout)
+    diff = git_output(["diff", "HEAD"], checkout)
+    parts = [head, status_text, diff]
+    for path in untracked:
         try:
             details = (checkout / path).stat()
         except OSError:
             continue
         parts.append(f"{path}\0{details.st_size}\0{details.st_mtime_ns}")
-    return hashlib.sha256("\n".join(parts).encode()).hexdigest()
-
-
-class BranchCheckFailure(Exception):
-    pass
-
-
-def unreported_new_branch(checkout: Path, reported) -> str:
-    """Return this worktree's branch when origin lacks it and it is not yet reported, else "".
-
-    Only this worktree's own branch is considered: other worktrees of the same clone share
-    refs/heads, and their branches belong to other agents.
-    """
-    try:
-        finished = subprocess.run(["git", "symbolic-ref", "--short", "-q", "HEAD"], cwd=str(checkout),
-                                  capture_output=True, text=True, check=False,
-                                  timeout=GIT_CALL_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired as error:
-        raise BranchCheckFailure("git symbolic-ref timed out") from error
-    except OSError as error:
-        raise BranchCheckFailure("git symbolic-ref could not start") from error
-    if finished.returncode == 1:
-        return ""
-    if finished.returncode != 0:
-        first_line = (finished.stderr.strip().splitlines() or [""])[0][:200]
-        raise BranchCheckFailure(f"git symbolic-ref exited {finished.returncode}: {first_line}")
-    branch = finished.stdout.strip()
-    if not branch or f"branch\t{branch}" in reported:
-        return ""
-    try:
-        lookup = subprocess.run(["git", "show-ref", "--verify", "--quiet", f"refs/remotes/origin/{branch}"],
-                                cwd=str(checkout), capture_output=True, text=True, check=False,
-                                timeout=GIT_CALL_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired as error:
-        raise BranchCheckFailure("git show-ref timed out") from error
-    except OSError as error:
-        raise BranchCheckFailure("git show-ref could not start") from error
-    if lookup.returncode == 0:
-        return ""
-    if lookup.returncode != 1:
-        first_line = (lookup.stderr.strip().splitlines() or [""])[0][:200]
-        raise BranchCheckFailure(f"git show-ref exited {lookup.returncode}: {first_line}")
-    return branch
+    return hashlib.sha256("\n".join(parts).encode("utf-8", "surrogateescape")).hexdigest()
 
 
 def failure_report_once(state: dict, error: str):
@@ -325,21 +323,14 @@ def failure_report_once(state: dict, error: str):
     return FAILURE_TEMPLATE.format(error=error, page=NAMING_PAGE_PATH)
 
 
-def codex_writable_roots_argument() -> str:
-    # The fresh-agent's blind guess runs agy, which must write under ~/.gemini inside Codex's sandbox.
-    gemini_directory = str(Path.home() / ".gemini")
-    return shlex.quote("sandbox_workspace_write.writable_roots=" + json.dumps([gemini_directory]))
-
-
-def reminder_text(new_names, checkout: Path) -> str:
+def reminder_text(new_names, subagent_report_heading: str) -> str:
     lines = [f"  {name} ({kind}{', in ' + path if path and path != name else ''})"
              for path, kind, name in new_names[:REMINDER_NAME_LIMIT]]
     if len(new_names) > REMINDER_NAME_LIMIT:
         lines.append(MORE_NAMES_LINE.format(count=len(new_names) - REMINDER_NAME_LIMIT,
                                             command=LISTER_COMMAND))
     return REMINDER_TEMPLATE.format(names="\n".join(lines), agent=NAMING_FRESH_AGENT_NAME,
-                                    page=NAMING_PAGE_PATH, checkout=shlex.quote(str(checkout)),
-                                    writable_roots=codex_writable_roots_argument())
+                                    heading=subagent_report_heading, page=NAMING_PAGE_PATH)
 
 
 def emit(text: str) -> None:
@@ -366,21 +357,36 @@ def main() -> int:
     working_directory = payload.get("cwd")
     if not isinstance(working_directory, str) or not Path(working_directory).is_dir():
         return 0
-    top_level = git_output(["rev-parse", "--show-toplevel"], Path(working_directory))
-    if not top_level or not top_level.strip():
-        return 0
-    checkout = Path(top_level.strip())
-
-    record_path = reported_names_path(checkout)
-    if record_path is None:
-        return 0
+    location_arguments = ["rev-parse", "--show-toplevel", "--absolute-git-dir"]
+    try:
+        locations = git_machine_readable_output.run_git_unless_outside_a_repository(
+            Path(working_directory), location_arguments, timeout_seconds=GIT_CALL_TIMEOUT_SECONDS)
+        if locations is None or not locations.strip():
+            return 0
+        location_lines = os.fsdecode(locations).strip().split("\n")
+        if len(location_lines) != 2:
+            print(GIT_FAILURE_TEMPLATE.format(
+                command=" ".join(location_arguments),
+                outcome=f"printed {len(location_lines)} lines where the 2 paths should give one line each; "
+                        "a path holding a newline prints as two lines, and fewer lines mean git "
+                        "printed less than asked"), file=sys.stderr)
+            return 1
+        top_level, git_directory = location_lines
+        checkout = Path(top_level)
+        # The record lives in the worktree's own git directory, so each worktree keeps its own.
+        record_path = Path(git_directory) / REPORTED_NAMES_FILE_NAME
+        status = worktree_head_branch_untracked_and_status_text(checkout)
+        # A repository with no commit yet has no branch to compare, and HEAD cannot be read.
+        if not status[0]:
+            return 0
+        fingerprint = worktree_fingerprint(checkout, status)
+        record_key = status[1]
+    except git_machine_readable_output.GitCommandFailed as failure:
+        print(git_failure_text(failure), file=sys.stderr)
+        return 1
     state = read_state(session_id)
-    fingerprint = worktree_fingerprint(checkout)
-    if fingerprint is None:
-        return 0
     messages = []
 
-    record_key = reported_names_record_key_for(checkout)
     # The branch is part of the identity, so a switch to another branch is never skipped as unchanged.
     fingerprint = f"{fingerprint}\0{record_key}"
     def tell_notice_once(text: str) -> None:
@@ -419,16 +425,8 @@ def main() -> int:
     reported = record.get(record_key, set())
     # Pruned on every run, so a branch deleted and later recreated under the same name starts fresh.
     record_merge_prune_and_write_telling_failures(set())
-    try:
-        new_branch = unreported_new_branch(checkout, reported)
-    except BranchCheckFailure as failure:
-        new_branch = ""
-        failure_text = failure_report_once(state, str(failure))
-        if failure_text:
-            messages.append(failure_text)
-    # A shell command that changed no file and left no new branch has nothing new to list.
-    if (tool_name == SHELL_TOOL_NAME and not new_branch and not messages
-            and fingerprint == state.get("worktree_fingerprint")):
+    # A shell command that changed no file and left the worktree on the same branch has nothing new to list.
+    if tool_name == SHELL_TOOL_NAME and not messages and fingerprint == state.get("worktree_fingerprint"):
         return 0
     state["worktree_fingerprint"] = fingerprint
 
@@ -436,8 +434,7 @@ def main() -> int:
     names = []
     try:
         lister = load_lister()
-        names = lister.new_shared_names(checkout, [new_branch] if new_branch else [],
-                                        already_reported=frozenset(reported), file_cache=file_cache)
+        names = lister.new_shared_names(checkout, already_reported=frozenset(reported), file_cache=file_cache)
     except Exception as failure:
         failure_text = failure_report_once(state, str(failure) or type(failure).__name__)
         if failure_text:
@@ -451,7 +448,8 @@ def main() -> int:
         record_merge_prune_and_write_telling_failures(newly_reported)
     write_state(session_id, state)
     if names:
-        messages.append(reminder_text(names, checkout))
+        messages.append(reminder_text(
+            names, lister.SUBAGENT_REPORT_HEADING_ABOVE_NEW_SHARED_NAMES_FOR_DISPATCHING_AGENT_TO_CHECK))
     if messages:
         emit("\n\n".join(messages))
     return 0

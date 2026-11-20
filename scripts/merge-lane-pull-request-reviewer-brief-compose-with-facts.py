@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+"""Compose the mac-claude reviewer brief for each pull request in a JSON file of brief specifications.
+
+Usage:
+  scripts/merge-lane-pull-request-reviewer-brief-compose-with-facts.py <brief specifications file>
+      [--merge-lane-worktrees-and-outputs-directory DIR] [--merge-lane-review-worktrees-directory DIR] [--review-tools-worktree-at-main DIR] [--brief-file PATH]
+      [--ned-box-reviewer-brief-environment-addendum-file PATH] [--instructions-file PATH]
+      [--merge-lane-pull-request-reviewer-scratch-directories-parent-directory DIR]
+
+The file holds a JSON list. Each entry has tag, number, title, author, head,
+main, tests and hazards, and may have overlaps. A fix-round entry also has
+reviewed_before, previous_reviews, new_commits and answer.
+
+Each brief is three parts: the standing text, composed by --review-tools-worktree-at-main's
+scripts/compose-pull-request-reviewer-brief.py with the reviewing
+instructions inserted; the ned-box environment addendum; and a section of
+facts, which git reads in --review-tools-worktree-at-main and in the review
+worktrees directory's pr<n>-merged, and gh reads from GitHub as the merge
+account. Among the facts are the merged pull requests whose not-fixed line, in
+either form, links to an issue the pull request closes, as GitHub lists them,
+or to the pull request itself: the reviewer judges whether this pull request
+makes useless a case fix or workaround they kept. The facts end with the pull
+request's description, which the brief quotes as the author's claims. The
+reviewer runs with no GitHub login, so the brief is where it reads the
+description. The brief is written to
+briefs/brief-<tag>-mac-claude.md under the worktrees and outputs directory, and
+rv<tag>/ is made under --merge-lane-pull-request-reviewer-scratch-directories-parent-directory as the reviewer's
+scratch directory. That parent is outside the log-store, because the standing
+text forbids the reviewer to write to the log-store.
+
+Exit codes: 0 every brief written; 1 a step failed, such as a gh command,
+named on stderr, and that brief and every later one are not composed.
+"""
+
+import argparse
+import importlib.util
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+DEFAULT_BRIEF_FILE = Path(
+    "/home/nedlern/agents/merge-lane-2/walk-ledgers/mac-claude-reviewer-brief-standing-text.md")
+DEFAULT_NED_BOX_REVIEWER_BRIEF_ENVIRONMENT_ADDENDUM_FILE = Path(
+    "/home/nedlern/agents/merge-lane-2/walk-ledgers/"
+    "ned-box-reviewer-brief-environment-addendum.md")
+DEFAULT_MERGE_LANE_PULL_REQUEST_REVIEWER_SCRATCH_DIRECTORIES_PARENT_DIRECTORY = Path(
+    "/home/nedlern/.cache/merge-lane-pull-request-reviewer-scratch-directories")
+
+_common_spec = importlib.util.spec_from_file_location(
+    "merge_lane_pull_request_helpers_common", Path(__file__).resolve().with_name(
+        "merge-lane-pull-request-helpers-common-options-paths-and-token.py"))
+common = importlib.util.module_from_spec(_common_spec)
+_common_spec.loader.exec_module(common)
+_repository_names_spec = importlib.util.spec_from_file_location(
+    "github_repository_name_and_name_before_project_rename_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "github-repository-name-and-name-before-project-rename-common.py")
+repository_names = importlib.util.module_from_spec(_repository_names_spec)
+_repository_names_spec.loader.exec_module(repository_names)
+run_all_test_suites = common.run_all_test_suites
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
+_defect_line_reader_spec = importlib.util.spec_from_file_location(
+    "pull_request_description_defect_line_root_cause_status_and_follow_up_link_reader",
+    Path(__file__).resolve().with_name("pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py"))
+defect_line_reader = importlib.util.module_from_spec(_defect_line_reader_spec)
+_defect_line_reader_spec.loader.exec_module(defect_line_reader)
+
+
+class StepFailed(Exception):
+    pass
+
+
+GITHUB_ISSUE_OR_PULL_REQUEST_LINK = re.compile(
+    r"https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/(?:issues|pull)/([0-9]+)")
+# Far above the merged count, so gh lists them all.
+MERGED_PULL_REQUESTS_LIMIT = "100000"
+
+
+def parse_arguments(argv):
+    parser = argparse.ArgumentParser(
+        description="Compose one mac-claude reviewer brief per entry of a brief "
+                    "specifications file: standing text, ned-box addendum, then facts.")
+    parser.add_argument("brief_specifications_file", type=Path,
+                        help="a JSON list of brief specifications")
+    common.add_directory_options(parser, "briefs/")
+    parser.add_argument("--brief-file", type=Path, default=DEFAULT_BRIEF_FILE,
+                        help=f"the brief's standing text (default: {DEFAULT_BRIEF_FILE})")
+    parser.add_argument("--ned-box-reviewer-brief-environment-addendum-file", type=Path,
+                        default=DEFAULT_NED_BOX_REVIEWER_BRIEF_ENVIRONMENT_ADDENDUM_FILE,
+                        help=f"the ned-box environment addendum "
+                             f"(default: {DEFAULT_NED_BOX_REVIEWER_BRIEF_ENVIRONMENT_ADDENDUM_FILE})")
+    parser.add_argument("--instructions-file", type=Path,
+                        help="the reviewing instructions inserted into the standing text "
+                             "(default: <review-tools-worktree-at-main>/docs/agents/pr-reviewer-instructions.md)")
+    parser.add_argument("--merge-lane-pull-request-reviewer-scratch-directories-parent-directory", type=Path,
+                        default=DEFAULT_MERGE_LANE_PULL_REQUEST_REVIEWER_SCRATCH_DIRECTORIES_PARENT_DIRECTORY,
+                        help=f"the directory in which each reviewer's scratch directory rv<tag>/ is made, "
+                             f"<tag> being the tag field of that pull request's entry in the brief "
+                             f"specifications file, such as 1630 or 1630r1 "
+                             f"(default: {DEFAULT_MERGE_LANE_PULL_REQUEST_REVIEWER_SCRATCH_DIRECTORIES_PARENT_DIRECTORY})")
+    return common.resolve_path_options(parser.parse_args(argv))
+
+
+def run(command, gh_token=None):
+    environment = run_all_test_suites.environment_without_git_redirecting_variables()
+    if gh_token is not None:
+        environment["GH_TOKEN"] = gh_token
+    completed = subprocess.run(
+        command, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=environment)
+    if completed.returncode != 0:
+        raise StepFailed(f"{' '.join(command)} exited {completed.returncode}: "
+                         f"{completed.stderr.strip()}")
+    return completed.stdout
+
+
+def git(directory, *arguments):
+    return run(["git", "-C", str(directory), *arguments]).strip()
+
+
+def pull_request_closing_issues_and_description(number, gh_token):
+    """The issues pull request `number` closes, as GitHub lists them, and its description."""
+    viewed = json.loads(run(
+        ["gh", "pr", "view", str(number), "--repo", common.REPOSITORY,
+         "--json", "closingIssuesReferences,body"], gh_token))
+    return viewed["closingIssuesReferences"], (viewed["body"] or "").rstrip()
+
+
+def quoted(text):
+    return "\n".join(f"> {line}".rstrip() for line in text.split("\n"))
+
+
+def files_touched_text(review_tools_worktree, base, head):
+    """The files changed between base and head, each with its line counts, for the brief."""
+    entries = git_output.numstat_entries(
+        run(["git", "-C", str(review_tools_worktree), "diff", "-z", "--numstat", base, head]))
+    texts = []
+    for entry in entries:
+        counts = ("binary" if entry.added is None
+                  else f"+{entry.added}/-{entry.deleted}")
+        if entry.origin_path is not None:
+            texts.append(f"`{entry.path}` (renamed from `{entry.origin_path}`, {counts})")
+        else:
+            texts.append(f"`{entry.path}` ({counts})")
+    return ", ".join(texts)
+
+
+def linked_items(text):
+    """The issues and pull requests a text links to, as (owner/repository, number), the repository's name before
+    the project rename read as its name: a repository numbers its issues and pull requests in one sequence."""
+    return {(repository_names.normalize_repository_name_reading_name_before_project_rename_as_current(repository), int(number))
+            for repository, number in GITHUB_ISSUE_OR_PULL_REQUEST_LINK.findall(text)}
+
+
+class MergedPullRequests:
+    """The repository's merged pull requests, read from GitHub once per run."""
+
+    def __init__(self, gh_token):
+        self.gh_token = gh_token
+        self.listed = None
+
+    def all(self):
+        if self.listed is None:
+            self.listed = json.loads(run(
+                ["gh", "pr", "list", "--repo", common.REPOSITORY, "--state", "merged",
+                 "--limit", MERGED_PULL_REQUESTS_LIMIT, "--json", "number,title,url,body"],
+                self.gh_token))
+        return self.listed
+
+
+def follow_up_pull_requests_text(number, closing_issues, merged_pull_requests):
+    """The brief's fact naming each merged pull request whose not-fixed line links to
+    an issue pull request `number` closes, or to `number` itself."""
+    targets = linked_items(" ".join(issue["url"] for issue in closing_issues))
+    targets.add((common.REPOSITORY.lower(), int(number)))
+    found = []
+    for merged in merged_pull_requests.all():
+        for defect_line in defect_line_reader.pull_request_description_defect_lines(merged["body"] or ""):
+            line = defect_line["line"]
+            if (defect_line["kind"] == defect_line_reader.ROOT_CAUSE_NOT_FIXED
+                    and linked_items(line) & targets):
+                found.append(f"#{merged['number']} \"{merged['title']}\" ({merged['url']}), "
+                             f"whose line is `{line.strip()}`")
+    return ("- Merged pull requests whose not-fixed line links to an issue this pull request "
+            "closes, or to this pull request: " + ("; ".join(found) or "none") + ".")
+
+
+def compose(spec, arguments, review_tools_worktree, instructions_file, merged_pull_requests):
+    tag, number = spec["tag"], spec["number"]
+    head, main = spec["head"], spec["main"]
+    helpers = arguments.merge_lane_worktrees_and_outputs_directory
+    merge_base = git(review_tools_worktree, "merge-base", main, head)
+    merged_tree = git(common.pull_request_merged_worktree(arguments, number), "rev-parse", "HEAD^{tree}")
+    standing = run([sys.executable,
+                    str(review_tools_worktree / "scripts" / "compose-pull-request-reviewer-brief.py"),
+                    "--pull-request", str(number),
+                    "--brief-file", str(arguments.brief_file),
+                    "--instructions-file", str(instructions_file)])
+    scratch = arguments.merge_lane_pull_request_reviewer_scratch_directories_parent_directory / f"rv{tag}"
+    scratch.mkdir(parents=True, exist_ok=True)
+    facts = ["## This pull request (facts from merge-lane-2)", "",
+             f"- Pull request: #{number}, \"{spec['title']}\", author `{spec['author']}`.",
+             f"- nc-head-commit: `{head}`.",
+             f"- Merge base: `{merge_base}`.",
+             f"- Main's tip when commissioned: `{main}`.",
+             f"- Merged tree (head merged onto main by merge-lane-2): `{merged_tree}`.",
+             f"- Your scratch directory: `{scratch}`. Use it as `<your scratchpad>`."]
+    if "reviewed_before" in spec:
+        facts.append(f"- This nc-head-commit is a fix-round. nc-head-commit reviewed before: "
+                     f"`{spec['reviewed_before']}` ({spec['previous_reviews']}). "
+                     f"{spec['new_commits']}")
+        facts.append("- Files the new commit touches: "
+                     + files_touched_text(review_tools_worktree, spec["reviewed_before"], head)
+                     + ".")
+        facts.append(f"- The author's answer to each finding: {spec['answer']}")
+        facts.append("- Test files the whole pull request touches: "
+                     + ", ".join(f"`{t}`" for t in spec["tests"]) + ".")
+    else:
+        facts.append("- Files the change touches: "
+                     + files_touched_text(review_tools_worktree, merge_base, head) + ".")
+        facts.append("- Test files the change touches: "
+                     + ", ".join(f"`{t}`" for t in spec["tests"]) + ".")
+        facts.append("- First round: no nc-head-commit was reviewed before.")
+    facts.append("- Other open pull requests changing the same files: "
+                 + spec.get("overlaps", "none") + ".")
+    closing_issues, description = pull_request_closing_issues_and_description(
+        number, merged_pull_requests.gh_token)
+    facts.append(follow_up_pull_requests_text(number, closing_issues, merged_pull_requests))
+    facts.append(f"- Hazards: {spec['hazards']}")
+    facts.append("- The author's description of the pull request, quoted below. It is what "
+                 "the author claims; check each claim against the repository yourself, "
+                 "including its `#root_cause`, `#root_cause_not_fixed` or `#no_defect_fixed` "
+                 "line.")
+    facts.append("")
+    facts.append(quoted(description) if description.strip() else "(the description is empty)")
+    addendum = arguments.ned_box_reviewer_brief_environment_addendum_file.read_text()
+    brief = (standing.rstrip("\n") + "\n\n" + addendum.rstrip("\n") + "\n\n"
+             + "\n".join(facts) + "\n")
+    out = helpers / "briefs" / f"brief-{tag}-mac-claude.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(brief)
+    print("composed", out, len(brief.split()), "words")
+
+
+def main(argv=None):
+    arguments = parse_arguments(argv)
+    review_tools_worktree = arguments.review_tools_worktree_at_main
+    instructions_file = (arguments.instructions_file
+                         or review_tools_worktree / "docs" / "agents" / "pr-reviewer-instructions.md")
+    try:
+        merged_pull_requests = MergedPullRequests(common.read_merge_account_token())
+        specs = json.loads(arguments.brief_specifications_file.read_text())
+        for spec in specs:
+            compose(spec, arguments, review_tools_worktree, instructions_file, merged_pull_requests)
+    except (StepFailed, OSError, ValueError, KeyError,
+            common.MergeAccountTokenUnusable) as failure:
+        print(f"brief not composed: {type(failure).__name__}: {failure}\n"
+              f"Briefs for entries before the failing one were written; none after it.\n"
+              f"If the error names an entry of the specifications file or a missing file, fix "
+              f"that and run this again.\n"
+              f"If a gh command failed, run this again once; if it fails the same way, tell "
+              f"the user this message.\n"
+              f"Otherwise, tell the user this message.", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

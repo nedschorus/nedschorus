@@ -28,7 +28,7 @@ _supervisor_spec.loader.exec_module(supervisor)
 
 _worth_resuming_spec = importlib.util.spec_from_file_location(
     "seat_transcript_worth_resuming",
-    _SCRIPTS_DIRECTORY / "seat-transcript-worth-resuming.py")
+    _SCRIPTS_DIRECTORY / "agent-seat-transcript-worth-resuming-common.py")
 worth_resuming = importlib.util.module_from_spec(_worth_resuming_spec)
 _worth_resuming_spec.loader.exec_module(worth_resuming)
 
@@ -191,22 +191,26 @@ def waiting_handoff_verdict(handoff_directory: Path, name: str, state_path: Path
     if counter is None:
         # The supervisor cannot consume a handoff without a valid counter; resuming would discard its request.
         return "refuse", (
-            f"a handoff exists at {handoff_path} but its restart-counter is "
+            f"a handoff exists at {handoff_path} but its session-handoff-sequence-number is "
             "missing or unreadable, so no supervisor would ever consume it. "
-            "Read it: if it is real, fix its restart-counter and relaunch "
+            "Read it: if it is real, fix its session-handoff-sequence-number and relaunch "
             "plain; if it is scrap, delete it and rerun this recovery"
         )
     if consumed is None or counter > consumed:
-        dont_restart = fields.get("dont-restart")
-        if dont_restart:
+        ask_user_before_restart = supervisor.read_ask_user_before_restart_reason_from_session_handoff_fields(fields)
+        if ask_user_before_restart:
             # Leave the handoff unconsumed so a by-hand launch still asks the supervisor’s restart question.
-            return "seat-asked-to-be-consulted", (counter, dont_restart)
+            return "seat-asked-to-be-consulted", (counter, ask_user_before_restart)
         return "defer-to-boot-ignition", (
             f"an unconsumed handoff waits (counter {counter}, consumed "
-            f"{consumed}) — plain relaunch is correct; the supervisor's "
+            f"{consumed}) — relaunching without resuming is correct; the supervisor's "
             "boot-ignition consumes it"
         )
     return None
+
+
+# The project rename leaves this value alone: task lists on disk keep the old prefix.
+TASK_LIST_ID_PREFIX_BEFORE_PROJECT_RENAME = "nedschorus-"
 
 
 def seat_of(list_id):
@@ -214,8 +218,10 @@ def seat_of(list_id):
     # scripts/seat-shared-file-ship.py's seat_name_from_environment reads the same IDs
     # but returns None for an unfamiliar one; the two are kept apart on purpose.
     name = list_id
-    if name.startswith("nedschorus-"):
-        name = name[len("nedschorus-"):]
+    for prefix in ("nedschorus-", TASK_LIST_ID_PREFIX_BEFORE_PROJECT_RENAME):
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+            break
     if name.endswith("-tasks"):
         name = name[: -len("-tasks")]
     return name or list_id

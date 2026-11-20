@@ -20,7 +20,7 @@ None. The user answered on 2026-09-29, below; the issue is closed as not planned
 
 ## Search receipt
 
-`scripts/ghi-info-ask.py` asked 2026-09-18 with `--include-closed` whether any issue covers publishing or hosting the vault: none does. The only other publishing issue, GHI [Open-source publishing and community strategy](https://github.com/nedschorus/nedschorus/issues/4), is about the project's public site and syndication and predates the vault.
+`scripts/ghi-guide-agent-ask.py` asked 2026-09-18 with `--include-closed` whether any issue covers publishing or hosting the vault: none does. The only other publishing issue, GHI [Open-source publishing and community strategy](https://github.com/nedschorus/nedschorus/issues/4), is about the project's public site and syndication and predates the vault.
 
 ## Outcome
 

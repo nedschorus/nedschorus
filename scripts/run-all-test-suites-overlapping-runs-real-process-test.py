@@ -1,0 +1,296 @@
+#!/usr/bin/env python3
+"""Two real test runs on one machine at once: neither waits for the other, and neither disturbs the other.
+
+Runs scripts/run-all-test-suites.py, and scripts/run-suite-in-signal-sandbox.py,
+as real processes, each suite in its own nc-test-sandbox. Admission's CPU and
+memory thresholds are opened wide by a small driver; the admission directory
+is this test's own. Each run's suite waits until the other run's suite has
+started, through a directory the driver binds writable into both
+nc-test-sandboxes, so the runs overlap however far apart a busy machine starts them.
+
+The last case is the collision that made test runs take turns: two
+overlapping runs of scripts/resupervise-seat-test.py both exited 0 while
+silently dropping cases to SKIP, because they shared tmux sockets under /tmp.
+
+Linux with bwrap only; elsewhere every case is skipped. It starts bwrap, which
+cannot start inside bwrap, so the runner runs it without any sandbox; run
+inside a sandbox anyway, by a runner that does not list it, it skips.
+
+Run: python3 scripts/run-all-test-suites-overlapping-runs-real-process-test.py   (exit 0 = all passed)
+"""
+
+import importlib.util
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+import tempfile
+
+# Before anything runs git, so the scratch repository is built where this suite says.
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    pathlib.Path(__file__).resolve().with_name(
+        "git-redirecting-environment-removal-test-fixture.py"))
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
+
+SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
+CHECKOUT = SCRIPTS_DIR.parent
+RUNNER_PATH = SCRIPTS_DIR / "run-all-test-suites.py"
+ONE_SUITE_PATH = SCRIPTS_DIR / "run-suite-in-signal-sandbox.py"
+
+failures = []
+
+
+def check(case_name, condition, detail=""):
+    print(f"{'PASS' if condition else 'FAIL'}  {case_name}")
+    if not condition:
+        failures.append(case_name)
+        if detail:
+            print(f"      {detail!r}"[:1500])
+
+
+# Loads a program as a module, opens admission's thresholds wide, and runs its main.
+# Given a meeting directory first, it binds that directory writable into every suite's
+# nc-test-sandbox, which otherwise shares nothing writable with another run's.
+DRIVER_SOURCE = r'''
+import importlib.util, sys
+meeting_directory, program_path, *arguments = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("program_under_test", program_path)
+program = importlib.util.module_from_spec(spec)
+sys.argv = [program_path, *arguments]
+spec.loader.exec_module(program)
+runner = getattr(program, "runner", program)
+runner.TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW = 101
+runner.TEST_SUITE_ADMISSION_AVAILABLE_MEMORY_BYTES_ABOVE = -1
+if meeting_directory:
+    unwrapped = runner.command_prefix_starting_one_suite_in_its_test_sandbox
+    def with_meeting_directory(sandbox_prefix, checkout, writable_paths=(), *rest):
+        return unwrapped(sandbox_prefix, checkout, [*writable_paths, meeting_directory], *rest)
+    runner.command_prefix_starting_one_suite_in_its_test_sandbox = with_meeting_directory
+sys.exit(program.main(arguments))
+'''
+NO_MEETING_DIRECTORY = ""
+
+# Sized to how long the other run may take to start its suite on a machine at full CPU.
+OTHER_SUITE_START_WAIT_SECONDS = 120
+
+# Each suite claims one fixed name under /tmp and holds it until the other run's suite has
+# started: two suites sharing /tmp would find each other's claim.
+CLAIMING_SUITE = r'''
+import os, tempfile, time
+meeting_directory = MEETING_DIRECTORY
+claim = "/tmp/run-all-test-suites-overlapping-runs-claim"
+if os.path.exists(claim):
+    print(f"FAIL  the claim under /tmp is free: another suite holds it: {open(claim).read()}")
+    raise SystemExit(1)
+with open(claim, "w") as handle:
+    handle.write(str(os.getpid()))
+print("PASS  claimed /tmp alone", flush=True)
+print(f"PASS  runs at niceness {os.nice(0)}", flush=True)
+# Not named by process ID: each suite is in a PID namespace of its own, so both may share one.
+tempfile.mkstemp(dir=meeting_directory, prefix="started-")
+deadline = time.monotonic() + OTHER_SUITE_START_WAIT_SECONDS
+while len(os.listdir(meeting_directory)) < 2:
+    if time.monotonic() > deadline:
+        print(f"FAIL  the other run's suite started within {OTHER_SUITE_START_WAIT_SECONDS} s of "
+              f"this one: {meeting_directory} holds {os.listdir(meeting_directory)}", flush=True)
+        raise SystemExit(1)
+    time.sleep(0.1)
+print("PASS  saw the other run's suite started while this one ran", flush=True)
+# Long enough for each run to record the machine's readings three times.
+time.sleep(3)
+'''
+
+
+def unavailable_because():
+    if not sys.platform.startswith("linux"):
+        return f"{sys.platform} has no nc-test-sandbox"
+    # A runner older than this suite runs it inside its sandbox, as merge-lane-2's head test
+    # run does with main's runner; there the inner runs cannot build nc-test-sandboxes.
+    if os.environ.get("RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX"):
+        return "this suite is already inside a sandbox, where bwrap cannot start again"
+    if shutil.which("bwrap") is None:
+        return "bwrap is not on PATH"
+    return None
+
+
+def run_together(commands, cwd):
+    processes = [subprocess.Popen(command, cwd=str(cwd), stdin=subprocess.DEVNULL,
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                 for command in commands]
+    outputs = []
+    for process in processes:
+        try:
+            output, _ = process.communicate(timeout=600)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            output, _ = process.communicate()
+            output += "\n(timed out)"
+        outputs.append((process.returncode, output))
+    return outputs
+
+
+def case_rows(log_dir):
+    rows = (log_dir / "test-case-times.tsv").read_text().splitlines()[1:]
+    return [row.split("\t") for row in rows]
+
+
+why = unavailable_because()
+if why is not None:
+    print(f"SKIP  every case: {why}")
+    sys.exit(0)
+
+with tempfile.TemporaryDirectory(prefix="run-all-test-suites-overlapping-runs-") as scratch_name:
+    scratch = pathlib.Path(scratch_name)
+    repository = scratch / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    meeting_directory = scratch / "meeting"
+    meeting_directory.mkdir()
+    (repository / "claims-tmp-test.py").write_text(
+        CLAIMING_SUITE.replace("MEETING_DIRECTORY", repr(str(meeting_directory)))
+        .replace("OTHER_SUITE_START_WAIT_SECONDS", str(OTHER_SUITE_START_WAIT_SECONDS)))
+    subprocess.run(["git", "add", "."], cwd=repository, check=True)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q",
+                    "-m", "start"], cwd=repository, check=True)
+    lock_file = scratch / "machine" / "run.lock"
+
+    runs = run_together(
+        [[sys.executable, "-c", DRIVER_SOURCE, str(meeting_directory), str(RUNNER_PATH),
+          "--checkout", str(repository),
+          "--lock-file", str(lock_file), "--log-dir", str(scratch / f"logs-{name}"),
+          "--recorded-inputs-directory", str(scratch / f"recorded-{name}"),
+          "--wait-for-lock-seconds", "1"]
+         for name in ("first", "second")], scratch)
+    check("two runs started together both pass, each suite alone in its own /tmp",
+          all(code == 0 for code, _ in runs), runs)
+    check("neither run waited for a machine lock",
+          not any("waiting up to" in output or "seconds waiting for the machine's lock" in output
+                  for _, output in runs), runs)
+    first_rows = case_rows(scratch / "logs-first")
+    second_rows = case_rows(scratch / "logs-second")
+    check("the runs overlapped: each run's suite saw the other's start while it ran",
+          all(any(row[1] == "PASS" and row[5].startswith("saw the other run's suite started")
+                  for row in rows) for rows in (first_rows, second_rows)),
+          (first_rows, second_rows))
+    runner_spec = importlib.util.spec_from_file_location("run_all_test_suites", RUNNER_PATH)
+    runner = importlib.util.module_from_spec(runner_spec)
+    runner_spec.loader.exec_module(runner)
+    cgroup_unavailable = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none()
+    for name in ("first", "second"):
+        log_dir = scratch / f"logs-{name}"
+        resources = (log_dir / "test-suite-resource-use.tsv").read_text().splitlines()
+        fields = resources[1].split("\t") if len(resources) > 1 else []
+        check(f"the {name} run records the suite's kind and admission wait",
+              len(fields) == 8 and fields[1] == "test sandbox" and fields[4] != "", resources)
+        if cgroup_unavailable is None:
+            check(f"the {name} run records the suite's CPU seconds and peak memory",
+                  len(fields) == 8 and fields[5] != "" and int(fields[6] or 0) > 0, resources)
+        else:
+            print(f"SKIP  the {name} run's CPU seconds and peak memory: {cgroup_unavailable}")
+        readings = (log_dir / "machine-cpu-and-memory-readings.tsv").read_text().splitlines()
+        check(f"the {name} run records the machine's readings each second", len(readings) >= 3,
+              readings)
+        check(f"the {name} run records each case's time, and writes JUnit XML",
+              len(case_rows(log_dir)) == 3 and (log_dir / "junit.xml").is_file())
+        # Niceness stops at 19, and this test itself runs at nice 10 under the runner.
+        expected_niceness = min(os.nice(0) + 10, 19)
+        check(f"the {name} run's suite runs at low priority, niceness "
+              f"{expected_niceness} where this test runs at {os.nice(0)}",
+              any(row[5] == f"runs at niceness {expected_niceness}"
+                  for row in case_rows(log_dir)), case_rows(log_dir))
+        report = (log_dir / "test-run-report.txt").read_text()
+        check(f"the {name} run reports how long its suites waited for admission",
+              "seconds suites waited for admission: " in report, report[-800:])
+
+    # Admission that cannot work stops the run with exit 2, saying why.
+    blocked = scratch / "blocked"
+    blocked.mkdir()
+    (blocked / "run.lock.test-suite-admission").write_text("a file where the admission "
+                                                          "directory belongs\n")
+    code, output = run_together(
+        [[sys.executable, "-c", DRIVER_SOURCE, NO_MEETING_DIRECTORY, str(RUNNER_PATH),
+          "--checkout", str(repository),
+          "--lock-file", str(blocked / "run.lock"), "--log-dir", str(scratch / "logs-blocked"),
+          "--recorded-inputs-directory", str(scratch / "recorded-blocked")]], scratch)[0]
+    check("an admission directory that cannot be made stops the run with exit 2, saying so",
+          code == 2 and "admission could not start" in output, (code, output[-800:]))
+    unopenable = scratch / "unopenable"
+    (unopenable / "run.lock.test-suite-admission" / "slot-00").mkdir(parents=True)
+    code, output = run_together(
+        [[sys.executable, "-c", DRIVER_SOURCE, NO_MEETING_DIRECTORY, str(RUNNER_PATH),
+          "--checkout", str(repository),
+          "--lock-file", str(unopenable / "run.lock"),
+          "--log-dir", str(scratch / "logs-unopenable"),
+          "--recorded-inputs-directory", str(scratch / "recorded-unopenable")]], scratch)[0]
+    check("a slot file that cannot be opened stops the run with exit 2, naming the file",
+          code == 2 and "admission failed" in output and "slot-00" in output,
+          (code, output[-800:]))
+
+    # The collision that made test runs take turns, on the real suite.
+    collisions = run_together(
+        [[sys.executable, "-c", DRIVER_SOURCE, NO_MEETING_DIRECTORY, str(ONE_SUITE_PATH),
+          "scripts/resupervise-seat-test.py", "--checkout", str(CHECKOUT),
+          "--lock-file", str(lock_file)] for _ in range(2)], CHECKOUT)
+    check("two runs of scripts/resupervise-seat-test.py at once both pass",
+          all(code == 0 and "VERDICT: suite passed" in output for code, output in collisions),
+          collisions)
+    check("neither run of scripts/resupervise-seat-test.py waited for a machine lock",
+          not any("waiting up to" in output for _, output in collisions), collisions)
+    check("neither run of scripts/resupervise-seat-test.py dropped a case to SKIP",
+          not any(line.startswith("SKIP") for _, output in collisions
+                  for line in output.splitlines()),
+          [line for _, output in collisions for line in output.splitlines()
+           if line.startswith("SKIP")])
+
+    # A run started as cron starts it, with no way to the user's systemd in its environment.
+    user_session_bus = pathlib.Path(f"/run/user/{os.getuid()}/bus")
+    if user_session_bus.exists():
+        cron_repository = scratch / "cron-repository"
+        cron_repository.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=cron_repository, check=True)
+        (cron_repository / "reports-its-cgroup-test.py").write_text(
+            'print("PASS  runs in cgroup " + open("/proc/self/cgroup").read().strip())\n')
+        subprocess.run(["git", "add", "."], cwd=cron_repository, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q",
+                        "-m", "start"], cwd=cron_repository, check=True)
+        cron_environment = {name: value for name, value in os.environ.items()
+                            if name not in ("XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS")}
+        cron_log_dir = scratch / "logs-cron"
+        started_by_cron = subprocess.run(
+            [sys.executable, "-c", DRIVER_SOURCE, NO_MEETING_DIRECTORY, str(RUNNER_PATH),
+             "--checkout", str(cron_repository), "--lock-file", str(lock_file),
+             "--log-dir", str(cron_log_dir),
+             "--recorded-inputs-directory", str(scratch / "recorded-cron")],
+            cwd=scratch, env=cron_environment, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=600)
+        cgroup_lines = [row[5] for row in case_rows(cron_log_dir)
+                        if row[5].startswith("runs in cgroup ")] if (
+            cron_log_dir / "test-case-times.tsv").is_file() else []
+        check("a run started with no XDG_RUNTIME_DIR, as cron starts it, puts its suite in a "
+              "scope in the suites' slice of the user's systemd",
+              started_by_cron.returncode == 0 and len(cgroup_lines) == 1
+              and f"/user@{os.getuid()}.service/{runner.TEST_SUITE_CGROUP_SLICE}/"
+              in cgroup_lines[0], (cgroup_lines, started_by_cron.stdout[-1500:]))
+        # The one-suite runner builds its suite's environment before its cgroup check runs.
+        one_suite_by_cron = subprocess.run(
+            [sys.executable, "-c", DRIVER_SOURCE, NO_MEETING_DIRECTORY, str(ONE_SUITE_PATH),
+             "reports-its-cgroup-test.py", "--checkout", str(cron_repository),
+             "--lock-file", str(lock_file)],
+            cwd=scratch, env=cron_environment, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=600)
+        check("scripts/run-suite-in-signal-sandbox.py started with no XDG_RUNTIME_DIR, as cron "
+              "starts it, runs its suite in a scope in the suites' slice of the user's systemd",
+              one_suite_by_cron.returncode == 0
+              and "VERDICT: suite passed" in one_suite_by_cron.stdout
+              and f"/user@{os.getuid()}.service/{runner.TEST_SUITE_CGROUP_SLICE}/"
+              in one_suite_by_cron.stdout, one_suite_by_cron.stdout[-1500:])
+    else:
+        print(f"SKIP  a run started as cron starts it: {user_session_bus} does not exist, so "
+              f"this machine's user systemd cannot be reached")
+
+print(f"{len(failures)} failed" if failures else "all cases passed")
+sys.exit(1 if failures else 0)

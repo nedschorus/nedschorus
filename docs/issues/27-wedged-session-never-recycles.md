@@ -1,3 +1,7 @@
+---
+issue: "[Console text-insertion + stuck/waiting-state detection (operator tooling; captured from the comms backlog)](https://github.com/nedschorus/nedschorus/issues/27)"
+---
+
 # A wedged session trips nothing: the supervisor waits forever, and the only reincarnation trigger is context growth
 
 Promoted from `docs/issues/queue/` on 2026-10-02 as a supporting document of issue [Console text-insertion + stuck/waiting-state detection (operator tooling; captured from the comms backlog)](https://github.com/nedschorus/nedschorus/issues/27) (console text-insertion + stuck/waiting-state detection), whose captured scope already names "a wedged worker". Line numbers below re-measured on main on 2026-10-02. Owned by the `fleet` seat (its brief, deleted on 2026-10-01: `git show 6fa06024:docs/agents/fleet-instructions.md`), which owns the handoff supervisor and the session machinery.
@@ -12,7 +16,7 @@ The finding was recorded as a runtime claim that might not be settleable from co
 
 **The heartbeat that exists measures the wrong thing.** `stamp_heartbeat` (line 510) stamps `last_poll_at` into the seat's state file every 10 seconds (`HEARTBEAT_INTERVAL_SECONDS`, line 246), and `supervisor_liveness` (line 871) reports a supervisor alive while its process holds the seat's supervisor lock. That answers "is anyone watching this seat", which is a real question and correctly answered. It does not answer "is the watched session making progress" — the supervisor keeps stamping a healthy heartbeat while the session it watches is wedged, so the liveness signal reads green during exactly the failure this concerns.
 
-**The only reincarnation trigger is context growth, and a wedged session cannot reach it.** `scripts/handoff-context-threshold-hook.py` computes the used-context share from the transcript's newest assistant record and fires the handoff skill above the threshold (default 50%, line 591). Two properties make it blind here: it fires on *context share*, so a session wedged while light never qualifies; and it is a `Stop` hook, so it runs when a turn ends — a session that never ends a turn never invokes it at all. Both halves of "wedged but under threshold" are uncovered.
+**The only reincarnation trigger is context growth, and a wedged session cannot reach it.** `scripts/handoff-context-threshold-hook.py` computes the used-context share from the transcript's newest assistant record and fires the handoff skill above the threshold (default 33%, line 277). Two properties make it blind here: it fires on *context share*, so a session wedged while light never qualifies; and it is a `Stop` hook, so it runs when a turn ends — a session that never ends a turn never invokes it at all. Both halves of "wedged but under threshold" are uncovered.
 
 Nothing else in the tree covers it. Search receipt: `grep -rln "watchdog" scripts/` returns nothing at all, and `grep -rn "wedged\|stalled\|no-progress" scripts/` returned one substantive hit, in a probe since removed — no script anywhere bounds a session's idle time.
 

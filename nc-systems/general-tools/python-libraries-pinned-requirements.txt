@@ -1,0 +1,9 @@
+# Python libraries that a ruled design requires, pinned, each with its license. Install per user into the python3 the hooks run:
+#   python3 -m pip install --user --break-system-packages -r nc-systems/general-tools/python-libraries-pinned-requirements.txt
+tree-sitter==0.25.2  # MIT
+tree-sitter-bash==0.25.1  # MIT
+coverage==7.16.2  # Apache-2.0
+markdown-it-py==3.0.0  # MIT
+mdurl==0.1.2  # MIT, a dependency of markdown-it-py
+psutil==7.1.0  # BSD-3-Clause
+ruff==0.17.0  # MIT

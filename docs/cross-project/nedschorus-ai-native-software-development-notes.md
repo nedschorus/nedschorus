@@ -4,7 +4,7 @@
 
 **How to use it.** Read the objective for what the project is trying to be, and read this for one way a piece of it might work. A design that departs from a section here is not blocked and should say why it departs. A design that contradicts the objective is blocked, because the objective's standing decisions are ruled.
 
-**If a section here seems wrong, stale, or at odds with the objective**, that is worth reporting rather than working around. An agent the user is directing raises it in its own session. An agent he is not directing reaches him by filing a GitHub issue labelled `draft`, which is his review queue in the issue world.
+**If a section here seems wrong, stale, or at odds with the objective**, that is worth reporting rather than working around. An agent the user is directing raises it in its own session. An agent he is not directing reaches him by filing a GitHub issue labelled `queue-drain-candidate`, which is his review queue in the issue world.
 
 **Provenance.** Split on 2026-09-04 from the architecture document at docs/cross-project/nedschorus-ai-native-software-development.md, which this same change deletes; it is readable in git history at the commit before its deletion. The split was made under the rulings of the walk whose minutes are kept in the log-store rather than on main (user-ruled 2026-09-08) at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/2026-09-03-ai-native-architecture-overview-decisions-minutes.md`. The text below is as it was written, except where those rulings renamed something.
 
@@ -367,7 +367,7 @@ The state machine is a program, not an agent, and it holds no judgement. Its dut
 - Coordinate independent work and reconciliation
 - Recover from durable state after process or machine failure
 
-The liaison is the human-facing half, and its whole job is carrying. When a node returns `user` as its destination, the state machine assembles the packet and the liaison presents it as a concise decision rather than a raw dump, carries the human's answer back, and does no work of its own. When the liaison is not running, an agent reaches the user by filing a GitHub issue labelled `draft`.
+The liaison is the human-facing half, and its whole job is carrying. When a node returns `user` as its destination, the state machine assembles the packet and the liaison presents it as a concise decision rather than a raw dump, carries the human's answer back, and does no work of its own. When the liaison is not running, an agent reaches the user by filing a GitHub issue labelled `queue-drain-candidate`.
 
 Natural-language human oversight occurs at four points:
 
@@ -539,7 +539,7 @@ The following is a repository-and-GHI snapshot, not a statement that every propo
 | Persistent state machine | **Not built; declined 2026-08-13 and reopened 2026-09-04 in the [seat-model document](https://github.com/nedschorus/nedschorus/blob/main/docs/nedschorus-wiki/nedschorus-agent-seat-model.md), whose 2026-09-14 trim removed that section (see its git history)** | Reopen explicitly. Build the smallest durable router needed for one human conversation, work-item state, and recovery. Record why the earlier “no state machine” decision changed. |
 | Deployment and production-feedback loop | **Not a gatekeeper responsibility; largely missing** | Design and build separately: CI/CD evidence, deployment identity, rollback, observability contract, and incident intake. |
 
-The [README](https://github.com/nedschorus/nedschorus/blob/main/README.md) already expresses several principles this architecture should preserve: complexity must be earned, behavior belongs in code where possible, durable outputs must be readable with zero prior context, and there should be one gate to `main`.
+The [founding principles page](https://github.com/nedschorus/nedschorus/blob/main/docs/nedschorus-wiki/nedschorus-founding-principles-actors-and-repository-layout.md) already expresses several principles this architecture should preserve: complexity must be earned, behavior belongs in code where possible, durable outputs must be readable with zero prior context, and there should be one gate to `main`.
 
 ## 16. External components worth using
 

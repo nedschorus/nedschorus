@@ -3,11 +3,11 @@
 
 A shared name is one other files or agents will meet: a new file path, a top-level
 Python function, class or UPPER_CASE constant that another file in the checkout
-names, a backquoted name or hyphenated phrase in markdown, a new glossary entry,
-and the branch's own name when given. Every file the branch changed is considered
-on each run, so a function written before its first caller is listed once the
-caller exists; a caller may pass a per-file cache so unchanged files are not parsed
-again.
+names, a backquoted name or hyphenated phrase in markdown, or a new glossary entry.
+A branch's own name is not listed, because the naming page needs no check of it.
+Every file the branch changed is considered on each run, so a function written
+before its first caller is listed once the caller exists; a caller may pass a
+per-file cache so unchanged files are not parsed again.
 
 Output lines are `<file>\t<kind>\t<name>`. Exit 0 with no output when nothing is new;
 exit 2, naming the git command, when git cannot answer.
@@ -16,11 +16,19 @@ exit 2, naming the git command, when git cannot answer.
 import argparse
 import ast
 import hashlib
+import importlib.util
 import re
 import subprocess
 import sys
 import tempfile
 from pathlib import Path, PurePosixPath
+
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
 
 GIT_CALL_TIMEOUT_SECONDS = 20
 MAIN_REF = "origin/main"
@@ -31,6 +39,13 @@ MAIN_TOKEN_CACHE_DIRECTORY = Path(tempfile.gettempdir()) / "new-shared-names-mai
 # Files larger than this on main are data, not prose or code a name is defined in.
 MAIN_BLOB_SIZE_LIMIT_BYTES = 2_000_000
 
+NAMING_FRESH_AGENT_NAME = "new-name-propose-and-check-fresh-agent"
+# A subagent cannot start NAMING_FRESH_AGENT_NAME, so it lists its new names under this heading in its final report.
+# new-shared-names-reminder-hook.py writes the same heading into its reminder.
+# A program that refuses until the agent that dispatched a subagent has checked its new names takes this flag.
+CONFIRM_DISPATCHING_AGENT_CHECKED_NEW_SHARED_NAMES_COMMAND_LINE_FLAG = "--confirm-dispatching-agent-checked-new-shared-names"
+SUBAGENT_REPORT_HEADING_ABOVE_NEW_SHARED_NAMES_FOR_DISPATCHING_AGENT_TO_CHECK = f"New shared names: send these to the {NAMING_FRESH_AGENT_NAME} subagent"
+
 KIND_FILE_PATH = "file-path"
 KIND_PYTHON_FUNCTION = "python-function"
 KIND_PYTHON_CLASS = "python-class"
@@ -38,7 +53,6 @@ KIND_PYTHON_CONSTANT = "python-constant"
 KIND_MARKDOWN_BACKQUOTED_NAME = "markdown-backquoted-name"
 KIND_MARKDOWN_HYPHENATED_PHRASE = "markdown-hyphenated-phrase"
 KIND_GLOSSARY_ENTRY = "glossary-entry"
-KIND_BRANCH = "branch"
 PYTHON_KINDS = frozenset({KIND_PYTHON_FUNCTION, KIND_PYTHON_CLASS, KIND_PYTHON_CONSTANT})
 
 # A period ends the phrase unless a word character follows it, as in a file name.
@@ -78,12 +92,12 @@ def git(arguments, checkout: Path, allowed_exit_codes=(0,)) -> str:
 
 
 def changed_files(checkout: Path, merge_base: str):
-    committed = git(["diff", "--name-only", "--diff-filter=AMR", merge_base, "HEAD"], checkout)
-    uncommitted = git(["diff", "--name-only", "--diff-filter=AMR", "HEAD"], checkout)
-    untracked = git(["ls-files", "--others", "--exclude-standard"], checkout)
+    committed = git(["diff", "-z", "--name-only", "--diff-filter=AMR", merge_base, "HEAD"], checkout)
+    uncommitted = git(["diff", "-z", "--name-only", "--diff-filter=AMR", "HEAD"], checkout)
+    untracked = git(["ls-files", "-z", "--others", "--exclude-standard"], checkout)
     names = set()
     for listing in (committed, uncommitted, untracked):
-        names.update(line for line in listing.splitlines() if line)
+        names.update(git_output.nul_separated_fields(listing))
     return sorted(path for path in names if (checkout / path).is_file())
 
 
@@ -94,14 +108,10 @@ def main_token_set(checkout: Path, main_commit: str):
         return set(cache_path.read_text().split("\n"))
     except OSError:
         pass
-    listing = git(["ls-tree", "-r", "-l", main_commit], checkout)
-    blob_ids = []
-    for line in listing.splitlines():
-        metadata, _, _ = line.partition("\t")
-        fields = metadata.split()
-        if len(fields) == 4 and fields[1] == "blob" and fields[3].isdigit() \
-                and int(fields[3]) <= MAIN_BLOB_SIZE_LIMIT_BYTES:
-            blob_ids.append(fields[2])
+    entries = git_output.tree_entries(git(["ls-tree", "-r", "-l", "-z", main_commit], checkout))
+    blob_ids = [entry.object_name for entry in entries
+                if entry.object_type == "blob" and entry.size is not None
+                and entry.size <= MAIN_BLOB_SIZE_LIMIT_BYTES]
     try:
         finished = subprocess.run(["git", "cat-file", "--batch"], cwd=str(checkout),
                                   input=("\n".join(blob_ids) + "\n").encode(),
@@ -115,11 +125,9 @@ def main_token_set(checkout: Path, main_commit: str):
                                           finished.stderr.decode(errors="replace")))
     tokens = {token.decode("ascii") for token in MAIN_TOKEN_PATTERN.findall(finished.stdout)}
     # A file main only has as a file, named in none of its texts, is still on main: add each path and its parts.
-    for line in listing.splitlines():
-        if "\t" in line:
-            main_path = line.split("\t", 1)[1]
-            tokens.add(main_path)
-            tokens.update(PurePosixPath(main_path).parts)
+    for entry in entries:
+        tokens.add(entry.path)
+        tokens.update(PurePosixPath(entry.path).parts)
     try:
         MAIN_TOKEN_CACHE_DIRECTORY.mkdir(parents=True, exist_ok=True)
         for stale in MAIN_TOKEN_CACHE_DIRECTORY.glob("*.txt"):
@@ -170,7 +178,8 @@ def glossary_terms(text: str):
 
 def every_glossary_term(checkout: Path):
     terms = set()
-    for path in git(["ls-files", f"*{GLOSSARY_FILE_SUFFIX}"], checkout).splitlines():
+    for path in git_output.nul_separated_fields(
+            git(["ls-files", "-z", f"*{GLOSSARY_FILE_SUFFIX}"], checkout)):
         try:
             terms.update(term.lower() for term in glossary_terms((checkout / path).read_text()))
         except OSError:
@@ -184,6 +193,28 @@ def ordinary_hyphenated_words(checkout: Path):
     except OSError:
         return set()
     return set(ORDINARY_HYPHENATED_WORD_LINE_PATTERN.findall(text))
+
+
+def listed_word_or_its_form(phrase: str, listed_words) -> bool:
+    """Say whether phrase is a listed word or its -s, -ed or -ing form, such as re-runs,
+    re-running, near-misses or hard-coding.
+
+    The spelling rules are loose, so a misspelt form of a listed word also passes.
+    """
+    if phrase in listed_words:
+        return True
+    for suffix in ("s", "es", "d", "ed", "ing"):
+        if not phrase.endswith(suffix):
+            continue
+        stem = phrase[:-len(suffix)]
+        bases = {stem}
+        if suffix in ("ed", "ing") and len(stem) >= 2 and stem[-1] == stem[-2]:
+            bases.add(stem[:-1])
+        if suffix == "ing":
+            bases.add(stem + "e")
+        if bases & listed_words:
+            return True
+    return False
 
 
 def candidates_in_file(path: str, text: str, checkout: Path, main_commit: str):
@@ -205,15 +236,13 @@ def names_used_in_other_files(names_and_files, checkout: Path):
     """Return the names that some file other than the files defining them mentions."""
     if not names_and_files:
         return set()
-    arguments = ["grep", "--untracked", "-n", "-o", "-w", "-F"]
+    arguments = ["grep", "-z", "--untracked", "-I", "-n", "-o", "-w", "-F"]
     for name in sorted({name for name, _ in names_and_files}):
         arguments += ["-e", name]
     found = git(arguments, checkout, allowed_exit_codes=(0, 1))
     files_mentioning = {}
-    for line in found.splitlines():
-        path, _, rest = line.partition(":")
-        _, _, name = rest.partition(":")
-        files_mentioning.setdefault(name, set()).add(path)
+    for match in git_output.grep_matches(found):
+        files_mentioning.setdefault(match.text, set()).add(match.path)
     # A file that defines the same name itself, such as its own LOG_PATH, is not a user of this one.
     defining_files = {}
     for name, defining_file in names_and_files:
@@ -222,8 +251,7 @@ def names_used_in_other_files(names_and_files, checkout: Path):
             if files_mentioning.get(name, set()) - defining_files[name]}
 
 
-def new_shared_names(checkout: Path, branch_names=(), already_reported=frozenset(),
-                     file_cache=None):
+def new_shared_names(checkout: Path, already_reported=frozenset(), file_cache=None):
     """Find the branch's new shared names.
 
     already_reported holds "kind\\tname" keys the caller has already shown, which are
@@ -233,7 +261,8 @@ def new_shared_names(checkout: Path, branch_names=(), already_reported=frozenset
     file_cache = {} if file_cache is None else file_cache
     main_commit = git(["rev-parse", MAIN_REF], checkout).strip()
     merge_base = git(["merge-base", "HEAD", MAIN_REF], checkout).strip()
-    main_paths = set(git(["ls-tree", "-r", "--name-only", main_commit], checkout).splitlines())
+    main_paths = set(git_output.nul_separated_fields(
+        git(["ls-tree", "-r", "--name-only", "-z", main_commit], checkout)))
     known_terms = every_glossary_term(checkout)
     exempt_phrases = ordinary_hyphenated_words(checkout)
     paths = changed_files(checkout, merge_base)
@@ -262,7 +291,7 @@ def new_shared_names(checkout: Path, branch_names=(), already_reported=frozenset
             if f"{kind}\t{name}" in already_reported:
                 continue
             if kind == KIND_MARKDOWN_HYPHENATED_PHRASE and (
-                    name in known_terms or name in exempt_phrases):
+                    name in known_terms or listed_word_or_its_form(name, exempt_phrases)):
                 continue
             candidates.append((path, kind, name))
     for stale in set(file_cache) - set(paths):
@@ -276,23 +305,63 @@ def new_shared_names(checkout: Path, branch_names=(), already_reported=frozenset
     used_elsewhere = names_used_in_other_files(python_candidates, checkout)
     found.extend(triple for triple in candidates
                  if triple[1] not in PYTHON_KINDS or triple[2] in used_elsewhere)
-
-    for branch_name in branch_names:
-        remote_branch = git(["branch", "-r", "--list", f"origin/{branch_name}"], checkout)
-        if not remote_branch.strip():
-            found.append(("", KIND_BRANCH, branch_name))
     found = [triple for triple in found if f"{triple[1]}\t{triple[2]}" not in already_reported]
     return sorted(set(found))
+
+
+def new_shared_names_in_files_changed_since(checkout: Path, base_commit: str, commit: str = "HEAD"):
+    """Return new_shared_names() limited to the files changed from base_commit to commit, leaving out each
+    name base_commit's tree already holds, such as one a pull request added before its fix-round.
+
+    Contents are read from the checkout's files, as new_shared_names() reads them, so commit should be
+    what the checkout has checked out. Raises GitFailure when git cannot answer.
+    """
+    changed = set(git_output.nul_separated_fields(
+        git(["diff", "-z", "--name-only", "--diff-filter=AMR", base_commit, commit], checkout)))
+    names = [triple for triple in new_shared_names(checkout) if triple[0] in changed]
+    if not names:
+        return []
+    base_paths = set(git_output.nul_separated_fields(
+        git(["ls-tree", "-r", "--name-only", "-z", base_commit], checkout)))
+    patterns = []
+    for name in sorted({name for _, kind, name in names if kind != KIND_FILE_PATH}):
+        patterns += ["-e", name]
+    in_base = (set(git(["grep", "-h", "-o", "-w", "-F", "-I", *patterns, base_commit], checkout,
+                       allowed_exit_codes=(0, 1)).splitlines()) if patterns else set())
+    return [(path, kind, name) for path, kind, name in names
+            if name not in (base_paths if kind == KIND_FILE_PATH else in_base)]
+
+
+def unchecked_new_shared_names_refusal_text(names, what_stopped, rename_instruction, rerun_command):
+    """The refusal a program prints when names, (file, kind, name) triples, would go out unchecked.
+
+    what_stopped says what the program did not do; rename_instruction says where each rename goes; the
+    agent runs rerun_command, which carries CONFIRM_DISPATCHING_AGENT_CHECKED_NEW_SHARED_NAMES_COMMAND_LINE_FLAG, once the names are checked.
+    """
+    listed = [f"  {name} ({kind}{', in ' + path if path and path != name else ''})" for path, kind, name in names]
+    return (
+        f"{what_stopped}, because no agent has checked these new shared names against the naming page:\n"
+        + "\n".join(listed) + "\n"
+        f"If you are a subagent, you cannot start the {NAMING_FRESH_AGENT_NAME} subagent, so stop here: end "
+        f"your final report with the heading `{SUBAGENT_REPORT_HEADING_ABOVE_NEW_SHARED_NAMES_FOR_DISPATCHING_AGENT_TO_CHECK}`, under it one "
+        "line per name, <name>: <one sentence saying what it names and which file it is in>, and last this line, "
+        "word for word: \"For the agent that dispatched me: send the lines under that heading to the "
+        f"{NAMING_FRESH_AGENT_NAME} subagent, check by hand each name its report lists under Not checked:, then send "
+        "me with SendMessage each rename its report or your check calls for, or that none is needed. I go on "
+        "with my work then, so do nothing else my ending calls for until I end again.\"\n"
+        f"If you can start a subagent, send those lines to the {NAMING_FRESH_AGENT_NAME} subagent yourself.\n"
+        f"{rename_instruction} Then run: {rerun_command}\n"
+        "If a listed name is not one you chose, such as quoted text or an existing name written differently, "
+        "leave it off the list; if no name is left, run that command at once.")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--checkout", default=".", help="the checkout to scan (default: here)")
-    parser.add_argument("--branch-name", help="a branch name about to be created, to list as well")
     arguments = parser.parse_args()
     try:
         checkout = Path(git(["rev-parse", "--show-toplevel"], Path(arguments.checkout)).strip())
-        names = new_shared_names(checkout, [arguments.branch_name] if arguments.branch_name else [])
+        names = new_shared_names(checkout)
     except GitFailure as failure:
         print(f"new-shared-names-in-changed-files-list: {failure}", file=sys.stderr)
         return 2

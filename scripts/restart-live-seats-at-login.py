@@ -21,11 +21,24 @@ there (the #116 design's window role; user-ruled 2026-09-14, box seats are
 not reconnected by hand): every login has lost the Mac's windows onto the
 box's seats, though the seats themselves run on. So on the Mac, after its
 own seats, a run asks the box over ssh which seats are alive and opens an
-iTerm window onto each, running launch-claude-ubuntu, which attaches. When
-the box does not answer — it may be rebooting too — the run retries for a
-bounded time and then reports the box's windows as missing, with the by-hand
-command, rather than opening nothing quietly. On the box this job does not
-exist: the box has no display.
+iTerm window onto each, running launch-claude-ubuntu, which attaches. A box
+seat that already has a window attached since the Mac booted gets no second
+one: recovery on the box opens a window on the Mac after each seat it brings
+up, and when the box restarts its seats while the Mac is logged in, that
+window can come first. When the box does not answer — it may be rebooting
+too — the run retries for a bounded time and then reports the box's windows
+as missing, with the by-hand command, rather than opening nothing quietly.
+Each seat runs on a tmux server named after it, which launch-claude-ubuntu
+creates when it starts the seat, and an older seat may still run on the
+shared `default` server, which can hold several. When the box's tmux fails on a seat's own server or session for any
+reason but that server or session being gone, that seat alone gets no window,
+and the report names it with tmux's error and the command that opens its
+window. When tmux fails on the `default` server, which seats it holds is
+unknown, so no box seat gets a window, and the report says the box did not
+answer, quoting tmux's error. On
+the box this job asks the Mac for no windows itself: recovery opens a window
+on the Mac after each seat it brings up, and a window that does not open
+makes this run exit nonzero, with the seat counted as come up.
 
 The rule, from docs/issues/116-fleet-survives-machine-restart-design.md
 § Ruled 2026-08-31 and its amendments:
@@ -38,16 +51,14 @@ The rule, from docs/issues/116-fleet-survives-machine-restart-design.md
     write too.
   - A seat's heartbeat is its last_poll_at. When that cannot be read —
     empty, cut off, no stamp, a stamp that does not parse, or one in the
-    future — the file's last write stands in for it. A reboot in the middle
-    of the supervisor's whole-file write leaves a file cut off at the stop,
-    and the user's answer for that file (2026-09-11) was to try the resume:
-    "Resume or continue works perfectly 99% of the time, so I'd try that."
-    A file damaged long before the stop is judged like any old seat.
+    future — the file's last write stands in for it, and is judged against
+    the anchor like any heartbeat, so a file cut off by the stop is resumed
+    with the seats that were running then.
   - The anchor is the newest heartbeat before this boot; it approximates the
     moment the machine stopped.
   - A seat whose heartbeat or file was written since boot has had a
     supervisor since boot — recovered by hand, started by an earlier run of
-    this program, or caught mid-write while it runs now. It is neither the
+    this program, or running now. It is neither the
     anchor nor restarted.
   - The seats whose heartbeats are within LIVE_SET_WINDOW_SECONDS of the
     anchor were running at the stop, and are restarted — however long before
@@ -116,6 +127,13 @@ _records_reader_spec = importlib.util.spec_from_file_location(
 )
 records_reader = importlib.util.module_from_spec(_records_reader_spec)
 _records_reader_spec.loader.exec_module(records_reader)
+_tmux_error_pattern_spec = importlib.util.spec_from_file_location(
+    "tmux_target_or_server_does_not_exist_error_pattern_common",
+    Path(__file__).resolve().parent.parent / "nc-systems" / "general-tools"
+    / "tmux-target-or-server-does-not-exist-error-pattern-common.py"
+)
+tmux_error_pattern = importlib.util.module_from_spec(_tmux_error_pattern_spec)
+_tmux_error_pattern_spec.loader.exec_module(tmux_error_pattern)
 LIVE_SET_WINDOW_SECONDS = records_reader.LIVE_SET_WINDOW_SECONDS
 RUN_LOG_FILE_NAME = records_reader.RUN_LOG_FILE_NAME
 BOOT_MATCH_TOLERANCE_SECONDS = records_reader.BOOT_MATCH_TOLERANCE_SECONDS
@@ -190,14 +208,50 @@ BOX_QUERY_DEADLINE_SECONDS = 150.0
 BOX_QUERY_RETRY_SECONDS = 5.0
 # Seat homes exclude the fleet-anchor keep-alive session; after-exit shells still need windows.
 # The box launcher always uses ~/agents and reads no agents-root override.
-LIST_LIVE_BOX_SEATS_REMOTE_COMMAND = (
-    'for seat_socket_path in "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"/*; do '
-    '[ -S "$seat_socket_path" ] || continue; '
-    'tmux -S "$seat_socket_path" list-sessions -F "#{session_name}" 2>/dev/null; '
-    'done | sort -u | while read -r seat_name; do '
-    '[ -d "$HOME/agents/$seat_name" ] && echo "$seat_name"; '
-    'done; true'
-)
+# A seat whose newest client attached at or after the Mac's boot already has a window from
+# this login; a client from before it is a window the reboot closed, whose ssh the box may
+# not have noticed yet, so it does not count.
+AGENT_SEAT_CLIENT_ATTACHED_SINCE_MAC_BOOT_LISTING_TEXT = "attached"
+# The listing prints each failed tmux command on stderr after this text and the seat it
+# failed on, for the Mac to tell tmux's "that server or session is gone" answers from its
+# failures. A failure on the default server names this placeholder instead, since that
+# server can hold several seats.
+NED_BOX_LISTING_TMUX_FAILURE_PREFIX = "tmux failed on the box:"
+NED_BOX_LISTING_TMUX_FAILURE_SEAT_PLACEHOLDER_FOR_SHARED_DEFAULT_SERVER = "*"
+
+
+def ned_box_running_agent_seats_list_command_marking_clients_attached_since_mac_boot(
+        mac_booted_at_epoch_seconds: int) -> str:
+    return (
+        'report_tmux_failure() { failed_seat=$1; shift; printf "%s %s %s\\n" '
+        f'"{NED_BOX_LISTING_TMUX_FAILURE_PREFIX}" "$failed_seat" '
+        '"$(printf "%s" "$*" | tr "\\n" " ")" >&2; }; '
+        'for seat_socket_path in "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"/*; do '
+        '[ -S "$seat_socket_path" ] || continue; '
+        'if ! seat_names=$(tmux -S "$seat_socket_path" list-sessions -F "#{session_name}" 2>&1); '
+        'then socket_name=$(basename "$seat_socket_path"); '
+        'if [ "$socket_name" = default ]; '
+        f'then report_tmux_failure "{NED_BOX_LISTING_TMUX_FAILURE_SEAT_PLACEHOLDER_FOR_SHARED_DEFAULT_SERVER}" '
+        '"tmux -S $seat_socket_path list-sessions: $seat_names"; '
+        'elif [ -d "$HOME/agents/$socket_name" ]; '
+        'then report_tmux_failure "$socket_name" "tmux -S $seat_socket_path list-sessions: '
+        '$seat_names"; fi; '
+        'continue; fi; '
+        'printf "%s\\n" "$seat_names" | while read -r seat_name; do '
+        '[ -n "$seat_name" ] || continue; '
+        'if ! client_times=$(tmux -S "$seat_socket_path" list-clients -t "=$seat_name" '
+        '-F "#{client_created}" 2>&1); '
+        'then [ -d "$HOME/agents/$seat_name" ] && report_tmux_failure "$seat_name" '
+        '"tmux -S $seat_socket_path list-clients -t =$seat_name: $client_times"; continue; fi; '
+        'newest=$(printf "%s\\n" "$client_times" | sort -n | tail -n 1); '
+        f'if [ "${{newest:-0}}" -ge {int(mac_booted_at_epoch_seconds)} ]; '
+        f'then echo "$seat_name {AGENT_SEAT_CLIENT_ATTACHED_SINCE_MAC_BOOT_LISTING_TEXT}"; '
+        'else echo "$seat_name"; fi; '
+        'done; '
+        'done | sort -u | while read -r seat_name attached; do '
+        '[ -d "$HOME/agents/$seat_name" ] && echo "$seat_name${attached:+ $attached}"; '
+        'done; true'
+    )
 
 
 def agent_box() -> str:
@@ -205,32 +259,78 @@ def agent_box() -> str:
     return os.environ.get("NEDSCHORUS_AGENT_BOX", "ned")
 
 
-def box_seat_query_command(box: str = None) -> list:
-    return ["ssh", *BOX_QUERY_SSH_OPTIONS, box or agent_box(), LIST_LIVE_BOX_SEATS_REMOTE_COMMAND]
+def box_seat_query_command(mac_booted_at: datetime, box: str = None) -> list:
+    return ["ssh", *BOX_QUERY_SSH_OPTIONS, box or agent_box(),
+            ned_box_running_agent_seats_list_command_marking_clients_attached_since_mac_boot(
+                int(mac_booted_at.timestamp()))]
 
 
-def ask_the_box_which_seats_are_alive(run=subprocess.run, deadline_seconds=BOX_QUERY_DEADLINE_SECONDS,
+def ned_box_agent_seat_listing_parse_into_needing_window_and_attached_since_mac_boot(listing: str):
+    """Return (seats to open a window onto, seats already attached since the Mac booted)."""
+    seats, already_attached = set(), set()
+    for line in listing.splitlines():
+        words = line.split()
+        if not words:
+            continue
+        if words[1:] == [AGENT_SEAT_CLIENT_ATTACHED_SINCE_MAC_BOOT_LISTING_TEXT]:
+            already_attached.add(words[0])
+        else:
+            seats.add(words[0])
+    # A seat listed on two sockets, one with a window, has its window.
+    return sorted(seats - already_attached), sorted(already_attached)
+
+
+def ask_the_box_which_seats_are_alive(mac_booted_at: datetime, run=subprocess.run,
+                                      deadline_seconds=BOX_QUERY_DEADLINE_SECONDS,
                                       retry_seconds=BOX_QUERY_RETRY_SECONDS, sleep=time.sleep,
                                       monotonic=time.monotonic):
-    """Return (seat names, detail), using None when the query fails."""
+    """Return (seats without a window, detail, seats already attached, withheld seats).
+
+    seats is None when the box did not answer, or tmux failed on its shared default
+    server; withheld is a list of (seat, tmux's failure) for seats whose own tmux server or
+    session failed, which get no window."""
     started = monotonic()
     attempts = 0
     while True:
         attempts += 1
         try:
-            finished = run(box_seat_query_command(), stdout=subprocess.PIPE,
+            finished = run(box_seat_query_command(mac_booted_at), stdout=subprocess.PIPE,
                            stderr=subprocess.PIPE, text=True)
         except OSError as error:
-            return None, f"could not run ssh: {error}"
+            return None, f"could not run ssh: {error}", [], []
         if finished.returncode == 0:
-            return sorted({line.strip() for line in finished.stdout.splitlines()
-                           if line.strip()}), f"answered on attempt {attempts}"
+            tmux_failures = []
+            for line in finished.stderr.splitlines():
+                if not line.startswith(NED_BOX_LISTING_TMUX_FAILURE_PREFIX):
+                    continue
+                failed_seat, _, failure = (
+                    line[len(NED_BOX_LISTING_TMUX_FAILURE_PREFIX):].strip().partition(" "))
+                # A seat that fails on both its own server and the default one is one failure.
+                if not tmux_error_pattern.tmux_error_text_says_target_or_server_does_not_exist(
+                        failure) and failed_seat not in dict(tmux_failures):
+                    tmux_failures.append((failed_seat, failure.strip()))
+            shared = [failure for failed_seat, failure in tmux_failures
+                      if failed_seat
+                      == NED_BOX_LISTING_TMUX_FAILURE_SEAT_PLACEHOLDER_FOR_SHARED_DEFAULT_SERVER]
+            if shared:
+                return None, ("its tmux could not list the seats on its shared default "
+                              "server: " + "; ".join(shared)), [], []
+            seats, already_attached = (
+                ned_box_agent_seat_listing_parse_into_needing_window_and_attached_since_mac_boot(
+                    finished.stdout))
+            # A seat whose own server failed can still be listed from the default server;
+            # it stays withheld, since whether its own server holds a live seat is unknown.
+            withheld_seats = {failed_seat for failed_seat, _ in tmux_failures}
+            return ([seat for seat in seats if seat not in withheld_seats],
+                    f"answered on attempt {attempts}",
+                    [seat for seat in already_attached if seat not in withheld_seats],
+                    tmux_failures)
         if finished.returncode != 255:
             return None, (f"the box answered with exit {finished.returncode}: "
-                          f"{finished.stderr.strip()}")
+                          f"{finished.stderr.strip()}"), [], []
         if monotonic() - started >= deadline_seconds:
             return None, (f"unreachable for {int(deadline_seconds)}s over {attempts} "
-                          f"attempt(s) (ssh exit 255: {finished.stderr.strip()})")
+                          f"attempt(s) (ssh exit 255: {finished.stderr.strip()})"), [], []
         sleep(retry_seconds)
 
 
@@ -257,16 +357,17 @@ def open_windows_onto_box_seats(seats, run=subprocess.run):
     return opened, reports
 
 
-def restore_box_windows(dry_run: bool, platform: str = sys.platform, run=subprocess.run,
-                        sleep=time.sleep, monotonic=time.monotonic):
-    """Return the attempted, answered, detail, seats, opened and reports fields."""
+def restore_box_windows(dry_run: bool, mac_booted_at: datetime, platform: str = sys.platform,
+                        run=subprocess.run, sleep=time.sleep, monotonic=time.monotonic):
+    """Return the attempted, answered, detail, seats, already_attached, opened and reports fields."""
     if platform != "darwin":
         return {"attempted": False}
-    seats, detail = ask_the_box_which_seats_are_alive(
-        run=run, deadline_seconds=0 if dry_run else BOX_QUERY_DEADLINE_SECONDS,
+    seats, detail, already_attached, withheld = ask_the_box_which_seats_are_alive(
+        mac_booted_at, run=run, deadline_seconds=0 if dry_run else BOX_QUERY_DEADLINE_SECONDS,
         sleep=sleep, monotonic=monotonic)
     outcome = {"attempted": True, "answered": seats is not None, "detail": detail,
-               "seats": seats, "opened": [], "reports": []}
+               "seats": seats, "already_attached": already_attached, "withheld": withheld,
+               "opened": [], "reports": []}
     if seats and not dry_run:
         outcome["opened"], outcome["reports"] = open_windows_onto_box_seats(seats, run=run)
     return outcome
@@ -282,9 +383,11 @@ def recovery_command_for_seat(seat: str, handoff_directory: Path,
 
 
 def seat_came_up(exit_code, report: str) -> bool:
-    # A confirmed already-running supervisor counts as up even though no seat was launched.
-    return exit_code == 0 and not any(
-        marker in report for marker in recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS)
+    # A confirmed already-running supervisor counts as up even though no seat was launched,
+    # and so does a seat whose window on the Mac did not open.
+    return (exit_code in (0, recovery.ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_OPEN_FAILED_EXIT_STATUS)
+            and not any(marker in report
+                        for marker in recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS))
 
 
 def launch_seats_decided_restart(decisions, handoff_directory: Path,
@@ -338,7 +441,7 @@ def main(argv=None) -> int:
     else:
         launched, reports = launch_seats_decided_restart(decisions, arguments.handoff_dir)
     # Every Mac login loses the windows onto box seats, regardless of local seat verdicts.
-    box_windows = restore_box_windows(arguments.dry_run)
+    box_windows = restore_box_windows(arguments.dry_run, boot_at)
     recorded = None if arguments.dry_run else append_selection_to_run_log(
         arguments.handoff_dir, boot_at, anchor, anchor_is_the_stop, decisions, now,
         launched=launched, box_windows=box_windows)
@@ -385,11 +488,13 @@ def main(argv=None) -> int:
             print(f"  box {box}: did not answer ({box_windows['detail']}) — its windows are "
                   f"missing; when it is back, one window per seat by hand: "
                   f"{BOX_LAUNCHER_PATH} <seat>")
-        elif not box_windows["seats"]:
+        elif not (box_windows["seats"] or box_windows["already_attached"]
+                  or box_windows["withheld"]):
             print(f"  box {box}: no live seats, so no windows to open")
         elif arguments.dry_run:
-            print(f"  box {box}: would open a window onto each live seat: "
-                  + ", ".join(box_windows["seats"]))
+            if box_windows["seats"]:
+                print(f"  box {box}: would open a window onto each live seat: "
+                      + ", ".join(box_windows["seats"]))
         else:
             for seat, opened, detail in box_windows["reports"]:
                 if opened:
@@ -398,6 +503,20 @@ def main(argv=None) -> int:
                     windows_not_opened.append(seat)
                     print(f"  box {box}: NO WINDOW onto {seat} — {detail}; by hand: "
                           f"{BOX_LAUNCHER_PATH} {seat}")
+        for seat in box_windows["already_attached"]:
+            print(f"  box {box}: {seat} already has a window attached since this Mac "
+                  "booted, so no other was opened")
+        # Its tmux could not say whether the seat is alive or already has a window, so
+        # opening one could attach a second window or start a duplicate seat.
+        for seat, failure in box_windows["withheld"]:
+            windows_not_opened.append(seat)
+            print(f"  box {box}: NO WINDOW onto {seat} — the box's tmux failed on it ({failure}), "
+                  f"so whether it is alive is unknown; once that tmux error is fixed on {box}, "
+                  f"run on this Mac: {BOX_LAUNCHER_PATH} {seat}")
+    # On the box, recovery opened each restarted seat's window on the Mac and reported
+    # one that did not open in that seat's line, printed above.
+    windows_not_opened += [seat for seat, came_up, report in reports
+                           if came_up and recovery.AGENT_SEAT_MAC_WINDOW_NOT_OPENED_REPORT_TEXT in report]
     did_not_come_back = [seat for seat, came_up, _ in reports if not came_up]
     if recorded is True:
         print(f"  recorded in {log_path}")

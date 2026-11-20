@@ -7,7 +7,7 @@ import pathlib
 
 _tables_spec = importlib.util.spec_from_file_location(
     "design_to_main_state_tables",
-    pathlib.Path(__file__).with_name("design-to-main-state-tables.py"))
+    pathlib.Path(__file__).with_name("design-to-main-state-tables-common.py"))
 tables = importlib.util.module_from_spec(_tables_spec)
 _tables_spec.loader.exec_module(tables)
 
@@ -56,7 +56,7 @@ class RunCounters:
             if rule.per_design_version:
                 self.values[rule.name] = 0
 
-    def reset_by_the_user(self):
+    def zero_all_run_counters_including_redesigns(self):
         for name in self.values:
             self.values[name] = 0
 

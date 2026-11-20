@@ -1,5 +1,6 @@
 ---
 issue: "[Open-source publishing and community strategy — Ned's Chorus (doc: docs/issues/4-open-source-publishing-community-strategy.md)](https://github.com/nedschorus/nedschorus/issues/4)"
+kind: design
 ---
 
 Issue: https://github.com/nedschorus/nedschorus/issues/4

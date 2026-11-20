@@ -190,7 +190,7 @@ class AScenarioTheMachineCallsAMachineError(unittest.TestCase):
 class TwoCoverageTypesInEitherSpellingPlayAsTheMachineReadsThem(unittest.TestCase):
     """Review 2026-09-16 by mac-claude on PR #407, the blocking finding:
     `coverage-type: script, prompt`, section 2's comma form, is split as
-    the machine splits state-exit.json (coverage_types_from_json_field),
+    the machine splits design-to-main-state-exit-verdict-and-destination.json (coverage_types_from_json_field),
     so an implementation claiming two coverage-types is the machine error
     in this spelling as in the flow list `[script, prompt]`."""
 
@@ -308,12 +308,13 @@ class TheScenarioFile(unittest.TestCase):
             "    fields:\n"
             "      investigation-focus: design\n"
             "      coverage_types: [script, prompt]\n"
-            "      rulings: reset\n")
+            "      rulings: zero-all-run-counters-including-redesigns\n")
         self.assertEqual(scenario.name, "fields")
         self.assertEqual([(s.state, s.verdict, s.line) for s in scenario.steps],
                          [(T.TEST_SUITE_EXECUTING, T.V_FAIL, 4), (T.TEST_SUITE_ARBITRATING, T.V_ESCALATE_TO_USER, 5)])
         self.assertEqual(scenario.steps[1].fields, {
-            "investigation_focus": "design", "coverage_types": ("script", "prompt"), "rulings": ("reset",)})
+            "investigation_focus": "design", "coverage_types": ("script", "prompt"),
+            "rulings": (T.RULING_ZERO_ALL_RUN_COUNTERS_INCLUDING_REDESIGNS,)})
 
     def test_an_unknown_verdict_is_refused_with_its_line(self):
         with self.assertRaises(runner.MalformedScenario) as refused:

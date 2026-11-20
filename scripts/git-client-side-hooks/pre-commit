@@ -1,30 +1,27 @@
 #!/bin/sh
 # Refuses a commit made inside a Claude session when its author or its
-# committer is the user's own address or the unconfigured-agent tripwire.
+# committer is the user's own address or the unconfigured-agent tripwire, or
+# when the clone's own git config does not hold the tripwire identity; in the
+# last case it first writes the tripwire back if another identity replaced it.
 #
-# Why (user-approved 2026-09-22, the walk
-# ghi-write-session-open-rulings-and-concerns item 7, part 4 of the design;
-# re-confirmed 2026-09-23, the reboot-test meta-walk item 3). Every worktree
-# of a clone shares one .git/config, and any agent's `git config user.name`
-# rewrote the author for every seat at once. Measured 2026-09-22: one seat's
-# commits went out that day as identity-probe, as reviewer, and once as
-# `identity-probe <junk@lerner1.com>` — the user's own address, on an agent's
-# commit, on a public pull request. Parts 1 and 2 of the design move each
-# seat's identity into its launcher's environment (scripts/launch-claude-mac
-# and scripts/launch-claude-ubuntu export GIT_AUTHOR_* and GIT_COMMITTER_* as
-# <seat> and <seat>@nedschorus.invalid). Part 3 replaces the shared config's
-# identity with a tripwire, `unconfigured-agent
-# <unconfigured-agent@nedschorus.invalid>`, rather than stripping it: with no
-# identity in the clone's config, git falls back to the Mac's ~/.gitconfig,
-# which is the user's own name and junk@lerner1.com — the leak made worse.
-# This hook is part 4: whatever the environment or the config holds, an
+# Why: every worktree of a clone shares one .git/config, so any agent's
+# `git config user.name` rewrites the author for every seat at once, and an
+# agent's commit can go out under the user's own address on a public pull
+# request. So each seat's identity lives in its launcher's environment
+# (scripts/launch-claude-mac and scripts/launch-claude-ubuntu export
+# GIT_AUTHOR_* and GIT_COMMITTER_* as <seat> and <seat>@nedschorus.invalid),
+# and the shared config's identity is replaced with a tripwire,
+# `unconfigured-agent <unconfigured-agent@nedschorus.invalid>`, rather than
+# stripped: with no identity in the clone's config, git falls back to the
+# Mac's ~/.gitconfig, which is the user's own name and junk@lerner1.com.
+# This hook is the last safeguard: whatever the environment or the config holds, an
 # agent's commit never goes out under the user's address, and a session
 # started without the launcher is stopped at its first commit instead of
 # publishing under the tripwire.
 #
 # The refused addresses are the user's own, each seen on commits in this
-# repository's history: junk@lerner1.com (the Mac's ~/.gitconfig, and the
-# 2026-09-22 leak), ned@lerner1.com (commits by the reboot-test, merge-lane
+# repository's history: junk@lerner1.com (the Mac's ~/.gitconfig),
+# ned@lerner1.com (commits by the reboot-test, merge-lane
 # and nedlern identities), and nedlerner@yahoo.com (the merging account's
 # GitHub identity). GitHub's own merge commits carry that last address and
 # are right to: they are made on GitHub's servers and never pass through a
@@ -48,69 +45,135 @@
 # (see that file's header); the reference checkout stays on main, so every
 # seat's worktree runs main's copy.
 #
-# THE TRIPWIRE IS A SEPARATE, LATER STEP, taken only on the user's go after
-# every live seat has been relaunched by a launcher that carries the exports
-# above (user-ruled 2026-09-27, the reboot-test meta-walk item 15: the seat
-# that holds the step asks him once more before writing either config). A seat launched before then commits with whatever the shared config
-# holds, so writing the tripwire first would stop every such seat at its
-# next commit. The step, once per clone:
-#   Mac:     git -C /Users/el/Projects/nedschorus config user.name unconfigured-agent
-#            git -C /Users/el/Projects/nedschorus config user.email unconfigured-agent@nedschorus.invalid
-#   ned-box: git -C /home/nedlern/Projects/nedschorus config user.name unconfigured-agent
-#            git -C /home/nedlern/Projects/nedschorus config user.email unconfigured-agent@nedschorus.invalid
-# It also means a commit the user types by hand in a clone would be authored
-# unconfigured-agent, since the clone's config outranks ~/.gitconfig, and
-# outside a session this hook does not run to catch it. So the refusal's last
-# line tells him to add `-c user.name=<name> -c user.email=<address>` after
-# git when the clone's identity is the tripwire (Codex P2 in merge-lane-2's
-# review 5298511609 of PR "The commit guard's refusal is instructions only",
-# https://github.com/nedschorus/nedschorus/pull/701). The -c form rather than
-# --author because -c sets the committer too; --author alone would leave the
-# commit committed by unconfigured-agent. Before the tripwire is written the
-# line's condition is simply false, so the one wording holds on both sides.
+# The tripwire is written once per clone by the user, never by an agent, since
+# writing it stops every seat that is not launched with the exports above:
+#   git -C <clone> config user.name unconfigured-agent
+#   git -C <clone> config user.email unconfigured-agent@nedschorus.invalid
+# Before the identity checks below, this hook reads the clone's own user.name
+# and user.email with `git config --local`, which ignores ~/.gitconfig and the
+# `-c` values of the command being run. When both are unset, as in a new
+# clone, the hook refuses the commit, writes nothing, and prints those two
+# commands for the user. When they hold anything but the tripwire, an agent
+# has replaced it, so the hook writes the tripwire back and refuses the
+# commit. The refusal is what makes
+# the agent read the message, which says to tell the user what identity was
+# found; a launched seat's own commit is otherwise unaffected, since its
+# identity comes from the environment. A failed write is reported and refuses
+# the commit.
+#
+# A commit the user types by hand in a clone is authored unconfigured-agent,
+# since the clone's config outranks ~/.gitconfig, and outside a session this
+# hook does not run to catch it. So the refusal's last line tells him to add
+# `-c user.name=<name> -c user.email=<address>` after git. The -c form rather
+# than --author because -c sets the committer too; --author alone would leave
+# the commit committed by unconfigured-agent.
 #
 # The user's own commits inside a session are refused too. A commit the user
 # types into a Claude session with the `!` prefix runs in the session's
 # environment, carrying CLAUDE_CODE_SESSION_ID, so under his own address it is
-# refused like an agent's. The user ruled it stays that way, with no
-# exemption: he commits from a plain terminal (user-ruled 2026-09-27, the
-# reboot-test meta-walk item 16, after merge-lane-2's review of PR "Each seat
-# commits under its own name, and no agent commits as the user",
-# https://github.com/nedschorus/nedschorus/pull/694). Nothing marks a command
+# refused like an agent's, with no exemption, by the user's decision: he
+# commits from a plain terminal. Nothing marks a command
 # the user typed apart from one an agent ran, so an exemption would have
 # nothing to key on.
 #
 # Amending. `git commit --amend` keeps the amended commit's author unless
 # --reset-author is given, and git hands that author to this hook, so the
 # same-command identity alone is refused again when the commit being amended
-# carries the user's address (mac-claude's finding in the same review;
-# reproduced 2026-09-27 in a throwaway repository: refused without
-# --reset-author, committed as the seat for both author and committer with
-# it). Two cases need different instructions. A commit that went out under
-# the user's address by mistake, the 2026-09-22 leak's kind, is the agent's
+# carries the user's address; with --reset-author it is committed as the
+# seat for both author and committer. Two cases need different instructions.
+# A commit that went out under the user's address by mistake is the agent's
 # own work and --reset-author puts the right name on it. A commit the user
 # really wrote keeps his name, so the agent leaves it and commits on top.
 #
 # Why the refusal says to set the identity in the same command as the commit:
 # the agent's Bash tool starts every call in a fresh shell, so an `export` in
 # one call is gone by the next, and an agent that exports and then commits in
-# two calls is refused again (merge-lane-2's question in the same review;
-# measured 2026-09-24: a variable exported in one call read back unset in the
-# next).
+# two calls is refused again.
 #
 # The refusal printed below opens with what was refused and why, then gives
 # one instruction per line, each with the condition it applies under, and
 # cites no ruling and no date. The refused identity is named in the first two
 # lines because the agent needs it to see which variable or flag put the
 # user's address or the tripwire on this commit.
+#
+# Agent-homes. Before the identity checks, and for every commit, the user's own
+# included, this hook refuses a commit in an agent-home: a worktree whose own
+# git directory holds the file agent-home-marker, which
+# scripts/launch-claude-mac, scripts/launch-claude-ubuntu and
+# scripts/agent-home-seat-branch-commits-save-to-pushed-branch-and-detach-at-origin-main.py
+# write. An agent-home rests on a detached HEAD at origin/main, so a commit
+# there is on no branch, and nothing keeps it once HEAD moves. A marker rather
+# than a path, because worktrees that are not agent-homes also sit under the
+# agents root, and the Mac's agents root can be moved.
+
+agent_home_git_directory="$(git rev-parse --absolute-git-dir)" || {
+    echo "pre-commit: git rev-parse --absolute-git-dir failed, so this hook could not tell whether this worktree is an agent-home, and refuses the commit; git's error is just above this line." >&2
+    echo "Tell the user this whole message." >&2
+    exit 1
+}
+if [ -e "$agent_home_git_directory/agent-home-marker" ]; then
+    agent_home="$(git rev-parse --show-toplevel)"
+    # The creator is named through this hook's own checkout, the reference checkout core.hooksPath points at, because an agent-home at an older commit may not have it.
+    worktree_creator="$(cd "$(dirname "$0")/.." && pwd)/agent-seat-worktree-create-with-owner-file.py"
+    echo "pre-commit: this commit is refused, because $agent_home is an agent-home: an agent-home holds no work and rests on a detached HEAD at origin/main, so a commit here is on no branch, and nothing keeps it once HEAD moves." >&2
+    echo "Make the commit in a worktree of your own, on an nc-topic-branch, made with this command, which prints the new worktree's path: cd $agent_home && python3 $worktree_creator <branch name> --base HEAD" >&2
+    echo "If the changes you meant to commit were made here in the agent-home, carry them to that worktree: git -C $agent_home diff --binary HEAD | git -C <the new worktree> apply --index; copy across any new file that git status lists as untracked, then, once the worktree holds them all, put the agent-home back with git -C $agent_home reset --hard HEAD and delete those copied files here." >&2
+    echo "If you are the user committing by hand and mean this commit to be in the agent-home, add --no-verify to the same git commit command." >&2
+    exit 1
+fi
 
 if [ -z "${CLAUDE_CODE_SESSION_ID:-}" ] && [ -z "${CLAUDE_CODE_BRIDGE_SESSION_ID:-}" ]; then
     exit 0
 fi
 
+TRIPWIRE_NAME="unconfigured-agent"
+TRIPWIRE_EMAIL="unconfigured-agent@nedschorus.invalid"
+clone_directory="$(git rev-parse --path-format=absolute --git-common-dir)"
+clone_config="$clone_directory/config"
+# `git config --get` exits 1 for an unset key; any other nonzero exit is a failure to read.
+config_read_failed() {
+    echo "pre-commit: this commit is refused, because reading $1 from the clone's own git config, $clone_config, failed with exit $2; git's error is just above this line." >&2
+    echo "Tell the user this whole message." >&2
+    echo "Do not commit in this clone until the user says its git config reads again." >&2
+    exit 1
+}
+clone_name="$(git config --local --get user.name)"
+status=$?
+[ "$status" -le 1 ] || config_read_failed user.name "$status"
+clone_email="$(git config --local --get user.email)"
+status=$?
+[ "$status" -le 1 ] || config_read_failed user.email "$status"
+if [ -z "$clone_name" ] && [ -z "$clone_email" ]; then
+    echo "pre-commit: this commit is refused, because the clone's own git config, $clone_config, holds no user.name or user.email, so an agent-session started without its launcher would commit under whatever identity git finds elsewhere, such as the user's own ~/.gitconfig." >&2
+    echo "Do not set the identity yourself: the first identity written in a clone is the user's to write." >&2
+    echo "Tell the user that this clone holds no identity, and ask him to run these two commands:" >&2
+    echo "git --git-dir=\"$clone_directory\" config user.name $TRIPWIRE_NAME" >&2
+    echo "git --git-dir=\"$clone_directory\" config user.email $TRIPWIRE_EMAIL" >&2
+    echo "Commit again only after the user says he has run them." >&2
+    exit 1
+fi
+if [ "$clone_name" != "$TRIPWIRE_NAME" ] || [ "$clone_email" != "$TRIPWIRE_EMAIL" ]; then
+    found="${clone_name:-(no user.name)} <${clone_email:-no user.email}>"
+    if ! git config --local user.name "$TRIPWIRE_NAME" || ! git config --local user.email "$TRIPWIRE_EMAIL"; then
+        echo "pre-commit: this commit is refused, because the clone's own git config, $clone_config, holds the identity $found instead of $TRIPWIRE_NAME <$TRIPWIRE_EMAIL>, and writing $TRIPWIRE_NAME back failed; git's error is just above this line." >&2
+        echo "Tell the user that $clone_config holds $found, that this hook could not write $TRIPWIRE_NAME back, and what git's error says." >&2
+        echo "Do not commit in this clone until the user has set the identity back." >&2
+        exit 1
+    fi
+    echo "pre-commit: this commit is refused, because the clone's own git config, $clone_config, held the identity $found instead of $TRIPWIRE_NAME <$TRIPWIRE_EMAIL>, which stops an agent-session started without its launcher from committing; this hook has written $TRIPWIRE_NAME back." >&2
+    echo "Tell the user that $clone_config held $found, and that this hook set it back to $TRIPWIRE_NAME." >&2
+    echo "Then commit again." >&2
+    exit 1
+fi
+
 refused_identity=""
 for role in AUTHOR COMMITTER; do
-    identity="$(git var "GIT_${role}_IDENT" 2>/dev/null)" || continue
+    if ! identity="$(git var "GIT_${role}_IDENT")"; then
+        echo "pre-commit: git var GIT_${role}_IDENT failed, so this commit's $(printf '%s' "$role" | tr 'A-Z' 'a-z') was not checked for the user's own address or the unconfigured-agent address, and this hook does not refuse the commit for it; git's error is just above this line." >&2
+        echo "Before you push this commit, run git log -1 --format='%an <%ae> / %cn <%ce>' and check that neither identity is the user's address or unconfigured-agent." >&2
+        echo "If git var keeps failing, tell the user this whole message." >&2
+        continue
+    fi
     # "Name <email> 1727000000 +0000" -> the email, lowercased.
     email="$(printf '%s\n' "$identity" | sed -n 's/.*<\([^>]*\)>.*/\1/p' | tr 'A-Z' 'a-z')"
     case "$email" in
@@ -128,6 +191,6 @@ echo "If this session is a seat, relaunch it with launch-claude-mac or launch-cl
 echo "If you cannot relaunch, set the identity in the same command as the commit: GIT_AUTHOR_NAME=<seat> GIT_AUTHOR_EMAIL=<seat>@nedschorus.invalid GIT_COMMITTER_NAME=<seat> GIT_COMMITTER_EMAIL=<seat>@nedschorus.invalid git commit ..." >&2
 echo "If you are amending a commit made under the user's address by mistake, add --reset-author to that same command." >&2
 echo "If you are amending a commit the user wrote, leave it and make a new commit on top instead." >&2
-echo "Do not change user.name or user.email in git config: every worktree of the clone shares that config, so the change would rename every agent-seat's commits." >&2
+echo "Do not change user.name or user.email in git config: every worktree of the clone shares that config, and a launched agent-seat's commits keep its own name either way, but an agent-session started without its launcher could then commit under the new identity." >&2
 echo "If the user is committing by hand, commit from a terminal outside the Claude session, adding -c user.name=<name> -c user.email=<address> after git if the clone's identity is unconfigured-agent." >&2
 exit 1

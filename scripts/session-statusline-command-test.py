@@ -23,6 +23,34 @@ _statusline_spec = importlib.util.spec_from_file_location(
 statusline = importlib.util.module_from_spec(_statusline_spec)
 _statusline_spec.loader.exec_module(statusline)
 
+# A whole-line render reads three live inputs unless they are redirected: the
+# backup checker's Timeshift paths, Claude Code's session registry, and the
+# freshness stamp under the payload's directory. Every case renders against
+# scratch state instead, so no result depends on the machine running the suite.
+isolation_directory = tempfile.TemporaryDirectory()
+isolation_root = Path(isolation_directory.name)
+healthy_timeshift_log_directory = isolation_root / "timeshift-log"
+healthy_timeshift_log_directory.mkdir()
+(healthy_timeshift_log_directory / "backup.log").write_text("ran\n", encoding="utf-8")
+healthy_timeshift_snapshot_directory = isolation_root / "timeshift-snapshots"
+(healthy_timeshift_snapshot_directory / "scheduled-snapshot").mkdir(parents=True)
+(healthy_timeshift_snapshot_directory / "scheduled-snapshot" / "info.json").write_text(
+    json.dumps({"created": str(int(time.time())), "tags": "hourly"}), encoding="utf-8")
+HEALTHY_BACKUP_ENVIRONMENT = {
+    # The checker needs a mount point; "/" is one on both machines, and a scratch directory never is.
+    "NEDSCHORUS_BACKUP_MOUNT": "/",
+    "NEDSCHORUS_TIMESHIFT_LOG_DIRECTORY": str(healthy_timeshift_log_directory),
+    "NEDSCHORUS_TIMESHIFT_SNAPSHOT_DIRECTORY": str(healthy_timeshift_snapshot_directory),
+}
+os.environ.update(HEALTHY_BACKUP_ENVIRONMENT)
+empty_session_registry_directory = isolation_root / "session-registry"
+empty_session_registry_directory.mkdir()
+statusline.CLAUDE_CODE_LIVE_SESSION_REGISTRY_DIRECTORY = empty_session_registry_directory
+# Its own .git stops the freshness lookup from walking up into whatever checkout holds the temporary directory.
+payload_checkout = isolation_root / "nedschorus"
+(payload_checkout / ".git").mkdir(parents=True)
+(payload_checkout / ".git" / "HEAD").write_text("ref: refs/heads/seat\n", encoding="utf-8")
+
 failures = []
 
 
@@ -36,16 +64,31 @@ def check(case_name, condition, detail=""):
 
 payload = {
     "session_id": "test-session",
-    "workspace": {"current_dir": "/Users/el/Projects/nedschorus"},
+    "workspace": {"current_dir": str(payload_checkout)},
     "model": {"display_name": "Fable 5"},
     "effort": {"level": "high"},
     "context_window": {"remaining_percentage": 62.4},
 }
 line = statusline.status_line_text(payload)
 check("status line names the working directory", "nedschorus" in line, line)
-check("status line names the host", os.uname().nodename.split(".")[0] in line, line)
-check("status line names the model", "Fable 5" in line, line)
-check("status line names the effort level", "high" in line, line)
+check("status line names the machine", statusline.status_line_this_machine_short_name() in line, line)
+check("status line names the model and effort as one word", "Fable5/high" in line, line)
+check("the model loses its context size",
+      statusline.model_segment({"model": {"display_name": "Opus 5.5 (1M context)"},
+                                "effort": {"level": "medium"}}) == "Opus5.5/medium",
+      statusline.model_segment({"model": {"display_name": "Opus 5.5 (1M context)"},
+                                "effort": {"level": "medium"}}))
+check("a model without an effort shows alone",
+      statusline.model_segment({"model": {"display_name": "Opus 5.5"}}) == "Opus5.5")
+original_platform = statusline.sys.platform
+try:
+    statusline.sys.platform = "darwin"
+    check("the Mac is named Mac", statusline.status_line_this_machine_short_name() == "Mac", statusline.status_line_this_machine_short_name())
+    statusline.sys.platform = "linux"
+    check("another machine keeps its host name",
+          statusline.status_line_this_machine_short_name() == os.uname().nodename.split(".")[0], statusline.status_line_this_machine_short_name())
+finally:
+    statusline.sys.platform = original_platform
 check("status line reports context remaining, not used", "62%" in line, line)
 
 # Quota windows: both percentages are REMAINING, so a payload reporting
@@ -94,6 +137,9 @@ with tempfile.TemporaryDirectory() as freshness_directory:
     check("behind renders as a count",
           statusline.freshness_suffix(str(fake_checkout)) == "⇣3",
           statusline.freshness_suffix(str(fake_checkout)))
+    check("the behind count is cyan, not red",
+          statusline.colored("⇣3", statusline.CYAN_BOLD) in statusline.location_segment(str(fake_checkout)),
+          repr(statusline.location_segment(str(fake_checkout))))
     stamp_path.write_text('{"behind": 3, "fetch_ok": false}', encoding="utf-8")
     check("a failed fetch marks the count as doubtful",
           statusline.freshness_suffix(str(fake_checkout)) == "⇣3?",
@@ -113,11 +159,77 @@ check(
     "choirmaster" in statusline.status_line_text({**payload, "agent": {"name": "choirmaster"}}),
 )
 
+# No RC shows only when the session's record is found and lacks a Remote Control connection.
+with tempfile.TemporaryDirectory() as records_directory_name:
+    records_directory = Path(records_directory_name)
+    no_rc = statusline.colored("No RC", statusline.RED_BOLD)
+    check("no record for the session shows nothing",
+          statusline.status_line_remote_control_missing_warning_segment(payload, records_directory) == "")
+    (records_directory / "111.json").write_text("not json", encoding="utf-8")
+    (records_directory / "222.json").write_text(
+        json.dumps({"sessionId": "another-session"}), encoding="utf-8")
+    check("an unreadable record and another session's record are skipped",
+          statusline.status_line_remote_control_missing_warning_segment(payload, records_directory) == "")
+    (records_directory / "333.json").write_text(
+        json.dumps({"sessionId": "test-session"}), encoding="utf-8")
+    check("a record without a Remote Control connection shows No RC in red",
+          statusline.status_line_remote_control_missing_warning_segment(payload, records_directory) == no_rc,
+          repr(statusline.status_line_remote_control_missing_warning_segment(payload, records_directory)))
+    (records_directory / "333.json").write_text(
+        json.dumps({"sessionId": "test-session", "bridgeSessionId": "session_x"}), encoding="utf-8")
+    check("a record with a Remote Control connection shows nothing",
+          statusline.status_line_remote_control_missing_warning_segment(payload, records_directory) == "")
+    check("a payload without a session id shows nothing",
+          statusline.status_line_remote_control_missing_warning_segment({}, records_directory) == "")
+    (records_directory / "333.json").write_text(
+        json.dumps({"sessionId": "test-session"}), encoding="utf-8")
+    original_directory = statusline.CLAUDE_CODE_LIVE_SESSION_REGISTRY_DIRECTORY
+    try:
+        statusline.CLAUDE_CODE_LIVE_SESSION_REGISTRY_DIRECTORY = records_directory
+        rendered = statusline.status_line_text(payload)
+        check("No RC is the last segment of the status line", rendered.endswith(no_rc), repr(rendered))
+    finally:
+        statusline.CLAUDE_CODE_LIVE_SESSION_REGISTRY_DIRECTORY = original_directory
+
 # An empty payload no longer renders empty: the host is derived locally,
 # not from the payload, so the line degrades to it rather than vanishing.
 empty_line = statusline.status_line_text({})
-check("status line survives an empty payload", os.uname().nodename.split(".")[0] in empty_line, empty_line)
+check("status line survives an empty payload", statusline.status_line_this_machine_short_name() in empty_line, empty_line)
 check("an empty payload adds no stray separators", statusline.SEPARATOR not in empty_line, empty_line)
+
+# The backup warning leads the line, in red, when the checker reports a failure.
+try:
+    os.environ["NEDSCHORUS_BACKUP_MOUNT"] = str(isolation_root / "absent-backup-drive")
+    os.environ["NEDSCHORUS_TIMESHIFT_SNAPSHOT_DIRECTORY"] = str(isolation_root / "no-snapshots")
+    failing_backup_line = statusline.status_line_text(payload)
+    check("a failing backup leads the line as a red warning",
+          failing_backup_line.startswith(
+              statusline.colored("⚠ BACKUP DRIVE GONE unknown", statusline.RED_BOLD)
+              + statusline.SEPARATOR),
+          repr(failing_backup_line))
+finally:
+    os.environ.update(HEALTHY_BACKUP_ENVIRONMENT)
+healthy_backup_line = statusline.status_line_text(payload)
+check("a healthy backup shows no warning", "⚠" not in healthy_backup_line, repr(healthy_backup_line))
+
+# The checker is found beside the script's __file__, so a scratch copy of the script's location loads a checker that raises.
+raising_checker_directory = isolation_root / "raising-checker"
+raising_checker_directory.mkdir()
+(raising_checker_directory / "backup-health-check.py").write_text(
+    "def diagnose():\n    raise RuntimeError('checker broke')\n", encoding="utf-8")
+original_statusline_file = statusline.__file__
+try:
+    statusline.__file__ = str(raising_checker_directory / "session-statusline-command.py")
+    try:
+        raising_checker_line = statusline.status_line_text(payload)
+    except Exception as error:  # noqa: BLE001 - the case reports the escape instead of crashing the suite
+        raising_checker_line = f"raised {error!r}"
+    check("a backup checker that raises still leaves a status line, without a warning",
+          raising_checker_line.startswith(statusline.location_segment(str(payload_checkout)))
+          and "⚠" not in raising_checker_line,
+          repr(raising_checker_line))
+finally:
+    statusline.__file__ = original_statusline_file
 
 # Every case above asserts what this script BELIEVES the harness sends.
 # That belief was wrong once and the suite could not tell: resets_at is epoch
@@ -198,6 +310,8 @@ if "--canary" in sys.argv:
     run_payload_contract_canary()
 else:
     print("\n(skipped the payload contract canary; pass --canary to run it)")
+
+isolation_directory.cleanup()
 
 print()
 if failures:

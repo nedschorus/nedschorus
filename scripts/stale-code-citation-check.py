@@ -4,17 +4,33 @@
 import argparse
 import datetime
 import importlib.util
+import os
 import pathlib
 import re
-import subprocess
+import shlex
 import sys
 
 PROGRAM = "stale-code-citation-check"
 SCRIPTS_DIRECTORY = pathlib.Path(__file__).resolve().parent
 REPOSITORY_ROOT = SCRIPTS_DIRECTORY.parent
 
+_git_machine_readable_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_machine_readable_output = importlib.util.module_from_spec(_git_machine_readable_output_spec)
+_git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
+
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+
 EXIT_FINDINGS = 1
 EXIT_BAD_INVOCATION = 2
+EXIT_COULD_NOT_CHECK = 2
 
 DESIGN_AS_OF_NAME = "design-as-of"
 STATUS_NAME = "status"
@@ -58,10 +74,19 @@ def load_md_drift_lint():
     return module
 
 
-def git_output(arguments, repository_root: pathlib.Path) -> str:
-    completed = subprocess.run(["git", *arguments], cwd=str(repository_root),
-                               capture_output=True, text=True, check=False)
-    return completed.stdout
+def git_output(arguments, repository_root: pathlib.Path,
+               accepted_exit_codes=(0,)) -> str:
+    """Return git's stdout; raise GitCommandFailed on any other exit code."""
+    # surrogateescape: -z output carries each path's bytes as stored, which need not be UTF-8.
+    return git_machine_readable_output.run_git(
+        repository_root, arguments, accepted_exit_codes=accepted_exit_codes,
+    ).decode("utf-8", errors="surrogateescape")
+
+
+def resolves_to_a_commit(name: str, repository_root: pathlib.Path) -> bool:
+    # --verify --quiet exits 1 for a name that is no commit; any other failure raises.
+    return bool(git_output(["rev-parse", "--verify", "--quiet", name + "^{commit}"],
+                           repository_root, accepted_exit_codes=(0, 1)).strip())
 
 
 def frontmatter_lines(text: str):
@@ -118,13 +143,8 @@ def code_file_marks(line: str, document: pathlib.Path,
 def line_number_citations(document: pathlib.Path, repository_root: pathlib.Path, lint):
     """Yield (document_line, cited_file, first, last, written_text) for each citation."""
     # Attach line-number phrases only to the nearest preceding path on the same line to avoid attributing unrelated prose.
-    inside_code_fence = False
-    for number, line in enumerate(document.read_text(encoding="utf-8").splitlines(), 1):
-        if line.lstrip().startswith("```"):
-            inside_code_fence = not inside_code_fence
-            continue
-        if inside_code_fence:
-            continue
+    lines = document.read_text(encoding="utf-8").splitlines()
+    for number, line in lint.lines_outside_fenced_code_blocks(lines):
         if any(marker in line
                for marker in lint.HISTORY_MARKERS + lint.FOREIGN_ROOT_MARKERS):
             continue
@@ -132,8 +152,9 @@ def line_number_citations(document: pathlib.Path, repository_root: pathlib.Path,
         for column, found, word in marks:
             suffixed = lint.LINE_SUFFIXED_PATH.match(word)
             if suffixed:
-                cited = int(suffixed.group("line"))
-                yield number, found, cited, cited, word
+                first = int(suffixed.group("line"))
+                last = int(suffixed.group("last_line") or first)
+                yield number, found, first, last, word
         for match in LINE_NUMBER_PHRASE.finditer(line):
             earlier = [found for column, found, word in marks if column < match.start()]
             if not earlier:
@@ -143,18 +164,12 @@ def line_number_citations(document: pathlib.Path, repository_root: pathlib.Path,
             yield number, earlier[-1], first, last, match.group(0)
 
 
-def heading_sections(text: str):
+def heading_sections(text: str, lint):
     """Yield (first_line, last_line, text) per heading block, including the preamble."""
     lines = text.splitlines()
-    starts = []
-    inside_code_fence = False
-    for index, line in enumerate(lines):
-        if line.lstrip().startswith("```"):
-            inside_code_fence = not inside_code_fence
-            continue
-        # A # inside a fence is not a heading; splitting there would remove citations from their pinned section.
-        if not inside_code_fence and line.startswith("#"):
-            starts.append(index)
+    # A # inside a fence is not a heading; splitting there would remove citations from their pinned section.
+    starts = [number - 1 for number, line in lint.lines_outside_fenced_code_blocks(lines)
+              if line.startswith("#")]
     if not starts or starts[0] != 0:
         starts.insert(0, 0)
     for position, start in enumerate(starts):
@@ -166,20 +181,17 @@ def names_a_commit(text: str, repository_root: pathlib.Path) -> bool:
     for token in set(COMMIT_ISH_TOKEN.findall(text)):
         key = (str(repository_root), token)
         if key not in _commit_ish_cache:
-            completed = subprocess.run(
-                ["git", "rev-parse", "--verify", "--quiet", token + "^{commit}"],
-                cwd=str(repository_root), capture_output=True, text=True, check=False)
-            _commit_ish_cache[key] = completed.returncode == 0
+            _commit_ish_cache[key] = resolves_to_a_commit(token, repository_root)
         if _commit_ish_cache[key]:
             return True
     return False
 
 
-def pinned_line_ranges(text: str, repository_root: pathlib.Path) -> list:
+def pinned_line_ranges(text: str, repository_root: pathlib.Path, lint) -> list:
     """Return the line ranges of sections whose numbers are pinned to a commit."""
     # A citation pinned to an existing commit cannot drift because commits are immutable.
     pinned = []
-    for first, last, section in heading_sections(text):
+    for first, last, section in heading_sections(text, lint):
         if PINNED_SECTION_PHRASE not in section.lower():
             continue
         if names_a_commit(section, repository_root):
@@ -214,14 +226,6 @@ def stamped_documents(repository_root: pathlib.Path, lint) -> list:
     return found
 
 
-def base_resolves(base: str, repository_root: pathlib.Path) -> bool:
-    # git_output returns an empty string on failure; an invalid base would otherwise look like a clean diff.
-    completed = subprocess.run(
-        ["git", "rev-parse", "--verify", "--quiet", base + "^{commit}"],
-        cwd=str(repository_root), capture_output=True, text=True, check=False)
-    return completed.returncode == 0
-
-
 def newest_commit_date_in_range(relative: str, base: str,
                                 repository_root: pathlib.Path) -> str:
     """Return the newest date touching this path in the change, or an empty string."""
@@ -238,15 +242,16 @@ def changed_code_paths(base: str, repository_root: pathlib.Path, lint) -> dict:
                                   repository_root).strip()
     today = datetime.date.today().isoformat()
     moved_on_by_path = {}
-    for name in git_output(["diff", "--name-only", f"{base}...HEAD"],
-                           repository_root).split():
+    for name in git_machine_readable_output.nul_separated_fields(
+            git_output(["diff", "-z", "--name-only", f"{base}...HEAD"], repository_root)):
         if pathlib.PurePath(name).suffix in lint.CODE_SOURCE_EXTENSIONS:
             moved_on_by_path[name] = (
                 newest_commit_date_in_range(name, base, repository_root)
                 or head_commit_date)
-    for arguments in (["diff", "--name-only", "HEAD"],
-                      ["ls-files", "--others", "--exclude-standard"]):
-        for name in git_output(arguments, repository_root).split():
+    for arguments in (["diff", "-z", "--name-only", "HEAD"],
+                      ["ls-files", "-z", "--others", "--exclude-standard"]):
+        for name in git_machine_readable_output.nul_separated_fields(
+                git_output(arguments, repository_root)):
             if pathlib.PurePath(name).suffix in lint.CODE_SOURCE_EXTENSIONS:
                 moved_on_by_path[name] = today
     return moved_on_by_path
@@ -309,10 +314,9 @@ def findings_for_document(document: pathlib.Path, repository_root: pathlib.Path,
             return [], 0
         return [(stamp_line,
                  f"{DESIGN_AS_OF_NAME} is {stamp!r}, which is not a date: "
-                 f"write a day the calendar has, as YYYY-MM-DD, so a cited "
-                 f"file's history can be compared against it")], 0
+                 f"write a day the calendar has, as YYYY-MM-DD")], 0
 
-    pinned = pinned_line_ranges(text, repository_root)
+    pinned = pinned_line_ranges(text, repository_root, lint)
     findings = []
     pinned_count = 0
     for number, relative, first, last in citations:
@@ -351,7 +355,29 @@ def findings_for_document(document: pathlib.Path, repository_root: pathlib.Path,
     return findings, pinned_count
 
 
+def git_failure_next_steps(argv, failure) -> str:
+    """The lines telling an agent what to do after a git command failed."""
+    # The rerun must start in this directory: FILE arguments are relative to it.
+    rerun = (f"cd {shlex.quote(os.getcwd())} && "
+             + shlex.join(["python3", str(pathlib.Path(__file__).resolve()),
+                           *(sys.argv[1:] if argv is None else argv)]))
+    return next_step_lines.git_failure_next_step_lines(
+        rerun, PROGRAM, git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=str(failure),
+        text_the_failure_line_contains="could not check, because a git command failed")
+
+
 def main(argv=None) -> int:
+    try:
+        return run_check(argv)
+    except git_machine_readable_output.GitCommandFailed as failure:
+        print(f"{PROGRAM}: could not check, because a git command failed, so "
+              f"no result is reported: {failure}\n"
+              f"{git_failure_next_steps(argv, failure)}",
+              file=sys.stderr)
+        return EXIT_COULD_NOT_CHECK
+
+
+def run_check(argv) -> int:
     parser = argparse.ArgumentParser(
         prog=f"scripts/{PROGRAM}.py",
         description="A design document's line-number citations still point at "
@@ -392,7 +418,7 @@ def main(argv=None) -> int:
         scope = f"{len(arguments.files)} named document(s)"
     else:
         mode = "changed paths"
-        if not base_resolves(arguments.base, REPOSITORY_ROOT):
+        if not resolves_to_a_commit(arguments.base, REPOSITORY_ROOT):
             print(f"{PROGRAM}: pass --base a ref this repository holds; "
                   f"{arguments.base!r} names no commit. Fetch it, or name "
                   f"origin/main.", file=sys.stderr)

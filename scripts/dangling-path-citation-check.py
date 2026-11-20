@@ -1,18 +1,36 @@
 #!/usr/bin/env python3
 """Check new citations and citations of removed paths for dangling references.
 
+With --only-citations-of-removed-paths, check only the citations of removed paths.
+
 Run on a clean tree: diff line numbers come from HEAD, but citation text and
 existence checks read the working tree."""
 import argparse
 import importlib.util
+import os
 import pathlib
 import re
+import shlex
 import subprocess
 import sys
 
 PROGRAM = "dangling-path-citation-check"
 SCRIPTS_DIRECTORY = pathlib.Path(__file__).resolve().parent
 REPOSITORY_ROOT = SCRIPTS_DIRECTORY.parent
+
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
+
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
 
 EXIT_FINDINGS = 1
 EXIT_BAD_INVOCATION = 2
@@ -24,7 +42,8 @@ HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 NAMED_PATH_TOKEN_SEPARATOR = re.compile(r"[\s'\"()\[\]`]+")
 PLAIN_PATH_TOKEN_SEPARATOR = re.compile(r"[\s'\"()\[\]]+")
 
-# Project tests use a -test stem or a tests directory, regardless of extension.
+# A project test is a program whose stem ends -test, or any file in a tests directory.
+# A Markdown file's stem can end -test without it being a test: a GHI-MD is named after its issue's title.
 PROJECT_TEST_FILE_STEM_ENDING = "-test"
 PROJECT_TEST_DIRECTORY_NAME = "tests"
 
@@ -67,10 +86,17 @@ def repository_paths_a_line_cites(line: str, citing_path: pathlib.Path, lint,
         yield from lint.repo_relative_candidates(token, citing_path, repository_root)
 
 
+def git_text(arguments, repository_root: pathlib.Path, accepted_exit_codes=(0,)) -> str:
+    """Return git's stdout; raise GitCommandFailed on any other exit code."""
+    # surrogateescape here and below: -z output carries each path's bytes as stored, which need not be UTF-8.
+    return git_output.run_git(repository_root, arguments,
+                              accepted_exit_codes=accepted_exit_codes,
+                              ).decode("utf-8", errors="surrogateescape")
+
+
 def repository_root_directories(repository_root: pathlib.Path) -> tuple:
-    names = subprocess.run(["git", "ls-tree", "HEAD", "--name-only", "-d"],
-                           cwd=repository_root, capture_output=True, text=True, check=False)
-    return tuple(sorted(name for name in names.stdout.split() if name))
+    names = git_text(["ls-tree", "-z", "HEAD", "--name-only", "-d"], repository_root)
+    return tuple(sorted(git_output.nul_separated_fields(names)))
 
 
 def load_md_drift_lint():
@@ -109,7 +135,7 @@ def changed_lines_by_file(merge_base: str, repository_root: pathlib.Path) -> dic
             current = None
             continue
         if in_file_preamble and line.startswith("+++ "):
-            target = line[4:].strip()
+            target = git_output.patch_header_path(line[4:])
             current = None if target == "/dev/null" else target[2:] if target.startswith("b/") else target
             in_file_preamble = False
             continue
@@ -143,9 +169,12 @@ def plain_path_citations(line: str, root_directories: tuple, lint):
 
 def file_at_merge_base(relative: str, merge_base: str, repository_root: pathlib.Path) -> str:
     """Return the file's merge-base text, or "" if absent."""
-    shown = subprocess.run(["git", "show", f"{merge_base}:{relative}"],
-                           cwd=repository_root, capture_output=True, text=True, check=False)
-    return shown.stdout if shown.returncode == 0 else ""
+    # git show exits 128 both for an absent path and for a git failure; ls-tree tells them apart.
+    listed = git_text(["ls-tree", "-z", merge_base, "--", relative], repository_root)
+    if not any(entry.path == relative and entry.object_type == "blob"
+               for entry in git_output.tree_entries(listed)):
+        return ""
+    return git_text(["show", f"{merge_base}:{relative}"], repository_root)
 
 
 def cited_path_of(problem: str) -> str:
@@ -160,14 +189,12 @@ def paths_the_base_text_cites(base_text: str, base_name: str, lint,
     walk_as_markdown = citing_path.suffix == ".md"
     skipped_markers = lint.HISTORY_MARKERS + lint.FOREIGN_ROOT_MARKERS
     cited = set()
-    in_code_fence = False
-    for line in base_text.splitlines():
-        if walk_as_markdown:
-            if line.lstrip().startswith("```"):
-                in_code_fence = not in_code_fence
-                continue
-            if in_code_fence or any(marker in line for marker in skipped_markers):
-                continue
+    lines = base_text.splitlines()
+    walked = (lint.lines_outside_fenced_code_blocks(lines) if walk_as_markdown
+              else enumerate(lines, 1))
+    for _, line in walked:
+        if walk_as_markdown and any(marker in line for marker in skipped_markers):
+            continue
         cited.update(repository_paths_a_line_cites(line, citing_path, lint, repository_root))
     return cited
 
@@ -180,12 +207,13 @@ def base_already_cites(cited: str, base_cited_paths: set, citing_path: pathlib.P
     return bool(candidates & base_cited_paths)
 
 
-def is_project_test_file(path: pathlib.Path, repository_root: pathlib.Path) -> bool:
+def is_project_test_file(path: pathlib.Path, repository_root: pathlib.Path, lint) -> bool:
     try:
         relative = path.resolve().relative_to(repository_root.resolve())
     except ValueError:
         return False
-    return (relative.stem.endswith(PROJECT_TEST_FILE_STEM_ENDING)
+    return ((relative.stem.endswith(PROJECT_TEST_FILE_STEM_ENDING)
+             and relative.suffix in lint.PROGRAM_SUFFIXES)
             or PROJECT_TEST_DIRECTORY_NAME in relative.parts[:-1])
 
 
@@ -195,7 +223,7 @@ def findings_for_file(path: pathlib.Path, changed: set, lint, root_directories: 
     if lint.in_frozen_measured_data(path, REPOSITORY_ROOT):
         return
     # Skip test fixtures only forward; backward checks must still catch stale module citations.
-    if is_project_test_file(path, REPOSITORY_ROOT):
+    if is_project_test_file(path, REPOSITORY_ROOT, lint):
         return
     if path.suffix == ".md":
         for line_number, problem in lint.lint_markdown(path, REPOSITORY_ROOT):
@@ -217,15 +245,19 @@ def findings_for_file(path: pathlib.Path, changed: set, lint, root_directories: 
 
 
 def name_status_rows_against_merge_base(merge_base: str, repository_root: pathlib.Path) -> list:
-    """Return tab-split name-status rows that carry paths."""
+    """Return name-status rows: [status, path], or [status, old path, new path]
+    for a rename or copy."""
     names = subprocess.run(
-        ["git", "diff", "--name-status", "--no-color", "--no-ext-diff", f"{merge_base}..HEAD"],
-        cwd=repository_root, capture_output=True, text=True, check=False)
+        ["git", "diff", "-z", "--name-status", "--no-color", "--no-ext-diff",
+         f"{merge_base}..HEAD"],
+        cwd=repository_root, capture_output=True, text=True, errors="surrogateescape",
+        check=False)
     if names.returncode != 0:
         fail_bad_invocation(f"git diff --name-status against {merge_base} failed: "
                             f"{names.stderr.strip() or names.returncode}")
-    return [fields for fields in (row.split("\t") for row in names.stdout.splitlines())
-            if len(fields) >= 2]
+    return [[entry.status, entry.origin_path, entry.path] if entry.origin_path is not None
+            else [entry.status, entry.path]
+            for entry in git_output.name_status_entries(names.stdout)]
 
 
 def paths_this_change_removed(name_status_rows: list, repository_root: pathlib.Path) -> list:
@@ -248,12 +280,13 @@ def ancestor_directories_of(relative: str) -> list:
 
 def directories_in_the_head_tree(repository_root: pathlib.Path) -> frozenset:
     # git mv can leave empty source directories on disk; HEAD gives the same answer in fresh and existing checkouts.
-    listed = subprocess.run(["git", "ls-tree", "-r", "-d", "--name-only", "HEAD"],
-                            cwd=repository_root, capture_output=True, text=True, check=False)
+    listed = subprocess.run(["git", "ls-tree", "-z", "-r", "-d", "--name-only", "HEAD"],
+                            cwd=repository_root, capture_output=True, text=True,
+                            errors="surrogateescape", check=False)
     if listed.returncode != 0:
         fail_bad_invocation(f"git ls-tree of HEAD failed: "
                             f"{listed.stderr.strip() or listed.returncode}")
-    return frozenset(name for name in listed.stdout.splitlines() if name)
+    return frozenset(git_output.nul_separated_fields(listed.stdout))
 
 
 def directories_this_change_emptied(removed_files: list, repository_root: pathlib.Path) -> list:
@@ -285,10 +318,10 @@ def files_that_might_name_a_removed_path(removed: list, repository_root: pathlib
         base_name = gone.rsplit("/", 1)[-1]
         if not base_name:
             continue
-        hits = subprocess.run(
-            ["git", "grep", "-l", "-I", "--no-color", "-F", base_name, "--", "."],
-            cwd=repository_root, capture_output=True, text=True, check=False)
-        candidates.update(row for row in hits.stdout.splitlines() if row)
+        # git grep exits 1 for no match.
+        hits = git_text(["grep", "-z", "-l", "-I", "--no-color", "-F", base_name, "--", "."],
+                        repository_root, accepted_exit_codes=(0, 1))
+        candidates.update(git_output.nul_separated_fields(hits))
     return candidates
 
 
@@ -317,7 +350,27 @@ def citations_of_removed_paths(removed: list, repository_root: pathlib.Path, lin
     return findings
 
 
+def git_failure_next_steps(argv, failure) -> str:
+    """The lines telling an agent what to do after a git command failed."""
+    # The rerun must start in this directory: FILE arguments are relative to it.
+    rerun = (f"cd {shlex.quote(os.getcwd())} && "
+             + shlex.join(["python3", str(pathlib.Path(__file__).resolve()),
+                           *(sys.argv[1:] if argv is None else argv)]))
+    return next_step_lines.git_failure_next_step_lines(
+        rerun, PROGRAM, git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=str(failure),
+        text_the_failure_line_contains="could not check, because a git command failed")
+
+
 def main(argv=None) -> int:
+    try:
+        return run_check(argv)
+    except git_output.GitCommandFailed as failure:
+        fail_bad_invocation(f"could not check, because a git command failed, so "
+                            f"no result is reported: {failure}\n"
+                            f"{git_failure_next_steps(argv, failure)}")
+
+
+def run_check(argv) -> int:
     parser = argparse.ArgumentParser(
         prog=f"scripts/{PROGRAM}.py",
         description="Every repository path cited on a line this change touches exists.")
@@ -325,12 +378,16 @@ def main(argv=None) -> int:
                         help="what to diff against (default: origin/main)")
     parser.add_argument("files", nargs="*", metavar="FILE",
                         help="limit the check to these paths (default: the diff's)")
+    parser.add_argument("--only-citations-of-removed-paths", action="store_true",
+                        help="report only the lines citing a path this change removed or "
+                             "renamed, and skip the check of the lines it touches")
     arguments = parser.parse_args(argv)
 
     lint = load_md_drift_lint()
     root_directories = repository_root_directories(REPOSITORY_ROOT)
     merge_base = merge_base_with_head(arguments.base, REPOSITORY_ROOT)
-    changed = changed_lines_by_file(merge_base, REPOSITORY_ROOT)
+    changed = ({} if arguments.only_citations_of_removed_paths
+               else changed_lines_by_file(merge_base, REPOSITORY_ROOT))
     if arguments.files:
         wanted = {str(pathlib.Path(name)) for name in arguments.files}
         changed = {name: lines for name, lines in changed.items() if name in wanted}

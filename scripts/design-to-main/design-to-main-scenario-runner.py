@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Play a scenario through the real design-to-main machine in a throwaway repository.
 
-Run: python3 scripts/design-to-main/design-to-main-scenario-runner.py <scenario.yaml>
+Usage: python3 scripts/design-to-main/design-to-main-scenario-runner.py <scenario.yaml>
 A scenario supplies a name and steps, each `state: verdict`, or a mapping of
 `state`, `verdict` and optional `fields`. Unnamed states use the fixture's
 happy path until the supplied steps are spent.
@@ -404,6 +404,9 @@ def format_trace(played):
 
 
 def main(argv):
+    if argv[1:] in (["--help"], ["-h"]):
+        print(__doc__)
+        return 0
     if len(argv) != 2:
         sys.stderr.write("usage: %s <scenario.yaml>\n" % pathlib.Path(argv[0]).name)
         return EXIT_MALFORMED_SCENARIO

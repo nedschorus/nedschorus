@@ -1,10 +1,11 @@
 # How to choose a name for files, code and glossary terms
 
-This page says how to choose every name this project invents: file and directory names, script names, the names of functions, classes, constants and states used from other files, branch names, and the terms the glossaries define, project-terms and system-terms alike. CLAUDE.md states the naming rule in brief and points here; where the two differ, this page governs.
+This page says how to choose every name this project invents: file and directory names, script names, the names of functions, classes, constants and states used from other files, branch names, and the terms the glossaries define, project-terms and system-terms alike. CLAUDE.md points here.
 
-Two kinds of name are partly decided elsewhere, and this page fills in the rest:
+Three kinds of name are partly decided elsewhere, and this page fills in the rest:
 
 - **Names set outside the project.** `CLAUDE.md`, `SKILL.md`, `AGENTS.md`, a test framework's `test_` prefix, and the flags another program accepts are fixed by the tools that read them. Keep what is fixed; choose the remaining words by this page.
+- **Skill names.** A skill's name, its directory under `.claude/skills/`, is what the user types as a slash command, so it is one to three words that say the skill's job: `find-info`, `handoff`, `cold-read`. The skill's `description` says when to use the skill; the name does not have to. Every other rule on this page still applies to the name, such as using a glossary's existing term and checking for a collision.
 - **Names that follow a pattern in the file naming standards.** `docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md` gives patterns for kinds of file, such as `nedschorus-<subject>.md` for a wiki page or `<what it does>.py` for a hook, and filename suffixes such as `-draft`. Follow the pattern exactly, and use this page to choose the words that fill each slot in it.
 
 ## Why names matter so much in this project
@@ -23,7 +24,7 @@ A fresh-reader here has the name, the glossaries, and what the glossaries refere
 
 ### Who judges whether a name meets the criterion
 
-You cannot judge your own name, because you already know what it means. So for a name that will be used beyond the place it is defined, such as a file name, a script name, a function or class used from other files, or a branch name, ask a fresh subagent what it thinks the name means, giving it the name and nothing else. If its answer is wrong, or vague where your meaning is specific, add the words its answer lacked and ask again. A name used only inside one file needs no such check.
+You cannot judge your own name, because you already know what it means. So for a name that will be used beyond the place it is defined and will last longer than a month, such as a file name, a script name, a function or class used from other files, or a glossary term, ask a fresh subagent what it thinks the name means, giving it the name and nothing else. A branch name or a scratch file's name needs no check and is not changed once chosen. If its answer is wrong, or vague where your meaning is specific, add the words its answer lacked and ask again. A name used only inside one file needs no such check.
 
 For a new project-term or system-term, the user rules on the name, as Step 5 says.
 
@@ -60,7 +61,7 @@ The main-gatekeeper is the program that will be the single route by which a chan
 - `scripts/branch-conflict-check.py`: it acts on a branch and checks it for a merge conflict. It belongs to no single system, and its name says so by naming none (see "Where a rule above does not apply").
 - `nc-systems/handoff/handoff-supervisor.py`: the system is the handoff system, and the program supervises it.
 
-A name can also fail the third question by saying something untrue. `.claude/hooks/ghi-issue-write-redirect.py` refuses a write to a GitHub issue typed by hand and tells the agent which command to run instead; it does not redirect the write anywhere. Its name says "redirect", so a reader expects the write to have gone through by another route. Step 4 covers this.
+A name can also fail the third question by saying something untrue. The hook now named `.claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py` refuses a write to a GitHub issue typed by hand and tells the agent which command to run instead; it does not redirect the write anywhere. Its former name, `ghi-issue-write-redirect.py`, said "redirect", so a reader expected the write to have gone through by another route. Step 4 covers this.
 
 ### Order the parts from the system to the role
 
@@ -75,6 +76,10 @@ This page sets no upper limit: some studies favour names of two to four words, a
 ### Generic words are fine inside a longer name
 
 Generic words, such as `manager`, `handler`, `helper`, `common`, `data`, `info`, `record` or `check`, say almost nothing alone. As one word of a longer name whose other words say which one, they are fine: `nc-systems/cold-read/cold-read-cell-common.py` says it holds the code the cold-read-cells share. What fails is the bare word, or a name such as `seat-manager`, which leaves the reader asking what it does to which agent-seat.
+
+### Name a test file after what it tests
+
+A test file takes the name of the program it tests, with `-test` before the extension: `scripts/branch-conflict-check-test.py` tests `scripts/branch-conflict-check.py`. When one program has more than one test file, each adds the fewest words that tell it apart from the others, naming the behaviour it covers rather than every case inside it: `handoff-supervisor-successor-prompt-test.py` and `handoff-supervisor-session-launch-and-seat-lock-test.py` both test `nc-systems/handoff/handoff-supervisor.py`. A test file that lists every case it holds grows a name no one reads; one that covers so much that a few words cannot say what sets it apart is better split.
 
 ## Step 3: check the name you built against the names that exist
 
@@ -97,7 +102,7 @@ Do not put the history of the thing in its name. Words such as `new-`, `old-`, `
 
 When a change makes a name untrue, rename the thing, and in the same commit update every reference to the old name in the repository: callers, imports, paths in scripts, and mentions in documents. Leave the references outside the repository as they are: git history, the log-store, the frozen copies inside cold-read-records, and text already written on GitHub. A change that leaves the name true, such as a bug fix, needs no rename.
 
-Do not abbreviate, except with abbreviations the glossary lists, such as GHI and PR, or that any programmer reads without decoding, such as `id` and `url`. Write them in lowercase inside a name, as in `ghi-issue-write.py` or `pr-reviewer-instructions.md`. Use the abbreviation or the full words for a thing, not both: once `pull-request-` names one family of files, a new file in it does not start `pr-`.
+Do not abbreviate, except with abbreviations the glossary lists, such as GHI and PR, or that any programmer reads without decoding, such as `id` and `url`. Write them in lowercase inside a name, as in `ghi-issue-write.py` or `pr-reviewer-instructions.md`. Write `pr` in a new file or directory name, never `pull-request`, as in `pr-reviewer-instructions.md`, even beside older files whose names start `pull-request-`, except that a test file keeps the name of the program it tests; a function name keeps `pull_request`, a branch name `pull-request` and a glossary term `pull request`. For any other thing, use its abbreviation or its full words, not both.
 
 ## Step 5: use the same words everywhere, and coin new terms with the user
 
@@ -113,10 +118,13 @@ In prose, a hyphenated phrase marks a project-term or a system-term, such as age
 
 A new term is coined only when no existing name and no SDLC-term fits, and it is proposed to the user, with a definition of one sentence, before it is used. The glossary entries for project-term and system-term say which is which. An approved project-term goes into the project glossary; an approved system-term goes into the glossary of its system. If the system has no glossary yet, propose one to the user, named `<system-name>-glossary.md` in the system's directory, and list it at the top of the project glossary.
 
+A hyphen makes a name easy to find with `git grep`; the words must also say what it names. When a project-term or system-term gives a generic software word, such as block or test, a meaning of this project's own, keep the generic word and add the words that say which one is meant, as agent-session does for session; a name such as block-type, which could mean any kind of block, does not say what it names.
+
 ## Where a rule above does not apply, and why
 
 - **A name that belongs to the whole project names no system.** `agent-seat` and `log-store` belong to no single system, and a general tool such as `scripts/branch-conflict-check.py` serves them all. Adding the project's name, as in `nedschorus-agent-seat`, would add a word that every such name shares. The wiki's `nedschorus-` prefix is a pattern set by the file naming standards, and the pattern governs there.
 - **An SDLC-term keeps its standard name.** `worktree`, `pull request` and `test double` mean the same thing to every programmer who knows them, and a reader who does not can look them up anywhere. A longer name of this project's own would hide that they are standard.
+- **A project-term or system-term whose words already name something in software engineering or another computing field starts with `nc-`, short for NedsChorus, placed before any system name, when the project means something different by them or adds significant project-specific detail to the standard meaning.** In standard usage a critical component is a part whose failure brings a system down, so the project's term for the code that judges other work is `nc-critical-code`; a test suite is a set of test cases run as one program, so the project's term for one `-test.py` or `-test.sh` file is `nc-test-suite`. The prefix tells the reader to look the term up in the glossary. A standard term used with its standard meaning takes no prefix.
 - **What is set outside the project stays as it is set**, as the opening of this page says.
 - **A name used only inside one file** is left to the writer: this page does not govern it. A loop index `i`, an exception `error`, or a constant only its own file reads is found by a reader who already has the file open.
 

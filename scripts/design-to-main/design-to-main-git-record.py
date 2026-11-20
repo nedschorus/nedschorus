@@ -7,9 +7,16 @@ import subprocess
 
 _tables_spec = importlib.util.spec_from_file_location(
     "design_to_main_state_tables",
-    pathlib.Path(__file__).with_name("design-to-main-state-tables.py"))
+    pathlib.Path(__file__).with_name("design-to-main-state-tables-common.py"))
 tables = importlib.util.module_from_spec(_tables_spec)
 _tables_spec.loader.exec_module(tables)
+
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    pathlib.Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
 
 
 def compose_state_exit_trailer(state, verdict, package_commit, counters, write_number=None):
@@ -37,8 +44,11 @@ def parse_state_exit_trailer(message):
     return trailer
 
 
+AGENT_HOME_MARKER_FILE_NAME = "agent-home-marker"
+
+
 class TopicBranchCutRefused(Exception):
-    """Git refused the branch name or the required start point is absent."""
+    """Git refused the branch name, the required start point is absent, or the checkout is an agent-home."""
 
 
 class RefusedBeforeTopicBranchCut(Exception):
@@ -85,11 +95,40 @@ class TopicBranchGitRecord:
         return commits[-1] if commits else None
 
 
+    def require_checkout_is_not_an_agent_home(self):
+        """Raise TopicBranchCutRefused in an agent-home, GitCommandFailed when git fails."""
+        # The marker is the one scripts/git-client-side-hooks/pre-commit reads: without this check the cut
+        # would put the agent-home on the topic branch, and the hook would then refuse every state-exit commit.
+        git_directory = pathlib.Path(git_output.run_git(
+            self.repository_dir, ["rev-parse", "--absolute-git-dir"]).decode().strip())
+        if (git_directory / AGENT_HOME_MARKER_FILE_NAME).exists():
+            raise TopicBranchCutRefused(
+                "refused to cut the topic branch %r in %s, because that checkout is an agent-home: "
+                "an agent-home holds no topic work and rests on a detached HEAD at origin/main; "
+                "the run does not start and the checkout is as it was.\n"
+                "Make a worktree for the run, detached at origin/main, by running this shell command:\n"
+                "cd %s && python3 scripts/agent-seat-worktree-create-with-owner-file.py --detach %s origin/main\n"
+                "Then, in Python code of your own, whether the program that called start(%r) and received this "
+                "error or a new one, build the run again over that worktree: a new TopicBranchGitRecord "
+                "(scripts/design-to-main/design-to-main-git-record.py) with the path the command prints as its "
+                "repository_dir, and the component, component_directory, design_path and topic_branch_start_point "
+                "of the refused record; and a new DesignToMainStateMachineFlow "
+                "(scripts/design-to-main/design-to-main-state-machine.py) over the new record, with the launcher "
+                "the refused flow was given. Then call start(%r) on the new flow, which checks the worktree and "
+                "returns the run's state record, and pass that record to the new flow's run_until_ended(), "
+                "whose first step cuts the topic branch in that worktree." % (
+                    self.component, self.repository_dir, self.repository_dir, self.component, self.component,
+                    self.component))
+
     def require_topic_branch_start_point(self):
+        """Raise TopicBranchCutRefused when the start point is absent, GitCommandFailed when git fails."""
         # Validate before assembling the initial package: instance counting needs the start point before branch creation.
         start_point = self.topic_branch_start_point
-        if self.git("rev-parse", "--verify", "--quiet",
-                    "%s^{commit}" % start_point, check=False).returncode != 0:
+        # --verify --quiet prints the commit on exit 0 and nothing on exit 1, its "absent" answer.
+        if not git_output.run_git(
+                self.repository_dir,
+                ["rev-parse", "--verify", "--quiet", "%s^{commit}" % start_point],
+                accepted_exit_codes=(0, 1)).strip():
             raise TopicBranchCutRefused(
                 "the checkout at %s has no %s to cut the topic branch %r from; "
                 "the run does not start and the checkout is as it was" % (
@@ -182,12 +221,18 @@ class TopicBranchGitRecord:
         with open(path, "a") as rulings:
             rulings.write("- %s (user-ruled %s)\n" % (text, date))
 
+    def path_is_at_head(self, path):
+        """Return whether path is in HEAD's tree; raise GitCommandFailed when git fails."""
+        # git show and cat-file -e exit 128 both for an absent path and for a failure; ls-tree exits 0 when absent.
+        return bool(git_output.tree_entries(git_output.run_git(
+            self.repository_dir, ["ls-tree", "-z", "HEAD", "--", str(path)])))
+
     def run_state_text_at_last_commit(self):
-        """Return the run-state.json text at HEAD, or None when absent."""
-        shown = self.git("show", "HEAD:%s" % self.run_state_path, check=False)
-        if shown.returncode != 0:
+        """Return the design-to-main-run-state.json text at HEAD, or None when absent; raise GitCommandFailed when git fails."""
+        if not self.path_is_at_head(self.run_state_path):
             return None
-        return shown.stdout
+        return git_output.run_git(
+            self.repository_dir, ["show", "HEAD:%s" % self.run_state_path]).decode()
 
 
     def commit_state_exit(self, run, subject, trailer, named_files=()):
@@ -201,13 +246,13 @@ class TopicBranchGitRecord:
         return self.head_commit()
 
     def named_files_that_are_not_there(self, named_files):
-        """Return paths absent from both the worktree and HEAD, excluding tracked deletions."""
+        """Return paths absent from both the worktree and HEAD, excluding tracked deletions;
+        raise GitCommandFailed when git fails."""
         missing = []
         for path in named_files:
             if self.absolute(path).exists():
                 continue
-            tracked = self.git("cat-file", "-e", "HEAD:%s" % path, check=False)
-            if tracked.returncode != 0:
+            if not self.path_is_at_head(path):
                 missing.append(path)
         return missing
 
@@ -223,16 +268,18 @@ class TopicBranchGitRecord:
         self.put_the_whole_checkout_back_to_head()
 
     def put_the_whole_checkout_back_to_head(self):
+        """Discard staged, changed and untracked work; raise GitCommandFailed at the first git step that fails."""
         # Reset the index first: checkout restores from the index, so staged work would otherwise survive recovery.
-        self.git("reset", "-q", check=False)
-        self.git("checkout", "--", ".", check=False)
-        self.git("clean", "-fdq", check=False)
+        for step in (["reset", "-q"], ["checkout", "--", "."], ["clean", "-fdq"]):
+            git_output.run_git(self.repository_dir, step)
 
 
     def paths_changed_since(self, commit):
         """Return committed and uncommitted changes since commit, excluding the record directory."""
-        changed = set(self.git("diff", "--name-only", commit).stdout.split())
-        changed |= set(self.git("ls-files", "--others", "--exclude-standard").stdout.split())
+        changed = set(git_output.nul_separated_fields(
+            self.git("diff", "-z", "--name-only", commit).stdout))
+        changed |= set(git_output.nul_separated_fields(
+            self.git("ls-files", "-z", "--others", "--exclude-standard").stdout))
         record = str(self.record_directory)
         return sorted(p for p in changed if not p.startswith(record + "/"))
 

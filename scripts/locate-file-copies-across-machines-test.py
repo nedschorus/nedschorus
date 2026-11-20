@@ -2,7 +2,8 @@
 """Tests for scripts/locate-file-copies-across-machines.py: what it finds on
 each machine, what it leaves out, how it ranks and collapses copies, the git
 surface's reflog and deleted-file hits, every way the other machine can fail
-to answer, and the exit code each outcome gives.
+to answer, the second search it runs with the full name when every
+candidate has one name, and the exit code each outcome gives.
 
 Every case runs against scratch trees. The program's surfaces are replaced
 through LOCATE_FILE_COPIES_ACROSS_MACHINES_PLAN, and the other machine is a
@@ -23,7 +24,9 @@ over a minute and reaches ned-box, so no case runs it except for --help.
 Run: python3 scripts/locate-file-copies-across-machines-test.py   (exit 0 = all passed)
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import pathlib
@@ -35,6 +38,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 PROGRAM = pathlib.Path(
@@ -43,11 +47,21 @@ PROGRAM = pathlib.Path(
 PLAN_VARIABLE = "LOCATE_FILE_COPIES_ACROSS_MACHINES_PLAN"
 FAKE_BOX = "fake-box"
 # The variables that point git at another repository, stripped from every git
-# this suite runs: the same set scripts/run-all-test-suites.py strips, so the
-# suite is as safe run directly as it is under the runner.
-GIT_REDIRECTING_VARIABLES = (
-    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
-    "GIT_COMMON_DIR", "GIT_ALTERNATE_OBJECT_DIRECTORIES")
+# this suite runs: the shared module's list, the one scripts/run-all-test-suites.py
+# strips, so the suite is as safe run directly as it is under the runner.
+_git_redirecting_removal_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_variables_removal_common",
+    SCRIPTS_DIR.parent / "nc-systems" / "general-tools"
+    / "git-redirecting-environment-variables-removal-common.py")
+git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
+_git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
+GIT_REDIRECTING_ENVIRONMENT_VARIABLES = git_redirecting_removal.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
+_ned_box_home_spec = importlib.util.spec_from_file_location(
+    "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
+    SCRIPTS_DIR.parent / "nc-systems" / "general-tools"
+    / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+ned_box_home_path_constants = importlib.util.module_from_spec(_ned_box_home_spec)
+_ned_box_home_spec.loader.exec_module(ned_box_home_path_constants)
 
 STAND_IN_SSH = """#!/usr/bin/env python3
 import json, os, subprocess, sys, time
@@ -55,7 +69,9 @@ arguments = sys.argv[1:]
 with open(os.environ["FAKE_SSH_ARGV_LOG"], "a") as log:
     log.write(json.dumps(arguments) + "\\n")
 mode = os.environ.get("FAKE_SSH_MODE", "ok")
-if mode == "unreachable":
+with open(os.environ["FAKE_SSH_ARGV_LOG"]) as log:
+    runs_so_far = len(log.readlines())
+if mode == "unreachable" or (mode == "unreachable-on-second-run" and runs_so_far >= 2):
     sys.stderr.write("ssh: connect to host fake-box port 22: No route to host\\n")
     sys.exit(255)
 if mode == "hang":
@@ -80,24 +96,51 @@ sys.exit(subprocess.run(["sh", "-c", command]).returncode)
 # directory and every GIT_ variable it was given, then answers in the shape
 # the real one prints -- a header, a surface, a summary line -- with the exit
 # code FAKE_BACKUP_SEARCH_MODE asks for, or dies before its summary.
-STAND_IN_BACKUP_SEARCH = """import json, os, signal, sys
+STAND_IN_BACKUP_SEARCH = """import argparse, json, os, signal, sys
 with open(os.environ["FAKE_BACKUP_SEARCH_LOG"], "a") as log:
     log.write(json.dumps({
         "argv": sys.argv[1:], "cwd": os.getcwd(),
         "git_variables": sorted(key for key in os.environ
                                 if key.startswith("GIT_"))}) + "\\n")
+parser = argparse.ArgumentParser()
+parser.add_argument("path")
+parser.add_argument("--skip", action="append", default=[])
+arguments = parser.parse_args()
 mode = os.environ.get("FAKE_BACKUP_SEARCH_MODE", "not-found")
-print("Searching every history this fleet keeps for: " + sys.argv[1])
+with open(os.environ["FAKE_BACKUP_SEARCH_LOG"]) as log:
+    runs_so_far = len(log.readlines())
+if mode == "killed-on-second-run" and runs_so_far >= 2:
+    mode = "killed"
+print("Searching every history the Mac and ned-box keep for: " + arguments.path)
 print(flush=True)
 if mode == "killed":
     os.kill(os.getpid(), signal.SIGKILL)
 if mode == "raises":
     raise RuntimeError("stand-in backup search failed")
-if mode == "found":
-    print("transcripts     FOUND")
+if mode in ("found", "found-some-unsearched"):
+    print("log-store       FOUND")
+    print("    copied to /scratch/found/logstore-x")
     print()
-    print("Recoverable from: transcripts.")
+    print("Recoverable from: log-store.")
+    if mode == "found-some-unsearched":
+        print("Could NOT search: local snapshots -- see each one's line above.")
     sys.exit(0)
+if mode in ("copy-command-printed", "copy-command-printed-some-unsearched"):
+    print("time machine    FOUND")
+    print("    $ mkdir -p /scratch/found && cp -n a /scratch/found/timemachine-x")
+    print()
+    print("Recoverable from: time machine.")
+    if mode == "copy-command-printed-some-unsearched":
+        print("Could NOT search: local snapshots -- see each one's line above.")
+    sys.exit(5)
+if mode in ("not-copied", "not-copied-some-unsearched"):
+    print("log-store       FOUND")
+    print("    could NOT copy x — ssh exited 255: refused")
+    print()
+    print("Recoverable from: log-store.")
+    if mode == "not-copied-some-unsearched":
+        print("Could NOT search: local snapshots -- see each one's line above.")
+    sys.exit(4)
 if mode == "incomplete":
     print("time machine    UNAVAILABLE")
     print()
@@ -142,6 +185,31 @@ def load_program(module_name):
 
 program = load_program("locate_file_copies_under_test")
 
+# The program keeps its own copy of the list, because it is sent over ssh alone.
+check("the program's list of variables that redirect git is the shared module's",
+      tuple(program.GIT_REDIRECTING_ENVIRONMENT_VARIABLES) == GIT_REDIRECTING_ENVIRONMENT_VARIABLES,
+      (program.GIT_REDIRECTING_ENVIRONMENT_VARIABLES, GIT_REDIRECTING_ENVIRONMENT_VARIABLES))
+# It keeps its own copy of ned-box's home and the Mac's mount of it for the same reason.
+check("the program's spelling of ned-box's home on the Mac is the shared module's",
+      program.NED_BOX_SURFACES["spellings"]
+      == [[ned_box_home_path_constants.MAC_MOUNT_OF_NED_BOX_HOME, ned_box_home_path_constants.NED_BOX_HOME]]
+      and program.KNOWN_HOST_HOMES[program.NED_BOX_HOSTNAME] == ned_box_home_path_constants.NED_BOX_HOME,
+      (program.NED_BOX_SURFACES["spellings"], program.KNOWN_HOST_HOMES))
+_saved_redirecting = {name: os.environ.get(name) for name in GIT_REDIRECTING_ENVIRONMENT_VARIABLES}
+try:
+    for _name in GIT_REDIRECTING_ENVIRONMENT_VARIABLES:
+        os.environ[_name] = "/elsewhere/.git"
+    _left = sorted(set(program.environment_without_git_redirecting_variables())
+                   & set(GIT_REDIRECTING_ENVIRONMENT_VARIABLES))
+    check("the environment the program runs git with has none of the six variables "
+          "that redirect git", not _left, _left)
+finally:
+    for _name, _value in _saved_redirecting.items():
+        if _value is None:
+            os.environ.pop(_name, None)
+        else:
+            os.environ[_name] = _value
+
 
 def write(path, text, mtime=None):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -156,7 +224,7 @@ def git(cwd, *arguments):
     (hooks, signing) kept out of it."""
     environment = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull,
                        GIT_CONFIG_NOSYSTEM="1")
-    for variable in GIT_REDIRECTING_VARIABLES:
+    for variable in GIT_REDIRECTING_ENVIRONMENT_VARIABLES:
         environment.pop(variable, None)
     return subprocess.run(
         ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
@@ -203,8 +271,7 @@ def make_plan(base, other="ssh", timeout_seconds=20, extra_mac_roots=()):
          "roots": [str(base / "box" / "agents"), str(base / "box" / "Projects"),
                    str(base / "box" / "tmp")],
          "git": True},
-        {"name": "log-store", "roots": [str(base / "box" / "logs")],
-         "prune": [str(base / "box" / "logs" / "transcripts")]},
+        {"name": "log-store", "roots": [str(base / "box" / "logs")]},
         {"name": "handoffs", "roots": [str(base / "box" / "handoffs")]},
     ], "this_repository": {
         "clones": [str(base / "box" / "Projects" / "nedschorus")],
@@ -242,7 +309,7 @@ def program_environment(base, mode="ok", plan=None, backup_mode="not-found"):
     ssh first on PATH, the stand-in backup search, and no variable that
     points git elsewhere."""
     environment = dict(os.environ)
-    for variable in GIT_REDIRECTING_VARIABLES:
+    for variable in GIT_REDIRECTING_ENVIRONMENT_VARIABLES:
         environment.pop(variable, None)
     environment[PLAN_VARIABLE] = json.dumps(plan or make_plan(base))
     environment["PATH"] = f"{base / 'stand-in-bin'}{os.pathsep}{environment['PATH']}"
@@ -251,20 +318,33 @@ def program_environment(base, mode="ok", plan=None, backup_mode="not-found"):
     environment[BACKUP_SEARCH_VARIABLE] = str(
         base / "stand-in-bin" / "backup-search-stand-in.py")
     environment["FAKE_BACKUP_SEARCH_MODE"] = backup_mode
+    # The real backup search copies what it finds; a run started here copies into the scratch base.
+    environment["FIND_DELETED_PATH_FOUND_COPIES_ROOT"] = str(base / "found-copies")
     environment["FAKE_BACKUP_SEARCH_LOG"] = str(base / "backup-search-runs.log")
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     return environment
 
 
+def fail_on_traceback(arguments, stderr):
+    """Records a failure when the program died with a traceback, which every
+    case rejects: a crash exits 1, the code for "not found", so a case that
+    expects exit 1 passes on a crash unless this checks."""
+    if "Traceback" in stderr:
+        check(f"the run with {arguments!r} ends without a traceback", False,
+              stderr)
+
+
 def run(base, query, mode="ok", plan=None, cwd=None, backup_mode="not-found",
-        extra_environment=None):
+        extra_environment=None, double_dash=False):
     """(exit code, stdout, stderr) of one run of the program, from `cwd`
-    (`base` by default)."""
+    (`base` by default), with "--" before the query when `double_dash`."""
     environment = program_environment(base, mode, plan, backup_mode)
     environment.update(extra_environment or {})
-    result = subprocess.run([sys.executable, str(PROGRAM), query],
+    result = subprocess.run([sys.executable, str(PROGRAM),
+                             *(["--"] if double_dash else []), query],
                             capture_output=True, text=True, cwd=cwd or base,
                             env=environment, timeout=120)
+    fail_on_traceback(query, result.stderr)
     return result.returncode, result.stdout, result.stderr
 
 
@@ -338,7 +418,6 @@ with scratch() as directory:
     write(base / "box/logs/seats/x/report-draft-from-origin-x.md", "gamma",
           NOW - 10)
     write(base / "box/handoffs/report-draft-handoff.md", "zeta", NOW - 20)
-    write(base / "box/logs/transcripts/report-draft.md", "delta")
     write(base / "mac/agents/seat-a/node_modules/pkg/report-draft.md", "eps")
     write(base / "mac/Projects/old/.git/report-draft-in-git-dir.md", "eta")
     write(base / "mac/Projects/a-report-draft-dir/notes.md", "theta")
@@ -372,8 +451,6 @@ with scratch() as directory:
           "/box/handoffs/report-draft-handoff.md" in other, other)
     check("each entry carries its size",
           "(5 bytes)" in stdout and "(4 bytes)" in stdout, stdout)
-    check("the log-store's transcripts directory is not searched",
-          "/box/logs/transcripts/" not in same + other, stdout)
     check("a node_modules tree is not searched",
           "node_modules" not in same + other, stdout)
     check("nothing inside a .git directory is listed",
@@ -384,11 +461,9 @@ with scratch() as directory:
           stdout)
     check("a symbolic link is not listed as a copy",
           "report-draft-link.md" not in stdout, stdout)
-    check("the searched lines name every surface on both machines, and the "
-          "log-store's exception",
+    check("the searched lines name every surface on both machines",
           "mac checkouts:" in searched and "mac handoffs:" in searched
           and "ned-box log-store:" in searched
-          and f"except {base / 'box/logs/transcripts'}" in searched
           and "ned-box handoffs:" in searched and "mac git:" in searched,
           searched)
     check("a complete search prints no instruction to tell the user anything",
@@ -402,6 +477,43 @@ with scratch() as directory:
           and first[4] == FAKE_BOX
           and first[5].startswith("python3 - --this-machine-json "),
           argv_log)
+
+# --- The transcript mirror's copies in the log-store ----------------------------
+# transcript-mirror-to-log-store.py never deletes, so its copies of task lists,
+# seat-briefs, the global CLAUDE.md, handoffs, memory store files and session
+# transcripts can be the only ones left.
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    mirror = base / "box/logs/agent-session-files-by-machine"
+    write(mirror / "mac/seat-briefs/some-seat/CLAUDE.local.md", "brief")
+    write(mirror / "ned-box/tasks/nedschorus-some-seat-tasks/41.json", "task")
+    write(mirror / "mac/CLAUDE.md", "global instructions")
+    write(mirror / "mac/handoffs/mirror-only-handoff.md", "handoff")
+    write(mirror / "mac/projects/-Users-el-x/memory/mirror-only-memory.md",
+          "memory")
+    write(mirror / "ned-box/projects/-home-nedlern-x/memory/MEMORY.md", "index")
+    write(mirror / "mac/projects/-Users-el-x/mirror-session.jsonl", "mac")
+    write(mirror / "ned-box/projects/-home-nedlern-x/mirror-session.jsonl", "box")
+    write(mirror / "recovered/from-a-backup/-Users-el-x/mirror-session.jsonl",
+          "old")
+    for query, paths in (
+            ("CLAUDE.local.md", ["mac/seat-briefs/some-seat/CLAUDE.local.md"]),
+            ("41.json", ["ned-box/tasks/nedschorus-some-seat-tasks/41.json"]),
+            ("CLAUDE.md", ["mac/CLAUDE.md"]),
+            ("mirror-only-handoff.md", ["mac/handoffs/mirror-only-handoff.md"]),
+            ("mirror-only-memory.md",
+             ["mac/projects/-Users-el-x/memory/mirror-only-memory.md"]),
+            ("MEMORY.md", ["ned-box/projects/-home-nedlern-x/memory/MEMORY.md"]),
+            ("mirror-session.jsonl",
+             ["mac/projects/-Users-el-x/mirror-session.jsonl",
+              "ned-box/projects/-home-nedlern-x/mirror-session.jsonl",
+              "recovered/from-a-backup/-Users-el-x/mirror-session.jsonl"])):
+        code, stdout, stderr = run(base, query)
+        same, _, _ = sections(stdout)
+        for path in paths:
+            check(f"a copy only in the transcript mirror is found: {path}",
+                  code == 0 and str(mirror / path) in same, stdout + stderr)
 
 # --- Ranking inside the same-name list ------------------------------------------
 with scratch() as directory:
@@ -520,11 +632,11 @@ with scratch() as directory:
           "half never runs it), on the bare name, without its git surfaces "
           "and without --repo, from /",
           [(one["argv"], one["cwd"]) for one in runs]
-          == [(["nothing-anywhere.md", "--skip", "git", "--skip", "reflog"],
+          == [(["--skip", "git", "--skip", "reflog", "--", "nothing-anywhere.md"],
                "/")], runs)
     order = [stdout.find(marker) for marker in (
         "\nTook ", "do not say the file does not exist", BACKUP_SEARCH_HEADER,
-        "Searching every history this fleet keeps for: nothing-anywhere.md",
+        "Searching every history the Mac and ned-box keep for: nothing-anywhere.md",
         "No surface that could be searched has it.")]
     check("the backup search's output follows this program's whole answer, "
           "closing lines included, and ends with its summary line",
@@ -567,27 +679,37 @@ with scratch() as directory:
         code, stdout, stderr = run(base, query, plan=plan, **keywords)
         return code, stdout + stderr, backup_search_runs(base)
 
-    skips = ["--skip", "git", "--skip", "reflog"]
+    skips = ["--skip", "git", "--skip", "reflog", "--"]
     code, output, runs = handed(str(base / "mac" / "private" / "tmp" / "wt-gone"
                                     / "docs" / "gone-draft.md"))
     check("a path is handed to the backup search absolute, in its canonical "
           "spelling",
           code == 1 and [one["argv"] for one in runs]
-          == [[str(base / "mac" / "tmp" / "wt-gone" / "docs" / "gone-draft.md"),
-               *skips]], (runs, output))
+          == [[*skips,
+               str(base / "mac" / "tmp" / "wt-gone" / "docs" / "gone-draft.md")]], (runs, output))
     seat = base / "mac" / "agents" / "seat-a"
     code, output, runs = handed("docs/never-written.md", cwd=seat)
     check("a relative query is handed to it as the absolute path it names, "
           "never relative to a repository",
           code == 1 and [one["argv"] for one in runs]
-          == [[os.path.join(os.path.realpath(seat), "docs", "never-written.md"),
-               *skips]], (runs, output))
+          == [[*skips,
+               os.path.join(os.path.realpath(seat), "docs", "never-written.md")]], (runs, output))
     log_store_path = base / "box" / "logs" / "seats" / "x" / "gone-record.md"
     code, output, runs = handed(str(log_store_path))
     check("a log-store path is handed to it as it is, with git and its reflog "
           "left out",
           code == 1 and [one["argv"] for one in runs]
-          == [[str(log_store_path), *skips]], (runs, output))
+          == [[*skips, str(log_store_path)]], (runs, output))
+    code, output, runs = handed("-dash-led-never-anywhere.md", double_dash=True)
+    check("a name that opens with a dash, given after --, is handed to the "
+          "backup search after its options and --, so the search reads it as "
+          "the path and finishes",
+          code == 1 and [one["argv"] for one in runs]
+          == [[*skips, "-dash-led-never-anywhere.md"]]
+          and "Searching every history the Mac and ned-box keep for: "
+              "-dash-led-never-anywhere.md" in output
+          and "No surface that could be searched has it." in output
+          and "did not finish" not in output, (runs, output))
     code, output, runs = handed("never-anywhere.md", extra_environment={
         "GIT_DIR": str(base / "no-such-git-dir"),
         "GIT_COMMON_DIR": str(base / "no-such-git-dir"),
@@ -595,17 +717,49 @@ with scratch() as directory:
     check("the backup search starts with none of the variables that point git "
           "at another repository, and the answer is still exit 1",
           code == 1 and len(runs) == 1
-          and not set(runs[0]["git_variables"]) & set(GIT_REDIRECTING_VARIABLES),
+          and not set(runs[0]["git_variables"]) & set(GIT_REDIRECTING_ENVIRONMENT_VARIABLES),
           (runs, output))
 
     code, output, runs = handed("never-anywhere.md", backup_mode="found")
     check("when the backup search finds it, the exit code stays this "
-          "program's own, and the last line says to check the content before "
-          "calling it recoverable",
+          "program's own, and the last line says to open the copies it made and "
+          "check their content before calling it recoverable",
           code == 1 and output.rstrip().splitlines()[-1].startswith(
-              "The backup search found it: before you say it can be "
-              "recovered, check that the place a FOUND line names holds the "
-              "file's content"), output)
+              "The backup search found it: open the copies its \"copied to\" "
+              "lines name, and check that one holds the file's content")
+          and "transcript" not in output.rstrip().splitlines()[-1], output)
+    code, output, runs = handed("never-anywhere.md", backup_mode="not-copied")
+    check("when the backup search found it but copied no version, the last "
+          "line says to tell the user what its FOUND lines say, and does not "
+          "send the agent to copies that do not exist",
+          code == 1 and output.rstrip().splitlines()[-1].startswith(
+              "The backup search found it but copied no version: tell the user "
+              "what its FOUND lines say")
+          and "open the copies" not in output.rstrip().splitlines()[-1], output)
+    code, output, runs = handed("never-anywhere.md", backup_mode="copy-command-printed")
+    check("when the backup search copied nothing but printed a copy command, "
+          "the last line sends the agent to the summary that says who runs "
+          "each command, not to the user for every one",
+          code == 1 and output.rstrip().splitlines()[-1].startswith(
+              "The backup search found it but copied nothing yet: the "
+              "commands it printed under each FOUND surface copy a version")
+          and "which commands you run yourself" in output.rstrip().splitlines()[-1], output)
+    code, output, runs = handed("never-anywhere.md",
+                                backup_mode="copy-command-printed-some-unsearched")
+    check("when the backup search found it but could not search some places, "
+          "the last line also says to tell the user which",
+          code == 1 and output.rstrip().splitlines()[-1].startswith(
+              "It also could NOT search some places: tell the user which")
+          and "The backup search found it but copied nothing yet" in output, output)
+    for unsearched_mode, exit_line in (
+            ("found-some-unsearched", "The backup search found it: open the copies"),
+            ("not-copied-some-unsearched", "The backup search found it but copied no version")):
+        code, output, runs = handed("never-anywhere.md", backup_mode=unsearched_mode)
+        check("when the backup search exits %s and could not search some "
+              "places, the last line also says to tell the user which" % unsearched_mode,
+              code == 1 and output.rstrip().splitlines()[-1].startswith(
+                  "It also could NOT search some places: tell the user which")
+              and exit_line in output, output)
     code, output, runs = handed("never-anywhere.md", backup_mode="incomplete")
     check("when the backup search could not search a place, the last line "
           "says to tell the user which, and why",
@@ -660,11 +814,15 @@ check("every summary the backup search prints begins as this program "
       "expects it to",
       all(line.startswith(program.BACKUP_SEARCH_SUMMARY_OPENINGS)
           for line in summaries), summaries)
-check("the backup search's found and could-not-search-everywhere exit codes "
-      "are the ones this program reads",
-      (backup_search.EXIT_FOUND, backup_search.EXIT_INCOMPLETE)
-      == (program.BACKUP_SEARCH_FOUND_EXIT, program.BACKUP_SEARCH_INCOMPLETE_EXIT),
-      (backup_search.EXIT_FOUND, backup_search.EXIT_INCOMPLETE))
+check("the backup search's found, could-not-search-everywhere and "
+      "found-but-not-copied exit codes are the ones this program reads",
+      (backup_search.EXIT_FOUND, backup_search.EXIT_INCOMPLETE,
+       backup_search.EXIT_FOUND_BUT_NOT_COPIED, backup_search.EXIT_FOUND_COPY_COMMAND_PRINTED)
+      == (program.BACKUP_SEARCH_FOUND_EXIT, program.BACKUP_SEARCH_INCOMPLETE_EXIT,
+          program.BACKUP_SEARCH_FOUND_BUT_NOT_COPIED_EXIT,
+          program.BACKUP_SEARCH_FOUND_COPY_COMMAND_PRINTED_EXIT),
+      (backup_search.EXIT_FOUND, backup_search.EXIT_INCOMPLETE,
+       backup_search.EXIT_FOUND_BUT_NOT_COPIED, backup_search.EXIT_FOUND_COPY_COMMAND_PRINTED))
 
 # --- A surface that fails does not read as "not found" --------------------------
 with scratch() as directory:
@@ -680,7 +838,9 @@ with scratch() as directory:
                         "answer"),
             ("remote-fails", "the search there exited 127: python3: command "
                              "not found")):
-        plan = make_plan(base, timeout_seconds=1)
+        # Only the hanging stand-in ssh is meant to reach the timeout; the others
+        # fail at once, but a loaded machine can take over 1 s just to start them.
+        plan = make_plan(base, timeout_seconds=1) if mode == "hang" else make_plan(base)
         code, stdout, stderr = run(base, "absent-everywhere.md", mode, plan)
         check(f"ned-box {mode}: nothing found exits 3, not 1",
               code == 3, stdout + stderr)
@@ -769,9 +929,25 @@ check("the production plan searches ned-box's scratch worktrees, "
       len(box_checkouts) == 2
       and all("/tmp/claude-1000" in roots for roots in box_checkouts),
       box_checkouts)
-check("the production log-store surface leaves out transcripts/",
-      log_store and log_store[0]["prune"]
-      == ["/home/nedlern/nedschorus-logs/transcripts"], log_store)
+supervisor_temp_parent = re.search(
+    r'^NED_BOX_CLAUDE_CODE_TMPDIR = "([^"]+)"$',
+    (pathlib.Path(__file__).resolve().parents[1] / "nc-systems" / "handoff"
+     / "handoff-supervisor.py").read_text(encoding="utf-8"), re.M).group(1)
+check("the production plan searches ned-box's temp folders under the "
+      "handoff-supervisor's CLAUDE_CODE_TMPDIR as well as under /tmp, and "
+      "places a scratch path under either",
+      len(box_checkouts) == 2
+      and all(supervisor_temp_parent + "/claude-1000" in roots
+              for roots in box_checkouts)
+      and program.place_in_this_repository(
+          supervisor_temp_parent + "/claude-1000/-p/s/scratchpad/a.md",
+          [program.NED_BOX_SURFACES["this_repository"]])
+      == ("scratch", ["claude-1000", "-p", "s", "scratchpad", "a.md"]),
+      (supervisor_temp_parent, box_checkouts))
+check("the production log-store surface searches the whole log-store, the "
+      "transcript mirror included",
+      log_store == [{"name": "log-store",
+                     "roots": ["/home/nedlern/nedschorus-logs"]}], log_store)
 
 # --- The query reaches the other machine intact ---------------------------------
 with scratch() as directory:
@@ -812,10 +988,10 @@ with scratch() as directory:
     check("a cut list tells the agent to narrow the name",
           "run again with more of the name" in stdout, stdout)
 
-# --- The git surface: a file added and deleted on a merged topic branch --------
+# --- The git surface: a file added and deleted on a merged nc-topic-branch --------
 # Every pull request reaches main as a merge commit. With a pathspec and no
 # --full-history, git log follows a merge's first parent alone when the path
-# is the same there, so a file that lived only on the topic branch is never
+# is the same there, so a file that lived only on the nc-topic-branch is never
 # reached once the branch and its worktree's reflog are gone.
 with scratch() as directory:
     base = pathlib.Path(directory)
@@ -845,7 +1021,7 @@ with scratch() as directory:
           "branch's commits, and with it does",
           simplified == "" and removal in full.split(), (simplified, full))
     code, stdout, stderr = run(base, "side-branch-draft.md")
-    check("a file that lived only on a merged topic branch is found at its "
+    check("a file that lived only on a merged nc-topic-branch is found at its "
           "deleting commit",
           code == 0
           and f'commit {removal[:12]} ("Remove the side-branch draft")' in stdout
@@ -860,6 +1036,8 @@ with scratch() as directory:
     make_stand_in_bin(base)
     write(base / "mac" / "agents" / "c" / "candidate-probe-notes.md", "n")
     write(base / "box" / "logs" / "seats" / "x" / "candidate-probe-old.md", "o")
+    # Two names on the Mac too, so a run that reaches only the Mac does not rerun with one.
+    write(base / "mac" / "agents" / "c" / "candidate-probe-draft.md", "d")
     code, stdout, stderr = run(base, "candidate-probe.md")
     same, other, _ = sections(stdout)
     check("names that only contain the stem exit 1, not 0, when every surface "
@@ -880,6 +1058,190 @@ with scratch() as directory:
                                make_plan(base))
     check("candidates alone, with ned-box unreachable, exit 3",
           code == 3, stdout + stderr)
+
+# --- One candidate name: the search runs again with that full name --------------
+RERUN_LINE_OPENING = "No copy was found, and every candidate is named "
+
+
+def ssh_runs(base):
+    """How many times the stand-in ssh was started, and empties its record."""
+    record = base / "ssh-argv.log"
+    if not record.exists():
+        return 0
+    count = len(record.read_text(encoding="utf-8").splitlines())
+    record.unlink()
+    return count
+
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    full_name = "rerun-probe-page-and-reuse-checks-minutes.md"
+    write(base / "mac" / "agents" / "c" / "docs" / full_name, "draft", NOW - 100)
+    write(base / "box" / "logs" / "seats" / "x" / full_name, "shipped", NOW - 10)
+    code, stdout, stderr = run(base, "rerun-probe")
+    first, _, second = stdout.partition(RERUN_LINE_OPENING)
+    same_first, other_first, _ = sections(first)
+    same_second, other_second, _ = sections(second)
+    check("one candidate name, held by two different copies, reruns the search "
+          "with that full name, which finds both and exits 0",
+          code == 0 and not same_first and full_name in other_first
+          and second.startswith(f"{full_name}, so this program runs again with "
+                                f"{full_name} in place of rerun-probe.")
+          and f"Same name ({full_name})" in second
+          and len(entry_lines(same_second)) == 2 and not other_second,
+          stdout + stderr)
+    runs = backup_search_runs(base)
+    check("the first search's backup search runs on the query as given, and the "
+          "rerun, which finds the file, runs none",
+          [one["argv"][-1] for one in runs] == ["rerun-probe"]
+          and stdout.find(BACKUP_SEARCH_HEADER) < stdout.find(RERUN_LINE_OPENING),
+          (runs, stdout))
+    check("the rerun searches ned-box again", ssh_runs(base) == 2, stdout)
+
+    write(base / "mac" / "agents" / "c" / "rerun-probe-other-notes.md", "n")
+    code, stdout, stderr = run(base, "rerun-probe")
+    check("two candidate names do not rerun",
+          code == 1 and RERUN_LINE_OPENING not in stdout
+          and len(backup_search_runs(base)) == 1 and ssh_runs(base) == 1,
+          stdout + stderr)
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    write(base / "mac" / "agents" / "seat-a" / "notes" / "rerun-path-probe.md", "x")
+    code, stdout, stderr = run(
+        base, str(base / "mac" / "agents" / "seat-a" / "docs" / "rerun-path-probe.md"))
+    _, other, _ = sections(stdout)
+    check("a path query whose one candidate has the query's own name does not "
+          "rerun by name, which would count a file at another path as found",
+          code == 1 and "rerun-path-probe.md" in other
+          and RERUN_LINE_OPENING not in stdout
+          and len(backup_search_runs(base)) == 1, stdout + stderr)
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    full_name = "rerun-failure-probe-minutes.md"
+    write(base / "box" / "logs" / "seats" / "x" / full_name, "only on ned-box")
+    code, stdout, stderr = run(base, "rerun-failure-probe",
+                               mode="unreachable-on-second-run",
+                               backup_mode="killed-on-second-run")
+    first, _, second = stdout.partition(RERUN_LINE_OPENING)
+    runs = backup_search_runs(base)
+    check("a rerun that cannot reach ned-box reports it as the first search "
+          "would, after the rerun line, and exits 3",
+          code == 3 and "NOT searched" not in first
+          and "NOT searched, or searched only in part:" in second
+          and "Tell the user ned-box was not searched" in second
+          and "do not say the file does not exist" in second, stdout + stderr)
+    check("a rerun that finds nothing runs the backup search again, on the full "
+          "name, and a backup search that dies there is reported as not "
+          "finished",
+          [one["argv"][-1] for one in runs] == ["rerun-failure-probe", full_name]
+          and "did not finish" not in first
+          and second.rstrip().splitlines()[-1].startswith(
+              "The backup search did not finish (it was stopped by signal 9 "
+              "before its summary line)"), (runs, stdout))
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    full_name = "rerun-dir-probe-minutes.md"
+    write(base / "mac" / "agents" / "seat-a" / "notes" / full_name, "x")
+    query_dir = base / "mac" / "agents" / "seat-a" / "docs"
+    code, stdout, stderr = run(base, str(query_dir / "rerun-dir-probe.md"))
+    first, _, second = stdout.partition(RERUN_LINE_OPENING)
+    same_second, other_second, _ = sections(second)
+    check("a path query whose one candidate has another name reruns with that "
+          "name in the query's directory, so a file at another path is still "
+          "only a candidate, and exits 1",
+          code == 1 and second.startswith(
+              f"{full_name}, so this program runs again with "
+              f"{query_dir / full_name} in place of ")
+          and not same_second and full_name in other_second, stdout + stderr)
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    full_name = "rerun-root-probe-minutes.md"
+    write(base / "mac" / "agents" / "c" / full_name, "x")
+    code, stdout, stderr = run(base, "/rerun-root-probe")
+    first, _, second = stdout.partition(RERUN_LINE_OPENING)
+    same_second, other_second, _ = sections(second)
+    check("a path query in the root directory, which has one part, reruns in "
+          "the root directory, not by name, so a file elsewhere is still only "
+          "a candidate, and exits 1",
+          code == 1 and second.startswith(
+              f"{full_name}, so this program runs again with /{full_name} "
+              f"in place of /rerun-root-probe.")
+          and not same_second and full_name in other_second, stdout + stderr)
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    write(base / "mac" / "agents" / "c" / "found-probe.md", "the file")
+    write(base / "mac" / "agents" / "c" / "found-probe-minutes.md", "other")
+    code, stdout, stderr = run(base, "found-probe.md")
+    check("a search that finds the file does not rerun, even when every "
+          "candidate has one other name",
+          code == 0 and RERUN_LINE_OPENING not in stdout
+          and ssh_runs(base) == 1, stdout + stderr)
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    write(base / "mac" / "agents" / "c" / "Case-Probe-Notes.md", "one")
+    write(base / "mac" / "agents" / "d" / "case-probe-notes.md", "two")
+    code, stdout, stderr = run(base, "case-probe")
+    check("candidate names that differ only in case count as one name, so the "
+          "search reruns with it",
+          code == 0 and RERUN_LINE_OPENING in stdout, stdout + stderr)
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    write(base / "mac" / "agents" / "c" / "unreached-probe-minutes.md", "x")
+    code, stdout, stderr = run(base, "unreached-probe", mode="unreachable")
+    first, _, second = stdout.partition(RERUN_LINE_OPENING)
+    check("a rerun does not try again the machine the first search could not "
+          "reach, and still reports it as not searched",
+          RERUN_LINE_OPENING in stdout and ssh_runs(base) == 1
+          and "Tell the user ned-box was not searched: " in second
+          and "No route to host" in second, stdout + stderr)
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    full_name = "mount-rerun-probe-minutes.md"
+    write(base / "mac" / "agents" / "c" / full_name, "x")
+    mounted_dir = base / "mac" / "Volumes" / "nedhome" / "logs" / "s"
+    code, stdout, stderr = run(base, str(mounted_dir / "mount-rerun-probe.md"),
+                               mode="unreachable")
+    runs = backup_search_runs(base)
+    check("a rerun after the other machine was unreachable keeps that machine's "
+          "path spellings, so a query spelled through its mount reaches the "
+          "backup search in that machine's own spelling",
+          RERUN_LINE_OPENING in stdout
+          and [one["argv"][-1] for one in runs]
+          == [str(base / "box" / "logs" / "s" / "mount-rerun-probe.md"),
+              str(base / "box" / "logs" / "s" / full_name)],
+          (runs, stdout + stderr))
+
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    for number in range(program.MAX_FILE_HITS_PER_MACHINE):
+        write(base / "mac" / "agents" / f"cut-{number:03d}" / "cut-probe-minutes.md",
+              f"candidate {number}", NOW - 10 - number)
+    write(base / "mac" / "agents" / "old" / "cut-probe-other.md", "older",
+          NOW - 100000)
+    code, stdout, stderr = run(base, "cut-probe")
+    check("no rerun when the candidate list was cut, since the cut candidates "
+          "may have other names",
+          code == 1 and RERUN_LINE_OPENING not in stdout
+          and "were considered" in stdout,
+          stdout + stderr)
 
 # --- A query with directories is found only at its own path ---------------------
 # The log-store reuses generic names across records (40 dispositions.md on
@@ -1367,6 +1729,7 @@ with scratch() as directory:
         [sys.executable, str(PROGRAM),
          str(linked / "docs" / "linked-worktree-probe.md")],
         capture_output=True, text=True, cwd=base, env=environment, timeout=120)
+    fail_on_traceback("linked-worktree-probe.md", result.stderr)
     # The failure line is matched whole. The query's own path begins with
     # the project's (linked-project-wt), so "the project's path appears
     # somewhere below NOT searched" held without the listing being named
@@ -1451,6 +1814,8 @@ with scratch() as directory:
           code == 0 and str(seat_b / "CLAUDE.local.md") in sections(stdout)[0]
           and "/seat-c/CLAUDE.local.md" in sections(stdout)[0],
           stdout + stderr)
+    check("a bare file name's search does not ask git which copies it tracks",
+          "not tracked by git" not in stdout, stdout)
     code, stdout, stderr = run(base, str(seat_a / "docs" / "tracked-probe.md"),
                                plan=plan)
     check("a file git tracks in another checkout is still found by its path "
@@ -1664,6 +2029,7 @@ with scratch() as directory:
         result = subprocess.run(["sh", "-c", script], capture_output=True,
                                 text=True, env=program_environment(base),
                                 timeout=120)
+        fail_on_traceback(query, result.stderr)
         return result.returncode, result.stdout, result.stderr
 
     code, stdout, stderr = run_in_removed_directory("docs/gone-dir-probe.md")
@@ -1671,7 +2037,7 @@ with scratch() as directory:
           "searches nothing",
           code == 3 and "the current directory no longer exists" in stdout
           and "Run again with the file's absolute path" in stdout
-          and "Searched:" not in stdout and "Traceback" not in stderr,
+          and "Searched:" not in stdout,
           f"exit {code}\n{stdout}{stderr}")
     code, stdout, stderr = run_in_removed_directory("./gone-dir-probe.md")
     check("... and so does ./ before a bare name",
@@ -1681,7 +2047,7 @@ with scratch() as directory:
     check("a bare name needs no current directory, and is still searched "
           "from a removed one",
           code == 0 and "/agents/s/docs/gone-dir-probe.md"
-          in sections(stdout)[0] and "Traceback" not in stderr,
+          in sections(stdout)[0],
           f"exit {code}\n{stdout}{stderr}")
     # PR 703 review 5308486733, inline at :896: git refuses to start in a
     # directory that no longer exists, so every git surface went unsearched
@@ -1716,7 +2082,7 @@ with scratch() as directory:
     write(checkout / "strip-probe.md", "untracked here")
     decoy = base / "decoy"
     commit_files(decoy, {"strip-probe.md": "tracked in the decoy"}, "Decoy")
-    saved = {name: os.environ.get(name) for name in GIT_REDIRECTING_VARIABLES}
+    saved = {name: os.environ.get(name) for name in GIT_REDIRECTING_ENVIRONMENT_VARIABLES}
     os.environ["GIT_DIR"] = str(decoy / ".git")
     os.environ["GIT_WORK_TREE"] = str(decoy)
     try:
@@ -1753,7 +2119,7 @@ with scratch() as directory:
     commit_files(decoy, {"README.md": "the decoy"}, "Decoy")
     decoy_worktree = base / "decoy-clone-wt"
     git(decoy, "worktree", "add", "-q", "-b", "decoy-topic", str(decoy_worktree))
-    saved = {name: os.environ.get(name) for name in GIT_REDIRECTING_VARIABLES}
+    saved = {name: os.environ.get(name) for name in GIT_REDIRECTING_ENVIRONMENT_VARIABLES}
     os.environ["GIT_COMMON_DIR"] = str(decoy / ".git")
     try:
         worktrees, listing_failure = program.worktrees_listed_by(
@@ -1782,6 +2148,7 @@ with scratch() as directory:
         [sys.executable, str(PROGRAM),
          str(asked_worktree / "docs" / "common-dir-probe.md")],
         capture_output=True, text=True, cwd=base, env=environment, timeout=120)
+    fail_on_traceback("common-dir-probe.md", result.stderr)
     check("a whole run with GIT_COMMON_DIR naming another clone finds the "
           "asked clone's commit at its linked worktree's path, exit 0",
           result.returncode == 0
@@ -1789,6 +2156,20 @@ with scratch() as directory:
           in sections(result.stdout)[0]
           and "NOT searched" not in result.stdout,
           f"exit {result.returncode}\n{result.stdout}{result.stderr}")
+
+# Without -z, git worktree list ends each attribute at a newline, so a
+# worktree path holding a newline was listed cut short.
+with scratch() as directory:
+    base = pathlib.Path(directory).resolve()
+    clone = base / "newline-clone"
+    commit_files(clone, {"README.md": "a clone"}, "Start")
+    newline_worktree = base / "two\nlines-wt"
+    git(clone, "worktree", "add", "-q", "-b", "newline-topic", str(newline_worktree))
+    worktrees, listing_failure = program.worktrees_listed_by(str(clone / ".git"))
+    check("a worktree path holding a newline is listed whole",
+          listing_failure is None
+          and sorted(worktrees) == sorted([str(clone), str(newline_worktree)]),
+          (worktrees, listing_failure))
 
 # --- A printed read-it command reads its clone, whatever the caller's shell sets ---
 # The command runs later in the caller's own shell, which this program never
@@ -1802,14 +2183,14 @@ for machine, opening in (("mac-host", ""),
     printed = program.read_command(read_it_hit, machine)
     tokens = (shlex.split(printed[len(opening):])
               if printed.startswith(opening) else [])
-    count = len(GIT_REDIRECTING_VARIABLES)
+    count = len(GIT_REDIRECTING_ENVIRONMENT_VARIABLES)
     check(f"a read-it command printed for {machine} begins with env, unsets "
           "each of the six git redirect variables once, then runs git on the "
           "clone it names",
           tokens[:1] == ["env"]
           and tokens[1:1 + 2 * count:2] == ["-u"] * count
           and sorted(tokens[2:2 + 2 * count:2])
-          == sorted(GIT_REDIRECTING_VARIABLES)
+          == sorted(GIT_REDIRECTING_ENVIRONMENT_VARIABLES)
           and tokens[1 + 2 * count:]
           == ["git", "--git-dir=/r/.git", "show", "0123456789ab:docs/x.md"],
           printed)
@@ -1838,13 +2219,13 @@ with scratch() as directory:
 
     def shell_run(command, variable):
         environment = {key: value for key, value in os.environ.items()
-                       if key not in GIT_REDIRECTING_VARIABLES}
+                       if key not in GIT_REDIRECTING_ENVIRONMENT_VARIABLES}
         environment[variable] = str(decoy_values[variable])
         return subprocess.run(["/bin/sh", "-c", command or "false"],
                               cwd=base, env=environment,
                               capture_output=True, text=True)
 
-    for variable in GIT_REDIRECTING_VARIABLES:
+    for variable in GIT_REDIRECTING_ENVIRONMENT_VARIABLES:
         as_printed = shell_run(printed, variable)
         check(f"with {variable} naming another clone in the shell that runs "
               "it, the printed read-it command prints the asked clone's file",
@@ -2052,6 +2433,24 @@ check("a relative query's target is the same as its absolute spelling's",
       == {"kind": "checkout", "parts": ["docs", "b.md"],
           "path": "/Users/el/agents/s/.claude/worktrees/a/docs/b.md",
           "canonical": "/Users/el/agents/s/.claude/worktrees/a/docs/b.md"})
+
+# --- The time a search took ----------------------------------------------------
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    write(base / "mac" / "tmp" / "clock-probe.md", "tick")
+    clock_readings = iter([100.0, 103.5])
+    saved_time = program.time
+    program.time = types.SimpleNamespace(monotonic=lambda: next(clock_readings))
+    try:
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            clock_code = program.search_and_report(
+                "clock-probe.md", {"this": make_plan(base)["this"]})[0]
+    finally:
+        program.time = saved_time
+    check("the time a search took is the clock's reading after it less the "
+          "reading before it",
+          clock_code == 0 and "\nTook 3.5 s.\n" in printed.getvalue(),
+          printed.getvalue())
 
 blob_a = "a" * 40
 blob_b = "b" * 40

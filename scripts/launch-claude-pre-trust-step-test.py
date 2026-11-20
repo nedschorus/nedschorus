@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """Tests for the launchers' pre-trust step: the write that pre-answers
 Claude's one-time folder-trust dialog by adding the seat directory to
-~/.claude.json.
+~/.claude.json, and its onboarding screens by setting hasCompletedOnboarding
+and, when none is set, a theme. Both twins run
+scripts/claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py
+for it: the Mac twin from its own checkout, the box twin from the box's
+~/Projects/nedschorus. That script's own cases are in its -test.py file; these
+cases measure the write as each launcher runs it.
 
 That file is the HARNESS's live state file, not the launchers' own: running
 sessions write it while a launch is happening (its mtime was observed
@@ -9,7 +14,7 @@ changing mid-session on the Mac, 2026-09-08). Until that day both launchers
 read it whole and wrote it back by truncating the file and streaming JSON
 into it, which gives a concurrent harness read a torn file — and a fresh
 session that reads torn JSON can stop at the very dialog this step exists to
-skip. Both twins now write a temporary sibling and os.replace it into place.
+skip. The write now goes to a temporary sibling that os.replace puts into place.
 
 These cases MEASURE that, on the file the write actually produces, rather
 than reading the launchers' source for the word "replace":
@@ -38,8 +43,9 @@ through a real /bin/sh, so the box-side program is tested as it ARRIVES —
 after the single-quote parse it crosses (P1). Every external participant is
 stubbed and HOME is a throwaway directory: no seat starts, no session
 updates, and nothing ssh's anywhere. The one participant deliberately NOT
-stubbed is python3 -c, which is the code under test; the stub execs the real
-interpreter for that call and answers exit 0 for every other.
+stubbed is the presets write, which is the code under test; the python3 stub
+execs the real interpreter for that call, and for the controls' -c programs,
+and answers exit 0 for every other.
 
 Run: python3 scripts/launch-claude-pre-trust-step-test.py
 """
@@ -53,6 +59,9 @@ from pathlib import Path
 
 MAC_LAUNCHER = Path(__file__).with_name("launch-claude-mac")
 UBUNTU_LAUNCHER = Path(__file__).with_name("launch-claude-ubuntu")
+
+PRESETS_WRITE_SCRIPT_NAME = "claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py"
+PRESETS_WRITE_SCRIPT = Path(__file__).with_name(PRESETS_WRITE_SCRIPT_NAME)
 
 ARGUMENT_BOUNDARY = "=== argument boundary ===\n"
 CALL_BOUNDARY = "=== call boundary ===\n"
@@ -129,12 +138,11 @@ class PreTrustSandbox:
         self.stubs = root / "stubs"
         self.stubs.mkdir()
         self.state_file = self.home / ".claude.json"
-        # python3: every call is recorded argument by argument (the Mac
-        # twin's program is multi-line, so a line-per-argument capture could
-        # not be parsed back), and a `-c` call — the pre-trust write, the one
-        # thing under test — is handed to the REAL interpreter. Every other
-        # python3 the launchers run (the supervisor, clean-worktrees,
-        # checkout-freshness-catch-up) answers exit 0.
+        # python3: every call is recorded argument by argument, and the
+        # presets write — the one thing under test — is handed to the REAL
+        # interpreter, as is a `-c` call. Every other python3 the launchers
+        # run (the supervisor, clean-worktrees, checkout-freshness-catch-up)
+        # answers exit 0.
         write_stub(self.stubs, "python3",
                    'for argument in "$@"; do\n'
                    '  printf \'%s\\n=== argument boundary ===\\n\' "$argument" '
@@ -142,10 +150,15 @@ class PreTrustSandbox:
                    'done\n'
                    'printf \'=== call boundary ===\\n\' '
                    '>> "$PRE_TRUST_CAPTURES/python3-calls.txt"\n'
-                   'if [ "${1:-}" = "-c" ]; then\n'
-                   '  exec "$PRE_TRUST_REAL_PYTHON3" "$@"\n'
-                   'fi\n'
+                   'case "${1:-}" in (-c|*/' + PRESETS_WRITE_SCRIPT_NAME + ')\n'
+                   '  exec "$PRE_TRUST_REAL_PYTHON3" "$@";;\n'
+                   'esac\n'
                    'exit 0\n')
+        # The box twin runs the presets write from the box's own checkout,
+        # $HOME/Projects/nedschorus; in this HOME that is this checkout's copy.
+        box_scripts = self.home / "Projects" / "nedschorus" / "scripts"
+        box_scripts.mkdir(parents=True)
+        (box_scripts / PRESETS_WRITE_SCRIPT_NAME).symlink_to(PRESETS_WRITE_SCRIPT)
         # has-session answers "no session" so the launch proceeds on the
         # seat's own socket; new-session records its argv and returns,
         # without running the pane command — the seat's own contents are
@@ -245,11 +258,11 @@ class PreTrustSandbox:
             }, cwd=str(self.workdir))
         return launched, remote, replayed
 
-    # --- the program as it arrived, and re-running it under a failure ---
-    def arrived_trust_program(self):
-        """The `-c` program text and its argument, as the interpreter
-        received them — after every shell parse between the launcher and the
-        write."""
+    # --- the write as it arrived, and re-running it under a failure -----
+    def arrived_presets_write_call(self):
+        """The presets write's script path and its argument, as the
+        interpreter received them — after every shell parse between the
+        launcher and the write."""
         capture = self.captures / "python3-calls.txt"
         if not capture.is_file():
             return None, None
@@ -258,22 +271,25 @@ class PreTrustSandbox:
                          if piece]
             arguments = [piece[:-1] if piece.endswith("\n") else piece
                          for piece in arguments]
-            if len(arguments) == 3 and arguments[0] == "-c":
-                return arguments[1], arguments[2]
+            if (len(arguments) == 2
+                    and arguments[0].endswith("/" + PRESETS_WRITE_SCRIPT_NAME)):
+                return arguments[0], arguments[1]
         return None, None
 
-    def run_trust_program(self, program: str, seat_directory: str,
+    def run_trust_program(self, interpreter_arguments: list, seat_directory: str,
                           sabotage: bool = False):
-        """Run a pre-trust program against this sandbox's HOME. With
+        """Run a pre-trust write — ["-c", program] or [script path] —
+        against this sandbox's HOME. With
         sabotage, RLIMIT_FSIZE is zero, so the first byte written to any
         regular file fails with EFBIG: an OSError out of the payload write,
         after the read and before the replace — the same place in the
         program a full disk fails, where the errno would be ENOSPC."""
-        script = 'exec "$0" -c "$1" "$2"'
+        script = 'exec "$0" "$@"'
         if sabotage:
             script = "ulimit -f 0; " + script
         return subprocess.run(
-            ["/bin/sh", "-c", script, sys.executable, program, seat_directory],
+            ["/bin/sh", "-c", script, sys.executable, *interpreter_arguments,
+             seat_directory],
             capture_output=True, text=True, check=False,
             env={"PATH": f"{self.stubs}:/usr/bin:/bin",
                  "HOME": str(self.home),
@@ -304,11 +320,13 @@ def project_names(facts: dict) -> list:
 
 
 def expected_bytes(existing_seat: str, new_seat: str) -> str:
-    """What the step must write: the seeded state with one project added,
-    formatted exactly as the pre-fix write formatted it (indent=2, no
-    trailing newline). The fix changed HOW the file is written, not what."""
+    """What the step must write: the seeded state with one project added and
+    the two onboarding presets after the keys already there, formatted as
+    indent=2 JSON with no trailing newline."""
     settings = seeded_state(existing_seat)
     settings["projects"][new_seat] = {"hasTrustDialogAccepted": True}
+    settings["hasCompletedOnboarding"] = True
+    settings["theme"] = "light"
     return json.dumps(settings, indent=2)
 
 
@@ -377,12 +395,13 @@ def main() -> int:
               sandbox.temporary_leftovers())
         check("mac, existing file: nothing was written through TMPDIR",
               sandbox.decoy_contents() == [], sandbox.decoy_contents())
-        mac_program, mac_argument = sandbox.arrived_trust_program()
-        check("mac: the pre-trust write is a python3 -c program taking the "
-              "seat directory as its argument",
-              mac_program is not None and "os.replace" in mac_program
+        mac_script, mac_argument = sandbox.arrived_presets_write_call()
+        check("mac: the pre-trust write is the presets script beside the "
+              "launcher, taking the seat directory as its argument",
+              mac_script is not None
+              and Path(mac_script).resolve() == PRESETS_WRITE_SCRIPT.resolve()
               and mac_argument == seat_directory,
-              (mac_argument, (mac_program or "")[:120]))
+              (mac_argument, mac_script))
 
         # --- 3. Mac twin, the write sabotaged partway ---------------------
         # The program is re-run as the interpreter received it, with
@@ -393,8 +412,8 @@ def main() -> int:
         sandbox = PreTrustSandbox(root / "mac-sabotaged")
         before_content = sandbox.seed_state_file("/an/earlier/seat")
         before = sandbox.facts()
-        sabotaged = sandbox.run_trust_program(mac_program, "/some/seat/home",
-                                              sabotage=True)
+        sabotaged = sandbox.run_trust_program([str(PRESETS_WRITE_SCRIPT)],
+                                              "/some/seat/home", sabotage=True)
         facts = sandbox.facts()
         check("mac, sabotaged: the write fails loudly (non-zero exit)",
               sabotaged.returncode != 0,
@@ -418,7 +437,7 @@ def main() -> int:
         sandbox = PreTrustSandbox(root / "control-truncating")
         before_content = sandbox.seed_state_file("/an/earlier/seat")
         before = sandbox.facts()
-        control = sandbox.run_trust_program(PRE_FIX_TRUNCATING_WRITE,
+        control = sandbox.run_trust_program(["-c", PRE_FIX_TRUNCATING_WRITE],
                                             "/some/seat/home", sabotage=True)
         facts = sandbox.facts()
         check("control: the pre-fix truncate-in-place shape EMPTIES the state "
@@ -430,7 +449,7 @@ def main() -> int:
 
         sandbox = PreTrustSandbox(root / "control-swallowed-flush")
         before_content = sandbox.seed_state_file("/an/earlier/seat")
-        control = sandbox.run_trust_program(SWALLOWED_FLUSH_WRITE,
+        control = sandbox.run_trust_program(["-c", SWALLOWED_FLUSH_WRITE],
                                             "/some/seat/home", sabotage=True)
         facts = sandbox.facts()
         check("control: an open(...).write() temporary publishes an EMPTY "
@@ -439,11 +458,10 @@ def main() -> int:
               and facts["content"] == "",
               (control.returncode, repr(facts.get("content", ""))[:120]))
 
-        # --- 5. Box twin: the program as it ARRIVES on the box ------------
-        # It crosses the box login shell's parse (P1) inside SINGLE quotes,
-        # so it may carry no single quote of its own; and the whole chain is
-        # replayed by a real /bin/sh, with the real interpreter running the
-        # write against a sandboxed HOME.
+        # --- 5. Box twin: the write as it ARRIVES on the box --------------
+        # The whole chain is replayed by a real /bin/sh, which is where the
+        # box login shell's parse (P1) happens, with the real interpreter
+        # running the write against a sandboxed HOME.
         sandbox = PreTrustSandbox(root / "box-existing")
         existing_seat = "/an/earlier/seat"
         sandbox.seed_state_file(existing_seat, mode=0o640)
@@ -457,12 +475,12 @@ def main() -> int:
         check("box: the remote command parses and runs (P1 exit 0)",
               replayed.returncode == 0,
               (replayed.returncode, replayed.stderr[-300:]))
-        box_program, box_argument = sandbox.arrived_trust_program()
-        check("box: the program arrives intact and carries no single quote "
-              "of its own (P1 splices it between single quotes)",
-              box_program is not None and "os.replace" in box_program
-              and "'" not in box_program,
-              (box_program or "")[:160])
+        box_script, box_argument = sandbox.arrived_presets_write_call()
+        check("box: the presets write runs the script in the box's own "
+              "checkout, ~/Projects/nedschorus",
+              box_script == f"{sandbox.home}/Projects/nedschorus/scripts/"
+                            f"{PRESETS_WRITE_SCRIPT_NAME}",
+              box_script)
         check("box: the seat directory is trusted with the box's own $HOME "
               "resolved box-side",
               is_trusted(facts, box_seat_directory)
@@ -474,6 +492,11 @@ def main() -> int:
               and project_entry(facts, existing_seat) == {
                   "hasTrustDialogAccepted": True,
                   "history": ["an earlier session"]},
+              facts.get("content", "")[:300])
+        check("box: the onboarding presets are written box-side",
+              facts["parsed"] is not None
+              and facts["parsed"].get("hasCompletedOnboarding") is True
+              and facts["parsed"].get("theme") == "light",
               facts.get("content", "")[:300])
         check("box: the box-side write REPLACES the file (the inode changed)",
               facts.get("inode") != before["inode"],
@@ -490,7 +513,7 @@ def main() -> int:
         sandbox = PreTrustSandbox(root / "box-sabotaged")
         before_content = sandbox.seed_state_file("/an/earlier/seat")
         before = sandbox.facts()
-        sabotaged = sandbox.run_trust_program(box_program, "/some/box/seat",
+        sabotaged = sandbox.run_trust_program([box_script], "/some/box/seat",
                                               sabotage=True)
         facts = sandbox.facts()
         check("box, sabotaged: the write fails loudly (non-zero exit)",
@@ -525,6 +548,47 @@ def main() -> int:
               and not is_trusted(facts, f"{apostrophe_root}/seat-odd"),
               (replayed.returncode, replayed.stderr[-200:],
                project_names(facts)))
+
+        # --- 8. A state file that is not valid JSON stops each launch -----
+        # The file holds the account's credentials, so the write leaves it
+        # alone and the launch stops with the cause, rather than starting a
+        # seat that may stop at a screen nobody watches.
+        unparseable = '{"oauthAccount": {"accountUuid": "not-a-real-uuid"'
+        sandbox = PreTrustSandbox(root / "mac-unparseable")
+        sandbox.state_file.write_text(unparseable, encoding="utf-8")
+        before = sandbox.facts()
+        launched = sandbox.run_mac_launcher("seat-unparseable")
+        facts = sandbox.facts()
+        check("mac, unparseable state file: the launch stops non-zero, naming "
+              "the file, and starts no seat",
+              launched.returncode != 0 and ".claude.json" in launched.stderr
+              and not (sandbox.captures / "tmux-argv.txt").exists(),
+              (launched.returncode, launched.stderr[-300:]))
+        check("mac, unparseable state file: the file is byte-identical, its "
+              "inode unchanged, and no temporary is left",
+              facts["content"] == unparseable and facts["inode"] == before["inode"]
+              and sandbox.temporary_leftovers() == [],
+              (facts.get("content"), sandbox.temporary_leftovers()))
+
+        sandbox = PreTrustSandbox(root / "box-unparseable")
+        sandbox.state_file.write_text(unparseable, encoding="utf-8")
+        before = sandbox.facts()
+        launched, remote, replayed = sandbox.run_ubuntu_replay("seat-unparseable")
+        facts = sandbox.facts()
+        # The detached command's closing `|| echo` turns any failed prepare
+        # step into exit 0, so the case asserts what reaches the operator:
+        # the cause, on the ssh connection's stderr, and no seat started.
+        check("box, unparseable state file: the box-side command prints the "
+              "cause, naming the file, and tmux starts no seat",
+              ".claude.json" in replayed.stderr
+              and "is not valid JSON" in replayed.stderr
+              and not (sandbox.captures / "tmux-argv.txt").exists(),
+              (replayed.returncode, replayed.stderr[-300:]))
+        check("box, unparseable state file: the file is byte-identical, its "
+              "inode unchanged, and no temporary is left",
+              facts["content"] == unparseable and facts["inode"] == before["inode"]
+              and sandbox.temporary_leftovers() == [],
+              (facts.get("content"), sandbox.temporary_leftovers()))
 
     print()
     if failures:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A test suite run directly, with a variable that redirects git set, leaves
+"""An nc-test-suite run directly, with a variable that redirects git set, leaves
 the repository that variable names alone.
 
 WHAT WENT WRONG. A suite that needs a git repository builds one with
@@ -12,7 +12,7 @@ branch and overwrote the `user.name` and `user.email` shared by every
 worktree of that clone; on 2026-09-24 another wrote `core.bare=true` there.
 GitHub issue "Test suites write into the ambient repository when GIT_DIR is
 set: git init's result is unchecked and the suite runner passes no
-environment" (https://github.com/nedschorus/nedschorus/issues/639).
+environment" (https://github.com/nedsnodes/nedsnodes/issues/639).
 scripts/run-all-test-suites.py removes the variables from every suite it
 launches, which does nothing for a suite run directly. Measured 2026-10-01
 on main, 80 of its 82 suites each run directly with GIT_DIR naming a
@@ -84,6 +84,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNNER_PATH = "scripts/run-all-test-suites.py"
 FIXTURE_PATH = "scripts/git-redirecting-environment-removal-test-fixture.py"
+# The runner and the fixture both read the list from this module.
+REMOVAL_MODULE_PATH = "nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py"
+# The runner reads the attendance variable names from this module.
+ATTENDANCE_CHECK_MODULE_PATH = "nc-systems/general-tools/agent-session-unattended-by-user-check-common.py"
 REMOVAL_CALL = "remove_git_redirecting_environment_variables_from_this_process()"
 
 # A git `init` argument as the suites write it, in a list or as a helper's
@@ -103,7 +107,7 @@ REMOVE_THE_VARIABLES_ANOTHER_WAY = {
         "it removes the six from its own environment before it runs git",
     "scripts/branch-conflict-check-test.py":
         "its git runs with every GIT_ variable removed",
-    "scripts/daily-full-test-run-of-main-test.py":
+    "scripts/scheduled-full-test-run-of-main-test.py":
         "its fixture_git() runs with the runner's own stripped environment",
     "scripts/git-client-side-hooks-pre-push-test.py":
         "every GIT_ variable is removed from each case's environment",
@@ -111,25 +115,30 @@ REMOVE_THE_VARIABLES_ANOTHER_WAY = {
         "its git() removes the same six from the environment of every git it runs",
     "scripts/pull-request-head-test-run-test.py":
         "its fixture_git() runs with the runner's own stripped environment",
-    "scripts/unvalidated-negative-result-check-test.py":
-        "its git runs with every GIT_ variable removed",
     "scripts/test-suites-run-directly-ignore-git-redirecting-environment-test.py":
         "this suite: it removes the runner's list from its own environment, below",
 }
 
 # Each suite this one runs directly, with the other files it reads. Only
-# these, the fixture and the runner are copied, so this suite's recorded
+# these, the fixture, the runner and the module they read the list from are copied, so this suite's recorded
 # inputs are these files and not the whole checkout. A suite here that comes
 # to read another file fails its "exits 0" case until the file is listed.
 SUITES_RUN_WITH_GIT_DIR = {
     "scripts/dangling-path-citation-check-test.py": (
-        "scripts/dangling-path-citation-check.py", "scripts/md-drift-lint.py"),
+        "scripts/dangling-path-citation-check.py", "scripts/md-drift-lint.py",
+        "scripts/branch-leaves-no-citations-of-removed-paths-test.py",
+        "scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py",
+        "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py",
+        "nc-systems/general-tools/failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py"),
 }
 SUITE_RUN_WITH_EVERY_VARIABLE = "scripts/code-review-codex-cell-test.py"
 FILES_THE_SUITE_RUN_WITH_EVERY_VARIABLE_READS = (
     "scripts/code-review-codex-cell.py",
+    "docs/agents/pr-reviewer-instructions.md",
     "nc-systems/cold-read/cold-read-cell-common.py",
-    "nc-systems/cold-read/cold-read-record-names.py",
+    "nc-systems/cold-read/cold-read-record-names-common.py",
+    "nc-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py",
+    "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py",
 )
 
 # Where each variable points, relative to the named repository's top
@@ -256,7 +265,10 @@ runs = [(suite, "GIT_DIR") for suite in SUITES_RUN_WITH_GIT_DIR]
 runs += [(SUITE_RUN_WITH_EVERY_VARIABLE, variable)
          for variable in NAMED_REPOSITORY_PATH_FOR_VARIABLE]
 
-files_to_copy = [RUNNER_PATH, FIXTURE_PATH, SUITE_RUN_WITH_EVERY_VARIABLE,
+files_to_copy = [RUNNER_PATH,
+                 str(runner.ONE_SUITE_CHILD_SUBREAPER_LAUNCHER_PATH.relative_to(REPO_ROOT)),
+                 FIXTURE_PATH, REMOVAL_MODULE_PATH, ATTENDANCE_CHECK_MODULE_PATH,
+                 SUITE_RUN_WITH_EVERY_VARIABLE,
                  *FILES_THE_SUITE_RUN_WITH_EVERY_VARIABLE_READS]
 for suite, files_it_reads in SUITES_RUN_WITH_GIT_DIR.items():
     files_to_copy += [suite, *files_it_reads]

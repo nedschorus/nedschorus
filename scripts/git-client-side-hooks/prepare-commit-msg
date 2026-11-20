@@ -5,17 +5,12 @@
 #
 # The harness asks a session that has a link to end its commit messages with
 #   Claude-Session: https://claude.ai/code/<session id>
-# and puts that id in CLAUDE_CODE_BRIDGE_SESSION_ID. Agents forget the line:
-# all six pull requests of the reboot-test seat's 2026-09-17/18 session went
-# out without it (issue "Topic-branch base enforcement", piece 3). So git adds
-# it, and nobody has to remember.
+# and puts that id in CLAUDE_CODE_BRIDGE_SESSION_ID. Agents forget the line,
+# so git adds it, and nobody has to remember.
 #
-# A session with no link once got no trailer at all, which this file called
-# the harness's own rule. That left 12 of main's last 60 non-merge commits
-# untraceable and cost a merge-lane reviewer a misdiagnosis, so since
-# 2026-09-20 such a session gets its session id instead (see the selection
-# below). Only a session the harness identifies by neither variable goes
-# unstamped.
+# A session with no link gets its session id instead (see the selection
+# below), so that its commits stay traceable. Only a session the harness
+# identifies by neither variable goes unstamped.
 #
 # addIfDifferent: a message that already carries this session's line keeps
 # exactly one; a commit re-made by another session (amend, cherry-pick,
@@ -34,11 +29,9 @@
 # that has a claude.ai link CLAUDE_CODE_BRIDGE_SESSION_ID, and gives every
 # session CLAUDE_CODE_SESSION_ID, which names its transcript on the authoring
 # machine at ~/.claude/projects/<slugged working directory>/<id>.jsonl. A
-# session without a link has only the second, and until 2026-09-20 got no
-# trailer at all: 12 of main's last 60 non-merge commits carried none, and a
-# merge-lane reviewer had to reconstruct one such commit's authoring session
-# from its content, then wrongly diagnosed the absence as an unwired
-# core.hooksPath and told a seat to rewire it. The linked form stays first
+# session without a link has only the second; without a trailer, a reviewer
+# must reconstruct a commit's authoring session from its content, and can
+# mistake the missing trailer for an unwired core.hooksPath. The linked form stays first
 # because a reviewer can open it; the id is the fallback because a reviewer
 # can still find the transcript from it.
 #
@@ -62,18 +55,38 @@ fi
 # and the trailer must not turn an empty message into one that goes through:
 # a file with nothing but comment lines and whitespace is left untouched.
 # A missing file is left for interpret-trailers to report.
-comment_char="$(git config --get core.commentChar || echo '#')"
-if [ -f "$1" ] && ! grep -v "^$comment_char" "$1" | grep -q '[^[:space:]]'; then
-    exit 0
+say_trailer_may_be_missing() {
+    echo "prepare-commit-msg: $1, so the trailer \"$session_trailer\" may be missing from this commit's message; the trailer is how a reviewer finds the agent-session that made a commit. $2's error is just above this line." >&2
+    echo "If this commit was made by a rebase, merge or cherry-pick, leave the commits as they are, and tell the user this message once the operation is done." >&2
+    echo "Otherwise, if git log -1 shows the commit you just made, that commit is not pushed, and its message lacks the trailer, add it with: git commit --amend --only --no-edit --trailer \"$session_trailer\"" >&2
+    echo "If that amend fails, or the commit is already pushed, leave the commit as it is and tell the user this whole message." >&2
+}
+
+# git config --get exits 1 when the key is unset.
+comment_char="$(git config --get core.commentChar)"
+comment_char_status=$?
+if [ "$comment_char_status" -ne 0 ]; then
+    if [ "$comment_char_status" -ne 1 ]; then
+        echo "prepare-commit-msg: git config --get core.commentChar exited with status $comment_char_status, so this hook takes '#' as the comment character when it decides whether the message is empty; git's error is just above this line." >&2
+    fi
+    comment_char='#'
+fi
+if [ -f "$1" ]; then
+    # grep -v exits 1 when every line is a comment line, and 2 when it cannot read the file.
+    uncommented="$(grep -v "^$comment_char" "$1")"
+    uncommented_status=$?
+    if [ "$uncommented_status" -gt 1 ]; then
+        say_trailer_may_be_missing "grep could not read the commit message file $1 (status $uncommented_status)" grep
+        exit 0
+    fi
+    if ! printf '%s\n' "$uncommented" | grep -q '[^[:space:]]'; then
+        exit 0
+    fi
 fi
 
 # --no-divider: the file is a bare commit message, never a patch, so a "---"
 # line in its body is text, not the start of a diff to stamp above.
 git interpret-trailers --in-place --no-divider --if-exists addIfDifferent \
-    --trailer "$session_trailer" "$1" || {
-    echo "prepare-commit-msg: git interpret-trailers failed, so the trailer \"$session_trailer\" may be missing from this commit's message; the trailer is how a reviewer finds the agent-session that made a commit. git's error is just above this line." >&2
-    echo "If this commit was made by a rebase, merge or cherry-pick, leave the commits as they are, and tell the user this message once the operation is done." >&2
-    echo "Otherwise, if git log -1 shows the commit you just made, that commit is not pushed, and its message lacks the trailer, add it with: git commit --amend --only --no-edit --trailer \"$session_trailer\"" >&2
-    echo "If that amend fails, or the commit is already pushed, leave the commit as it is and tell the user this whole message." >&2
-}
+    --trailer "$session_trailer" "$1" ||
+    say_trailer_may_be_missing "git interpret-trailers failed" git
 exit 0

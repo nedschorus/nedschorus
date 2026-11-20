@@ -68,6 +68,6 @@ None. The issue is closed; see Outcome.
 
 - GHI [recover-crashed-seats.py: the six changes ruled 2026-09-02 — exit record, process-identity liveness, parking marker, verified restart, by-hand resume, window](https://github.com/nedschorus/nedschorus/issues/242): this program's owning issue. None of its six changes covers this.
 - GHI [Run named agents on the Ubuntu box, reachable from iTerm2 by name: launch-claude with tmux attach-or-create, and the migration it requires](https://github.com/nedschorus/nedschorus/issues/45): records the same class of problem for `launch-claude-ubuntu` and `clean-worktrees.py`, where a fixed-location copy ran stale code.
-- Search receipt: ghi-info ask, 2026-09-22, including closed issues. It found no issue covering which checkout the recovered seat's supervisor runs from. Also `gh issue list --repo nedschorus/nedschorus --search recover --state all`.
+- Search receipt: ghi-guide-agent ask, 2026-09-22, including closed issues. It found no issue covering which checkout the recovered seat's supervisor runs from. Also `gh issue list --repo nedschorus/nedschorus --search recover --state all`.
 
 Found in the 2026-09-17 backlog walk. Reproduced and filed by an agent on 2026-09-22, as approved by the user at superwalk item 4.

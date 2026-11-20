@@ -2,22 +2,25 @@
 """Open an iTerm window on the user's Mac that runs a command on ned-box.
 
 Usage, on ned-box: scripts/open-mac-window-from-ned-box.py <word> [<word> ...]
+               or: scripts/open-mac-window-from-ned-box.py --agent-seat <seat>
 
 for example `scripts/open-mac-window-from-ned-box.py tmux -L merge-lane-2 attach -t merge-lane-2`,
 which attaches to that agent-seat on its own tmux server.
 The Mac opens a window running `ssh -t -- nedlern@ned-box <word> ...`, so the
-user sees the command's output on his own screen.
+user sees the command's output on his own screen. With --agent-seat, the Mac
+instead opens the window its own scripts/launch-claude-ubuntu <seat> opens,
+which reconnects to the seat when the connection drops.
 
 The request goes over ssh with the key ~/.ssh/id_ed25519_mac_side_action. The
 Mac admits that key for one forced command only,
-scripts/mac-window-opened-for-ned-box-forced-command.py, which checks the
+scripts/mac-request-from-ned-box-forced-command.py, which checks the
 request word by word before anything runs. This program checks the words with
 that same function first, so a request the Mac would refuse is refused here,
 with the same reason, before any connection is made.
 
 NEDSCHORUS_MAC_SSH_DESTINATION overrides the Mac's address; NEDSCHORUS_SSH_PROGRAM
 overrides the ssh program and NEDSCHORUS_MAC_SSH_TIMEOUT_SECONDS the time limit,
-the seams the test suite uses.
+the seams the nc-test-suite uses.
 """
 
 import importlib.util
@@ -27,11 +30,12 @@ import sys
 from pathlib import Path
 
 PROGRAM = "open-mac-window-from-ned-box"
-DEFAULT_MAC_SSH_DESTINATION = "el@10.0.1.23"
+# By mDNS name: the router assigns the Mac its address by DHCP, and the address changes.
+DEFAULT_MAC_SSH_DESTINATION = "el@edwards-macbook-air.local"
 MAC_SIDE_ACTION_KEY = Path.home() / ".ssh" / "id_ed25519_mac_side_action"
 SSH_EXIT_CONNECTION_FAILED = 255
 SSH_TIMEOUT_SECONDS = 60
-FORCED_COMMAND_PATH = Path(__file__).with_name("mac-window-opened-for-ned-box-forced-command.py")
+FORCED_COMMAND_PATH = Path(__file__).with_name("mac-request-from-ned-box-forced-command.py")
 
 EXIT_OPENED = 0
 EXIT_USAGE_OR_REFUSED = 2
@@ -66,8 +70,9 @@ def explain_connection_failure(stderr, destination, program=PROGRAM, not_done="n
         return [f"{program}: the Mac refused the key {MAC_SIDE_ACTION_KEY}, so {not_done}.",
                 "The Mac's ~/.ssh/authorized_keys does not admit this key yet: tell the user, who adds the line the helper's pull request gives."]
     if "Host key verification failed" in stderr:
+        # Not ssh-keyscan: it cannot resolve the Mac's mDNS .local name on ned-box, where ssh can.
         return [f"{program}: this machine does not know the Mac's host key, so ssh stopped before connecting and {not_done}.",
-                f"Tell the user; the one-time fix, run on ned-box, is: ssh-keyscan -t ed25519 {destination.split('@')[-1]} >> ~/.ssh/known_hosts"]
+                f"Tell the user; the one-time fix, run on ned-box, is: ssh -o StrictHostKeyChecking=accept-new {destination} true — it records the Mac's host key, and the Mac then refuses the command true, which is expected."]
     return [f"{program}: could not reach the Mac at {destination}, so {not_done}: {stderr.strip() or 'ssh exited 255'}.",
             f"Tell the user what this says, and {fallback}."]
 
@@ -98,12 +103,34 @@ def send_request_to_mac(request, forced_command, program=PROGRAM, not_done="no w
     return EXIT_OPENED if result.returncode == 0 else EXIT_NOT_OPENED
 
 
+def agent_seat_window_request_for(seat, forced_command):
+    request = f"{forced_command.AGENT_SEAT_WINDOW_VERB} {seat}"
+    forced_command.agent_seat_window_seat_name(request)
+    return request
+
+
 def main(arguments):
+    if arguments in (["--help"], ["-h"]):
+        print(__doc__)
+        return 0
     if not arguments:
-        print(f"usage: {PROGRAM} <word> [<word> ...]", file=sys.stderr)
-        print("Opens a window on the user's Mac running ssh -t -- nedlern@ned-box <word> ...", file=sys.stderr)
+        print(f"usage: {PROGRAM} <word> [<word> ...]  or  {PROGRAM} --agent-seat <seat>", file=sys.stderr)
+        print("Opens a window on the user's Mac running ssh -t -- nedlern@ned-box <word> ..., "
+              "or the Mac's launch-claude-ubuntu <seat>", file=sys.stderr)
         return EXIT_USAGE_OR_REFUSED
     forced_command = load_forced_command_module()
+    if arguments[0] == "--agent-seat":
+        if len(arguments) != 2:
+            print(f"{PROGRAM}: --agent-seat takes exactly one agent-seat name; no request was sent.", file=sys.stderr)
+            return EXIT_USAGE_OR_REFUSED
+        try:
+            request = agent_seat_window_request_for(arguments[1], forced_command)
+        except forced_command.RequestRefused as refusal:
+            print(f"{PROGRAM}: no request was sent, because {refusal}.", file=sys.stderr)
+            return EXIT_USAGE_OR_REFUSED
+        by_hand = (f"that the window opens by hand on the Mac with scripts/launch-claude-ubuntu "
+                   f"{arguments[1]} in the user's clone there")
+        return send_request_to_mac(request, forced_command, fallback=by_hand, timeout_fallback=by_hand)
     try:
         request = request_for(arguments, forced_command)
     except forced_command.RequestRefused as refusal:

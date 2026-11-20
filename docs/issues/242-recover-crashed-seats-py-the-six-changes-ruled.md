@@ -33,7 +33,7 @@ The fleet-restart program `restart-live-seats-at-login` (GHI [Fleet survives a m
 - GHI [Fleet survives a machine restart without losing seat context: detect, hand off on notice, relaunch at boot, resume from transcript](https://github.com/nedschorus/nedschorus/issues/116): the fleet-restart design consumes 1, 4, 6 and the parking state; its pair document `docs/issues/116-fleet-survives-machine-restart-design.md` holds the login-time handling of a seat that cannot be brought back.
 - GHI [Run named agents on the Ubuntu box, reachable from iTerm2 by name: launch-claude with tmux attach-or-create, and the migration it requires](https://github.com/nedschorus/nedschorus/issues/45): seat supervision; names the process-id-versus-command-line identity problem that change 1 answers.
 - GHI [Claude auto-update purges the running version under live fleet sessions — updates need a drain-or-retain policy](https://github.com/nedschorus/nedschorus/issues/62): the supervisor state-file precedent that change 2 extends.
-- Search receipt: ghi-info ask, 2026-09-02 — no open issue covers this set; seat parking has no owning issue.
+- Search receipt: ghi-guide-agent ask, 2026-09-02 — no open issue covers this set; seat parking has no owning issue.
 
 ## Close condition
 
