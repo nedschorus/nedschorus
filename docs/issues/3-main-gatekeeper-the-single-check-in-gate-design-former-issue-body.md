@@ -1,12 +1,12 @@
 ---
-issue: "[main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)"
+issue: "[main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)"
 ---
 
-# main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)
+# main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper-design.md)
 
-The MD half of this pair: `nc-systems/main-gatekeeper/main-gatekeeper-design.md` (canonical specification, design-as-of 2026-08-12) — the single-writer git-gatekeeper as nedschorus's permanent check-in architecture: one program holds the project's one main-capable credential; agents invoke it and never push to main themselves; for each request it checks the work in, or refuses and teaches the fix.
+The MD half of this pair: `nn-systems/main-gatekeeper/main-gatekeeper-design.md` (canonical specification, design-as-of 2026-08-12) — the single-writer git-gatekeeper as nedschorus's permanent check-in architecture: one program holds the project's one main-capable credential; agents invoke it and never push to main themselves; for each request it checks the work in, or refuses and teaches the fix.
 
-**Built** (`nc-systems/main-gatekeeper/main-gatekeeper.py` + `nc-systems/main-gatekeeper/tests/main-gatekeeper-test.py`, 150 cases green):
+**Built** (`nn-systems/main-gatekeeper/main-gatekeeper.py` + `nn-systems/main-gatekeeper/tests/main-gatekeeper-test.py`, 150 cases green):
 - Slice 1 (2026-08-08): synchronous check-in end to end — screening, candidate built from the declaration, commit with the trailer block, atomic push.
 - Slice 2 (2026-08-08): the entry checkpoint — the `--import` triple validated against the legacy repository and recorded in the carrying commit's trailer. (An `imports` query subcommand was built here and deleted by ruling 2026-08-10: the trailer is the record, `git log --grep` the view.)
 - Slice 3 (2026-08-09): concurrency — the race loser integrates over newer commits, same-path overlap refuses `conflict`, bounded retry cap.

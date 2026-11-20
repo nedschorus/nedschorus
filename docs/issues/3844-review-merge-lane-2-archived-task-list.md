@@ -4,7 +4,7 @@ issue: "[Review merge-lane-2's archived task list](https://github.com/nedschorus
 
 # Review merge-lane-2's archived task list
 
-At 2026-11-17T05:46:07Z the user said to merge-lane-2 (transcript `nedlern@ned-box:/home/nedlern/.claude/projects/-home-nedlern-agents-merge-lane-2/281b4ed9-a47c-42c9-9f34-83ab38636f1b.jsonl`): "You can have all the agents archive their tasks, and make GHIs to review those archives at some point. Then we can start the restructure." That day merge-lane-2's task list was copied whole into `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane-2/task-list-archive-2026-11-17/`. The archive holds 216 task files, one JSON file per task, named by task id. The file `task-list-archive.md` in the same folder lists the tasks with their status, subject and description.
+At 2026-11-17T05:46:07Z the user said to merge-lane-2 (transcript `nedlern@ned-box:/home/nedlern/.claude/projects/-home-nedlern-agents-merge-lane-2/281b4ed9-a47c-42c9-9f34-83ab38636f1b.jsonl`): "You can have all the agents archive their tasks, and make GHIs to review those archives at some point. Then we can start the restructure." That day merge-lane-2's task list was copied whole into `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/merge-lane-2/task-list-archive-2026-11-17/`. The archive holds 216 task files, one JSON file per task, named by task id. The file `task-list-archive.md` in the same folder lists the tasks with their status, subject and description.
 
 ## Why
 

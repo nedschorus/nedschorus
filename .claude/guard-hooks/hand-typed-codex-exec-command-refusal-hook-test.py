@@ -164,9 +164,9 @@ ALLOWED = [
         "bash -s -c 'echo hi' <<'EOF'\ncodex exec task\nEOF"),
     ("a python heredoc that mentions codex exec", "python3 - <<'EOF'\nprint('codex exec')\nEOF"),
     ("a cold-read cell, which runs Codex itself",
-        "python3 nc-systems/cold-read/cold-read-codex-cell.py --prompt-file p.md -o r.md"),
+        "python3 nn-systems/cold-read/cold-read-codex-cell.py --prompt-file p.md -o r.md"),
     ("a cold-read cell run over ssh",
-        "ssh nedlern@ned-box 'cd ~/x && python3 nc-systems/cold-read/cold-read-codex-cell.py --prompt-file p.md'"),
+        "ssh nedlern@ned-box 'cd ~/x && python3 nn-systems/cold-read/cold-read-codex-cell.py --prompt-file p.md'"),
 ]
 
 TABLE_COPIES = {

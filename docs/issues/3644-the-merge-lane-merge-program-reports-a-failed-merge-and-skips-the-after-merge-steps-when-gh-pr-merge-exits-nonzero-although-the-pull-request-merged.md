@@ -8,7 +8,7 @@ Filed by a subagent of merge-lane-2 on 2026-11-15, under merge-lane-2's seat-bri
 
 ## Reproduction
 
-The program is `scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py`, as it was on main when merge-lane-2 merged pull request [3360](https://github.com/nedschorus/nedschorus/pull/3360) on 2026-11-15 at about 02:48Z. Its output is in the log `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers/merge-3360.log`, whose first lines are:
+The program is `scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py`, as it was on main when merge-lane-2 merged pull request [3360](https://github.com/nedschorus/nedschorus/pull/3360) on 2026-11-15 at about 02:48Z. Its output is in the log `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/merge-lane-2/merge-helpers/merge-3360.log`, whose first lines are:
 
 ```
 try 1: mergeStateStatus is UNKNOWN
