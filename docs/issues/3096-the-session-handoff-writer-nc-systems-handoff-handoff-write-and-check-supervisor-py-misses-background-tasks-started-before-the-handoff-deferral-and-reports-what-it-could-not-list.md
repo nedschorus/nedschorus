@@ -6,7 +6,7 @@ issue: "[The session-handoff writer nn-systems/handoff/handoff-write-and-check-s
 
 ## What is wrong
 
-When an agent-session hands off, `nn-systems/handoff/handoff-write-and-check-supervisor.py` writes the session-handoff and records in it the work still running, so the successor knows what to start again. The successor needs that record because the session-handoff stops every background Bash task of the agent-session. Two gaps in that script, and one in a script that reads the same transcripts, are checked here against main at 30f0c3312.
+When an agent-session hands off, `nn-systems/handoff/handoff-write-and-check-supervisor.py` writes the session-handoff and records in it the work still running, so the successor knows what to start again. The successor needs that record because the session-handoff stops every background Bash task of the agent-session. Two gaps in that script are checked here against main at 30f0c3312; a third, in a script that reads the same transcripts, is fixed.
 
 ### 1. Only background tasks started during the handoff-deferral are listed
 
@@ -30,20 +30,17 @@ A simpler alternative needs no refusal and keeps the design: the writer writes e
 
 Evidence on whether this race has lost work: none found. On 2026-11-11, `rg -z` over `/home/nedlern/nedsnodes-logs`, which holds copies of the Mac's and ned-box's agent-session transcripts under `agent-session-files-by-machine/`, and over ned-box's `/home/nedlern/.claude/projects`, tallied every printed line starting `handoff-write-and-check-supervisor: handoff-deferral:` or `handoff-write-and-check-supervisor: spawned-subagent roster:`. No handoff-deferral line reports a failure. The roster lines that do, "not derived — CLAUDE_CODE_SESSION_ID is unset", appear only in subagents' transcripts and in research notes under `seats/reboot-test/`, not in the transcript of an agent-session that handed off. `rg` could not read one file, `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/merge-lane-2/merge-helpers/rv1289r1-dead-reviewer-2352/shatest/3.json` (permission denied).
 
-### 3. The idle sweep misses Workflow-tool agents' transcripts
+### 3. The idle sweep missed Workflow-tool agents' transcripts: fixed
 
-In `scripts/agent-seat-idle-sweep-verdicts-print.py`, `verdict_for_seat` reads the agent-session's own transcript and then looks for its subagents' transcripts by globbing `subagents/*.jsonl`, which matches only files directly in that directory. The agents that Claude Code's Workflow tool starts write their transcripts one directory deeper, under `subagents/workflows/<workflow run>/agent-*.jsonl`, as seen in ned-box's `/home/nedlern/.claude/projects` on 2026-11-11. Their token spend is left out of the verdict's `last_activity`. The verdict's `idle` is true when that spend is 5 minutes old and the agent-session's last turn has ended, so an agent-seat whose only work is a running workflow can be judged idle. `session_subagent_transcript_paths` in `scripts/handoff-context-threshold-hook.py`, which the sweep already loads as `threshold_hook`, returns both kinds of transcript.
-
-Proposed: `verdict_for_seat` takes its subagent transcripts from `threshold_hook.session_subagent_transcript_paths`.
+`scripts/agent-seat-idle-sweep-verdicts-print.py` left the transcripts of the agents that Claude Code's Workflow tool starts, under `subagents/workflows/<workflow run>/agent-*.jsonl`, out of the verdict's `last_activity`, so an agent-seat whose only work was a running workflow could be judged idle. Pull request [#3538](https://github.com/nedsnodes/nedsnodes/pull/3538), merged on 2026-11-13, fixed it: `verdict_for_seat` now takes its subagent transcripts from `threshold_hook.session_subagent_transcript_paths` in `scripts/handoff-context-threshold-hook.py`, which also returns the Workflow-tool agents' transcripts, and `scripts/agent-seat-idle-sweep-verdicts-print-test.py` checks that a transcript under `subagents/workflows/<run>/` counts and that the workflow run's `journal.jsonl` does not.
 
 ## Why it matters
 
-Each gap lets running work be lost at a session-handoff, or an agent-seat be swept as idle while it works, without anyone being told. Parts 1 and 2 decide what the successor learns about the work it inherits.
+Each open gap lets running work be lost at a session-handoff without anyone being told. Parts 1 and 2 decide what the successor learns about the work it inherits.
 
 ## Next action
 
 1. The user rules on part 1, the approval-walk item, and on part 2's reversal of the design.
 2. Part 1, if the user approves it, is one pull request. Part 2, in whichever way the user approves, goes in the same pull request when both are approved, since both change the writer's handling of the same reports, with a test for each failure the writer reports, checking what reaches the session-handoff and the exit code.
-3. Part 3 needs no ruling and can be its own pull request now, with a test that puts a transcript under `subagents/workflows/<run>/` and checks that its spend counts.
 
-Related, read before building: [#2476](https://github.com/nedschorus/nedschorus/issues/2476), the project's design for how a program reports its outcome by exit code, for part 2; [#2257](https://github.com/nedschorus/nedschorus/issues/2257), which reads agent-seats' transcripts, for part 3.
+Related, read before building: [#2476](https://github.com/nedschorus/nedschorus/issues/2476), the project's design for how a program reports its outcome by exit code, for part 2.
