@@ -12,7 +12,7 @@ replaces it. Each passes a function that reads a pull request's description, so 
 
 replaced_pull_request_chain_numbers_oldest_first follows the lines through replacements of replacements: when C
 replaces B and B replaces A, C's chain is A, B. It raises ReplacedPullRequestChainUnreadable when a #replaces line
-carries no link to a pull request of the same repository, when it names the pull request whose
+carries no link to a pull request of the same repository, under its name or the name it had before the project rename, when it names the pull request whose
 description carries it, or when the chain comes back to a pull request it already passed; a malformed
 line would otherwise drop the old pull request's findings with no one seeing it.
 
@@ -21,7 +21,16 @@ refused, not guessed at; and reading the descriptions, which the caller's functi
 it raises.
 """
 
+import importlib.util
 import re
+from pathlib import Path
+
+_repository_names_spec = importlib.util.spec_from_file_location(
+    "github_repository_name_and_name_before_project_rename_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "github-repository-name-and-name-before-project-rename-common.py")
+repository_names = importlib.util.module_from_spec(_repository_names_spec)
+_repository_names_spec.loader.exec_module(repository_names)
 
 PULL_REQUEST_DESCRIPTION_REPLACES_HASHTAG = "#replaces"
 READER_PATH = "scripts/pull-request-description-replaces-line-replaced-pull-request-chain-reader-common.py"
@@ -46,7 +55,7 @@ def replaced_pull_request_numbers_on_replaces_lines(description, repository, num
         if matched is None:
             continue
         link = _PULL_REQUEST_LINK.search(matched.group("rest"))
-        if link is None or link.group("repository").lower() != repository.lower():
+        if link is None or repository_names.normalize_repository_name_reading_name_before_project_rename_as_current(link.group("repository")) != repository_names.normalize_repository_name_reading_name_before_project_rename_as_current(repository):
             raise ReplacedPullRequestChainUnreadable(
                 f"pull request {number}'s description has the line `{line.strip()}`, which does not name, after "
                 f"{PULL_REQUEST_DESCRIPTION_REPLACES_HASHTAG}, a full https://github.com/{repository}/pull/<number> "

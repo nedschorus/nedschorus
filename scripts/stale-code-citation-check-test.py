@@ -552,7 +552,7 @@ with tempfile.TemporaryDirectory() as workspace:
     # brackets and the full sha in the link.
     landed = git(root, "rev-parse", "HEAD")
     pin = (f"**Pinned to what landed:** commit [{landed[:7]}]"
-           f"(https://github.com/nedschorus/nedschorus/commit/{landed}) on "
+           f"(https://github.com/nedsnodes/nedsnodes/commit/{landed}) on "
            "2026-06-01 — the moved program.")
 
     write_document(root, "docs/pinned.md", document(
@@ -597,7 +597,7 @@ with tempfile.TemporaryDirectory() as workspace:
         status="specification",
         body="The test is `scripts/moved.py` lines 20-24.\n\n"
              f"**Pinned to what landed:** commit [{absent}]"
-             f"(https://github.com/nedschorus/nedschorus/commit/{absent}) on "
+             f"(https://github.com/nedsnodes/nedsnodes/commit/{absent}) on "
              "2026-06-01 — the moved program."))
     code, out, err = run(root, "docs/pin-absent-commit.md")
     check("a pinned line naming a well-formed sha that is no commit here gets the status finding",
