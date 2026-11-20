@@ -14,7 +14,7 @@ scripts/clean-worktrees.py reads. The owner named:
   - any other worktree, those agents make by hand inside .claude/worktrees/ included: the
     agent-seat GIT_AUTHOR_NAME names.
 
-The agents root is ~/agents, or $NEDSCHORUS_AGENTS_ROOT when set on the Mac, as
+The agents root is ~/agents, or $NEDSNODES_AGENTS_ROOT when set on the Mac, as
 scripts/recover-crashed-seats.py's default_agents_root gives it.
 An agent-seat is a directory under the agents root whose name has a handoff-supervisor state
 file or a session-handoff file in ~/.claude/handoffs/, as scripts/recover-crashed-seats.py lists
