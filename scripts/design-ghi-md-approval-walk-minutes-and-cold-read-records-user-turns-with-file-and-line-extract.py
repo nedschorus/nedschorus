@@ -117,7 +117,7 @@ _record_shipper_spec.loader.exec_module(record_shipper)
 def cold_read_records_in(records_root):
     """{record name: set of the file names under its target/}."""
     records = {}
-    for record in record_shipper.cold_read_record_directories_in(records_root):
+    for record in record_shipper.cold_read_record_directories_listed_without_shipment_staging_directories(records_root):
         target = record / "target"
         records[record.name] = ({p.name for p in target.rglob("*") if p.is_file()}
                                 if target.is_dir() else set())
