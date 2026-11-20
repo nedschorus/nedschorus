@@ -33,7 +33,7 @@ REMOTE_TIMEOUT_SECONDS = 30
 LOCAL_COMMAND_TIMEOUT_SECONDS = 30
 
 # Remove Git redirects so each command answers for the named repository.
-# A copy of nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py's
+# A copy of nn-systems/general-tools/git-redirecting-environment-variables-removal-common.py's
 # list, the one copy allowed: this file is sent over ssh alone, so it cannot load the module.
 # Its test fails when the two lists differ.
 GIT_REDIRECTING_ENVIRONMENT_VARIABLES = (
@@ -78,7 +78,7 @@ MAC_SURFACES = {
          "git": True},
         {"name": "handoffs", "roots": ["/Users/el/.claude/handoffs"]},
     ],
-    "this_repository": {"clones": ["/Users/el/Projects/nedschorus"],
+    "this_repository": {"clones": ["/Users/el/Projects/nedsnodes"],
                         "checkout_parents": ["/Users/el/agents"],
                         "scratch_trees": ["/tmp"]},
     "spellings": [["/private/tmp", "/tmp"]],
@@ -94,14 +94,14 @@ NED_BOX_SURFACES = {
                    "/tmp/claude-1000",
                    "/home/nedlern/.cache/claude-code-tmp/claude-1000"],
          "git": True},
-        {"name": "log-store", "roots": ["/home/nedlern/nedschorus-logs"]},
+        {"name": "log-store", "roots": ["/home/nedlern/nedsnodes-logs"]},
         {"name": "handoffs", "roots": ["/home/nedlern/.claude/handoffs"]},
     ],
-    "this_repository": {"clones": ["/home/nedlern/Projects/nedschorus"],
+    "this_repository": {"clones": ["/home/nedlern/Projects/nedsnodes"],
                         "checkout_parents": ["/home/nedlern/agents"],
                         "scratch_trees": ["/tmp", "/home/nedlern/.cache/claude-code-tmp"]},
     # The Mac mounts ned-box's home here. A copy of the pair in
-    # nc-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py,
+    # nn-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py,
     # since this file is sent over ssh alone; its test fails when the two differ.
     "spellings": [["/Volumes/nedhome", "/home/nedlern"]],
 }

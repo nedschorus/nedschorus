@@ -771,18 +771,18 @@ for list_name in runner.SUITE_SANDBOX_LIST_NAMES_READ_FROM_CHECKOUT_UNDER_TEST:
               (SCRIPTS_DIR.parent / suite).is_file())
 
 # Each of these starts the real bwrap, which cannot start inside bwrap.
-for suite in ("nc-systems/cold-read/tests/cold-read-agy-cell-real-sandbox-test.py",
-              "nc-systems/general-tools/tests/agy-print-prompt-run-in-empty-home-sandbox-real-sandbox-test.py"):
+for suite in ("nn-systems/cold-read/tests/cold-read-agy-cell-real-sandbox-test.py",
+              "nn-systems/general-tools/tests/agy-print-prompt-run-in-empty-home-sandbox-real-sandbox-test.py"):
     check(f"a suite that starts the real bwrap runs outside the sandbox: {suite}",
           suite in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX)
 # Each of these starts a program's bwrap through the cold-read fixture's
 # pass-through stand-in, so it runs inside the sandbox like any other suite.
-for suite in ("nc-systems/cold-read/tests/cold-read-agy-cell-test.py",
-              "nc-systems/cold-read/tests/cold-read-fast-read-test.py",
-              "nc-systems/cold-read/tests/cold-read-grid-test.py",
-              "nc-systems/general-tools/tests/agy-print-prompt-run-in-empty-home-sandbox-test.py",
-              "nc-systems/skills/explain/tests/explain-reply-cold-read-fast-read-test.py",
-              "nc-systems/skills/walk-me-through/tests/"
+for suite in ("nn-systems/cold-read/tests/cold-read-agy-cell-test.py",
+              "nn-systems/cold-read/tests/cold-read-fast-read-test.py",
+              "nn-systems/cold-read/tests/cold-read-grid-test.py",
+              "nn-systems/general-tools/tests/agy-print-prompt-run-in-empty-home-sandbox-test.py",
+              "nn-systems/skills/explain/tests/explain-reply-cold-read-fast-read-test.py",
+              "nn-systems/skills/walk-me-through/tests/"
               "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close-test.py"):
     check(f"a suite whose bwrap is the stand-in runs inside the sandbox: {suite}",
           suite not in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX)
@@ -1039,7 +1039,7 @@ if linux_only_cases_run_here("what a suite's nc-test-sandbox shows and hides"):
               launch_in_checkout == [], launch_in_checkout)
         program_checkout = home_scratch / "program-checkout"
         (program_checkout / ".git").mkdir(parents=True)
-        (program_checkout / "nc-systems" / "general-tools").mkdir(parents=True)
+        (program_checkout / "nn-systems" / "general-tools").mkdir(parents=True)
         launcher_in_checkout = program_checkout / "scripts" / "run-suite-in-signal-sandbox.py"
         launcher_in_checkout.parent.mkdir(parents=True)
         launcher_in_checkout.write_text("")
@@ -1056,7 +1056,7 @@ if linux_only_cases_run_here("what a suite's nc-test-sandbox shows and hides"):
         finally:
             runner.directories_hidden_whole_in_test_sandbox = original_hidden
         check("a program file in another git checkout has that whole checkout shown, so the "
-              "modules it loads from outside its own directory, such as nc-systems/, are there",
+              "modules it loads from outside its own directory, such as nn-systems/, are there",
               launch_from_checkout == [os.path.realpath(program_checkout)], launch_from_checkout)
         check("a program's checkout that holds the checkout under test shows only the program's "
               "directory, so no read-only directory covers the checkout's writable copy",
