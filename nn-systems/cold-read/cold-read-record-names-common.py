@@ -42,6 +42,10 @@ GENERATED_INPUT_COPY_SUFFIXES = (SENTENCE_ID_MARKED_COPY_SUFFIX,)
 # session's reads from other sessions'. Claude Code sets the variable in the
 # Bash environment; a subagent's Bash sees its parent's ID.
 COLD_READ_FAST_READ_REPORT_AGENT_SESSION_ID_FILE_SUFFIX = ".agent-session.json"
+# Whether the agent applied or declined each finding of the record's fast read
+# report, written once by cold-read-fast-read.py --record-finding-outcomes-in-cold-read-record.
+# Not .md, so COMPLETED_REPORT_NAME_PATTERN never takes it for a report.
+COLD_READ_FAST_READ_FINDING_OUTCOMES_FILE_NAME = "cold-read-fast-read-finding-outcomes.json"
 AGENT_SESSION_ID_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_SESSION_ID"
 
 
