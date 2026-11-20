@@ -794,7 +794,7 @@ def run_cases_on_ned_box(workspace: Path):
         if arguments[:1] == ("fetch",):
             return subprocess.CompletedProcess(
                 ["git", "-C", str(clone), *arguments], 1, "",
-                "From https://github.com/nedschorus/nedschorus\n"
+                "From https://github.com/nedsnodes/nedsnodes\n"
                 "error: cannot lock ref 'refs/remotes/origin/main': is at 1 but expected 2\n"
                 "error: some local refs could not be updated\n")
         return real_git(clone, *arguments)
