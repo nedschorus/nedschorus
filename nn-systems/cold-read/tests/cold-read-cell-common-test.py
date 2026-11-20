@@ -909,31 +909,66 @@ with tempfile.TemporaryDirectory() as scratch:
         return common_module.classify_failed_attempt(
             stdout=stdout, stderr=stderr, exit_code=exit_code,
             recognised_texts=claude_module.recognised_failure_texts_for_model(model),
-            start_error=start_error)
+            start_error=start_error,
+            agent_binary_failure_line_prefix_checked_when_no_recognised_failure_text_matched=(
+                claude_module.AGENT_BINARY_FAILURE_LINE_PREFIX_CHECKED_WHEN_NO_RECOGNISED_FAILURE_TEXT_MATCHED))
+
+    UNRECOGNISED = common_module.UNRECOGNISED_FAILURE_TEXT_CAUSE_CLASS
 
     check("the weekly limit line is account-limit, the limit and its reset as detail",
           classify(stdout=PERMISSION_NOISE + WEEKLY_LIMIT_LINE + "\n")
           == ("account-limit", "weekly limit · resets Nov 7, 3am (America/Los_Angeles)"),
           repr(classify(stdout=PERMISSION_NOISE + WEEKLY_LIMIT_LINE + "\n")))
-    check("a line starting \"You've hit your \" whose next words do not end in limit is exit-N",
-          classify(stdout="You've hit your limitless quota · resets Nov 7\n")[0] == "exit-1",
+    check("a line starting \"You've hit your \" whose next words do not end in limit is unrecognised-failure-text",
+          classify(stdout="You've hit your limitless quota · resets Nov 7\n")[0] == UNRECOGNISED,
           repr(classify(stdout="You've hit your limitless quota · resets Nov 7\n")))
     check("three words before limit is still account-limit",
           classify(stdout="You've hit your Opus weekly usage limit · resets Nov 7\n")
           == ("account-limit", "Opus weekly usage limit · resets Nov 7"),
           repr(classify(stdout="You've hit your Opus weekly usage limit · resets Nov 7\n")))
-    check("exactly four words before limit is exit-N",
-          classify(stdout="You've hit your a b c d limit\n")[0] == "exit-1",
+    check("exactly four words before limit is unrecognised-failure-text",
+          classify(stdout="You've hit your a b c d limit\n")[0] == UNRECOGNISED,
           repr(classify(stdout="You've hit your a b c d limit\n")))
-    check("a line whose \"limit\" comes five or more words after \"You've hit your \" is exit-N",
-          classify(stdout="You've hit your stride and now the speed limit\n")[0] == "exit-1",
+    check("a line whose \"limit\" comes five or more words after \"You've hit your \" is unrecognised-failure-text",
+          classify(stdout="You've hit your stride and now the speed limit\n")[0] == UNRECOGNISED,
           repr(classify(stdout="You've hit your stride and now the speed limit\n")))
     check("the Fable limit line is model-limit for a Fable attempt, the family as detail",
           classify(stdout=PERMISSION_NOISE + FABLE_LIMIT_LINE + "\n") == ("model-limit", "Fable"),
           repr(classify(stdout=PERMISSION_NOISE + FABLE_LIMIT_LINE + "\n")))
-    check("the same line on an Opus attempt is not that model's limit: exit-N",
-          classify(stdout=FABLE_LIMIT_LINE + "\n", model="claude-opus-5")[0] == "exit-1",
+    check("the same line on an Opus attempt is not that model's limit: unrecognised-failure-text",
+          classify(stdout=FABLE_LIMIT_LINE + "\n", model="claude-opus-5")[0] == UNRECOGNISED,
           repr(classify(stdout=FABLE_LIMIT_LINE + "\n", model="claude-opus-5")))
+    UNRECOGNISED_LIMIT_LINE = "You've used 100% of your weekly allowance · resets Nov 25, 9am"
+    check("a failed exit's line starting \"You've \" that no recognised text matches is "
+          "unrecognised-failure-text, the line as detail",
+          classify(stdout=PERMISSION_NOISE + UNRECOGNISED_LIMIT_LINE + "\n\nlast line\n")
+          == (UNRECOGNISED, UNRECOGNISED_LIMIT_LINE),
+          repr(classify(stdout=PERMISSION_NOISE + UNRECOGNISED_LIMIT_LINE + "\n\nlast line\n")))
+    check("an unrecognised \"You've \" line on stdout is reported though stderr has other lines",
+          classify(stdout=UNRECOGNISED_LIMIT_LINE + "\n", stderr="Error: exiting\n")
+          == (UNRECOGNISED, UNRECOGNISED_LIMIT_LINE))
+    check("an unrecognised \"You've \" line followed by a recognised one is the recognised class",
+          classify(stdout=UNRECOGNISED_LIMIT_LINE + "\n" + WEEKLY_LIMIT_LINE + "\n")[0]
+          == "account-limit",
+          repr(classify(stdout=UNRECOGNISED_LIMIT_LINE + "\n" + WEEKLY_LIMIT_LINE + "\n")))
+    check("of two unrecognised \"You've \" lines the first is the detail",
+          classify(stdout=UNRECOGNISED_LIMIT_LINE + "\nYou've also got mail\n")
+          == (UNRECOGNISED, UNRECOGNISED_LIMIT_LINE))
+    check("the unrecognised line is cut to 120 characters",
+          classify(stdout="You've " + "z" * 200 + "\n")
+          == (UNRECOGNISED, ("You've " + "z" * 200)[:120]))
+    check("exit 0 with a line starting \"You've \" is no-report: that is the reviewer's prose",
+          classify(stdout="You've written a clear page.\n", exit_code=0)
+          == ("no-report", "no report written; the reviewer's last line: You've written a clear page."),
+          repr(classify(stdout="You've written a clear page.\n", exit_code=0)))
+    check("\"You've \" inside a line, not at its start, is exit-N",
+          classify(stdout="The page says You've hit a snag\n") == ("exit-1", "The page says You've hit a snag"),
+          repr(classify(stdout="The page says You've hit a snag\n")))
+    check("with no watched prefix, a \"You've \" line is exit-N as before",
+          common_module.classify_failed_attempt(
+              stdout=UNRECOGNISED_LIMIT_LINE + "\n", stderr="", exit_code=1,
+              recognised_texts=claude_module.recognised_failure_texts_for_model("claude-opus-5"))
+          == ("exit-1", UNRECOGNISED_LIMIT_LINE))
     check("the logged-out capture is logged-out with the whole line as detail",
           classify(stdout=LOGGED_OUT_LINE + "\n") == ("logged-out", LOGGED_OUT_LINE),
           repr(classify(stdout=LOGGED_OUT_LINE + "\n")))
@@ -1015,6 +1050,80 @@ with tempfile.TemporaryDirectory() as scratch:
           len(cause_lines) == 1
           and result.stderr.index("failed (exit 1)") < result.stderr.index("cause: model-limit"),
           repr(result.stderr))
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = repository / "cold-read-records" / "run-cause-unrecognised" / "claude-defect-hunt-second-strongest-model.md"
+    result = run_claude_cell(
+        repository, stubs,
+        {"claude-fable-5-1": {"exit": 1, "stdout": UNRECOGNISED_LIMIT_LINE + "\n"}},
+        report, "--tier", "second-strongest-model",
+    )
+    check("a Claude cell whose claude exits 1 on an unrecognised \"You've \" line prints "
+          "cause: unrecognised-failure-text with the line quoted",
+          result.returncode == 1
+          and f"cold-read-claude-cell: cause: unrecognised-failure-text — {UNRECOGNISED_LIMIT_LINE}"
+          in result.stderr.splitlines(),
+          repr(result.stderr))
+    check("the Claude cell says the line may be a new usage-limit wording and what to do",
+          f"that matches none of this cell's recognised failure texts, so it may be a usage limit "
+          f"in a wording the cell does not recognise: \"{UNRECOGNISED_LIMIT_LINE}\"" in result.stderr
+          and "\nIf that line reports a usage limit, tell the user, quoting it," in result.stderr,
+          repr(result.stderr))
+    check("a cell that fails on the unrecognised line prints no fell-back line",
+          "fell back to" not in result.stderr, repr(result.stderr))
+    shutil.rmtree(repository)
+    # No pinned tier has a second model, so the scratch copy's chain is given one:
+    # when the later model's report lands the grid deletes the log, and the
+    # fell-back line, which the grid prints as FELL BACK:, is all that is left.
+    repository = build_scratch_repository(scratch)
+    scratch_claude_cell = repository / "nn-systems" / "cold-read" / "cold-read-claude-cell.py"
+    one_model_chain = '"second-strongest-model": ("claude-fable-5-1",),'
+    claude_cell_text = scratch_claude_cell.read_text(encoding="utf-8")
+    check("the scratch copy's second-strongest-model chain is the one this case widens",
+          claude_cell_text.count(one_model_chain) == 1, one_model_chain)
+    scratch_claude_cell.write_text(claude_cell_text.replace(
+        one_model_chain, '"second-strongest-model": ("claude-fable-5-1", "claude-opus-5-5"),'),
+        encoding="utf-8")
+    report = repository / "cold-read-records" / "run-cause-unrecognised-fell-back" / "claude-defect-hunt-second-strongest-model.md"
+    result = run_claude_cell(
+        repository, stubs,
+        {"claude-fable-5-1": {"exit": 1, "stdout": UNRECOGNISED_LIMIT_LINE + "\n"},
+         "claude-opus-5-5": {"report": "STUB REVIEW: the later model's findings\n"}},
+        report, "--tier", "second-strongest-model",
+    )
+    fell_back_lines = [line for line in result.stderr.splitlines()
+                       if line.startswith("cold-read-claude-cell: fell back to ")]
+    check("a later model's report after an unrecognised line: the one fell-back line quotes "
+          "the line and tells the user",
+          result.returncode == 0 and report.is_file() and len(fell_back_lines) == 1
+          and fell_back_lines[0].endswith(
+              "The report's provenance stamp records this. Tell the user: claude-fable-5-1 printed "
+              f"\"{UNRECOGNISED_LIMIT_LINE}\", which may be a usage limit in a wording the cell "
+              "does not recognise."),
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("the provenance stamp's fallback_from names the failed attempt alone, not the line",
+          "fallback_from=claude-fable-5-1(exit1)" in report.read_text(encoding="utf-8")
+          and "allowance" not in report.read_text(encoding="utf-8").splitlines()[0],
+          report.read_text(encoding="utf-8")[:300] if report.is_file() else "no report")
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = repository / "cold-read-records" / "run-cause-b-fell-back-exit" / "claude-defect-hunt-second-strongest-model.md"
+    scratch_claude_cell = repository / "nn-systems" / "cold-read" / "cold-read-claude-cell.py"
+    scratch_claude_cell.write_text(scratch_claude_cell.read_text(encoding="utf-8").replace(
+        one_model_chain, '"second-strongest-model": ("claude-fable-5-1", "claude-opus-5-5"),'),
+        encoding="utf-8")
+    result = run_claude_cell(
+        repository, stubs,
+        {"claude-fable-5-1": {"exit": 1, "stdout": "Error: something else\n"},
+         "claude-opus-5-5": {"report": "STUB REVIEW: the later model's findings\n"}},
+        report, "--tier", "second-strongest-model",
+    )
+    check("a fell-back line after a failure with no unrecognised line tells the user nothing",
+          result.returncode == 0
+          and any(line.startswith("cold-read-claude-cell: fell back to ")
+                  and line.endswith("The report's provenance stamp records this.")
+                  for line in result.stderr.splitlines()),
+          f"exit {result.returncode}; stderr={result.stderr!r}")
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
     report = repository / "cold-read-records" / "run-cause-b" / "codex-defect-hunt-second-strongest-model.md"

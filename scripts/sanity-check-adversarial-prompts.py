@@ -224,7 +224,11 @@ Running a sanity-check, and reading its output:
   outlast a relaunch: the classes only the user can clear
   (USER_CLEARABLE_CAUSE_CLASSES in
   nn-systems/cold-read/cold-read-cell-common.py), which also reach the user by
-  the printed instruction, and a timeout. The classification is read from the
+  the printed instruction, and a timeout. A claude line starting "You've "
+  that no recognised text matches, cause unrecognised-failure-text, is
+  relaunched, and when the relaunch fails the same way the printed
+  instruction tells the user too, because the line may be a usage limit in a
+  wording not yet recognised. The classification is read from the
   CLI's own output, matched only at the start of a line and only on a launch
   that failed; a launch whose text misleads it is told to the user, who can
   see the line. The class decides whether the runner relaunches, because a
@@ -353,12 +357,17 @@ def _cold_read_cell_program(file_name: str):
 # each line the agent-binary wrote. Each text was captured from a real run and
 # is kept, with its source, beside the cold-read cell that met it; taken from
 # there, not copied, so a text added for one instrument is recognised by both.
+_CLAUDE_CELL_PROGRAM = _cold_read_cell_program("cold-read-claude-cell.py")
 RECOGNISED_FAILURE_TEXTS_FOR_MODEL = {
-    "claude": _cold_read_cell_program(
-        "cold-read-claude-cell.py").recognised_failure_texts_for_model,
+    "claude": _CLAUDE_CELL_PROGRAM.recognised_failure_texts_for_model,
     "codex": _cold_read_cell_program(
         "cold-read-codex-cell.py").recognised_failure_texts_for_model,
 }
+# The start of a claude output line that, when no recognised text matched,
+# names the cause unrecognised-failure-text: it may be a usage limit in a wording not
+# yet recognised. Taken from the claude cold-read cell, as the texts are.
+CLAUDE_FAILURE_LINE_PREFIX_CHECKED_WHEN_NO_RECOGNISED_FAILURE_TEXT_MATCHED = (
+    _CLAUDE_CELL_PROGRAM.AGENT_BINARY_FAILURE_LINE_PREFIX_CHECKED_WHEN_NO_RECOGNISED_FAILURE_TEXT_MATCHED)
 
 # The signals that end a run early and that this runner answers by stopping
 # its agents and removing its review copy: see WHEN A RUN IS STOPPED in the
@@ -701,7 +710,9 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
             print(f"WARNING: {model} failed (exit {completed.returncode})", flush=True)
             last_cause = common.classify_failed_attempt(
                 stdout=completed.stdout or "", stderr=completed.stderr or "",
-                exit_code=completed.returncode, recognised_texts=recognised_texts)
+                exit_code=completed.returncode, recognised_texts=recognised_texts,
+                agent_binary_failure_line_prefix_checked_when_no_recognised_failure_text_matched=(
+                    CLAUDE_FAILURE_LINE_PREFIX_CHECKED_WHEN_NO_RECOGNISED_FAILURE_TEXT_MATCHED))
             continue
         if not completed.stdout.strip():
             # Exiting 0 with nothing to show is the ending that looks most like
@@ -1704,8 +1715,12 @@ def failed_cell_lines(adversarial_prompt: str, runtime: str, failure: FailedLaun
             rerun_command,
         ]
     other_cell = cell_name(adversarial_prompt, *(name for name in RUNTIMES if name != runtime))
+    # Relaunched like any failure, but the line it quotes may be a usage limit only the user can judge.
+    tell = (["Tell the user what the FAILED line above says."]
+            if failure.cause_class in common.TOLD_TO_THE_USER_CAUSE_CLASSES else [])
     return [
         failed,
+        *tell,
         f"When a run of this sanity-check saved {other_cell}'s report, triage "
         f"the {adversarial_prompt}-adversarial-prompt from that report.",
         f"When no run of this sanity-check saved a report of the "

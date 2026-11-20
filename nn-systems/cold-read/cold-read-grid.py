@@ -92,15 +92,18 @@ out time the machine was asleep on both Linux (CLOCK_MONOTONIC) and macOS
 attempt is stopped with its children, its cause is `timed-out — timed out
 after 4 hours`, and a report it had written is deleted as unfinished, so it
 neither ships nor counts as a review. The `FAILED` line of an attempt whose cause the user can
-clear ends with "Tell the user: ...", once per agent-binary and cause, so
-the user hears of it while the other cold-read-cells run. When
+clear, or whose cause is `unrecognised-failure-text`, a line that may be a
+usage limit in a wording the cells do not recognise
+(cell_common.TOLD_TO_THE_USER_CAUSE_CLASSES), ends with "Tell the user: ...",
+once per agent-binary and cause, so the user hears of it while the other
+cold-read-cells run. When
 every cold-read-cell of one agent-binary has landed or is absent for the same
 agent-binary-wide cause, one `AGENT-BINARY DOWN:` line says so. Every run closes
 with one closing text built from what landed: all landed, some landed (the
 set is valid and incomplete, and is triaged), none landed, or the
 frozen copy changed, whatever else happened. When any report is absent
 every .md file in the record is marked `<!-- INCOMPLETE SET: ... -->`, and
-when an absent report's cause is one the user can clear the closing text
+when an absent report's cause is one of those the closing text
 ends "Tell the user: ...", which repeats each such cause as the run's
 summary. Apart from the retry, a cause changes what is reported, never what
 is decided: the absence, the closing text and the exit code turn only on
@@ -1057,10 +1060,10 @@ def wait_for_cells(running: dict,
                     # Not for Question 4: the other reports do not depend on its answer.
                     tell = ""
                     if (not is_question_4
-                            and cause_class in cell_common.USER_CLEARABLE_CAUSE_CLASSES
+                            and cause_class in cell_common.TOLD_TO_THE_USER_CAUSE_CLASSES
                             and (report.runtime, cause_class) not in told_the_user):
                         told_the_user.add((report.runtime, cause_class))
-                        tell = f". Tell the user: {user_clearable_cause_text(report)}."
+                        tell = f". Tell the user: {cause_to_tell_the_user_text(report)}."
                     print(f"FAILED (exit {exit_text}): {name}{cell_common.CAUSE_SEPARATOR}"
                           f"{cause} (stderr kept: {attempt.stderr_path})"
                           f"{STOPPED_CELL_UNFINISHED_REPORT_DELETED_PHRASE if report_deleted else ''}{tell}",
@@ -1090,19 +1093,19 @@ def wait_for_cells(running: dict,
 
 
 def tell_the_user_sentence(absent: dict) -> str:
-    """Return user-actionable causes with their logs, or an empty string."""
+    """Return the causes the user is told of, with their logs, or an empty string."""
     causes = {}
     for report in absent.values():
-        if report.cause_class in cell_common.USER_CLEARABLE_CAUSE_CLASSES:
+        if report.cause_class in cell_common.TOLD_TO_THE_USER_CAUSE_CLASSES:
             causes[(report.runtime, report.cause_class)] = report
     if not causes:
         return ""
     return "Tell the user: " + "; ".join(
-        user_clearable_cause_text(report) for report in causes.values()) + "."
+        cause_to_tell_the_user_text(report) for report in causes.values()) + "."
 
 
-def user_clearable_cause_text(report: AbsentReport) -> str:
-    """One cause the user can clear, with the log that shows it."""
+def cause_to_tell_the_user_text(report: AbsentReport) -> str:
+    """One cause the user is told of, with the log that shows it."""
     return (f"{report.runtime} {report.cause_class}{cell_common.CAUSE_SEPARATOR}"
             f"{report.detail} (log: {report.log_path})")
 
