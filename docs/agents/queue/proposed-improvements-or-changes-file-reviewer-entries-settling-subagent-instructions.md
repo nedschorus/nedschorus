@@ -57,7 +57,7 @@ When the change is new work rather than an edit of the GHI-MD, file a new GHI, a
 
 ### Worth doing, but not doable now
 
-Leave the entry open, with its try recorded: the open entry is the reminder, and no task is needed. A maintenance-job of GHI [Regular maintenance: the list of maintenance jobs, how often each runs, and how each reaches the user](https://github.com/nedschorus/nedschorus/issues/1058) is to list every entry open more than 7 days. When a program the change needs fails, such as `scripts/ghi-issue-write.py`, and running it again does not help, the change is not doable now: say in the try what the program printed.
+Leave the entry open, with its try recorded: the open entry is the reminder, and no task is needed. A maintenance-job of GHI [Regular maintenance: the list of maintenance jobs, how often each runs, and how each reaches the user](https://github.com/nedschorus/nedschorus/issues/1058) is to list every entry open more than 7 days. When a program the change needs fails, such as `scripts/ghi-issue-write.py`, the change is not doable now: say in the try what the program printed.
 
 ### Goes to the user
 
