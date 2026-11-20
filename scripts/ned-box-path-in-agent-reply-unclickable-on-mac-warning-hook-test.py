@@ -264,7 +264,7 @@ def run_hook(stdin_text):
                           text=True, timeout=60, env=environment)
 
 
-this_machine_is_ned_box = hook.daily_memory_review_mark().this_machine_is_ned_box()
+this_machine_is_ned_box = hook.handoff_user_review_of_agent_memory_stores_mark().this_machine_is_ned_box()
 result = run_hook(json.dumps(prompt_payload(FLAGGED_REPLY)))
 check("as a subprocess, the hook notes the reply on ned-box and is silent elsewhere "
       f"(this machine is {'ned-box' if this_machine_is_ned_box else 'not ned-box'})",

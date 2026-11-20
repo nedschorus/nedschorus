@@ -13,7 +13,11 @@ Each registered Stop or SubagentStop hook is checked two ways:
   - run with stop_hook_active true, from an empty directory and with HOME set
     to an empty directory, it exits 0, prints nothing on stdout or stderr, and
     writes nothing under HOME, which
-    catches a hook that cannot load the rule's module.
+    catches a hook that cannot load the rule's module. The run makes the
+    markdown parser's libraries, markdown-it-py and mdurl, unimportable, so a
+    hook that builds the parser before the rule's check tries to install them
+    under HOME and fails here on every machine, not only where they are not
+    already installed outside HOME.
 That run has nothing for most hooks to speak about, so it cannot show that
 the rule's check comes before the hook's work; each hook's own test does that, with
 a case where the hook would speak but for stop_hook_active.
@@ -37,6 +41,17 @@ RULE_MODULE = ("nc-systems/general-tools/"
 RULE_FUNCTION = "stop_hook_stays_silent_while_agent_answers_a_stop_hook"
 STOP_EVENTS = ("Stop", "SubagentStop")
 HOOK_RUN_TIMEOUT_SECONDS = 60
+# Runs the hook file argv[1] as __main__ with markdown-it-py and mdurl unimportable.
+HOOK_RUNNER_WITHOUT_MARKDOWN_PARSER_LIBRARIES = """
+import runpy, sys
+class MarkdownParserLibrariesHidden:
+    def find_spec(self, name, path=None, target=None):
+        if name.split(".")[0] in ("markdown_it", "mdurl"):
+            raise ImportError(f"{name} is hidden by the stays-silent test")
+sys.meta_path.insert(0, MarkdownParserLibrariesHidden())
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
 
 MISSING_CALL_MESSAGE = (
     "{hook} is registered as a {event} hook and does not call {function}.\n"
@@ -63,7 +78,10 @@ SPOKE_MESSAGE = (
     "a hook that acts or speaks here keeps the agent answering hooks instead of stopping. "
     "The rule and its reasons are in {module}.\n"
     "Fix: in {hook}, move the call of {function} to the hook's first act on its payload, "
-    "and when it returns True exit 0 without printing or writing anything. If the hook "
+    "and when it returns True exit 0 without printing or writing anything.\n"
+    "If the hook or a module it loads builds the markdown parser at import, build it on "
+    "first use instead, since building it can install the parser's libraries under HOME.\n"
+    "If the hook "
     "failed to load {module}, check the path it loads it from.")
 
 failures = []
@@ -121,7 +139,8 @@ def run_hook_while_agent_answers(hook_path, event):
                    "last_assistant_message": "The file is missing."}
         environment = dict(os.environ, HOME=home, CLAUDE_PROJECT_DIR=str(REPOSITORY))
         completed = subprocess.run(
-            [sys.executable, str(REPOSITORY / hook_path)], input=json.dumps(payload),
+            [sys.executable, "-c", HOOK_RUNNER_WITHOUT_MARKDOWN_PARSER_LIBRARIES, str(REPOSITORY / hook_path)],
+            input=json.dumps(payload),
             capture_output=True, text=True, cwd=cwd, env=environment,
             timeout=HOOK_RUN_TIMEOUT_SECONDS)
         written = [str(path.relative_to(home)) for path in Path(home).rglob("*")]

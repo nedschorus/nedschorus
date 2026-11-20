@@ -36,8 +36,8 @@ Kept as a third voice, Subagent: for each subagent the session dispatched,
 what it was asked and what it reported, never its own records. These subagent
 turns have the voice "subagent" even when the session's agent wrote them, as
 it wrote each task. The subagent tracker,
-scripts/handoff-extract-conversation-subagent-tracker-nbd.py, finds them and
-says which records it reads. The tracker is nice-but-dirty: when it cannot be
+scripts/handoff-extract-conversation-subagent-tracker-hack.py, finds them and
+says which records it reads. The tracker is nn-hack: when it cannot be
 loaded or raises, the subagent turns are left out, and one note says so and
 why: as a line in the header of the conversation-tail, which is also what
 stdout gets; as a section of its own, "Subagent tasks and reports left out",
@@ -54,6 +54,18 @@ Alongside the extraction, when it leaves turns behind, the complete filtered
 dialog is written as a sibling file: the tail is the successor's working set,
 the companion is the conversation's history without the raw transcript's tool
 dumps.
+
+The session dialogs the log-store keeps for the past-discussion search hold
+all of a session's turns, and scripts/log-store-session-dialogs-refresh-common.py
+writes them from the session's transcript with this file's renderer for the
+handoff's companion. They differ from the companion in two ways. First, in
+them, an agent paragraph identical to one the agent showed earlier in the
+session becomes one line, "(repeated: <its first eight
+words> …)". A paragraph is text between blank lines. The first copy stays
+whole, and the user's and the subagent turns are never shortened. The
+handoff's own files keep every repeat, since a successor needs the current
+item's closing line. Second, each session dialog ends with a line naming the
+sha256 of the extractor that wrote it, which the companion does not have.
 
 Exit codes: 0 extraction written, 2 bad invocation, 3 transcript not
 found, 4 transcript unusable (empty, unparseable, or boundary not found).
@@ -94,7 +106,7 @@ INJECTED_TEXT_PREFIXES = (
 MAXIMUM_ACKNOWLEDGEMENT_WORDS = 60
 
 SUBAGENT_VOICE = "subagent"
-SUBAGENT_TRACKER_MODULE_FILE_NAME = "handoff-extract-conversation-subagent-tracker-nbd.py"
+SUBAGENT_TRACKER_MODULE_FILE_NAME = "handoff-extract-conversation-subagent-tracker-hack.py"
 # The kind of the one turn that says the subagent turns were left out; it is not a subagent turn.
 SUBAGENT_TURNS_LEFT_OUT_KIND = "left-out"
 
@@ -105,19 +117,27 @@ class TranscriptProblem(Exception):
 
 def project_directory_for_working_directory(working_directory: Path) -> Path:
     """Return the harness project directory holding the worktree's sessions."""
-    # Same rule as claude-code-session-transcript-project-directory-for-agent-seat-common.py,
+    # Same rule as claude-code-session-transcript-lookup-and-text-search-common.py,
     # copied because this script runs copied beside hooks that lack that module; that
     # module's test fails if the two disagree.
     return PROJECTS_ROOT / re.sub(r"[^a-zA-Z0-9]", "-", str(Path(working_directory).resolve()))
 
 
+def transcript_paths_for_session(session_id: str, working_directory: Path) -> list:
+    """Return the keyed transcript when it exists, else every project directory's copy, sorted."""
+    # Same rule as the common module's
+    # claude_code_session_transcript_paths_for_session_id_in_working_directory_project_directory_if_present_else_in_every_project_directory,
+    # copied for the same reason as the folder rule above; that module's test fails if the two disagree.
+    keyed_path = project_directory_for_working_directory(working_directory) / f"{session_id}.jsonl"
+    if keyed_path.is_file():
+        return [keyed_path]
+    return sorted(PROJECTS_ROOT.glob(f"*/{session_id}.jsonl"))
+
+
 def find_transcript_path(session_id: str, working_directory: Path) -> Path:
     """Find a session transcript by keyed lookup, then by search."""
     keyed_path = project_directory_for_working_directory(working_directory) / f"{session_id}.jsonl"
-    if keyed_path.is_file():
-        return keyed_path
-
-    matches = sorted(PROJECTS_ROOT.glob(f"*/{session_id}.jsonl"))
+    matches = transcript_paths_for_session(session_id, working_directory)
     if len(matches) == 1:
         return matches[0]
     if not matches:
@@ -248,7 +268,7 @@ def new_subagent_tracker():
     global _subagent_tracker_module
     if _subagent_tracker_module is None:
         specification = importlib.util.spec_from_file_location(
-            "handoff_extract_conversation_subagent_tracker_nbd", subagent_tracker_module_path())
+            "handoff_extract_conversation_subagent_tracker_hack", subagent_tracker_module_path())
         module = importlib.util.module_from_spec(specification)
         specification.loader.exec_module(module)
         if module.SUBAGENT_VOICE != SUBAGENT_VOICE:
@@ -463,6 +483,37 @@ def subagent_turns_note(turns) -> str:
     return f"; {count} subagent turns, not counted in the words" if count else ""
 
 
+REPEATED_PARAGRAPH_OPENING_WORDS = 8
+# Blank lines, however many, between two paragraphs; captured, so the paragraphs keep their spacing.
+PARAGRAPH_BREAK = re.compile(r"(\n(?:[ \t]*\n)+)")
+
+
+def turns_with_repeated_agent_paragraphs_shortened(turns):
+    """Return the turns with each agent paragraph identical to an earlier agent paragraph made one line.
+
+    The line is "(repeated: <its first eight words> …)"; paragraphs are compared with their outer
+    whitespace stripped. Only "assistant" turns are changed, and only copies after the first.
+    """
+    shown = set()
+    shortened = []
+    for turn in turns:
+        if turn["voice"] != "assistant":
+            shortened.append(turn)
+            continue
+        pieces = PARAGRAPH_BREAK.split(turn["text"])
+        for index in range(0, len(pieces), 2):
+            paragraph = pieces[index].strip()
+            if not paragraph:
+                continue
+            if paragraph in shown:
+                opening = " ".join(paragraph.split()[:REPEATED_PARAGRAPH_OPENING_WORDS])
+                pieces[index] = f"(repeated: {opening} …)"
+            else:
+                shown.add(paragraph)
+        shortened.append(dict(turn, text="".join(pieces)))
+    return shortened
+
+
 SUBAGENT_HEADINGS = {
     "task": "Subagent task",
     "follow-up": "Subagent task, continued",
@@ -550,17 +601,12 @@ def render_companion(turns, report: ExtractionReport) -> str:
     return "\n".join(lines)
 
 
-def render_complete_dialog_of_transcript_as_markdown(transcript_path: Path) -> str:
-    """Return a transcript's complete filtered dialog, subagent turns included.
-
-    A transcript with no dialog turns still yields a dialog, one that says it holds none,
-    so a caller that writes it has a file to say the session was read.
-    """
-    return render_companion(*complete_dialog_turns_and_report(transcript_path))
-
-
 def complete_dialog_turns_and_report(transcript_path: Path):
+    """Return (turns, report) for render_companion to render as a transcript's session dialog for the log-store:
+    its complete filtered dialog, subagent turns included, with each agent paragraph shown before made one line,
+    as turns_with_repeated_agent_paragraphs_shortened says."""
     turns, skip_counts = read_dialog_turns(transcript_path, include_subagent_tasks_and_reports=True)
+    turns = turns_with_repeated_agent_paragraphs_shortened(turns)
     report = ExtractionReport(
         session_id=transcript_path.stem,
         transcript_path=transcript_path,
@@ -573,7 +619,7 @@ def complete_dialog_turns_and_report(transcript_path: Path):
 
 
 def complete_dialog_lines_with_turn_timestamps(transcript_path: Path):
-    """Return (lines, left_out_notes) for the text render_complete_dialog_of_transcript_as_markdown gives.
+    """Return (lines, left_out_notes) for the text of the transcript's session dialog for the log-store.
 
     lines pairs each line with the timestamp of the turn it belongs to: "" for a heading line, or a turn
     whose record has none. left_out_notes holds the text of each note saying the subagent tracker failed,

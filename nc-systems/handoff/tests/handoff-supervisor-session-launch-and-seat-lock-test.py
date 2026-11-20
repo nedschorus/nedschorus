@@ -2,9 +2,9 @@
 """Tests for handoff-supervisor.py: a supervisor's hold on its seat, and the
 session it launches.
 
-The supervisor lock and the process-identity check behind it; adopting a
-session already running; the appended system prompt and the seat environment
-a launched session gets; and the agent-binary update before each launch,
+The supervisor lock and the process-identity check behind it; the refusal to
+start without a pinned task list; the appended system prompt and the seat
+environment a launched session gets; and the agent-binary update before each launch,
 under the machine-wide update lock. The supervisor's other cases are in
 handoff-supervisor-successor-prompt-test.py and
 handoff-supervisor-session-end-and-resume-test.py, beside this file.
@@ -53,21 +53,18 @@ a_process_that_looks_like_a_supervisor = fixture.a_process_that_looks_like_a_sup
 sandboxed_update_lock_path = fixture.sandboxed_update_lock_path
 
 
-def run_adoption_cases(workspace: Path):
-    """Adopting a running session is what lets a hand-started agent reincarnate:
-    a supervisor normally owns only the process it launched itself."""
-    # A process that has already exited: if the startup check stopped firing,
-    # adopting it ends the supervisor at once instead of watching a live process.
-    exited = subprocess.Popen(["true"])  # pylint: disable=consider-using-with
-    exited.wait(timeout=10)
+def run_unpinned_task_list_startup_refusal_cases(workspace: Path):
+    """A supervisor not started by a launcher that pins its task list refuses
+    to start; the read-only --check needs no pin."""
+    this_machine_launcher = ("launch-claude-ubuntu"
+                             if supervisor.handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box()
+                             else "launch-claude-mac")
     for value in (None, "", "   "):
         environment = dict(os.environ)
         environment.pop("CLAUDE_CODE_TASK_LIST_ID", None)
         if value is not None:
             environment["CLAUDE_CODE_TASK_LIST_ID"] = value
-        for arguments in ([], ["--resume-session-id", "retiring-session"],
-                          ["--adopt-session-id", "live-session",
-                           "--adopt-process-id", str(exited.pid)]):
+        for arguments in ([], ["--resume-session-id", "retiring-session"]):
             result = subprocess.run(
                 [sys.executable, str(SCRIPT_PATH), "--agent", "unpinned",
                  "--cd", str(workspace), "--handoff-dir", str(workspace / "unpinned"),
@@ -81,9 +78,9 @@ def run_adoption_cases(workspace: Path):
                   and "startup stopped" in result.stderr
                   and "not started by a launcher that pins its task list" in result.stderr
                   and "CLAUDE_CODE_TASK_LIST_ID is unset or empty" in result.stderr
-                  and "scripts/launch-claude-mac" in result.stderr
-                  and "scripts/launch-claude-ubuntu" in result.stderr
-                  and "start it on the Mac" in result.stderr
+                  and ("To start the agent-seat, ask the user to run "
+                       f"`/Users/el/Projects/nedschorus/scripts/{this_machine_launcher} unpinned` "
+                       "in a Terminal on his Mac.") in result.stderr
                   and not (workspace / "unpinned").exists(), result.stderr)
         result = subprocess.run(
             [sys.executable, str(SCRIPT_PATH), "--check", "--agent", "unpinned",
@@ -94,42 +91,6 @@ def run_adoption_cases(workspace: Path):
         check(f"read-only check needs no task-list pin: {value!r}",
               result.returncode == 1 and "startup stopped" not in result.stderr,
               result.stderr)
-
-    # Not a context manager: the point is a process this test does NOT own a
-    # handle to in the supervisor, which is what adoption exists for.
-    sleeper = subprocess.Popen(  # pylint: disable=consider-using-with
-        [sys.executable, "-c", "import time; time.sleep(30)"])
-    try:
-        adopted = supervisor.AdoptedSession("some-session-id", sleeper.pid)
-        check("an adopted live process reads as running", adopted.poll() is None)
-        adopted.terminate()
-        sleeper.wait(timeout=10)
-        check("an adopted process can be terminated", adopted.poll() == 0)
-        check("terminating an already-gone process is not an error",
-              adopted.terminate() is None)
-    finally:
-        if sleeper.poll() is None:
-            sleeper.kill()
-            sleeper.wait()
-
-    gone = supervisor.AdoptedSession("some-session-id", 99999999)
-    check("a process id that does not exist reads as gone", gone.poll() == 0)
-
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), "--agent", "adopter",
-         "--handoff-dir", str(workspace), "--adopt-session-id", "an-id"],
-        capture_output=True, text=True, check=False,
-    )
-    check("adopting without a process id is refused", result.returncode == 2, result.stderr)
-
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), "--agent", "adopter", "--cd", str(workspace),
-         "--handoff-dir", str(workspace), "--adopt-session-id", "an-id",
-         "--adopt-process-id", "99999999"],
-        capture_output=True, text=True, check=False,
-    )
-    check("adopting a process that is already gone is refused",
-          result.returncode == 2 and "already gone" in result.stderr, result.stderr)
 
 
 def run_process_identity_cases(workspace: Path):
@@ -180,7 +141,11 @@ def run_process_identity_cases(workspace: Path):
     line, answered = supervisor.read_process_command_line(os.getpid())
     check("the real reader reads this process's own command line",
           answered and line is not None and "python" in line.lower(), (answered, line))
-    line, answered = supervisor.read_process_command_line(99999999)
+    # A child that has exited and been reaped names no process, on Linux and on
+    # macOS alike; a made-up id like 99999999 is refused on macOS as too large.
+    reaped = subprocess.Popen([sys.executable, "-c", "pass"])
+    reaped.wait()
+    line, answered = supervisor.read_process_command_line(reaped.pid)
     check("the real reader says ps ANSWERED for a process that is not there",
           answered and line is None, (answered, line))
     real_search_path = os.environ.get("PATH", "")
@@ -221,6 +186,26 @@ def run_process_identity_cases(workspace: Path):
           supervisor.PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS == 15,
           supervisor.PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS)
 
+    # A ps that runs and fails exits 1 with an error, which is not the empty
+    # exit 1 ps gives for a process that is not there.
+    failing_ps_directory = workspace / "failing-ps"
+    failing_ps_directory.mkdir()
+    failing_ps = failing_ps_directory / "ps"
+    failing_ps.write_text("#!/bin/sh\necho 'ps: stub failure' >&2\nexit 1\n", encoding="utf-8")
+    failing_ps.chmod(0o755)
+    complaint = io.StringIO()
+    try:
+        os.environ["PATH"] = f"{failing_ps_directory}:{real_search_path}"
+        with contextlib.redirect_stderr(complaint):
+            line, answered = supervisor.read_process_command_line(os.getpid())
+    finally:
+        os.environ["PATH"] = real_search_path
+    check("a ps that fails with an error is reported as not having answered, not as "
+          "'no such process'", not answered and line is None, (answered, line))
+    check("and the reader prints ps's error, after the ps command exactly as it ran",
+          f"ps -ww -p {os.getpid()} -o args= exited 1: ps: stub failure"
+          in complaint.getvalue(), complaint.getvalue())
+
     alive, detail = supervisor.process_is_supervisor_for_agent(
         99999999, "x", read_command_line=ps_says_no_such_process)
     check("ps answering 'no such process' means not a supervisor",
@@ -260,7 +245,8 @@ def run_process_identity_cases(workspace: Path):
     try:
         with contextlib.redirect_stderr(complaints):
             alive, detail = supervisor.process_is_supervisor_for_agent(
-                unidentifiable.pid, "x", read_command_line=ps_could_not_run)
+                unidentifiable.pid, "x", read_command_line=ps_could_not_run,
+                lock_path=Path("/handoffs/x-supervisor.lock"))
         check("a live but unidentifiable process IS assumed to be the supervisor",
               alive, detail)
         check("and it says it cannot tell, rather than claiming the process is gone",
@@ -269,8 +255,12 @@ def run_process_identity_cases(workspace: Path):
               "could not identify" in complaints.getvalue()
               and "ps could not be run" in complaints.getvalue(),
               complaints.getvalue())
-        check("and names the way out, since whoever asked is now stuck on an assumption",
-              "lock is removed" in complaints.getvalue(), complaints.getvalue())
+        check("and names the way out, since whoever asked is now stuck on an assumption: "
+              "the user checks with the ps command the program ran, then removes the named lock file",
+              f"the user runs `ps -ww -p {unidentifiable.pid} -o args=`" in complaints.getvalue()
+              and "ps has still not answered, so the lock stays" in complaints.getvalue()
+              and "the user removes the supervisor lock /handoffs/x-supervisor.lock"
+              in complaints.getvalue(), complaints.getvalue())
         check("and does not claim a consequence only one of the callers has",
               "this seat will not start" not in complaints.getvalue(),
               complaints.getvalue())
@@ -291,6 +281,32 @@ def run_process_identity_cases(workspace: Path):
 
     check("and once it is gone it is no longer recognised",
           not supervisor.process_is_supervisor_for_agent(running.pid, "identity-seat")[0])
+
+    # The stand-in is reached through a process that waits before its exec,
+    # so for that time its command line is not a supervisor's: a fixture that
+    # yielded as soon as Popen returned would hand the case a process that is
+    # not yet a supervisor, as `ps` showed `[python3]` mid-exec under load.
+    late_exec = ("import json, os, time\n"
+                 "time.sleep(0.5)\n"
+                 "command = json.loads(os.environ['STAND_IN_SUPERVISOR_COMMAND'])\n"
+                 "os.execv(command[0], command)\n")
+    with a_process_that_looks_like_a_supervisor(
+            workspace, "late-exec-seat",
+            launched_through=[sys.executable, "-c", late_exec]) as running:
+        alive, detail = supervisor.process_is_supervisor_for_agent(
+            running.pid, "late-exec-seat")
+        check("the stand-in supervisor is handed over only once it is running", alive, detail)
+
+    try:
+        with a_process_that_looks_like_a_supervisor(
+                workspace, "never-runs-seat",
+                launched_through=["sh", "-c", "exit 3"]):
+            check("a stand-in supervisor that never runs is not handed over", False,
+                  "the fixture yielded")
+    except RuntimeError as refusal:
+        check("a stand-in supervisor that never runs is not handed over",
+              "never printed" in str(refusal) and "exit status is 3" in str(refusal),
+              str(refusal))
 
     # argparse accepts --agent=NAME as well as --agent NAME. No launcher writes
     # it that way today (checked across both launchers and both recovery
@@ -543,6 +559,72 @@ def run_lock_cases(workspace: Path):
         unidentifiable.wait()
     unknown_state_path.unlink(missing_ok=True)
     unknown_lock_path.unlink(missing_ok=True)
+    run_liveness_or_cannot_tell_cases(workspace)
+
+
+def run_liveness_or_cannot_tell_cases(workspace: Path):
+    """The three-answer query keeps "cannot tell" apart from yes and no."""
+    state_path = workspace / "threeway-supervisor-state.json"
+    lock_path = workspace / "threeway-supervisor.lock"
+    ps_fails = lambda _process_id: (None, False)  # noqa: E731
+    answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(state_path)
+    check("with no state, the three-answer query says not watching",
+          answer == supervisor.SUPERVISOR_LIVENESS_NOT_WATCHING, explanation)
+
+    supervisor.stamp_heartbeat(state_path, {"launched_session_id": "s"})
+    answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(state_path)
+    check("with no lock, the three-answer query says not watching",
+          answer == supervisor.SUPERVISOR_LIVENESS_NOT_WATCHING and "no supervisor lock" in explanation,
+          explanation)
+
+    lock_path.write_text("garbage\n", encoding="utf-8")
+    answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(state_path)
+    check("an unreadable lock is cannot tell, not no",
+          answer == supervisor.SUPERVISOR_LIVENESS_CANNOT_TELL and "unreadable" in explanation,
+          explanation)
+    alive, explanation = supervisor.supervisor_liveness(state_path)
+    check("the two-answer reading still takes an unreadable lock as no supervisor",
+          not alive and explanation.startswith("no supervisor is watching — ")
+          and "unreadable" in explanation, explanation)
+
+    holder = subprocess.Popen(  # pylint: disable=consider-using-with
+        [sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        lock_path.write_text(f"{holder.pid}\n", encoding="utf-8")
+        complaints = io.StringIO()
+        with contextlib.redirect_stderr(complaints):
+            answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(
+                state_path, read_command_line=ps_fails)
+        check("ps failing on a live lock holder is cannot tell, not yes",
+              answer == supervisor.SUPERVISOR_LIVENESS_CANNOT_TELL
+              and "cannot tell" in explanation and "assumed present" not in explanation,
+              explanation)
+        check("the three-answer query prints no assumed-supervisor notice",
+              complaints.getvalue() == "", complaints.getvalue())
+
+        answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(
+            state_path, read_command_line=lambda _p: ("python3 /x/handoff-supervisor.py --agent threeway", True))
+        check("an identified supervisor is watching",
+              answer == supervisor.SUPERVISOR_LIVENESS_WATCHING
+              and explanation.startswith("supervisor alive — "), explanation)
+
+        answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(
+            state_path, read_command_line=lambda _p: ("python3 other.py", True))
+        check("a live process that is not the supervisor is not watching",
+              answer == supervisor.SUPERVISOR_LIVENESS_NOT_WATCHING
+              and explanation.startswith("no supervisor is watching — "), explanation)
+    finally:
+        holder.kill()
+        holder.wait()
+
+    lock_path.write_text("99999999\n", encoding="utf-8")
+    answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(
+        state_path, read_command_line=ps_fails)
+    check("ps failing on a dead id is answered as not watching",
+          answer == supervisor.SUPERVISOR_LIVENESS_NOT_WATCHING and "os.kill" in explanation,
+          explanation)
+    state_path.unlink(missing_ok=True)
+    lock_path.unlink(missing_ok=True)
 
 
 
@@ -556,12 +638,12 @@ def run_appended_system_prompt_cases(workspace: Path):
     recovered seat silently running without the appended text.
     """
     def boot_once(name: str, extra_arguments: list):
-        """Boot-ignite once with an argument-recording stub; return its argv,
+        """Start a fresh agent-session at boot once with an argument-recording stub; return its argv,
         one argument per line, and the supervisor's stderr."""
         handoff_directory = workspace / name
         handoff_directory.mkdir(parents=True, exist_ok=True)
         (handoff_directory / f"{name}-handoff.md").write_text(
-            "written-at: 2026-08-31T00:00:00Z\nnext-step: carry on\nrestart-counter: 5\n",
+            "written-at: 2026-08-31T00:00:00Z\nnext-step: carry on\nsession-handoff-sequence-number: 5\n",
             encoding="utf-8",
         )
         supervisor.write_supervisor_state(
@@ -823,11 +905,160 @@ def run_launched_session_seat_environment_cases(workspace: Path):
           f"{recorded} state session_id={state.get('session_id')}")
 
 
+def run_launched_session_github_token_cases(workspace: Path):
+    """Every launched session gets GH_TOKEN set to the token of the GitHub account its
+    agent-seat acts as: merge-lane-2 as ned-review-merge, every other agent-seat as its
+    machine's account. Every way an agent-seat is started runs the supervisor, so this is
+    what makes a crash recovery or a restart at login act as the right account.
+
+    The supervisor is started with a decoy GH_TOKEN, as a recovery run from another
+    agent-session's shell would start it, so an inherited token cannot pass for the one
+    the supervisor set. When the token file is missing, empty or unreadable the supervisor
+    starts no session, exits 5 and names the account and the file."""
+    directory = workspace / "github-token-cases"
+    directory.mkdir(parents=True, exist_ok=True)
+    record_path = directory / "gh-token.json"
+    stub_agent = directory / "stub-agent"
+    stub_agent.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os\n"
+        f"open({str(record_path)!r}, 'w').write(json.dumps(os.environ.get('GH_TOKEN')))\n",
+        encoding="utf-8")
+    stub_agent.chmod(0o755)
+    machine_account = ("ubuntu-claude"
+                       if supervisor.handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box()
+                       else "mac-claude")
+    machine_launcher = "launch-claude-ubuntu" if machine_account == "ubuntu-claude" else "launch-claude-mac"
+
+    def start_supervisor(agent, home=None):
+        record_path.unlink(missing_ok=True)
+        seat_directory = directory / f"{agent}-directory"
+        seat_directory.mkdir(exist_ok=True)
+        environment = dict(os.environ, GH_TOKEN="decoy-inherited-token")
+        if home is not None:
+            environment["HOME"] = str(home)
+        completed = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "--agent", agent, "--cd", str(seat_directory),
+             "--handoff-dir", str(directory / f"{agent}-handoffs"),
+             "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0"],
+            capture_output=True, text=True, check=False,
+            stdin=subprocess.DEVNULL, timeout=60, env=environment)
+        recorded = json.loads(record_path.read_text()) if record_path.is_file() else "no session"
+        return completed, recorded
+
+    for agent, account in (("merge-lane-2", "ned-review-merge"),
+                           ("github-token-ordinary-seat", machine_account)):
+        completed, recorded = start_supervisor(agent)
+        check(f"a session of {agent} gets the token of {account}, not the inherited GH_TOKEN",
+              recorded == fixture.FIXTURE_GITHUB_TOKEN_BY_ACCOUNT[account],
+              f"{recorded!r}; exit {completed.returncode}: {completed.stderr[-600:]}")
+
+    user_fills_the_file = "write the GitHub token of ned-review-merge to"
+    for label, prepare, remedy in (
+            ("missing", lambda token_file: None, user_fills_the_file),
+            ("empty", lambda token_file: token_file.write_text("\n", encoding="utf-8"),
+             user_fills_the_file),
+            ("unreadable", lambda token_file: (token_file.write_text("x\n", encoding="utf-8"),
+                                               token_file.chmod(0)),
+             "readable by the Unix user"),
+    ):
+        home = directory / f"home-with-{label}-token-file"
+        (home / ".config" / "nedschorus").mkdir(parents=True, exist_ok=True)
+        token_file = home / ".config" / "nedschorus" / "ned-review-merge.token"
+        prepare(token_file)
+        completed, recorded = start_supervisor("merge-lane-2", home=home)
+        check(f"a {label} token file: the supervisor starts no session and exits 5, "
+              "naming the agent-seat, the account, the file, and the leftover shell the user exits before he runs this machine's launcher in a Terminal on his Mac",
+              completed.returncode == supervisor.AGENT_SEAT_GITHUB_TOKEN_UNREADABLE_EXIT_STATUS == 5
+              and recorded == "no session"
+              and "the agent-seat merge-lane-2 was not started" in completed.stderr
+              and "ned-review-merge" in completed.stderr
+              and str(token_file) in completed.stderr
+              and "Do not start the agent-seat any other way" in completed.stderr
+              and remedy in completed.stderr
+              and "If you are an agent, do not open, write or change the file" in completed.stderr
+              and ("Once the file is fixed: ask the user, in the Terminal on his Mac that shows the "
+                   "agent-seat's tmux session, first to exit the shell the launcher left open there, if it "
+                   "left one, and then to run "
+                   f"`/Users/el/Projects/nedschorus/scripts/{machine_launcher} merge-lane-2`.") in completed.stderr,
+              f"{recorded!r}; exit {completed.returncode}: {completed.stderr[-800:]}")
+        if token_file.exists():
+            token_file.chmod(0o600)
+
+    # A launcher runs the check outside the agent-seat's pane, where the task list is not
+    # pinned yet, so the check must not stop at the pin.
+    def check_token_file_only(agent, home=None):
+        record_path.unlink(missing_ok=True)
+        environment = {key: value for key, value in os.environ.items()
+                       if key != "CLAUDE_CODE_TASK_LIST_ID"}
+        if home is not None:
+            environment["HOME"] = str(home)
+        completed = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "--agent", agent,
+             "--agent-command", str(stub_agent),
+             "--agent-seat-github-token-file-readable-check-only"],
+            capture_output=True, text=True, check=False,
+            stdin=subprocess.DEVNULL, timeout=60, env=environment)
+        return completed, "a session" if record_path.is_file() else "no session"
+
+    completed, recorded = check_token_file_only("merge-lane-2")
+    check("--agent-seat-github-token-file-readable-check-only with a token file: exits 0, "
+          "prints nothing and starts no session, though the task list is not pinned",
+          completed.returncode == 0 and recorded == "no session"
+          and completed.stdout == "" and completed.stderr == "",
+          f"{recorded}; exit {completed.returncode}: {completed.stderr[-600:]}")
+    completed, recorded = check_token_file_only(
+        "merge-lane-2", home=directory / "home-with-missing-token-file")
+    check("--agent-seat-github-token-file-readable-check-only with no token file: exits 5 "
+          "with the refusal a start prints, and starts no session",
+          completed.returncode == supervisor.AGENT_SEAT_GITHUB_TOKEN_UNREADABLE_EXIT_STATUS
+          and recorded == "no session"
+          and "handoff-supervisor: the agent-seat merge-lane-2 was not started" in completed.stderr,
+          f"{recorded}; exit {completed.returncode}: {completed.stderr[-600:]}")
+
+
+def run_launched_session_claude_code_tmpdir_cases(workspace: Path):
+    """On ned-box a launched session gets CLAUDE_CODE_TMPDIR, the main-disk directory the daily
+    temp-folder deletion also sweeps; elsewhere the supervisor leaves the variable as it found it,
+    since that path exists only on ned-box."""
+    directory = workspace / "tmpdir-cases"
+    directory.mkdir(parents=True, exist_ok=True)
+    record_path = directory / "tmpdir.json"
+    stub_agent = directory / "stub-agent"
+    stub_agent.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os\n"
+        f"open({str(record_path)!r}, 'w').write(json.dumps(os.environ.get('CLAUDE_CODE_TMPDIR')))\n",
+        encoding="utf-8")
+    stub_agent.chmod(0o755)
+    for on_ned_box, expected in ((True, supervisor.NED_BOX_CLAUDE_CODE_TMPDIR),
+                                 (False, "decoy-inherited-tmpdir")):
+        record_path.unlink(missing_ok=True)
+        with mock.patch.object(supervisor.handoff_user_review_of_agent_memory_stores_mark,
+                               "this_machine_is_ned_box", return_value=on_ned_box), \
+                mock.patch.dict(os.environ, {"CLAUDE_CODE_TMPDIR": "decoy-inherited-tmpdir"}):
+            supervisor.launch_agent_session(str(stub_agent), "tmpdir-session", directory,
+                                            "prompt").wait(timeout=60)
+        recorded = json.loads(record_path.read_text()) if record_path.is_file() else None
+        check(f"a session launched {'on ned-box' if on_ned_box else 'off ned-box'} runs with "
+              f"CLAUDE_CODE_TMPDIR={expected}", recorded == expected, str(recorded))
+    deletion_path = (Path(SCRIPT_PATH).resolve().parents[1] / "general-tools"
+                     / "claude-code-temp-folders-of-exited-agent-sessions-delete.py")
+    deletion_spec = importlib.util.spec_from_file_location("temp_folders_delete", deletion_path)
+    deletion = importlib.util.module_from_spec(deletion_spec)
+    deletion_spec.loader.exec_module(deletion)
+    check("the daily temp-folder deletion sweeps the directory ned-box sessions are given",
+          supervisor.NED_BOX_CLAUDE_CODE_TMPDIR in deletion.DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES,
+          str(deletion.DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES))
+
+
 with fixture.handoff_supervisor_suite_workspace() as workspace:
-    run_adoption_cases(workspace)
+    run_unpinned_task_list_startup_refusal_cases(workspace)
     run_appended_system_prompt_cases(workspace)
     run_appended_system_prompt_agent_part_cases(workspace)
     run_launched_session_seat_environment_cases(workspace)
+    run_launched_session_github_token_cases(workspace)
+    run_launched_session_claude_code_tmpdir_cases(workspace)
     run_process_identity_cases(workspace)
     run_lock_cases(workspace)
 
@@ -885,15 +1116,20 @@ with tempfile.TemporaryDirectory() as update_workspace:
     # A hung update is killed at the timeout and the launch proceeds. The
     # launchers allow 120s for a real download; 1s here bounds the case. exec,
     # so the kill at the timeout reaches the sleep and nothing outlives the case.
+    hung_update_timeout_seconds = 1
+    # A backstop only: the status and the message below are what show the
+    # timeout fired. Ten times the timeout or more, so a busy machine cannot
+    # fail it, and far below the stub's 30-second sleep.
+    hung_update_backstop_seconds = 15 * hung_update_timeout_seconds
     agent = an_agent_recording_its_invocations(update_workspace, body="exec sleep 30")
     started = time.monotonic()
     captured = io.StringIO()
     with contextlib.redirect_stderr(captured):
         result = supervisor.agent_binary_update_under_lock.run_agent_binary_update_under_lock(
-            [str(agent), "update"], 1, "handoff-supervisor")
+            [str(agent), "update"], hung_update_timeout_seconds, "handoff-supervisor")
     elapsed = time.monotonic() - started
     check("a hung update is killed at the timeout rather than blocking the launch",
-          elapsed < 15, f"{elapsed:.1f}s")
+          elapsed < hung_update_backstop_seconds, f"{elapsed:.1f}s")
     check("a timed-out update returns a nonzero status", result == 124, str(result))
     check("a killed update says so, because the supervisor is what killed it",
           "was stopped" in captured.getvalue(), captured.getvalue())
@@ -924,9 +1160,7 @@ with tempfile.TemporaryDirectory() as update_workspace:
     # The wiring. launch_agent_session is the ONE site every restart path
     # reaches a session through: the supervisor's relaunch after a handoff,
     # recover-crashed-seats.py, and the login restart, which goes through
-    # recovery. An adopted session never passes through here, which is what
-    # keeps the update off the adopted path structurally rather than by
-    # where the call happens to sit.
+    # recovery.
     agent = an_agent_recording_its_invocations(update_workspace)
     supervisor.launch_agent_session(
         str(agent), "session-without-update", Path(update_workspace), "prompt",
@@ -947,14 +1181,17 @@ with tempfile.TemporaryDirectory() as update_workspace:
 with tempfile.TemporaryDirectory() as update_workspace:
     agent = an_agent_recording_its_invocations(update_workspace)
     captured = io.StringIO()
+    # Counting the lock attempts, not timing them: one attempt that cannot
+    # block is what "immediately" means, and a busy machine cannot change it.
     with AnotherUpdateHoldsTheLock(sandboxed_update_lock_path):
-        started = time.monotonic()
-        with contextlib.redirect_stderr(captured):
+        with mock.patch.object(fcntl, "flock", wraps=fcntl.flock) as lock_attempts, \
+                contextlib.redirect_stderr(captured):
             supervisor.update_agent_binary(str(agent), 30)
-        elapsed = time.monotonic() - started
-    check("a held lock skips the update immediately",
-          invocations_of(update_workspace) == [] and elapsed < 0.5,
-          f"{invocations_of(update_workspace)} after {elapsed:.1f}s")
+    lock_attempt_flags = [call.args[1] for call in lock_attempts.call_args_list]
+    check("a held lock skips the update immediately: one lock attempt, which does not wait",
+          invocations_of(update_workspace) == []
+          and len(lock_attempt_flags) == 1 and lock_attempt_flags[0] & fcntl.LOCK_NB,
+          f"{invocations_of(update_workspace)} lock flags {lock_attempt_flags}")
     check("the skipped update is reported in exactly one line",
           "Another claude update is running; this launch uses the claude already installed.\n"
           == captured.getvalue(), captured.getvalue())
@@ -962,20 +1199,20 @@ with tempfile.TemporaryDirectory() as update_workspace:
 with tempfile.TemporaryDirectory() as update_workspace:
     # Timeout 0 is --agent-update-timeout-seconds 0, which every supervisor
     # case in the handoff-supervisor suites passes: it must skip the update
-    # entirely, lock included. Held lock: returning at once proves it neither
-    # waited nor reported. Fresh path: the lock file never even being created
+    # entirely, lock included. Held lock: no lock attempt at all proves it
+    # neither waited nor reported. Fresh path: the lock file never even being created
     # proves it was never opened.
     agent = an_agent_recording_its_invocations(update_workspace)
     captured = io.StringIO()
     with AnotherUpdateHoldsTheLock(sandboxed_update_lock_path):
-        started = time.monotonic()
-        with contextlib.redirect_stderr(captured):
+        with mock.patch.object(fcntl, "flock", wraps=fcntl.flock) as lock_attempts, \
+                contextlib.redirect_stderr(captured):
             supervisor.update_agent_binary(str(agent), 0)
-        elapsed = time.monotonic() - started
     check("a zero timeout does not wait on a held lock, and says nothing",
-          elapsed < 0.5 and captured.getvalue() == ""
+          lock_attempts.call_count == 0 and captured.getvalue() == ""
           and invocations_of(update_workspace) == [],
-          f"{elapsed:.2f}s {captured.getvalue()!r} {invocations_of(update_workspace)}")
+          f"{lock_attempts.call_count} lock attempts {captured.getvalue()!r} "
+          f"{invocations_of(update_workspace)}")
     unused_lock_path = Path(update_workspace) / "unused-lock" / "agent-binary-update.lock"
     supervisor.agent_binary_update_under_lock.AGENT_BINARY_UPDATE_LOCK_PATH = str(
         unused_lock_path)

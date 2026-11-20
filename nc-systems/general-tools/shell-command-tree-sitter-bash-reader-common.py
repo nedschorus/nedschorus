@@ -62,6 +62,16 @@ _python_libraries_pinned_requirements_install_if_missing_then_import_spec = impo
     Path(__file__).resolve().with_name("python-libraries-pinned-requirements-install-if-missing-then-import-common.py"))
 python_libraries_pinned_requirements_install_if_missing_then_import_common = importlib.util.module_from_spec(_python_libraries_pinned_requirements_install_if_missing_then_import_spec)
 _python_libraries_pinned_requirements_install_if_missing_then_import_spec.loader.exec_module(python_libraries_pinned_requirements_install_if_missing_then_import_common)
+_failed_command_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().with_name("failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py"))
+_failed_command_lines = importlib.util.module_from_spec(_failed_command_lines_spec)
+_failed_command_lines_spec.loader.exec_module(_failed_command_lines)
+_attendance_check_spec = importlib.util.spec_from_file_location(
+    "agent_session_unattended_by_user_check_common",
+    Path(__file__).resolve().with_name("agent-session-unattended-by-user-check-common.py"))
+_attendance_check = importlib.util.module_from_spec(_attendance_check_spec)
+_attendance_check_spec.loader.exec_module(_attendance_check)
 
 REQUIREMENTS_FILE = python_libraries_pinned_requirements_install_if_missing_then_import_common.PINNED_REQUIREMENTS_FILE
 # The Bash guards run in parallel with a 30-second hook timeout; a cached wheel installs in about a second.
@@ -191,8 +201,12 @@ class SimpleCommand(list):
     command whose child_shell starts with another's runs inside it, so it sees
     that shell's cd but its own cd does not leak out. redirects holds
     (operator, target) pairs, heredocs the heredocs fed to this command or to
-    the pipeline that starts on its heredoc line.
+    the pipeline that starts on its heredoc line. in_while_or_until_loop_condition
+    is True for a command in the condition of a while or until loop, including
+    one inside a substitution there, and False for one in the loop's body.
     """
+
+    in_while_or_until_loop_condition = False
 
     def __init__(self, words, child_shell, redirects, heredocs):
         super().__init__(words)
@@ -261,7 +275,8 @@ def simple_command_program_index_skipping_wrappers(words):
     The program is the first word after environment assignments and after
     wrappers such as sudo, timeout and xargs with their options and operands;
     a later word, such as the file of `tee /tmp/bash`, is not the program.
-    index is None when no word is left to be the program. receives_standard_input
+    index is None when no word is left to be the program, and for `command -v`
+    and `command -V`, which run nothing. receives_standard_input
     is false when a wrapper, such as xargs, keeps its standard input from the
     program.
     """
@@ -296,10 +311,19 @@ def _wrappers_read(words):
         own = []
         options.append((name, own))
         index = _index_after_options(words, index + 1, wrapper, own)
+        if name == "command" and any(_is_short_option_cluster_holding(option, "vV")
+                                     for option, _ in own):
+            # command -v and command -V only describe the next word; they run nothing.
+            return None, receives_standard_input, options
         if wrapper.operands:
             # Options may follow the operand too, as in timeout 60 --signal=KILL.
             index = _index_after_options(words, index + wrapper.operands, wrapper, own)
     return None, receives_standard_input, options
+
+
+def _is_short_option_cluster_holding(option, letters):
+    return (option.startswith("-") and not option.startswith("--")
+            and any(letter in option[1:] for letter in letters))
 
 
 def _index_after_options(words, index, wrapper, options):
@@ -315,6 +339,84 @@ def _index_after_options(words, index, wrapper, options):
             options.append((option, None))
         index += 1
     return index
+
+
+SHELL_STRING_RUNNERS = ("bash", "sh", "zsh")
+# In a short-option cluster such as -eo, each o or O takes an option name from the next word.
+SHELL_VALUE_LETTERS = "oO"
+# bash's long options that take the next word as their value.
+SHELL_VALUE_LONG_OPTIONS = {"--rcfile", "--init-file"}
+# ssh's getopt string is "1246ab:c:e:fgi:kl:m:no:p:qstvxAB:CD:E:F:GI:J:KL:MNO:P:Q:R:S:TVw:W:XYy": these letters take a value.
+SSH_VALUE_LETTERS = "bceilmopBDEFIJLOPQRSwW"
+# -G prints the configuration and -V the version; with either, ssh connects to nothing and runs nothing.
+SSH_RUN_NOTHING_LETTERS = "GV"
+
+
+def shell_runner_options_read(arguments):
+    """Read the options of bash, sh or zsh as bash reads them.
+
+    Return (flags, operand_index): flags is the set of short-option letters left on, with
+    noexec as n; operand_index is the index of the first word after the options, which is
+    the command string under -c, or len(arguments) when there is none.
+    """
+    flags = set()
+    index = 0
+    while index < len(arguments):
+        word = arguments[index]
+        if word == "--":
+            return flags, index + 1
+        if not word.startswith(("-", "+")) or word == "+":
+            return flags, index
+        if word.startswith("--"):
+            if word in SHELL_VALUE_LONG_OPTIONS:
+                index += 1  # the value is the next word
+            index += 1
+            continue
+        turns_on = word[0] == "-"
+        for letter in word[1:]:
+            if letter in SHELL_VALUE_LETTERS:
+                index += 1  # each value is a following word, in order
+                if letter == "o" and index < len(arguments) and arguments[index] == "noexec":
+                    letter = "n"
+                else:
+                    continue
+            if turns_on:
+                flags.add(letter)
+            else:
+                flags.discard(letter)
+        index += 1
+    return flags, index
+
+
+def shell_command_string(arguments):
+    """Return the command string of `bash -c <string>`, or None without -c or under -n, which runs nothing."""
+    flags, operand_index = shell_runner_options_read(arguments)
+    if "c" not in flags or "n" in flags or operand_index >= len(arguments):
+        return None
+    return arguments[operand_index]
+
+
+def ssh_remote_command(arguments):
+    """Return the command ssh runs on the remote machine, or None when there is none."""
+    index = 0
+    while index < len(arguments):
+        word = arguments[index]
+        if word == "--":
+            index += 1
+            break
+        if not word.startswith("-") or word == "-":
+            break
+        letters = word[1:]
+        for position, letter in enumerate(letters):
+            if letter in SSH_RUN_NOTHING_LETTERS:
+                return None
+            if letter in SSH_VALUE_LETTERS:
+                if position == len(letters) - 1:
+                    index += 1  # the value is the next word
+                break
+        index += 1
+    remote = arguments[index + 1:]  # past the destination
+    return " ".join(remote) if remote else None
 
 
 def shell_reader_python_libraries_pinned_requirements_pip_install(runner=subprocess.run):
@@ -360,7 +462,14 @@ def load_parser(importer=import_tree_sitter_bash, installer=shell_reader_python_
     except ImportError:
         tree_sitter, tree_sitter_bash = _install_then_import(importer, installer, clock,
                                                              fresh_process_check)
+    TREE_SITTER_QUERY_CLASSES_BY_LANGUAGE_CLASS[tree_sitter.Language] = (tree_sitter.Query,
+                                                                         tree_sitter.QueryCursor)
     return tree_sitter.Parser(tree_sitter.Language(tree_sitter_bash.language()))
+
+
+# A query runs only with the classes of the tree-sitter module its parser was made from, and an
+# install can import another copy of that module while a parser from the first is still in use.
+TREE_SITTER_QUERY_CLASSES_BY_LANGUAGE_CLASS = {}
 
 
 def _install_then_import(importer, installer, clock, fresh_process_check):
@@ -381,8 +490,7 @@ def parser():
 
 
 def _session_unattended(environment):
-    return bool(environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
-                or environment.get("CLAUDE_CODE_SESSION_ATTENDED") == "0")
+    return _attendance_check.agent_session_unattended_by_user(environment)
 
 
 @contextlib.contextmanager
@@ -392,8 +500,8 @@ def agent_session_attendance_environment_variables_temporarily_set_for_test(atte
     A test of a message that names whom to tell sets both, so it reads the same in any
     agent-session it runs in.
     """
-    values = {"CLAUDE_CODE_SESSION_ATTENDED": attended,
-              "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": reincarnation_owned_by_caller}
+    values = {_attendance_check.SESSION_ATTENDED_VARIABLE: attended,
+              _attendance_check.REINCARNATION_OWNED_BY_CALLER_VARIABLE: reincarnation_owned_by_caller}
     saved = {name: os.environ.get(name) for name in values}
 
     def put(settings):
@@ -434,32 +542,37 @@ def tree_sitter_bash_install_failure_report_words_build(host, install_output, co
             f"Then pass on what the install printed, quoted as it is: {install_output}")
 
 
-def parser_unavailable_hook_output(guard_name, error, environment=os.environ):
-    """Return the PreToolUse JSON that lets the command through and says it was not checked."""
+def parser_unavailable_hook_output(guard_name, error, next_step_lines, environment=os.environ):
+    """Return the PreToolUse JSON that lets the command through and says it was not checked.
+
+    next_step_lines is the guard's own text, one instruction per line, telling the agent what to
+    check now that the command has run. Each guard gives its own, because an undo that is safe
+    after one guard's command does further damage after another's, such as a second force push.
+    """
     host = socket.gethostname().split(".")[0]
+    next_steps = next_step_lines.rstrip("\n") + "\n"
     if isinstance(error, ShellCommandUnreadable):
         message = (
             f"{guard_name} let this command through without checking it, and the command has "
             f"run: the shell command reader ({Path(__file__).name}) failed on it on {host} "
             f"({error.install_output}).\n"
-            f"Look at what the command did. If the command did what {guard_name} exists to "
-            f"stop, undo what the command did, now, where you can.\n"
+            + next_steps
             + report_to_user_or_dispatching_agent_instruction_build(
                 f"\"{guard_name} let a command through unchecked on {host}, because the shell "
                 f"command reader failed on it ({error.install_output}).\" After those words, "
                 f"{COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION}, then say whether it did what "
-                f"{guard_name} exists to stop, what you undid, and what you could not undo.",
+                f"{guard_name} exists to stop.",
                 environment))
-        return json.dumps({"hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "additionalContext": message,
-        }})
+        user_notice = (
+            f"{guard_name} let a command through unchecked on {host}, because the shell command "
+            f"reader failed on it ({error.install_output}). The agent has been told to check "
+            f"what the command did.")
+        return _parser_unavailable_hook_output_json(message, user_notice)
     message = (
         f"{guard_name} let this command through without checking it, and the command has run: "
         f"the shell parser tree-sitter-bash is missing on {host}, and installing it failed.\n"
-        f"Look at what the command did. If the command did what {guard_name} exists to stop, "
-        f"undo what the command did, now, where you can.\n"
-        f"Later commands are let through unchecked too, each with this message, until an "
+        + next_steps
+        + f"Later commands are let through unchecked too, each with this message, until an "
         f"install succeeds; the first command after {INSTALL_RETRY_SECONDS // 60} minutes "
         f"have passed tries the install again.\n"
         + report_to_user_or_dispatching_agent_instruction_build(
@@ -467,12 +580,21 @@ def parser_unavailable_hook_output(guard_name, error, environment=os.environ):
                 host, error.install_output,
                 "the project's Bash guards are not checking commands there")
             + f"\nThen {COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION}, and say whether it did what "
-            f"{guard_name} exists to stop, what you undid, and what you could not undo.",
+            f"{guard_name} exists to stop.",
             environment))
-    return json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "additionalContext": message,
-    }})
+    user_notice = (
+        f"{guard_name} let a command through unchecked on {host}: tree-sitter-bash is missing "
+        f"there and installing it failed ({error.install_output}). The agent has been told to "
+        f"check what the command did and how to install it by hand.")
+    return _parser_unavailable_hook_output_json(message, user_notice)
+
+
+def _parser_unavailable_hook_output_json(agent_notice, user_notice):
+    """Return the PreToolUse JSON giving agent_notice to the agent and user_notice to the user."""
+    return json.dumps({
+        "hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": agent_notice},
+        "systemMessage": user_notice,
+    })
 
 
 def report_to_user_or_dispatching_agent_instruction_build(words, environment=os.environ):
@@ -487,8 +609,7 @@ def report_to_user_or_dispatching_agent_instruction_build(words, environment=os.
                 f"a subagent, skip the rest of this message and go on with your task.\n"
                 f"If you are a subagent, tell the agent that dispatched you, in these words: "
                 f"{words}")
-    return (f"Tell the user, or, if you are a subagent, the agent that dispatched you, in these "
-            f"words: {words}")
+    return f"Tell {_failed_command_lines.REPORT_RECIPIENT_PHRASE_USER_OR_DISPATCHING_AGENT} in these words: {words}"
 
 
 def _text(node):
@@ -815,7 +936,7 @@ def _redirect_text_before_operator(node, operator, source, glob_markers):
     touching the operator before it. After a blank, bash reads that text as the
     operator's descriptor when it is decimal digits, and as a word otherwise.
     Text that touches the escaped blanks is the end of the word before, as the 2
-    of `>f\\<tab>2>&-`, which this reader does not read.
+    of `>f\\<tab>2>&-`: see _text_ending_word_before_redirect.
     """
     before = [child for child in node.named_children
               if child.type != "file_descriptor" and child.end_byte <= operator.start_byte]
@@ -832,6 +953,25 @@ def _redirect_text_before_operator(node, operator, source, glob_markers):
     if _digits_are_whole_token(source, first, operator.start_byte):
         return text.decode(), gap_words
     return "", gap_words + [prefix + _unescape_unquoted(text.decode("utf-8", SHELL_TEXT_ERRORS), glob_markers)]
+
+
+def _text_ending_word_before_redirect(node, source, word_end, glob_markers):
+    """Return the text inside a redirect before its operator that ends the word before it, or "".
+
+    tree-sitter-bash ends a word before an escaped tab and starts the redirect
+    after it at the backslash, so in `zzq a\\<tab>2>f` it puts the 2 inside the
+    redirect; bash passes the word "a<tab>2" and writes standard output to f.
+    word_end is where the word before ends, after the escaped blanks that continue it.
+    """
+    operator = next((child for child in node.children if not child.is_named), None)
+    if operator is None or node.start_byte >= word_end:
+        return ""
+    before = [child for child in node.named_children
+              if child.type != "file_descriptor" and child.end_byte <= operator.start_byte]
+    if not before or before[0].start_byte != word_end:
+        return ""
+    return _unescape_unquoted(source[word_end:operator.start_byte].decode("utf-8", SHELL_TEXT_ERRORS),
+                              glob_markers)
 
 
 def _digits_are_whole_token(source, start, end):
@@ -891,6 +1031,12 @@ def _descriptor_written_before(node, source):
     return ""
 
 
+def _is_braced_expansion(node):
+    """Return whether node is a ${ } expansion, including one tree-sitter-bash reads as an ERROR."""
+    return node.type == "expansion" or (
+        node.type == "ERROR" and [child.type for child in node.children[:1]] == ["${"])
+
+
 class _Collector:
     def __init__(self, glob_markers, source, heredocs_taken_out, restored=None):
         self.glob_markers = glob_markers
@@ -919,15 +1065,28 @@ class _Collector:
         if kind in SEQUENCE_NODE_TYPES or kind in SIMPLE_COMMAND_NODE_TYPES:
             self.sequence(node, child_shell, heredocs)
             return
-        if kind == "expansion":
-            for child in node.children:
-                if child.type == "word" and any(mark in _text(child) for mark in ("`", "<(", ">(")):
-                    # tree-sitter-bash leaves a backtick or a process substitution in a
-                    # ${name:-...} default as one word; bash runs it.
-                    found = simple_commands("echo " + _text_restored(child, self.restored),
-                                            self.glob_markers)
-                    self.adopt([command for command in found if command.inside_substitution()],
-                               child_shell + (ChildShell(child.start_byte, SUBSTITUTION),))
+        if kind == "while_statement":
+            # tree-sitter-bash reads an until loop as a while_statement too.
+            for index, child in enumerate(node.children):
+                first = len(self.commands)
+                self.visit(child, child_shell, heredocs)
+                if node.field_name_for_child(index) == "condition":
+                    for command in self.commands[first:]:
+                        command.in_while_or_until_loop_condition = True
+            return
+        if _is_braced_expansion(node) and any(mark in _text(node) for mark in ("`", "<(", ">(")):
+            # tree-sitter-bash splits a backticked command or a process substitution
+            # inside ${ } into text, ERROR and substitution pieces, so the text inside
+            # the braces is read again whole, in the quoting it is written in.
+            quote = '"' if node.parent is not None and node.parent.type in ("string", "heredoc_body") \
+                else ""
+            # Inside ${ } a # after a blank starts no comment, so the second read gets it escaped.
+            inner = re.sub(r"(^|\s)#", r"\1\\#", _text_restored(node, self.restored)[2:-1])
+            found = simple_commands("echo " + quote + inner + quote, self.glob_markers)
+            # The offsets of the second read count from its own text, so the ${ } holds them.
+            self.adopt([command for command in found if command.inside_substitution()],
+                       child_shell + (ChildShell(node.start_byte, SUBSTITUTION),))
+            return
         for child in node.children:
             self.visit(child, child_shell, heredocs)
 
@@ -938,17 +1097,19 @@ class _Collector:
         substitution is a child shell of its own, apart from every other body's.
         """
         for command in _heredoc_body_substitution_commands(taken.body, self.glob_markers):
-            identity = tuple(shell.placed(
+            command.child_shell = tuple(shell.placed(
                 lambda offset: -1 - offset - taken.number * BODY_IDENTITY_STRIDE)
                 for shell in command.child_shell)
-            self.commands.append(SimpleCommand(list(command), child_shell + identity,
-                                               command.redirects, command.heredocs))
+            self.adopt([command], child_shell)
 
     def adopt(self, commands, child_shell):
-        """Add commands read from a second parse, inside the child shell they run in."""
+        """Add commands read from a second parse, inside the child shell they run in.
+
+        Each command is moved, not rebuilt, so every attribute the second parse gave it stays.
+        """
         for command in commands:
-            self.commands.append(SimpleCommand(list(command), child_shell + command.child_shell,
-                                               command.redirects, command.heredocs))
+            command.child_shell = child_shell + command.child_shell
+            self.commands.append(command)
 
     def follows_process_id(self, node):
         return _follows_process_id(self.source, node.start_byte)
@@ -993,23 +1154,43 @@ class _Collector:
                 unit_shell = (child_shell + (ChildShell(first.start_byte, PIPELINE_STAGE,
                                                         pipeline_start),)
                               if len(pipeline) > 1 else child_shell)
-                redirects, trailing_words = [], []
+                redirects, trailing_words, command_word_end = [], [], ""
                 previous_end = (_escaped_blanks_continuing_word(
                     self.source, unit["children"][-1].end_byte)[1] if unit["children"] else None)
+                # Where the word written last before the next redirection is held: the
+                # command's words, trailing_words, or the last redirection's target.
+                last_word = ("command" if unit["children"]
+                             and unit["children"][-1].type not in REDIRECT_NODE_TYPES else None)
                 for redirect, limit in unit["redirects"]:
                     if previous_end is not None:
-                        trailing_words.extend(_escaped_blank_words_before_operator(
-                            self.source[previous_end:redirect.start_byte]))
+                        gap_words = _escaped_blank_words_before_operator(
+                            self.source[previous_end:redirect.start_byte])
+                        trailing_words.extend(gap_words)
+                        last_word = "trailing" if gap_words else last_word
+                        text = _text_ending_word_before_redirect(
+                            redirect, self.source, previous_end, self.glob_markers)
+                        if text and last_word == "trailing":
+                            trailing_words[-1] = _word_with_text(trailing_words[-1], trailing_words[-1] + text)
+                        elif text and last_word == "target":
+                            redirects[-1] = (redirects[-1][0], redirects[-1][1] + text)
+                        elif text and last_word == "command":
+                            command_word_end += text
                         previous_end = _redirect_end_with_escaped_blanks_continuing_target(
                             self.source, redirect, limit)
+                    words_before, redirects_before = len(trailing_words), len(redirects)
                     shared_heredocs.extend(
                         self.redirect(redirect, unit_shell, redirects, trailing_words, limit))
+                    if len(trailing_words) > words_before:
+                        last_word = "trailing"
+                    elif len(redirects) > redirects_before:
+                        last_word = "target" if redirects[-1][1] else None
                 if previous_end is not None:
                     trailing_words.extend(_escaped_blank_words_ending_command(
                         self.source, previous_end))
                 if unit["children"] is not None:
                     self.simple_command(unit["node"], unit["children"], unit_shell,
-                                        list(shared_heredocs), redirects, trailing_words)
+                                        list(shared_heredocs), redirects, trailing_words,
+                                        command_word_end)
                 else:
                     self.visit(unit["node"], unit_shell, list(shared_heredocs))
 
@@ -1096,7 +1277,9 @@ class _Collector:
             self.expanded_heredoc_body(taken, child_shell)
         return [Heredoc(body, taken.expanded, taken.delimiter_as_written)]
 
-    def simple_command(self, node, children, child_shell, heredocs, redirects, trailing_words):
+    def simple_command(self, node, children, child_shell, heredocs, redirects, trailing_words,
+                       last_word_end=""):
+        """Read one simple command; last_word_end is text a redirection after it adds to its last word."""
         words, own_redirects, own_heredocs = [], [], []
         joined = None
         previous_end = None
@@ -1142,6 +1325,8 @@ class _Collector:
                 continues = previous_end > child.end_byte
         if joined is not None:
             words.append(word_value(joined, self.glob_markers, self.restored))
+        if last_word_end and words:
+            words[-1] = _word_with_text(words[-1], words[-1] + last_word_end)
         words.extend(trailing_words)
         if words:
             self.commands.append(SimpleCommand(words, child_shell, own_redirects + list(redirects),
@@ -1235,9 +1420,7 @@ def _escaped_blank_words_ending_command(source, start):
     """Return the words of the escaped blanks from start to the text that ends a command.
 
     tree-sitter-bash ends a command at its last word and leaves escaped blanks
-    after it outside every node, so `zzq \\ ;` loses the " " bash passes. The
-    blanks count only when a separator, a comment, a closing parenthesis or
-    backtick, a line end or the end of the source follows them.
+    after it outside every node, so `zzq \\ ;` loses the " " bash passes.
     """
     end = start
     while True:
@@ -1248,10 +1431,6 @@ def _escaped_blank_words_ending_command(source, start):
             end += 1
         else:
             break
-    # A # here starts a comment: the source corrections make a # just after an escaped blank
-    # part of a word.
-    if source[end:end + 1] not in (b"", b"\n", b";", b"&", b"|", b")", b"`", b"#"):
-        return []
     return _escaped_blank_words_before_operator(source[start:end])
 
 
@@ -1315,11 +1494,12 @@ def _source_with_case_terminators_repaired(text, text_node_types, keep_first=Fal
 
     tree-sitter-bash rejects a last case branch ended by ;;& or ;&, and loses
     every command after the case, a heredoc's included; before esac they act as
-    ;; does. The earliest one outside text_node_types is written as ;; in the
-    text, where the bodies already taken out cannot be mistaken for commands, and
-    the text is read again, until the parse holds no error or no such one is left.
-    all_at_once writes every such one in each round instead, for text in which no
-    heredoc can be hidden. restored maps the offset in source of each ;; written
+    ;; does. Each one outside text_node_types and before the first heredoc
+    operator after the earliest one is written as ;; in the text, where the
+    bodies already taken out cannot be mistaken for commands, and the text is read
+    again, until the parse holds no error or no such one is left: a later one may
+    lie in a body that the parse hides behind that operator. all_at_once writes
+    every such one in each round, for text in which no heredoc can be hidden. restored maps the offset in source of each ;; written
     to the terminator written there before, so a word holding it reads as written.
     """
     edits, written = [], []
@@ -1331,9 +1511,15 @@ def _source_with_case_terminators_repaired(text, text_node_types, keep_first=Fal
             break
         matches = [found for found in LAST_CASE_TERMINATOR_PATTERN.finditer(source)
                    if not _inside_text(tree.root_node, found.start(), text_node_types)]
+        if matches and not all_at_once:
+            # Only a heredoc operator can open a body the parse hides, so the terminators before
+            # the first one after the earliest terminator are written in one round.
+            hiding = HEREDOC_OPERATOR_PATTERN.search(source, matches[0].end())
+            matches = [found for found in matches
+                       if hiding is None or found.start() < hiding.start()]
         # A line continuation may split the terminator, so its end is mapped back to text too.
         spans = [(_offset_before_edits(found.start(), edits), _offset_before_edits(found.start(1), edits))
-                 for found in (matches if all_at_once else matches[:1])]
+                 for found in matches]
         starts = [(start, end - start) for start, end in spans if start is not None and end is not None]
         if not starts:
             break
@@ -1351,8 +1537,12 @@ def _source_with_case_terminators_repaired(text, text_node_types, keep_first=Fal
                    + [(after_this_round(start), text[start:start + length])
                       for start, length in starts])
         # Only the terminator is replaced: what follows it in source may lie elsewhere in text.
-        for start, length in sorted(starts, reverse=True):
-            text = text[:start] + b";;" + text[start + length:]
+        # The text is joined once, since copying it once per terminator takes quadratic time.
+        pieces, previous = [], 0
+        for start, length in starts:
+            pieces += [text[previous:start], b";;"]
+            previous = start + length
+        text = b"".join(pieces + [text[previous:]])
         edits = []
         source, tree, taken = _source_with_heredoc_bodies_taken_out(text, keep_first, edits)
     restored = {}
@@ -1461,11 +1651,8 @@ def _heredoc_body_substitution_commands(body, glob_markers):
     index = start
     while index < end:
         node = expansions.get(index)
-        if node is not None and not (node.type == "expansion" and b"`" in node.text):
+        if node is not None:
             index = node.end_byte
-        elif node is not None:
-            # tree-sitter-bash splits a backticked command inside ${ }; the walk reads it there.
-            index += 1
         elif source[index:index + 1] == b"\\":
             index += 2
         elif source[index:index + 1] == b"`":
@@ -1530,8 +1717,8 @@ _new_process_runner = subprocess.run
 def _use_a_new_process(runner=subprocess.run):
     """Read every later command in a new process, started and answered through runner.
 
-    runner is called as subprocess.run is; the Bash guards replay passes one that answers from a
-    process it keeps running, started with
+    runner is called as subprocess.run is; nc-systems/general-tools/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py passes
+    one that answers from a process it keeps running, started with
     NEW_PROCESS_READ_ONE_REQUEST_PER_LINE_UNTIL_INPUT_CLOSES_FLAG.
     """
     global _read_in_a_new_process, _new_process_runner
@@ -1549,12 +1736,12 @@ def _simple_commands_in_a_new_process(command_text, glob_markers, runner=None):
                            input=request.encode("utf-8", SHELL_TEXT_ERRORS), capture_output=True,
                            timeout=INSTALL_TIMEOUT_SECONDS)
     except (OSError, subprocess.SubprocessError) as error:
-        raise ShellParserUnavailable(f"reading the command in a new process failed: {error}") \
+        raise ShellCommandUnreadable(f"reading the command in a new process failed: {error}") \
             from error
     if completed.returncode != 0:
         # The agent is told to quote this, so it gets the exception's own line, not the traceback.
         error_lines = completed.stderr.decode("utf-8", "replace").strip().splitlines()
-        raise ShellParserUnavailable(
+        raise ShellCommandUnreadable(
             "reading the command in a new process failed: "
             + (error_lines[-1] if error_lines else f"exit {completed.returncode}"))
     read = json.loads(completed.stdout.decode("utf-8", SHELL_TEXT_ERRORS))
@@ -1661,14 +1848,24 @@ def _collect(root, glob_markers, source, heredocs_taken_out, restored=None):
     return collector.commands
 
 
-def _heredoc_starts(node):
-    stack, found = [node], []
-    while stack:
-        current = stack.pop()
-        if current.type == "heredoc_start":
-            found.append(current)
-        stack.extend(current.children)
-    return sorted(found, key=lambda start: start.start_byte)
+_heredoc_start_query = (None, None, None)
+
+
+def _heredoc_start(root, skipped):
+    """Return the heredoc_start node under root that comes after the earliest skipped ones, or None.
+
+    A tree-sitter query walks the tree in C; this runs once for each heredoc
+    taken out, and a walk in Python there costs more than the parse.
+    """
+    global _heredoc_start_query
+    if _heredoc_start_query[0] is not parser():
+        language = parser().language
+        query_class, query_cursor_class = TREE_SITTER_QUERY_CLASSES_BY_LANGUAGE_CLASS[type(language)]
+        _heredoc_start_query = (parser(), query_class(language, "(heredoc_start) @start"),
+                                query_cursor_class)
+    _, query, query_cursor = _heredoc_start_query
+    starts = query_cursor(query).captures(root).get("start", [])
+    return next(iter(sorted(starts, key=lambda start: start.start_byte)[skipped:]), None)
 
 
 class _HeredocTakenOut:
@@ -1685,6 +1882,7 @@ class _HeredocTakenOut:
 
 HEREDOC_PLACEHOLDER_PREFIX = "NEDSCHORUS_HEREDOC_"
 HEREDOC_START_WITH_DESCRIPTOR_PATTERN = re.compile(rb"([0-9]+)(<<-?)")
+BLANKS_AND_LINE_CONTINUATIONS_PATTERN = re.compile(rb"(?:[ \t]|\\\n)*")
 # Each heredoc taken out costs a parse; real commands hold far fewer.
 MAX_HEREDOCS_TAKEN_OUT = 256
 
@@ -1724,15 +1922,25 @@ def _comment_misread_after_an_escaped_blank(root, source):
     `echo \\ #word; rm x`; bash reads that # as part of the word, so the comment hides the
     rest of the line, a command included.
     """
-    stack, found = [root], []
-    while stack:
-        node = stack.pop()
-        start = node.start_byte
-        if node.type == "comment" and start > 0 and source[start - 1:start] in (b" ", b"\t") \
-                and _escaped_by_backslashes(source, start - 1):
-            found.append(start)
-        stack.extend(node.children)
-    return min(found, default=None)
+    for found in ESCAPED_BLANK_BEFORE_HASH_PATTERN.finditer(source):
+        start = found.end() - 1
+        if _escaped_by_backslashes(source, start - 1) and _comment_starts_at(root, start):
+            return start
+    return None
+
+
+# The # of each comment that may be misread follows a backslash and a blank; searching the text
+# for them, rather than walking the tree, keeps a long command fast.
+ESCAPED_BLANK_BEFORE_HASH_PATTERN = re.compile(rb"\\[ \t]#")
+
+
+def _comment_starts_at(root, byte):
+    node = root.descendant_for_byte_range(byte, byte + 1)
+    while node is not None and node.start_byte == byte:
+        if node.type == "comment":
+            return True
+        node = node.parent
+    return False
 
 
 def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
@@ -1758,15 +1966,17 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
     found, and in source once that heredoc is taken out. Line continuations
     before the next heredoc operator are removed, as bash removes them before
     it reads tokens: tree-sitter-bash keeps one inside an operator such as <(
-    and misreads the command. edits, when given, gets (offset, length removed, length inserted) for each
-    change, in the order made.
+    and misreads the command. The next heredoc is taken out in the same parse,
+    unless the parse after shows that a continuation removed changed how it is
+    read. edits, when given, gets (offset, length removed, length inserted) for
+    each change, in the order made.
     """
     taken = {}
     original = source
     tree = parser().parse(source)
     index = 0
     for _ in range(MAX_HEREDOCS_TAKEN_OUT + source.count(b"#") + source.count(b"\\\n")):
-        start = next(iter(_heredoc_starts(tree.root_node)[1 if keep_first else 0:]), None)
+        start = _heredoc_start(tree.root_node, 1 if keep_first else 0)
         operator = start.prev_sibling if start is not None else None
         if operator is None or operator.type not in ("<<", "<<-"):
             operator = None
@@ -1774,11 +1984,29 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
         first = min((at for at in (misread, operator and operator.start_byte) if at is not None),
                     default=len(source))
         continuations = _line_continuations_bash_removes(tree.root_node, source, first)
+        heredoc = None
+        if operator is not None and index < MAX_HEREDOCS_TAKEN_OUT and first == operator.start_byte:
+            heredoc = _heredoc_found(source, start, operator, index, original, 1 if keep_first else 0)
         if continuations:
+            joined = source
             for at in reversed(continuations):
-                source = source[:at] + source[at + 2:]
+                joined = joined[:at] + joined[at + 2:]
+            joined_edits = [(at - 2 * number, 2, 0) for number, at in enumerate(continuations)]
+            # Taking the heredoc out in the same parse as the continuations before it halves the
+            # parses of a command whose heredocs each follow a continued line.
+            if heredoc is not None:
+                shifted = heredoc.moved_back(2 * len(continuations))
+                candidate, candidate_tree = shifted.taken_out_of(joined)
+                if shifted.still_found_in(candidate_tree):
+                    source, tree = candidate, candidate_tree
+                    taken[heredoc.placeholder] = heredoc.taken
+                    if edits is not None:
+                        edits.extend(joined_edits + shifted.edits())
+                    index += 1
+                    continue
+            source = joined
             if edits is not None:
-                edits.extend((at - 2 * number, 2, 0) for number, at in enumerate(continuations))
+                edits.extend(joined_edits)
             tree = parser().parse(source)
             continue
         if misread is not None and (operator is None or misread < operator.start_byte):
@@ -1787,43 +2015,96 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
                 edits.append((misread, 0, 1))
             tree = parser().parse(source)
             continue
-        if operator is None or index == MAX_HEREDOCS_TAKEN_OUT:
+        if heredoc is None:
             break
-        operator_start, delimiter_start, dashed = (operator.start_byte, start.start_byte,
-                                                   operator.type == "<<-")
-        # tree-sitter-bash reads the 0 of 0<<EOF into the delimiter, after an empty operator.
-        descriptor = HEREDOC_START_WITH_DESCRIPTOR_PATTERN.match(source, start.start_byte)
-        if descriptor:
-            operator_start, delimiter_start = descriptor.start(2), descriptor.end()
-        delimiter_end, delimiter = _delimiter_word(source, delimiter_start)
-        delimiter_as_written = source[delimiter_start:delimiter_end]
-        expanded = not any(mark in delimiter_as_written.replace(b"\\\n", b"")
-                           for mark in (b"'", b'"', b"\\"))
-        body_start = _heredoc_body_start(source, delimiter_end)
-        body_end, resume = _heredoc_body_end(source, body_start, delimiter, dashed,
-                                             _inside_substitution(start), expanded)
-        body = source[body_start:body_end]
-        if dashed:
-            body = b"\n".join(line.lstrip(b"\t") for line in body.split(b"\n"))
-        placeholder = f"{HEREDOC_PLACEHOLDER_PREFIX}{index}"
-        while placeholder.encode() in original:
-            placeholder += "_"
-        written = source[operator_start:delimiter_end]
-        taken[placeholder] = _HeredocTakenOut(
-            written.decode("utf-8", SHELL_TEXT_ERRORS),
-            delimiter_as_written.decode("utf-8", SHELL_TEXT_ERRORS), body,
-            expanded,
-            source[body_end:resume].decode("utf-8", SHELL_TEXT_ERRORS), index)
-        replacement = b"<" + placeholder.encode()
+        source, tree = heredoc.taken_out_of(source)
+        taken[heredoc.placeholder] = heredoc.taken
         if edits is not None:
-            edits.append((operator_start, delimiter_end - operator_start, len(replacement)))
-            edits.append((body_start - (delimiter_end - operator_start) + len(replacement),
-                          resume - body_start, 0))
-        source = (source[:operator_start] + replacement
-                  + source[delimiter_end:body_start] + source[resume:])
-        tree = parser().parse(source)
+            edits.extend(heredoc.edits())
         index += 1
     return source, tree, taken
+
+
+class _HeredocFound:
+    """Where a heredoc found in the parse is written, and what taking it out leaves.
+
+    operator_start to delimiter_end becomes `<PLACEHOLDER`, and body_start to
+    resume is removed. inside_substitution is what the body's end was found with.
+    """
+
+    def __init__(self, operator_start, delimiter_end, body_start, resume, placeholder, taken,
+                 inside_substitution, skipped):
+        self.operator_start, self.delimiter_end = operator_start, delimiter_end
+        self.body_start, self.resume = body_start, resume
+        self.placeholder, self.taken = placeholder, taken
+        self.inside_substitution, self.skipped = inside_substitution, skipped
+        self.replacement = b"<" + placeholder.encode()
+
+    def moved_back(self, length):
+        return _HeredocFound(self.operator_start - length, self.delimiter_end - length,
+                             self.body_start - length, self.resume - length, self.placeholder,
+                             self.taken, self.inside_substitution, self.skipped)
+
+    def taken_out_of(self, source):
+        """Return (source, tree) with this heredoc taken out of source."""
+        source = (source[:self.operator_start] + self.replacement
+                  + source[self.delimiter_end:self.body_start] + source[self.resume:])
+        return source, parser().parse(source)
+
+    def edits(self):
+        written = self.delimiter_end - self.operator_start
+        return [(self.operator_start, written, len(self.replacement)),
+                (self.body_start - written + len(self.replacement), self.resume - self.body_start, 0)]
+
+    def still_found_in(self, tree):
+        """Return whether tree, parsed with this heredoc taken out, reads it as it was found.
+
+        A line continuation removed before the operator can join a heredoc operator
+        earlier in the text, or put this one inside a substitution.
+        """
+        earlier = _heredoc_start(tree.root_node, self.skipped)
+        if earlier is not None and earlier.start_byte < self.operator_start:
+            return False
+        redirection = tree.root_node.descendant_for_byte_range(self.operator_start,
+                                                               self.operator_start + 1)
+        return _inside_substitution(redirection) == self.inside_substitution
+
+
+def _heredoc_found(source, start, operator, index, original, skipped):
+    """Return the _HeredocFound for the heredoc whose heredoc_start node is start, read by bash's rules.
+
+    skipped is how many heredocs before it stay in the text.
+    """
+    operator_start, delimiter_start, dashed = (operator.start_byte, start.start_byte,
+                                               operator.type == "<<-")
+    # tree-sitter-bash reads the 0 of 0<<EOF into the delimiter, after an empty operator.
+    descriptor = HEREDOC_START_WITH_DESCRIPTOR_PATTERN.match(source, start.start_byte)
+    if descriptor:
+        operator_start, delimiter_start = descriptor.start(2), descriptor.end()
+    # tree-sitter-bash starts the delimiter at a line continuation after the operator, before
+    # the blanks that bash skips there.
+    delimiter_start = BLANKS_AND_LINE_CONTINUATIONS_PATTERN.match(source, delimiter_start).end()
+    delimiter_end, delimiter = _delimiter_word(source, delimiter_start)
+    delimiter_as_written = source[delimiter_start:delimiter_end]
+    expanded = not any(mark in delimiter_as_written.replace(b"\\\n", b"")
+                       for mark in (b"'", b'"', b"\\"))
+    inside_substitution = _inside_substitution(start)
+    body_start = _heredoc_body_start(source, delimiter_end)
+    body_end, resume = _heredoc_body_end(source, body_start, delimiter, dashed,
+                                         inside_substitution, expanded)
+    body = source[body_start:body_end]
+    if dashed:
+        body = b"\n".join(line.lstrip(b"\t") for line in body.split(b"\n"))
+    placeholder = f"{HEREDOC_PLACEHOLDER_PREFIX}{index}"
+    while placeholder.encode() in original:
+        placeholder += "_"
+    taken = _HeredocTakenOut(
+        source[operator_start:delimiter_end].decode("utf-8", SHELL_TEXT_ERRORS),
+        delimiter_as_written.decode("utf-8", SHELL_TEXT_ERRORS), body,
+        expanded,
+        source[body_end:resume].decode("utf-8", SHELL_TEXT_ERRORS), index)
+    return _HeredocFound(operator_start, delimiter_end, body_start, resume, placeholder, taken,
+                         inside_substitution, skipped)
 
 
 ShellSourceCommentsAndUnreadableSpans = collections.namedtuple(
@@ -1956,12 +2237,33 @@ def _heredoc_body_start(source, delimiter_end):
     backslash continuations, as in `cat <<EOF && git commit -m "two` with the
     message's second line next. The rest of the command line is parsed on its
     own to find it; what follows that line end does not change how the text
-    before it is read. A comment tree-sitter-bash misreads after an escaped blank
-    is corrected in that parse first, since it would hide a quote that carries
-    the line on, as in `cat <<EOF; echo \\ #word"` with the quote closed on the
-    next line.
+    before it is read. So the parse covers the next line, then twice as many
+    lines each time, until it holds no error and a line end is found, or covers
+    everything left: a parse of everything left, made for each heredoc, takes
+    time that grows with the square of the command's length. A comment
+    tree-sitter-bash misreads after an escaped blank is corrected in that parse
+    first, since it would hide a quote that carries the line on, as in
+    `cat <<EOF; echo \\ #word"` with the quote closed on the next line.
     """
-    probe = b": " + source[delimiter_end:]
+    rest, lines = source[delimiter_end:], 1
+    while True:
+        window_end = -1
+        for _ in range(lines):
+            window_end = rest.find(b"\n", window_end + 1)
+            if window_end == -1:
+                break
+        window = rest if window_end == -1 else rest[:window_end + 1]
+        line_end, clean = _opening_line_end_in(b": " + window)
+        if window_end == -1 or (line_end is not None and clean):
+            break
+        lines *= 2
+    if line_end is None:
+        return len(source)
+    return delimiter_end + line_end - 2 + 1
+
+
+def _opening_line_end_in(probe):
+    """Return (the offset in probe of its opening line's end or None, whether its parse holds no error)."""
     inserted = []
     tree = parser().parse(probe)
     for _ in range(probe.count(b"#") + 1):
@@ -1974,12 +2276,11 @@ def _heredoc_body_start(source, delimiter_end):
         probe = probe[:misread] + b"\\" + probe[misread:]
         inserted.append(misread)
         tree = parser().parse(probe)
-    if line_end is None:
-        return len(source)
-    for at in reversed(inserted):
-        if line_end > at:
-            line_end -= 1
-    return delimiter_end + line_end - 2 + 1
+    if line_end is not None:
+        for at in reversed(inserted):
+            if line_end > at:
+                line_end -= 1
+    return line_end, not tree.root_node.has_error
 
 
 def _opening_line_end(root, probe):
@@ -2044,6 +2345,8 @@ def _follows_process_id(source, offset):
 # A comment may come between the terminator and esac.
 LAST_CASE_TERMINATOR_PATTERN = re.compile(rb";;?&((?:\s|#[^\n]*\n)*esac\b)")
 CASE_TERMINATOR_PATTERN = re.compile(rb";;?&")
+# <<< is a here-string, which opens no body.
+HEREDOC_OPERATOR_PATTERN = re.compile(rb"(?<!<)<<(?!<)")
 
 
 TEXT_NODE_TYPES = {"raw_string", "string", "ansi_c_string", "heredoc_body", "comment"}

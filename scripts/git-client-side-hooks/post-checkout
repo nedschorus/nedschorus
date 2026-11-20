@@ -1,0 +1,20 @@
+#!/bin/sh
+# Writes the owner file of each new worktree `git worktree add` makes, through
+# scripts/git-client-side-hooks-post-checkout-new-worktree-owner-file-write.py,
+# whose docstring says which owner it names and when it writes none. Git runs
+# this hook with a previous HEAD of all zeros only for a checkout that starts
+# from nothing, as `git worktree add` does; a branch switch passes a real
+# commit, so it does nothing then.
+#
+# Installed by the same per-clone core.hooksPath as prepare-commit-msg, an
+# absolute path into the clone's reference checkout, which stays on main.
+#
+# Git makes this hook's exit status the exit status of `git worktree add` and
+# `git checkout`, so it always exits 0: a missing owner file must not fail the
+# checkout, and the Python file says on stderr why it wrote none.
+case "$1" in
+    "" | *[!0]*) exit 0 ;;
+esac
+[ "$3" = 1 ] || exit 0
+python3 "$(dirname "$0")/../git-client-side-hooks-post-checkout-new-worktree-owner-file-write.py"
+exit 0

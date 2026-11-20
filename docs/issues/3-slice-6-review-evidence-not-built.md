@@ -8,7 +8,7 @@ Terms used below, defined here because this document is meant to stand alone. **
 
 ## What slice 6 was going to be
 
-*Approved-by-walk* means approved by the user item by item rather than by one yes to a bundle. It is recorded today by quoting his words into `.walk-approved` at the root of the session's own checkout — the hook resolves that from `CLAUDE_PROJECT_DIR`, so in a worktree or forked session it is not necessarily the main repository root. [`.claude/hooks/instruction-file-guard.py`](../../.claude/hooks/instruction-file-guard.py) reads the marker, **deletes it, and only then allows the write through**. Two consequences follow from that order and are worth knowing: a write that then fails has already spent its approval, and nothing survives to a later check-in.
+*Approved-by-walk* means approved by the user item by item rather than by one yes to a bundle. It is recorded today by quoting his words into `.walk-approved` at the root of the session's own checkout — the hook resolves that from `CLAUDE_PROJECT_DIR`, so in a worktree or forked session it is not necessarily the main repository root. [`.claude/guard-hooks/instruction-file-guard.py`](../../.claude/guard-hooks/instruction-file-guard.py) reads the marker, **deletes it, and only then allows the write through**. Two consequences follow from that order and are worth knowing: a write that then fails has already spent its approval, and nothing survives to a later check-in.
 
 Slice 6 would have turned approval into an artifact the gate could check at check-in: a field on the check-in request carrying the approval, verified before an instruction-bearing change reached `main`.
 

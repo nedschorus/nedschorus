@@ -90,9 +90,22 @@ def file_lines_at_head_unless_git_ignores_file(root: Path, relative_path: str):
 
     Return an empty set when HEAD lacks the file and git would track it, and None
     when git ignores it. Raise GitCommandFailed when git cannot say which."""
-    committed = _run_git(["show", "HEAD:" + relative_path], root)
+    show_arguments = ["show", "HEAD:" + relative_path]
+    committed = _run_git(show_arguments, root)
     if committed.returncode == 0:
         return set(line.rstrip() for line in committed.stdout.split("\n"))
+    # git show exits 128 both for a path HEAD lacks and for a failure; only a
+    # tree that was read and lists nothing, or no HEAD at all, proves the file is new.
+    listing = _run_git(["ls-tree", "HEAD", "--", relative_path], root)
+    if listing.returncode == 0:
+        file_is_new = not listing.stdout.strip()
+    else:
+        # rev-parse --verify --quiet exits 1, and only 1, when HEAD does not exist.
+        file_is_new = _run_git(["rev-parse", "--verify", "--quiet", "HEAD"], root).returncode == 1
+    if not file_is_new:
+        detail = committed.stderr.strip().splitlines()
+        raise GitCommandFailed(show_arguments, root, committed.returncode,
+                               detail[0] if detail else "")
     if git_would_track(root, relative_path):
         return set()
     return None

@@ -29,7 +29,7 @@ It prints:
 
 Bash itself passes `push --force origin main` to git for all three: `bash -c 'set -- push 2>&- --force origin main; echo "$@"'` prints `push --force origin main`.
 
-The force-push guard, `scripts/force-push-with-open-pull-request-guard-hook.py`, run on a PreToolUse Bash input for a branch with an open pull request (the branch `shell-reader-escaped-blank-gap-knows-where-previous-word-ends` of [PR 1530: Shell reader: escaped blanks that touch a word's end stay in that word, as bash reads them](https://github.com/nedschorus/nedschorus/pull/1530), while it was open), denies `git push --force origin <branch>`, but exits 0 with no output, which allows the command, for `git push >&- --force origin <branch>` and `git push 2>&- --force origin <branch>`.
+The force-push guard, `.claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py`, run on a PreToolUse Bash input for a branch with an open pull request (the branch `shell-reader-escaped-blank-gap-knows-where-previous-word-ends` of [PR 1530: Shell reader: escaped blanks that touch a word's end stay in that word, as bash reads them](https://github.com/nedschorus/nedschorus/pull/1530), while it was open), denies `git push --force origin <branch>`, but exits 0 with no output, which allows the command, for `git push >&- --force origin <branch>` and `git push 2>&- --force origin <branch>`.
 
 ## Why it matters
 

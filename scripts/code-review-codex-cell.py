@@ -31,6 +31,14 @@ must not drift are pinned:
     --pull-request-description-file, handed to the review as context -- see
     THE PULL REQUEST'S DESCRIPTION below.
 
+The cell also rewrites the priority label that opens each of Codex's
+finding headings, so a reader who does not know Codex's scale reads it
+right: "- [P2] title — file:line" becomes "- [Codex priority P2 (P0
+highest)] title — file:line", for each of P0 to P3. Only a line that
+starts with "- [Pn] " is rewritten, which is where the rubric puts a
+heading; a label elsewhere, such as in a finding's indented body or
+quoted code, is left as Codex wrote it.
+
 What this deliberately does not do: replace the built-in review with a
 custom prompt. On codex-cli 0.147.0 a [PROMPT] is mutually exclusive with
 --base and switches to custom-review mode, losing the built-in rubric
@@ -433,6 +441,7 @@ import hashlib
 import importlib.util
 import json
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -520,6 +529,16 @@ def developer_instructions_override(instructions: str, description: str) -> str:
                   + PULL_REQUEST_DESCRIPTION_END)
     text = json.dumps(value, ensure_ascii=False)
     return "developer_instructions=" + text.replace("\x7f", "\\u007f")
+
+
+CODEX_FINDING_HEADING_PRIORITY_LABEL = re.compile(r"^- \[(P[0-3])\] ", re.MULTILINE)
+
+
+def codex_priority_labels_spelled_out(report: str) -> str:
+    """The report with each finding heading's "[Pn]" spelled out as
+    "[Codex priority Pn (P0 highest)]"."""
+    return CODEX_FINDING_HEADING_PRIORITY_LABEL.sub(
+        r"- [Codex priority \1 (P0 highest)] ", report)
 
 
 # This script's own refusals, kept off every code `codex exec` produces so a
@@ -687,7 +706,7 @@ def main(argv=None) -> int:
 
     # Provenance header, so a report read later is pinned to its inputs, as
     # the cold-read cells' reports are.
-    report = output_path.read_text(encoding="utf-8")
+    report = codex_priority_labels_spelled_out(output_path.read_text(encoding="utf-8"))
     kind = "base" if arguments.base else "commit"
     output_path.write_text(
         f"<!-- provenance: runtime=codex-exec-review model={arguments.model} "

@@ -5,7 +5,9 @@ the two patterns in MARKER_PATTERNS.
 Standing instructions hold what an agent must do. A line that records when the
 user decided tells the agent nothing to do; that history belongs in the commit
 message and the pull request. The files checked are every git-tracked
-CLAUDE.md, SKILL.md, *-instructions.md and *-prompt.md.
+CLAUDE.md, AGENTS.md, SKILL.md, *-instructions.md and *-prompt.md, the agent
+definitions in .claude/agents/ and the cold-read prompts in
+.claude/skills/cold-read/prompts/.
 
 Links and paths are not checked: a date inside a markdown link target, a URL,
 or a path or file name such as `docs/walk/x-YYYY-MM-DD.md` is a pointer an
@@ -45,8 +47,9 @@ REPOSITORY = Path(__file__).resolve().parent.parent
 SUITE = "scripts/standing-instructions-carry-no-citations-test.py"
 
 # git's pathspec `*` crosses directories, so `*-prompt.md` finds the file at any depth.
-STANDING_INSTRUCTION_PATHSPECS = ("CLAUDE.md", "*/CLAUDE.md", "SKILL.md", "*/SKILL.md",
-                                  "*-instructions.md", "*-prompt.md")
+STANDING_INSTRUCTION_PATHSPECS = ("CLAUDE.md", "*/CLAUDE.md", "AGENTS.md", "*/AGENTS.md",
+                                  "SKILL.md", "*/SKILL.md", "*-instructions.md", "*-prompt.md",
+                                  ".claude/agents/*.md", ".claude/skills/cold-read/prompts/*.md")
 
 MARKER_PATTERNS = {
     "date": _date_pattern.DATE_MARKER_PATTERN_OUTSIDE_PATH_AND_FILE_NAMES,
@@ -118,14 +121,17 @@ def the_file_listing_takes_exactly_the_standing_instruction_files():
         scratch = Path(scratch)
         subprocess.run(["git", "init", "-q", str(scratch)], check=True)
         names = ["CLAUDE.md", "x/CLAUDE.md", "x/y/SKILL.md", "a-instructions.md",
-                 "x/b-prompt.md", "c-design.md", "NOTCLAUDE.md", "x/SKILL.md.bak"]
+                 "x/b-prompt.md", "AGENTS.md", "x/AGENTS.md", ".claude/agents/d.md",
+                 ".claude/skills/cold-read/prompts/e.md", "c-design.md", "NOTCLAUDE.md",
+                 "x/SKILL.md.bak", ".claude/skills/other/prompts/f.md", ".claude/g.md"]
         for name in names:
             (scratch / name).parent.mkdir(parents=True, exist_ok=True)
             (scratch / name).write_text("text\n", encoding="utf-8")
         subprocess.run(["git", "-C", str(scratch), "add", "--", *names], check=True)
         listed = standing_instruction_paths(scratch)
     return listed == sorted(["CLAUDE.md", "x/CLAUDE.md", "x/y/SKILL.md",
-                             "a-instructions.md", "x/b-prompt.md"])
+                             "a-instructions.md", "x/b-prompt.md", "AGENTS.md", "x/AGENTS.md",
+                             ".claude/agents/d.md", ".claude/skills/cold-read/prompts/e.md"])
 
 
 def the_suite_run_with_git_dir_set_still_scans_this_repository():
@@ -254,8 +260,9 @@ def main():
     if not os.environ.get("STANDING_INSTRUCTIONS_SUITE_CHILD"):
         results.append(check("run with GIT_DIR set, the suite still scans this repository",
                              the_suite_run_with_git_dir_set_still_scans_this_repository()))
-        results.append(check("the listing takes every CLAUDE.md, SKILL.md, -instructions.md and "
-                             "-prompt.md file, at any depth, and no other file",
+        results.append(check("the listing takes every CLAUDE.md, AGENTS.md, SKILL.md, "
+                             "-instructions.md and -prompt.md file, at any depth, every agent "
+                             "definition and every cold-read prompt, and no other file",
                              the_file_listing_takes_exactly_the_standing_instruction_files()))
     results.append(check("a scanned marker or a stale exception fails the suite, and the "
                          "failure names the remedy",

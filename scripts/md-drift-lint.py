@@ -10,8 +10,10 @@ Checks, per file type:
 
   .md   - repo paths named in backticks or markdown links exist on disk
           (a path this repository deliberately does not track is skipped;
-          a backtick citation with a line number, `file.md:120`, is checked
-          as the file it names)
+          a backtick citation with a line number, `file.md:120`, or a line
+          range, `file.md:120-125`, is checked as the file it names; the line
+          numbers themselves, past the file's end or a range written backwards,
+          are not checked)
         - markdown link targets resolve (external schemes skipped; a target
           that is only a `<placeholder>` skipped; a target written in angle
           brackets, `[x](<docs/file.md>)`, checked as the path inside them
@@ -21,17 +23,20 @@ Checks, per file type:
         - YYYY-MM-DD tokens are real calendar dates
         - a backtick command naming an existing project script also names
           only flags that appear in that script's source
-        - a backtick span that is only a number, on a line naming exactly
-          one existing project code file (.py/.sh), appears in that file's
-          source, digit-group separators ignored. Prose numbers — counts,
-          issue numbers, cardinalities — are never checked: backticks are
-          what opt a number into the check.
+        - a backtick span that is only a number, in a sentence naming
+          exactly one existing project code file (.py/.sh), appears in that
+          file's source, digit-group separators ignored. A sentence ends at
+          ".", "!", "?" or ";" followed by whitespace, and at a table cell's
+          " | "; a number in another sentence or cell of the same line is not
+          paired with the file. Prose
+          numbers — counts, issue numbers, cardinalities — are never
+          checked: backticks are what opt a number into the check.
   .json - no duplicate keys at any nesting depth (a duplicate key is legal
           JSON that parsers resolve silently: the second value wins and an
           edit to the first does nothing)
 
-An architecture overview, a file at the path
-scripts/architecture-overview-path-template-and-checked-against-commit-reader.py
+An nc-architecture-overview, a file at the path
+scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py
 gives for a system with a directory under nc-systems/, gets the overview
 checks of docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md
 too, when this script is run (a program that calls lint_markdown() gets them
@@ -46,7 +51,7 @@ only by asking):
           order; a line naming no such file is not checked
         - each list item, and each line linking an issue, under
           "## Planned work" is written
-          "- GHI [<title>](https://github.com/nedschorus/nedschorus/issues/<number>)",
+          "- GHI [<title>](https://github.com/nedsnodes/nedsnodes/issues/<number>)",
           and the GHI is open on GitHub with that title
         and, as a note that is not a finding, each program (.py, .sh, or a
         file starting "#!") under nc-systems/<system>/, outside tests/, whose
@@ -78,7 +83,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 def _load_architecture_overview_path_reader():
     path = Path(__file__).resolve().with_name(
-        "architecture-overview-path-template-and-checked-against-commit-reader.py")
+        "architecture-overview-path-template-and-checked-against-commit-reader-common.py")
     specification = importlib.util.spec_from_file_location(
         "architecture_overview_path_template_and_checked_against_commit_reader", path)
     module = importlib.util.module_from_spec(specification)
@@ -124,8 +129,11 @@ HISTORY_MARKERS = ("git history", "git show")
 FOREIGN_ROOT_MARKERS = ("~/Projects/nedlern", "nedlern/docs", "legacy system",
                         "~/Projects/nedsmessenger")
 
-# These citations are frozen measurements; changing them invalidates published scores.
-FROZEN_MEASURED_DATA_DIRECTORIES = ("cold-read-reviewer-test-cases",)
+# Paths relative to the repository root. Their citations record what was true when the data
+# was measured or captured: changing them invalidates published scores, or makes a captured
+# GitHub response one that GitHub never sent.
+FROZEN_MEASURED_DATA_DIRECTORIES = ("cold-read-reviewer-test-cases",
+                                    "scripts/merge-gate-test-captured-github-responses")
 
 _basename_index_cache = {}
 _git_ignore_cache = {}
@@ -189,11 +197,13 @@ def _warn_once(repo_root: Path, detail: str):
           f"so citations of the record stores will be reported", file=sys.stderr)
 
 
-LINE_SUFFIXED_PATH = re.compile(r"^(?P<path>[^\s:]+):(?P<line>\d+)$")
+# The project's prose uses en dashes as well as hyphens for line ranges.
+LINE_SUFFIXED_PATH = re.compile(
+    r"^(?P<path>[^\s:]+):(?P<line>\d+)(?:[-–](?P<last_line>\d+))?$")
 
 
 def without_line_suffix(token: str) -> str:
-    """Remove a trailing :line number from a backtick citation."""
+    """Remove a trailing :line or :first-last suffix from a backtick citation."""
     match = LINE_SUFFIXED_PATH.match(token)
     return match.group("path") if match else token
 
@@ -306,16 +316,39 @@ def referenced_files(line: str, md_path: Path, repo_root: Path):
     return list(distinct.values())
 
 
+# A table row's cells are separate claims, as sentences are.
+SENTENCE_END = re.compile(r"(?<=[.!?;])\s+|\s+\|\s+")
+
+
+def sentences(line: str):
+    """Split a line at sentence ends outside backtick spans; a command span such
+    as `a; b` stays whole, so its backticks still pair."""
+    spans = [match.span() for match in BACKTICK_TOKEN.finditer(line)]
+    pieces, start = [], 0
+    for end in SENTENCE_END.finditer(line):
+        if not any(left < end.start() < right for left, right in spans):
+            pieces.append(line[start:end.start()])
+            start = end.end()
+    return pieces + [line[start:]]
+
+
 def check_code_numbers(line: str, md_path: Path, repo_root: Path):
-    """Yield findings for backticked numbers absent from the line's sole referenced code file."""
+    # A Markdown paragraph is written as one line, so the sentence, not the
+    # line, is the unit in which a number and a file are one claim.
+    for sentence in sentences(line):
+        yield from check_code_numbers_in_sentence(sentence, md_path, repo_root)
+
+
+def check_code_numbers_in_sentence(sentence: str, md_path: Path, repo_root: Path):
+    """Yield findings for backticked numbers absent from the sentence's sole referenced code file."""
     number_spans = [
-        match.group(1).strip() for match in BACKTICK_TOKEN.finditer(line)
+        match.group(1).strip() for match in BACKTICK_TOKEN.finditer(sentence)
         if NUMBER_ONLY.fullmatch(match.group(1).strip())
     ]
     if not number_spans:
         return
     sources = [
-        source for source in referenced_files(line, md_path, repo_root)
+        source for source in referenced_files(sentence, md_path, repo_root)
         if source.suffix in CODE_SOURCE_EXTENSIONS
     ]
     if len(sources) != 1:
@@ -349,7 +382,7 @@ def check_markdown_links(line: str, md_path: Path, repo_root: Path):
 
 
 def architecture_overview_system(path: Path, repo_root: Path):
-    """Return the system an architecture overview at path describes, or None."""
+    """Return the system an nc-architecture-overview at path describes, or None."""
     try:
         relative = path.resolve().relative_to(repo_root.resolve()).as_posix()
     except ValueError:
@@ -426,11 +459,13 @@ def check_overview_lock_and_environment_variable_sources(line: str, md_path: Pat
             yield f"{claim} does not appear in the source of {names}"
 
 
-GITHUB_REPOSITORY = "nedschorus/nedschorus"
+GITHUB_REPOSITORY = "nedsnodes/nedsnodes"
+# GitHub redirects the repository's old name, and text written before the rename still holds it.
+OLD_REPOSITORY = "nedschorus/nedschorus"
 PLANNED_WORK_HEADING = "## Planned work"
 PLANNED_WORK_GHI_LINE = re.compile(
     r"\s*(?:[-*+]|\d+[.)]) GHI \[(?P<title>.+)\]\(https://github\.com/"
-    + re.escape(GITHUB_REPOSITORY) + r"/issues/(?P<number>\d+)\)")
+    + r"(?:" + re.escape(GITHUB_REPOSITORY) + "|" + re.escape(OLD_REPOSITORY) + r")/issues/(?P<number>\d+)\)")
 PLANNED_WORK_ENTRY = re.compile(r"\s*(?:[-*+]|\d+[.)])\s|.*github\.com/[^)\s]+/issues/\d+")
 GITHUB_QUERY_TIMEOUT_SECONDS = 60
 
@@ -572,11 +607,12 @@ def in_frozen_measured_data(path: Path, repo_root: Path) -> bool:
         parts = path.resolve().relative_to(repo_root.resolve()).parts
     except ValueError:
         return False
-    return bool(parts) and parts[0] in FROZEN_MEASURED_DATA_DIRECTORIES
+    return any(parts[:len(frozen.parts)] == frozen.parts
+               for frozen in map(Path, FROZEN_MEASURED_DATA_DIRECTORIES))
 
 
 def lint_markdown(path: Path, repo_root: Path, architecture_overview_checks=False):
-    """Yield (line number, problem). The architecture overview checks, one of
+    """Yield (line number, problem). The nc-architecture-overview checks, one of
     which queries GitHub, run only when architecture_overview_checks is true."""
     if in_frozen_measured_data(path, repo_root):
         return

@@ -1,5 +1,6 @@
 ---
 issue: "[The handoff-supervisor resumes a session that died without a handoff, instead of stopping the seat](https://github.com/nedschorus/nedschorus/issues/613)"
+kind: design
 ---
 
 # The handoff-supervisor resumes a session that died without a handoff, instead of stopping the seat

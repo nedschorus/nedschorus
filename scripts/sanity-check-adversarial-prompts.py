@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a sanity-check: independent audits, each on both runtimes, over one document.
+"""Run a sanity-check: independent audits, each on both agent-binaries, over one document.
 
 The sanity-check is this project's second review instrument, separate from
 the cold read (`nc-systems/cold-read/cold-read-grid.py`, the prose-and-clarity review) and
@@ -35,22 +35,24 @@ fails before any model cost is spent.
 
 Operating rules:
 
-- Both runtimes on every audit — the claude CLI (claude-fable-5-1, falling
+- Both agent-binaries on every audit — the claude CLI (claude-fable-5-1, falling
   back to claude-opus-5 when Fable produces no review) and
   gpt-6.1-sol (the codex CLI), at xhigh reasoning effort. Each audit
-  therefore runs as two review agents, one per runtime, named
-  `<audit>-<runtime>` in this runner's output. The claude CLI runs with
+  therefore runs as two review agents, one per agent-binary, named
+  `<audit>-adversarial-prompt-<runtime>`, such as `cut-adversarial-prompt-claude`
+  (the `--adversarial-prompt` flag still takes the short `<audit>`, such as
+  `cut`), in this runner's output; each agent's report file is that name with `.md` added,
+  such as `cut-adversarial-prompt-claude.md`. The claude CLI runs with
   `--setting-sources user`, so this repository's hooks, CLAUDE.md and skills
   are never loaded into a claude agent (nedschorus#397).
-- Run it only by deliberate decision — never wire it into automation. A
-  revision of an already-sanity-checked document earns no automatic rerun. Run it after the cold read has passed, not before. It
+- Run it after the cold read has passed, not before. It
   applies only to actionable (work-directing) MDs — designs, specs, skills,
   plans — never records (documents that only report what happened).
   "the cold read passed" is the natural moment to ask
   whether a document deserves its sanity-check; a PR carrying an actionable MD with
   no sign of a past sanity-check may have one suggested — a note, never a gate.
 - The requesting agent triages: follows up the warnings described below,
-  settles hedged claims about code by reading the code, merges the runtimes' reports, and
+  settles hedged claims about code by reading the code, merges the agent-binaries' reports, and
   presents the surviving findings to the user one at a time for his ruling
   (the walk-me-through skill). Findings are design changes; none is applied
   without the user's ruling. Triage is complete when every warning and every
@@ -71,7 +73,7 @@ Operating rules:
   the copy; a path that resolves outside the checkout is refused.
 - Reports land in `sanity-check-records/<date>-<target-stem>/` (suffixed -2,
   -3, ... claimed by creation, so a same-day second pass never overwrites
-  earlier reports; for a skill, whose file is always `SKILL.md`, the stem is
+  earlier reports, and skipping a name the log-store already holds; for a skill, whose file is always `SKILL.md`, the stem is
   `<skill directory>-SKILL`). Beside them the runner saves everything it
   printed, as `sanity-check-run.log`, and the request the fresh-eyes agents
   were given, as `sanity-check-request.md`. The record is gitignored, and
@@ -79,12 +81,12 @@ Operating rules:
   `scripts/sanity-check-record-ship.py`, which this runner calls when the run
   ends. They are logs, kept and citable, not deleted when the work they served
   lands (user-ruled 2026-08-25, and 2026-09-15 for this kind). Ship again
-  after writing `finding-dispositions.md` and the add-only copy sends only
+  after writing `sanity-check-finding-dispositions.md` and the add-only copy sends only
   that file; a file already in the store whose content differs is refused, so
   finish the triage before shipping it rather than editing it afterwards.
 - Each review agent is given a scratch directory of its own, made by the
   runner in the review copy at the record's own path,
-  `sanity-check-records/<date>-<target-stem>/scratch/<audit>-<runtime>/`, and
+  `sanity-check-records/<date>-<target-stem>/scratch/<audit>-adversarial-prompt-<runtime>/`, and
   named to that agent in its prompt: working notes, drafts, anything it needs.
   When the agents are done the runner moves the scratch directories into the
   record, before the copy is removed. It replaces the bare "write no files" the prompts used to
@@ -105,7 +107,7 @@ the target. `--adversarial-prompt` (repeatable; default all three) runs a
 subset — the fresh-eyes second pass is `--adversarial-prompt fresh-eyes
 --problem-statement <variant>`, and a failed audit reruns without repeating
 the others. `--runtime` (repeatable, `claude` or `codex`; default both) does
-the same for runtimes: a rerun of the one agent that failed is this run's
+the same for agent-binaries: a rerun of the one agent that failed is this run's
 command with `--adversarial-prompt <audit> --runtime <runtime>` as its only
 `--adversarial-prompt` and `--runtime`, and the runner prints that command
 whole under the agent's `FAILED:` line when a rerun is what the
@@ -122,14 +124,20 @@ Running a sanity-check, and reading its output:
 
 - Run it as a background task and arm a Monitor (the harness's watch tool)
   on its output; it prints a status line per review agent as each finishes —
-  `saved: <path>`, `FAILED: <audit>-<runtime> — <cause class> — <detail>`, or
-  `SKIPPED:` — plus `RETRYING: <audit>-<runtime> — <cause class> — <detail>`
+  `saved: <path>`, `FAILED: <audit>-adversarial-prompt-<runtime> — <cause class> — <detail>`, or
+  `SKIPPED:` — plus `RETRYING: <audit>-adversarial-prompt-<runtime> — <cause class> — <detail>`
   when it launches an agent a second time, and the warning lines described
-  below. Exit 0 when every launched agent saved; 1 when any launched agent
-  failed (a skipped agent is not launched); 2 when the invocation itself is
-  unusable — a missing file, a broken prompt boundary, a bad flag. A run that
+  below. Exit 0 when every launched agent saved and the record reached the
+  log-store; 1 when any launched agent failed (a skipped agent is not
+  launched), or when the `record:` line is anything but `shipped:`, a refusal
+  included, since the record then stays on disk alone: the run still finishes
+  and keeps every report; 2 when the invocation itself is
+  unusable — a missing file, a broken prompt boundary, a bad flag — or when a
+  git command the runner reads fails, even after an agent saved its report,
+  because the write check or the provenance line could not be made, and 2
+  stands whether or not the record arrived. A run that
   SIGTERM, SIGINT or SIGHUP ends is ended by that signal, after the steps
-  under WHEN A RUN IS STOPPED. A run in which every launched agent failed
+  under WHEN A RUN IS STOPPED, whether or not its record arrived. A run in which every launched agent failed
   still ships its record, which then holds the run's log and no report, and
   prints the `record:` line and the record's path.
 - An agent that saves no report is launched once more by the runner, with the
@@ -152,7 +160,7 @@ Running a sanity-check, and reading its output:
   the user what the line says, and after the user has cleared the cause run
   the command printed there, which runs that one agent again into a new
   record directory. For every other failure: triage that audit from the other
-  runtime's report when a run saved one, and write in finding-dispositions.md
+  agent-binary's report when a run saved one, and write in sanity-check-finding-dispositions.md
   that the audit is unreviewed when none did. A report saved by an agent's
   second launch carries `relaunched_after=<cause class>` in its provenance
   line.
@@ -160,7 +168,7 @@ Running a sanity-check, and reading its output:
   never silently — that audit works from the problem statement alone.
 - Cut and mechanization reports get a quote scan: every quoted span of four
   or more words is searched for across the tracked files, and a span found in
-  none prints `WARNING: <audit>-<runtime> quote found in no tracked file: ...` — triage
+  none prints `WARNING: <audit>-adversarial-prompt-<runtime> quote found in no tracked file: ...` — triage
   information, never a gate; a quote may legitimately come from git history
   or the web.
 - Every review agent may reach the internet to check facts, and every one may
@@ -171,10 +179,10 @@ Running a sanity-check, and reading its output:
   there. Withholding the tools was never the protection it looked like: on
   2026-08-21 a claude agent wrote a file to the worktree while carrying no
   write tools at all (nedschorus#161) — so the check below runs after every agent
-  that completes, on both runtimes: a write to the review copy outside the
+  that completes, on both agent-binaries: a write to the review copy outside the
   agents' scratch directories is reported as
   `WARNING: the review copy was modified outside the cells' scratch
-  directories, seen when <audit>-<runtime> finished: <paths>`. The agents
+  directories, seen when <audit>-adversarial-prompt-<runtime> finished: <paths>`. The agents
   share one copy and one baseline, so the check cannot tell which agent
   wrote: the line names the agent whose completion ran the check that saw the
   write, and every agent that completes after it sees the same write and
@@ -194,7 +202,7 @@ Running a sanity-check, and reading its output:
   The requester's own checkout is not watched: the agents run in the copy, and
   the requester may work in the checkout meanwhile. A report path the runner
   finds already occupied when it writes the report is reported as
-  `WARNING: <audit>-<runtime> found a stray write at its own report path and
+  `WARNING: <audit>-adversarial-prompt-<runtime> found a stray write at its own report path and
   overwrote it: <path>`. The largest gap is an agent that does not complete:
   one that times out, cannot be launched, or exits non-zero returns before
   the comparison runs, so an agent that wrote a file and then failed is never
@@ -219,12 +227,11 @@ Running a sanity-check, and reading its output:
   the printed instruction, and a timeout. The classification is read from the
   CLI's own output, matched only at the start of a line and only on a launch
   that failed; a launch whose text misleads it is told to the user, who can
-  see the line. The cold-read-grid relaunches whatever the cause and uses the
-  class for its report alone; here the class decides, because a relaunch of a
-  logged-out CLI is a wasted launch and its failure sends the audit to triage
+  see the line. The class decides whether the runner relaunches, because a
+  relaunch of a logged-out CLI is a wasted launch and its failure sends the audit to triage
   with one report. The instructions do not depend on which agent finished
-  first, or on whether this run launched the other runtime: a rerun of one
-  agent is a run that launched one runtime, and the other runtime's report is
+  first, or on whether this run launched the other agent-binary: a rerun of one
+  agent is a run that launched one agent-binary, and the other agent-binary's report is
   then in the first run's record.
 - WHEN A RUN IS STOPPED. The /sanity-check skill starts this runner as a
   background task, and a seat's handoff ends that seat's background tasks, so
@@ -250,7 +257,10 @@ Running a sanity-check, and reading its output:
   the run stopped, so every agent-binary is in the process table the handler
   then reads. The one later start is the `--version` probe of a cell saving
   its report, for the report's provenance line; it reads the version and
-  exits. A signal that arrives after every cell has finished, each having
+  exits. Each agent-binary and probe starts in a session of its own, so a
+  signal sent to the runner's process group reaches the runner alone and the
+  runner does the stopping; a SIGKILL sent to that group therefore leaves
+  the agents running, as a SIGKILL to the runner alone does. A signal that arrives after every cell has finished, each having
   saved its report or said why it could not, stopped nothing: the runner
   finishes the run's closing steps, prints what a finished run prints, with
   no `STOPPED:` line, and ends by the signal. A cell still running when the
@@ -291,16 +301,36 @@ RECORDS_ROOT = REPO_ROOT / RECORDS_DIRECTORY_NAME
 # The record reaches the log-store by program, not by an agent remembering to
 # run one, the way nc-systems/cold-read/cold-read-grid.py ships its own.
 RECORD_SHIPPER = REPO_ROOT / "scripts" / "sanity-check-record-ship.py"
+# The shipper's one line opens with this only when the record reached the
+# log-store; REFUSED and FAILED both leave it on disk alone.
+RECORD_SHIPPED_LINE_PREFIX = "shipped:"
 _common_spec = importlib.util.spec_from_file_location(
     "cold_read_cell_common", REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-cell-common.py")
 common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
+_record_ship_spec = importlib.util.spec_from_file_location(
+    "sanity_check_record_ship", RECORD_SHIPPER)
+record_ship = importlib.util.module_from_spec(_record_ship_spec)
+_record_ship_spec.loader.exec_module(record_ship)
 _git_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
     REPO_ROOT / "nc-systems" / "general-tools"
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
+
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+_command_line_prefix_spec = importlib.util.spec_from_file_location(
+    "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
+command_line_prefix = importlib.util.module_from_spec(_command_line_prefix_spec)
+_command_line_prefix_spec.loader.exec_module(command_line_prefix)
 # The Codex cells' permission profile, as it appears in their sessions.
 CODEX_CREDENTIAL_DENYING_PERMISSION_PROFILE = "sanity-check-no-credentials"
 
@@ -318,7 +348,7 @@ def _cold_read_cell_program(file_name: str):
 
 
 # What each agent-binary prints when a launch fails for a reason it can name
-# (logged out, a usage limit), per runtime: a function from the model to the
+# (logged out, a usage limit), per agent-binary: a function from the model to the
 # texts, which common.classify_failed_attempt matches against the start of
 # each line the agent-binary wrote. Each text was captured from a real run and
 # is kept, with its source, beside the cold-read cell that met it; taken from
@@ -340,6 +370,18 @@ STOPPED_PROCESS_GRACE_SECONDS = 10.0
 # How long the main thread waits for a cell at a time, and so the longest a
 # stop signal can wait for its handler: see run_cells_in_review_copy.
 MAIN_THREAD_WAIT_STEP_SECONDS = 0.25
+# Set while the main thread runs the cells' thread pool: submitting the
+# cells, waiting for them and shutting the pool down, all of which run the
+# threading module's lock code. stop_run_on_signal does not raise there: an
+# exception raised between a condition's wait and its re-acquire of the lock
+# leaves the lock released, `with` releases it again, and RuntimeError
+# replaces the stop. It records the signal in
+# STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL instead, and run_cells_in_review_copy
+# raises it after each wait step and after the pool has shut down, where the
+# main thread holds no such lock. A stop taken while a cell is submitted waits
+# for the next wait step: a cell submitted after the stop launches nothing.
+MAIN_THREAD_RUNS_THE_CELLS_POOL = False
+STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL = None
 # Set by the first stop signal, and read by every thread before it launches an
 # agent-binary: a cell stopped with its run is not relaunched, and the claude
 # chain does not go on to its next model.
@@ -364,6 +406,31 @@ AGENT_BINARY_LAUNCH_LOCK = threading.RLock()
 # The review copy this run could not remove, which makes the run fail once its
 # record is shipped; None while there is none.
 REVIEW_COPY_NOT_REMOVED = None
+# The git checks a cell's thread could not make once its agent had finished,
+# each already printed as a WARNING line; any makes the run exit 2.
+GIT_CHECKS_FAILED_AFTER_A_CELL = []
+# Why the stop could not list this run's processes, or None. Set inside the
+# stop handler, which prints nothing; run_stopped_line prints it.
+STOP_PROCESS_LISTING_FAILURE = None
+# The commit token of a provenance line whose commit git could not read.
+COMMIT_NOT_READ = "not-read-git-failed"
+
+
+# What each of the runner's two git-failure messages prints again when its rerun fails too.
+CELL_GIT_CHECK_FAILED_AGAIN = "WARNING: the runner could not check"
+STOPPED_BEFORE_LAUNCH_AGAIN = "sanity-check stopped before any agent launched"
+
+
+def git_failure_next_step_lines(rerun: str, text_the_failure_line_contains: str, failure) -> str:
+    """What to do after a git command the runner ran has failed, each line ending its line.
+
+    Printed after the line that names the command and quotes git's error.
+    """
+    program = str(pathlib.Path(__file__).resolve())
+    return next_step_lines.git_failure_next_step_lines(
+        rerun, program, git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=str(failure),
+        text_the_failure_line_contains=text_the_failure_line_contains) + "\n"
+
 
 # The line a cell prints when its first launch produced no report and the
 # runner launches it once more: `RETRYING: <cell> — <cause class> — <detail>`.
@@ -383,7 +450,7 @@ CAUSE_CLASS_NOT_A_REPORT = "not-a-report"
 CODEX_FAILED_LAUNCH_PRINTED_TAIL_LINES = 20
 
 # The sanctioned working space, one directory per cell, inside the run's own
-# record directory: <record dir>/scratch/<audit>-<runtime>/. See
+# record directory: <record dir>/scratch/<audit>-adversarial-prompt-<runtime>/. See
 # cell_scratch_dir for why it lives there and why it is per cell.
 CELL_SCRATCH_DIRECTORY_NAME = "scratch"
 
@@ -423,7 +490,7 @@ IGNORED_PATHS_WATCHED_FOR_WRITES = (RECORDS_DIRECTORY_NAME,)
 # write detection alone and belong to no commit — see reviewed_revision.
 IGNORED_PATH_STATUS_CODE = "!!"
 
-# The claude runtime's chain, tried in order until one produces a review.
+# The claude agent-binary's chain, tried in order until one produces a review.
 # "claude-fable-5" is obsolete, and Fable is sometimes unavailable, so Opus 5
 # stands behind it and ends the chain.
 #
@@ -437,7 +504,7 @@ CLAUDE_MODEL_CHAIN = ("claude-fable-5-1", "claude-opus-5")
 # Matches cold-read-codex-cell.py's `deep` tier; the id needs codex-cli 0.159.1
 # or later.
 CODEX_MODEL = "gpt-6.1-sol"
-# xhigh for both runtimes, by the user's calibration and a tier probe of both:
+# xhigh for both agent-binaries, by the user's calibration and a tier probe of both:
 # max earned neither slot.
 REASONING_EFFORT = "xhigh"
 CELL_TIMEOUT_SECONDS = 3600
@@ -573,8 +640,9 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
             # review nobody is left to save.
             break
         recognised_texts = RECOGNISED_FAILURE_TEXTS_FOR_MODEL["claude"](model)
+        # dontAsk: a tool call --allowedTools does not allow is refused, with no one to ask.
         command = [
-            "claude", "-p",
+            *command_line_prefix.claude_code_headless_run_command_line_prefix_build("dontAsk"),
             "--model", model,
             "--effort", REASONING_EFFORT,
             "--output-format", "text",
@@ -599,14 +667,14 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
         except OSError as error:
             # A CLI that will not launch is one failed attempt, not the end of
             # the run. run_cell's own OSError handler still covers the codex
-            # runtime, which has no chain to advance.
+            # agent-binary, which has no chain to advance.
             failed_attempts.append(f"{model}({type(error).__name__})")
             print(f"WARNING: {model} could not be run: {error}", flush=True)
             last_cause = common.classify_failed_attempt(
                 stdout="", stderr="", exit_code=None, recognised_texts=(),
                 start_error=str(error))
             continue
-        # The runtime's own words survive every ending, the house chain's rule
+        # The agent-binary's own words survive every ending, the house chain's rule
         # (BOTH STREAMS ARE CAPTURED, in run_model_chain,
         # nc-systems/cold-read/cold-read-cell-common.py). A CLI that is logged out or out of
         # credits explains itself on one of these streams and nowhere else, so
@@ -617,7 +685,7 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
         # the only trace of the degradation in the output. Re-emitted before any
         # branch below, so no ending drops them. This program's log is its
         # stdout -- the review itself is returned to run_cell, never printed --
-        # so the runtime's words go there too, and not to stderr as in the
+        # so the agent-binary's words go there too, and not to stderr as in the
         # house tool, whose log is the other stream.
         if completed is None or RUN_STOPPED.is_set():
             # The run was stopped: this model was never started, or its launch
@@ -666,13 +734,21 @@ def run_agent_binary_unless_run_stopped(command: list, input: str = None,
     its pipes, and the run waited for that child with every stop signal
     ignored, its review copy left behind. The wait after the start is outside the
     lock and is subprocess.run's own: on a timeout the agent-binary is killed
-    and TimeoutExpired raised with the streams it had written."""
+    and TimeoutExpired raised with the streams it had written.
+
+    The agent-binary starts in a session of its own, so a stop signal sent to
+    the runner's process group, as Ctrl-C at a terminal sends it, reaches the
+    runner alone, and stop_run_on_signal stops the agent-binary after it has
+    set RUN_STOPPED. In the runner's group the agent-binary could die of that
+    signal first, and its cell's thread, seeing RUN_STOPPED still unset,
+    printed RETRYING and could relaunch it or start the claude chain's next
+    model."""
     with AGENT_BINARY_LAUNCH_LOCK:
         if RUN_STOPPED.is_set():
             return None
         if input is not None:
             popen_keywords["stdin"] = subprocess.PIPE
-        process = subprocess.Popen(command, **popen_keywords)
+        process = subprocess.Popen(command, start_new_session=True, **popen_keywords)
     with process:
         try:
             stdout, stderr = process.communicate(input, timeout=timeout)
@@ -775,13 +851,13 @@ def run_codex(prompt: str, checkout: pathlib.Path = None) -> tuple:
 
 
 def captured_stream_as_text(captured) -> str:
-    """A stream a runtime wrote, as text, in whichever form it was handed back.
+    """A stream an agent-binary wrote, as text, in whichever form it was handed back.
 
     subprocess.TimeoutExpired carries what the child had written before it was
     cut off, and CPython raises it before the decoding step, so a call that
     asked for text still gets bytes (measured on Python 3.13); a stream
     that was never piped, and a piped one the child wrote nothing to, arrive
-    as None. Undecodable bytes are replaced, never raised on: a runtime cut off
+    as None. Undecodable bytes are replaced, never raised on: an agent-binary cut off
     partway through a character must not turn a timeout into a crash.
     """
     if captured is None:
@@ -829,13 +905,12 @@ def worktree_snapshot(repo_root: pathlib.Path = REPO_ROOT) -> dict:
     ignored status code in place of a porcelain label, and a path git already
     reported keeps the entry git gave it, so a file force-added under a watched
     path still shows its real status and a `git add` there is still visible.
+
+    Raises git_output.GitCommandFailed when git status fails.
     """
-    completed = subprocess.run(
-        ["git", "status", "--porcelain", "-z", "-uall"], cwd=repo_root,
-        stdout=subprocess.PIPE, text=True, check=False,
-    )
+    status = git_output.run_git(repo_root, ["status", "--porcelain", "-z", "-uall"])
     snapshot = {}
-    for entry in git_output.status_entries(completed.stdout):
+    for entry in git_output.status_entries(status):
         snapshot[entry.path] = (entry.code, file_fingerprint(repo_root / entry.path))
     for watched in IGNORED_PATHS_WATCHED_FOR_WRITES:
         watched_root = repo_root / watched
@@ -875,14 +950,12 @@ def normalized_for_quote_match(text: str) -> str:
 def tracked_files_corpus(checkout: pathlib.Path = None) -> tuple:
     """Every tracked text file's content, normalized, one entry per file, read
     from `checkout`, the review copy, so quotes are checked against the text
-    the cells read. Built once per run, before the cells launch."""
+    the cells read. Built once per run, before the cells launch. Raises
+    git_output.GitCommandFailed when git ls-files fails."""
     checkout = checkout or REPO_ROOT
-    listed = subprocess.run(
-        ["git", "ls-files", "-z"], cwd=checkout,
-        stdout=subprocess.PIPE, text=True, check=False,
-    )
+    listed = git_output.run_git(checkout, ["ls-files", "-z"])
     pieces = []
-    for name in git_output.nul_separated_fields(listed.stdout):
+    for name in git_output.nul_separated_fields(listed):
         path = checkout / name
         try:
             pieces.append(normalized_for_quote_match(path.read_text(encoding="utf-8")))
@@ -926,7 +999,7 @@ CLI_VERSION_CACHE = {}
 
 
 def runtime_cli_version(runtime: str) -> str:
-    """The reviewing CLI's version, measured by this runner, once per runtime.
+    """The reviewing CLI's version, measured by this runner, once per agent-binary.
 
     In each report's provenance line because a cell's self-reported CLI version
     is not one to lean on for a cross-version fact; the runner measures it
@@ -941,6 +1014,10 @@ def runtime_cli_version(runtime: str) -> str:
             completed = subprocess.run(
                 [binary, "--version"], stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, text=True, check=False, timeout=60,
+                # As an agent-binary's launch does, so a stop signal sent to
+                # the process group cannot end the probe before RUN_STOPPED
+                # is set and have "unknown" cached as the version.
+                start_new_session=True,
             )
             lines = (completed.stdout or "").strip().splitlines()
             measured = (
@@ -950,7 +1027,7 @@ def runtime_cli_version(runtime: str) -> str:
             )
         except (OSError, subprocess.TimeoutExpired):
             measured = "unknown"
-        # A probe the stop may have ended is not cached as the runtime's version.
+        # A probe the stop may have ended is not cached as the agent-binary's version.
         if RUN_STOPPED.is_set():
             return measured
         CLI_VERSION_CACHE[runtime] = measured
@@ -1006,24 +1083,28 @@ def reviewed_revision(baseline: dict, checkout: pathlib.Path = None) -> str:
     this fact exactly, and a document moves under a walk, so the reports'
     quotes can point at a version that no longer exists before the walk on them
     finishes.
+
+    Raises git_output.GitCommandFailed when git cannot read the commit.
     """
-    completed = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"], cwd=checkout or REPO_ROOT,
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False,
-    )
-    commit = completed.stdout.strip() or "unknown"
+    commit = os.fsdecode(git_output.run_git(
+        checkout or REPO_ROOT, ["rev-parse", "--short", "HEAD"])).strip()
+    return f"commit={commit} {reviewed_worktree_state(baseline)}"
+
+
+def reviewed_worktree_state(baseline: dict) -> str:
+    """The `worktree=` token of a provenance line."""
     # Watched ignored paths sit in the snapshot for write detection alone. They
     # belong to no commit, so a record directory left over from an earlier run
     # must not report the text the cell read as dirty.
     differing = [path for path, (status, _) in baseline.items()
                  if status != IGNORED_PATH_STATUS_CODE]
     worktree = "clean" if not differing else f"dirty({len(differing)})"
-    return f"commit={commit} worktree={worktree}"
+    return f"worktree={worktree}"
 
 
 def stray_paths(baseline: dict, now: dict) -> list:
     """Paths whose status or fingerprint changed while the cells ran — a cell
-    writing to the worktree, which its prompt forbids on either runtime.
+    writing to the worktree, which its prompt forbids on either agent-binary.
     Compared over the union of both snapshots, so a file that appears,
     changes, or disappears all count."""
     return sorted(path for path in set(now) | set(baseline)
@@ -1084,7 +1165,8 @@ def uncommitted_review_paths(paths: list, repo_root: pathlib.Path) -> list:
     """The paths among these that differ from the checkout's last commit, that
     git does not track, or that lie outside the checkout: the cells read a
     copy of that commit, so for these they would read a text the requester
-    did not mean, or none at all. Returned as given."""
+    did not mean, or none at all. Returned as given. Raises
+    git_output.GitCommandFailed when git ls-files or git status fails."""
     root = repo_root.resolve()
     git_names = {}
     for path in paths:
@@ -1095,14 +1177,11 @@ def uncommitted_review_paths(paths: list, repo_root: pathlib.Path) -> list:
     inside = sorted({name for name in git_names.values() if name is not None})
     tracked, changed = set(), set()
     if inside:
-        listed = subprocess.run(
-            ["git", "ls-files", "-z", "--", *inside], cwd=repo_root,
-            stdout=subprocess.PIPE, text=True, check=False)
-        tracked = set(git_output.nul_separated_fields(listed.stdout))
-        status = subprocess.run(
-            ["git", "status", "--porcelain", "-z", "-uall", "--", *inside],
-            cwd=repo_root, stdout=subprocess.PIPE, text=True, check=False)
-        changed = {entry.path for entry in git_output.status_entries(status.stdout)}
+        listed = git_output.run_git(repo_root, ["ls-files", "-z", "--", *inside])
+        tracked = set(git_output.nul_separated_fields(listed))
+        status = git_output.run_git(
+            repo_root, ["status", "--porcelain", "-z", "-uall", "--", *inside])
+        changed = {entry.path for entry in git_output.status_entries(status)}
     return [path for path, name in git_names.items()
             if name is None or name not in tracked or name in changed]
 
@@ -1190,19 +1269,27 @@ def remove_directory_whatever_signal_arrives(directory: pathlib.Path) -> None:
 def processes_under_this_one() -> dict:
     """{pid: parent pid} for every process on the machine but the `ps` that
     listed them, from one `ps` call (the same flags on macOS and Linux); {}
-    when ps cannot be run.
+    when ps cannot be run or fails, with the cause kept in
+    STOP_PROCESS_LISTING_FAILURE, because this runs inside the stop handler,
+    which must neither print nor raise.
 
     The `ps` that lists the processes is left out because it is a child of the
     process that asks, and stop_processes_this_run_started walks the asking
     process's own children: each reading would hand it one more child, the
     reader of that reading, and the walk would never end."""
+    global STOP_PROCESS_LISTING_FAILURE
     try:
         with subprocess.Popen(["ps", "-A", "-o", "pid=", "-o", "ppid="],
-                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               text=True) as listing:
-            listed, _ = listing.communicate()
+            listed, errors = listing.communicate()
             reader = listing.pid
-    except OSError:
+    except OSError as error:
+        STOP_PROCESS_LISTING_FAILURE = STOP_PROCESS_LISTING_FAILURE or f"ps could not be run: {error}"
+        return {}
+    if listing.returncode != 0:
+        STOP_PROCESS_LISTING_FAILURE = STOP_PROCESS_LISTING_FAILURE or (
+            f"ps exited {listing.returncode}: {errors.strip() or 'no error text'}")
         return {}
     parents = {}
     for line in listed.splitlines():
@@ -1215,7 +1302,9 @@ def processes_under_this_one() -> dict:
 
 class RunStoppedBySignal(BaseException):
     """A stop signal ended this run: raised in the main thread by
-    stop_run_on_signal, after the agents' processes were stopped, so that
+    stop_run_on_signal, or by run_cells_in_review_copy for a signal taken
+    while the main thread ran the cells' thread pool, after the agents' processes
+    were stopped, so that
     every `finally` and context manager between the run and main() does its
     work, the review copy's removal among them. A BaseException, so that no
     `except Exception` on the way takes it for an error of its own."""
@@ -1317,7 +1406,9 @@ def stop_run_on_signal(signal_number: int, _frame) -> None:
     way: see WHEN A RUN IS STOPPED in the module docstring. Every later stop
     signal does nothing from here on (stop_signal_after_the_first_does_nothing),
     so the stopping and the removal of the review copy are not themselves cut
-    short."""
+    short. While the main thread runs the cells' thread pool it records the
+    signal instead of raising RunStoppedBySignal: see
+    MAIN_THREAD_RUNS_THE_CELLS_POOL."""
     for number in RUN_STOP_SIGNALS:
         signal.signal(number, stop_signal_after_the_first_does_nothing)
     # Under the lock a cell's thread holds from reading RUN_STOPPED to
@@ -1328,7 +1419,13 @@ def stop_run_on_signal(signal_number: int, _frame) -> None:
     CELLS_FINISHED_AT_THE_STOP = frozenset(CELLS_FINISHED)
     with AGENT_BINARY_LAUNCH_LOCK:
         RUN_STOPPED.set()
+    global STOP_PROCESS_LISTING_FAILURE
+    STOP_PROCESS_LISTING_FAILURE = None
     stop_processes_this_run_started()
+    if MAIN_THREAD_RUNS_THE_CELLS_POOL:
+        global STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL
+        STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL = signal_number
+        return
     raise RunStoppedBySignal(signal_number)
 
 
@@ -1397,21 +1494,26 @@ def fresh_record_dir(target_stem: str) -> pathlib.Path:
     The directory is claimed by creating it, not by testing first and creating
     after: two runs starting together on the same target and date both pass a
     look-then-create test and return the same path, and the second overwrites
-    the first."""
+    the first.
+
+    The name is claimed the same way in the log-store's sanity-check-records:
+    another checkout's record of the same target and day ships to the same
+    store, and shipping this one under its name is refused. When the store
+    cannot be reached to claim the name, the name is checked against this
+    checkout alone and a warning on stderr says so."""
     base = RECORDS_ROOT / f"{datetime.date.today().isoformat()}-{target_stem}"
-    counter = 1
-    while True:
-        out_dir = base if counter == 1 else pathlib.Path(f"{base}-{counter}")
-        try:
-            out_dir.mkdir(parents=True)
-            return out_dir
-        except FileExistsError:
-            counter += 1
+    out_dir, unclaimed = record_ship.shipper.cold_read_record_directory_created_atomically_free_in_checkout_and_claimed_in_log_store_and_log_store_claim_failure_reason_or_none(
+        base, *record_ship.destination_for_this_machine())
+    record_ship.shipper.record_directory_being_written_lock_take(out_dir)
+    if unclaimed:
+        print(record_ship.shipper.log_store_claim_failed_so_record_name_may_collide_warning_line(
+            "sanity-check-adversarial-prompts.py", out_dir, unclaimed), file=sys.stderr)
+    return out_dir
 
 
 def cell_scratch_dir(out_dir: pathlib.Path, cell: str) -> pathlib.Path:
     """One cell's sanctioned working space, created here:
-    `<record dir>/scratch/<audit>-<runtime>/`.
+    `<record dir>/scratch/<audit>-adversarial-prompt-<runtime>/`.
 
     A review agent's deliverable is its reply, but an agent working a document
     still needs somewhere to put notes and drafts. A prohibition — "write no
@@ -1444,7 +1546,8 @@ class FailedLaunch(typing.NamedTuple):
 def launch_cell_once(cell: str, adversarial_prompt: str, runtime: str, prompt: str,
                      target: str, out_dir: pathlib.Path, baseline_status: dict,
                      corpus: tuple, checkout: pathlib.Path,
-                     scratch_record_dir: pathlib.Path, relaunched_after: str = ""):
+                     scratch_record_dir: pathlib.Path, relaunched_after: str = "",
+                     rerun_command: str = ""):
     """Launch one cell once, and save its report when it wrote one. Returns
     None when the report was saved, and the FailedLaunch otherwise; prints the
     agent-binary's own words and the launch's warnings, and neither the
@@ -1457,9 +1560,9 @@ def launch_cell_once(cell: str, adversarial_prompt: str, runtime: str, prompt: s
         # do. The cause is then read off the exit code alone.
         code, output, model, fallback_from, *cause = runner(prompt, checkout)
     except subprocess.TimeoutExpired as timeout:
-        # What the runtime wrote before it was cut off, printed before the
+        # What the agent-binary wrote before it was cut off, printed before the
         # cell's FAILED line, both streams in run_claude's order: every other
-        # ending keeps a failed runtime's words, and this one dropped them. The
+        # ending keeps a failed agent-binary's words, and this one dropped them. The
         # exception holds the streams of the attempt that timed out and no
         # other — run_claude prints each earlier failed attempt's words as that
         # attempt ends, so they are already out and are not repeated here. A
@@ -1488,7 +1591,12 @@ def launch_cell_once(cell: str, adversarial_prompt: str, runtime: str, prompt: s
         cause_class, detail = (cause[0] if cause and cause[0]
                                else (f"exit-{code}", "no output"))
         return FailedLaunch(cause_class, detail, fallback_from)
-    stray = stray_paths_since(baseline_status, checkout, scratch_record_dir)
+    try:
+        stray = stray_paths_since(baseline_status, checkout, scratch_record_dir)
+    except git_output.GitCommandFailed as failure:
+        stray = []
+        git_check_failed_after_a_cell(cell, f"whether {cell} modified the review copy", failure,
+                                      rerun_command)
     if stray:
         print(f"WARNING: the review copy was modified outside the cells' scratch "
               f"directories, seen when {cell} finished: {', '.join(stray)}",
@@ -1496,7 +1604,7 @@ def launch_cell_once(cell: str, adversarial_prompt: str, runtime: str, prompt: s
     # After the worktree check, so a cell that ran to the end has its writes
     # compared whatever it returned; before the quote scan and the write, so a
     # text that is not a report raises no warnings to triage, never lands as a
-    # report, and is printed so the runtime's words survive.
+    # report, and is printed so the agent-binary's words survive.
     missing = missing_report_phrases(adversarial_prompt, output)
     if missing:
         print(output, flush=True)
@@ -1504,7 +1612,12 @@ def launch_cell_once(cell: str, adversarial_prompt: str, runtime: str, prompt: s
                             f"the text it returned lacks {', '.join(missing)}")
     if not fresh_eyes:
         quote_scan(corpus, output, cell)
-    revision = reviewed_revision(baseline_status, checkout)
+    try:
+        revision = reviewed_revision(baseline_status, checkout)
+    except git_output.GitCommandFailed as failure:
+        revision = f"commit={COMMIT_NOT_READ} {reviewed_worktree_state(baseline_status)}"
+        git_check_failed_after_a_cell(cell, f"the commit {cell}'s report describes", failure,
+                                      rerun_command)
     out_path = out_dir / f"{cell}.md"
     overwrote_stray_write = write_report(
         out_path,
@@ -1517,6 +1630,23 @@ def launch_cell_once(cell: str, adversarial_prompt: str, runtime: str, prompt: s
               f"overwrote it: {out_path}", flush=True)
     print(f"saved: {out_path}", flush=True)
     return None
+
+
+def git_check_failed_after_a_cell(cell: str, what: str, failure, rerun: str) -> None:
+    """Print that a git check could not be made for a cell whose agent has
+    finished, and make the run exit 2. The cell's report is still saved: the
+    agent's work is not thrown away for the runner's own failure. Silent
+    when the run is stopping, because the stop kills the git it ran."""
+    if RUN_STOPPED.is_set():
+        return
+    GIT_CHECKS_FAILED_AFTER_A_CELL.append(cell)
+    # One write, so another cell's lines cannot land between these.
+    sys.stdout.write(f"WARNING: the runner could not check {what}, because "
+                     f"{failure}. {cell}'s report is saved without that check. Follow the "
+                     f"steps below; the rerun command in them runs {cell} alone again, "
+                     f"in a new record.\n"
+                     + git_failure_next_step_lines(rerun, CELL_GIT_CHECK_FAILED_AGAIN, failure))
+    sys.stdout.flush()
 
 
 def failed_launch_is_relaunched(cause_class: str) -> bool:
@@ -1533,7 +1663,7 @@ def rerun_command_for_cell(adversarial_prompt: str, runtime: str, target: str, c
     """The command that runs this one cell again, as one line a shell takes
     as it stands: this run's target, every context document and the
     sanity-check-request when one was passed, with the cell's adversarial prompt and
-    runtime as the only `--adversarial-prompt` and `--runtime`. Both flags are repeatable,
+    agent-binary as the only `--adversarial-prompt` and `--runtime`. Both flags are repeatable,
     so a command that kept the first run's would run more than the one cell.
     The program and the request are named by absolute path and the documents
     by their repository-relative names, which the program resolves against its
@@ -1547,13 +1677,19 @@ def rerun_command_for_cell(adversarial_prompt: str, runtime: str, target: str, c
     return shlex.join(command)
 
 
+def cell_name(adversarial_prompt: str, runtime: str) -> str:
+    """A sanity-check-cell's name, such as `cut-adversarial-prompt-claude`: its
+    report file, its scratch directory and its printed lines all use it."""
+    return f"{adversarial_prompt}-adversarial-prompt-{runtime}"
+
+
 def failed_cell_lines(adversarial_prompt: str, runtime: str, failure: FailedLaunch,
                       relaunched: bool, rerun_command: str) -> list:
     """The lines a cell that saved no report ends on: its FAILED: line, and
     under it what the requesting agent does next. The lines after the first
     are instructions and nothing else; why each is what it is stands in the
     module docstring, under WHY THE RUNNER DECIDES THE RELAUNCH."""
-    cell = f"{adversarial_prompt}-{runtime}"
+    cell = cell_name(adversarial_prompt, runtime)
     separator = common.CAUSE_SEPARATOR
     failed = f"FAILED: {cell}{separator}{failure.cause_class}{separator}{failure.detail}"
     if relaunched:
@@ -1567,13 +1703,13 @@ def failed_cell_lines(adversarial_prompt: str, runtime: str, failure: FailedLaun
             "After the user has cleared the cause, run the command on the next line.",
             rerun_command,
         ]
-    other_cell = "-".join((adversarial_prompt, *(name for name in RUNTIMES if name != runtime)))
+    other_cell = cell_name(adversarial_prompt, *(name for name in RUNTIMES if name != runtime))
     return [
         failed,
         f"When a run of this sanity-check saved {other_cell}'s report, triage "
         f"the {adversarial_prompt}-adversarial-prompt from that report.",
         f"When no run of this sanity-check saved a report of the "
-        f"{adversarial_prompt}-adversarial-prompt, write in finding-dispositions.md "
+        f"{adversarial_prompt}-adversarial-prompt, write in sanity-check-finding-dispositions.md "
         f"that the {adversarial_prompt}-adversarial-prompt is unreviewed.",
     ]
 
@@ -1593,15 +1729,19 @@ def run_cell(adversarial_prompt: str, runtime: str, target: str, context: list,
     prompt, in the same copy and the same scratch directory, unless
     failed_launch_is_relaunched says the cause is not one a second launch can
     clear. A cell that ends with no report prints failed_cell_lines."""
-    cell = f"{adversarial_prompt}-{runtime}"
+    cell = cell_name(adversarial_prompt, runtime)
     checkout = checkout or REPO_ROOT
     prompt = assemble_prompt(adversarial_prompt, target, context, problem_statement,
                              str(cell_scratch_dir(scratch_record_dir or out_dir, cell)))
 
+    rerun_command = rerun_command_for_cell(adversarial_prompt, runtime, target, context,
+                                           problem_statement)
+
     def launch(relaunched_after: str = ""):
         return launch_cell_once(cell, adversarial_prompt, runtime, prompt, target, out_dir,
                                 baseline_status, corpus, checkout,
-                                scratch_record_dir or out_dir, relaunched_after)
+                                scratch_record_dir or out_dir, relaunched_after,
+                                rerun_command)
 
     if RUN_STOPPED.is_set():
         return cell, False
@@ -1631,7 +1771,7 @@ def run_cell(adversarial_prompt: str, runtime: str, target: str, context: list,
     # say "the FAILED line above".
     lines = failed_cell_lines(
         adversarial_prompt, runtime, failure, relaunched,
-        rerun_command_for_cell(adversarial_prompt, runtime, target, context, problem_statement))
+        rerun_command)
     sys.stdout.write("".join(line + "\n" for line in lines))
     sys.stdout.flush()
     CELLS_FINISHED.add(cell)
@@ -1642,12 +1782,13 @@ def ship_record(record_dir: pathlib.Path) -> str:
     """Run the shipper on this run's record and return its one line, or a
     FAILED line of this program's own when the shipper could not run.
 
-    Never raises, and never changes the run's exit code: the shipper's outcome
-    is reported, not enforced (the same shape as
-    nc-systems/cold-read/cold-read-grid.py's ship_record). A sanity check that found
-    something and could not reach ned-box has still found it, and the record
-    stays on disk for a later run.
+    Never raises: the shipper's outcome is reported and the run goes on (the
+    same shape as nc-systems/cold-read/cold-read-grid.py's ship_record). A
+    sanity check that found something and could not reach ned-box has still
+    found it, and the record stays on disk for a later run; the run's exit
+    code says the record did not arrive.
     """
+    record_ship.shipper.record_directory_being_written_lock_release(record_dir)
     try:
         completed = subprocess.run(
             [sys.executable, str(RECORD_SHIPPER), str(record_dir)],
@@ -1746,7 +1887,7 @@ def main() -> int:
             return 2
         # A print surface is per audit while a scratch directory is per cell,
         # so the shape is shown with its varying parts left as names: a real
-        # path would claim one runtime's directory for both of the audit's
+        # path would claim one agent-binary's directory for both of the audit's
         # cells, and a reader would take it for the literal path.
         illustrative_scratch = (RECORDS_ROOT / "<date>-<target-stem>"
                                 / CELL_SCRATCH_DIRECTORY_NAME
@@ -1767,6 +1908,11 @@ def main() -> int:
     stopped_by = None
     try:
         return run_cells_in_review_copy(args, target_path, run_log)
+    except git_output.GitCommandFailed as failure:
+        rerun = shlex.join([str(pathlib.Path(__file__).resolve()), *sys.argv[1:]])
+        sys.stderr.write(f"sanity-check stopped before any agent launched: {failure}.\n"
+                         + git_failure_next_step_lines(rerun, STOPPED_BEFORE_LAUNCH_AGAIN, failure))
+        return 2
     except RunStoppedBySignal as stopped:
         stopped_by = stopped.signal_number
         saved = run_log.reports_saved_once_cells_ended
@@ -1817,6 +1963,11 @@ def run_stopped_line(signal_number: int, record_directory) -> str:
             f"reports this run did not save.")
     if record_directory is not None:
         line += (f" The reports it saved, and this log, are in {record_directory}.")
+    if STOP_PROCESS_LISTING_FAILURE is not None:
+        line += (f" The runner could not list this run's processes "
+                 f"({STOP_PROCESS_LISTING_FAILURE}), so agents it started may "
+                 f"still be running: find them with `ps -A -o pid,ppid,command` "
+                 f"and stop them before you run the command again.")
     return line
 
 
@@ -1831,7 +1982,7 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
     for adversarial_prompt in adversarial_prompts:
         if adversarial_prompt == "fresh-eyes" and args.problem_statement is None:
             for runtime in runtimes:
-                print(f"SKIPPED: {adversarial_prompt}-{runtime} (no --problem-statement)", flush=True)
+                print(f"SKIPPED: {cell_name(adversarial_prompt, runtime)} (no --problem-statement)", flush=True)
             continue
         for runtime in runtimes:
             cells.append((adversarial_prompt, runtime))
@@ -1847,6 +1998,13 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
               "skipped; there is nothing to triage.", flush=True)
         return 0
 
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    if head.returncode != 0:
+        print(f"Run this from a git checkout that has a commit: "
+              f"{head.stderr.strip()}", file=sys.stderr)
+        return 2
     # The cells read a copy of the last commit, so a target or context
     # document that differs from it would be reviewed as it was, not as it is.
     uncommitted = uncommitted_review_paths([args.target, *args.context], REPO_ROOT)
@@ -1854,13 +2012,6 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
         for path in uncommitted:
             print(f"{path} differs from the last commit or is not tracked: "
                   f"commit it, then rerun this command.", file=sys.stderr)
-        return 2
-    head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
-    if head.returncode != 0:
-        print(f"Run this from a git checkout that has a commit: "
-              f"{head.stderr.strip()}", file=sys.stderr)
         return 2
 
     stem = record_directory_target_stem(target_path)
@@ -1875,6 +2026,9 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
                   file=sys.stderr)
             return 2
 
+        # Before the record is claimed, so a git failure here leaves none.
+        baseline_status = worktree_snapshot(checkout)
+        corpus = tracked_files_corpus(checkout)
         # Claimed only after validation and only when an agent will launch: a
         # refused startup or an all-skipped run must not burn a -N suffix.
         out_dir = fresh_record_dir(stem)
@@ -1885,37 +2039,47 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
         # may write, under the record directory's own name; they join the
         # record when the cells are done, before the copy is removed.
         copy_record_dir = checkout / RECORDS_DIRECTORY_NAME / out_dir.name
-
-        baseline_status = worktree_snapshot(checkout)
-        corpus = tracked_files_corpus(checkout)
         CELLS_FINISHED.clear()
-        global CELLS_FINISHED_AT_THE_STOP
+        GIT_CHECKS_FAILED_AFTER_A_CELL.clear()
+        global CELLS_FINISHED_AT_THE_STOP, STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL
+        global MAIN_THREAD_RUNS_THE_CELLS_POOL
         CELLS_FINISHED_AT_THE_STOP = None
+        STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL = None
+
+        def raise_stop_taken_in_the_cells_pool():
+            if STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL is not None:
+                raise RunStoppedBySignal(STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL)
+
         futures = []
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(cells)) as pool:
-                futures = [
-                    pool.submit(run_cell, adversarial_prompt, runtime, args.target, args.context,
-                                args.problem_statement, out_dir, baseline_status, corpus,
-                                checkout, copy_record_dir)
-                    for adversarial_prompt, runtime in cells
-                ]
-                # Waited for in short steps, not with as_completed: Python runs
-                # stop_run_on_signal only in the main thread, and when Linux
-                # hands a stop signal to a cell's thread, a main thread blocked
-                # with no timeout runs the handler only when some cell
-                # finishes, which can be minutes later. Each step's end lets
-                # the handler run.
-                waiting = set(futures)
-                while waiting:
-                    finished, waiting = concurrent.futures.wait(
-                        waiting, timeout=MAIN_THREAD_WAIT_STEP_SECONDS,
-                        return_when=concurrent.futures.FIRST_COMPLETED)
-                    for future in finished:
-                        _, cell_ok = future.result()
-                        ok = ok and cell_ok
-                        saved_count += 1 if cell_ok else 0
-                run_log.reports_saved_once_cells_ended = saved_count
+            MAIN_THREAD_RUNS_THE_CELLS_POOL = True
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=len(cells)) as pool:
+                    for adversarial_prompt, runtime in cells:
+                        futures.append(pool.submit(
+                            run_cell, adversarial_prompt, runtime, args.target, args.context,
+                            args.problem_statement, out_dir, baseline_status, corpus,
+                            checkout, copy_record_dir))
+                    # Waited for in short steps, not with as_completed: Python
+                    # runs stop_run_on_signal only in the main thread, and when
+                    # Linux hands a stop signal to a cell's thread, a main
+                    # thread blocked with no timeout runs the handler only when
+                    # some cell finishes, which can be minutes later. Each
+                    # step's end lets the handler run.
+                    waiting = set(futures)
+                    while waiting:
+                        finished, waiting = concurrent.futures.wait(
+                            waiting, timeout=MAIN_THREAD_WAIT_STEP_SECONDS,
+                            return_when=concurrent.futures.FIRST_COMPLETED)
+                        raise_stop_taken_in_the_cells_pool()
+                        for future in finished:
+                            _, cell_ok = future.result()
+                            ok = ok and cell_ok
+                            saved_count += 1 if cell_ok else 0
+                    run_log.reports_saved_once_cells_ended = saved_count
+            finally:
+                MAIN_THREAD_RUNS_THE_CELLS_POOL = False
+            raise_stop_taken_in_the_cells_pool()
         except RunStoppedBySignal:
             # A stop that came after every cell had finished, saving its
             # report or saying why it could not, cut nothing short: that run
@@ -1926,7 +2090,7 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
             if (run_log.reports_saved_once_cells_ended is None
                     and len(futures) == len(cells)
                     and CELLS_FINISHED_AT_THE_STOP is not None
-                    and {f"{adversarial_prompt}-{runtime}" for adversarial_prompt, runtime in cells}
+                    and {cell_name(adversarial_prompt, runtime) for adversarial_prompt, runtime in cells}
                         <= CELLS_FINISHED_AT_THE_STOP
                     and all(future.done() and future.exception() is None
                             for future in futures)):
@@ -1944,15 +2108,18 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
     run_log.detach()
 
     if saved_count:
-        print_run_completion(out_dir)
+        ok = print_run_completion(out_dir) and ok
     else:
         print_completion_of_run_that_saved_no_report(out_dir)
+    if GIT_CHECKS_FAILED_AFTER_A_CELL:
+        return 2
     return 0 if ok and REVIEW_COPY_NOT_REMOVED is None else 1
 
 
-def print_completion_of_run_that_saved_no_report(out_dir: pathlib.Path, ship=None) -> None:
+def print_completion_of_run_that_saved_no_report(out_dir: pathlib.Path, ship=None):
     """Ship the record of a run whose every launched agent failed, and say
-    where its log is.
+    where its log is. Whether the record reached the log-store cannot change
+    the exit, which is 1 because the agents failed; the `record:` line says it.
 
     Such a run used to ship nothing and name its record nowhere, so the
     requesting agent could not find the log the run had just saved, the one
@@ -1962,15 +2129,17 @@ def print_completion_of_run_that_saved_no_report(out_dir: pathlib.Path, ship=Non
     that holds no report. `ship` is the shipper to call, for the test.
     """
     ship = ship or ship_record
-    print(f"record: {ship(out_dir)}", flush=True)
+    record_line = ship(out_dir)
+    print(f"record: {record_line}", flush=True)
     print("sanity-check wrote no reports: every agent above failed or was "
           "skipped; there is nothing to triage. Do what the lines under each "
           f"FAILED: line above say; this run's log, which keeps them, is in {out_dir}.",
           flush=True)
 
 
-def print_run_completion(out_dir: pathlib.Path, ship=None) -> None:
-    """Ship this run's record and say what the requesting agent does next.
+def print_run_completion(out_dir: pathlib.Path, ship=None) -> bool:
+    """Ship this run's record, say what the requesting agent does next, and
+    return whether the record reached the log-store.
 
     The shipping is the program's, not the agent's: the record
     is a log, and a log that reaches the store only when someone remembers to
@@ -1978,7 +2147,8 @@ def print_run_completion(out_dir: pathlib.Path, ship=None) -> None:
     the test; the default is this module's ship_record.
     """
     ship = ship or ship_record
-    print(f"record: {ship(out_dir)}", flush=True)
+    record_line = ship(out_dir)
+    print(f"record: {record_line}", flush=True)
     print(
             f"sanity-check complete: reports in {out_dir}. Triage each report "
             "(follow up the warnings above, settle hedged claims about code by "
@@ -1987,7 +2157,7 @@ def print_run_completion(out_dir: pathlib.Path, ship=None) -> None:
             "time for his ruling (the walk-me-through skill). "
             "The record was shipped to the log-store when this run ended (the "
             "`record:` line above says whether it arrived); once "
-            "finding-dispositions.md is written, run "
+            "sanity-check-finding-dispositions.md is written, run "
             f"`scripts/sanity-check-record-ship.py {out_dir}` so it joins the "
             "reports there. Leave the record directory in place: these are logs, "
             "kept, not deleted when the work they served lands. A file already in "
@@ -1995,6 +2165,7 @@ def print_run_completion(out_dir: pathlib.Path, ship=None) -> None:
             "ship a dispositions file once it is finished.",
         flush=True,
     )
+    return record_line.startswith(RECORD_SHIPPED_LINE_PREFIX)
 
 
 if __name__ == "__main__":

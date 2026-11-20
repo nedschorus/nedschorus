@@ -1,6 +1,6 @@
 # Ordinary hyphenated words
 
-Words whose hyphen is part of the word: standard English words that dictionaries list with the hyphen, and standard computing terms. `scripts/new-shared-names-in-changed-files-list.py` does not list these as new names. A hyphenated phrase that is neither here nor in a glossary is either a new project-term, which goes to the user, or a compound that the hyphen rule says to write without the hyphen. The words are ordered by how often agents use them.
+Words whose hyphen is part of the word: standard English words that dictionaries list with the hyphen, and standard computing terms. `scripts/new-shared-names-in-changed-files-list.py` does not list the words below as new names. A hyphenated phrase that is neither here nor in a glossary is one of three things: a standard English word that dictionaries list with the hyphen, or a standard computing term, which is added to this list; a new project-term or system-term, which goes to the user; or an ordinary compound, which the naming page's section [Hyphens in prose mark the project's own terms](nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md#hyphens-in-prose-mark-the-projects-own-terms) says to write without the hyphen.
 
 - follow-up
 - read-only
@@ -12,11 +12,9 @@ Words whose hyphen is part of the word: standard English words that dictionaries
 - up-to-date
 - re-arm
 - self-documenting
-- re-armed
 - top-level
 - fast-forward
 - force-push
-- follow-ups
 - built-in
 - pre-push
 - non-zero
@@ -26,13 +24,10 @@ Words whose hyphen is part of the word: standard English words that dictionaries
 - in-flight
 - long-lived
 - one-shot
-- fast-forwarded
 - self-contained
 - re-check
 - server-side
 - off-limits
-- re-running
-- re-arming
 - fine-grained
 - dry-run
 - byte-for-byte
@@ -41,7 +36,6 @@ Words whose hyphen is part of the word: standard English words that dictionaries
 - one-off
 - near-miss
 - cold-start
-- re-runs
 - client-side
 - clean-up
 - command-line
@@ -51,9 +45,7 @@ Words whose hyphen is part of the word: standard English words that dictionaries
 - append-only
 - non-empty
 - hard-coded
-- fast-forwards
 - as-is
-- re-checked
 - opt-in
 - fail-open
 - cherry-pick
@@ -72,12 +64,10 @@ Words whose hyphen is part of the word: standard English words that dictionaries
 - three-way
 - multiple-choice
 - trade-off
-- re-checking
 - one-liner
 - non-interactive
 - write-up
 - short-circuit
-- re-reads
 - mid-life
 - first-party
 - cross-link
@@ -85,17 +75,14 @@ Words whose hyphen is part of the word: standard English words that dictionaries
 - re-present
 - self-check
 - spot-check
-- re-reading
 - well-formed
 - third-party
 - non-standard
 - close-out
 - brand-new
 - first-class
-- spot-checked
 - out-of-date
 - follow-on
-- re-presented
 - lead-in
 - short-lived
 - remote-tracking
@@ -104,13 +91,10 @@ Words whose hyphen is part of the word: standard English words that dictionaries
 - self-correction
 - round-trip
 - one-sided
-- machine-readable
 - deep-dive
-- re-arms
 - cross-check
 - to-do
 - sign-off
-- re-checks
 - line-by-line
 - double-check
 - two-sided
@@ -122,8 +106,5 @@ Words whose hyphen is part of the word: standard English words that dictionaries
 - cut-off
 - open-source
 - off-by-one
-- near-misses
-- human-readable
 - fail-closed
-- cold-starts
 - catch-all

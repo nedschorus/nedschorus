@@ -275,6 +275,13 @@ def make_legacy_fixture(root: Path, name: str):
     return legacy, legacy_commit
 
 
+def _no_origin_repository(root: Path) -> Path:
+    """A repository with no remotes."""
+    repository = root / "no-origin-repository"
+    git(["init", "--quiet", "--initial-branch=main", str(repository)], root)
+    return repository
+
+
 def base_request(work, remote, base, files, message="fixture change", issue="none",
                  overrides=None):
     """A complete, well-formed argv, with any flag overridable by exact name.
@@ -464,6 +471,22 @@ with tempfile.TemporaryDirectory() as workspace_name:
           git(["show", "main:README.md"], remote).stdout == "seed\nracer one\n"
           and git(["show", "main:keep.txt"], remote).stdout == "racer two\n")
 
+    # A racer's push holds its incoming objects in a quarantine directory inside the remote's
+    # object store, which a file-by-file copy of that store can catch half-written. A planted
+    # quarantine makes the copy visible without needing the race's timing.
+    remote, work, base = make_fixture(workspace, "quarantine")
+    quarantine = remote / "objects" / "tmp_objdir-incoming-planted" / "53"
+    quarantine.mkdir(parents=True)
+    (quarantine / "tmp_obj_planted").write_bytes(b"a push still being received")
+    screening = workspace / "quarantine-screening"
+    screening.mkdir()
+    clone = gatekeeper.prepare_clone(screening, str(remote))
+    check("T4 the candidate clone does not copy a push still in a local remote's quarantine",
+          not list((clone / ".git" / "objects").glob("tmp_objdir-incoming-*")),
+          sorted(path.name for path in (clone / ".git" / "objects").iterdir()))
+    check("T4 the candidate clone still holds main",
+          git(["rev-parse", "origin/main"], clone).stdout.strip() == base)
+
     # --- T5: a real conflict refuses rather than guessing -------------------
     remote, work, base = make_fixture(workspace, "conflict")
     rival = workspace / "conflict-rival"
@@ -502,6 +525,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
     original_fetch_main_tip = gatekeeper.fetch_main_tip
     original_paths_changed = gatekeeper.paths_changed_between
     original_build_candidate = gatekeeper.build_candidate
+    original_find_existing_check_in = gatekeeper.find_existing_check_in
     rounds = {"count": 0}
 
     def always_rejected(clone):
@@ -515,6 +539,8 @@ with tempfile.TemporaryDirectory() as workspace_name:
     gatekeeper.fetch_main_tip = always_moving
     gatekeeper.paths_changed_between = lambda clone, older, newer: set()  # never a conflict
     gatekeeper.build_candidate = lambda clone, request, worktree, digest, target=None: "c" * 40
+    # The simulated tips are not commits, so git cannot search them for the digest.
+    gatekeeper.find_existing_check_in = lambda clone, digest, ref=None: None
     try:
         capped = None
         try:
@@ -536,6 +562,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
         gatekeeper.fetch_main_tip = original_fetch_main_tip
         gatekeeper.paths_changed_between = original_paths_changed
         gatekeeper.build_candidate = original_build_candidate
+        gatekeeper.find_existing_check_in = original_find_existing_check_in
 
     # --- retired by slice 3: main-moved is no longer an ending --------------
     # Slice 1 refused when main had moved at all. Slice 3 splits that: moved
@@ -695,7 +722,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
     accepted = load_payload(completed.stdout)
     b4d_digest = accepted.get("digest", "")
 
-    # One writer for worker.pid (ruled 2026-08-12, applied 2026-08-13). check_in
+    # One writer for main-gatekeeper-check-in-request-holder.pid (ruled 2026-08-12, applied 2026-08-13). check_in
     # stamped "<pid> 0" immediately after Popen and then raced the worker for the
     # file; a worker dying before its own stamp left that placeholder forever,
     # and worker_state skips the start-time comparison on a placeholder, so the
@@ -704,17 +731,17 @@ with tempfile.TemporaryDirectory() as workspace_name:
     # detached worker had not yet booted far enough to overwrite it.
     b4d_workspace = state_home / "nedschorus-gatekeeper" / b4d_digest
     try:
-        spawn_tokens = (b4d_workspace / "worker.pid").read_text(
+        spawn_tokens = (b4d_workspace / "main-gatekeeper-check-in-request-holder.pid").read_text(
             encoding="utf-8").split()
     except OSError:
         spawn_tokens = []
-    check("check_in writes no worker.pid placeholder in --no-wait mode",
+    check("check_in writes no main-gatekeeper-check-in-request-holder.pid placeholder in --no-wait mode",
           len(spawn_tokens) < 2 or spawn_tokens[1] != "0", spawn_tokens)
     stamp_deadline = time.time() + 10
     stamped: list[str] = []
     while time.time() < stamp_deadline and len(stamped) < 2:
         try:
-            stamped = (b4d_workspace / "worker.pid").read_text(
+            stamped = (b4d_workspace / "main-gatekeeper-check-in-request-holder.pid").read_text(
                 encoding="utf-8").split()
         except OSError:
             stamped = []
@@ -726,7 +753,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
     check("B4d the paused submission was accepted",
           accepted.get("outcome") == "accepted", accepted)
     check("the worker announces the phase it is held at",
-          wait_for(lambda: (b4d_workspace / ".reached-before-git").exists()),
+          wait_for(lambda: (b4d_workspace / ".main-gatekeeper-test-worker-reached-before-git").exists()),
           sorted(p.name for p in b4d_workspace.iterdir()))
     code, payload = run_gatekeeper(["status", b4d_digest, "--repo", str(work)],
                                    state_home)
@@ -743,7 +770,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
     # Released only now that the rival's conflicting commit is on main, so the
     # worker's push is guaranteed to lose. The old form raced the rival's git
     # work against a three-second sleep.
-    (b4d_workspace / ".release-before-git").write_text("", encoding="utf-8")
+    (b4d_workspace / ".main-gatekeeper-test-worker-paused-at-before-git-release-signal-from-test").write_text("", encoding="utf-8")
     deadline = time.time() + 60
     while time.time() < deadline:
         code, payload = run_gatekeeper(["status", b4d_digest, "--repo", str(work)],
@@ -769,7 +796,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
         capture_output=True, text=True, check=False, env=paused_environment)
     cancel_digest = load_payload(completed.stdout).get("digest", "")
     cancel_workspace = state_home / "nedschorus-gatekeeper" / cancel_digest
-    wait_for(lambda: (cancel_workspace / ".reached-before-git").exists())
+    wait_for(lambda: (cancel_workspace / ".main-gatekeeper-test-worker-reached-before-git").exists())
     code, payload = run_gatekeeper(["cancel", cancel_digest, "--repo", str(work)],
                                    state_home)
     check("T8 cancelling a live worker answers cancelled",
@@ -799,7 +826,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
     race_digest = load_payload(completed.stdout).get("digest", "")
     race_workspace = state_home / "nedschorus-gatekeeper" / race_digest
     check("the worker reaches the pre-push phase",
-          wait_for(lambda: (race_workspace / ".reached-before-push").exists()),
+          wait_for(lambda: (race_workspace / ".main-gatekeeper-test-worker-reached-before-push").exists()),
           race_digest)
     race_environment = {**os.environ, "XDG_STATE_HOME": str(state_home)}
     race_environment.pop("CLAUDE_CODE_SESSION_ID", None)
@@ -812,7 +839,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
         # of margin, and overshooting cannot pass wrongly — SIGKILL would end
         # the worker with nothing pushed and the case would fail, not invert.
         time.sleep(1)
-        (race_workspace / ".release-before-push").write_text("", encoding="utf-8")
+        (race_workspace / ".main-gatekeeper-test-worker-paused-at-before-push-release-signal-from-test").write_text("", encoding="utf-8")
         race_stdout, _ = canceller.communicate(timeout=120)
     finally:
         if canceller.poll() is None:
@@ -835,8 +862,8 @@ with tempfile.TemporaryDirectory() as workspace_name:
     unstoppable_digest = "8" * 64
     unstoppable = state_home / "nedschorus-gatekeeper" / unstoppable_digest
     unstoppable.mkdir(parents=True)
-    (unstoppable / "request.json").write_text("{}", encoding="utf-8")
-    (unstoppable / "worker.pid").write_text(
+    (unstoppable / "main-gatekeeper-check-in-request-record-resolved-at-screening.json").write_text("{}", encoding="utf-8")
+    (unstoppable / "main-gatekeeper-check-in-request-holder.pid").write_text(
         f"1 {gatekeeper.process_start_time(1)}", encoding="utf-8")
     code, payload, signal_calls = cancel_with_signals_recorded(
         GATEKEEPER_SOURCE, unstoppable_digest, work, state_home)
@@ -861,8 +888,8 @@ with tempfile.TemporaryDirectory() as workspace_name:
           and mutated_source != GATEKEEPER_SOURCE)
     shutil.rmtree(unstoppable)
     unstoppable.mkdir(parents=True)
-    (unstoppable / "request.json").write_text("{}", encoding="utf-8")
-    (unstoppable / "worker.pid").write_text(
+    (unstoppable / "main-gatekeeper-check-in-request-record-resolved-at-screening.json").write_text("{}", encoding="utf-8")
+    (unstoppable / "main-gatekeeper-check-in-request-holder.pid").write_text(
         f"1 {gatekeeper.process_start_time(1)}", encoding="utf-8")
     canary = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"])
     try:
@@ -888,8 +915,8 @@ with tempfile.TemporaryDirectory() as workspace_name:
     fake_digest = "f" * 64
     fake_workspace = state_home / "nedschorus-gatekeeper" / fake_digest
     fake_workspace.mkdir(parents=True)
-    (fake_workspace / "request.json").write_text("{}", encoding="utf-8")
-    (fake_workspace / "worker.pid").write_text("999999 0", encoding="utf-8")
+    (fake_workspace / "main-gatekeeper-check-in-request-record-resolved-at-screening.json").write_text("{}", encoding="utf-8")
+    (fake_workspace / "main-gatekeeper-check-in-request-holder.pid").write_text("999999 0", encoding="utf-8")
     code, payload = run_gatekeeper(["status", fake_digest, "--repo", str(work)],
                                    state_home)
     check("T7 a dead-worker workspace reports abandoned",
@@ -952,10 +979,10 @@ with tempfile.TemporaryDirectory() as workspace_name:
     recycled_digest = "9" * 64
     recycled_workspace = state_home / "nedschorus-gatekeeper" / recycled_digest
     recycled_workspace.mkdir(parents=True)
-    (recycled_workspace / "request.json").write_text("{}", encoding="utf-8")
+    (recycled_workspace / "main-gatekeeper-check-in-request-record-resolved-at-screening.json").write_text("{}", encoding="utf-8")
     # A live pid (this test's own) recorded against a start time that is not its
     # own: the pid was recycled, so the worker it named is gone.
-    (recycled_workspace / "worker.pid").write_text(
+    (recycled_workspace / "main-gatekeeper-check-in-request-holder.pid").write_text(
         f"{os.getpid()} not-the-start-time", encoding="utf-8"
     )
     code, payload = run_gatekeeper(["status", recycled_digest, "--repo", str(work)],
@@ -1012,20 +1039,20 @@ with tempfile.TemporaryDirectory() as workspace_name:
           secret.read_text(encoding="utf-8") == "OUTSIDE CONTENT\n", payload)
 
     # Death requires positive evidence (ruled 2026-08-12). An unreadable or
-    # absent worker.pid used to read as "dead", the strongest conclusion from
+    # absent main-gatekeeper-check-in-request-holder.pid used to read as "dead", the strongest conclusion from
     # the weakest evidence: status called a running request abandoned, and a
     # twin submission deleted the live worker's clone and spawned a rival.
     for torn_label, torn_bytes in (("an empty", ""), ("a garbage", "not-a-pid")):
         torn_digest = ("a" if torn_label == "an empty" else "b") * 64
         torn_workspace = state_home / "nedschorus-gatekeeper" / torn_digest
         torn_workspace.mkdir(parents=True)
-        (torn_workspace / "request.json").write_text("{}", encoding="utf-8")
-        (torn_workspace / "worker.pid").write_text(torn_bytes, encoding="utf-8")
+        (torn_workspace / "main-gatekeeper-check-in-request-record-resolved-at-screening.json").write_text("{}", encoding="utf-8")
+        (torn_workspace / "main-gatekeeper-check-in-request-holder.pid").write_text(torn_bytes, encoding="utf-8")
         code, payload = run_gatekeeper(["status", torn_digest, "--repo", str(work)],
                                        state_home)
-        check(f"{torn_label} worker.pid is not evidence of death",
+        check(f"{torn_label} main-gatekeeper-check-in-request-holder.pid is not evidence of death",
               payload.get("outcome") == "in-progress", payload)
-        check(f"{torn_label} worker.pid leaves the workspace intact",
+        check(f"{torn_label} main-gatekeeper-check-in-request-holder.pid leaves the workspace intact",
               torn_workspace.is_dir(), payload)
 
     # The retained refusal record survives a status that lands mid-write, and is
@@ -1036,7 +1063,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
     unreadable_digest = "c" * 64
     unreadable_workspace = state_home / "nedschorus-gatekeeper" / unreadable_digest
     unreadable_workspace.mkdir(parents=True)
-    (unreadable_workspace / "refusal.json").write_text("{half-written",
+    (unreadable_workspace / "main-gatekeeper-refusal-record-kept-for-status-command.json").write_text("{half-written",
                                                        encoding="utf-8")
     code, payload = run_gatekeeper(["status", unreadable_digest, "--repo", str(work)],
                                    state_home)
@@ -1046,7 +1073,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
           unreadable_workspace.is_dir(), payload)
 
     # Kill scope (ruled 2026-08-12): a recorded pid that does not lead its own
-    # process group is signalled alone. worker.pid is written above the
+    # process group is signalled alone. main-gatekeeper-check-in-request-holder.pid is written above the
     # --no-wait branch, so a waiting check-in records its own pid, whose group
     # belongs to the invoking shell or harness — and cancel's group kill reached
     # every process in it. Demonstrated during the PR #49 review by killing a
@@ -1054,7 +1081,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
     scope_digest = "d" * 64
     scope_workspace = state_home / "nedschorus-gatekeeper" / scope_digest
     scope_workspace.mkdir(parents=True)
-    (scope_workspace / "request.json").write_text("{}", encoding="utf-8")
+    (scope_workspace / "main-gatekeeper-check-in-request-record-resolved-at-screening.json").write_text("{}", encoding="utf-8")
     # The launcher stands in for the caller's harness: its own session, holding
     # a child whose pid is recorded as the worker. A group kill takes the
     # launcher down with the child; a correctly scoped kill does not.
@@ -1074,7 +1101,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
     )
     try:
         recorded_pid = int(launcher.stdout.readline().strip())
-        (scope_workspace / "worker.pid").write_text(f"{recorded_pid} 0",
+        (scope_workspace / "main-gatekeeper-check-in-request-holder.pid").write_text(f"{recorded_pid} 0",
                                                     encoding="utf-8")
         code, payload = run_gatekeeper(
             ["cancel", scope_digest, "--repo", str(work)], state_home
@@ -1112,7 +1139,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
             (victim / "keep.txt").write_text("PRECIOUS\n", encoding="utf-8")
             # A refusal record makes the status path reach its sweep, and the
             # climbing form needs the root to exist for '..' to resolve.
-            (victim / "refusal.json").write_text('{"outcome": "planted"}',
+            (victim / "main-gatekeeper-refusal-record-kept-for-status-command.json").write_text('{"outcome": "planted"}',
                                                  encoding="utf-8")
             (state_home / "nedschorus-gatekeeper").mkdir(parents=True, exist_ok=True)
             code, payload = run_gatekeeper(
@@ -1130,7 +1157,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
     old_stamp = time.time() - 31 * 24 * 3600
     aged_record = state_home / "nedschorus-gatekeeper" / ("e" * 64)
     aged_record.mkdir(parents=True)
-    (aged_record / "refusal.json").write_text("{}", encoding="utf-8")
+    (aged_record / "main-gatekeeper-refusal-record-kept-for-status-command.json").write_text("{}", encoding="utf-8")
     os.utime(aged_record, (old_stamp, old_stamp))
     aged_scratch = state_home / "nedschorus-gatekeeper" / "screening-stale"
     aged_scratch.mkdir()
@@ -1210,7 +1237,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
     no_gh_environment.pop("CLAUDE_CODE_SESSION_ID", None)
     completed = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "audit",
-         "--repo-slug", "nedschorus/nedschorus"],
+         "--repo-slug", "nedsnodes/nedsnodes"],
         capture_output=True, text=True, check=False, env=no_gh_environment,
     )
     audit_payload = load_payload(completed.stdout)
@@ -1219,63 +1246,37 @@ with tempfile.TemporaryDirectory() as workspace_name:
           and completed.returncode == 1, audit_payload)
 
     # --- slice 5: the repo git-config pins ----------------------------------
-    # A clone arrives with no identity of its own, and this is the only place
-    # that tells anyone -- the requirement is otherwise in design prose and in
-    # git configs nothing distributes (README.md § Working in a fresh clone
-    # names it too, added 2026-09-21). So the detail names the value found AND
-    # all three commands that fix it, in the checkout it is missing from,
-    # whichever of the three cases failed.
+    # Each clone's own config holds the identity unconfigured-agent, which the
+    # pre-commit hook refuses, so an agent-session started without its
+    # launcher cannot commit; launched agent-seats commit under the
+    # GIT_AUTHOR_* and GIT_COMMITTER_* their launcher sets, which outrank any
+    # git config. This checks the exact values, not merely that some identity
+    # is set: a clone whose identity an agent replaced passes a presence check.
     #
-    # The local user.name and user.email are what keep a commit off the user's
-    # own name: being local, they override his global identity.
-    # user.useConfigOnly does not -- `git help config` says it instructs git to
-    # "avoid trying to guess defaults for user.email and user.name, and instead
-    # retrieve the values only from the configuration", and a global config is
-    # configuration. It turns a MISSING identity into a loud failure and blocks
-    # nothing ~/.gitconfig already answers. Measured 2026-09-21 on this Mac, in
-    # a fresh clone whose only local setting was user.useConfigOnly=true: `git
-    # var GIT_AUTHOR_IDENT` answered the user's own global identity, and a
-    # commit made there was authored as him. The first revision of these
-    # messages and of the README said the setting refused the global config --
-    # the same wrong rationale main-gatekeeper-design.md had already corrected
-    # on 2026-08-14, in its rewrite-policy classification; a reader who
-    # followed that revision passed this suite and still authored every commit
-    # as the user.
+    # Read with plain `git config <key>`, not `--local`: the test runner treats
+    # a one-key read as seeing no file, and any other git config call as
+    # reading the whole checkout. The merged value equals the local one
+    # whenever the clone's config holds the key, since the local file
+    # outranks ~/.gitconfig, and a global identity cannot pass by itself,
+    # because no global config holds unconfigured-agent.
     #
-    # These cases read git's merged configuration, not the local file, so a
-    # machine with a global identity passes the name and email cases on that
-    # alone, and no assertion here can show who would author a commit. That is
-    # what the GIT_AUTHOR_IDENT line in the detail is for: it is the reader's
-    # proof, and a green suite is not.
-    #
-    # Asked of git rather than counted in `..`s: this was SCRIPT_PATH.parent
-    # .parent, which was the repository root while the program lived in
-    # scripts/ and became <root>/nc-systems when it moved into
-    # nc-systems/main-gatekeeper/. The checks still read the same local config
-    # from a subdirectory, so nothing failed -- but the path they now print for
-    # the reader to paste was not the root, and the next move would shift it
-    # again.
+    # Asked of git rather than counted in `..`s, so the path printed for the
+    # reader stays the repository root wherever this test lives.
     enclosing = Path(git(["rev-parse", "--show-toplevel"],
                          Path(__file__).resolve().parent).stdout.strip())
-    fresh_clone_identity_fix_instructions = (
-        f"Set all three, in that checkout, before you commit:\n"
-        f"  git -C {enclosing} config user.name <the agent-seat or host doing "
-        f"the work, never the user>\n"
-        f"  git -C {enclosing} config user.email <that name>@nedschorus.invalid\n"
-        f"  git -C {enclosing} config user.useConfigOnly true\n"
-        f"Then run: git -C {enclosing} var GIT_AUTHOR_IDENT -- if it answers "
-        f"the user's own name or address, the local identity is not set."
-    )
-    for key in ("user.name", "user.email"):
+    for key, expected in (("user.name", "unconfigured-agent"),
+                          ("user.email", "unconfigured-agent@nedschorus.invalid")):
         pinned = git(["config", key], enclosing, check_result=False).stdout.strip()
-        check(f"slice 5 pins {key} in the enclosing repository", bool(pinned),
-              f"{key} is unset in {enclosing}.\n"
-              f"{fresh_clone_identity_fix_instructions}")
-    use_config_only = git(["config", "user.useConfigOnly"], enclosing,
-                          check_result=False).stdout.strip()
-    check("slice 5 pins user.useConfigOnly=true", use_config_only == "true",
-          f"user.useConfigOnly is {use_config_only or '(unset)'} in {enclosing}.\n"
-          f"{fresh_clone_identity_fix_instructions}")
+        check(f"slice 5 pins {key}={expected} in the enclosing repository",
+              pinned == expected,
+              f"{key} is {pinned or '(unset)'} in {enclosing}, not {expected}.\n"
+              f"Do not change it yourself: the clone's identity is the user's to set.\n"
+              f"If it holds another value, the next commit made in a Claude session "
+              f"writes {expected} back; tell the user which value you found.\n"
+              f"If it is unset, tell the user, and ask him to run:\n"
+              f"  git -C {enclosing} config user.name unconfigured-agent\n"
+              f"  git -C {enclosing} config user.email unconfigured-agent@nedschorus.invalid\n"
+              f"Then run this test again.")
 
     # --import takes 'none' or nothing; any other value is a malformed field,
     # not a slice boundary, now that the entry checkpoint is built.
@@ -1482,6 +1483,176 @@ with tempfile.TemporaryDirectory() as workspace_name:
 
     check("T11 no import refusal moved main",
           git(["rev-parse", "main"], remote).stdout.strip() == main_before_imports)
+
+    # --- a git failure is reported, never read as an answer -----------------
+    # A stand-in git on PATH fails exactly the command under test, as a broken
+    # repository does, and passes every other command to the real git.
+    real_git = shutil.which("git")
+
+    def failing_git(name, pattern):
+        directory = workspace / f"failing-git-{name}"
+        directory.mkdir()
+        (directory / "git").write_text(
+            "#!/bin/sh\n"
+            f"case \" $* \" in *\"{pattern}\"*) echo 'fatal: stand-in failure' >&2; exit 128;; esac\n"
+            f'exec {real_git} "$@"\n', encoding="utf-8")
+        (directory / "git").chmod(0o755)
+        return directory
+
+    @contextlib.contextmanager
+    def git_on_path(directory):
+        before = os.environ["PATH"]
+        os.environ["PATH"] = f"{directory}{os.pathsep}{before}"
+        try:
+            yield
+        finally:
+            os.environ["PATH"] = before
+
+    def refusal_of(call):
+        try:
+            call()
+        except gatekeeper.Refusal as refusal:
+            return refusal
+        return None
+
+    remote, work, base = make_fixture(workspace, "git-fails")
+    (work / "README.md").write_text("seed\nchanged\n", encoding="utf-8")
+    git(["commit", "--quiet", "-am", "a second commit"], work)
+    tip = git(["rev-parse", "HEAD"], work).stdout.strip()
+    for name, pattern, call, what in (
+            ("diff", "diff --name-only",
+             lambda: gatekeeper.paths_changed_between(work, base, tip),
+             "the paths main changed"),
+            ("log", "--grep Gatekeeper-digest",
+             lambda: gatekeeper.find_existing_check_in(work, "0" * 64, tip),
+             "whether the work is already on main"),
+            ("show", " show ",
+             lambda: gatekeeper.read_base_content(work, base, ["README.md"]),
+             "a path's content at the base"),
+            ("verify-path", "--verify " + base + ":",
+             lambda: gatekeeper.read_base_content(work, base, ["README.md"]),
+             "whether a path exists at the base"),
+            ("status", "status --porcelain",
+             lambda: gatekeeper.undeclared_changes(work, ["README.md"]),
+             "the working copy's other changes"),
+            ("get-url", "remote get-url",
+             lambda: gatekeeper.resolve_remote(work, None),
+             "the origin remote"),
+            ("fetch", "fetch --quiet origin",
+             lambda: gatekeeper.compute_base(work),
+             "the base, when main cannot be fetched")):
+        with git_on_path(failing_git(name, pattern)):
+            refusal = refusal_of(call)
+        check(f"a git failure reading {what} is reported as workspace-io-error with git's stderr",
+              refusal is not None and refusal.error == "workspace-io-error"
+              and "stand-in failure" in refusal.facts, refusal)
+
+    check("a path absent at the base still reads as absent",
+          gatekeeper.read_base_content(work, base, ["no-such-file"]) == {"no-such-file": None})
+    check("a repository with no origin remote still refuses as having none",
+          (lambda refusal: refusal is not None and "no 'origin' remote" in refusal.facts)(
+              refusal_of(lambda: gatekeeper.resolve_remote(_no_origin_repository(workspace),
+                                                           None))))
+
+    with git_on_path(failing_git("slug", "remote get-url")):
+        refusal = refusal_of(lambda: gatekeeper.derive_repo_slug(work))
+    check("a git failure reading the origin for the audit says git failed, not that origin "
+          "is not on GitHub",
+          refusal is not None and refusal.error == "audit-failed"
+          and "stand-in failure" in refusal.facts and "is not a GitHub" not in refusal.facts,
+          refusal)
+
+    legacy, legacy_commit = make_legacy_fixture(workspace, "git-fails")
+    with git_on_path(failing_git("legacy-verify", "--verify " + legacy_commit + "^{commit}")):
+        refusal = refusal_of(lambda: gatekeeper.read_legacy_content(
+            str(legacy), {"commit": legacy_commit, "source": "old-tool.py", "dest": "x.py"}))
+    check("a git failure checking the legacy commit is reported, not read as \"no such commit\"",
+          refusal is not None and refusal.error == "workspace-io-error"
+          and "stand-in failure" in refusal.facts, refusal)
+    with git_on_path(failing_git("legacy-show", " show " + legacy_commit)):
+        refusal = refusal_of(lambda: gatekeeper.read_legacy_content(
+            str(legacy), {"commit": legacy_commit, "source": "old-tool.py", "dest": "x.py"}))
+    check("a git failure reading the legacy path is reported, not read as \"no such path\"",
+          refusal is not None and refusal.error == "workspace-io-error"
+          and "stand-in failure" in refusal.facts, refusal)
+    with git_on_path(failing_git("legacy-verify-path", "--verify " + legacy_commit + ":")):
+        refusal = refusal_of(lambda: gatekeeper.read_legacy_content(
+            str(legacy), {"commit": legacy_commit, "source": "old-tool.py", "dest": "x.py"}))
+    check("a git failure checking the legacy path is reported, not read as \"no such path\"",
+          refusal is not None and refusal.error == "workspace-io-error"
+          and "stand-in failure" in refusal.facts, refusal)
+    refusal = refusal_of(lambda: gatekeeper.read_legacy_content(
+        str(legacy), {"commit": legacy_commit, "source": "no-such-path.py", "dest": "x.py"}))
+    check("an absent legacy path still refuses as import-invalid",
+          refusal is not None and refusal.error == "import-invalid"
+          and "does not exist" in refusal.facts, refusal)
+    refusal = refusal_of(lambda: gatekeeper.read_legacy_content(
+        str(legacy), {"commit": "1" * 40, "source": "old-tool.py", "dest": "x.py"}))
+    check("an absent legacy commit still refuses as import-invalid",
+          refusal is not None and refusal.error == "import-invalid"
+          and "no commit" in refusal.facts, refusal)
+
+    refusal = refusal_of(lambda: gatekeeper.resolve_repository(str(workspace / "no-such-dir")))
+    check("a repository git cannot find is refused with git's own words",
+          refusal is not None and "cannot change to" in refusal.facts, refusal)
+
+    original_attempt_push = gatekeeper.attempt_push
+    original_build_candidate = gatekeeper.build_candidate
+    gatekeeper.attempt_push = lambda clone: (True, "")
+    gatekeeper.build_candidate = lambda clone, request, worktree, digest, target=None: "c" * 40
+    try:
+        with git_on_path(failing_git("rev-list", "rev-list --count")):
+            outcome = gatekeeper.integrate_and_push(
+                work, {"base": base, "paths": ["README.md"], "message": "m", "issue": "none",
+                       "agent": "a", "origin": "none", "import": None},
+                {"README.md": b"seed\n"}, "0" * 64)
+    finally:
+        gatekeeper.attempt_push = original_attempt_push
+        gatekeeper.build_candidate = original_build_candidate
+    check("a failed count after a push that landed is reported beside the success",
+          outcome[0] == "c" * 40 and outcome[1] is None and "stand-in failure" in outcome[2],
+          outcome)
+
+    remote, work, base = make_fixture(workspace, "count-fails-end-to-end")
+    rival = workspace / "count-fails-rival"
+    git(["clone", "--quiet", str(remote), str(rival)], workspace)
+    git(["config", "user.name", "rival"], rival)
+    git(["config", "user.email", "rival@nedschorus.invalid"], rival)
+    (rival / "keep.txt").write_text("untouched\nthe rival's line\n", encoding="utf-8")
+    git(["commit", "--quiet", "-am", "a rival commit on main"], rival)
+    git(["push", "--quiet", "origin", "main"], rival)
+    (work / "README.md").write_text("seed\nlands over a rival\n", encoding="utf-8")
+    environment = {**os.environ, "XDG_STATE_HOME": str(state_home),
+                   "PATH": f"{failing_git('rev-list-end-to-end', 'rev-list --count')}"
+                           f"{os.pathsep}{os.environ['PATH']}"}
+    environment.pop("CLAUDE_CODE_SESSION_ID", None)
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), *base_request(work, remote, base, ["README.md"])],
+        capture_output=True, text=True, check=False, env=environment,
+    )
+    payload = load_payload(completed.stdout)
+    check("a check-in whose integration count fails still checks in, and its summary says the "
+          "count is unknown, with git's stderr",
+          payload.get("outcome") == "checked-in"
+          and "is unknown" in payload.get("summary", "")
+          and "stand-in failure" in payload.get("summary", ""), payload)
+
+    remote, work, base = make_fixture(workspace, "advisory-status-fails")
+    (work / "README.md").write_text("seed\nchecked in while status fails\n", encoding="utf-8")
+    environment = {**os.environ, "XDG_STATE_HOME": str(state_home),
+                   "PATH": f"{failing_git('status-end-to-end', 'status --porcelain')}"
+                           f"{os.pathsep}{os.environ['PATH']}"}
+    environment.pop("CLAUDE_CODE_SESSION_ID", None)
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), *base_request(work, remote, base, ["README.md"])],
+        capture_output=True, text=True, check=False, env=environment,
+    )
+    payload = load_payload(completed.stdout)
+    check("a check-in whose git status fails still checks in, and its advisory says the other "
+          "changes are unknown, with git's stderr",
+          payload.get("outcome") == "checked-in"
+          and "unknown" in payload.get("advisory", "")
+          and "stand-in failure" in payload.get("advisory", ""), payload)
 
     # --- the origin trailer records the submitting session -----------------
     remote, work, base = make_fixture(workspace, "origin")

@@ -8,8 +8,8 @@ and a citation only says who decided and when. The suite reads the hooks
 .claude/settings.json registers, and in each every module-level string
 constant, or tuple or list of strings, whose name is in capitals, whatever the
 name ends in: a hook's message reaches the agent whether or not its name ends
-in one of the suffixes the agent-facing-message collector recognizes,
-nc-systems/general-tools/python-source-agent-facing-string-collector-common.py.
+in one of the suffixes the tool-message-to-agent collector recognizes,
+nc-systems/general-tools/python-source-tool-message-to-agent-string-collector-common.py.
 It reads only registered hooks: across all programs and tests a citation
 pattern also matches dates and issue numbers that are data, while in hook
 constants every match so far was a citation.
@@ -20,7 +20,6 @@ constant that needs one of these forms as data goes in EXEMPTIONS, named by
 hook and constant.
 """
 import importlib.util
-import json
 import re
 import sys
 from pathlib import Path
@@ -35,10 +34,17 @@ REPOSITORY = Path(__file__).resolve().parent.parent
 SETTINGS = REPOSITORY / ".claude" / "settings.json"
 
 _collector_spec = importlib.util.spec_from_file_location(
-    "python_source_agent_facing_string_collector_common",
-    REPOSITORY / "nc-systems" / "general-tools" / "python-source-agent-facing-string-collector-common.py")
+    "python_source_tool_message_to_agent_string_collector_common",
+    REPOSITORY / "nc-systems" / "general-tools" / "python-source-tool-message-to-agent-string-collector-common.py")
 collector = importlib.util.module_from_spec(_collector_spec)
 _collector_spec.loader.exec_module(collector)
+
+_rule_ids_spec = importlib.util.spec_from_file_location(
+    "claude_code_registered_hook_rule_id_pattern_hook_files_list_and_source_scan_common",
+    REPOSITORY / "nc-systems" / "general-tools"
+    / "claude-code-registered-hook-rule-id-pattern-hook-files-list-and-source-scan-common.py")
+rule_ids = importlib.util.module_from_spec(_rule_ids_spec)
+_rule_ids_spec.loader.exec_module(rule_ids)
 
 CITATION_PATTERNS = {
     "date": _date_pattern.DATE_MARKER_PATTERN,
@@ -63,22 +69,8 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def registered_hook_paths():
-    settings = json.loads(SETTINGS.read_text(encoding="utf-8"))
-    paths = []
-    for event_matchers in settings.get("hooks", {}).values():
-        for matcher in event_matchers:
-            for hook in matcher.get("hooks", []):
-                for word in hook.get("command", "").split():
-                    word = word.replace('"$CLAUDE_PROJECT_DIR"/', "").replace(
-                        "$CLAUDE_PROJECT_DIR/", "").strip("\"'")
-                    if word.endswith(".py") and word not in paths:
-                        paths.append(word)
-    return paths
-
-
 def is_message_name(name):
-    return name.isupper() and collector.variable_name_has_agent_facing_message_suffix(name)
+    return name.isupper() and collector.variable_name_has_tool_message_to_agent_suffix(name)
 
 
 def constant_texts(module):
@@ -117,8 +109,8 @@ def load_hook(relative_path):
 for text in ("this exact failure corrupted a command on 2026-08-17",
              "(user-ruled before)", "rule: nedschorus#27", "evidence on #37",
              "fixed by PR 931", "see GHI 913", "issue #46 holds it",
-             "https://github.com/nedschorus/nedschorus/pull/931",
-             "https://github.com/nedschorus/nedschorus/issues/913",
+             "https://github.com/nedsnodes/nedsnodes/pull/931",
+             "https://github.com/nedsnodes/nedsnodes/issues/913",
              "answered at 2026-09-19T04:00:31Z", "on 2026-09-07/08", "on 2026-08-10-11"):
     check(f"a citation is caught: {text}", citations_in(text) != [], text)
 for text in ("gh issue close <number> --reason completed",
@@ -146,7 +138,7 @@ bare_probe.REFUSAL = "stopped"
 check("a hook whose only string constant is a bare REFUSAL declares no message constant",
       not declares_message_constants(constant_texts(bare_probe)), constant_texts(bare_probe))
 
-hook_paths = registered_hook_paths()
+hook_paths = rule_ids.registered_hook_paths(SETTINGS)
 check(".claude/settings.json registers hooks for this suite to read", len(hook_paths) > 5,
       hook_paths)
 for relative_path in hook_paths:

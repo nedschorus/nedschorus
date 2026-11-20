@@ -1,3 +1,7 @@
+---
+kind: design
+---
+
 # Build bindings for pair issue [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3) (main-gatekeeper) — user-walked 2026-07-30
 
 Promoted from `docs/issues/queue/` on 2026-10-01 as a supporting document of issue [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3), rider on the canonical spec `nc-systems/main-gatekeeper/main-gatekeeper-design.md` (design-as-of 2026-07-24). Source walk: `nc-queue/archived/2026-07-28-sdlc-skill-set-coverage-and-app-skill-pile.md` §6b (12-step bindings walk, complete). These bindings supplement the spec; nothing here contradicts it except two explicitly-marked amendments (B4d, and the audit-outcome rule in B3c).

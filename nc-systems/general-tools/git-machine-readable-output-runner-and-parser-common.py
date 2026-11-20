@@ -15,7 +15,8 @@ runs git itself, because telling "not a repository" from other failures needs
 git's message read in one fixed locale; a program that runs git its own way
 reads that message with git_stderr_says_outside_a_repository and
 git_stderr_says_worktree_git_directory_unusable, the one place that knows
-git's words.
+git's words. git_stderr_first_error_message_else_last_line gives, for a
+program's report, why a git command it ran failed.
 
 Load it by path, under the snake_case form of its file name:
 
@@ -29,6 +30,8 @@ from __future__ import annotations
 import codecs
 import os
 import subprocess
+import sys
+import types
 from typing import NamedTuple
 
 GIT_TIMEOUT_SECONDS = 60
@@ -50,6 +53,21 @@ class GitCommandFailed(Exception):
         else:
             outcome = f"exit {returncode}: {stderr.strip() or 'no error text'}"
         super().__init__(f"git {' '.join(self.arguments)} in {self.directory} failed ({outcome})")
+
+
+# Programs load this file by path, each copy a module object of its own, and
+# one program can reach two copies through the modules it loads. Each copy
+# would define its own GitCommandFailed, and an except naming one copy's class
+# misses an error raised through another. The first copy in a process registers
+# its class here, and every later copy uses that class.
+_FIRST_LOADED_COPY_CLASSES_MODULE_NAME = (
+    "git_machine_readable_output_runner_and_parser_common_first_loaded_copy_classes")
+_first_loaded_copy_classes = sys.modules.get(_FIRST_LOADED_COPY_CLASSES_MODULE_NAME)
+if _first_loaded_copy_classes is None:
+    _first_loaded_copy_classes = types.ModuleType(_FIRST_LOADED_COPY_CLASSES_MODULE_NAME)
+    _first_loaded_copy_classes.GitCommandFailed = GitCommandFailed
+    sys.modules[_FIRST_LOADED_COPY_CLASSES_MODULE_NAME] = _first_loaded_copy_classes
+GitCommandFailed = _first_loaded_copy_classes.GitCommandFailed
 
 
 class GitStatusEntry(NamedTuple):
@@ -280,8 +298,9 @@ def patch_header_path(text):
 
 
 def run_git(directory, arguments, *, accepted_exit_codes=(0,),
-            timeout_seconds=GIT_TIMEOUT_SECONDS, environment=None):
-    """Run `git -C <directory> <arguments>` and return its stdout as bytes."""
+            timeout_seconds=GIT_TIMEOUT_SECONDS, environment=None, return_stderr=False):
+    """Run `git -C <directory> <arguments>` and return its stdout as bytes, or with
+    return_stderr, (stdout bytes, stderr text)."""
     arguments = list(arguments)
     try:
         result = subprocess.run(["git", "-C", str(directory), *arguments],
@@ -296,6 +315,8 @@ def run_git(directory, arguments, *, accepted_exit_codes=(0,),
     if result.returncode not in accepted_exit_codes:
         raise GitCommandFailed(arguments, directory, result.returncode,
                                os.fsdecode(result.stderr))
+    if return_stderr:
+        return result.stdout, os.fsdecode(result.stderr)
     return result.stdout
 
 
@@ -319,6 +340,34 @@ def git_stderr_says_outside_a_repository(stderr):
     """True when git's LC_ALL=C stderr says the directory is in no repository."""
     return (OUTSIDE_A_REPOSITORY_MESSAGE in stderr
             and not git_stderr_says_worktree_git_directory_unusable(stderr))
+
+
+GIT_ERROR_LINE_PREFIXES = ("fatal:", "error:")
+GIT_ERROR_MESSAGE_CONTINUATION_LINES_KEPT = 2
+
+
+def git_stderr_first_error_message_else_last_line(stderr):
+    """One line saying why a git command failed: its first `fatal:` or `error:`
+    message, with up to two lines that continue it, else its last non-empty
+    line, else `no detail`.
+
+    git writes progress, such as "Preparing worktree (...)" or "From <url>",
+    before its error, so the first line of a failure's stderr is often not the
+    error. A checkout on a full disk writes one `error:` line per file, and a
+    fetch one line per ref after its error, so only the start of the first
+    message is kept. A failing hook's message has neither prefix and comes
+    last."""
+    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    for index, line in enumerate(lines):
+        if line.startswith(GIT_ERROR_LINE_PREFIXES):
+            message = [line]
+            for following in lines[index + 1:]:
+                if (following.startswith(GIT_ERROR_LINE_PREFIXES)
+                        or len(message) > GIT_ERROR_MESSAGE_CONTINUATION_LINES_KEPT):
+                    break
+                message.append(following)
+            return " ".join(message)
+    return lines[-1] if lines else "no detail"
 
 
 def run_git_unless_outside_a_repository(directory, arguments, **run_options):

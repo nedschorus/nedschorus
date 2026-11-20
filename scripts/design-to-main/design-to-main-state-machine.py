@@ -17,7 +17,7 @@ def _load_sibling_module(file_name, module_name):
     return module
 
 
-tables = _load_sibling_module("design-to-main-state-tables.py", "design_to_main_state_tables")
+tables = _load_sibling_module("design-to-main-state-tables-common.py", "design_to_main_state_tables")
 run_state_module = _load_sibling_module("design-to-main-run-state.py", "design_to_main_run_state")
 git_record_module = _load_sibling_module("design-to-main-git-record.py", "design_to_main_git_record")
 
@@ -60,7 +60,7 @@ class MalformedStateExitFile(ValueError):
 
 
 def state_exit_record_from_json_file(path):
-    """Read state-exit.json into a StateExitRecord, validating field names and shapes."""
+    """Read design-to-main-state-exit-verdict-and-destination.json into a StateExitRecord, validating field names and shapes."""
     path = pathlib.Path(path)
     try:
         data = json.loads(path.read_text())
@@ -338,7 +338,8 @@ def coverage_types_of_the_test_designs_requirements(test_design_text):
 
 def the_set_of_coverage_types_the_test_design_asks_for(requirement_coverage_types):
     present = {t for t in requirement_coverage_types
-               if t != tables.COVERAGE_TYPE_NO_TESTS}
+               if t not in (tables.COVERAGE_TYPE_NO_TESTS,
+                            tables.COVERAGE_TYPE_USER_TESTS_BY_HAND)}
     if not present:
         return (tables.COVERAGE_TYPE_NO_TESTS,)
     return tuple(sorted(present))
@@ -518,7 +519,9 @@ class DesignToMainStateMachineFlow:
 
 
     def start(self, component):
-        """Start the run after verifying origin/main is available for the topic branch cut."""
+        """Start the run after verifying the checkout is not an agent-home and origin/main is available
+        for the topic branch cut."""
+        self.git_record.require_checkout_is_not_an_agent_home()
         self.git_record.require_topic_branch_start_point()
         return RunStateRecord(component)
 
@@ -528,7 +531,7 @@ class DesignToMainStateMachineFlow:
         text = self.git_record.run_state_text_at_last_commit()
         if text is None:
             raise RefusedBeforeTopicBranchCut(
-                "refused to recover: no run-state.json is committed at HEAD (%s on %r), "
+                "refused to recover: no design-to-main-run-state.json is committed at HEAD (%s on %r), "
                 "so there is no state-exit to recover from; the checkout is as it was" % (
                     self.git_record.head_commit(), self.git_record.current_branch()))
         run = RunStateRecord.from_dict(json.loads(text))

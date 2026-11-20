@@ -1,5 +1,6 @@
 ---
 issue: "[Genre-suffix naming for non-reviewable documents (-log, -report, -capture), and mechanical exclusion from the review instruments](https://github.com/nedschorus/nedschorus/issues/152)"
+kind: design
 ---
 
 # Genre-suffix naming for non-reviewable documents (-log, -report, -capture), and mechanical exclusion from the review instruments

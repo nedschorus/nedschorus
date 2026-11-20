@@ -50,9 +50,15 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def git(arguments, cwd: Path):
-    return subprocess.run(["git", *arguments], cwd=str(cwd),
-                          capture_output=True, text=True, check=False)
+def git(arguments, cwd: Path, check=True):
+    """Run a git step of a fixture; a step that fails stops the suite there,
+    naming the step, unless check=False because the case reads the exit code."""
+    result = subprocess.run(["git", *arguments], cwd=str(cwd),
+                            capture_output=True, text=True, check=False)
+    if check and result.returncode != 0:
+        raise RuntimeError(f"fixture step `git {' '.join(arguments)}` in {cwd} exited "
+                           f"{result.returncode}: {result.stderr.strip()}")
+    return result
 
 
 def run_catch_up_once(extra_arguments, path_prefix=None, stdin_text=None):
@@ -129,6 +135,11 @@ def never_blocks(result) -> bool:
 def configure_identity(repository: Path):
     git(["config", "user.email", "test@example.invalid"], repository)
     git(["config", "user.name", "freshness test"], repository)
+
+
+def mark_as_agent_home(worktree: Path):
+    git_directory = Path(git(["rev-parse", "--absolute-git-dir"], worktree).stdout.strip())
+    (git_directory / "agent-home-marker").write_text("", encoding="utf-8")
 
 
 def commit_file(repository: Path, name: str, content: str, message: str):
@@ -354,7 +365,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           merge_note.endswith("\n" + NOT_FOR_THE_USER_LINE), merge_note)
     check("and only once",
           "merge commit(s) from main" not in agent_text(run_catch_up(["--cwd", str(merge_seat)])))
-    # A merge of another topic branch is not the banned thing.
+    # A merge of another nc-topic-branch is not the banned thing.
     topic_seat = tmp / "topic-merge-worktree"
     git(["worktree", "add", "-q", "-b", "topic-a", str(topic_seat), "main"], reference)
     configure_identity(topic_seat)
@@ -366,7 +377,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     commit_file(other, "topic-b.txt", "b\n", "topic b work")
     git(["-c", "core.editor=true", "merge", "--no-ff", "--no-edit", "topic-b"], topic_seat)
     result = run_catch_up(["--cwd", str(topic_seat)])
-    check("a merge of another topic branch is NOT reported as a merge from main",
+    check("a merge of another nc-topic-branch is NOT reported as a merge from main",
           "merge commit(s) from main" not in agent_text(result), agent_text(result))
 
     # -----------------------------------------------------------------------
@@ -398,15 +409,17 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "Do not rebase or amend it" in agent_text(result)
           and "git checkout -b <name> origin/main" in agent_text(result), agent_text(result))
     # A conflict with main is the one case a commit on top cannot clear; the
-    # pushed-branch advice sends it to the hand-merge that the VERDICT: CONFLICT
-    # report of scripts/branch-conflict-check.py describes.
+    # pushed-branch advice sends it to scripts/branch-conflict-check.py's report.
     check("a pushed branch is told how to clear a conflict with main, byte for byte",
-          "If it conflicts with main, clear the conflict with the hand-merge that "
-          "scripts/branch-conflict-check.py describes." in agent_text(result),
+          "To learn whether the branch conflicts with main, run python3 "
+          "scripts/branch-conflict-check.py in this checkout. If it prints `VERDICT: "
+          "CONFLICT`, do what its report says. If it exits 2, it has no answer: do what "
+          "its lines say, then run it again." in agent_text(result),
           agent_text(result))
     check("the pushed head's status says how a conflict is cleared, byte for byte",
-          "(frozen: a fix is a new commit on top, never an amend; a conflict with "
-          "main is cleared by a hand-merge)" in agent_text(result), agent_text(result))
+          "(frozen: a fix is a new commit on top, never an amend; for a conflict with "
+          "main, do what scripts/branch-conflict-check.py reports)" in agent_text(result),
+          agent_text(result))
     check("the pushed-branch note ends by saying it is not for the user, byte for byte",
           agent_text(result).endswith("\n" + NOT_FOR_THE_USER_LINE), agent_text(result))
     check("the user hears nothing", display_text(result) == "", display_text(result))
@@ -510,8 +523,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "This branch's commits are already on GitHub under another branch name, so the "
           "branch is treated as pushed and is not rebased: a pushed head may be under "
           "review, and a rebase would rewrite it. Do not rebase or amend those commits. A "
-          "fix is a new commit on top. If it conflicts with main, clear the conflict with "
-          "the hand-merge that scripts/branch-conflict-check.py describes."
+          "fix is a new commit on top. If the branch conflicts with main, as python3 "
+          "scripts/branch-conflict-check.py run in its checkout reports, do what that "
+          "report says."
           in agent_text(result), agent_text(result))
     check("the pushed-history note never tells the agent to rebase",
           "git rebase origin/main" not in agent_text(result), agent_text(result))
@@ -551,9 +565,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         "CLAUDE.md, the skills and the hooks load from this checkout, so until it moves, the "
         "files listed above stay older here than on main.")
     detached_work_line = (
-        "It holds work of its own: run `git switch -c <branch name>` to put that work on a "
-        "branch, and commit any uncommitted changes there; from then on the hook's rules for a "
-        "branch apply.")
+        "It holds work of its own.\n"
+        "This checkout is an agent-home, so git refuses commits in it: carry that work to a "
+        "worktree of your own on an nc-topic-branch, as the refusal of `git commit` here says "
+        "how.")
     detached_bisect_line = (
         "A bisect is in progress: finish it or abort it; the next turn's end moves the "
         "checkout forward.")
@@ -563,11 +578,13 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         "If git names anything else, leave the checkout as it is: the refusal has been "
         "reported to the user.")
 
-    def detached_worktree_behind_main(name):
+    def detached_worktree_behind_main(name, agent_home=True):
         git(["fetch", "-q"], reference)
         path = tmp / name
         git(["worktree", "add", "-q", "--detach", str(path), "origin/main~1"], reference)
         configure_identity(path)
+        if agent_home:
+            mark_as_agent_home(path)
         return path
 
     def head_of(checkout):
@@ -589,6 +606,19 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = run_catch_up(["--cwd", str(detached)])
     check("a detached HEAD already at origin/main prints nothing",
           result.stdout.strip() == "", result.stdout)
+
+    # A review worktree pinned at the commit under review, which main already
+    # holds: detached, behind, nothing of its own, but no agent-home.
+    pinned = detached_worktree_behind_main("detached-pinned-review-worktree", agent_home=False)
+    pinned_head = head_of(pinned)
+    result = run_catch_up(["--cwd", str(pinned)])
+    check("a detached HEAD at an ancestor of main that is not an agent-home is not moved",
+          head_of(pinned) == pinned_head and pinned_head != main_tip()
+          and not (pinned / "scripts/detached-advance.py").exists(), pinned_head)
+    check("and neither the agent nor the user is told anything, and no note is queued",
+          agent_text(result) == "" and display_text(result) == ""
+          and not stamp_of(pinned).get("pending_agent_notes"),
+          agent_text(result) + display_text(result) + str(stamp_of(pinned)))
 
     tracked = detached_worktree_behind_main("detached-tracked-change-worktree")
     tracked_head = head_of(tracked)
@@ -676,6 +706,26 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("and a refusal over an untracked file is not sent to the user",
           display_text(result) == "", display_text(result))
 
+    # An ignored directory at a path main newly tracks: without
+    # --no-overwrite-ignore, git replaces its file with main's, and the only copy is lost.
+    commit_file(origin, "detached-ignored/notes.txt", "main's copy\n",
+                "main adds a file inside a directory a detached checkout ignores")
+    ignoring = detached_worktree_behind_main("detached-ignored-collision-worktree")
+    (ignoring / "detached-ignored").mkdir()
+    (ignoring / "detached-ignored/.gitignore").write_text("*\n", encoding="utf-8")
+    (ignoring / "detached-ignored/notes.txt").write_text("the only copy\n", encoding="utf-8")
+    ignoring_head = head_of(ignoring)
+    result = run_catch_up(["--cwd", str(ignoring)])
+    check("a fast-forward over an ignored file at a path main tracks is refused, and the "
+          "file survives",
+          head_of(ignoring) == ignoring_head
+          and (ignoring / "detached-ignored/notes.txt").read_text(encoding="utf-8")
+          == "the only copy\n", agent_text(result))
+    check("and message B gives git's error, naming the ignored file",
+          any(line.startswith("Git refused the fast-forward: ")
+              and "detached-ignored/notes.txt" in line
+              for line in agent_text(result).splitlines()), agent_text(result))
+
     locked = detached_worktree_behind_main("detached-index-locked-worktree")
     locked_head = head_of(locked)
     locked_git_dir = Path(git(["rev-parse", "--absolute-git-dir"], locked).stdout.strip())
@@ -730,7 +780,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     (sequencing / "shared.txt").write_text("a different line\n", encoding="utf-8")
     git(["commit", "-qam", "a conflicting base"], sequencing)
     sequencing_head = head_of(sequencing)
-    git(["cherry-pick", "--no-commit", *picked], sequencing)
+    git(["cherry-pick", "--no-commit", *picked], sequencing, check=False)
     git(["checkout", "--ours", "shared.txt"], sequencing)
     git(["add", "shared.txt"], sequencing)
     sequencing_git_dir = Path(git(["rev-parse", "--absolute-git-dir"], sequencing).stdout.strip())
@@ -748,12 +798,12 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           agent_text(result))
     git(["cherry-pick", "--abort"], sequencing)
 
-    # The ghi-info shape (nedschorus#334): no commits of its own, far behind,
+    # The ghi-guide-agent shape (nedschorus#334): no commits of its own, far behind,
     # never pushed — so it is simply brought level, the same fast-forward the
-    # box's ghi-info-ask now does for itself (#375).
-    ghi = tmp / "ghi-info-worktree"
+    # box's ghi-guide-agent-ask now does for itself (#375).
+    ghi = tmp / "ghi-guide-agent-worktree"
     first_commit = git(["rev-list", "--max-parents=0", "main"], reference).stdout.strip()
-    git(["worktree", "add", "-q", "-b", "ghi-info", str(ghi), first_commit], reference)
+    git(["worktree", "add", "-q", "-b", "ghi-guide-agent", str(ghi), first_commit], reference)
     configure_identity(ghi)
     result = run_catch_up(["--cwd", str(ghi)])
     check("a never-pushed branch with no own commits, far behind, is brought level",
@@ -806,6 +856,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("--reference-pull reports the same blocked reference every time",
           "left alone" in operator.stdout and "left alone" in operator_again.stdout,
           operator.stdout + operator_again.stdout)
+    check("--reference-pull exits 1 when local work left the reference behind origin/main",
+          operator.returncode == 1 and operator_again.returncode == 1,
+          f"rc={operator.returncode}, {operator_again.returncode}")
     git(["checkout", "--", "shared.txt"], reference)
 
     # A session seated outside any repository does nothing, silently.
@@ -942,7 +995,10 @@ with tempfile.TemporaryDirectory() as unknowable_scratch:
 
     # There is no origin/main here at all, so the comparison is unknowable.
     seed_stale_counts(lone)
-    run_catch_up(["--reference-pull", "--repo", str(lone)])
+    uncounted = run_catch_up(["--reference-pull", "--repo", str(lone)])
+    check("--reference-pull exits 1 and says why when git cannot count against origin/main",
+          uncounted.returncode == 1 and "could not count" in uncounted.stdout,
+          f"rc={uncounted.returncode} {uncounted.stdout}")
     stamp = stamp_of(lone)
     check("an unknowable count nulls the reference checkout's recorded behind",
           stamp.get("behind") is None, json.dumps(stamp))
@@ -1072,6 +1128,49 @@ with tempfile.TemporaryDirectory() as reference_pull_scratch:
           NOT_FOR_THE_USER_LINE not in pulled.stdout, pulled.stdout)
     check("a successful pull clears the reference's reason key",
           "last_reference_blockers" not in stamp_of(reference), str(stamp_of(reference)))
+    check("--reference-pull exits 0 when it moved the reference to origin/main",
+          pulled.returncode == 0, f"rc={pulled.returncode} {pulled.stdout}")
+    already_current = run_catch_up(["--reference-pull", "--repo", str(reference)])
+    check("--reference-pull exits 0, silently, when the reference is already at origin/main",
+          already_current.returncode == 0 and already_current.stdout == "",
+          f"rc={already_current.returncode} {already_current.stdout}")
+
+    # Git exits 0 after a fast-forward whatever post-merge returns, so the
+    # hook's FAILED line reaches nobody unless the catch-up relays it.
+    hooks = tmp / "hooks"
+    hooks.mkdir()
+    (hooks / "post-merge").write_text(
+        "#!/bin/sh\necho 'restart-program: FAILED — the restart did not happen' >&2\nexit 1\n",
+        encoding="utf-8")
+    (hooks / "post-merge").chmod(0o755)
+    git(["config", "core.hooksPath", str(hooks)], reference)
+    commit_file(origin, "advance-again.txt", "two\n", "advance again")
+    pulled = run_catch_up(["--reference-pull", "--repo", str(reference)])
+    check("a post-merge hook's FAILED line after a fast-forward of the reference is relayed",
+          (reference / "advance-again.txt").exists()
+          and "post-merge hook reported a failure" in pulled.stdout
+          and "restart-program: FAILED — the restart did not happen" in pulled.stdout,
+          pulled.stdout + pulled.stderr)
+    (hooks / "post-merge").write_text("#!/bin/sh\necho 'all went well' >&2\n", encoding="utf-8")
+    commit_file(origin, "advance-third.txt", "three\n", "advance a third time")
+    pulled = run_catch_up(["--reference-pull", "--repo", str(reference)])
+    check("(control) a post-merge hook that reports no failure adds no line",
+          "post-merge hook" not in pulled.stdout, pulled.stdout)
+
+    # An ignored directory at a path main newly tracks: without
+    # --no-overwrite-ignore, git replaces its file with main's, and the only copy is lost.
+    commit_file(origin, "reference-ignored/notes.txt", "main's copy\n",
+                "main adds a file inside a directory the reference ignores")
+    (reference / "reference-ignored").mkdir()
+    (reference / "reference-ignored/.gitignore").write_text("*\n", encoding="utf-8")
+    (reference / "reference-ignored/notes.txt").write_text("the only copy\n", encoding="utf-8")
+    pulled = run_catch_up(["--reference-pull", "--repo", str(reference)])
+    check("a reference fast-forward over an ignored file at a path main tracks is refused, "
+          "the operator is told, and the file survives",
+          "could not fast-forward" in pulled.stdout
+          and "reference-ignored/notes.txt" in pulled.stdout
+          and (reference / "reference-ignored/notes.txt").read_text(encoding="utf-8")
+          == "the only copy\n", pulled.stdout + pulled.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -1110,6 +1209,9 @@ with tempfile.TemporaryDirectory() as reference_fetch_scratch:
           "fetch failed at" in unreachable_operator.stdout
           and "fetch failed at" in unreachable_operator_again.stdout,
           unreachable_operator.stdout + unreachable_operator_again.stdout)
+    check("--reference-pull exits 1 when the fetch failed, though local refs say 0 behind",
+          unreachable_operator.returncode == 1 and unreachable_operator_again.returncode == 1,
+          f"rc={unreachable_operator.returncode}, {unreachable_operator_again.returncode}")
 
     git(["remote", "set-url", "origin", str(origin)], reference)
     reachable_hook = run_catch_up(["--cwd", str(seat)])
@@ -1214,8 +1316,13 @@ with tempfile.TemporaryDirectory() as naming_scratch:
           named())
     check("hooks and their wiring share one category, having one reason",
           "hooks and wiring that run on your work (2)"
-          in named((".claude/hooks/a-guard.py", "a hook"),
+          in named((".claude/guard-hooks/a-hook.py", "a hook"),
                    (".claude/settings.json", "wiring")), named())
+    guard_listing = named((".claude/guard-hooks/a-guard.py", "a guard hook"))
+    check("a guard under .claude/guard-hooks/ is named with the hooks",
+          any(line.startswith("  hooks and wiring that run on your work (3):")
+              and ".claude/guard-hooks/a-guard.py" in line
+              for line in guard_listing.splitlines()), guard_listing)
     check("an uncategorised path is still surfaced rather than hidden",
           "other files (1): Makefile" in named(("Makefile", "a makefile")), named())
 
@@ -1323,7 +1430,7 @@ with tempfile.TemporaryDirectory() as naming_scratch:
           (rename_seat / "scripts/main-will-rename-this.py").is_file())
     check("(fixture) and origin/main no longer has that path at all",
           git(["cat-file", "-e", "origin/main:scripts/main-will-rename-this.py"],
-              rename_seat).returncode != 0)
+              rename_seat, check=False).returncode != 0)
     renamed_listing = catch_up_module.format_obsolete_files(
         catch_up_module.obsolete_files_by_category(rename_seat))
     check("a file main renamed away is listed at the OLD path, the one this branch holds",
@@ -1510,12 +1617,12 @@ with tempfile.TemporaryDirectory() as exception_scratch:
         do it; returns git's exit status so a conflict can be resolved."""
         git(["fetch", "-q", "origin"], seat_path)
         return git(["-c", "core.editor=true", "merge", "--no-ff", "--no-edit", "origin/main"],
-                   seat_path).returncode
+                   seat_path, check=False).returncode
 
     def merge_tree_status(seat_path: Path, extra_arguments):
         """What git says about re-merging the seat's merge commit's two parents."""
         return git(["merge-tree", "--write-tree", *extra_arguments, "HEAD^1", "HEAD^2"],
-                   seat_path).returncode
+                   seat_path, check=False).returncode
 
     # --- a clean catch-up merge is STILL reported ---------------------------
     clean_origin, clean_seat = seat_on_main("clean-catch-up")
@@ -1639,23 +1746,13 @@ with tempfile.TemporaryDirectory() as exception_scratch:
           and never_blocks(old_git_result) and never_blocks(unresolvable_result),
           f"{old_git_result.returncode} {unresolvable_result.returncode}")
 
-    # --- a hand-merge the conflict check called for is not reported ----------
-    # A pushed branch that scripts/branch-conflict-check.py reports as
-    # `VERDICT: CONFLICT` is cleared by a hand-merge, as that report says. That
-    # program asks git with rename detection ON, as `git merge` and the pre-push
-    # hook do; this hook once re-merged the two parents with rename detection
-    # OFF only. A file added under a directory the
-    # other side moved conflicts only WITH detection (CONFLICT (file location)).
-    # So the conflict check ordered the hand-merge, git's own merge stopped and
-    # was resolved by hand, and this hook then told the user that the branch did
-    # what was ruled out 2026-09-14. The first shape is the merge commit "Merge
-    # main to relocate #342's two drafts, and revert two commit-pinned paths"
-    # (6bd0aa5850ce) in miniature, the one such merge in main's history
-    # (merges_from_main's docstring); the second is the same conflict with the
-    # two sides swapped. Both not-reported checks FAIL against the script as it
-    # was when it re-merged without rename detection only, each printing the
-    # merge-from-main line — checked by running this file against that
-    # revision, not assumed.
+    # --- a merge that resolved a conflict with main is not reported ----------
+    # A file added under a directory the other side moved conflicts only WITH
+    # rename detection (CONFLICT (file location)), as scripts/branch-conflict-check.py,
+    # `git merge` and the pre-push hook see it. A merge that resolved such a
+    # conflict is no catch-up, so it is not reported. The first shape is the merge
+    # commit 6bd0aa5850ce in miniature; the second is the same conflict with the
+    # two sides swapped.
     conflict_check_path = SCRIPT_PATH.with_name("branch-conflict-check.py")
 
     def conflict_check_exit_and_verdict_line(seat_path: Path):
@@ -1675,11 +1772,11 @@ with tempfile.TemporaryDirectory() as exception_scratch:
 
     for shape_name, seat_change, main_change, case_name in (
             ("seat-moved-the-directory", move_drafts_directory, add_third_draft,
-             "the hand-merge that relocates a file main added under a directory the "
-             "branch moved is NOT reported — the conflict check called for it"),
+             "a merge that relocates a file main added under a directory the "
+             "branch moved is NOT reported — it resolved a conflict"),
             ("main-moved-the-directory", add_third_draft, move_drafts_directory,
-             "the hand-merge that relocates a file the branch added under a directory "
-             "main moved is NOT reported — the conflict check called for it")):
+             "a merge that relocates a file the branch added under a directory "
+             "main moved is NOT reported — it resolved a conflict")):
         shape_origin, shape_seat = seat_on_main(shape_name)
         # A directory both sides start with, holding two drafts.
         commit_file(shape_origin, "docs/drafts/first-draft.md", "the first draft\n",
@@ -1704,9 +1801,7 @@ with tempfile.TemporaryDirectory() as exception_scratch:
         check(f"(fixture, {shape_name}) merging main by hand stops on a conflict",
               merge_main_into(shape_seat) != 0)
         # The resolution git itself suggests: the added file goes where the
-        # directory went. The merge's message names the resolved file, as
-        # the VERDICT: CONFLICT report of scripts/branch-conflict-check.py has a
-        # hand-merge do.
+        # directory went.
         git(["add", "-A"], shape_seat)
         git(["commit", "-q", "-m",
              "Merge origin/main into seat by hand\n\n"
@@ -1717,7 +1812,7 @@ with tempfile.TemporaryDirectory() as exception_scratch:
               git(["rev-list", "--merges", "--count", "origin/main..HEAD"],
                   shape_seat).stdout.strip() == "1"
               and git(["merge-base", "--is-ancestor", "HEAD^2", "origin/main"],
-                      shape_seat).returncode == 0
+                      shape_seat, check=False).returncode == 0
               and git(["ls-files", "docs"], shape_seat).stdout.split()
               == ["docs/queue/first-draft.md", "docs/queue/second-draft.md",
                   "docs/queue/third-draft.md"],
@@ -1976,7 +2071,7 @@ with tempfile.TemporaryDirectory() as notes_scratch:
     (diff_fails / "git").write_text(
         "#!/bin/sh\n"
         'for argument in "$@"; do\n'
-        '  if [ "$argument" = "--name-only" ]; then\n'
+        '  if [ "$1" = "diff" ] && [ "$argument" = "--name-only" ]; then\n'
         '    echo "fatal: shimmed diff failure" >&2; exit 128\n'
         "  fi\n"
         "done\n"
@@ -2066,6 +2161,7 @@ with tempfile.TemporaryDirectory() as notes_scratch:
     detached = notes_seat.parent / "detached"
     git(["worktree", "add", "-q", "--detach", str(detached), "main"], notes_seat.parent / "clone")
     configure_identity(detached)
+    mark_as_agent_home(detached)
     (detached / "shared.txt").write_text("dirty\n", encoding="utf-8")
     commit_file(origin_repo, "a.txt", "a\n", "advance a")
     stop_only(detached)
@@ -2243,7 +2339,7 @@ with tempfile.TemporaryDirectory() as notes_scratch:
             ("the did-not-fit line", catch_up_module.delivery_text(many)),
             ("the could-not-be-read line", catch_up_module.NOTES_UNREADABLE_LINE.format(
                 path="stamp.json", error="unreadable")),
-            ("the moved-without-a-list note", catch_up_module.MOVED_WITHOUT_LIST_NOTE.format(
+            ("the moved-without-a-list note", catch_up_module.MOVED_WITHOUT_LIST_NOTICE.format(
                 error="no list"))):
         check(f"{note_name} says to invoke the skill again, and to stop following a skill "
               f"main deleted, byte for byte", skill_reload_lines in rendered, rendered[:600])
@@ -2402,6 +2498,619 @@ with tempfile.TemporaryDirectory() as notes_scratch:
           [note["text"] for note in json.loads(reread_stamp.read_text())["pending_agent_notes"]]
           == ["new"], reread_stamp.read_text())
 
+
+# ---------------------------------------------------------------------------
+# A git command that fails is told as a failure, never read as git's "no"
+# ---------------------------------------------------------------------------
+# git exits 1 for a real "no" from `rev-parse --verify --quiet` and
+# `merge-base --is-ancestor`, and 128 for a failure. A failure must not read
+# as "no remote branch" (which authorises a rebase), "diverged" (which accuses
+# the agent of rewriting a pushed head), "detached HEAD" (which authorises a
+# fast-forward), or "not a merge from main".
+with tempfile.TemporaryDirectory() as failing_git_scratch:
+    failing_tmp = Path(failing_git_scratch).resolve()
+    failing_real_git = shutil.which("git")
+    failing_fixture_count = [0]
+    INJECTED_STDERR = "fatal: injected git failure"
+
+    def seat_behind_main(pushed=False, own_commit=False):
+        """(origin, seat): a seat branch one commit behind origin/main."""
+        failing_fixture_count[0] += 1
+        root = failing_tmp / f"fixture-{failing_fixture_count[0]}"
+        origin_repo = root / "origin"
+        origin_repo.mkdir(parents=True)
+        git(["init", "-q", "-b", "main"], origin_repo)
+        configure_identity(origin_repo)
+        commit_file(origin_repo, "shared.txt", "first\n", "add shared.txt")
+        clone = root / "clone"
+        git(["clone", "-q", str(origin_repo), str(clone)], root)
+        configure_identity(clone)
+        seat_path = root / "seat"
+        git(["worktree", "add", "-q", "-b", "seat", str(seat_path), "main"], clone)
+        configure_identity(seat_path)
+        if own_commit:
+            commit_file(seat_path, "own.txt", "mine\n", "the seat's own work")
+        if pushed:
+            git(["push", "-q", "-u", "origin", "seat"], seat_path)
+        commit_file(origin_repo, "main-only.txt", "new\n", "advance main")
+        git(["fetch", "-q", "origin"], seat_path)
+        return origin_repo, seat_path
+
+    def failing_git_shim(name, shell_pattern, stderr=INJECTED_STDERR):
+        """A git that exits 128, printing stderr, for argument lists matching shell_pattern and
+        passes every other call to the real git."""
+        directory = failing_tmp / name
+        directory.mkdir()
+        (directory / "git").write_text(
+            "#!/bin/sh\n"
+            f'case " $* " in {shell_pattern}) echo "{stderr}" >&2; exit 128;; esac\n'
+            f'exec "{failing_real_git}" "$@"\n', encoding="utf-8")
+        (directory / "git").chmod(0o755)
+        return str(directory)
+
+    real_module_run_git = catch_up_module.run_git
+
+    @contextlib.contextmanager
+    def module_git_fails_when(matches):
+        """catch_up_module's run_git answers 128 for argument lists matching."""
+        def run_git_with_injected_failure(arguments, working_directory, timeout=60):
+            if matches(list(arguments)):
+                return subprocess.CompletedProcess(arguments, 128, "", INJECTED_STDERR + "\n")
+            return real_module_run_git(arguments, working_directory, timeout=timeout)
+        catch_up_module.run_git = run_git_with_injected_failure
+        try:
+            yield
+        finally:
+            catch_up_module.run_git = real_module_run_git
+
+    def tip(checkout, reference="HEAD"):
+        return git(["rev-parse", reference], checkout).stdout.strip()
+
+    # head_state, one decision point at a time.
+    _, never_pushed = seat_behind_main(own_commit=True)
+    with module_git_fails_when(lambda arguments: arguments[:3] == ["rev-parse", "--verify", "--quiet"]
+                               and arguments[3] == "origin/seat"):
+        state = catch_up_module.head_state(never_pushed, "seat")
+    check("a failed lookup of origin/<branch> is 'unknown', never 'unpushed'",
+          state[0] == "unknown" and INJECTED_STDERR in state[1], str(state))
+
+    _, pushed_seat = seat_behind_main(pushed=True, own_commit=True)
+    commit_file(pushed_seat, "local.txt", "local\n", "a local commit on top of the push")
+    check("(fixture) a pushed seat with a local commit is pushed-with-local-commits",
+          catch_up_module.head_state(pushed_seat, "seat")[0] == "pushed-with-local-commits",
+          str(catch_up_module.head_state(pushed_seat, "seat")))
+    for case_name, matches in (
+            ("a failed read of HEAD", lambda arguments: arguments == ["rev-parse", "HEAD"]),
+            ("a failed count of local commits",
+             lambda arguments: arguments == ["rev-list", "--count", "origin/seat..HEAD"]),
+            ("a failed ancestry check",
+             lambda arguments: arguments[:2] == ["merge-base", "--is-ancestor"])):
+        with module_git_fails_when(matches):
+            state = catch_up_module.head_state(pushed_seat, "seat")
+        check(f"{case_name} in head_state is 'unknown', not an answer",
+              state[0] == "unknown" and INJECTED_STDERR in state[1], str(state))
+
+    git(["reset", "-q", "--hard", "HEAD~1"], pushed_seat)
+    git(["reset", "-q", "--hard", "HEAD~1"], pushed_seat)
+    check("(fixture) a seat behind its own remote branch is behind-remote",
+          catch_up_module.head_state(pushed_seat, "seat")[0] == "behind-remote",
+          str(catch_up_module.head_state(pushed_seat, "seat")))
+    with module_git_fails_when(
+            lambda arguments: arguments == ["rev-list", "--count", "HEAD..origin/seat"]):
+        state = catch_up_module.head_state(pushed_seat, "seat")
+    check("a failed count of the remote's commits in head_state is 'unknown', not 'some'",
+          state[0] == "unknown" and INJECTED_STDERR in state[1], str(state))
+
+    # End to end: the never-pushed seat is not rebased when origin/<branch>
+    # cannot be looked up.
+    before = tip(never_pushed)
+    verify_fails = failing_git_shim("verify-origin-seat-fails", '*" --verify --quiet origin/seat "*')
+    run = run_catch_up_once(["--cwd", str(never_pushed)], verify_fails)
+    check("a never-pushed seat whose origin/<branch> lookup fails is not rebased",
+          run.returncode == 0 and tip(never_pushed) == before
+          and stamp_of(never_pushed).get("head_state") == "unknown",
+          f"{run.stdout} {run.stderr} {stamp_of(never_pushed)}")
+
+    # The branch read: a failure is not "detached HEAD".
+    _, level_seat = seat_behind_main()
+    before = tip(level_seat)
+    with module_git_fails_when(lambda arguments: arguments == ["rev-parse", "--abbrev-ref", "HEAD"]):
+        try:
+            catch_up_module.catch_up_session_checkout(level_seat, 0)
+            raised = None
+        except catch_up_module.git_output.GitCommandFailed as error:
+            raised = error
+    check("a failed branch read stops the session catch-up instead of reading as detached HEAD",
+          raised is not None and INJECTED_STDERR in str(raised) and tip(level_seat) == before
+          and git(["rev-parse", "--abbrev-ref", "HEAD"], level_seat).stdout.strip() == "seat",
+          f"{raised} {tip(level_seat)} {before}")
+    with module_git_fails_when(lambda arguments: arguments == ["rev-parse", "--abbrev-ref", "HEAD"]):
+        try:
+            catch_up_module.merge_blockers(level_seat, Path(git(
+                ["rev-parse", "--absolute-git-dir"], level_seat).stdout.strip()))
+            raised = None
+        except catch_up_module.git_output.GitCommandFailed as error:
+            raised = error
+    check("a failed branch read in merge_blockers raises instead of reporting detached HEAD",
+          raised is not None and INJECTED_STDERR in str(raised), str(raised))
+
+    # The never-pushed rebase is the shared rebase-or-replace answer's: a replace answer
+    # leaves the branch where it is, and the rebase answer moves it.
+    shared_answer = catch_up_module.rebase_or_replace
+    real_answer = shared_answer.pull_request_conflict_with_main_rebase_or_replace_answer
+    asked = []
+    for answer in (shared_answer.REPLACE_WITH_NEW_PULL_REQUEST, shared_answer.REBASE_ONTO_MAIN):
+        _, answered_seat = seat_behind_main(own_commit=True)
+        before = tip(answered_seat)
+
+        def injected_answer(open_pull_request_found, ever_marked_ready_read=None,
+                            answer=answer):
+            asked.append(open_pull_request_found)
+            return answer
+        shared_answer.pull_request_conflict_with_main_rebase_or_replace_answer = injected_answer
+        try:
+            catch_up_module.catch_up_session_checkout(answered_seat, 0)
+        finally:
+            shared_answer.pull_request_conflict_with_main_rebase_or_replace_answer = real_answer
+        moved = tip(answered_seat) != before
+        check(f"a never-pushed branch the shared answer gives '{answer}' is "
+              f"{'rebased' if answer == shared_answer.REBASE_ONTO_MAIN else 'left where it is'}",
+              moved == (answer == shared_answer.REBASE_ONTO_MAIN), f"{before} {tip(answered_seat)}")
+    check("checkout-freshness asks the shared answer for a branch with no open pull request",
+          asked == [False, False], repr(asked))
+
+    # merges_from_main: a merge commit from main on the seat.
+    _, merged_seat = seat_behind_main(own_commit=True)
+    git(["merge", "-q", "--no-edit", "origin/main"], merged_seat)
+    check("(fixture) the seat's merge from main is found",
+          len(catch_up_module.merges_from_main(merged_seat) or []) == 1,
+          str(catch_up_module.merges_from_main(merged_seat)))
+    for case_name, matches in (
+            ("a failed read of a merge's second parent",
+             lambda arguments: arguments[:3] == ["rev-parse", "--verify", "--quiet"]
+             and arguments[3].endswith("^2")),
+            ("a failed check of whether the second parent is on main",
+             lambda arguments: arguments[:2] == ["merge-base", "--is-ancestor"])):
+        with module_git_fails_when(matches):
+            try:
+                found = catch_up_module.merges_from_main(merged_seat)
+                raised = None
+            except catch_up_module.git_output.GitCommandFailed as error:
+                found, raised = None, error
+        check(f"{case_name} in merges_from_main raises instead of skipping the merge",
+              raised is not None and INJECTED_STDERR in str(raised), f"{found} {raised}")
+
+    # Each mode tells a git failure inside a known checkout; only a directory
+    # outside every repository stays silent.
+    for shell_pattern, shim_name in (('*" --show-toplevel "*', "toplevel-fails"),
+                                     ('*" --absolute-git-dir "*', "git-dir-fails"),
+                                     ('*" --abbrev-ref HEAD "*', "branch-read-fails"),
+                                     ('*" worktree list "*', "worktree-list-fails")):
+        shim = failing_git_shim(shim_name, shell_pattern)
+        run = run_catch_up_once(["--cwd", str(level_seat)], shim)
+        check(f"the Stop hook tells the user when {shim_name.replace('-', ' ')}",
+              run.returncode == 0 and never_blocks(run)
+              and "a git command failed" in display_text(run)
+              and INJECTED_STDERR in display_text(run)
+              and "\nThis check runs again at the end of the agent's next turn.\n"
+                  in display_text(run)
+              and "paste both messages to the agent" in display_text(run)
+              and "tell the user" not in display_text(run)
+              and "you gave that name to" not in display_text(run),
+              f"rc={run.returncode} {run.stdout} {run.stderr}")
+    # The first branch read alone fails: main() must not take the failure for
+    # a branch that is not main and carry on.
+    first_read_only = failing_tmp / "first-branch-read-fails"
+    first_read_only.mkdir()
+    (first_read_only / "git").write_text(
+        "#!/bin/sh\n"
+        f'case " $* " in *" --abbrev-ref HEAD "*) if [ ! -e "{first_read_only}/failed" ]; then '
+        f': > "{first_read_only}/failed"; echo "{INJECTED_STDERR}" >&2; exit 128; fi;; esac\n'
+        f'exec "{failing_real_git}" "$@"\n', encoding="utf-8")
+    (first_read_only / "git").chmod(0o755)
+    before = tip(level_seat)
+    run = run_catch_up_once(["--cwd", str(level_seat)], str(first_read_only))
+    check("a failed first branch read stops the Stop hook, telling the user, with nothing moved",
+          run.returncode == 0 and INJECTED_STDERR in display_text(run) and tip(level_seat) == before,
+          f"{run.stdout} {run.stderr}")
+    try:
+        git(["rev-parse", "--verify", "refs/heads/no-such-branch"], level_seat)
+        helper_raised = False
+    except RuntimeError:
+        helper_raised = True
+    check("a fixture git step that fails stops the suite at that step", helper_raised)
+    # A session whose working directory was deleted is in no checkout: silence,
+    # not a git failure at every turn.
+    deleted_directory = failing_tmp / "deleted-working-directory"
+    deleted_directory.mkdir()
+    deleted_directory.rmdir()
+    for mode in ([], ["--deliver-pending-agent-notes"]):
+        run = run_catch_up_once([*mode, "--cwd", str(deleted_directory)])
+        check(f"a deleted working directory is silent ({' '.join(mode) or 'Stop hook'})",
+              run.returncode == 0 and run.stdout.strip() == "" and run.stderr.strip() == "",
+              f"rc={run.returncode} {run.stdout} {run.stderr}")
+    # A repository with no commit yet has no branch to compare: silence, not a
+    # git failure at every turn.
+    unborn = failing_tmp / "unborn-head"
+    unborn.mkdir()
+    git(["init", "-q", "-b", "topic"], unborn)
+    for mode in ([], ["--deliver-pending-agent-notes"]):
+        run = run_catch_up_once([*mode, "--cwd", str(unborn)])
+        check(f"a repository with no commit yet is silent ({' '.join(mode) or 'Stop hook'})",
+              run.returncode == 0 and run.stdout.strip() == "" and run.stderr.strip() == "",
+              f"rc={run.returncode} {run.stdout} {run.stderr}")
+    check("a repository with no commit yet has no current branch",
+          catch_up_module.current_branch(unborn) is None,
+          str(catch_up_module.current_branch(unborn)))
+    git_dir_fails = failing_git_shim("git-dir-fails-in-modes", '*" --absolute-git-dir "*')
+    run = run_catch_up_once(["--deliver-pending-agent-notes", "--cwd", str(level_seat)],
+                            git_dir_fails)
+    check("note delivery tells the agent when git cannot find the git directory, "
+          "with the hook's next steps",
+          run.returncode == 0 and INJECTED_STDERR in agent_text(run)
+          and catch_up_module.GIT_FAILED_NOTES_DELIVERY_AGENT_NEXT_STEP_LINES in agent_text(run)
+          and "end of your next turn" not in agent_text(run)
+          and "you gave that name to" not in agent_text(run), run.stdout + run.stderr)
+    run = run_catch_up_once(["--report", "--repo", str(level_seat)], git_dir_fails)
+    check("--report prints the git failure instead of 'not a git checkout'",
+          run.returncode == 0 and INJECTED_STDERR in run.stdout
+          and "not a git checkout" not in run.stdout
+          and catch_up_module.next_step_lines.git_failure_next_step_lines(
+              f"python3 {SCRIPT_PATH.resolve()} --report --repo {level_seat.resolve()}",
+              git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=INJECTED_STDERR,
+              text_the_failure_line_contains="because a git command failed") in run.stdout
+          and "you gave" not in run.stdout
+          and "Nothing needs rerunning" not in run.stdout, run.stdout + run.stderr)
+    lock_file = level_seat.resolve() / ".git" / "index.lock"
+    run = run_catch_up_once(["--report", "--repo", str(level_seat)], failing_git_shim(
+        "git-dir-fails-on-a-lock-file", '*" --absolute-git-dir "*',
+        f"fatal: Unable to create '{lock_file}': File exists."))
+    check("--report given a git error that names a lock file gives the step that waits for that "
+          "lock file, then reruns the same --report command",
+          f"Git's error names the lock file {lock_file}: " in run.stdout
+          and catch_up_module.next_step_lines.git_error_names_a_lock_file_wait_then_rerun_line_or_none(
+              f"fatal: Unable to create '{lock_file}': File exists.",
+              f"exactly `python3 {SCRIPT_PATH.resolve()} --report --repo {level_seat.resolve()}`")
+          in run.stdout,
+          run.stdout + run.stderr)
+    worktree_list_fails = failing_git_shim("worktree-list-fails-in-modes", '*" worktree list "*')
+    run = run_catch_up_once(["--reference-pull", "--repo", str(level_seat)], worktree_list_fails)
+    check("--reference-pull prints the git failure instead of saying nothing, "
+          "with the command that runs it again, and exits 1",
+          run.returncode == 1 and INJECTED_STDERR in run.stdout
+          and "--reference-pull --repo" in run.stdout and "once more." in run.stdout
+          and "Nothing needs rerunning" not in run.stdout, run.stdout + run.stderr)
+
+# ---------------------------------------------------------------------------
+# An IGNORED file at a path origin/main tracks. `git rebase` replaces such a
+# file with main's copy and exits 0, and has no --no-overwrite-ignore to make
+# it refuse, so the hook must not start the rebase while one is there. Three
+# placements lose the file: the same path; inside a directory where main
+# tracks a file; and a file where main needs a directory.
+# ---------------------------------------------------------------------------
+with tempfile.TemporaryDirectory() as ignored_scratch:
+    ignored_tmp = Path(ignored_scratch).resolve()
+    ignored_real_git = shutil.which("git")
+
+    def never_pushed_seat_with_ignored_files(name):
+        """(origin, seat): a never-pushed seat one own commit ahead, whose
+        .gitignore ignores what main is about to track."""
+        root = ignored_tmp / name
+        origin_repo = root / "origin"
+        origin_repo.mkdir(parents=True)
+        git(["init", "-q", "-b", "main"], origin_repo)
+        configure_identity(origin_repo)
+        commit_file(origin_repo, "shared.txt", "first\n", "add shared.txt")
+        clone = root / "clone"
+        git(["clone", "-q", str(origin_repo), str(clone)], root)
+        configure_identity(clone)
+        seat_path = root / "seat"
+        git(["worktree", "add", "-q", "-b", "seat", str(seat_path), "main"], clone)
+        configure_identity(seat_path)
+        commit_file(seat_path, ".gitignore", "*.log\nbuild-cache/\nlogs\nscratch.txt\n",
+                    "the seat ignores its local files")
+        commit_file(origin_repo, "notes.log", "main's notes\n", "main tracks notes.log")
+        commit_file(origin_repo, "build-cache", "main's file\n", "main tracks build-cache")
+        commit_file(origin_repo, "logs/today.txt", "main's log\n", "main tracks logs/today.txt")
+        (seat_path / "notes.log").write_text("local notes\n", encoding="utf-8")
+        (seat_path / "build-cache").mkdir()
+        (seat_path / "build-cache/inner.txt").write_text("local cache\n", encoding="utf-8")
+        (seat_path / "logs").write_text("local log\n", encoding="utf-8")
+        (seat_path / "scratch.txt").write_text("keep me\n", encoding="utf-8")
+        return origin_repo, seat_path
+
+    def local_files_kept(seat_path):
+        return ((seat_path / "notes.log").read_text(encoding="utf-8") == "local notes\n"
+                and (seat_path / "build-cache/inner.txt").read_text(encoding="utf-8")
+                == "local cache\n"
+                and (seat_path / "logs").read_text(encoding="utf-8") == "local log\n"
+                and (seat_path / "scratch.txt").read_text(encoding="utf-8") == "keep me\n")
+
+    _, ignored_seat = never_pushed_seat_with_ignored_files("collisions")
+    ignored_seat_git_dir = Path(git(["rev-parse", "--absolute-git-dir"], ignored_seat).stdout.strip())
+    head_before = git(["rev-parse", "HEAD"], ignored_seat).stdout.strip()
+    result = run_catch_up(["--cwd", str(ignored_seat)])
+    check("an ignored file at a path origin/main tracks stops the rebase: HEAD unchanged, "
+          "no rebase state",
+          git(["rev-parse", "HEAD"], ignored_seat).stdout.strip() == head_before
+          and rebase_state_dirs_absent(ignored_seat_git_dir), result.stdout + result.stderr)
+    check("and every ignored file keeps its content: the same path, inside a directory "
+          "where main tracks a file, and a file where main needs a directory",
+          local_files_kept(ignored_seat), git(["status", "--ignored"], ignored_seat).stdout)
+    check("the agent is told which ignored files are in the way, and to move them",
+          "Not updated: a rebase onto origin/main would overwrite or delete these ignored "
+          "files, which are in the way of files origin/main tracks: build-cache/inner.txt, "
+          "logs, notes.log." in agent_text(result)
+          and "Move each file listed above out of this checkout" in agent_text(result),
+          agent_text(result))
+    check("an ignored file at a path origin/main does not track is not named",
+          "scratch.txt" not in agent_text(result), agent_text(result))
+    check("and is not told to run `git rebase origin/main` by hand, which would replace them",
+          catch_up_module.REBASE_ADVICE not in agent_text(result)
+          and "Do not run `git rebase origin/main` yourself" in agent_text(result),
+          agent_text(result))
+    check("the ignored-files note ends by saying it is not for the user, byte for byte",
+          agent_text(result).endswith("\n" + NOT_FOR_THE_USER_LINE), agent_text(result))
+    check("the user hears nothing about it", display_text(result) == "", display_text(result))
+    check("the stamp says why",
+          stamp_of(ignored_seat).get("last_action", "").startswith("rebase ignored-files-in-the-way"),
+          str(stamp_of(ignored_seat)))
+    again = run_catch_up(["--cwd", str(ignored_seat)])
+    check("the ignored files are told once: the next turn end is silent",
+          again.stdout.strip() == "" and local_files_kept(ignored_seat), again.stdout)
+    for moved in ("notes.log", "build-cache/inner.txt", "logs"):
+        (ignored_seat / moved).unlink()
+    (ignored_seat / "build-cache").rmdir()
+    cleared = run_catch_up(["--cwd", str(ignored_seat)])
+    check("with the ignored files moved, the next turn end rebases, keeping the ignored file "
+          "at a path main does not track",
+          "was rebased" in agent_text(cleared)
+          and (ignored_seat / "notes.log").read_text(encoding="utf-8") == "main's notes\n"
+          and (ignored_seat / "logs/today.txt").read_text(encoding="utf-8") == "main's log\n"
+          and (ignored_seat / "scratch.txt").read_text(encoding="utf-8") == "keep me\n",
+          agent_text(cleared) + cleared.stderr)
+
+    # An ignored nested git repository is listed by `git ls-files --others
+    # --ignored` as "<directory>/", with a trailing slash, not file by file.
+    nested_root = ignored_tmp / "nested-repository"
+    nested_origin = nested_root / "origin"
+    nested_origin.mkdir(parents=True)
+    git(["init", "-q", "-b", "main"], nested_origin)
+    configure_identity(nested_origin)
+    commit_file(nested_origin, "shared.txt", "first\n", "add shared.txt")
+    nested_clone = nested_root / "clone"
+    git(["clone", "-q", str(nested_origin), str(nested_clone)], nested_root)
+    configure_identity(nested_clone)
+    nested_seat = nested_root / "seat"
+    git(["worktree", "add", "-q", "-b", "seat", str(nested_seat), "main"], nested_clone)
+    configure_identity(nested_seat)
+    commit_file(nested_seat, ".gitignore", "vendor/\n", "the seat ignores vendor/")
+    commit_file(nested_origin, "vendor/library.txt", "main's library\n",
+                "main tracks vendor/library.txt")
+    (nested_seat / "vendor").mkdir()
+    git(["init", "-q"], nested_seat / "vendor")
+    (nested_seat / "vendor/library.txt").write_text("local library\n", encoding="utf-8")
+    head_before = git(["rev-parse", "HEAD"], nested_seat).stdout.strip()
+    result = run_catch_up(["--cwd", str(nested_seat)])
+    check("an ignored nested git repository where origin/main tracks files stops the rebase, "
+          "and its files keep their content",
+          git(["rev-parse", "HEAD"], nested_seat).stdout.strip() == head_before
+          and (nested_seat / "vendor/library.txt").read_text(encoding="utf-8")
+          == "local library\n", result.stdout + result.stderr)
+    check("and the agent is told the nested repository is in the way",
+          "which are in the way of files origin/main tracks: vendor/." in agent_text(result),
+          agent_text(result))
+
+    # Ignored files in the way are told whatever else blocks the rebase: the
+    # dirty-tree note's advice to rebase by hand would overwrite them.
+    _, ignored_then_dirty_seat = never_pushed_seat_with_ignored_files("ignored-then-dirty")
+    ignored_first = run_catch_up(["--cwd", str(ignored_then_dirty_seat)])
+    check("a clean tree with ignored files in the way is told about them",
+          "would overwrite or delete these ignored files" in agent_text(ignored_first),
+          agent_text(ignored_first))
+    (ignored_then_dirty_seat / "shared.txt").write_text("edited\n", encoding="utf-8")
+    dirty_after = run_catch_up(["--cwd", str(ignored_then_dirty_seat)])
+    check("a tracked edit made while the ignored files are still in the way brings no "
+          "advice to rebase by hand: the ignored-files note stands",
+          "git rebase origin/main`, then run" not in agent_text(dirty_after)
+          and "Not updated: 1 uncommitted tracked change(s)" not in agent_text(dirty_after)
+          and stamp_of(ignored_then_dirty_seat).get("last_action", "").startswith(
+              "rebase ignored-files-in-the-way")
+          and local_files_kept(ignored_then_dirty_seat),
+          agent_text(dirty_after) + str(stamp_of(ignored_then_dirty_seat)))
+    for moved in ("notes.log", "build-cache/inner.txt", "logs"):
+        (ignored_then_dirty_seat / moved).unlink()
+    (ignored_then_dirty_seat / "build-cache").rmdir()
+    dirty_only = run_catch_up(["--cwd", str(ignored_then_dirty_seat)])
+    check("once the ignored files are moved, the dirty tree is told, its advice now safe",
+          "Not updated: 1 uncommitted tracked change(s)" in agent_text(dirty_only),
+          agent_text(dirty_only))
+
+    _, dirty_and_ignored_seat = never_pushed_seat_with_ignored_files("dirty-and-ignored")
+    (dirty_and_ignored_seat / "shared.txt").write_text("edited\n", encoding="utf-8")
+    dirty_and_ignored = run_catch_up(["--cwd", str(dirty_and_ignored_seat)])
+    check("a dirty tree with ignored files in the way is told about the ignored files, "
+          "not told to rebase by hand",
+          "would overwrite or delete these ignored files" in agent_text(dirty_and_ignored)
+          and "Do not run `git rebase origin/main` yourself" in agent_text(dirty_and_ignored)
+          and "git rebase origin/main`, then run" not in agent_text(dirty_and_ignored),
+          agent_text(dirty_and_ignored))
+
+    # A note told for one outcome does not silence the note for another: a
+    # dirty tree skipped first, then an ignored file put in the way.
+    _, dirty_then_ignored_seat = never_pushed_seat_with_ignored_files("dirty-then-ignored")
+    for moved in ("notes.log", "build-cache/inner.txt", "logs"):
+        (dirty_then_ignored_seat / moved).rename(ignored_tmp / f"dirty-then-ignored-{moved.replace('/', '-')}")
+    (dirty_then_ignored_seat / "build-cache").rmdir()
+    (dirty_then_ignored_seat / "shared.txt").write_text("edited\n", encoding="utf-8")
+    dirty_result = run_catch_up(["--cwd", str(dirty_then_ignored_seat)])
+    check("a dirty tree with no ignored file in the way is told it is dirty",
+          "Not updated: 1 uncommitted tracked change(s)" in agent_text(dirty_result),
+          agent_text(dirty_result))
+    (dirty_then_ignored_seat / "notes.log").write_text("local notes\n", encoding="utf-8")
+    ignored_later = run_catch_up(["--cwd", str(dirty_then_ignored_seat)])
+    check("an ignored file put in the way afterwards is told, not left unsaid behind the "
+          "earlier advice to rebase by hand",
+          "would overwrite or delete these ignored files" in agent_text(ignored_later)
+          and "Do not run `git rebase origin/main` yourself" in agent_text(ignored_later),
+          agent_text(ignored_later))
+
+    # A list of ignored files too long for one delivery still reaches the agent.
+    _, many_ignored_seat = never_pushed_seat_with_ignored_files("many-ignored")
+    for number in range(400):
+        (many_ignored_seat / "build-cache" / f"cached-file-number-{number:04d}.txt").write_text(
+            "local\n", encoding="utf-8")
+    many_result = run_catch_up(["--cwd", str(many_ignored_seat)])
+    delivered = agent_text(many_result)
+    check("a note naming too many ignored files for one delivery is delivered in a short form "
+          "that still says the rebase was not started and what to do",
+          "would overwrite or delete these ignored files" in delivered
+          and "Do not run `git rebase origin/main` yourself" in delivered
+          and "git status --ignored --untracked-files=all" in delivered
+          and len(delivered) <= catch_up_module.DELIVERY_CHARACTER_LIMIT,
+          delivered[:600] + many_result.stderr)
+    listed = git(["status", "--ignored", "--untracked-files=all"], many_ignored_seat).stdout
+    check("and the command the short form names lists the ignored files it left out",
+          "build-cache/cached-file-number-0399.txt" in listed, listed[-600:])
+
+    # A listing git cannot make is a failure, never "no ignored file in the way".
+    for failing_listing, shell_pattern in (("ls-files", '*" ls-files "*'),
+                                           ("ls-tree", '*" ls-tree "*')):
+        listing_fails = ignored_tmp / f"{failing_listing}-fails-shim"
+        listing_fails.mkdir()
+        (listing_fails / "git").write_text(
+            "#!/bin/sh\n"
+            f'case " $* " in {shell_pattern}) echo "fatal: injected {failing_listing} '
+            'failure" >&2; exit 128;; esac\n'
+            f'exec "{ignored_real_git}" "$@"\n', encoding="utf-8")
+        (listing_fails / "git").chmod(0o755)
+        _, failing_seat = never_pushed_seat_with_ignored_files(f"{failing_listing}-fails")
+        head_before = git(["rev-parse", "HEAD"], failing_seat).stdout.strip()
+        result = run_catch_up(["--cwd", str(failing_seat)], path_prefix=str(listing_fails))
+        check(f"a failed `git {failing_listing}` stops the rebase and keeps every ignored file",
+              git(["rev-parse", "HEAD"], failing_seat).stdout.strip() == head_before
+              and local_files_kept(failing_seat), result.stdout + result.stderr)
+        check(f"and the failed `git {failing_listing}` is reported, git's error included",
+              f"fatal: injected {failing_listing} failure" in result.stdout
+              and "because a git command failed" in result.stdout, result.stdout)
+
+# ---------------------------------------------------------------------------
+# --reference-pull exits 1 whenever the reference checkout did not end at
+# origin/main, so the launchers' warning prints; each such exit prints a line
+# first, because the launchers' warning says an exit with no line above it
+# was a kill.
+# ---------------------------------------------------------------------------
+
+with tempfile.TemporaryDirectory() as reference_pull_exit_scratch:
+    tmp = Path(reference_pull_exit_scratch).resolve()
+    real_git = shutil.which("git")
+
+    def worktree_listing_git_shim(name, listing_printf_text):
+        """A git that answers `worktree list` with listing_printf_text, a
+        printf format, and passes every other call to the real git."""
+        directory = tmp / name
+        directory.mkdir()
+        (directory / "git").write_text(
+            "#!/bin/sh\n"
+            f"case \" $* \" in *\" worktree list \"*) printf '{listing_printf_text}'; exit 0;; esac\n"
+            f'exec "{real_git}" "$@"\n', encoding="utf-8")
+        (directory / "git").chmod(0o755)
+        return str(directory)
+
+    def origin_and_reference(name):
+        """(origin, reference): a clone of origin, parked on main, and current."""
+        origin_repo = tmp / name / "origin"
+        origin_repo.mkdir(parents=True)
+        git(["init", "-q", "-b", "main"], origin_repo)
+        configure_identity(origin_repo)
+        commit_file(origin_repo, "shared.txt", "first\n", "first commit")
+        reference_clone = tmp / name / "reference"
+        git(["clone", "-q", str(origin_repo), str(reference_clone)], tmp)
+        configure_identity(reference_clone)
+        return origin_repo, reference_clone
+
+    outside = tmp / "outside-any-repository"
+    outside.mkdir()
+    run = run_catch_up_once(["--reference-pull", "--repo", str(outside)])
+    check("--reference-pull exits 1, saying so, when --repo is in no git checkout",
+          run.returncode == 1 and "is not in a git checkout" in run.stdout,
+          f"rc={run.returncode} {run.stdout} {run.stderr}")
+
+    _, listed_nothing = origin_and_reference("listed-nothing")
+    run = run_catch_up_once(["--reference-pull", "--repo", str(listed_nothing)],
+                            worktree_listing_git_shim("lists-no-worktree", ""))
+    check("--reference-pull exits 1, saying so, when git lists no worktree to use as the reference",
+          run.returncode == 1 and "git listed no worktrees" in run.stdout,
+          f"rc={run.returncode} {run.stdout} {run.stderr}")
+
+    _, listed_missing = origin_and_reference("listed-missing")
+    missing_reference = tmp / "no-such-reference-checkout"
+    run = run_catch_up_once(["--reference-pull", "--repo", str(listed_missing)],
+                            worktree_listing_git_shim(
+                                "lists-a-missing-worktree",
+                                f"worktree {missing_reference}\\000HEAD 0\\000\\000"))
+    check("--reference-pull exits 1, saying so, when the listed reference is not a git checkout",
+          run.returncode == 1 and f"{missing_reference} is not a git checkout" in run.stdout,
+          f"rc={run.returncode} {run.stdout} {run.stderr}")
+
+    refused_origin, refused_reference = origin_and_reference("fast-forward-refused")
+    commit_file(refused_origin, "arrives.txt", "from main\n", "add arrives.txt")
+    (refused_reference / "arrives.txt").write_text("untracked here\n", encoding="utf-8")
+    run = run_catch_up_once(["--reference-pull", "--repo", str(refused_reference)])
+    check("--reference-pull exits 1 when git refuses the fast-forward",
+          run.returncode == 1 and "could not fast-forward" in run.stdout,
+          f"rc={run.returncode} {run.stdout} {run.stderr}")
+
+    stale_origin, stale_reference = origin_and_reference("moved-to-a-stale-origin-main")
+    commit_file(stale_origin, "fetched.txt", "fetched\n", "a commit the fetch saw")
+    git(["fetch", "-q", "origin"], stale_reference)
+    commit_file(stale_origin, "unfetched.txt", "unfetched\n", "a commit no fetch saw")
+    git(["remote", "set-url", "origin", str(tmp / "no-such-remote")], stale_reference)
+    run = run_catch_up_once(["--reference-pull", "--repo", str(stale_reference)])
+    check("--reference-pull exits 1 when it moved the reference to an origin/main whose "
+          "fetch failed, and its line says the fetch failed",
+          run.returncode == 1 and (stale_reference / "fetched.txt").exists()
+          and "fast-forwarded 1 commit(s)" in run.stdout and "fetch failed at" in run.stdout,
+          f"rc={run.returncode} {run.stdout} {run.stderr}")
+
+    _, ahead_reference = origin_and_reference("zero-behind-one-ahead")
+    commit_file(ahead_reference, "local.txt", "local\n", "a commit main does not have")
+    run = run_catch_up_once(["--reference-pull", "--repo", str(ahead_reference)])
+    check("--reference-pull exits 1, saying so, when the reference is 0 behind but has "
+          "a commit main does not have",
+          run.returncode == 1 and "1 local commit(s) main does not have" in run.stdout,
+          f"rc={run.returncode} {run.stdout} {run.stderr}")
+
+    _, branch_reference = origin_and_reference("zero-behind-on-another-branch")
+    git(["switch", "-q", "-c", "some-feature"], branch_reference)
+    run = run_catch_up_once(["--reference-pull", "--repo", str(branch_reference)])
+    check("--reference-pull exits 1, saying so, when the reference is 0 behind but on "
+          "a branch other than main",
+          run.returncode == 1 and "on some-feature, not main" in run.stdout,
+          f"rc={run.returncode} {run.stdout} {run.stderr}")
+
+# ---------------------------------------------------------------------------
+# shortened_file_list: a short list is left whole; a long one keeps its whole
+# leading names and says where to see the rest
+# ---------------------------------------------------------------------------
+check("shortened_file_list leaves a list shorter than the limit whole",
+      catch_up_module.shortened_file_list("a.txt, b.txt") == "a.txt, b.txt",
+      catch_up_module.shortened_file_list("a.txt, b.txt"))
+long_file_names = [f"directory/file-{number:04d}.txt" for number in range(200)]
+long_file_list = ", ".join(long_file_names)
+shortened = catch_up_module.shortened_file_list(long_file_list)
+kept_names = shortened.removesuffix(
+    ", and more; run `git status --ignored --untracked-files=all` to see them all").split(", ")
+check("shortened_file_list cuts a list longer than the limit after its last whole name "
+      "within the limit, keeping the names before that cut and ending with where to see the rest",
+      len(long_file_list) > catch_up_module.IGNORED_FILES_SHORT_LIST_CHARACTER_LIMIT
+      and shortened.endswith("to see them all")
+      and kept_names[0] == long_file_names[0]
+      and kept_names == long_file_names[:len(kept_names)]
+      and len(", ".join(kept_names)) <= catch_up_module.IGNORED_FILES_SHORT_LIST_CHARACTER_LIMIT
+      and len(", ".join(long_file_names[:len(kept_names) + 1]))
+          > catch_up_module.IGNORED_FILES_SHORT_LIST_CHARACTER_LIMIT,
+      shortened)
 
 print()
 if failures:

@@ -26,10 +26,11 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path, PurePath
 
 # Before anything runs git: a run started with GIT_DIR set, or with another
@@ -54,12 +55,18 @@ HOOK_MODULE_SPEC = importlib.util.spec_from_file_location(
 HOOK_MODULE = importlib.util.module_from_spec(HOOK_MODULE_SPEC)
 HOOK_MODULE_SPEC.loader.exec_module(HOOK_MODULE)
 
+_rule_failure_lines_spec = importlib.util.spec_from_file_location(
+    "rule_enforcing_nc_test_suite_failure_message_closing_lines_text_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    / "rule-enforcing-nc-test-suite-failure-message-closing-lines-text-common.py")
+RULE_FAILURE_LINES = importlib.util.module_from_spec(_rule_failure_lines_spec)
+_rule_failure_lines_spec.loader.exec_module(RULE_FAILURE_LINES)
+
 # Named here rather than read from the hook: a test that asks the code under
 # test which names are exempt cannot notice the set changing.
 EXEMPT_FILE_NAMES_IN_TEST = {"skill.md", "readme.md", ".gitkeep"}
 
 failures = []
-
 
 def check(case_name, condition, detail=""):
     if condition:
@@ -70,8 +77,12 @@ def check(case_name, condition, detail=""):
 
 
 def git(arguments, cwd: Path):
-    return subprocess.run(["git", *arguments], cwd=str(cwd),
-                          capture_output=True, text=True, check=False)
+    finished = subprocess.run(["git", *arguments], cwd=str(cwd),
+                              capture_output=True, text=True, check=False)
+    if finished.returncode != 0:
+        raise RuntimeError(f"fixture git {' '.join(arguments)} in {cwd} exited "
+                           f"{finished.returncode}: {finished.stderr.strip()}")
+    return finished
 
 
 def commit_file(repository: Path, name: str, content: str = "x\n"):
@@ -105,11 +116,33 @@ def hook_payload(cwd, file_path, tool_name="Write") -> dict:
     }
 
 
-def run_hook(payload):
+def run_hook(payload, environment=None):
     text = payload if isinstance(payload, str) else json.dumps(payload)
     return subprocess.run([sys.executable, str(SCRIPT_PATH)], input=text,
                           capture_output=True, text=True, check=False,
-                          env=dict(os.environ))
+                          env=environment or dict(os.environ))
+
+
+REAL_GIT = shutil.which("git")
+# Fails the one git subcommand named in PLANTED_GIT_FAILURE, after any -C <dir>; runs the real git otherwise.
+STAND_IN_GIT = f"""#!/bin/sh
+if [ "$1" = "-C" ]; then subcommand="$3"; else subcommand="$1"; fi
+if [ "$subcommand" = "$PLANTED_GIT_FAILURE" ]; then
+  echo "fatal: planted $subcommand failure" >&2
+  echo "second line of the planted error" >&2
+  exit 128
+fi
+exec {REAL_GIT} "$@"
+"""
+
+
+def environment_with_failing_git(stand_in_directory: Path, subcommand: str) -> dict:
+    stand_in_directory.mkdir(parents=True, exist_ok=True)
+    stand_in = stand_in_directory / "git"
+    stand_in.write_text(STAND_IN_GIT, encoding="utf-8")
+    stand_in.chmod(0o755)
+    return dict(os.environ, PATH=f"{stand_in_directory}{os.pathsep}{os.environ['PATH']}",
+                PLANTED_GIT_FAILURE=subcommand)
 
 
 def agent_text(result) -> str:
@@ -176,8 +209,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           len(warning_lines) == 5, repr(warning))
     padded_warning_lines = warning_lines + ["", "", "", "", ""]
     check("line 1 is the fact, and it names both paths",
-          padded_warning_lines[0].startswith("file-name-collision-warning: "
-                                             "you wrote"),
+          padded_warning_lines[0].startswith(
+              "[rule file-name-collision-same-basename-warning] file-name-collision-warning: you wrote"),
           repr(padded_warning_lines[0]))
     check("line 2 tells a mover to delete the old path, naming it",
           padded_warning_lines[1] == "If you are moving the file, delete "
@@ -239,6 +272,13 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     loose_file.write_text("loose\n", encoding="utf-8")
     check("a session seated outside any checkout is silent",
           silent(run_hook(hook_payload(not_a_repository, loose_file))))
+
+    unborn = tmp / "no-commit-yet"
+    unborn.mkdir()
+    git(["init", "-q", "-b", "main"], unborn)
+    unborn_file = write_file(unborn, "scripts/cold-read-grid.py")
+    check("a write in a repository with no commit yet is silent",
+          silent(run_hook(hook_payload(unborn, unborn_file))))
 
     # --- letter case: two files, or one file spelled two ways ------------
     # The positive pair comes first: both sides of the comparison are folded,
@@ -322,14 +362,15 @@ with tempfile.TemporaryDirectory() as temporary_directory:
 
     original_stdin = sys.stdin
     recorded_stdout = io.StringIO()
-    HOOK_MODULE.subprocess.run = recording_subprocess_run
+    hook_subprocess = HOOK_MODULE.git_machine_readable_output.subprocess
+    hook_subprocess.run = recording_subprocess_run
     try:
         sys.stdin = io.StringIO(
             json.dumps(hook_payload(repository, colliding)))
         with redirect_stdout(recorded_stdout):
             in_process_exit_code = HOOK_MODULE.main()
     finally:
-        HOOK_MODULE.subprocess.run = real_subprocess_run
+        hook_subprocess.run = real_subprocess_run
         sys.stdin = original_stdin
 
     # THE POSITIVE HALF: the recorder saw the git calls. Without it the next
@@ -342,49 +383,100 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "file-name-collision-warning" in recorded_stdout.getvalue()
           and in_process_exit_code == 0,
           repr(recorded_stdout.getvalue()))
-    check("every git call the hook makes carries a positive timeout",
+    check("every git call the hook makes carries a timeout of at most 10 s",
           bool(recorded_git_calls) and all(
               isinstance(call.get("timeout"), (int, float))
               and not isinstance(call.get("timeout"), bool)
-              and call["timeout"] > 0 for call in recorded_git_calls),
+              and 0 < call["timeout"] <= 10 for call in recorded_git_calls),
           repr([call.get("timeout") for call in recorded_git_calls]))
 
-    # A timeout raises subprocess.TimeoutExpired, which is a SubprocessError
-    # and NOT an OSError, so passing timeout= without naming it in the except
-    # clauses would turn a slow git into a traceback.
     answered_listing = HOOK_MODULE.git_output(["ls-files", "-z"], repository)
     check("git_output returns git's answer when git answers",
-          answered_listing is not None
-          and "scripts/cold-read-grid.py" in answered_listing,
-          repr(answered_listing))
+          "scripts/cold-read-grid.py" in answered_listing, repr(answered_listing))
     check("is_ignored answers True for a path .gitignore covers",
           HOOK_MODULE.is_ignored(PurePath("docs/walk/cold-read-grid.py"),
                                  repository))
+    check("is_ignored answers False for a path .gitignore does not cover",
+          HOOK_MODULE.is_ignored(PurePath("scripts/cold-read-grid.py"),
+                                 repository) is False)
 
     def timing_out_subprocess_run(*arguments, **keywords):
         raise subprocess.TimeoutExpired(cmd=["git"], timeout=1)
 
-    def answer_or_the_escape(call):
-        """What the call returned, or the exception it let past. A timeout
-        that escapes is this suite's finding to report, not its own crash."""
-        try:
-            return call()
-        except subprocess.TimeoutExpired:
-            return "subprocess.TimeoutExpired escaped the hook"
-
-    HOOK_MODULE.subprocess.run = timing_out_subprocess_run
+    hook_subprocess.run = timing_out_subprocess_run
+    sys.stdin = io.StringIO(json.dumps(hook_payload(repository, colliding)))
+    timed_out_stderr = io.StringIO()
     try:
-        timed_out_listing = answer_or_the_escape(
-            lambda: HOOK_MODULE.git_output(["ls-files", "-z"], repository))
-        timed_out_ignore = answer_or_the_escape(
-            lambda: HOOK_MODULE.is_ignored(
-                PurePath("docs/walk/cold-read-grid.py"), repository))
+        with redirect_stdout(io.StringIO()) as timed_out_stdout, redirect_stderr(timed_out_stderr):
+            timed_out_exit_code = HOOK_MODULE.main()
     finally:
-        HOOK_MODULE.subprocess.run = real_subprocess_run
-    check("a git call that times out is git failing, not git saying nothing",
-          timed_out_listing is None, repr(timed_out_listing))
-    check("a check-ignore that times out is caught, not raised at the agent",
-          timed_out_ignore is False, repr(timed_out_ignore))
+        hook_subprocess.run = real_subprocess_run
+        sys.stdin = original_stdin
+    timed_out_result = subprocess.CompletedProcess([], timed_out_exit_code, timed_out_stdout.getvalue(),
+                                                   timed_out_stderr.getvalue())
+    check("a git call that times out exits 0 and tells the agent so in additionalContext, not silence",
+          timed_out_exit_code == 0 and timed_out_stderr.getvalue() == ""
+          and "did not finish within 10 s" in agent_text(timed_out_result),
+          f"exit {timed_out_exit_code}: {timed_out_stdout.getvalue()!r} {timed_out_stderr.getvalue()!r}")
+
+    # --- a failing git is reported, never read as an answer --------------
+    for failing_subcommand, written in (("rev-parse", colliding), ("check-ignore", colliding),
+                                        ("ls-files", fresh)):
+        failed = run_hook(hook_payload(repository, written), environment_with_failing_git(
+            tmp / f"stand-in-git-{failing_subcommand}", failing_subcommand))
+        failure_lines = agent_text(failed).splitlines()
+        # Claude Code never passes a PostToolUse exit 1's stderr to the model; additionalContext reaches it.
+        check(f"a failing git {failing_subcommand} exits 0 with its report in additionalContext and nothing on stderr",
+              failed.returncode == 0 and failed.stderr == "" and bool(failure_lines),
+              f"exit {failed.returncode}, stdout {failed.stdout!r}, stderr {failed.stderr!r}")
+        check(f"a failing git {failing_subcommand}'s first additionalContext line names the command, "
+              "git's whole error and what was not checked",
+              bool(failure_lines) and f"git {failing_subcommand} " in failure_lines[0]
+              and f"exit 128: fatal: planted {failing_subcommand} failure second line of the "
+              "planted error" in failure_lines[0]
+              and failure_lines[0].endswith(f"so {written} was not checked for another tracked file with the "
+                                            "same basename; this hook compares basenames ignoring letter case, so "
+                                            "Notes.md and notes.md count as the same basename."), repr(failure_lines))
+        check(f"a failing git {failing_subcommand} gives a line naming {written.name}, a line with a command "
+              "that reruns the hook on it, then the line saying what to do if that rerun fails too",
+              len(failure_lines) == 4
+              and failure_lines[1] == (f"A later run of this hook checks only the file that run's Write or Edit "
+                                       f"touched, so {written} is checked by the command printed on its own line below this paragraph. "
+                                       "Run that command now. The command prints nothing when no other tracked file has the "
+                                       "basename, and also when this hook skips the file without checking: a file "
+                                       "outside the checkout, a file git ignores, a file named SKILL.md, README.md "
+                                       "or .gitkeep in any letter case, or a working directory that no longer "
+                                       "exists or is in no git repository. Otherwise it prints JSON whose hookSpecificOutput."
+                                       "additionalContext field holds one of two texts: when another tracked file has "
+                                       "the basename, this hook's warning, whose instructions you follow; or, when git "
+                                       "fails again, a git-failure message like this one, and the last line here says "
+                                       "what to do then.")
+              and failure_lines[3] == HOOK_MODULE.next_step_lines
+              .hook_agent_instruction_if_rerun_command_reports_git_failure_tell_user_both_outputs_line(
+                  "file-name-collision-warning:"), repr(failure_lines))
+        rerun_line = failure_lines[1] if len(failure_lines) > 1 else ""
+        check(f"a failing git {failing_subcommand}'s rerun line says what the command prints when git fails again "
+              "and points to the closing line",
+              "or, when git fails again, a git-failure message like this one, and the last line here says what to "
+              "do then." in rerun_line, repr(rerun_line))
+        # The rerun runs with git working, so the file the failed run skipped is now checked.
+        rerun = subprocess.run(failure_lines[2] if len(failure_lines) == 4 else "false",
+                               shell=True, capture_output=True, text=True, check=False, cwd=str(tmp))
+        if written == colliding:
+            check(f"after a failing git {failing_subcommand}, the named rerun command warns that {written.name} collides",
+                  rerun.returncode == 0 and "is already" in agent_text(rerun), repr(rerun))
+        else:
+            check(f"after a failing git {failing_subcommand}, the named rerun command checks {written.name} and finds it free",
+                  silent(rerun) and rerun.stderr == "", repr(rerun))
+        # The closing line sends the reader into the JSON for the prefix, so a failing rerun must put it there.
+        failing_rerun = subprocess.run(failure_lines[2] if len(failure_lines) == 4 else "false",
+                                       shell=True, capture_output=True, text=True, check=False, cwd=str(tmp),
+                                       env=environment_with_failing_git(
+                                           tmp / f"stand-in-git-{failing_subcommand}", failing_subcommand))
+        check(f"when git {failing_subcommand} fails again, the named rerun command prints JSON whose "
+              "additionalContext field starts with the prefix the closing line names and reports the git failure",
+              agent_text(failing_rerun).startswith(f"file-name-collision-warning: git {failing_subcommand} ")
+              and " failed (" in agent_text(failing_rerun).splitlines()[0], repr(failing_rerun))
 
     # --- malformed payloads cost nothing and say nothing ------------------
     check("a payload that is not JSON exits 0 and prints nothing",
@@ -413,8 +505,8 @@ def tracked_name_collisions(repository_root: Path):
     """(every tracked name, the names belonging to more than one file).
 
     Raises when git does not answer and when it lists nothing: the hook
-    draws that same line in git_output(), where None is "git failed" and
-    never "git found nothing", and this case is worth nothing without it.
+    draws that same line, reporting a failing git rather than reading it as
+    "git found nothing", and this case is worth nothing without it.
     """
     listed = subprocess.run(["git", "ls-files", "-z"],
                             cwd=str(repository_root), capture_output=True,
@@ -432,6 +524,39 @@ def tracked_name_collisions(repository_root: Path):
             f"git ls-files listed no tracked file in {repository_root}")
     return names, {name: paths for name, paths in names.items()
                    if len(paths) > 1 and name not in EXEMPT_FILE_NAMES_IN_TEST}
+
+
+def tracked_name_collisions_failure_detail(tracked_names, collisions):
+    listing = f"over {len(tracked_names)} names: " + "; ".join(
+        f"{name}: {', '.join(paths)}" for name, paths in sorted(collisions.items()))
+    return "\n".join([
+        listing,
+        "Two tracked files may not share a basename, compared ignoring case, except SKILL.md, "
+        "README.md and .gitkeep: the rule is in scripts/file-name-collision-warning-hook.py, "
+        "because checks that find a moved file search by its name.",
+        "If a file your change added or renamed is among those files, rename it by CLAUDE.md's "
+        "naming rule and update what points at it.",
+        RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
+
+
+def tracked_files_unlisted_failure_detail(error):
+    return "\n".join([
+        str(error),
+        "The suite could not list this checkout's tracked files, so it did not check their names.",
+        "Fix what the line above reports, then run this suite again."])
+
+
+NO_SHARED_NAME_CASE = "no two tracked files in this repository share a name"
+
+
+def tracked_names_unique_case(repository_root: Path):
+    """(passed, detail) of the no-shared-name case, run on any checkout, so a
+    planted checkout prints the message the real one would."""
+    try:
+        tracked_names, collisions = tracked_name_collisions(repository_root)
+    except RuntimeError as unanswered:
+        return False, tracked_files_unlisted_failure_detail(unanswered)
+    return not collisions, tracked_name_collisions_failure_detail(tracked_names, collisions)
 
 
 with tempfile.TemporaryDirectory() as planted_temporary_directory:
@@ -460,6 +585,19 @@ with tempfile.TemporaryDirectory() as planted_temporary_directory:
           "readme.md" in planted_names
           and "readme.md" not in planted_collisions,
           planted_failure or repr(sorted(planted_names)))
+    planted_passed, planted_detail = tracked_names_unique_case(planted)
+    check("a planted collision's failure lists the files, says the rule and its home, gives the fix, "
+          "and ends with the line for a rule main broke",
+          not planted_passed and planted_detail.split("\n") == [
+              f"over {len(planted_names)} names: named-twice-on-purpose.py: "
+              + ", ".join(planted_collisions.get("named-twice-on-purpose.py", [])),
+              "Two tracked files may not share a basename, compared ignoring case, except SKILL.md, "
+              "README.md and .gitkeep: the rule is in scripts/file-name-collision-warning-hook.py, "
+              "because checks that find a moved file search by its name.",
+              "If a file your change added or renamed is among those files, rename it by CLAUDE.md's "
+              "naming rule and update what points at it.",
+              RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
+          planted_detail)
 
     unlistable = Path(planted_temporary_directory).resolve() / "not-a-checkout"
     unlistable.mkdir()
@@ -468,21 +606,18 @@ with tempfile.TemporaryDirectory() as planted_temporary_directory:
     except RuntimeError as unanswered:
         check("a repository git cannot list is a failure, not a clean result",
               "git ls-files exited" in str(unanswered), str(unanswered))
+        unlisted_passed, unlisted_detail = tracked_names_unique_case(unlistable)
+        check("a repository git cannot list fails with git's error and says its names went unchecked",
+              not unlisted_passed and unlisted_detail == "\n".join([
+                  str(unanswered),
+                  "The suite could not list this checkout's tracked files, so it did not check their names.",
+                  "Fix what the line above reports, then run this suite again."]),
+              unlisted_detail)
     else:
         check("a repository git cannot list is a failure, not a clean result",
               False, "tracked_name_collisions returned instead of raising")
 
-try:
-    tracked_names, collisions = tracked_name_collisions(REPOSITORY_ROOT)
-except RuntimeError as unanswered:
-    check("no two tracked files in this repository share a name", False,
-          str(unanswered))
-else:
-    check("no two tracked files in this repository share a name",
-          not collisions,
-          f"over {len(tracked_names)} names: " + "; ".join(
-              f"{name}: {', '.join(paths)}"
-              for name, paths in sorted(collisions.items())))
+check(NO_SHARED_NAME_CASE, *tracked_names_unique_case(REPOSITORY_ROOT))
 
 several = HOOK_MODULE.collision_warning_line(
     PurePath("docs/new/shared-name.md"), ["docs/a/shared-name.md", "docs/b/shared-name.md"])
@@ -494,6 +629,19 @@ check("with several matches, the draft line names 'one of those files'",
 check("with several matches, the move line names the file you moved from",
       several_lines[1] == "If you are moving the file, delete the file you moved from in this change.",
       repr(several))
+
+lock_file = "/r/a {dir}/.git/index.lock"
+lock_text = HOOK_MODULE.git_failure_text(
+    HOOK_MODULE.git_machine_readable_output.GitCommandFailed(
+        ["ls-files"], "/r", 128, f"fatal: Unable to create '{lock_file}': File exists.\n"),
+    "notes.md", Path("/r"))
+check("a git failure whose error names a lock file, braces in its path, tells the agent to wait for "
+      "that lock file before running the command below, instead of running it now",
+      f"Git's error names the lock file {lock_file}: " in lock_text
+      and HOOK_MODULE.next_step_lines.git_error_names_a_lock_file_wait_then_rerun_line_or_none(
+          f"fatal: Unable to create '{lock_file}': File exists.", "the command below this paragraph")
+      in lock_text
+      and "Run that command now." not in lock_text, repr(lock_text))
 
 print()
 if failures:

@@ -1,4 +1,4 @@
-"""The date patterns the three tests that keep dates out of agent-facing text share.
+"""The date patterns the three tests that keep dates out of tool-message-to-agent text share.
 
 scripts/standing-instructions-carry-no-citations-test.py,
 scripts/registered-hook-messages-carry-no-citations-test.py and

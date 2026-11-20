@@ -104,7 +104,7 @@ THE FIFTH ACCEPTED SHAPE, the Mac's agent-seat task lists, read:
 - The Mac's task store, TASK_STORE_UNDER_HOME under its home, must be a
   directory; a missing store is refused with EXIT_NO_TASK_STORE.
 - tar archives the store to standard output, which carries the archive and
-  nothing else, so ned-box's scripts/seat-task-list-read.py can unpack it as
+  nothing else, so ned-box's scripts/seat-task-list-read-hack.py can unpack it as
   it unpacks ned-box's own. Every message goes to standard error.
   COPYFILE_DISABLE keeps the Mac's tar from adding `._` extended-attribute
   files, which the reader would take for task files.
@@ -123,8 +123,8 @@ a caller told it failed would ask for a second one.
 
 NEDSCHORUS_MAC_WINDOW_OPENER overrides the opener's path, NEDSCHORUS_MAC_OPEN_PROGRAM
 the program that opens Typora and the browser, NEDSCHORUS_NED_BOX_HOME ned-box's home and
-NEDSCHORUS_MAC_NED_BOX_HOME_MOUNT the Mac's mount of it: the seams the test
-suites use, so no test opens a real window or a real file. sshd does not pass
+NEDSCHORUS_MAC_NED_BOX_HOME_MOUNT the Mac's mount of it: the seams the nc-test-suites
+use, so no test opens a real window or a real file. sshd does not pass
 a client's environment to a forced command, so ned-box cannot set them.
 """
 
@@ -151,7 +151,6 @@ AGENT_SEAT_NAME_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_-]{0,63}")
 LAUNCH_CLAUDE_UBUNTU_PATH = Path(__file__).with_name("launch-claude-ubuntu")
 SAFE_WORD_PATTERN = re.compile(r"[A-Za-z0-9_./:=@%+,-]+")
 MAXIMUM_WORD_COUNT = 32
-MAXIMUM_WORD_LENGTH = 256
 MAXIMUM_REQUEST_LENGTH = 2048
 NED_BOX_SSH_DESTINATION = "nedlern@ned-box"
 DEFAULT_WINDOW_OPENER = Path(__file__).with_name("open-iterm-window-running-command")
@@ -161,6 +160,8 @@ TYPORA_APPLICATION = "Typora"
 NED_BOX_HOME = ned_box_home_path_constants.NED_BOX_HOME
 MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home_path_constants.MAC_MOUNT_OF_NED_BOX_HOME
 MAXIMUM_PATH_LENGTH = 1024
+# A word is often an absolute path on ned-box, such as a program in a worktree under .claude/worktrees.
+MAXIMUM_WORD_LENGTH = MAXIMUM_PATH_LENGTH
 DEFAULT_OPEN_PROGRAM = "/usr/bin/open"
 OPEN_IN_BROWSER_REQUEST_VERB = "open-in-browser"
 LOG_STORE_DIRECTORY_NAME = "nedschorus-logs"
@@ -327,7 +328,7 @@ def open_in_typora(request):
     except RequestRefused as refusal:
         log_error = append_to_request_log("refused", request)
         print(f"{PROGRAM}: Typora was not opened, because {refusal}.", file=sys.stderr)
-        print(f"To open a file in Typora, run on ned-box: scripts/open-file-in-typora-on-mac-from-ned-box.py <path of a file under {ned_box_home}/>", file=sys.stderr)
+        print(f"To open a file in Typora, run on ned-box: scripts/open-file-in-typora-on-mac-from-ned-box-hack.py <path of a file under {ned_box_home}/>", file=sys.stderr)
         print("If you already ran that with an existing file, tell the user this reason and the file you wanted shown.", file=sys.stderr)
         if log_error:
             print(f"The refusal could not be added to the request log {REQUEST_LOG_PATH} either: {log_error}", file=sys.stderr)
@@ -396,7 +397,7 @@ def agent_seat_task_lists_read(request):
         log_error = append_to_request_log("refused", request)
         print(f"{PROGRAM}: the task lists were not sent, because {AGENT_SEAT_TASK_LISTS_READ_VERB} takes no words after it.",
               file=sys.stderr)
-        print(f"Send the request {AGENT_SEAT_TASK_LISTS_READ_VERB} alone; on ned-box, scripts/seat-task-list-read.py sends it.",
+        print(f"Send the request {AGENT_SEAT_TASK_LISTS_READ_VERB} alone; on ned-box, scripts/seat-task-list-read-hack.py sends it.",
               file=sys.stderr)
         if log_error:
             print(f"The refusal could not be added to the request log {REQUEST_LOG_PATH} either: {log_error}", file=sys.stderr)
@@ -459,7 +460,7 @@ def main():
         else:
             print(f"Send a request of the form: {REQUEST_VERB} <word> [<word> ...], each word made of letters, digits and _ . / : = @ % + , -", file=sys.stderr)
             print("To open an agent-seat's window instead, run on ned-box: scripts/open-mac-window-from-ned-box.py --agent-seat <seat>", file=sys.stderr)
-            print("To open a file in Typora instead, run on ned-box: scripts/open-file-in-typora-on-mac-from-ned-box.py <path>", file=sys.stderr)
+            print("To open a file in Typora instead, run on ned-box: scripts/open-file-in-typora-on-mac-from-ned-box-hack.py <path>", file=sys.stderr)
             print("To open an HTML page in the browser instead, run on ned-box: scripts/open-html-page-in-mac-browser-from-ned-box.py <path>", file=sys.stderr)
             print("If the command needs shell syntax or quoted words, put it in a script on ned-box and ask for a window running that script.", file=sys.stderr)
         if log_error:
