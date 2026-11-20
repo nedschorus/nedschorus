@@ -1301,7 +1301,7 @@ def build_review_plan_argument_parser():
     parser = RefusingArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--pull-request", type=int, required=True, metavar="N")
     parser.add_argument("--repository", type=Path, default=Path.cwd(), metavar="DIR")
-    parser.add_argument("--github-repository", default="nedschorus/nedschorus", metavar="OWNER/NAME")
+    parser.add_argument("--github-repository", default="nedsnodes/nedsnodes", metavar="OWNER/NAME")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--brief-skeleton", type=Path, metavar="PATH")
     parser.add_argument("--overview-write-architecture-overview-claim-check-report-directory", type=Path, metavar="DIR",
