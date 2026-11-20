@@ -195,7 +195,9 @@ thousands, and a text fast-read outside this program is read again. The log-stor
 cold-read-records directory is the path in cold-read-record-ship.py's
 LOG_STORE_RECORDS_DESTINATION, read on ned-box as it is and on the Mac through
 the Mac's mount of ned-box's home. For each text with none, it saves the text to
-a scratch file and runs cold-read-fast-read.py --target on that file; the
+a scratch file and runs cold-read-fast-read.py --target on that file with
+--without-question-4, which this program passes on every fast read it runs,
+of a waiting item, read ahead or not, and of the texts an answer adds; the
 scratch file's directory is removed when the fast read ends, whatever ends it,
 SIGTERM and SIGHUP included, since the cold-read-record keeps its own copy. Then it
 writes the answer line, which names each part's answer in part number order
@@ -460,6 +462,7 @@ HERE = Path(__file__).resolve().parent
 REPOSITORY_TOP = HERE.parents[2]
 WALK_FINDER_FILE = HERE / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py"
 FAST_READ_PROGRAM = REPOSITORY_TOP / "nn-systems" / "cold-read" / "cold-read-fast-read.py"
+FAST_READ_WITHOUT_QUESTION_4_OPTION = "--without-question-4"
 RECORD_SHIPPER_FILE = REPOSITORY_TOP / "nn-systems" / "cold-read" / "cold-read-record-ship.py"
 RECORD_NAMES_FILE = REPOSITORY_TOP / "nn-systems" / "cold-read" / "cold-read-record-names-common.py"
 PATH_CONSTANTS_FILE = (REPOSITORY_TOP / "nn-systems" / "general-tools"
@@ -1497,8 +1500,8 @@ def run_fast_read(text, name, fast_read_program):
     with scratch_directory_removed_on_every_exit() as scratch:
         target = Path(scratch) / f"{name}.md"
         target.write_text(text + "\n", encoding="utf-8")
-        result = subprocess.run([sys.executable, str(fast_read_program), "--target", str(target)],
-                                capture_output=True, text=True)
+        result = subprocess.run([sys.executable, str(fast_read_program), "--target", str(target),
+                                 FAST_READ_WITHOUT_QUESTION_4_OPTION], capture_output=True, text=True)
     lines = result.stdout.strip().split("\n")
     failed = [line for line in lines if line.startswith("FAILED")]
     if failed:
@@ -1509,7 +1512,8 @@ def run_fast_read(text, name, fast_read_program):
     only_the_record_not_shipped = result.returncode == 1 and any(
         note.startswith(FAST_READ_RECORD_NOT_SHIPPED_MARKERS) for note in notes)
     if (result.returncode != 0 and not only_the_record_not_shipped) or not lines[-1]:
-        raise FastReadFailed(f"FAILED: {fast_read_program} --target {target} exited {result.returncode} "
+        raise FastReadFailed(f"FAILED: {fast_read_program} --target {target} "
+                             f"{FAST_READ_WITHOUT_QUESTION_4_OPTION} exited {result.returncode} "
                              f"without naming a report; its stderr: {result.stderr.strip()[-500:]}")
     return Path(lines[-1]).parent, notes
 
