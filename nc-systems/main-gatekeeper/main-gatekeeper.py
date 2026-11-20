@@ -546,8 +546,10 @@ def resolve_remote(repository: Path, argument: str | None) -> str:
 def prepare_clone(workspace: Path, remote: str) -> Path:
     # Build from main so stale, undeclared worktree content cannot enter the candidate.
     clone = workspace / "candidate"
+    # A plain-path remote is otherwise cloned by copying its object store file by file, which
+    # copies, and can die on, a concurrent push's half-received quarantine.
     cloned = subprocess.run(
-        ["git", "clone", "--quiet", "--no-checkout", remote, str(clone)],
+        ["git", "clone", "--quiet", "--no-checkout", "--no-local", remote, str(clone)],
         capture_output=True, text=True, check=False,
     )
     if cloned.returncode != 0:

@@ -35,7 +35,7 @@ read = architecture_overview_path_template_and_checked_against_commit_reader.che
 
 check("the line the template writes names its commit in the brackets and the link",
       line == f"**Checked against:** commit [{FULL}]"
-              f"(https://github.com/nedschorus/nedschorus/commit/{FULL})", line)
+              f"(https://github.com/nedsnodes/nedsnodes/commit/{FULL})", line)
 check("an overview ending in the line gives its commit",
       read(f"# The widget\n\nIt widgets.\n\n{line}\n") == FULL)
 check("blank lines after the last line do not hide it",
@@ -50,7 +50,7 @@ check("of two such lines, the last names the commit",
            f"\n\n{line}\n") == FULL)
 check("the line an overview had before the page does not count",
       read(f"# The widget\n\n**Pinned to what landed:** commit [{FULL[:7]}]"
-           f"(https://github.com/nedschorus/nedschorus/commit/{FULL}) on 2026-09-28 — it.\n")
+           f"(https://github.com/nedsnodes/nedsnodes/commit/{FULL}) on 2026-09-28 — it.\n")
       is None)
 
 # The page is where the path and the line are defined; this module must say the same.

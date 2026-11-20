@@ -979,6 +979,59 @@ def main() -> int:
         check("--help alone: nothing was sent to the box",
               result["remote"] == "", result["remote"][:200])
 
+        # With no name, the usage lists the agent tmux sessions on the box.
+        # A listing whose ssh fails says so, passing ssh's message through,
+        # and is never read as an empty box.
+        # ssh exits 255 when it cannot connect, so only then is the reader
+        # sent to check the connection.
+        for label, ssh_exit_code, connected in (
+                ("ssh cannot reach the box", 255, False),
+                ("the listing command fails on the box", 1, True)):
+            harness = LaunchHarness(root / f"no-name-listing-fails-{ssh_exit_code}")
+            write_stub(harness.stubs, "ssh",
+                       'echo "ssh: Could not resolve hostname stub-box" >&2\n'
+                       f'exit {ssh_exit_code}\n')
+            result = harness.run([])
+            stderr = result["launched"].stderr
+            check(f"no name, {label}: exit nonzero, naming the failed listing "
+                  "and ssh's message, never 'No agent tmux sessions'",
+                  result["launched"].returncode != 0
+                  and "could not list the agent tmux sessions on stub-box: "
+                      f"ssh exited {ssh_exit_code}" in stderr
+                  and "ssh: Could not resolve hostname stub-box" in stderr
+                  and "No agent tmux sessions" not in stderr,
+                  (result["launched"].returncode, stderr[:800]))
+            connection_lines_shown = ("run it from the Mac instead" in stderr
+                                      and "check that the box is up and that ssh stub-box works" in stderr)
+            box_answered_line_shown = ("stub-box answered, so the connection works; "
+                                       "the listing command failed there" in stderr)
+            check(f"no name, {label}: "
+                  + ("says the box answered and the listing failed there, not to check the connection"
+                     if connected else
+                     "says to run it from the Mac or check the connection, not that the box answered"),
+                  (box_answered_line_shown and not connection_lines_shown) if connected
+                  else (connection_lines_shown and not box_answered_line_shown),
+                  stderr[:800])
+
+        harness = LaunchHarness(root / "no-name-listing-empty")
+        result = harness.run([])
+        check("no name, the listing succeeds and finds none: 'No agent tmux "
+              "sessions on the box now.'",
+              result["launched"].returncode == 2
+              and "No agent tmux sessions on the box now." in result["launched"].stderr
+              and "could not list" not in result["launched"].stderr,
+              (result["launched"].returncode, result["launched"].stderr[:800]))
+
+        harness = LaunchHarness(root / "no-name-listing-finds-sessions")
+        write_stub(harness.stubs, "ssh",
+                   "printf 'seat-a@seat-a\\nseat-b@default\\n'\n")
+        result = harness.run([])
+        check("no name, the listing finds sessions: they are named on one line",
+              result["launched"].returncode == 2
+              and "Agent tmux sessions on the box now (running agent-seats or "
+                  "leftover-shells): seat-a@seat-a seat-b@default" in result["launched"].stderr,
+              (result["launched"].returncode, result["launched"].stderr[:800]))
+
         # A first argument starting with - is refused as a seat name: the
         # first argument is always the name, so the launcher would otherwise
         # launch a seat named after the option.

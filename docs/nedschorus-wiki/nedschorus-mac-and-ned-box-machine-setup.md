@@ -70,7 +70,7 @@ Both launchers are attach-or-create: running a name that is already up attaches 
 
 ## What crosses between machines, and what does not
 
-**Crosses:** git branches, once pushed, and through them every committed file. That is also a cross-machine collision surface — two clones pushing the same branch name fight over one remote ref, whatever the agent-seats are called; the other is one agent-seat name used on both machines, as § Commands, and the machine each runs on says.
+**Crosses:** git branches, once pushed, and through them every committed file. That is also a cross-machine collision surface — two clones pushing the same branch name fight over one remote ref, whatever the agent-seats are called; the other is one agent-seat name used on both machines, as § Commands, and the machine each runs on says. The Mac also reads and writes ned-box's home directory, the log-store included, through its mount at `/Volumes/nedhome`.
 
 **Does not cross:** worktrees and their directories, agent-homes, handoff files, supervisor locks, tmux sessions, Claude credentials (each machine authenticates separately), and uncommitted work in a checkout. A pull on one machine tells the other nothing.
 

@@ -287,7 +287,8 @@ class Fixture:
         self.log_store = root / "log-store"
         self.temporary = root / "temporary"
         self.temporary.mkdir()
-        self.directory = self.temporary / program.SCHEDULED_FULL_TEST_RUN_DIRECTORY_NAME
+        # Spelled out, not read from the program, so a change to the directory name fails here.
+        self.directory = self.temporary / "nedschorus-scheduled-full-test-run-of-main"
         self.worktree = self.directory / program.SCHEDULED_FULL_TEST_RUN_WORKTREE_DIRECTORY_NAME
         self.logs = self.directory / program.SCHEDULED_FULL_TEST_RUN_LOGS_DIRECTORY_NAME
         self.lock_file = self.directory / program.SCHEDULED_FULL_TEST_RUN_LOCK_FILE_NAME
@@ -728,15 +729,6 @@ def run_cases_on_ned_box(workspace: Path):
           "what to do",
           result.stderr == f"scheduled-full-test-run-of-main: {what_failed}\n"
           "Fix what git reports, then run this again.\n", result.stderr)
-    error_line = getattr(program, "first_fatal_or_error_stderr_line_or_no_detail", None)
-    check("the error line of a failed git worktree add is the first line opening `error:` "
-          "or `fatal:`; of one that wrote neither, its first line; of one that wrote "
-          "nothing, `no detail`",
-          error_line is not None
-          and error_line("Preparing worktree (detached HEAD 0123456)\nerror: one\n"
-                         "fatal: two\n") == "error: one"
-          and error_line("a line\nanother\n") == "a line"
-          and error_line("\n") == "no detail")
 
     # --- One scheduled run at a time -------------------------------------------------
     files_before = {name: fixture.record(name) for name in ("ned-box", "mac")}
@@ -795,6 +787,33 @@ def run_cases_on_ned_box(workspace: Path):
           repr(result))
     check("a failed fetch leaves no worktree", fixture.worktree_is_gone(cut_off),
           fixture_git(cut_off, "worktree", "list"))
+
+    real_git = program.git
+
+    def fetch_fails_after_its_from_line(clone, *arguments):
+        if arguments[:1] == ("fetch",):
+            return subprocess.CompletedProcess(
+                ["git", "-C", str(clone), *arguments], 1, "",
+                "From https://github.com/nedsnodes/nedsnodes\n"
+                "error: cannot lock ref 'refs/remotes/origin/main': is at 1 but expected 2\n"
+                "error: some local refs could not be updated\n")
+        return real_git(clone, *arguments)
+
+    program.git = fetch_fails_after_its_from_line
+    try:
+        result = fixture.run()
+    finally:
+        program.git = real_git
+    record_lines = (fixture.record("ned-box") or "").splitlines()
+    check("a fetch that fails after its From line is recorded and printed with git's error: "
+          "line, not the From line",
+          result.code == 4 and result.runner_calls == []
+          and any(line.startswith("not run — git fetch origin failed in ")
+                  and line.endswith(": error: cannot lock ref 'refs/remotes/origin/main': "
+                                    "is at 1 but expected 2")
+                  for line in record_lines)
+          and "error: cannot lock ref" in result.stderr and "From https" not in result.stderr,
+          (repr(result), record_lines))
 
 
 def run_cases_on_the_mac(workspace: Path):

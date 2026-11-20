@@ -118,6 +118,11 @@ already says what the table says, with its job loaded, is left alone.
 which is how a new job is shown to run under launchd without waiting for its
 hour.
 
+AFTER EVERY PULL. Each machine's reference-checkout runs --install after
+every merge into it, from its post-merge hook, through
+install-scheduled-jobs-on-this-machine-after-reference-checkout-merge-and-report-install-failure-as-task-for-installer-owner-agent-seat.py,
+so a job added to or changed in the table is installed at the next pull.
+
 RETIRING A JOB. Take it off each machine that runs it, with --remove --job
 NAME, before the pull request that deletes it from the table merges: --remove
 finds a job's cron line and plist through the job's entry in the table. A job

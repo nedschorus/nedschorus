@@ -37,7 +37,7 @@ PROGRAM = "agent-seat-due-task-prerequisites-recording-reminder-after-task-creat
 
 # The user set this wording; change it only with his approval. {task_id_clause} is the only addition.
 PREREQUISITES_RECORD_INSTRUCTION_TEMPLATE = (
-    'If this task{task_id_clause} waits on a pull request merging or a GHI closing, record each one now '
+    '[rule due-task-prerequisites-record-after-task-create] If this task{task_id_clause} waits on a pull request merging or a GHI closing, record each one now '
     'with TaskUpdate in the task\'s metadata, as "prerequisites": [{{"pr_merged": <number>}}, '
     '{{"issue_closed": <number>}}].\n'
     'If it waits on the user\'s decision on an approval-walk item, add the item to the same prerequisites list, as '

@@ -63,8 +63,9 @@ is MAC_LOG_DIRECTORY, on the Mac's own disk: REMOTE_CONTROL_RECONNECT_WATCHER_DE
 keeps a later run from typing twice, and a run each minute must neither hang
 on nor write under the Mac's network mount of ned-box's home when that mount
 is hung or missing. scripts/transcript-mirror-to-log-store.py copies the
-Mac's log directory to the log-store, under
-agent-session-files-by-machine/mac/<PROGRAM>/, for agents on ned-box to read.
+Mac's log directory to the log-store, as
+agent-session-files-by-machine/mac/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher/,
+for agents on ned-box to read.
 
 On a machine that is neither Linux nor macOS the program refuses.
 

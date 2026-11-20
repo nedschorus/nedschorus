@@ -558,12 +558,14 @@ def run_cases_on_ned_box(workspace: Path):
     check("the runner is run once, by the Python running this program, from the checkout, "
           "as <runner> --checkout <checkout> "
           "--only-suites-whose-recorded-inputs-changed-since <since> --log-dir <logs> "
-          "--wait-for-lock-seconds 3600, with no -j and no --recorded-inputs-directory",
+          "--leave-out-suites-that-run-the-real-claude-cli --wait-for-lock-seconds 3600, with no -j "
+          "and no --recorded-inputs-directory",
           len(result.runner_calls) == 1
           and call.get("argv") == [
               str(fixture.runner), "--checkout", str(fixture.checkout),
               "--only-suites-whose-recorded-inputs-changed-since", fixture.merge_base,
-              "--log-dir", str(fixture.logs()), "--wait-for-lock-seconds", "3600"]
+              "--log-dir", str(fixture.logs()), "--leave-out-suites-that-run-the-real-claude-cli",
+              "--wait-for-lock-seconds", "3600"]
           and call.get("run_from") == str(fixture.checkout)
           and os.path.realpath(call.get("executable", "")) == os.path.realpath(sys.executable),
           repr(result))
@@ -1084,6 +1086,13 @@ def run_cases_on_ned_box(workspace: Path):
           result.code == 0 and result.runner_calls[0]["argv"][-4:-2]
           == ["--recorded-inputs-directory", str(recorded_inputs)]
           and not recorded_inputs.exists(), repr(result))
+    saved_inputs = workspace / "a-saved-recorded-inputs-directory"
+    result = fixture.run(extra_arguments=["--save-recorded-inputs-to-directory",
+                                          str(saved_inputs)])
+    check("--save-recorded-inputs-to-directory is passed through to the runner",
+          result.code == 0 and result.runner_calls[0]["argv"][-4:-2]
+          == ["--save-recorded-inputs-to-directory", str(saved_inputs)]
+          and not saved_inputs.exists(), repr(result))
     commands_run = []
 
     def runner_that_is_not_started(command, run_from, monotonic, stream_to=None):
@@ -2036,6 +2045,24 @@ def run_log_store_readme_cases():
           and "`scripts/pull-request-head-test-run.py`" in readme, readme)
 
 
+def run_cases_of_a_git_status_that_fails_after_a_warning(workspace: Path):
+    def status_fails_after_a_warning(checkout, *arguments):
+        return subprocess.CompletedProcess(
+            ["git", "-C", str(checkout), *arguments], 128, "",
+            "warning: unable to access '/home/nedlern/.config/git/attributes': Permission denied\n"
+            "fatal: unknown index entry format 0x61740000\n")
+
+    real_git = scheduled_run.git
+    scheduled_run.git = status_fails_after_a_warning
+    try:
+        result = program.first_tracked_file_that_differs(workspace)
+    finally:
+        scheduled_run.git = real_git
+    check("a git status that fails after a warning: line gives its fatal: line as the reason, "
+          "not the warning before it",
+          result == (None, "fatal: unknown index entry format 0x61740000"), repr(result))
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     # Resolved, because the program resolves the paths it is given and the
     # Mac's temporary directory is reached through a symbolic link.
@@ -2051,6 +2078,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_cases_of_two_writers_at_once(workspace_root)
     run_cases_as_a_program(workspace_root)
     run_cases_of_stderr_that_cannot_be_written(workspace_root)
+    run_cases_of_a_git_status_that_fails_after_a_warning(workspace_root)
     run_log_store_readme_cases()
 
 if failures:

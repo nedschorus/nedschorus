@@ -338,7 +338,8 @@ def coverage_types_of_the_test_designs_requirements(test_design_text):
 
 def the_set_of_coverage_types_the_test_design_asks_for(requirement_coverage_types):
     present = {t for t in requirement_coverage_types
-               if t != tables.COVERAGE_TYPE_NO_TESTS}
+               if t not in (tables.COVERAGE_TYPE_NO_TESTS,
+                            tables.COVERAGE_TYPE_USER_TESTS_BY_HAND)}
     if not present:
         return (tables.COVERAGE_TYPE_NO_TESTS,)
     return tuple(sorted(present))
@@ -518,7 +519,9 @@ class DesignToMainStateMachineFlow:
 
 
     def start(self, component):
-        """Start the run after verifying origin/main is available for the topic branch cut."""
+        """Start the run after verifying the checkout is not an agent-home and origin/main is available
+        for the topic branch cut."""
+        self.git_record.require_checkout_is_not_an_agent_home()
         self.git_record.require_topic_branch_start_point()
         return RunStateRecord(component)
 
