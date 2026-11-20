@@ -1,6 +1,6 @@
 #!/bin/sh
 # Each program does nothing outside a reference-checkout. The first restarts
-# the nc-shared-database service when a merge into ned-box's reference-checkout
+# the nn-shared-database service when a merge into ned-box's reference-checkout
 # changes the service; the second runs the scheduled-jobs installer with
 # --install, then --remove-not-in-table, in either machine's reference-checkout,
 # and hands a failed step to the agent-seat that owns the installer. Both
@@ -11,6 +11,6 @@
 # one argument, whether the merge was a squash, which neither program needs.
 hooks="$(dirname "$0")"
 status=0
-python3 "$hooks/../../nc-systems/nc-shared-database/nc-shared-database-service-restart-after-merge.py" || status=1
-python3 "$hooks/../../nc-systems/general-tools/install-scheduled-jobs-on-this-machine-after-reference-checkout-merge-and-report-install-failure-as-task-for-installer-owner-agent-seat.py" || status=1
+python3 "$hooks/../../nn-systems/nn-shared-database/nn-shared-database-service-restart-after-merge.py" || status=1
+python3 "$hooks/../../nn-systems/general-tools/install-scheduled-jobs-on-this-machine-after-reference-checkout-merge-and-report-install-failure-as-task-for-installer-owner-agent-seat.py" || status=1
 exit $status

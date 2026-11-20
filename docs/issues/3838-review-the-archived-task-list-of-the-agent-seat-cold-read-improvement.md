@@ -8,7 +8,7 @@ On 2026-11-17 the user asked every agent-seat to archive its task list before a 
 
 ## What was archived
 
-The archive is `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/cold-read-improvement/task-list-archive-2026-11-17/`. It holds all 50 tasks of the agent-seat's task list as they stood, each task's JSON file copied whole, and `task-list-archive.md`, which gives each task's id, status, subject, blocking tasks, metadata and description. The live task list now holds one task, which points to the archive and lists what was in flight: an open approval-walk, open pull requests, and the branches and worktrees that archived tasks hold.
+The archive is `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/cold-read-improvement/task-list-archive-2026-11-17/`. It holds all 50 tasks of the agent-seat's task list as they stood, each task's JSON file copied whole, and `task-list-archive.md`, which gives each task's id, status, subject, blocking tasks, metadata and description. The live task list now holds one task, which points to the archive and lists what was in flight: an open approval-walk, open pull requests, and the branches and worktrees that archived tasks hold.
 
 ## Why a review is needed
 

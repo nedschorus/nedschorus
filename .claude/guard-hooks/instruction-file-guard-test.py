@@ -223,19 +223,19 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           REFERENCE_CHECKOUT_LINE in " ".join(result.stderr.split()), result.stderr)
     result = run_hook(decoy, workspace, str(workspace / "docs" / "agents" / "seat-first-prompt.md"))
     check("a first prompt in docs/agents/ is blocked", result.returncode == 2)
-    skills = workspace / "nc-systems" / "skills" / "cold-read"
+    skills = workspace / "nn-systems" / "skills" / "cold-read"
     result = run_hook(decoy, workspace, str(skills / "defect-hunt-prompt.md"))
-    check("a skill prompt under nc-systems/skills/ is blocked", result.returncode == 2)
+    check("a skill prompt under nn-systems/skills/ is blocked", result.returncode == 2)
     result = run_hook(decoy, workspace, str(skills / "docs" / "cold-read-cell-instructions.md"))
     check("a skill's instructions in its docs/ are blocked", result.returncode == 2)
-    result = run_hook(decoy, workspace, str(workspace / "nc-systems" / "handoff" / "handoff-prompt.md"))
+    result = run_hook(decoy, workspace, str(workspace / "nn-systems" / "handoff" / "handoff-prompt.md"))
     check("a program's prompt beside it is blocked", result.returncode == 2)
     result = run_hook(decoy, workspace,
                       str(worktree / "docs" / "agents" / "fleet-instructions.md"))
     check("a reusable prompt inside a worktree checkout is still blocked", result.returncode == 2)
     result = run_hook(decoy, workspace, str(skills / "cold-read-grid.py"))
     check("a skill's code passes", result.returncode == 0, result.stderr)
-    result = run_hook(decoy, workspace, str(workspace / "nc-systems" / "handoff" / "defect-hunt.md"))
+    result = run_hook(decoy, workspace, str(workspace / "nn-systems" / "handoff" / "defect-hunt.md"))
     check("a prompt without either ending, outside the reviewed homes, passes (guarded by name only)",
           result.returncode == 0, result.stderr)
     result = run_hook(decoy, workspace, str(workspace / "docs" / "prompt-writing-notes.md"))
@@ -244,8 +244,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a draft in docs/agents/queue/ passes", result.returncode == 0, result.stderr)
     result = run_hook(decoy, workspace, str(workspace / "docs" / "issues" / "queue" / "x-prompt.md"))
     check("a draft in docs/issues/queue/ passes", result.returncode == 0, result.stderr)
-    result = run_hook(decoy, workspace, str(workspace / "nc-queue" / "x-prompt.md"))
-    check("a note in nc-queue/ passes", result.returncode == 0, result.stderr)
+    result = run_hook(decoy, workspace, str(workspace / "nn-queue" / "x-prompt.md"))
+    check("a note in nn-queue/ passes", result.returncode == 0, result.stderr)
     result = run_hook(decoy, workspace, str(workspace / "docs" / "drafts" / "x-instructions.md"))
     check("a draft in docs/drafts/ passes", result.returncode == 0, result.stderr)
     result = run_hook(decoy, workspace, str(workspace / ".claude" / "jobs" / "ab12" / "tmp" / "x-prompt.md"))
@@ -261,33 +261,33 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("the marker is consumed by the prompt's pass", not marker.exists())
 
     # Reviewed documents (2026-09-30): an MD file the user reviews is known by
-    # where it sits — docs/agents/, docs/nedschorus-wiki/, nc-systems/skills/ —
+    # where it sits — docs/agents/, docs/nedsnodes-wiki/, nn-systems/skills/ —
     # or, for a design, by its -design.md name wherever it sits. Drafts stay
     # free in the draft places; test-designs and design-contracts are left to
     # design-to-main's own acceptance states.
     reviewed_homes = [
         ("a doc in docs/agents/", workspace / "docs" / "agents" / "x.md"),
-        ("a wiki page in docs/nedschorus-wiki/", workspace / "docs" / "nedschorus-wiki" / "x.md"),
-        ("a skill's doc under nc-systems/skills/", skills / "docs" / "x.md"),
-        ("a skill's design under nc-systems/skills/", skills / "docs" / "cold-read-design.md"),
+        ("a wiki page in docs/nedsnodes-wiki/", workspace / "docs" / "nedsnodes-wiki" / "x.md"),
+        ("a skill's doc under nn-systems/skills/", skills / "docs" / "x.md"),
+        ("a skill's design under nn-systems/skills/", skills / "docs" / "cold-read-design.md"),
         ("a skill MD without either prompt ending", skills / "defect-hunt.md"),
         ("a design GHI-MD in docs/issues/", workspace / "docs" / "issues" / "12-foo-design.md"),
         ("a landed design in its system's docs/",
-         workspace / "nc-systems" / "handoff" / "docs" / "handoff-foo-design.md"),
+         workspace / "nn-systems" / "handoff" / "docs" / "handoff-foo-design.md"),
         ("design-to-main's design", workspace / "docs" / "design-to-main" / "design-to-main-state-machine-design.md"),
         ("a design in a record-named directory below the checkout's top",
          workspace / "docs" / "cold-read-records" / "foo-design-2026-09-30" / "foo-design.md"),
         ("a wiki page named contract.md, with no hyphen before contract",
-         workspace / "docs" / "nedschorus-wiki" / "contract.md"),
+         workspace / "docs" / "nedsnodes-wiki" / "contract.md"),
         ("a wiki page whose name ends contract.md without the hyphen",
-         workspace / "docs" / "nedschorus-wiki" / "nedschorus-subcontract.md"),
+         workspace / "docs" / "nedsnodes-wiki" / "nedsnodes-subcontract.md"),
         ("a wiki page whose name ends test-design.md without the hyphen",
-         workspace / "docs" / "nedschorus-wiki" / "footest-design.md"),
+         workspace / "docs" / "nedsnodes-wiki" / "footest-design.md"),
     ]
     for label, target in reviewed_homes:
         result = run_hook(decoy, workspace, str(target))
         check(f"{label} is blocked", result.returncode == 2, str(result.returncode))
-    result = run_hook(decoy, workspace, str(workspace / "docs" / "nedschorus-wiki" / "x.md"))
+    result = run_hook(decoy, workspace, str(workspace / "docs" / "nedsnodes-wiki" / "x.md"))
     check("the block says the guard refuses every write to a document the user reviews",
           "This guard refuses every write to a document the user reviews, until .walk-approved "
           "says the change may go ahead." in result.stderr, result.stderr)
@@ -298,7 +298,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("the reviewed-document block says, on its own line, to use its own worktree from the reference checkout",
           REFERENCE_CHECKOUT_LINE in result.stderr.splitlines(), result.stderr)
     check("the block sends a first draft to a draft place",
-          "docs/drafts/" in result.stderr and "docs/nedschorus-wiki/queue/" in result.stderr,
+          "docs/drafts/" in result.stderr and "docs/nedsnodes-wiki/queue/" in result.stderr,
           result.stderr)
     check("the block tells a subagent to report the change to the agent that dispatched it",
           "If the change needs his approval, or you cannot tell whether it does, and he has not "
@@ -309,27 +309,27 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           len(result.stderr.strip().splitlines()) == 15, result.stderr)
     draft_places = [
         ("a draft in docs/agents/queue/", workspace / "docs" / "agents" / "queue" / "x.md"),
-        ("a draft in docs/nedschorus-wiki/queue/", workspace / "docs" / "nedschorus-wiki" / "queue" / "x.md"),
+        ("a draft in docs/nedsnodes-wiki/queue/", workspace / "docs" / "nedsnodes-wiki" / "queue" / "x.md"),
         ("a design draft in docs/issues/queue/", workspace / "docs" / "issues" / "queue" / "foo-design.md"),
         ("a design draft in docs/drafts/", workspace / "docs" / "drafts" / "foo-design.md"),
-        ("a design draft in nc-queue/", workspace / "nc-queue" / "foo-design.md"),
+        ("a design draft in nn-queue/", workspace / "nn-queue" / "foo-design.md"),
     ]
     for label, target in draft_places:
         result = run_hook(decoy, workspace, str(target))
         check(f"{label} passes", result.returncode == 0, result.stderr)
     not_reviewed = [
-        ("a system's doc that is not a design", workspace / "nc-systems" / "handoff" / "docs" / "x.md"),
+        ("a system's doc that is not a design", workspace / "nn-systems" / "handoff" / "docs" / "x.md"),
         ("a test-design", workspace / "docs" / "issues" / "12-foo-test-design.md"),
         ("a design-contract", workspace / "docs" / "issues" / "12-foo-contract.md"),
-        ("a skill's test-design under nc-systems/skills/", skills / "docs" / "cold-read-test-design.md"),
-        ("a skill's design-contract under nc-systems/skills/", skills / "docs" / "cold-read-contract.md"),
+        ("a skill's test-design under nn-systems/skills/", skills / "docs" / "cold-read-test-design.md"),
+        ("a skill's design-contract under nn-systems/skills/", skills / "docs" / "cold-read-contract.md"),
         ("a name ending design.md without the hyphen", workspace / "docs" / "issues" / "12-redesign.md"),
         ("a reviewed home's path below the checkout's top",
-         workspace / "tools" / "docs" / "nedschorus-wiki" / "x.md"),
+         workspace / "tools" / "docs" / "nedsnodes-wiki" / "x.md"),
         ("a GHI-MD that is not a design", workspace / "docs" / "issues" / "12-foo.md"),
         ("a walk file", workspace / "docs" / "walk" / "x.md"),
         ("a skill's code", skills / "x.py"),
-        ("a non-MD file in a reviewed home", workspace / "docs" / "nedschorus-wiki" / "diagram.png"),
+        ("a non-MD file in a reviewed home", workspace / "docs" / "nedsnodes-wiki" / "diagram.png"),
         ("a design's frozen copy in a cold-read record",
          workspace / "cold-read-records" / "foo-design-2026-09-30" / "foo-design.md"),
         ("a design's frozen copy in a sanity-check record",
@@ -362,7 +362,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "reusable prompt" in result.stderr, result.stderr)
     reviewed_worktree = workspace / ".claude" / "worktrees" / "a-real-worktree"
     make_checkout(reviewed_worktree)
-    result = run_hook(decoy, workspace, str(reviewed_worktree / "docs" / "nedschorus-wiki" / "x.md"))
+    result = run_hook(decoy, workspace, str(reviewed_worktree / "docs" / "nedsnodes-wiki" / "x.md"))
     check("a reviewed document inside a worktree checkout is blocked", result.returncode == 2)
     result = run_hook(decoy, workspace, str(outside / "foo-design.md"))
     check("a design outside any checkout passes", result.returncode == 0, result.stderr)
@@ -394,11 +394,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     for label, target in (
             ("an instruction file", workspace / "CLAUDE.md"),
             ("a reusable prompt", workspace / "docs" / "agents" / "some-seat-instructions.md"),
-            ("a reviewed document", workspace / "docs" / "nedschorus-wiki" / "a-page.md")):
+            ("a reviewed document", workspace / "docs" / "nedsnodes-wiki" / "a-page.md")):
         result = run_hook(decoy, workspace, str(target))
         check(f"the refusal for {label} names the approval page by its path",
-              "The approval page is docs/nedschorus-wiki/"
-              "nedschorus-which-changes-need-the-users-approval.md." in result.stderr,
+              "The approval page is docs/nedsnodes-wiki/"
+              "nedsnodes-which-changes-need-the-users-approval.md." in result.stderr,
               result.stderr)
         check(f"the refusal for {label} gives the pre-approved-change marker step on its own line",
               "If the change needs no approval, write `#pre_approved_change` as the first line of "
@@ -567,7 +567,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     for label, target in (
             ("an instruction file", workspace / "CLAUDE.md"),
             ("a reusable prompt", workspace / "docs" / "agents" / "some-seat-instructions.md"),
-            ("a reviewed document", workspace / "docs" / "nedschorus-wiki" / "a-page.md")):
+            ("a reviewed document", workspace / "docs" / "nedsnodes-wiki" / "a-page.md")):
         result = run_hook(decoy, workspace, str(target))
         check(f"the refusal for {label} ends with the four route-around lines",
               result.returncode == 2
@@ -583,7 +583,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     for label, target in (
             ("an instruction file", workspace / "CLAUDE.md"),
             ("a reusable prompt", workspace / "docs" / "agents" / "some-seat-instructions.md"),
-            ("a reviewed document", workspace / "docs" / "nedschorus-wiki" / "a-page.md")):
+            ("a reviewed document", workspace / "docs" / "nedsnodes-wiki" / "a-page.md")):
         result = run_hook(decoy, workspace, str(target))
         check(f"the refusal for {label} carries the two obvious-fix marker lines",
               result.returncode == 2
@@ -602,7 +602,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     for label, target in (
             ("an instruction file", workspace / "CLAUDE.md"),
             ("a reusable prompt", workspace / "docs" / "agents" / "some-seat-instructions.md"),
-            ("a reviewed document", workspace / "docs" / "nedschorus-wiki" / "a-page.md")):
+            ("a reviewed document", workspace / "docs" / "nedsnodes-wiki" / "a-page.md")):
         result = run_hook(decoy, workspace, str(target))
         check(f"the refusal for {label} asks for a cold read just before its steps for asking the user",
               result.returncode == 2

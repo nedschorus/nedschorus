@@ -38,7 +38,7 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
     "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
@@ -48,7 +48,7 @@ PROGRAM = SCRIPTS / "stale-code-citation-check.py"
 LINT = SCRIPTS / "md-drift-lint.py"
 LINT_OVERVIEW_PATH_MODULE = (
     SCRIPTS / "architecture-overview-path-template-and-checked-against-commit-reader-common.py")
-GIT_OUTPUT_MODULE = (SCRIPTS.parent / "nc-systems" / "general-tools"
+GIT_OUTPUT_MODULE = (SCRIPTS.parent / "nn-systems" / "general-tools"
                      / "git-machine-readable-output-runner-and-parser-common.py")
 NEXT_STEP_LINES_MODULE = GIT_OUTPUT_MODULE.with_name(
     "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
@@ -88,9 +88,9 @@ def new_repository(workspace: str) -> Path:
     shutil.copy(PROGRAM, root / "scripts" / PROGRAM.name)
     shutil.copy(LINT, root / "scripts" / LINT.name)
     shutil.copy(LINT_OVERVIEW_PATH_MODULE, root / "scripts" / LINT_OVERVIEW_PATH_MODULE.name)
-    (root / "nc-systems" / "general-tools").mkdir(parents=True)
+    (root / "nn-systems" / "general-tools").mkdir(parents=True)
     for module in (GIT_OUTPUT_MODULE, NEXT_STEP_LINES_MODULE):
-        shutil.copy(module, root / "nc-systems" / "general-tools" / module.name)
+        shutil.copy(module, root / "nn-systems" / "general-tools" / module.name)
     git(root, "init", "-q", "-b", "main")
     git(root, "add", "-A")
     git(root, "commit", "-q", "-m", "scripts", date="2026-01-01")
@@ -475,7 +475,7 @@ with tempfile.TemporaryDirectory() as workspace:
 
     # A NEGATED BUILT WORD IS NOT A CLAIM THAT THE CODE IS BUILT. The status
     # values here are the ones docs/design-to-main/design-to-main-state-machine-
-    # design.md and nc-systems/main-gatekeeper/main-gatekeeper-design.md carry
+    # design.md and nn-systems/main-gatekeeper/main-gatekeeper-design.md carry
     # on main, which a substring test read as built -- so the rider was silent
     # on the clearest unbuilt claim a status can make.
     write_document(root, "docs/not-built.md", document(
