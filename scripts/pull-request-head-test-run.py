@@ -76,7 +76,7 @@ try:
     EXIT_CHECKOUT_REFUSED = run_all_test_suites.EXIT_COULD_NOT_RUN
     git_output = module_loaded_by_path(
         "git_machine_readable_output_runner_and_parser_common",
-        REPOSITORY_ROOT / "nc-systems" / "general-tools"
+        REPOSITORY_ROOT / "nn-systems" / "general-tools"
         / "git-machine-readable-output-runner-and-parser-common.py")
 except Exception:
     if __name__ != "__main__":

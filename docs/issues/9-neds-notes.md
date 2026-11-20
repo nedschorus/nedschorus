@@ -106,7 +106,7 @@ rule (a ruling that changes later items revises the remaining walk and reports
 the changed count or sequence) — legacy PR link to be edited in here when it
 opens. The six scenario tests above are deferred to the NC step-1 walk-me
 build, judged per the agent-facing test doctrine in
-`nc-queue/archived/2026-07-22-skill-creation-and-improvement-deep-dive.md` § 3.
+`nn-queue/archived/2026-07-22-skill-creation-and-improvement-deep-dive.md` § 3.
 Recorded by edit per the same-day revision convention (revise the artifact,
 never stack additive records); issue [Step-1 walk-me-through build: run pair #9's six walk-behavior scenario tests (deferred from the 2026-07-22 quarry walk-skill update)](https://github.com/nedschorus/nedschorus/issues/12) was opened for this deferral and
 closed as consolidated here.
@@ -260,7 +260,7 @@ disposed of: deleted, or its distilled remains promoted.
 
 ## Outcome: both disposal conditions are met, and this issue closes
 
-Ruled by the user on 2026-10-01, in walk ghi-md-reconciliation-disagreements-2026-09-30, item 3 (minutes: `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/ghi-md-reconciliation-disagreements-2026-09-30-minutes.md`).
+Ruled by the user on 2026-10-01, in walk ghi-md-reconciliation-disagreements-2026-09-30, item 3 (minutes: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/ghi-md-reconciliation-disagreements-2026-09-30-minutes.md`).
 
 The three questions under "Still under review" were each ruled on 2026-07-24, as recorded there: the boot set (walk item 12, commit fa54e52), the rewrite policy (walk item 13, commit d3383f8), and public versus internal (walk item 14, commit 2c494d3).
 
@@ -285,7 +285,7 @@ anchor after any interruption is the first unmarked item.
 
 Stack state: an INNER walk ("marking conventions and skill-creation") sat on
 top of this outer walk — now COMPLETE and popped. Inner item 1 (marking/archive
-conventions) — processed 2026-07-21/22 → folded (mark-in-place, nc-queue
+conventions) — processed 2026-07-21/22 → folded (mark-in-place, nn-queue
 archive convention, pair-doc close lifecycle). Inner item 2 (walk-me-through:
 update now vs NC step-1) — processed 2026-07-22 → ruled NOW; landed as legacy
 PR [nedlern/nedlern#2162](https://github.com/nedlern/nedlern/pull/2162);
@@ -312,8 +312,8 @@ Outer walk, 17 items:
    same ruling): items 3–10 collapse from full evidence presentations to
    rapid-fire summary dispositions — GHI-or-cut per item off the summaries MD
    (session ad0a3708, `/tmp/nc-candidate-skills-walk-summaries-2026-07-24.md`;
-   durable evidence stays in the two nc-queue files). Approved GHIs file in
-   nedschorus in one batch, each pointing at the nc-queue evidence. Filed as issue [Candidate skill: define-work — bounded work-definition spec before ambiguous or substantial work](https://github.com/nedschorus/nedschorus/issues/15).
+   durable evidence stays in the two nn-queue files). Approved GHIs file in
+   nedschorus in one batch, each pointing at the nn-queue evidence. Filed as issue [Candidate skill: define-work — bounded work-definition spec before ambiguous or substantial work](https://github.com/nedschorus/nedschorus/issues/15).
 3. `plan-rewrite-slice` — processed 2026-07-24 → GHI-not-build (batch approval); issue [Candidate skill: plan-rewrite-slice — one bounded legacy slice with four-way behavior classification](https://github.com/nedschorus/nedschorus/issues/16).
 4. `design-change` — processed 2026-07-24 → GHI-not-build (batch approval); issue [Candidate skill: design-change — read-only evidence-grounded design with one recommendation and honest exits](https://github.com/nedschorus/nedschorus/issues/17).
 5. `write-test-plan` — processed 2026-07-24 → GHI-not-build (batch approval); issue [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18) — flagged likely FIRST build (cops: leading main-gatekeeper-task dogfood).
@@ -343,9 +343,9 @@ Outer walk, 17 items:
     (b) Artifact-lifecycle ruling APPROVED and executed (commit 4b20892):
     every artifact final-at-home or in a destination-rooted queue with one
     four-outcome drain (promote / edit / demote / drop). Queues created at
-    docs/nedschorus-wiki/queue/ + docs/issues/queue/ (destination-rooted under the
+    docs/nedsnodes-wiki/queue/ + docs/issues/queue/ (destination-rooted under the
     plan's ruled homes — the verbatim proposal's bare `wiki/queue/` spelling
-    reconciled to `docs/nedschorus-wiki/queue/`); skill-authoring checklist git mv'd
+    reconciled to `docs/nedsnodes-wiki/queue/`); skill-authoring checklist git mv'd
     there and docs/reference/ removed; step-1 pointer + candidate GHIs
     issue [Candidate skill: define-work — bounded work-definition spec before ambiguous or substantial work](https://github.com/nedschorus/nedschorus/issues/15) through issue [Candidate skill: eval-agent-change — baseline-vs-candidate A/B with trigger cases and raw-count reporting](https://github.com/nedschorus/nedschorus/issues/23) re-pointed; `boss-review` renamed `draft` doctrine-wide and the
     label created on GitHub; three-state rule superseded by the
@@ -457,7 +457,7 @@ Outer walk, 17 items:
     (r) "ceremony" retired from the
     vocabulary (AI jargon) — plain "writing a handoff" / "the write
     procedure" swept through fast-handoff-design, comms-bridge-spec,
-    founding plan, gatekeeper spec, nc-queue README, package-review doc.
+    founding plan, gatekeeper spec, nn-queue README, package-review doc.
     CLOSED 2026-07-25: spec read and first task confirmed.
     ANCHOR = item 16.
 16. Agent organization / lifecycle roles — processed 2026-07-25 → the user
@@ -474,7 +474,7 @@ Outer walk, 17 items:
     filtered-intent-stream oversight with spot-check. Two research legs
     commissioned (cvp 1696104:39 + independent Claude deep-research);
     pair issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26) amends on their arrival. CIRCLE-BACK COMPLETE 2026-07-25:
-    both legs landed (nc-queue notes), independently converging on the
+    both legs landed (nn-queue notes), independently converging on the
     skeptical core; three reconciliation amendments user-approved (pilot
     discipline with mandatory baselines/stop rules; intent stream =
     sensor never gate, escalated experts get artifacts + provenance;
@@ -529,7 +529,7 @@ Outer walk, 17 items:
     Cluster 4 (git/GitHub/review) processed 2026-07-27, walked per-entry
     at the user's direction (ten entries, each ruled individually): two
     sentences captured (one-coherent-change-set-per-check-in →
-    issue [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3);
+    issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3);
     reply-incapable-sender terminal-state requirement →
     issue [Founding program — boot up nedschorus (plan of record: docs/cross-project/nedschorus-founding-plan.md)](https://github.com/nedschorus/nedschorus/issues/1));
     check-in composition ANSWERED by user ruling (lifecycle bundling is
@@ -554,9 +554,9 @@ Outer walk, 17 items:
     GHIs, and its tests" — with four duplicate overview bullets folded
     there; steward ideal → issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26)
     (candidate domain-expert duty: overview currency, never exclusive
-    control); scrub-duty enumeration → issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nc-systems/handoff/handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2)
+    control); scrub-duty enumeration → issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nn-systems/handoff/handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2)
     (the build enumerates task/memory disposal, queue-depth reporting,
-    nc-queue expiry, trailer-absence audit — surfaced by the user's
+    nn-queue expiry, trailer-absence audit — surfaced by the user's
     question whether any one artifact collects maintenance duties; none
     did); two landed (artifact-lifecycle promote path; no-junk-drawer
     machinery); one already dispersed (issue [Runtime-behavior research bundle: instruction compression + deliberate scrub, instruction precedence, output styles, context clearing, names reviewer, memory maintenance](https://github.com/nedschorus/nedschorus/issues/29)

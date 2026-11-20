@@ -802,7 +802,7 @@ finally:
     _program.socket.gethostname = _real_gethostname
 check("on ned-box the walk-minutes are read locally and the Mac's transcript copy is searched",
       ned_box_plan["walk_minutes"]["ssh_target"] is None
-      and "/home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/projects"
+      and "/home/nedlern/nedsnodes-logs/agent-session-files-by-machine/mac/projects"
       in ned_box_plan["transcript_directories"],
       ned_box_plan)
 mac_transcript_directories = [entry["directory"] if isinstance(entry, dict) else entry
