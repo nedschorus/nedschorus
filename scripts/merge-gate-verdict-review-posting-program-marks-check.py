@@ -35,8 +35,12 @@ def main():
             raise TypeError("review must be an object and comments a list")
         missing = posting.verdict_review_posting_program_marks_missing(review, comments)
     except (ValueError, KeyError, TypeError, AttributeError) as error:
-        print(f"merge-gate-verdict-review-posting-program-marks-check.py: standard input is not one JSON object "
-              f"with a \"review\" object and a \"comments\" list: {type(error).__name__}: {error}", file=sys.stderr)
+        print(f"scripts/merge-gate-verdict-review-posting-program-marks-check.py: standard input is not one JSON "
+              f"object with a \"review\" object and a \"comments\" list ({type(error).__name__}: {error}).\n"
+              f"scripts/merge-gate.sh builds that input from GitHub; if you ran this program yourself, give it "
+              f"{{\"review\": <the review as GitHub's pulls/<number>/reviews endpoint returns it>, "
+              f"\"comments\": [<that review's inline comments, from pulls/<number>/reviews/<id>/comments>]}}.",
+              file=sys.stderr)
         return EXIT_INPUT_UNUSABLE
     if missing:
         print(missing)

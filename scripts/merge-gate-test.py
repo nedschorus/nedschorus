@@ -1686,9 +1686,12 @@ def case_marks_hand_typed_approval_refused(gate):
         "https://github.com/nedsnodes/nedsnodes/pull/3881#pullrequestreview-5950181743 (APPROVED), lacks the "
         "marks scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py writes: its body does not "
         "open with the line APPROVE.\n",
-        "\nPost the same review again through scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py "
-        "--github-account ned-review-merge, then run the gate again with that review's submitted_at as "
-        "reviewed-since.\n"), run.summary()
+        "\nIt was posted some other way, such as by hand with gh pr review, so "
+        "scripts/pull-request-follow-up-request-after-merge-finding-answers-and-next-step.py cannot read its "
+        "non-blocking findings to send the author after the merge.\n",
+        "\nPost it with: python3 scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py "
+        f"--pull-request 3881 --head-commit {approval['commit_id']} --github-account ned-review-merge <review file>\n",
+        f"\nThen run the gate again: scripts/merge-gate.sh 3881 {approval['commit_id']} <submitted_at>, "), run.summary()
 
 
 def pr_636_request_routes(changed_fields, comments_routes):
@@ -1708,7 +1711,9 @@ def case_marks_hand_typed_request_for_changes_refused(gate):
     run = run_gate(gate, "636", pin["commit_id"], review(PR_636_REVIEWS, 5285368166)["submitted_at"], routes)
     return refused_with(
         run, "636", "#pullrequestreview-5285920906 (CHANGES_REQUESTED), lacks the marks",
-        "its body does not open with the line REQUEST_CHANGES, a blank line and the line **Blocking: N**.\n"), \
+        "its body does not open with the line REQUEST_CHANGES, a blank line and the line **Blocking: N**.\n",
+        "scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py "
+        "cannot read its blocking findings to brief the author's fix-round.\n"), \
         run.summary()
 
 
@@ -1741,8 +1746,10 @@ def case_marks_check_program_fails(gate):
     check_program = gate.parent / VERDICT_REVIEW_MARKS_CHECK.name
     return could_not_run_after_gh(
         run, "3881", f"GATE COULD NOT RUN: python3 {check_program} exited 5 when the gate gave it review 5950181743",
-        "\nDo not run the gate again, and do not repair that program or python3 yourself: tell reboot-test this "
-        "message, with SendMessage.\n"), run.summary()
+        "\nDo not run the gate again, do not merge pull request 3881 another way, and do not repair that program "
+        "or python3 yourself.\n",
+        "\nSend this whole message, with the error printed above it, to the agent-seat reboot-test, which owns that "
+        "program, with SendMessage; run the gate again when reboot-test says the program is fixed.\n"), run.summary()
 
 
 CASES = [
@@ -1942,7 +1949,7 @@ SINCE_REAL_TIME_CHECK = """jq -n --arg since "$SINCE" '$since | fromdateiso8601'
 
 MUTATIONS = [
     ("without the verdict review marks refusal",
-     [("    1) fail \"$MERGE_ACCOUNT's latest review with a verdict", "    1) : \"$MERGE_ACCOUNT's latest review with a verdict")],
+     [("       fail \"$MERGE_ACCOUNT's latest review with a verdict", "       : \"$MERGE_ACCOUNT's latest review with a verdict")],
      [case_marks_hand_typed_approval_refused, case_marks_hand_typed_request_for_changes_refused,
       case_marks_request_for_changes_with_fewer_blocks_than_its_count_refused]),
     ("a request for changes checked without its comments",

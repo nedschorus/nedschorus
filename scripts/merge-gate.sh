@@ -261,11 +261,20 @@ if [ -n "$verdict_review" ]; then
   marks_check_status=$?
   case "$marks_check_status" in
     0) : ;;
-    1) fail "$MERGE_ACCOUNT's latest review with a verdict, https://github.com/$REPO/pull/$PR#pullrequestreview-$verdict_review_id ($verdict_review_state), lacks the marks scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py writes: $marks_missing." \
-         "It was posted some other way, such as by hand with gh pr review, so the fix-round program and the follow-up program cannot read its findings." \
-         "Post the same review again through scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py --github-account $MERGE_ACCOUNT, then run the gate again with that review's submitted_at as reviewed-since." ;;
+    1) if [ "$verdict_review_state" = "APPROVED" ]; then
+         unread="scripts/pull-request-follow-up-request-after-merge-finding-answers-and-next-step.py cannot read its non-blocking findings to send the author after the merge"
+       else
+         unread="scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py cannot read its blocking findings to brief the author's fix-round"
+       fi
+       fail "$MERGE_ACCOUNT's latest review with a verdict, https://github.com/$REPO/pull/$PR#pullrequestreview-$verdict_review_id ($verdict_review_state), lacks the marks scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py writes: $marks_missing." \
+         "It was posted some other way, such as by hand with gh pr review, so $unread." \
+         "Write a review file holding that review's verdict, body and inline comments, each comment with its finding_category, in the form the docstring at the top of scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py describes for --github-account $MERGE_ACCOUNT." \
+         "Post it with: python3 scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py --pull-request $PR --head-commit $head --github-account $MERGE_ACCOUNT <review file>" \
+         "Leave the review above as it is: the gate reads only $MERGE_ACCOUNT's latest review with a verdict." \
+         "Then run the gate again: scripts/merge-gate.sh $PR $head <submitted_at>, where submitted_at is what gh api repos/$REPO/pulls/$PR/reviews/<id> --jq .submitted_at prints for the review id the posting program's success line names." ;;
     *) cannot "python3 $VERDICT_REVIEW_MARKS_CHECK exited $marks_check_status when the gate gave it review $verdict_review_id, so the gate cannot tell whether that review carries the posting program's marks; any error it printed is just above this line." \
-         "Do not run the gate again, and do not repair that program or python3 yourself: tell reboot-test this message, with SendMessage." ;;
+         "Do not run the gate again, do not merge pull request $PR another way, and do not repair that program or python3 yourself." \
+         "Send this whole message, with the error printed above it, to the agent-seat reboot-test, which owns that program, with SendMessage; run the gate again when reboot-test says the program is fixed." ;;
   esac
 fi
 
