@@ -52,7 +52,7 @@ The kind names below are plain prose; only the two under Proposed terms are prop
 | 9 | False alarm | The finding does not hold. | The author says why in a reply on the finding; when the check is a program, its cause is fixed so it does not recur. | The author answers; merge-lane-2 accepts or rejects the answer. |
 | 10 | Outside program changed | A program the project calls but does not write behaved differently from what the code assumes, now or after an upgrade. | A fix whose description has a `#root_cause` line naming the outside program, and a canary test where the canary design asks for one. | Open question 6. |
 
-The canary design, `docs/drafts/canary-tests-when-required-who-runs-them-and-where-they-live-design-draft.md`, splits kinds 4 and 10 further for canary tests (wrong only on the other machine, wrong only after an upgrade or at a reboot, a false pass from probing the wrong command), using this list's names.
+The canary design, `docs/drafts/canary-tests-when-required-who-runs-them-and-where-they-live-design-draft.md` on branch `canary-tests-when-required-who-runs-them-and-where-they-live-design-topic-branch`, not yet on main, splits kinds 4 and 10 further for canary tests (wrong only on the other machine, wrong only after an upgrade or at a reboot, a false pass from probing the wrong command), using this list's names.
 
 ## Where the list lives
 
@@ -96,4 +96,4 @@ Each stays plain prose until the user approves it; approved, it takes the hyphen
 4. How long may a deferred finding go without a follow-up pull request, a task, a GHI or a written decline before the consistency check reports it? Recommendation: 7 days after the merge.
 5. When a program says it let an act through unchecked (kind 5), what does the agent do? Recommendation: it runs the check by hand before relying on the act, or tells you why it cannot.
 6. Kind 10: who decides that an outside program changed, the author alone or merge-lane-2 on the author's evidence? Recommendation: merge-lane-2, as for kind 9, because the label excuses a defect.
-7. Your ruling that a needless guarded-file alarm is cleared with `--restore` without asking you is recorded only in `/home/nedlern/.claude/projects/-home-nedlern-Projects-nedsnodes/memory/guard-false-alarm-act-without-asking.md` on ned-box, so agent-seats on the Mac do not have it. Should it go into the false-alarm row of the wiki page? Recommendation: yes.
+7. Your ruling that a needless guarded-file alarm is cleared with `--restore` without asking you was recorded only in a ned-box agent-session memory file, whose copy of 2026-10-16 is `nedlern@ned-box:/home/nedlern/nedsnodes-logs/agent-session-files-by-machine/ned-box/projects/-home-nedlern-Projects-nedsnodes/memory/guard-false-alarm-act-without-asking.md`, so agent-seats on the Mac do not have it. Should it go into the false-alarm row of the wiki page? Recommendation: yes.
