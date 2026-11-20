@@ -109,13 +109,14 @@
                     "b",
                     "c",
                     "d",
+                    "e",
                     "question"
                   ],
-                  "description": "The letter of the fix, from the prompt's fixes (a) to (d), or \"question\" when you cannot tell what the author meant and ask instead."
+                  "description": "The letter of the fix, from the prompt's fixes (a) to (e), where (e) is the plain-words fix, or \"question\" when you cannot tell what the author meant and ask instead."
                 },
                 "words": {
                   "type": "string",
-                  "description": "The exact words of the fix: the name to use, or for \"question\" the question for the author."
+                  "description": "The exact words of the fix: the name to use, for (e) the plain words to write instead, or for \"question\" the question for the author."
                 },
                 "uses": {
                   "type": "array",

@@ -62,7 +62,7 @@ RULES_PAGE = ("nn-systems/cold-read/"
               "cold-read-terminology-answer-rules-the-runner-validates-beyond-the-schema.md")
 TESTS = (1, 2, 3, 4, 5)
 WORDS_A_RESTATEMENT_AVOIDS = ("kind", "type", "category", "sort", "class", "form")
-QUOTED_SPAN_PATTERN = re.compile(r'"[^"]*"|“[^”]*”')
+QUOTED_SPAN_PATTERN = re.compile(r'"[^"]*"|“[^”]*”|`[^`]*`')
 SURROUNDING_QUOTES = "\"'`“”‘’"
 # A fix (a) written in a sentence, as "the cold-read-target", still names a glossary term.
 LEADING_ARTICLE_PATTERN = re.compile(r"^(?:the|an|a)\s+", re.I)
@@ -72,6 +72,7 @@ LOCATION_DOCUMENT = "document"
 LOCATION_STANDARD_VOCABULARY = "standard_vocabulary"
 FIX_GLOSSARY_NAME = "a"
 FIX_NEW_PROJECT_TERM = "d"
+FIX_PLAIN_WORDS = "e"
 FIX_QUESTION = "question"
 DIFFERENTLY_WRITTEN_GLOSSARY_TERM_TEST = 5
 # Blanked before the scan for glossary terms written differently, keeping offsets.
@@ -307,13 +308,15 @@ def strings_avoid_flagged_terms_outside_quotation_marks(answer, document, glossa
         named.append((index, "its restatement", flag["restatement"]))
         named += [(index, "its question", fix["words"])
                   for fix in flag["fixes"] if fix["fix"] == FIX_QUESTION]
+        named += [(index, "its plain-words fix (e)", fix["words"])
+                  for fix in flag["fixes"] if fix["fix"] == FIX_PLAIN_WORDS]
     named += [(None, f"proposed definition {index}", proposal["definition"])
               for index, proposal in enumerate(answer["proposed_definitions"], 1)]
     breaks = []
     for flag, where, value in named:
         outside = QUOTED_SPAN_PATTERN.sub(" ", value)
         breaks += [RuleBreak(flag, f"{where} uses the flagged term {term!r} outside quotation "
-                                   f"marks")
+                                   f"marks and backquotes")
                    for term in terms if contains_term(outside, term)]
     return breaks
 

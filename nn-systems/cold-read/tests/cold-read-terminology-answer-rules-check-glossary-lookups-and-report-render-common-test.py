@@ -226,6 +226,19 @@ answer["flags"][0]["fixes"] = [{"fix": "question", "words": 'Is "slot" a queue e
                                 "uses": []}]
 check("a flagged term inside quotation marks in a question is allowed",
       problems_of(answer) == [], problems_of(answer))
+rejects("a flagged term outside quotation marks in a plain-words fix (e)",
+        lambda a: flag(a, 0).update(fixes=[{"fix": "e", "words": "moves the slot up by one",
+                                            "uses": []}]),
+        "flag 1 'bumps': its plain-words fix (e) uses the flagged term 'slot'")
+answer = base_answer()
+answer["flags"][0]["fixes"] = [{"fix": "e", "words": "moves the `slot` number up by one",
+                                "uses": []}]
+check("a flagged term inside backquotes in a plain-words fix (e) is allowed",
+      problems_of(answer) == [], problems_of(answer))
+answer = base_answer()
+answer["flags"][0]["fixes"] = [{"fix": "e", "words": "adds one", "uses": []}]
+check("a plain-words fix (e) is a fix the schema allows", problems_of(answer) == [],
+      problems_of(answer))
 answer = base_answer()
 answer["flags"][0]["fixes"] = [{"fix": "a", "words": "Agent seats", "uses": []}]
 check("a fix (a) is a glossary term whatever its case, hyphen or plural",
