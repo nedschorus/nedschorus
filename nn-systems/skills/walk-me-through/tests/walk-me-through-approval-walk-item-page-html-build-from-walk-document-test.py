@@ -528,6 +528,12 @@ def run_page_link_cases(scratch):
           and "SubStep41" not in page, page_links(page))
     check("a version a line states counts when it is higher than the lines recorded: two lines, the second version 4, "
           "make the next version 5", f"{scratch / 'item-3-version-5.html'} --version 5" in result.stdout, result.stdout)
+    with minutes.open("a", encoding="utf-8") as appended:
+        appended.write("#item_page item 3 of 9 https://claude.ai/artifact/Item3\n")
+    result, page = built(scratch, "5")
+    check("a line that states no version, after one stating version 4, is version 5, so the next version is 6, "
+          "though the lines number three", f"{scratch / 'item-3-version-6.html'} --version 6" in result.stdout,
+          result.stdout)
     result, page = built(scratch, "4.1")
     check("a sub-step's own page links to the item before its item",
           '<a href="https://claude.ai/artifact/Item3">Previous: item 3</a>' in page_links(page), page_links(page))
