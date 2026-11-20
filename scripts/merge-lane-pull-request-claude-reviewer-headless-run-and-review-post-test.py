@@ -643,7 +643,7 @@ def main():
               lambda: case.code != 0
               and "the posting step was interrupted, so the review in" in case.stdout
               and "may or may not have been posted" in case.stdout
-              and "gh api --paginate 'repos/nedschorus/nedschorus/pulls/7/reviews' --jq "
+              and "gh api --paginate 'repos/nedsnodes/nedsnodes/pulls/7/reviews' --jq "
                   "'.[] | select(.user.login == \"mac-claude\" and .commit_id == "
                   f"\"{case.head}\") | [.id, .state, .html_url] | @tsv'" in case.stdout
               and not case.reviewer_worktree_left(), case.detail)

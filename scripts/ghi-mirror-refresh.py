@@ -72,7 +72,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-DEFAULT_REPO = "nedschorus/nedschorus"
+DEFAULT_REPO = "nedsnodes/nedsnodes"
 DEFAULT_MIRROR_DIR = "ghi-mirror"
 CACHE_FILE_NAME = ".mirror-cache.json"
 OPEN_FILE_NAME = "issues-open.md"
