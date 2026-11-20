@@ -21,7 +21,7 @@ the gate, the retargets, the merge and every other gh call use one token.
 import importlib.util
 from pathlib import Path
 
-REPOSITORY = "nedschorus/nedschorus"
+REPOSITORY = "nedsnodes/nedsnodes"
 DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY = Path(
     "/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers")
 REVIEW_WORKTREES_DIRECTORY_UNDER_HOME = Path(".cache") / "merge-lane-review-worktrees"

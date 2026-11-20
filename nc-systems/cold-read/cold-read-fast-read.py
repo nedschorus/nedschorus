@@ -1210,7 +1210,7 @@ def attach_sentences_and_coverage(report_text: str, sentences: dict,
 
 # A bare issue, pull request or task number: `#` and digits, with whatever
 # repository name is glued to its front (`nedschorus#418`,
-# `nedschorus/nedschorus#418`), because each is a number where the project's citation rule wants
+# `nedsnodes/nedsnodes#418`), because each is a number where the project's citation rule wants
 # an ID-type and a name. A repository name may not start after a word
 # character or any of `& / . : -`, so no piece of a URL's path becomes one. A
 # bare `#` may not follow `&` or a word character, which keeps an HTML entity
