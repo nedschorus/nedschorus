@@ -1110,7 +1110,7 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
 
 def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
     """The ruling of 2026-09-21 (GHI [The handoff-supervisor resumes a session
-    that died without a handoff, instead of stopping the seat](https://github.com/nedschorus/nedschorus/issues/613)):
+    that died without a handoff, instead of stopping the seat](https://github.com/nedsnodes/nedsnodes/issues/613)):
     a session that dies without writing a handoff is resumed, chosen by how it
     died, under a budget of one resume that produces no new work.
 
@@ -1364,7 +1364,7 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
     # 5a. A SUCCESSOR STARTS WITH THE BUDGET WHOLE. The predecessor spends its
     # one resume, works, and writes a handoff; the successor works and dies.
     # Found at c7419d4 by merge-lane-2's review of PR [The handoff-supervisor
-    # resumes a session that died without a handoff](https://github.com/nedschorus/nedschorus/pull/651):
+    # resumes a session that died without a handoff](https://github.com/nedsnodes/nedsnodes/pull/651):
     # the successor was measured against its predecessor's turn count and
     # spent budget, refused, and the seat went dark.
     reincarnated = supervise_a_seat_whose_sessions_die(

@@ -644,7 +644,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
     # Remote mode, a `sha256sum` that fails on a file the store holds (the
     # Codex review cell's question in the merge review of PR "The walk-files
     # shipper replaces a walk text the walk only added to",
-    # https://github.com/nedschorus/nedschorus/pull/653). The
+    # https://github.com/nedsnodes/nedsnodes/pull/653). The
     # stand-in ssh RUNS the remote script under sh, so the loop the program
     # builds is what is tested, against a scratch store named by a stand-in
     # host; the stand-in sha256sum on PATH fails on the stored walk text and

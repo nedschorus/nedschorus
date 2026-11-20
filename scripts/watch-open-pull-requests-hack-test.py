@@ -704,7 +704,7 @@ def run_subprocess_cases():
                                                        "already open")]))
         watcher = WatcherProcess(environment=fake_gh.environment(),
                                  token_file=token_file)
-        baseline = watcher.wait_for("WATCH: watching nedschorus/nedschorus "
+        baseline = watcher.wait_for("WATCH: watching nedsnodes/nedsnodes "
                                     "every 0.05s; 1 open at baseline: #145")
         check("the first poll prints a baseline line naming what is open",
               baseline, "\n".join(watcher.lines))

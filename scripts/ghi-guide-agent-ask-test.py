@@ -591,7 +591,7 @@ finally:
 APPROVED_NOT_ABOUT_ISSUES_MESSAGE = (
     "Not a question about GitHub issues: ghi-guide-agent reports which issues relate to a subject.\n"
     'Ask again as: scripts/ghi-guide-agent-ask.py "Which issues cover <your subject>?"\n'
-    'If that is refused too, search yourself: gh issue list --repo nedschorus/nedschorus '
+    'If that is refused too, search yourself: gh issue list --repo nedsnodes/nedsnodes '
     '--state all --search "<terms>"\n')
 ESCALATE_SENTENCE = ("the 2026-09-19 body ruling in #46 may not hold after "
                      "the 2026-09-29 ruling in #783")
