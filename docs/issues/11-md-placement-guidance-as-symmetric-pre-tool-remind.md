@@ -7,7 +7,7 @@ kind: design
 
 ## Context
 
-Boss-requested notes were landing in arbitrary peer-local paths or not being written at all. The intake spot is now ruled and live: `nc-queue/` (verbatim unreviewed drops, 90-day TTL, dispersal at the initial walk — rule of record: founding plan § Project organization, commit 22a2be1). The remaining question was how agents get *taught* the placement rule mechanically.
+Boss-requested notes were landing in arbitrary peer-local paths or not being written at all. The intake spot is now ruled and live: `nn-queue/` (verbatim unreviewed drops, 90-day TTL, dispersal at the initial walk — rule of record: founding plan § Project organization, commit 22a2be1). The remaining question was how agents get *taught* the placement rule mechanically.
 
 ## Boss-directed design (2026-07-22, build deferred to a later boss pick)
 

@@ -10,7 +10,7 @@ Before the restructure, the user asked for every agent-seat to archive its task 
 
 ## The archive
 
-On 2026-11-17, reboot-test archived its whole task list, 186 tasks (121 pending, 30 in_progress, 35 completed), to `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/reboot-test/task-list-archive-2026-11-17/`. In that directory, `task-list-archive.md` gives each task's id, status, subject and description, and each `<id>.json` file is that task as the task store held it, with its `blocks`, `blockedBy` and `metadata` fields. The user's rulings are kept in walk-minutes and GHI-MDs, so the archive holds no ruling that exists only there.
+On 2026-11-17, reboot-test archived its whole task list, 186 tasks (121 pending, 30 in_progress, 35 completed), to `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/reboot-test/task-list-archive-2026-11-17/`. In that directory, `task-list-archive.md` gives each task's id, status, subject and description, and each `<id>.json` file is that task as the task store held it, with its `blocks`, `blockedBy` and `metadata` fields. The user's rulings are kept in walk-minutes and GHI-MDs, so the archive holds no ruling that exists only there.
 
 ## In flight when the list was archived
 
