@@ -123,7 +123,6 @@ import signal
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 PROGRAM = "no-sandbox-test-suites-run-on-main-in-a-quiet-gap"

@@ -168,7 +168,6 @@ open, whose report line says WINDOW NOT OPENED and how to open it by hand.
 
 import argparse
 import importlib.util
-import json
 import os
 import re
 import shlex

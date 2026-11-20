@@ -74,7 +74,7 @@ record holds the reference check alone and no report to keep.
 
 WHEN A COLD-READ-CELL FAILS (nedschorus#413; the design, user-reviewed
 2026-09-16 and 2026-09-17, is
-nn-systems/cold-read/cold-read-grid-cell-failure-handling-design.md). Every
+nn-systems/cold-read/cold-read-grid-cell-failure-handling.tool.design.md). Every
 cold-read-cell whose attempt ends without a landed report is retried once,
 at once, with the same model -- no cold-read-cell is special (user-ruled
 2026-09-11) -- and the first attempt's log is kept as
