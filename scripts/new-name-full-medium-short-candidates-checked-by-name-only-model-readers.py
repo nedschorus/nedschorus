@@ -18,7 +18,7 @@ in its own empty temporary folder, given the name alone: Claude Sonnet 5.5 and
 Opus 5.5 (`claude -p` behind the shared headless prefix, so no connectors, in
 dontAsk mode, with no tools and no settings files, so no CLAUDE.md), Gemini
 gemini-3.8-flash-low and gemini-4-argon-medium (through
-nc-systems/general-tools/agy-print-prompt-run-in-empty-home-sandbox.py), and
+nn-systems/general-tools/agy-print-prompt-run-in-empty-home-sandbox.py), and
 gpt-6.1-terra and gpt-6.2-sol (`codex exec`, read-only, ephemeral). Each
 reader answers what the thing does, what else the name could mean, and which
 word it was least sure of. A reader that exits nonzero, prints nothing, or

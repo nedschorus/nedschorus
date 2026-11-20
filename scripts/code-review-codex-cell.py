@@ -8,7 +8,7 @@ rather than a shell line in one seat's transcript, and so the pins that
 must not drift are pinned:
 
   - model and reasoning effort, explicit (the tier convention of
-    nc-systems/cold-read/cold-read-codex-cell.py: `deep` = gpt-6.2-sol at xhigh);
+    nn-systems/cold-read/cold-read-codex-cell.py: `deep` = gpt-6.2-sol at xhigh);
   - the sandbox, read-only and denying every credential file, placed AFTER
     `review`, because the review's commands drop a profile placed before it
     -- see WHERE THE PERMISSION PROFILE GOES below, which also says how to
