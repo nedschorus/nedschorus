@@ -6,7 +6,7 @@ Status: draft, not filed. The user asked for it on 2026-10-18, in the approval-w
 
 The project's checks are its test suites, the pull request reviewers, the merge gate, merge-lane-2's head test run, the guard hooks, the git client-side hooks, the cold-read grid, `scripts/branch-conflict-check.py`, the canary tests, and the prerequisite checks that GHI [Check every prerequisite of the fleet's programs before an agent-session starts](https://github.com/nedschorus/nedschorus/issues/1055) plans. Their outcomes are not just pass or fail. Between them they produce about ten kinds of non-pass outcome, listed below. No glossary entry, wiki page or CLAUDE.md line defines these kinds as a set. Each check uses its own words and its own exit codes for them, and agents handle the same kind in different ways.
 
-The evidence is in four reports, two by Codex and two by Claude subagents, which searched independently, and in their combined summary, all in `nedlern@ned-box:/home/nedlern/nedschorus-logs/analysis/canary-cases-and-failure-kinds-2026-10-18/` (`summary.md`, `failure-kinds-codex.md`, `failure-kinds-claude.md`, `canary-trawl-codex.md`, `canary-trawl-claude.md`). The cases below come from them.
+The evidence is in four reports, two by Codex and two by Claude subagents, which searched independently, and in their combined summary, all in `nedlern@ned-box:/home/nedlern/nedsnodes-logs/analysis/canary-cases-and-failure-kinds-2026-10-18/` (`summary.md`, `failure-kinds-codex.md`, `failure-kinds-claude.md`, `canary-trawl-codex.md`, `canary-trawl-claude.md`). The cases below come from them.
 
 **The same kind handled differently.**
 - A test already failing on main was ignored, merged over, rerun, filed as a GHI or fixed at the root, depending on the agent. On 2026-10-14 the test `scripts/run-codex-task-from-brief-test.py` got three of those handlings from three agent-seats; merge-lane-2 then filed GHI [The Codex task runner's deadline test case fails on a busy machine, because a scan of the whole home directory runs before the deadline starts](https://github.com/nedschorus/nedschorus/issues/1323).
@@ -18,8 +18,8 @@ The evidence is in four reports, two by Codex and two by Claude subagents, which
 **The same kind called by different words.**
 - A finding that need not be fixed before the merge is called "advice", "does not block", "non-blocking finding", "follow-up" and "findings that do not block".
 - `scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py` treats a review comment as blocking only when it begins with `**Blocks.**` (its constant `BLOCKING_MARKER`). No file on main tells a reviewer to write that marker: `git grep '\*\*Blocks\.\*\*' origin/main` finds it only in that script and its test.
-- "Could not run" and "failed" are kept apart by `scripts/run-all-test-suites.py` (exit 2 against exit 1) and by the cold-read grid ("a run that produced no report is not a review that found nothing"), but `nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py` reports a lapsed login or a network outage as `VERDICT: FAILED`.
-- `docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md` requires a program that fails open to say the act was not checked; several guard hooks fail open silently on bad input.
+- "Could not run" and "failed" are kept apart by `scripts/run-all-test-suites.py` (exit 2 against exit 1) and by the cold-read grid ("a run that produced no report is not a review that found nothing"), but `nn-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py` reports a lapsed login or a network outage as `VERDICT: FAILED`.
+- `docs/nedsnodes-wiki/nedsnodes-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md` requires a program that fails open to say the act was not checked; several guard hooks fail open silently on bad input.
 - One test suite prints `SKIP:`, which the test runner's pattern `^SKIP\s` does not count.
 
 **Why it matters.** When the kinds are not defined, an agent decides each case alone, from its own reading. A real defect labelled "flaky" stays unfixed and holds other pull requests; a "could not run" read as a pass merges unchecked work; a non-blocking finding with no follow-up is lost. The user cannot see from the records which of these happened.
@@ -45,14 +45,14 @@ The canary design, `docs/drafts/canary-tests-when-required-who-runs-them-and-whe
 
 ## Where the definitions live
 
-One wiki page holds the table above with one real example of each kind. Its proposed name, `docs/nedschorus-wiki/nedschorus-kinds-of-check-failure.md`, is still to be checked against `docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md`. The project glossary gets one entry, check-failure-kind if the user approves that term, pointing to the page.
+One wiki page holds the table above with one real example of each kind. Its proposed name, `docs/nedsnodes-wiki/nedsnodes-kinds-of-check-failure.md`, is still to be checked against `docs/nedsnodes-wiki/nedsnodes-how-to-choose-a-name-for-files-code-and-glossary-terms.md`. The project glossary gets one entry, check-failure-kind if the user approves that term, pointing to the page.
 
 ## Which files must use them
 
 - `docs/agents/pr-reviewer-instructions.md` and CLAUDE.md's review bullet, kept word for word alike by `scripts/pr-reviewer-instructions-copies-test.py`: a reviewer labels each finding with its kind.
 - `.claude/skills/pull-request-review-write/SKILL.md`: how the label is written in a review comment, so that a program can read it.
 - `scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py`, which today reads only the `**Blocks.**` marker (open question 4).
-- `scripts/run-all-test-suites.py`, `scripts/daily-full-test-run-of-main.py` and `nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py`: their exit codes and summary lines map to kinds 1, 4 and 6, and the weekly check reports a lapsed login as kind 4, not as a failure. Kind 3 cannot be seen in one run; the consistency check finds it across runs.
+- `scripts/run-all-test-suites.py`, `scripts/daily-full-test-run-of-main.py` and `nn-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py`: their exit codes and summary lines map to kinds 1, 4 and 6, and the weekly check reports a lapsed login as kind 4, not as a failure. Kind 3 cannot be seen in one run; the consistency check finds it across runs.
 - The guard hooks that fail open silently: they say so (kind 5). GHI [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956) covers the wording; this GHI covers only which kind each outcome is.
 - merge-lane-2's seat-brief, which is outside the repository: merge-lane-2 is told of the list and updates it itself.
 
@@ -88,4 +88,4 @@ Each stays plain prose until the user approves it; approved, it takes the hyphen
 5. How long may an advice finding go without a follow-up pull request or a written decline before the consistency check reports it? Recommendation: 7 days after the merge.
 6. When a program says it let an act through unchecked (kind 5), what does the agent do? Recommendation: it runs the check by hand before relying on the act, or tells you why it cannot.
 7. Kind 10: who decides that an outside program changed, the author alone or merge-lane-2 on the author's evidence? Recommendation: merge-lane-2, as for kind 9, because the label excuses a defect.
-8. Your ruling that a needless guarded-file alarm is cleared with `--restore` without asking you is recorded only in `/home/nedlern/.claude/projects/-home-nedlern-Projects-nedschorus/memory/guard-false-alarm-act-without-asking.md` on ned-box, so agent-seats on the Mac do not have it. Should it go into the false-alarm row of the wiki page? Recommendation: yes.
+8. Your ruling that a needless guarded-file alarm is cleared with `--restore` without asking you is recorded only in `/home/nedlern/.claude/projects/-home-nedlern-Projects-nedsnodes/memory/guard-false-alarm-act-without-asking.md` on ned-box, so agent-seats on the Mac do not have it. Should it go into the false-alarm row of the wiki page? Recommendation: yes.
