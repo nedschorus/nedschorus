@@ -73,7 +73,7 @@ with tempfile.TemporaryDirectory() as temporary:
     home = root / "home"
 
     # The plist itself.
-    plist = installer.launch_agent_plist("com.nedschorus.restart-live-seats-at-login",
+    plist = installer.launch_agent_plist("com.nedsnodes.restart-live-seats-at-login",
                                          checkout, None, home=home)
     check("the program is run by Homebrew's python3 link from the checkout's scripts/",
           plist["ProgramArguments"]
@@ -95,12 +95,12 @@ with tempfile.TemporaryDirectory() as temporary:
           plist)
     check("the label is the plist's and the default is the project's",
           plist["Label"] == installer.DEFAULT_LABEL
-          == "com.nedschorus.restart-live-seats-at-login", plist["Label"])
+          == "com.nedsnodes.restart-live-seats-at-login", plist["Label"])
 
     # A test install points the program and its output at a throwaway
     # handoff directory, so the real run log and the real seats are untouched.
     throwaway = root / "throwaway-handoffs"
-    plist = installer.launch_agent_plist("com.nedschorus.test", checkout, throwaway, home=home)
+    plist = installer.launch_agent_plist("com.nedsnodes.test", checkout, throwaway, home=home)
     check("a handoff directory is passed to the program and holds the output file",
           plist["ProgramArguments"][2:] == ["--handoff-dir", str(throwaway)]
           and plist["StandardOutPath"]
@@ -112,10 +112,10 @@ with tempfile.TemporaryDirectory() as temporary:
     working_directory_before = os.getcwd()
     os.chdir(root)
     try:
-        plist = installer.launch_agent_plist("com.nedschorus.test", Path("checkout"),
+        plist = installer.launch_agent_plist("com.nedsnodes.test", Path("checkout"),
                                              Path("throwaway-handoffs"), home=home)
         exit_code, printed, errors = run_main(
-            ["--checkout", "checkout", "--label", "com.nedschorus.relative"],
+            ["--checkout", "checkout", "--label", "com.nedsnodes.relative"],
             root / "LaunchAgents-relative")
     finally:
         os.chdir(working_directory_before)
@@ -130,7 +130,7 @@ with tempfile.TemporaryDirectory() as temporary:
           plist)
     check("and an install typed with a relative checkout finds the program and writes it absolute",
           exit_code == 0
-          and plistlib.loads((root / "LaunchAgents-relative" / "com.nedschorus.relative.plist")
+          and plistlib.loads((root / "LaunchAgents-relative" / "com.nedsnodes.relative.plist")
                              .read_bytes())["ProgramArguments"][1]
           == str(checkout.resolve() / "scripts" / "restart-live-seats-at-login.py"),
           (exit_code, printed, errors))
@@ -164,46 +164,46 @@ with tempfile.TemporaryDirectory() as temporary:
     agents_directory = root / "LaunchAgents-bootstrap"
     launchctl = LaunchctlStub()
     exit_code, printed, errors = run_main(
-        ["--checkout", str(checkout), "--label", "com.nedschorus.test", "--handoff-dir",
+        ["--checkout", str(checkout), "--label", "com.nedsnodes.test", "--handoff-dir",
          str(throwaway), "--bootstrap-now"], agents_directory, launchctl=launchctl)
     domain = f"gui/{os.getuid()}"
     check("--bootstrap-now boots out the label, then bootstraps the written plist",
           exit_code == 0 and launchctl.commands == [
-              ["launchctl", "bootout", f"{domain}/com.nedschorus.test"],
+              ["launchctl", "bootout", f"{domain}/com.nedsnodes.test"],
               ["launchctl", "bootstrap", domain,
-               str(agents_directory / "com.nedschorus.test.plist")]]
+               str(agents_directory / "com.nedsnodes.test.plist")]]
           and "running now" in printed,
           (exit_code, launchctl.commands, printed, errors))
 
     launchctl = LaunchctlStub(bootstrap_exit_code=5)
     exit_code, printed, errors = run_main(
-        ["--checkout", str(checkout), "--label", "com.nedschorus.test", "--bootstrap-now"],
+        ["--checkout", str(checkout), "--label", "com.nedsnodes.test", "--bootstrap-now"],
         agents_directory, launchctl=launchctl)
     check("a bootstrap that fails is reported with its exit code, and the run exits 1",
           exit_code == 1 and "bootstrap failed (exit 5)" in errors
-          and (agents_directory / "com.nedschorus.test.plist").is_file(),
+          and (agents_directory / "com.nedsnodes.test.plist").is_file(),
           (exit_code, printed, errors))
 
     # --remove boots the label out and deletes its plist.
     launchctl = LaunchctlStub()
     exit_code, printed, errors = run_main(
-        ["--label", "com.nedschorus.test", "--remove"], agents_directory, launchctl=launchctl)
+        ["--label", "com.nedsnodes.test", "--remove"], agents_directory, launchctl=launchctl)
     check("--remove boots out the label and deletes its plist",
           exit_code == 0
-          and launchctl.commands == [["launchctl", "bootout", f"{domain}/com.nedschorus.test"]]
-          and not (agents_directory / "com.nedschorus.test.plist").exists()
+          and launchctl.commands == [["launchctl", "bootout", f"{domain}/com.nedsnodes.test"]]
+          and not (agents_directory / "com.nedsnodes.test.plist").exists()
           and "removed" in printed,
           (exit_code, launchctl.commands, printed))
     exit_code, printed, errors = run_main(
-        ["--label", "com.nedschorus.test", "--remove"], agents_directory)
+        ["--label", "com.nedsnodes.test", "--remove"], agents_directory)
     check("removing a label with no plist still boots it out and says there was none",
           exit_code == 0 and "no " in printed and "to remove" in printed, printed)
-    target = f"{domain}/com.nedschorus.test"
-    plist_path = agents_directory / "com.nedschorus.test.plist"
+    target = f"{domain}/com.nedsnodes.test"
+    plist_path = agents_directory / "com.nedsnodes.test.plist"
     plist_path.write_bytes(b"a plist")
     launchctl = LaunchctlStub(bootout_exit_code=3, print_exit_code=113)
     exit_code, printed, errors = run_main(
-        ["--label", "com.nedschorus.test", "--remove"], agents_directory, launchctl=launchctl)
+        ["--label", "com.nedsnodes.test", "--remove"], agents_directory, launchctl=launchctl)
     check("a bootout that fails because launchd has no such job still deletes the plist, exit 0",
           exit_code == 0 and not plist_path.exists() and "removed" in printed
           and launchctl.commands == [["launchctl", "bootout", target],
@@ -212,30 +212,30 @@ with tempfile.TemporaryDirectory() as temporary:
     plist_path.write_bytes(b"a plist")
     launchctl = LaunchctlStub(bootout_exit_code=5, print_exit_code=0)
     exit_code, printed, errors = run_main(
-        ["--label", "com.nedschorus.test", "--remove"], agents_directory, launchctl=launchctl)
+        ["--label", "com.nedsnodes.test", "--remove"], agents_directory, launchctl=launchctl)
     check("a bootout that fails with the job still loaded keeps the plist, says nothing was "
           "unloaded, and exits 1 with bootout's exit and error",
           exit_code == 1 and plist_path.is_file() and "unloaded" not in printed
           and (f"`launchctl bootout {target}` exited 5: Boot-out failed: 5: Input/output error; "
-               f"so com.nedschorus.test may still be loaded, and {plist_path} was kept.")
+               f"so com.nedsnodes.test may still be loaded, and {plist_path} was kept.")
               in errors
           and "Fix what launchctl's error names." in errors
-          and (f"Then run `{shlex.join([str(SCRIPT_PATH.resolve()), '--remove', '--label', 'com.nedschorus.test'])}` "
+          and (f"Then run `{shlex.join([str(SCRIPT_PATH.resolve()), '--remove', '--label', 'com.nedsnodes.test'])}` "
                "on this Mac.") in errors, (exit_code, printed, errors))
     launchctl = LaunchctlStub(bootout_exit_code=3, print_exit_code=0)
     exit_code, printed, errors = run_main(
-        ["--label", "com.nedschorus.test", "--remove"], agents_directory, launchctl=launchctl)
-    rerun = shlex.join([str(SCRIPT_PATH.resolve()), "--remove", "--label", "com.nedschorus.test"])
+        ["--label", "com.nedsnodes.test", "--remove"], agents_directory, launchctl=launchctl)
+    rerun = shlex.join([str(SCRIPT_PATH.resolve()), "--remove", "--label", "com.nedsnodes.test"])
     check("a bootout that fails printing no error, with the job still loaded, tells the reader "
           "to rerun once and then tell the user, not to fix an error that was never printed",
           exit_code == 1 and "printing nothing on stderr" in errors
           and errors.splitlines()[-2:] == [
               f"Run `{rerun}` once more, on this Mac.",
               installer.next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
-                  "so com.nedschorus.test may still be loaded")], (exit_code, errors))
+                  "so com.nedsnodes.test may still be loaded")], (exit_code, errors))
     launchctl = LaunchctlStub(bootout_exit_code=5, print_exit_code=1)
     exit_code, printed, errors = run_main(
-        ["--label", "com.nedschorus.test", "--remove"], agents_directory, launchctl=launchctl)
+        ["--label", "com.nedsnodes.test", "--remove"], agents_directory, launchctl=launchctl)
     check("a bootout that fails while launchctl print fails with other than service-not-found "
           "keeps the plist and exits 1",
           exit_code == 1 and plist_path.is_file() and "may still be loaded" in errors,
