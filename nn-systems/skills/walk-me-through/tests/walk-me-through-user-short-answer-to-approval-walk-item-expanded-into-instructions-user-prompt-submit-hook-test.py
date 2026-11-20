@@ -2025,6 +2025,49 @@ def test_a_changed_part_line_refuses_and_every_waiting_item_goes_to_one_model_ca
           and sum(line.startswith(ANSWER_DISCARDED) for line in lines) == 2, f"lines {lines!r}, calls {calls!r}")
 
 
+QUOTED_PROPOSAL_ITEM = """## Item 4 of 9: a filter
+
+A filter would hide old rows.
+
+#new
+> Hide rows older than a year.
+> Keep the rest.
+
+**Recommendation: leave the filter out.**"""
+
+
+def test_a_bare_new_mark_takes_the_block_below_it_as_its_text():
+    for name, item, shown in (
+            ("a `>` quote", QUOTED_PROPOSAL_ITEM,
+             QUOTED_PROPOSAL_ITEM.replace("older than a year", "older than a month")),
+            ("the rest of its own paragraph", QUOTED_PROPOSAL_ITEM.replace("> ", ""),
+             QUOTED_PROPOSAL_ITEM.replace("> ", "").replace("older than a year", "older than a month"))):
+        document = "# A walk\n\n" + item + "\n"
+        case = Case(next_to_present="item 4 of 9", document=document, model="changed")
+        lines = case.lines("a", case.transcript(f"{shown}\n\n{ITEM_4_CLOSING_LINE}"))
+        check(f"an answer is refused when the text a bare `#new` mark introduces, in {name}, was shown changed",
+              len(case.model_calls()) == 1 and lines is not None
+              and "Its `#new` line now reads \"Hide rows older than a year. Keep the rest.\"" in lines[2],
+              f"lines {lines!r}")
+        case = Case(next_to_present="item 4 of 9", document=document, model="changed")
+        lines = case.lines("a", case.transcript(f"{item}\n\n{ITEM_4_CLOSING_LINE}"))
+        check(f"an answer counts with no model call when the text a bare `#new` mark introduces, in {name}, was "
+              "shown unchanged", counted(lines) and not case.model_calls(), f"lines {lines!r}")
+
+
+def test_a_later_items_lines_in_the_same_message_do_not_count_as_the_items_own():
+    document = DECISION_DOCUMENT.replace("leave the filter out", "restart the workers")
+    shown = (DECISION_ITEM.replace("leave the filter out", "stop the workers")
+             + "\n\n## Item 5 of 9: the next item\n\nRecommendation: restart the workers.\n")
+    case = Case(next_to_present="item 4 of 9", document=document, model="changed")
+    lines = case.lines("a", case.transcript(shown))
+    check("an answer to item 4 goes to the model and is refused when only item 5, shown below it in the same "
+          "message, holds item 4's current recommendation",
+          len(case.model_calls()) == 1 and lines is not None
+          and "Its `Recommendation:` line now reads \"restart the workers.\"" in lines[2]
+          and "Recommendation: stop the workers." in lines[2], f"lines {lines!r}")
+
+
 def test_closing_lines_alone_after_the_item_was_shown_do_not_hide_the_message_that_showed_it():
     case = Case(next_to_present="item 4 of 9", document=SHOWN_DOCUMENT)
     no_link_closing_line = f"Item 4 of 9, a filter · {LETTERS_AFTER_LINK}"

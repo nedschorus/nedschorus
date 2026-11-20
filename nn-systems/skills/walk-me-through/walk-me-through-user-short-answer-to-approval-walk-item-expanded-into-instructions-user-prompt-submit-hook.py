@@ -127,14 +127,17 @@ markup left out, reference links resolved by the definitions of their own
 text, whitespace squeezed, each running count's `of M` and each deferred note
 dropped. What the item decides is its decision-bearing lines, read line by
 line from the item's text after its heading: the text after a `#new` or
-`#new_if_d` mark opening a line, the text after a `#case_against` mark, its
+`#new_if_d` mark opening a line, or, for such a mark with nothing after it,
+the rest of its paragraph or else the block below it, such as a `>` quote;
+the text after a `#case_against` mark, its
 rating included, the text after each `The alternative:` and `Recommendation:`
 up to the next of those labels or the line's end, and, in an item that holds
 parts, the text after each `Part N.` opening a line. Each passes when its
 words, compared without punctuation, letter case or the marks `#new`,
 `#new_if_d`, `#case_against` and `[advisor]`, are those of a line of the
-same kind that the message after the heading's line holds, read by the same
-rules; or, when the message holds no line of that kind and the line is no
+same kind that the message holds after the heading's line and before any
+line that opens another item by its heading or closing line, read by the
+same rules; or, when the message holds no line of that kind and the line is no
 `Recommendation:` or `The alternative:` line, are the words a paragraph of
 the message ends with, as when the message dropped a `#new` mark or put "If
 you approve, the new text:" before the text. Words found elsewhere in the
@@ -524,6 +527,10 @@ For each pair, answer meaning_changed: true when the current line means somethin
 DECISION_MARK = re.compile(r"^(#new_if_d|#new|#case_against)(?!\w)[\s:]*(.*)$", re.I)
 DECISION_PART = re.compile(r"^(Part \d+)\.(?:\s+|$)(.*)$")
 DECISION_LABEL = re.compile(r"(Recommendation|The alternative):", re.I)
+BARE_MARKS_INTRODUCING_A_BLOCK = ("#new", "#new_if_d")
+# A line of a message that opens another item, by its heading or closing line, as shown_words gives it: `Item 5: ...`,
+# `Items 5 and 6: ...`, `Item 5, ...`, or `Item 5` alone; `Item 5 fixes a path` is a mention, not an opening.
+ITEM_OPENING_AS_SHOWN = re.compile(r"^Items?\s+(\d+(?:\.\d+)*)((?:\s*(?:,|and|to)\s*\d+(?:\.\d+)*)*)\s*(?:[:,]|$)")
 DECISION_LABEL_NAMES = {"recommendation": "Recommendation", "the alternative": "The alternative"}
 # Marks that tag a line, not words of its meaning, dropped from both texts before they are compared.
 MARK_WORDS = re.compile(r"\[advisor\]|#(?:new_if_d|new|case_against)(?!\w)", re.I)
@@ -983,10 +990,18 @@ def shown_words(markdown, parser, env=None):
 def rendered_paragraph_lines(markdown, parser, env):
     """[the rendered lines of one paragraph, each as text_as_shown_squeezed gives it] for each paragraph of markdown,
     list items' and quotations' included, in order; headings and code are no paragraphs."""
+    return [lines for lines, _, _ in rendered_paragraphs_with_following_block(markdown, parser, env)]
+
+
+def rendered_paragraphs_with_following_block(markdown, parser, env):
+    """[(the paragraph's lines as rendered_paragraph_lines gives them; the words of the block that follows the
+    paragraph at its own level, such as a `>` quote, a list or the next paragraph, as shown_words gives them, or ""
+    when none follows; how many paragraphs that block holds)] for each paragraph of markdown, in order."""
     text = load_walk_finder().approval_walk_text_with_approval_walk_item_hashtag_lines_removed(markdown)
+    source_lines = text.split("\n")
     tokens = parser.parse(text, env)
     paragraphs = []
-    for previous, token in zip(tokens, tokens[1:]):
+    for index, (previous, token) in enumerate(zip(tokens, tokens[1:]), 1):
         if token.type != "inline" or previous.type != "paragraph_open":
             continue
         lines = [[]]
@@ -995,7 +1010,17 @@ def rendered_paragraph_lines(markdown, parser, env):
                 lines.append([])
             elif child.type in RENDERED_CHILD_TYPES:
                 lines[-1].append(child.content)
-        paragraphs.append([text_as_shown_squeezed("".join(line)) for line in lines])
+        following, held = "", 0
+        block_start = index + 2  # past the inline token and its paragraph_close
+        if block_start < len(tokens) and tokens[block_start].nesting >= 0 and tokens[block_start].map:
+            block_end, depth = block_start, tokens[block_start].nesting
+            while depth > 0:
+                block_end += 1
+                depth += tokens[block_end].nesting
+            start, end = tokens[block_start].map
+            following = shown_words("\n".join(source_lines[start:end]), parser, env)
+            held = sum(token.type == "paragraph_open" for token in tokens[block_start:block_end + 1])
+        paragraphs.append(([text_as_shown_squeezed("".join(line)) for line in lines], following, held))
     return paragraphs
 
 
@@ -1003,11 +1028,21 @@ def decision_bearing_lines(body, parser, env, has_parts):
     """[(the line's name, as a refusal names it; its decision-bearing text)] for the item body's Markdown, as the
     module docstring's AN ANSWER TO A VERSION THE USER MAY NOT HAVE SEEN says, read line by line as rendered."""
     found = []
-    for paragraph in rendered_paragraph_lines(body, parser, env):
-        for line in paragraph:
+    skipped = 0
+    for paragraph, following, held in rendered_paragraphs_with_following_block(body, parser, env):
+        if skipped:
+            skipped -= 1
+            continue
+        for index, line in enumerate(paragraph):
             line = re.sub(r"\[advisor\]", " ", line, flags=re.I).strip()
             mark = DECISION_MARK.match(line)
             part = DECISION_PART.match(line) if has_parts else None
+            if mark and not comparable_words(mark[2]) and mark[1].lower() in BARE_MARKS_INTRODUCING_A_BLOCK:
+                # A bare mark's text is what it introduces: the rest of its paragraph, or else the block below it.
+                rest = " ".join(paragraph[index + 1:])
+                found.append((f"`{mark[1]}` line", rest if comparable_words(rest) else following))
+                skipped = 0 if comparable_words(rest) else held
+                break
             if mark:
                 found.append((f"`{mark[1]}` line", mark[2]))
             elif part:
@@ -1102,8 +1137,29 @@ def last_showing_message(transcript_path, heading, parser, references):
                 if not mentions_number.search(line) or ANSWER_LETTERS_TEXT in line:
                     continue
                 if f"{shown_words(line, parser, env)} ".startswith(f"{heading} "):
-                    return "\n".join(lines[index + 1:]), env, record.get("timestamp", "an unknown time")
+                    end = next((later for later in range(index + 1, len(lines))
+                                if opens_another_item(shown_words(lines[later], parser, env), heading)), len(lines))
+                    return "\n".join(lines[index + 1:end]), env, record.get("timestamp", "an unknown time")
     return None
+
+
+def opens_another_item(words, heading):
+    """Whether a message line, as shown_words gives it, opens an item other than the one heading names, by its
+    heading or its closing line, as ITEM_OPENING_AS_SHOWN reads it: such a line ends the text shown for heading's
+    item, so that another item's lines in the same message are not taken for its own. A sub-step of heading's item,
+    and an item inside heading's range, are its own."""
+    opening = ITEM_OPENING_AS_SHOWN.match(words)
+    own = ITEM_OPENING_AS_SHOWN.match(heading)
+    if not opening or not own:
+        return False
+    own_numbers = [own[1], *re.findall(r"\d+(?:\.\d+)*", own[2])]
+    number = opening[1]
+    if any(number == mine or number.startswith(f"{mine}.") for mine in own_numbers):
+        return False
+    if re.search(r"\bto\b", own[2]):
+        low, high = int(own_numbers[0].split(".")[0]), int(own_numbers[-1].split(".")[0])
+        return not low <= int(number.split(".")[0]) <= high
+    return True
 
 
 def model_judgement(pairs, timeout_seconds=MODEL_TIMEOUT_SECONDS):
