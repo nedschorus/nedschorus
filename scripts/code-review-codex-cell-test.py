@@ -434,7 +434,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # reviewer program's login file in the scratch home, for the credential
     # profile checked below.
     scratch_home = scratch_home_for(stubs)
-    (scratch_home / ".config" / "nedschorus").mkdir(parents=True, exist_ok=True)
+    (scratch_home / ".config" / "nedsnodes").mkdir(parents=True, exist_ok=True)
     (scratch_home / ".config" / "gh").mkdir(parents=True, exist_ok=True)
     login_canary = scratch_home / ".codex" / "auth.json"
     login_canary.parent.mkdir(parents=True, exist_ok=True)
@@ -485,7 +485,7 @@ with tempfile.TemporaryDirectory() as scratch:
                if override.startswith(("default_permissions=", "permissions."))],
           repr(overrides_before_review))
     check("the profile denies the credential directories and a reviewer program's login file",
-          f'"{scratch_home}/.config/nedschorus"="deny"' in denied_table
+          f'"{scratch_home}/.config/nedsnodes"="deny"' in denied_table
           and f'"{scratch_home}/.config/gh"="deny"' in denied_table
           and f'"{login_canary}"="deny"' in denied_table, denied_table)
 

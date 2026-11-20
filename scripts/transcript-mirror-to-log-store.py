@@ -47,7 +47,7 @@ program tells them apart by hostname. On ned-box the copy is local -- its
 transcripts are already on that disk inside Timeshift's coverage, and the
 copy makes the store the one place to look for any session from either
 machine. A file there is cited with its host in scp form, like everything in
-the store: `nedlern@ned-box:/home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/handoffs/<file>`.
+the store: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/agent-session-files-by-machine/mac/handoffs/<file>`.
 
 HOW. `rsync -a` of each source into its place, over ssh in batch mode with a
 connect timeout from the Mac, never `--delete`: a transcript that vanishes
@@ -63,7 +63,7 @@ GNU rsync exits 23, not 24, for a listed file that is gone by the time it
 looks, so on ned-box a seat-brief removed in that instant is a FAILED line
 for that one run. This is a mirror, not a record -- a live
 session's transcript grows between runs and rsync sends the delta -- so the
-no-overwrite rule nc-systems/cold-read/cold-read-record-ship.py applies to cold-read
+no-overwrite rule nn-systems/cold-read/cold-read-record-ship.py applies to cold-read
 records does not apply here. Two things rsync meets on a live tree are
 expected and not failures: files that vanish between its listing and its
 transfer (a scratch project directory removed by a session ending; exit 24
@@ -136,11 +136,11 @@ repository; com.nedlern.agent-ping was the casualty). Each machine runs its
 own `python3`: the Mac's Homebrew link and ned-box's system one. The lines,
 run from each machine's reference checkout, which the stop hook keeps on
 main, are installed by
-nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py from the
+nn-systems/general-tools/install-scheduled-jobs-on-this-machine.py from the
 table beside that program, which is where a change to them is made:
 
-  Mac:     * * * * * /opt/homebrew/bin/python3 /Users/el/Projects/nedschorus/scripts/transcript-mirror-to-log-store.py --failures-only >> /Users/el/.claude/transcript-mirror.log 2>&1
-  ned-box: * * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/transcript-mirror-to-log-store.py --failures-only >> /home/nedlern/.claude/transcript-mirror.log 2>&1
+  Mac:     * * * * * /opt/homebrew/bin/python3 /Users/el/Projects/nedsnodes/scripts/transcript-mirror-to-log-store.py --failures-only >> /Users/el/.claude/transcript-mirror.log 2>&1
+  ned-box: * * * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/transcript-mirror-to-log-store.py --failures-only >> /home/nedlern/.claude/transcript-mirror.log 2>&1
 
 Cron's environment has no ssh agent; the Mac's key to ned-box carries no
 passphrase, checked 2026-09-07 with `env -i HOME=/Users/el PATH=/usr/bin:/bin
@@ -168,7 +168,7 @@ import time
 
 PROGRAM = "transcript-mirror-to-log-store"
 
-LOG_STORE_AGENT_SESSION_FILES_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/agent-session-files-by-machine"
+LOG_STORE_AGENT_SESSION_FILES_DESTINATION = "nedlern@ned-box:/home/nedlern/nedsnodes-logs/agent-session-files-by-machine"
 LOG_STORE_HOSTNAME = "ned-box"
 MACHINE_NAME_ON_STORE_HOST = "ned-box"
 MACHINE_NAME_ELSEWHERE = "mac"

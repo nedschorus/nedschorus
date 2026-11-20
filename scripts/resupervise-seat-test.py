@@ -31,14 +31,14 @@ import time
 from pathlib import Path
 
 RESUPERVISE_SCRIPT = Path(__file__).with_name("resupervise-seat.py")
-# The supervisor moved into nc-systems/handoff/ on 2026-09-20.
+# The supervisor moved into nn-systems/handoff/ on 2026-09-20.
 SUPERVISOR_SCRIPT = (RESUPERVISE_SCRIPT.resolve().parent.parent
-                     / "nc-systems" / "handoff" / "handoff-supervisor.py")
+                     / "nn-systems" / "handoff" / "handoff-supervisor.py")
 
 failures = []
 _tmux_error_pattern_spec = importlib.util.spec_from_file_location(
     "tmux_target_or_server_does_not_exist_error_pattern_common",
-    RESUPERVISE_SCRIPT.resolve().parent.parent / "nc-systems" / "general-tools"
+    RESUPERVISE_SCRIPT.resolve().parent.parent / "nn-systems" / "general-tools"
     / "tmux-target-or-server-does-not-exist-error-pattern-common.py")
 tmux_error_pattern = importlib.util.module_from_spec(_tmux_error_pattern_spec)
 _tmux_error_pattern_spec.loader.exec_module(tmux_error_pattern)
@@ -64,9 +64,9 @@ CALLING_AGENT_SESSION_TEST_VARIABLES = {
     "CLAUDE_CODE_SESSION_ATTENDED": "0",
     "IS_DEMO": "1",
     "GH_TOKEN": "decoy-inherited-token",
-    "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": "calling-seat",
-    "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": "/calling/seat/directory",
-    "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID": "calling-supervisor-session",
+    "NEDSNODES_HANDOFF_SUPERVISOR_AGENT_NAME": "calling-seat",
+    "NEDSNODES_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": "/calling/seat/directory",
+    "NEDSNODES_HANDOFF_SUPERVISOR_SESSION_ID": "calling-supervisor-session",
 }
 
 # Set by isolate_tmux_for_this_run(): an empty config file every server this suite starts reads.
@@ -313,14 +313,14 @@ def run_missing_launcher_case(workspace: Path):
     copied = isolated / "resupervise-seat.py"
     copied.write_text(RESUPERVISE_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
     # resupervise-seat.py imports handoff-supervisor.py, which since 2026-09-20
-    # lives at nc-systems/handoff/ and itself imports the shared judgement of
+    # lives at nn-systems/handoff/ and itself imports the shared judgement of
     # which transcript is worth resuming from scripts/ (issue 242 change 5).
     # Both are resolved from the repository root, so the isolated copy needs
     # the repository's SHAPE around it rather than two files beside it.
     # The files the supervisor names under scripts/ are read from its own
     # source, so a new import there needs no change here, whether it loads the
     # file directly or through a path constant.
-    supervisor_home = workspace / "nc-systems" / "handoff"
+    supervisor_home = workspace / "nn-systems" / "handoff"
     supervisor_home.mkdir(parents=True)
     for supervisor_file in ("handoff-supervisor.py", "session-handoff-field-names-common.py",
                             "handoff-user-review-of-agent-memory-stores-mark.py",
@@ -336,7 +336,7 @@ def run_missing_launcher_case(workspace: Path):
     # uncommitted-work-snapshots.py reads git's output with one shared module
     # and writes a restore's task with another, and the supervisor strips the
     # variables that redirect git with a third.
-    general_tools_home = workspace / "nc-systems" / "general-tools"
+    general_tools_home = workspace / "nn-systems" / "general-tools"
     general_tools_home.mkdir(parents=True)
     # resupervise-seat.py reads tmux's absent-session answers with the shared
     # pattern module; the Stop hooks the supervisor loads from scripts/ load
@@ -840,14 +840,14 @@ def check_tmux_probe_failure_cases(resupervise, calls, stub_answers):
 def run_agent_box_case(workspace: Path):
     """--agent-box must reach the launcher, not just the ssh checks.
 
-    The launcher reads NEDSCHORUS_AGENT_BOX and otherwise defaults to its own
+    The launcher reads NEDSNODES_AGENT_BOX and otherwise defaults to its own
     alias, so a flag honored by the checks and dropped at the launch would clear
     one host and seat the successor on another. Asserted by reading the source:
     the launch is an exec, which cannot be observed from a subprocess run here.
     """
     source = (workspace / "isolated" / "resupervise-seat.py").read_text(encoding="utf-8")
-    check("the box launch passes NEDSCHORUS_AGENT_BOX through",
-          "NEDSCHORUS_AGENT_BOX" in source and "os.execve" in source,
+    check("the box launch passes NEDSNODES_AGENT_BOX through",
+          "NEDSNODES_AGENT_BOX" in source and "os.execve" in source,
           "the box launch does not carry --agent-box")
 
 
@@ -867,7 +867,7 @@ def run_override_propagation_case(workspace: Path):
     stub_launcher = isolated / "launch-claude-mac"
     stub_launcher.write_text(
         '#!/bin/sh\n'
-        f'echo "root=$NEDSCHORUS_AGENTS_ROOT" >> {record}\n'
+        f'echo "root=$NEDSNODES_AGENTS_ROOT" >> {record}\n'
         f'echo "extra=$LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS" >> {record}\n',
         encoding="utf-8")
     stub_launcher.chmod(0o755)
@@ -880,7 +880,7 @@ def run_override_propagation_case(workspace: Path):
     recorded = record.read_text(encoding="utf-8") if record.is_file() else ""
     recorded_values = dict(line.split("=", 1)
                            for line in recorded.splitlines() if "=" in line)
-    check("the mac launch carries the assessed agents root through NEDSCHORUS_AGENTS_ROOT",
+    check("the mac launch carries the assessed agents root through NEDSNODES_AGENTS_ROOT",
           recorded_values.get("root") == str(workspace / "agents"),
           (recorded, result.stdout, result.stderr))
     # Parsed the way the launch shell will (shlex.split), not by matching
@@ -929,7 +929,7 @@ def run_box_forwarding_case(workspace: Path):
 
     class FakeOs:
         environ = {key: value for key, value in os.environ.items()
-                   if key not in ("NEDSCHORUS_AGENTS_ROOT",
+                   if key not in ("NEDSNODES_AGENTS_ROOT",
                                   "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS")}
 
         @staticmethod
@@ -957,9 +957,9 @@ def run_box_forwarding_case(workspace: Path):
     check("the ubuntu launch carries the handoff override in its environment",
           shlex.split(environment.get("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS", ""))
               == ["--handoff-dir", "/box/handoffs"]
-          and environment.get("NEDSCHORUS_AGENT_BOX") == "testbox",
+          and environment.get("NEDSNODES_AGENT_BOX") == "testbox",
           {key: environment.get(key) for key in
-           ("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS", "NEDSCHORUS_AGENT_BOX")})
+           ("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS", "NEDSNODES_AGENT_BOX")})
 
     # The box half forwards no agents root even when handed one: main()
     # refuses first, and this pins that nothing downstream would carry it.
@@ -974,8 +974,8 @@ def run_box_forwarding_case(workspace: Path):
     check("an agents root reaches neither box half",
           "--agents-root" not in remote_command
           and "/box/agents" not in remote_command
-          and "NEDSCHORUS_AGENTS_ROOT" not in environment,
-          (remote_command, environment.get("NEDSCHORUS_AGENTS_ROOT")))
+          and "NEDSNODES_AGENTS_ROOT" not in environment,
+          (remote_command, environment.get("NEDSNODES_AGENTS_ROOT")))
 
     # PR #134 review finding 1, the box halves: an apostrophe path must
     # survive the remote shell's parse and the launcher hook's parse.
@@ -1006,9 +1006,9 @@ def run_box_forwarding_case(workspace: Path):
     check("with no overrides given, the box halves keep their own defaults",
           "--handoff-dir" not in remote_command
           and "--agents-root" not in remote_command
-          and "NEDSCHORUS_AGENTS_ROOT" not in environment
+          and "NEDSNODES_AGENTS_ROOT" not in environment
           and "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS" not in environment,
-          (remote_command, environment.get("NEDSCHORUS_AGENTS_ROOT")))
+          (remote_command, environment.get("NEDSNODES_AGENTS_ROOT")))
 
     # --machine ubuntu with --agents-root is refused as a bad invocation,
     # before any ssh and any launch, on the Mac half and on a by-hand
@@ -1034,8 +1034,8 @@ def run_box_forwarding_case(workspace: Path):
     # default_agents_root reads the Mac launcher's own variable (the same
     # rule as recover-crashed-seats.py's twin), so the no-flag checks and the
     # launch resolve one root.
-    FakeOs.environ["NEDSCHORUS_AGENTS_ROOT"] = "/elsewhere/agents"
-    check("default_agents_root honors NEDSCHORUS_AGENTS_ROOT",
+    FakeOs.environ["NEDSNODES_AGENTS_ROOT"] = "/elsewhere/agents"
+    check("default_agents_root honors NEDSNODES_AGENTS_ROOT",
           module.default_agents_root() == Path("/elsewhere/agents"),
           module.default_agents_root())
 

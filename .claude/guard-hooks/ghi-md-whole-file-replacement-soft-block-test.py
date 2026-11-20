@@ -251,7 +251,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("refused: a payload without cwd is read from the hook's own directory",
           code == 0 and got == refusal, (code, output))
 
-    replay_check = Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools" / (
+    replay_check = Path(__file__).resolve().parents[2] / "nn-systems" / "general-tools" / (
         "bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check.py")
     _replay_spec = importlib.util.spec_from_file_location("bash_guards_replay_check", replay_check)
     replay = importlib.util.module_from_spec(_replay_spec)
