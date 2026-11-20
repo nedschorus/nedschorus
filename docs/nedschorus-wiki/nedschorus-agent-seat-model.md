@@ -21,7 +21,7 @@ The user's reasoning, which this model serves:
 
 ## Which agent-seats exist
 
-The agent-seats that exist are the directories under `~/agents` on either machine; an agent-seat's seat-brief, the `CLAUDE.local.md` in its directory, says what it owns. The user chooses which of them run.
+The agent-seats that exist are the directories under `~/agents` on either machine, except a guide-agent's, such as `~/agents/ghi-guide-agent`; an agent-seat's seat-brief, the `CLAUDE.local.md` in its directory, says what it owns. The user chooses which of them run.
 
 An agent-seat name is one word. It is an address typed to reach an agent, not a search key, so the multi-part naming rule in `CLAUDE.md` does not apply to it.
 
