@@ -18,7 +18,7 @@ Change the file only with `scripts/proposed-improvements-or-changes-file-entry-s
 
 ## 1. Read every file of the GHI-MD first
 
-Read every proposed-improvements-or-changes-file of the GHI-MD before you act, not only the one you were given, and run the program's `show` subcommand on each. The GHI-MD's name is the part of the given file's name before `-proposed-improvements-or-changes-`. The files are those in the log-store directory above whose names start with that name, with or without its leading GHI number and hyphen, followed by `-proposed-improvements-or-changes-`. List them with `ls` on ned-box, through `ssh nedlern@ned-box ls <directory>` when you are elsewhere.
+Read every proposed-improvements-or-changes-file of the GHI-MD before you act, not only the one you were given. Run the program's `show` subcommand with the GHI-MD's name, the part of the given file's name before `-proposed-improvements-or-changes-`: it shows the entries of every such file in the log-store, each file under its path, and you read each file it names.
 
 Work through every open entry in them before you report, even when one of them goes to the user.
 
@@ -30,7 +30,7 @@ Work through every open entry in them before you report, even when one of them g
 
 ## 3. Work on an entry: at most 3 tries
 
-A try is one attempt to settle an entry: reading its sources, finding out whether it is real and worth doing, and, when it is, making the change. Record each try with the `try` subcommand once you have done the work, saying in `--found` what you read and what you found, with the words of each source you rely on, on one line. After a try brings an entry to 3 tries, the program says so; unless that try settles the entry, run `needs-the-user` on the entry with `--because three-tries`.
+A try is one attempt to settle an entry: reading its sources, finding out whether it is real and worth doing, and, when it is, making the change. Record each try with the `try` subcommand once you have done the work, saying in `--found` what you read and what you found, with the words of each source you rely on, on one line, and naming each source you read with one `--source`: a path in this repository, a log-store path, `PR <number>` or `GHI <number>`. After a try brings an entry to 3 tries, the program says so; unless that try settles the entry, run `needs-the-user` on the entry with `--because three-tries`.
 
 An entry of the first kind in "4. What goes to the user", whose change would alter a design, such as a GHI-MD that is a design, may go to the user at once, without a try: run `needs-the-user` on it with `--because cold-read-document`.
 
@@ -43,8 +43,8 @@ An entry is not worth doing when the problem is not real, or the improvement doe
 A second, independent agent must agree:
 
 1. Record your try with `try`, ending `--found` with your conclusion.
-2. Run `second-agent-verdict` on the entry, with one `--source` for each source your try cites: a path in this repository, a log-store path, `PR <number>` or `GHI <number>`. Run it in the background, with the Bash tool's `run_in_background`, and wait for it to finish, because the agent it runs can take longer than a foreground command may. The program runs the second agent, gives it the entry and the sources but not your conclusion, writes its verdict under the entry, and prints its reply.
-3. If it agrees, mark the entry with `settle --kind not-worth-doing`, giving in `--how` the reason in one sentence. If it disagrees, the try is spent and the entry stays open: read the reasons in its reply, and start another try if the program allows one; when it does not, run `needs-the-user` on the entry with `--because three-tries`.
+2. Run `second-agent-verdict` on the entry. Run it in the background, with the Bash tool's `run_in_background`, and wait for it to finish, because the agent it runs can take longer than a foreground command may. The program runs the second agent, gives it the entry and your try's sources but not your conclusion, writes its verdict under the entry, and prints its reply.
+3. If it agrees, mark the entry with `settle --kind not-worth-doing`, giving in `--how` the reason in one sentence. If it disagrees, the try is spent: read the reasons in its reply, and start another try if the program allows one. A disagreement on the third try marks the entry as needing the user, and the program says so.
 4. If `second-agent-verdict` prints `FAILED:`, no verdict was written and the entry stays open: go on with the other entries, and put what it printed in your report.
 
 ### Worth doing, and doable now

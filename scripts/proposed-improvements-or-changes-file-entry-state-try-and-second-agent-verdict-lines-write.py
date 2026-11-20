@@ -13,8 +13,13 @@ Subcommands, each on one file:
 
   show            every entry: its id, its State line, the tries counted
                   since its last user-ruling line, and its last verdict.
-  try             adds one "Try <n> — <by>, <time>: <found>" line under each
-                  entry named, the same line under each for related entries.
+                  Given a GHI-MD's name instead of a file, shows every
+                  proposed-improvements-or-changes-file in the log-store named
+                  after that GHI-MD, with or without its leading GHI number,
+                  each under its path in the form nedlern@ned-box:<path>.
+  try             adds one "Try <n> — <by>, <time>: <found> — sources read:
+                  <source>; <source>" line under each entry named, the same
+                  line under each for related entries.
                   Refused for an entry that already has MAXIMUM_TRIES tries
                   since its last user-ruling line; says so when a try
                   brings an entry to that number.
@@ -22,17 +27,21 @@ Subcommands, each on one file:
                   runs the second agent through `claude -p`, giving it
                   SECOND_AGENT_PROMPT, the entry's text without its State,
                   Try and "Second agent:" lines, which carry the handler's
-                  conclusion, and the sources the handler names; prints its
-                  reply, and adds "Second agent: agrees (or disagrees) that it
-                  is not worth doing, <who>, <time>" as the reply's last line
-                  says. One verdict per try: refused, before the agent runs,
-                  when no Try line follows the entry's last verdict, so a
-                  disagreement spends the try it answers, and asking again
-                  takes a new try.
+                  conclusion, and the sources on the entry's last Try line;
+                  prints its reply, and adds "Second agent: agrees (or
+                  disagrees) that it is not worth doing, <who>, <time>" as the
+                  reply's last line says. One verdict per try: refused, before
+                  the agent runs, when no Try line follows the entry's last
+                  verdict, so a disagreement spends the try it answers, and
+                  asking again takes a new try; refused too when that Try line
+                  names no sources. A disagreement on the entry's
+                  MAXIMUM_TRIES-th try also marks the entry as needing the
+                  user, as needs-the-user --because three-tries does.
   settle          rewrites the State line as "settled, <how settled> — <by>,
                   <time>: <how>". "not worth doing" is refused unless the
                   entry's last verdict is an agreement and no Try line
-                  follows it.
+                  follows it; "new GHI filed" is refused unless <how> holds a
+                  GHI's link.
   needs-the-user  rewrites the State line as "needs the user — <by>, <time>:
                   <why>"; `--because three-tries` is refused unless the
                   entry has MAXIMUM_TRIES tries since its last user-ruling
@@ -59,7 +68,7 @@ design's open question 2): the file is read, changed and replaced whole, so the 
 writer's replacement drops the earlier writer's lines.
 
 Failures: a value holding a line break, a refused change, a missing file or entry, a file that cannot be
-read or written, or a second agent that cannot be run, exits nonzero, runs past
+read or written, a log-store directory that cannot be listed, or a second agent that cannot be run, exits nonzero, runs past
 SECOND_AGENT_TIMEOUT_SECONDS or ends its reply with a line other than
 "VERDICT: agrees" or "VERDICT: disagrees", is printed to stderr with what to
 do, and the program exits 1 without changing the file. Exit 0: done.
@@ -91,6 +100,8 @@ command_line_prefix = _load(
     "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
     "nc-systems/general-tools/claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
 
+ghi_issue_write = _load("ghi_issue_write", "scripts/ghi-issue-write.py")
+
 SECOND_AGENT_PROMPT = "docs/agents/queue/proposed-improvements-or-changes-file-entry-not-worth-doing-second-agent-prompt.md"
 SECOND_AGENT_MODEL = "claude-opus-5-5"
 SECOND_AGENT_EFFORT = "high"
@@ -110,6 +121,10 @@ ENTRY_HEADING_PATTERN = re.compile(r"^## (E\d+)\b")
 ENTRY_ENDING_HEADING_PATTERN = re.compile(r"^#{1,2} ")
 STATE_LINE_OPENING = "State:"
 TRY_LINE_PATTERN = re.compile(r"^Try[ :]")
+# A Try line's sources follow the last TRY_SOURCES_DELIMITER, so a --found that holds the delimiter
+# never reaches the second agent.
+TRY_SOURCES_DELIMITER = " — sources read: "
+TRY_SOURCES_SEPARATOR = "; "
 SECOND_AGENT_LINE_OPENING = "Second agent:"
 SECOND_AGENT_AGREES_OPENING = "Second agent: agrees"
 USER_RULING_LINE_OPENING = "User-ruling"
@@ -117,6 +132,9 @@ OPEN_STATE_OPENING = "State: open"
 
 LOG_STORE_HOST = "nedlern@ned-box"
 LOG_STORE_HOSTNAME = "ned-box"
+LOG_STORE_DIRECTORY = ghi_issue_write.GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY
+FILE_NAME_INFIX = ghi_issue_write.PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX
+GHI_LINK_PATTERN = re.compile(r"https://github\.com/[^/\s]+/[^/\s]+/issues/\d+")
 
 SETTLED_KINDS = {
     "not-worth-doing": "not worth doing",
@@ -128,9 +146,14 @@ NEEDS_THE_USER_REASONS = {
     "user-ruling-change": "a question whether a user-ruling should change",
     "three-tries": "still open after 3 tries",
 }
+THIRD_TRY_DISAGREEMENT_WHY = "the last try found the entry not worth doing, and the second agent disagreed"
 
 
 class Refused(Exception):
+    pass
+
+
+class Failed(Exception):
     pass
 
 
@@ -139,17 +162,39 @@ def now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
 
 
+def refuse_unless_on_ned_box(what: str, argv):
+    if socket.gethostname().split(".")[0] != LOG_STORE_HOSTNAME:
+        remote = shlex.join(["cd", "/home/nedlern/Projects/nedschorus"]) + " && " + shlex.join(
+            ["python3", "scripts/proposed-improvements-or-changes-file-entry-state-try-and-second-agent-verdict-lines-write.py", *argv])
+        raise Refused(
+            f"{what} in the log-store on ned-box, and this machine is not ned-box, so nothing was changed.\n"
+            "Run the same command on ned-box, exactly as printed here, quoting included:\n"
+            f"ssh {LOG_STORE_HOST} {shlex.quote(remote)}")
+
+
 def local_path(named: str, argv) -> Path:
     if named.startswith(LOG_STORE_HOST + ":"):
-        if socket.gethostname().split(".")[0] != LOG_STORE_HOSTNAME:
-            remote = shlex.join(["cd", "/home/nedlern/Projects/nedschorus"]) + " && " + shlex.join(
-                ["python3", "scripts/proposed-improvements-or-changes-file-entry-state-try-and-second-agent-verdict-lines-write.py", *argv])
-            raise Refused(
-                f"{named} is in the log-store on ned-box, and this machine is not ned-box, so nothing was changed.\n"
-                "Run the same command on ned-box, exactly as printed here, quoting included:\n"
-                f"ssh {LOG_STORE_HOST} {shlex.quote(remote)}")
+        refuse_unless_on_ned_box(f"{named} is", argv)
         return Path(named[len(LOG_STORE_HOST) + 1:])
     return Path(named)
+
+
+def ghi_md_file_names(ghi_md_name: str, argv):
+    """The names of the GHI-MD's files in LOG_STORE_DIRECTORY, oldest name first."""
+    refuse_unless_on_ned_box(f"The files of GHI-MD {ghi_md_name} are", argv)
+    number = re.match(r"(\d+)-", ghi_md_name)
+    bare = ghi_md_name[number.end():] if number else ghi_md_name
+    leading = re.escape(number.group(0)) if number else r"\d+-"
+    pattern = re.compile(f"(?:{leading})?{re.escape(bare + FILE_NAME_INFIX)}.*\\.md")
+    try:
+        names = sorted(name for name in os.listdir(LOG_STORE_DIRECTORY) if pattern.fullmatch(name))
+    except OSError as failure:
+        raise Failed(f"the log-store directory {LOG_STORE_DIRECTORY} could not be listed: {failure}")
+    if not names:
+        raise Refused(
+            f"No file in {LOG_STORE_DIRECTORY} is named after GHI-MD {ghi_md_name}.\n"
+            f"Give the GHI-MD's name as the part of the given file's name before {FILE_NAME_INFIX}, or give the file itself.")
+    return names
 
 
 def entry_spans(lines):
@@ -233,7 +278,7 @@ def refuse_unless_open(block, entry):
             "A settled entry is never changed. An entry that needs the user waits until the agent-seat that brought it to him records his decision under it and sets its State line back to open.")
 
 
-def add_try(lines, entries, by, found):
+def add_try(lines, entries, by, found, sources):
     spans = entry_spans(lines)
     for entry in entries:
         block = entry_lines(lines, spans, entry)
@@ -243,9 +288,11 @@ def add_try(lines, entries, by, found):
                 f"Entry {entry} already has {MAXIMUM_TRIES} tries since the user last decided on it, so no try was recorded under any entry named.\n"
                 "Rule 4 of GHI 1132 allows no more; the entry goes to the user:\n"
                 f"run this program's needs-the-user subcommand on {entry} with --because three-tries.")
+    listed = TRY_SOURCES_SEPARATOR.join(sources)
     for entry in sorted(entries, key=lambda name: spans[name][0], reverse=True):
         number = tries_since_user_ruling(entry_lines(lines, spans, entry)) + 1
-        lines.insert(insertion_index(lines, spans, entry), f"Try {number} — {by}, {now()}: {found}")
+        lines.insert(insertion_index(lines, spans, entry),
+                     f"Try {number} — {by}, {now()}: {found}{TRY_SOURCES_DELIMITER}{listed}")
     return lines
 
 
@@ -263,6 +310,7 @@ def second_agent_input(lines, entry, sources) -> str:
 
 
 def refuse_unless_a_try_awaits_a_verdict(lines, entry):
+    """The sources on the Try line that awaits a verdict."""
     block = entry_lines(lines, entry_spans(lines), entry)
     refuse_unless_open(block, entry)
     attempt = last_index(block, lambda line: bool(TRY_LINE_PATTERN.match(line)))
@@ -272,6 +320,13 @@ def refuse_unless_a_try_awaits_a_verdict(lines, entry):
             f"Entry {entry} has no Try line after its last verdict, so no second agent was run and no verdict was recorded.\n"
             "Each verdict answers one try: record the try that shows the entry is not worth doing with the try subcommand first,\n"
             "then run the second-agent-verdict subcommand again.")
+    delimiter = block[attempt].rfind(TRY_SOURCES_DELIMITER)
+    if delimiter < 0:
+        raise Refused(
+            f"Entry {entry}'s last Try line names no sources, so no second agent was run and no verdict was recorded.\n"
+            "The second agent judges from the sources the try read: record a new try with the try subcommand, naming each source with --source,\n"
+            "then run the second-agent-verdict subcommand again.")
+    return block[attempt][delimiter + len(TRY_SOURCES_DELIMITER):].split(TRY_SOURCES_SEPARATOR)
 
 
 class SecondAgentFailed(Exception):
@@ -309,13 +364,16 @@ def verdict_of(reply) -> bool:
     return SECOND_AGENT_VERDICTS[lines[-1]]
 
 
-def add_verdict(lines, entry, agrees, who):
+def add_verdict(lines, entry, agrees, who, by):
+    """(the lines, and whether the verdict marked the entry as needing the user)."""
     spans = entry_spans(lines)
     refuse_unless_a_try_awaits_a_verdict(lines, entry)
     word = "agrees" if agrees else "disagrees"
     lines.insert(insertion_index(lines, spans, entry),
                  f"Second agent: {word} that it is not worth doing, {who}, {now()}")
-    return lines
+    if agrees or tries_since_user_ruling(entry_lines(lines, entry_spans(lines), entry)) < MAXIMUM_TRIES:
+        return lines, False
+    return needs_the_user(lines, entry, "three-tries", by, THIRD_TRY_DISAGREEMENT_WHY), True
 
 
 def settle(lines, entry, kind, by, how):
@@ -328,6 +386,11 @@ def settle(lines, entry, kind, by, how):
             raise Refused(
                 f"Entry {entry} cannot be settled as not worth doing: its last try has no agreement from a second agent, so the entry stays open.\n"
                 "Rule 5 of GHI 1132 needs that agreement: run the second-agent-verdict subcommand on the entry.")
+    if kind == "new-ghi" and not GHI_LINK_PATTERN.search(how):
+        raise Refused(
+            f"Entry {entry} was not settled as new GHI filed: --how holds no GHI link, such as https://github.com/<owner>/<repository>/issues/<number>, so nothing was changed.\n"
+            "Give the link of the GHI you filed in --how.\n"
+            "If you have not filed the GHI yet, file it first, as .claude/skills/ghi-write/SKILL.md says.")
     replace_state(lines, spans, entry, f"State: settled, {SETTLED_KINDS[kind]} — {by}, {now()}: {how}")
     return lines
 
@@ -373,16 +436,17 @@ def parser():
     top = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     commands = top.add_subparsers(dest="command", required=True)
     command = commands.add_parser("show")
-    command.add_argument("file")
+    command.add_argument("file", metavar="file-or-GHI-MD-name")
     command = commands.add_parser("try")
     command.add_argument("file")
     command.add_argument("entries", nargs="+")
     command.add_argument("--by", required=True)
     command.add_argument("--found", required=True)
+    command.add_argument("--source", action="append", required=True,
+                         help="one source the try read: a path in this repository, a log-store path, PR <number> or GHI <number>")
     command = commands.add_parser("second-agent-verdict")
     command.add_argument("file")
     command.add_argument("entry")
-    command.add_argument("--source", action="append", required=True)
     command.add_argument("--by", required=True)
     command = commands.add_parser("settle")
     command.add_argument("file")
@@ -409,7 +473,22 @@ def main(argv=None) -> int:
                 raise Refused(
                     f"--{name} holds a line break, so nothing was changed: each value is written as part of one line,\n"
                     "and a second line could be read as a State, Try or Second agent line. Give it on one line.")
-        path = local_path(arguments.file, sys.argv[1:] if argv is None else argv)
+        for source in getattr(arguments, "source", None) or []:
+            if not source.strip() or TRY_SOURCES_SEPARATOR.strip() in source:
+                raise Refused(
+                    f"--source {source!r} is empty or holds \"{TRY_SOURCES_SEPARATOR.strip()}\", which separates the sources on the Try line, so nothing was changed.\n"
+                    "Give each source in its own --source, without that character.")
+        argv = sys.argv[1:] if argv is None else argv
+        # A GHI-MD's name holds no directory and no extension.
+        if arguments.command == "show" and "/" not in arguments.file and not arguments.file.endswith(".md"):
+            for name in ghi_md_file_names(arguments.file, argv):
+                try:
+                    text = (Path(LOG_STORE_DIRECTORY) / name).read_text(encoding="utf-8")
+                except OSError as failure:
+                    raise Failed(f"{name} in {LOG_STORE_DIRECTORY} could not be read: {failure}")
+                print(f"{LOG_STORE_HOST}:{LOG_STORE_DIRECTORY}/{name}\n{show(text.splitlines())}\n")
+            return 0
+        path = local_path(arguments.file, argv)
         text = path.read_text(encoding="utf-8")
         ending = "\n" if text.endswith("\n") else ""
         lines = text.splitlines()
@@ -417,17 +496,18 @@ def main(argv=None) -> int:
             print(show(lines))
             return 0
         if arguments.command == "try":
-            lines = add_try(lines, arguments.entries, arguments.by, arguments.found)
+            lines = add_try(lines, arguments.entries, arguments.by, arguments.found, arguments.source)
         elif arguments.command == "second-agent-verdict":
-            refuse_unless_a_try_awaits_a_verdict(lines, arguments.entry)
-            reply = second_agent_reply(second_agent_input(lines, arguments.entry, arguments.source))
+            sources = refuse_unless_a_try_awaits_a_verdict(lines, arguments.entry)
+            reply = second_agent_reply(second_agent_input(lines, arguments.entry, sources))
             agrees = verdict_of(reply)
             print(reply.rstrip())
             # The agent runs for minutes; the file may have changed meanwhile.
             text = path.read_text(encoding="utf-8")
             ending = "\n" if text.endswith("\n") else ""
-            lines = add_verdict(text.splitlines(), arguments.entry, agrees,
-                                f"{SECOND_AGENT_MODEL} run through `claude -p` for {arguments.by}")
+            lines, marked_for_the_user = add_verdict(
+                text.splitlines(), arguments.entry, agrees,
+                f"{SECOND_AGENT_MODEL} run through `claude -p` for {arguments.by}", arguments.by)
         elif arguments.command == "settle":
             lines = settle(lines, arguments.entry, arguments.kind, arguments.by, arguments.how)
         else:
@@ -439,6 +519,9 @@ def main(argv=None) -> int:
     except SecondAgentFailed as failure:
         print(f"FAILED: {failure}\nNo verdict was recorded, and the file was left as it was.", file=sys.stderr)
         return 1
+    except Failed as failure:
+        print(f"FAILED: {failure}\nNothing was changed.", file=sys.stderr)
+        return 1
     except OSError as failure:
         print(f"FAILED: {arguments.file} could not be read or written, and was left as it was: {failure}\n"
               "If the path is wrong, run again with the path the file is at.", file=sys.stderr)
@@ -449,6 +532,9 @@ def main(argv=None) -> int:
         for entry in arguments.entries:
             if tries_since_user_ruling(entry_lines(lines, spans, entry)) >= MAXIMUM_TRIES:
                 print(f"Entry {entry} now has {MAXIMUM_TRIES} tries: unless this try settles it, run the needs-the-user subcommand on it with --because three-tries.")
+    if arguments.command == "second-agent-verdict" and marked_for_the_user:
+        print(f"The second agent disagreed on try {MAXIMUM_TRIES} of entry {arguments.entry}, the last try rule 4 of GHI 1132 allows, so the entry was marked as needing the user.\n"
+              "In your report, say what the user must decide, from the second agent's reasons above.")
     return 0
 
 
