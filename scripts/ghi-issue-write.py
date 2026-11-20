@@ -1845,6 +1845,20 @@ def create_pull_request_for_branch(repo: str, branch: str, number: int,
     report((created.stdout or "").strip())
 
 
+# A design keeps its `.<kind>.design` ending in every name it takes, as the
+# naming page's section on designs says, so the guard and the fast read,
+# which match `.design.md`, still know it once it is filed.
+DESIGN_KIND_ENDING = re.compile(r"(\.[a-z]+\.design)\.md$")
+
+
+def create_ghi_landing_path_for_ghi_md(number, title: str, source_name: str) -> str:
+    """Where create lands a GHI-MD: `docs/issues/<number>-<slug>.md`, or, for
+    a source named `<name>.<kind>.design.md`, `<number>-<slug>.<kind>.design.md`."""
+    kind_ending = DESIGN_KIND_ENDING.search(source_name)
+    return (f"{GHI_MD_DIRECTORY}/{number}-{slug(title)}"
+            f"{kind_ending.group(1) if kind_ending else ''}.md")
+
+
 def land_file(repo: str, number: int, title: str, source: Path,
               repository_root: Path, runner, report):
     """Step 4, in a throwaway worktree cut from a just-fetched origin/main,
@@ -1855,7 +1869,7 @@ def land_file(repo: str, number: int, title: str, source: Path,
     what this run would land before any branch is looked at: see the module
     docstring, WHAT A RERUN TESTS."""
     branch = f"ghi-{number}-{slug(title)}"
-    destination = f"{GHI_MD_DIRECTORY}/{number}-{slug(title)}.md"
+    destination = create_ghi_landing_path_for_ghi_md(number, title, source.name)
     source_text = source.read_text(encoding="utf-8")
     staged = with_issue_frontmatter(source_text, repo, number, title)
 
@@ -3287,8 +3301,8 @@ def main_with_stop_signals_raising_system_exit(argv):
             refuse_heading_with_date(title)
             report(f"would file: {title}")
             report(f"pairing key: {pairing_key(text)}")
-            report(f"would land at: {GHI_MD_DIRECTORY}/<number>-"
-                   f"{slug(title)}.md")
+            report("would land at: "
+                   + create_ghi_landing_path_for_ghi_md("<number>", title, path.name))
             return 0
         if not path.is_file():
             # Asked before the checkout is looked for, because step 4 moves

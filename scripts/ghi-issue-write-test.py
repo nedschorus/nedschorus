@@ -1161,6 +1161,28 @@ def run_cases(scratch: Path):
           and not landed_on_main_before_rename.ran("gh pr create"),
           (land_lines, landed_on_main_before_rename.commands()))
 
+    # A design keeps its `.<kind>.design` ending once filed, whatever its
+    # heading says, so the guard and the fast read still class it as a design.
+    design_source = source.with_name("widget.tool.design.md")
+    design_source.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    design_title = "Widget design"
+    design_destination = "docs/issues/9001-widget-design.tool.design.md"
+    design_staged = tool.with_issue_frontmatter(design_source.read_text(encoding="utf-8"),
+                                                REPO, 9001, design_title)
+    design_lines = []
+    design_landed = Recorder({
+        f"git show origin/main:{design_destination}": Completed(design_staged),
+    })
+    design_returned = tool.land_file(REPO, 9001, design_title, design_source, scratch,
+                                     design_landed, design_lines.append)
+    check("create lands a design named <name>.tool.design.md under a name ending .tool.design.md",
+          design_returned == design_destination
+          and tool.create_ghi_landing_path_for_ghi_md(9001, "Widget.tool.design", "widget.system.design.md")
+          == "docs/issues/9001-widget-tool-design.system.design.md"
+          and tool.create_ghi_landing_path_for_ghi_md(570, land_title, "statusline-drops-branch.md") == land_destination,
+          (design_returned, design_lines))
+    design_source.unlink()
+
     # The comparison is computed under the number the PATH carries. The same
     # content landed under a different issue is a different file, and must
     # not stop this one being filed.
