@@ -65,7 +65,7 @@ A suite that needs a git repository builds one with `git init` in a scratch dire
 
 ## What it cost
 
-On 2026-09-22 at 19:09:20Z it fired on the live `merge-lane-2` seat checkout. 14 commits authored `system-glossaries-listed test <test@nedschorus.invalid>` landed on the `merge-lane-2` branch, whose tree went from 293 files to 2; `/home/nedlern/Projects/nedschorus/.git/config` — the config shared by every worktree on that machine — had its `user.name` and `user.email` overwritten; and a worktree was registered in the shared repository. All of it is repaired.
+On 2026-09-22 at 19:09:20Z it fired on the live `merge-lane-2` seat checkout. 14 commits authored `system-glossaries-listed test <test@nedschorus.invalid>` landed on the `merge-lane-2` branch, whose tree went from 293 files to 2; `/home/nedlern/Projects/nedsnodes/.git/config` — the config shared by every worktree on that machine — had its `user.name` and `user.email` overwritten; and a worktree was registered in the shared repository. All of it is repaired.
 
 The trigger there was a reviewer deliberately probing `GIT_DIR` behaviour, so this is not a thing that happens unprompted: with `GIT_DIR` unset, normal operation is clean, and `run-all-test-suites.py` sets no such variable itself. What the incident establishes is the blast radius, not the frequency.
 
@@ -102,7 +102,7 @@ Merged pinned to head `873662231d590ad9039d42be8d277f5d801c61ba`; main `2796d953
 
 Approved by `mac-claude` (review 5283549058) after re-deriving all eight variable rows independently against throwaway repositories, and after confirming through the fixed runner — not merely directly — that the two suites which deliberately set `GIT_DIR` on their own children still pass.
 
-**A correction to this issue's own numbers.** The body above says "21 suites on main run `git init`". Measured at main on 2026-09-22: **19 under `scripts/`, plus three outside it** — `.claude/guard-hooks/session-location-write-guard-test.py`, `nc-systems/handoff/tests/handoff-supervisor-test.py`, `nc-systems/main-gatekeeper/tests/main-gatekeeper-test.py` — so **22**. The figure was right when written and rises whenever a suite lands, which is worth knowing before anyone treats a counted measurement here as durable.
+**A correction to this issue's own numbers.** The body above says "21 suites on main run `git init`". Measured at main on 2026-09-22: **19 under `scripts/`, plus three outside it** — `.claude/guard-hooks/session-location-write-guard-test.py`, `nn-systems/handoff/tests/handoff-supervisor-test.py`, `nn-systems/main-gatekeeper/tests/main-gatekeeper-test.py` — so **22**. The figure was right when written and rises whenever a suite lands, which is worth knowing before anyone treats a counted measurement here as durable.
 
 **Item 2 is sharper than this issue first stated it, and the difference matters for whoever scopes it.** The body above says the runner's own git calls mean "the suite list itself can be wrong". Measured by PR 644's reviewer: `git status --porcelain` in `commit_and_state` does not merely *read* a repository that `GIT_DIR` redirects it to — it takes `.git/index.lock` there and **rewrites that repository's index**, with the victim's index mtime moving across the call. So the uncovered half is a write, not a read.
 

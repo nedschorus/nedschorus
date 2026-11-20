@@ -20,22 +20,22 @@ Times and dates in this section are UTC.
 What is on main:
 
 - `.claude/skills/explain/SKILL.md`, the skill. Its check 13 has one fresh-reader read the agent's draft reply, a cold-read-fast-read, before the reply is sent; this document calls that read the fresh read. `/explain fast` skips the fresh read.
-- `nc-systems/skills/explain/explain-how-to-write-an-identifier-instructions.md`, the skill's supporting file: the identifier table ruled on 2026-09-16, as the skill's reviews revised the table. Check 7 of the skill names the file.
-- `nc-systems/skills/explain/explain-reply-cold-read-fast-read.py`, the script that runs the fresh read, with its test under `nc-systems/skills/explain/tests/`.
+- `nn-systems/skills/explain/explain-how-to-write-an-identifier-instructions.md`, the skill's supporting file: the identifier table ruled on 2026-09-16, as the skill's reviews revised the table. Check 7 of the skill names the file.
+- `nn-systems/skills/explain/explain-reply-cold-read-fast-read.py`, the script that runs the fresh read, with its test under `nn-systems/skills/explain/tests/`.
 - The project glossary's line for /explain.
 
 The sequence the 2026-09-16 walk ruled (see "The cold read is ruled, not open", below) was followed:
 
 1. The identifier table was folded in.
-2. The skill had two cold-read-full-runs. Their cold-read-records are `explain-skill-draft-2026-09-29-2` and, after the text was restructured on 2026-09-30 from 261 lines to 203, `SKILL-explain-skill-draft-2026-09-30-2`, both under `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/`.
-3. The user read and approved the text, and ruled on both runs' findings, in the approval-walk explain-skill-draft-2026-09-29-2, which ran from 2026-09-29 to 2026-10-01; walk-minutes `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/explain-skill-draft-2026-09-29-2-minutes.md`.
+2. The skill had two cold-read-full-runs. Their cold-read-records are `explain-skill-draft-2026-09-29-2` and, after the text was restructured on 2026-09-30 from 261 lines to 203, `SKILL-explain-skill-draft-2026-09-30-2`, both under `nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/`.
+3. The user read and approved the text, and ruled on both runs' findings, in the approval-walk explain-skill-draft-2026-09-29-2, which ran from 2026-09-29 to 2026-10-01; walk-minutes `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/explain-skill-draft-2026-09-29-2-minutes.md`.
 4. The skill was installed.
 
-The walk-minutes of the 2026-09-16 walk, which the design record calls at risk, are in the log-store at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/2026-09-16-merge-lane-sixteen-open-items-small-first-minutes.md`.
+The walk-minutes of the 2026-09-16 walk, which the design record calls at risk, are in the log-store at `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/2026-09-16-merge-lane-sixteen-open-items-small-first-minutes.md`.
 
 **Agents may use the skill.** An advisor's report of 2026-09-30 proposed installing the skill so that only the user could start it, and opening it to agents once eight of its first ten uses succeeded. Both proposals rested on the agent-seat merge-lane-backlog's misreading of a remark of the user's as a user-ruling. He corrected the misreading on 2026-09-30: "I did not rule that agents cant use explain. They can't use it because it's not built yet". So the skill is installed as a normal skill that agents can start, and the ten-use trial was dropped.
 
-**One later change.** Check 7 of the skill said "that" used as a noun; the part of speech meant is pronoun, so the phrase became "that" used as a pronoun, in check 7 and in the pronoun bullet of the project's `CLAUDE.md`. The user approved both on 2026-10-01 in the approval-walk claude-md-sentences-the-pronoun-rule-catches-2026-10-01 (walk-minutes `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/claude-md-sentences-the-pronoun-rule-catches-2026-10-01-minutes.md`), and PR [CLAUDE.md: name the noun in four sentences the pronoun rule catches, and call "that" a pronoun](https://github.com/nedschorus/nedschorus/pull/932) merged both on 2026-10-02.
+**One later change.** Check 7 of the skill said "that" used as a noun; the part of speech meant is pronoun, so the phrase became "that" used as a pronoun, in check 7 and in the pronoun bullet of the project's `CLAUDE.md`. The user approved both on 2026-10-01 in the approval-walk claude-md-sentences-the-pronoun-rule-catches-2026-10-01 (walk-minutes `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/claude-md-sentences-the-pronoun-rule-catches-2026-10-01-minutes.md`), and PR [CLAUDE.md: name the noun in four sentences the pronoun rule catches, and call "that" a pronoun](https://github.com/nedschorus/nedschorus/pull/932) merged both on 2026-10-02.
 
 **Two cases not pursued.** Two cases the 2026-09-16 walk left undecided, a process ID shown as evidence and a link to one section or line, are not in the supporting file and were not pursued; either is ruled when an agent is seen getting it wrong.
 
@@ -89,7 +89,7 @@ one agent-seat's checkout on one machine:
 
 An earlier pre-revision copy of the draft does survive elsewhere, frozen into a
 cold-read-record by the fast read of 2026-09-15:
-`nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-15-explain-skill-draft/`.
+`nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/2026-09-15-explain-skill-draft/`.
 That copy is **superseded** — the revision that answered the fast read came after it. Do not
 build from it.
 
@@ -187,7 +187,7 @@ case". It has not been overruled.
 
 ## The identifier table — ruled 2026-09-16, now folded in
 
-The table is now the skill's supporting file, `nc-systems/skills/explain/explain-how-to-write-an-identifier-instructions.md`. The user ruled on its five rows that needed a judgement at walk items 13.1 through 13.3 on 2026-09-16, dropping the first and approving the other four; the remaining rows were not ruled one by one. The draft above predates the table by a day and does not contain it. Reproduced in substance, condensed, because on 2026-09-21 its only copy was untracked. Where this table and the installed file differ, the installed file is in force: the reviews of the skill changed several rows, for example a GitHub issue is written `GHI` with its title and link, not `issue #386`.
+The table is now the skill's supporting file, `nn-systems/skills/explain/explain-how-to-write-an-identifier-instructions.md`. The user ruled on its five rows that needed a judgement at walk items 13.1 through 13.3 on 2026-09-16, dropping the first and approving the other four; the remaining rows were not ruled one by one. The draft above predates the table by a day and does not contain it. Reproduced in substance, condensed, because on 2026-09-21 its only copy was untracked. Where this table and the installed file differ, the installed file is in force: the reviews of the skill changed several rows, for example a GitHub issue is written `GHI` with its title and link, not `issue #386`.
 
 His requirement, in his own words:
 

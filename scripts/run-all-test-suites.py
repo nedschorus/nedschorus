@@ -48,7 +48,7 @@ Usage:
                 SELECTIVE RUN below
   --recorded-inputs-directory
                 where each suite's recorded inputs are kept; default
-                ~/.cache/nedschorus-test-suite-recorded-inputs
+                ~/.cache/nedsnodes-test-suite-recorded-inputs
   --save-recorded-inputs-to-directory
                 where this run saves the recordings of the suites it runs;
                 default, --recorded-inputs-directory. Selection, starting
@@ -66,7 +66,7 @@ Usage:
                 where a run given --record-inputs-with-strace keeps, for each
                 suite, the files only strace saw it read, and where every
                 selective run reads them; default
-                ~/.cache/nedschorus-test-suite-recorded-inputs, where the scheduled
+                ~/.cache/nedsnodes-test-suite-recorded-inputs, where the scheduled
                 full run keeps them
   --leave-recorded-inputs-and-failure-history-unchanged
                 record no suite's inputs, save no recording and add nothing
@@ -293,7 +293,7 @@ itself: a suite or fixture that runs `git init` first takes the variables
 listed above out of its own process, through
 scripts/git-redirecting-environment-removal-test-fixture.py, which reads
 GIT_REDIRECTING_ENVIRONMENT_VARIABLES from the module this file reads it
-from, nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py, and
+from, nn-systems/general-tools/git-redirecting-environment-variables-removal-common.py, and
 scripts/test-suites-run-directly-ignore-git-redirecting-environment-test.py
 checks that each one does. That is nedschorus#639's "Next action" item 2.
 
@@ -868,7 +868,7 @@ SKIPPED_CASE_LINE_THIS_MACHINE_CANNOT_RUN = re.compile(
 # The list is the shared module's; programs that load this runner read it here too.
 _git_redirecting_removal_spec = importlib.util.spec_from_file_location(
     "git_redirecting_environment_variables_removal_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "git-redirecting-environment-variables-removal-common.py")
 git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
 _git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
@@ -876,7 +876,7 @@ GIT_REDIRECTING_ENVIRONMENT_VARIABLES = git_redirecting_removal.GIT_REDIRECTING_
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
     "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
@@ -885,7 +885,7 @@ _next_step_lines_spec.loader.exec_module(next_step_lines)
 # is launched without them and each test sets them itself.
 _attendance_check_spec = importlib.util.spec_from_file_location(
     "agent_session_unattended_by_user_check_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "agent-session-unattended-by-user-check-common.py")
 _attendance_check = importlib.util.module_from_spec(_attendance_check_spec)
 _attendance_check_spec.loader.exec_module(_attendance_check)
@@ -921,7 +921,7 @@ TEST_SANDBOX_HOME_PATHS_SHOWN_READ_ONLY = {
     ".local/bin/ruff": "the Ruff binary pip installs for this account, which `python3 -m ruff` "
                        "looks for here",
     ".gitconfig": "git's settings for this account, which suites that run git read",
-    "nedschorus-logs/seats/ned-box-helper/absence-claim-trigger-phrases-2026-10-05/out/"
+    "nedsnodes-logs/seats/ned-box-helper/absence-claim-trigger-phrases-2026-10-05/out/"
     "precision/labels.csv": "the labelled replies scripts/absence-claim-locator-reminder-"
                             "hook-test.py measures the reminder's precision against",
 }
@@ -1004,10 +1004,10 @@ SIGNAL_SANDBOX_MACOS_TRIAL_SOURCE = (
 SIGNAL_NUMBER_LIMIT = 64
 # Suites that cannot work inside the sandbox run outside it, each named in the report.
 SUITES_RUN_WITHOUT_ANY_SANDBOX = {
-    "nc-systems/cold-read/tests/cold-read-agy-cell-real-sandbox-test.py":
+    "nn-systems/cold-read/tests/cold-read-agy-cell-real-sandbox-test.py":
         "it checks that the agy cell's real bwrap keeps credential files out, "
         "and bwrap cannot start inside bwrap",
-    "nc-systems/general-tools/tests/agy-print-prompt-run-in-empty-home-sandbox-real-sandbox-test.py":
+    "nn-systems/general-tools/tests/agy-print-prompt-run-in-empty-home-sandbox-real-sandbox-test.py":
         "it checks that the program's real bwrap empties the home, "
         "and bwrap cannot start inside bwrap",
     "scripts/run-all-test-suites-cleanup-after-killed-runs-real-process-test.py":
@@ -1022,20 +1022,20 @@ SUITES_RUN_WITHOUT_ANY_SANDBOX = {
     "scripts/mac-request-from-ned-box-forced-command-test.py":
         "it runs the real ssh, which refuses its root-owned config files because "
         "inside the sandbox's user namespace they show as owned by nobody",
-    "nc-systems/general-tools/tests/agent-seat-worktree-create-with-owner-file-claude-code-worktree-create-hook-real-claude-code-test.py":
+    "nn-systems/general-tools/tests/agent-seat-worktree-create-with-owner-file-claude-code-worktree-create-hook-real-claude-code-test.py":
         "it runs the real claude, which needs the real HOME it is logged in from and an "
         "agent-seat of this machine, and the sandbox's HOME is empty",
 }
 
 SUITES_THAT_RUN_THE_REAL_CLAUDE_CLI = {
-    "nc-systems/general-tools/tests/agent-seat-worktree-create-with-owner-file-claude-code-worktree-create-hook-real-claude-code-test.py",
+    "nn-systems/general-tools/tests/agent-seat-worktree-create-with-owner-file-claude-code-worktree-create-hook-real-claude-code-test.py",
 }
 
 # Suites that must write the git directory of the repository under test, such as with
 # `git worktree add`. Their git directory is a copy-on-write overlay instead of read-only,
 # so the writes work inside the suite and vanish when it ends.
 SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY = {
-    "nc-systems/general-tools/tests/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check-test.py":
+    "nn-systems/general-tools/tests/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check-test.py":
         "it replays at two refs, each in a worktree it adds to this repository",
 }
 
@@ -1134,7 +1134,7 @@ TEST_SUITE_MEMORY_CEILING_BYTES = 4 * 10**9
 # weight competes only with its siblings. A dash in a slice's name makes a parent slice of
 # each prefix, so the dashes are escaped. A weight, not idle, so busy agent-seats slow the
 # suites without stalling them into their timeouts.
-TEST_SUITE_CGROUP_SLICE = r"nc\x2dtest\x2dsuites.slice"
+TEST_SUITE_CGROUP_SLICE = r"nn\x2dtest\x2dsuites.slice"
 TEST_SUITE_CGROUP_SLICE_CPU_WEIGHT = 10
 TEST_SUITE_MEMORY_CEILING_BYTES_OF_SUITES_THAT_NEED_MORE = {
     "scripts/scheduled-full-test-run-of-main-test.py": 24 * 10**9,
@@ -1170,7 +1170,7 @@ REPORT_FILE_NAME = "test-run-report.txt"
 SUITES_RUN_AT_ONCE_WHEN_CORE_COUNT_UNKNOWN = 4
 
 DEFAULT_RECORDED_INPUTS_DIRECTORY = (
-    Path.home() / ".cache" / "nedschorus-test-suite-recorded-inputs")
+    Path.home() / ".cache" / "nedsnodes-test-suite-recorded-inputs")
 # Bump when the recording format changes so older recordings trigger a fresh run.
 RECORDED_INPUTS_FORMAT_VERSION = 5
 RECORDED_INPUTS_LOG_VARIABLE = "RUN_ALL_TEST_SUITES_RECORDED_INPUTS_LOG"
@@ -2731,7 +2731,7 @@ def psutil_imported_or_why_not():
             f"this program needs on Linux to read the machine's CPU use and available memory "
             f"before it starts each suite.\n"
             f"Install the pinned libraries, psutil among them, by running "
-            f"`python3 nc-systems/general-tools/python-libraries-pinned-requirements-check-and-install.py`, "
+            f"`python3 nn-systems/general-tools/python-libraries-pinned-requirements-check-and-install.py`, "
             f"then run this again.\n"
             f"If that install fails, tell the user what it printed.")
     return psutil, None
@@ -4315,7 +4315,7 @@ def recorded_at_time_or_none(text):
         return None
 
 
-# Tool-messages-to-agent: docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md
+# Tool-messages-to-agent: docs/nedsnodes-wiki/nedsnodes-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md
 def suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
         suites, kept_by_suite, directory, now, chosen):
     """A line saying how many suites' files only strace saw are missing, too old to trust, or
@@ -4377,7 +4377,7 @@ def suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
             f"list in the last {hours} hours for {len(missing) + len(old)} of {len(recorded)} "
             f"suites, so selective test runs there can miss a suite whose git or shell reads "
             f"changed. The scheduled run's records are in "
-            f"nedlern@ned-box:/home/nedlern/nedschorus-logs/scheduled-full-test-runs-of-main/ned-box/.\" "
+            f"nedlern@ned-box:/home/nedlern/nedsnodes-logs/scheduled-full-test-runs-of-main/ned-box/.\" "
             f"A subagent passes the quoted text to the agent that dispatched it instead.")
 
 

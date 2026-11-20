@@ -2,7 +2,7 @@
 """Every program that removes the variables that redirect git removes all six.
 
 Each case sets all six variables listed in
-nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py,
+nn-systems/general-tools/git-redirecting-environment-variables-removal-common.py,
 then makes one caller run git, or the program it starts, and records which of
 the six reached it. A stand-in `git`, first on PATH, records the environment
 it was started with and runs no real git, so no case can reach the repository
@@ -110,10 +110,10 @@ with tempfile.TemporaryDirectory(prefix="git-redirecting-removal-") as scratch:
                      "scripts/save-uncommitted-scratch-worktrees-before-reboot.py")
         locator = load("locate_file_copies_across_machines",
                        "scripts/locate-file-copies-across-machines.py")
-        supervisor = load("handoff_supervisor", "nc-systems/handoff/handoff-supervisor.py")
-        fast_read = load("cold_read_fast_read", "nc-systems/cold-read/cold-read-fast-read.py")
+        supervisor = load("handoff_supervisor", "nn-systems/handoff/handoff-supervisor.py")
+        fast_read = load("cold_read_fast_read", "nn-systems/cold-read/cold-read-fast-read.py")
         scratch_fixture = load("cold_read_scratch_repository_test_fixture",
-                               "nc-systems/cold-read/tests/cold-read-scratch-repository-test-fixture.py")
+                               "nn-systems/cold-read/tests/cold-read-scratch-repository-test-fixture.py")
 
         set_the_six()
         left = leaked_from(runner.environment_without_git_redirecting_variables())
@@ -144,19 +144,19 @@ with tempfile.TemporaryDirectory(prefix="git-redirecting-removal-") as scratch:
         if seen is not None:
             check(case, seen == [], seen)
 
-        case = ("nc-systems/handoff/handoff-supervisor.py starts the worktree cleaner "
+        case = ("nn-systems/handoff/handoff-supervisor.py starts the worktree cleaner "
                 "without any of the six")
         supervisor.CLEAN_WORKTREES_PATH = stand_in_cleaner
         seen = recorded_leaks(case, lambda: supervisor.remove_finished_worktrees_at_handoff(target_directory))
         if seen is not None:
             check(case, seen == [], seen)
 
-        case = "nc-systems/cold-read/cold-read-fast-read.py runs git without any of the six"
+        case = "nn-systems/cold-read/cold-read-fast-read.py runs git without any of the six"
         seen = recorded_leaks(case, lambda: fast_read.checkout_root_holding(target_directory / "a.md"))
         if seen is not None:
             check(case, seen == [], seen)
 
-        case = ("nc-systems/cold-read/tests/cold-read-scratch-repository-test-fixture.py "
+        case = ("nn-systems/cold-read/tests/cold-read-scratch-repository-test-fixture.py "
                 "runs git without any of the six")
         seen = recorded_leaks(case, lambda: scratch_fixture.git(target_directory, "status"))
         if seen is not None:
