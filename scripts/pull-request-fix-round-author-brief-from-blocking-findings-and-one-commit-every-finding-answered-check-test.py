@@ -2131,7 +2131,7 @@ def architecture_overview_cases(root, repository, _base, _frozen_head):
           "code and the claim check",
           code == 1 and "Not pushed yet" not in out and runner_calls(root) == []
           and f"{DEMO_OVERVIEW} names commit {described}, and later commits of the pull request change code the "
-          "overview describes: nc-systems/demo/demo.py." in err
+          "overview describes: nn-systems/demo/demo.py." in err
           and f"the overview describes at the round's commit {fix[:12]}. scripts/pull-request-review-plan.py" in err
           and "set each one's **Checked against:** line to name the fix commit's full id" in err
           and f"overview-write-architecture-overview-claim-check-by-fresh-agent.py --overview {DEMO_OVERVIEW}" in err
@@ -2200,7 +2200,7 @@ def fix_commit_range_two_commit_round_cases(_root, repository, _base, _frozen_he
     Parent lists that sort before or after the expected list, without being it, tell an ordering comparison
     from an equality one."""
     program = load_program()
-    (repository / "docs" / "nedschorus-wiki").mkdir(parents=True)
+    (repository / "docs" / "nedsnodes-wiki").mkdir(parents=True)
     parent = commit_file(repository, DEMO_OVERVIEW, demo_overview_text("0" * 40), "the frozen-head's parent")
     # The frozen-head's id must sort after its parent's, so that a merge whose first parent is that parent
     # sorts before [frozen_head].
