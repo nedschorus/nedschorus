@@ -698,7 +698,7 @@ result = seat.run()
 check("a held task's pull request whose state gh cannot give: reported with gh's failure, "
       "exit 1, nothing raised or recorded as raised",
       reported(result, "This hook could not ask GitHub whether PR 156 is merged, so no task "
-                       "waiting on it was raised: `gh pr view 156 --repo nedschorus/nedschorus "
+                       "waiting on it was raised: `gh pr view 156 --repo nedsnodes/nedsnodes "
                        "--json state,title,url` exited 1: gh stand-in: failing on purpose.")
       and json.loads(seat.state_path.read_text())["raised"] == {}, result)
 seat.respond({"pr:156": {"state": "CLOSED", "title": "T", "url": "https://x/156"}})
