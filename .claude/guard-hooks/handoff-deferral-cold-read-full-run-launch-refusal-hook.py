@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Refuse a cold-read-full-run while this agent-session's session-handoff is deferred.
 
-A PreToolUse hook on Bash. A command that runs nc-systems/cold-read/cold-read-grid.py starts
+A PreToolUse hook on Bash. A command that runs nn-systems/cold-read/cold-read-grid.py starts
 a cold-read-full-run, which outlasts a handoff-deferral. While the agent-session's
 handoff-deferred marker file exists, this hook refuses such a command, appends it with its
 working directory to the agent-session's file of refused commands, from which the handoff writer
@@ -45,13 +45,13 @@ with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(
         __file__, __name__ == "__main__"):
     _shell_reader_spec = importlib.util.spec_from_file_location(
         "shell_command_tree_sitter_bash_reader_common",
-        REPOSITORY_ROOT / "nc-systems" / "general-tools" / "shell-command-tree-sitter-bash-reader-common.py")
+        REPOSITORY_ROOT / "nn-systems" / "general-tools" / "shell-command-tree-sitter-bash-reader-common.py")
     shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
     _shell_reader_spec.loader.exec_module(shell_reader)
 
     _deferred_marker_file_spec = importlib.util.spec_from_file_location(
         "handoff_deferred_marker_and_refused_commands_files_common",
-        REPOSITORY_ROOT / "nc-systems" / "handoff" / "handoff-deferred-marker-and-refused-commands-files-common.py")
+        REPOSITORY_ROOT / "nn-systems" / "handoff" / "handoff-deferred-marker-and-refused-commands-files-common.py")
     handoff_deferred_marker_and_refused_commands_files_common = importlib.util.module_from_spec(_deferred_marker_file_spec)
     _deferred_marker_file_spec.loader.exec_module(handoff_deferred_marker_and_refused_commands_files_common)
 is_program = shell_reader.is_program
@@ -68,7 +68,7 @@ COLD_READ_FULL_RUN_REFUSED_AND_SAVED_REASON = (
     "[rule bash-guard-cold-read-full-run-during-handoff-deferral] "
     "This cold-read-full-run would outlast the handoff-deferral, so this hook refused it and "
     "saved the command for your successor, who runs it after the session-handoff. The handoff "
-    "writer script, nc-systems/handoff/handoff-write-and-check-supervisor.py, adds the command "
+    "writer script, nn-systems/handoff/handoff-write-and-check-supervisor.py, adds the command "
     "to your session-handoff, so you need not. Report the cold-read-full-run to whoever asked "
     "for it, the user or the agent that dispatched you, as put off, not failed."
 )
@@ -101,7 +101,7 @@ MARKER_LOOKUP_FAILED_CONTEXT = (
 
 PARSER_UNAVAILABLE_NEXT_STEP_TEMPLATE = (
     "This agent-session's session-handoff is deferred, and this command names "
-    "nc-systems/cold-read/cold-read-grid.py.\n"
+    "nn-systems/cold-read/cold-read-grid.py.\n"
     "If the command starts a cold-read-full-run in the background, it would outlast the "
     "deferral: stop it with the TaskStop tool, add a task to your task list (the TaskCreate "
     "tool) for your successor holding the directory {working_directory} and the command "

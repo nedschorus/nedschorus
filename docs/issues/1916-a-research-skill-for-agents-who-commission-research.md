@@ -4,7 +4,7 @@ issue: "[A research skill for agents who commission research whose numbers reach
 
 # A research skill for agents who commission research whose numbers reach the user
 
-This GHI proposes a project skill that an agent follows whenever it commissions research and the figures the research produces will reach the user. The research may be on the session dialogs at `nedlern@ned-box:/home/nedlern/nedschorus-logs/session-dialogs/`, on the repository, or on the web, and may be done by Codex or by Claude subagents. The skill would say how to write the task given to the researcher, how the researcher reports its figures, and how the commissioning agent carries those figures, with their limits, into an approval-walk item or a message to the user. Nothing is designed yet. The user asked for this GHI on 2026-10-24: "There probably should be a generic research skill. And if you want to file a GHI to do that, we'll get to it someday. You can put your notes into it."
+This GHI proposes a project skill that an agent follows whenever it commissions research and the figures the research produces will reach the user. The research may be on the session dialogs at `nedlern@ned-box:/home/nedlern/nedsnodes-logs/session-dialogs/`, on the repository, or on the web, and may be done by Codex or by Claude subagents. The skill would say how to write the task given to the researcher, how the researcher reports its figures, and how the commissioning agent carries those figures, with their limits, into an approval-walk item or a message to the user. Nothing is designed yet. The user asked for this GHI on 2026-10-24: "There probably should be a generic research skill. And if you want to file a GHI to do that, we'll get to it someday. You can put your notes into it."
 
 ## Why: figures from small samples were shown to the user as firm
 
@@ -18,7 +18,7 @@ The user called the data he had been shown "very deceptive", and asked how to av
 
 ## Sources
 
-- The five reports are in `nedlern@ned-box:/home/nedlern/nedschorus-logs/analysis/absolute-word-warn-categories-2026-10-24/`: `codex-absolute-word-warn-categories-report-2026-10-24.md`, `codex-absolute-word-hook-messages-report-2026-10-24.md`, `codex-absolute-word-constructs-report-2026-10-24.md`, `codex-user-words-that-confuse-agents-report-2026-10-24.md` and `codex-misquoted-user-rulings-report-2026-10-24.md`. The directory also holds each Codex invocation's log.
+- The five reports are in `nedlern@ned-box:/home/nedlern/nedsnodes-logs/analysis/absolute-word-warn-categories-2026-10-24/`: `codex-absolute-word-warn-categories-report-2026-10-24.md`, `codex-absolute-word-hook-messages-report-2026-10-24.md`, `codex-absolute-word-constructs-report-2026-10-24.md`, `codex-user-words-that-confuse-agents-report-2026-10-24.md` and `codex-misquoted-user-rulings-report-2026-10-24.md`. The directory also holds each Codex invocation's log.
 - The approval-walk's walk-document and walk-minutes are in the agent-seat ned-box-helper's working tree, not in the repository: `nedlern@ned-box:/home/nedlern/agents/ned-box-helper/docs/walk/ned-box-helper-combined-open-items-2026-10-22.md` and `nedlern@ned-box:/home/nedlern/agents/ned-box-helper/docs/walk/ned-box-helper-combined-open-items-2026-10-22-minutes.md`. Lines 163 to 199 of the walk-minutes record each revision of items 6.1 to 6.3 and the user's words quoted above.
 
 ## Related work

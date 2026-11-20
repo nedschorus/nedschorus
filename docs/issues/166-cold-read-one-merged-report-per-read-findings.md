@@ -4,7 +4,7 @@ issue: "[cold-read: one merged report per read — findings grouped by passage, 
 
 # cold-read: one merged report per read — findings grouped by passage, with each cell's wording and the count of cells that raised it
 
-**Correction, 2026-10-01.** The cold-read-grid, `nc-systems/cold-read/cold-read-grid.py`, now runs six cells, four defect-hunt cells and two terminology cells, and no restate cell, which was cut on 2026-08-30; so where this page says eight cells or eight reports the count today is six, and point 5 under What is wanted, the restate section, applies only if restate cells return.
+**Correction, 2026-10-01.** The cold-read-grid, `nn-systems/cold-read/cold-read-grid.py`, now runs six cells, four defect-hunt cells and two terminology cells, and no restate cell, which was cut on 2026-08-30; so where this page says eight cells or eight reports the count today is six, and point 5 under What is wanted, the restate section, applies only if restate cells return.
 
 ## Problem
 
