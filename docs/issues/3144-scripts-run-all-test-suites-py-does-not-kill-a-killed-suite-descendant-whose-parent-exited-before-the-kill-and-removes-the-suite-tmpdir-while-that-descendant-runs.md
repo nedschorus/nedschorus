@@ -6,7 +6,7 @@ issue: "[`scripts/run-all-test-suites.py` does not kill a killed suite's descend
 
 ## Reproduction
 
-On ned-box, on main at `8f38e5740`, this was run from the directory `/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers/ghi-reproductions-2026-11-11/`, which holds both files named below:
+On ned-box, on main at `8f38e5740`, this was run from the directory `/home/nedlern/nedsnodes-logs/seats/merge-lane-2/merge-helpers/ghi-reproductions-2026-11-11/`, which holds both files named below:
 
 ```
 python3 run-all-test-suites-orphaned-descendant-reproduction.py <a checkout of main> orphaned-descendant-suite-top <an empty log directory>
@@ -30,7 +30,7 @@ The result carried `"timeout"`, and its `output_note` said only that a process s
 - `ps -eo pid,ppid,sid,etimes,cmd` showed the grandchild `sleep 60` still running, with parent process 1;
 - the grandchild's environment held `TMPDIR=/tmp/rts-bvezs5v1`, and `ls -d /tmp/rts-bvezs5v1` answered `No such file or directory`: the runner had removed the suite's temporary directory while the grandchild was running.
 
-The Codex review cell reproduced the same with real processes while reviewing pull request [3093](https://github.com/nedschorus/nedschorus/pull/3093); its report, first finding, is `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers/cx/pr3093-17dc0f17/codex-code-review-report.md`.
+The Codex review cell reproduced the same with real processes while reviewing pull request [3093](https://github.com/nedschorus/nedschorus/pull/3093); its report, first finding, is `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/merge-lane-2/merge-helpers/cx/pr3093-17dc0f17/codex-code-review-report.md`.
 
 ## What is wrong
 

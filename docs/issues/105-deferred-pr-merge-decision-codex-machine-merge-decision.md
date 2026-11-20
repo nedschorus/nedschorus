@@ -26,7 +26,7 @@ Ruled 2026-08-19: build the small proven piece now (`code-review-codex-cell.py`,
 
 ## Outcome
 
-Closed as not planned on 2026-09-30, by the user's "y" to item 5 of the walk eight-deferrals-with-no-trigger-2026-09-29, which took eight deferred issues whose revisit triggers nothing was watching (minutes: `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/eight-deferrals-with-no-trigger-2026-09-29-minutes.md`).
+Closed as not planned on 2026-09-30, by the user's "y" to item 5 of the walk eight-deferrals-with-no-trigger-2026-09-29, which took eight deferred issues whose revisit triggers nothing was watching (minutes: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/eight-deferrals-with-no-trigger-2026-09-29-minutes.md`).
 
 **The revisit trigger fired.** The Codex code-review cell has run on dozens of merges: merge-lane-2's merge reviews quote the Codex review cell's verdict on 38 pull requests merged between 2026-09-28 and 2026-09-30 alone.
 
@@ -38,7 +38,7 @@ Closed as not planned on 2026-09-30, by the user's "y" to item 5 of the walk eig
 
 ## Related, not the same matter
 
-- GHI [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3) — the git-gatekeeper is this component's eventual consumer: the gate that can review, or refuse, what passes through it.
+- GHI [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3) — the git-gatekeeper is this component's eventual consumer: the gate that can review, or refuse, what passes through it.
 - GHI [run-agent: one CLI to invoke a Claude or Codex agent headlessly from any caller (Python, shell, either runtime)](https://github.com/nedschorus/nedschorus/issues/41) — run-agent, the headless invocation layer this could ride on.
 
 Search receipt for filing new rather than amending: `gh issue list --state all --limit 100 --search "review"` and `--search "codex"` (2026-08-19) returned no issue covering a machine merge-decision or Codex PR-review component; GHI [nedsmessenger is deferred until nedschorus can build it; where its early context lives](https://github.com/nedschorus/nedschorus/issues/80) is the precedent shape for deferral issues.

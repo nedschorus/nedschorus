@@ -235,13 +235,13 @@ def test_named_scripts_parsing():
         "Run scripts/a.py --x --y scripts/b.sh --z | grep --count\n"
         "Or c.py --c1 d.py --d1 e.py --e1\n"
         "Then scripts/a.py --x --w.\n"
-        "Read nc-systems/cold-read/cold-read-claude-cell.py first.\n"
+        "Read nn-systems/cold-read/cold-read-claude-cell.py first.\n"
         "Ignore /tmp/results/scripts__example-test.py.log --old, g.py-backup and h.pyc, and run f.py.\n"
         "Skip /tmp/results/example.py..log --x and /tmp/results/example.py...log, run m.py... then n.py...")
     check("parsing: flags stop at the next path and at a pipe, and repeat mentions merge",
           scripts == {"scripts/a.py": ["--x", "--y", "--w"], "scripts/b.sh": ["--z"],
                       "c.py": ["--c1"], "d.py": ["--d1"], "e.py": ["--e1"],
-                      "nc-systems/cold-read/cold-read-claude-cell.py": [], "f.py": [], "m.py": [], "n.py": []},
+                      "nn-systems/cold-read/cold-read-claude-cell.py": [], "f.py": [], "m.py": [], "n.py": []},
           scripts)
     check("parsing: a relative path is resolved from the checkout's top directory",
           ask_two_fresh_agents.named_script_existence_and_flags_in_help_check_report_lines("scripts/no-such-script-anywhere.py", [])
