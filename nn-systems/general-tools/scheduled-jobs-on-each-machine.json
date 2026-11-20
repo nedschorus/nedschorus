@@ -89,7 +89,7 @@
     {
       "name": "handoff-agent-crash-watcher",
       "owner": "fleet-restart-at-login",
-      "program": "nc-systems/handoff/handoff-agent-crash-watcher.py",
+      "program": "nn-systems/handoff/handoff-agent-crash-watcher.py",
       "arguments": [],
       "output": ".claude/handoff-agent-crash-watcher.log",
       "on": {
@@ -109,7 +109,7 @@
     {
       "name": "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher",
       "owner": "MD-skills",
-      "program": "nc-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py",
+      "program": "nn-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py",
       "arguments": [],
       "output": ".claude/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.log",
       "on": {
@@ -120,7 +120,7 @@
     {
       "name": "uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner",
       "owner": "MD-skills",
-      "program": "nc-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py",
+      "program": "nn-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py",
       "arguments": [],
       "output": ".claude/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.log",
       "on": {
@@ -135,7 +135,7 @@
     {
       "name": "guarded-file-versions-and-approvals-store-removed-checkout-copies-prune",
       "owner": "reboot-test",
-      "program": "nc-systems/general-tools/guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.py",
+      "program": "nn-systems/general-tools/guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.py",
       "arguments": [],
       "output": ".claude/guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.log",
       "on": {
@@ -148,9 +148,9 @@
       }
     },
     {
-      "name": "nc-shared-database-nightly-backup-with-integrity-check",
+      "name": "nn-shared-database-nightly-backup-with-integrity-check",
       "owner": "fleet-restart-at-login",
-      "program": "nc-systems/nc-shared-database/nc-shared-database-nightly-backup-with-integrity-check.py",
+      "program": "nn-systems/nn-shared-database/nn-shared-database-nightly-backup-with-integrity-check.py",
       "arguments": [],
       "output": ".claude/nn-shared-database-nightly-backup-with-integrity-check.log",
       "on": {
@@ -158,9 +158,9 @@
       }
     },
     {
-      "name": "nc-shared-database-newest-backup-copy-to-mac",
+      "name": "nn-shared-database-newest-backup-copy-to-mac",
       "owner": "fleet-restart-at-login",
-      "program": "nc-systems/nc-shared-database/nc-shared-database-newest-backup-copy-to-mac.py",
+      "program": "nn-systems/nn-shared-database/nn-shared-database-newest-backup-copy-to-mac.py",
       "arguments": [],
       "output": ".claude/nn-shared-database-newest-backup-copy-to-mac.log",
       "on": {
@@ -174,7 +174,7 @@
     {
       "name": "claude-code-temp-folders-of-exited-agent-sessions-delete",
       "owner": "cold-read-improvement",
-      "program": "nc-systems/general-tools/claude-code-temp-folders-of-exited-agent-sessions-delete.py",
+      "program": "nn-systems/general-tools/claude-code-temp-folders-of-exited-agent-sessions-delete.py",
       "arguments": ["--then-tmp-and-reviewer-scratch-folders-unchanged-a-day-and-unused-delete"],
       "output": ".claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log",
       "on": {
@@ -194,7 +194,7 @@
     {
       "name": "cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write",
       "owner": "cold-read-research",
-      "program": "nc-systems/cold-read/cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write.py",
+      "program": "nn-systems/cold-read/cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write.py",
       "arguments": [],
       "output": ".claude/cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write.log",
       "on": {
@@ -204,7 +204,7 @@
     {
       "name": "claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report",
       "owner": "reboot-test",
-      "program": "nc-systems/general-tools/claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report.py",
+      "program": "nn-systems/general-tools/claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report.py",
       "arguments": [],
       "output": ".claude/claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report.log",
       "on": {
