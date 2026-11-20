@@ -83,8 +83,9 @@ WORDS
 )\""""
 
 FILE_HEADING = "The emergency-stop file:"
-UNREADABLE_LINE = ("The emergency-stop file {path} cannot be read: {error}. It is treated as an emergency stop "
-                   "in force. Tell the user its path and this error; only he repairs or moves that file.")
+UNREADABLE_LINE = ("The emergency-stop file {path} cannot be read: {error}. Because that file exists, this hook "
+                   "treats an emergency stop as in force, though it cannot show the stop's text.\nTell the user "
+                   "the file's path and this error, and leave the file as it is: only the user repairs or moves it.")
 UNKNOWN_NOTE = ("emergency-stop state unknown: ned-box's log-store cannot be read ({error}). "
                 "This hook refuses nothing while it cannot read the log-store, so carry on with your work, "
                 "and tell the user that this machine cannot reach ned-box's log-store. "

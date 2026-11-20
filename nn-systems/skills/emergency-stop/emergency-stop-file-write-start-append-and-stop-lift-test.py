@@ -133,41 +133,238 @@ def main():
               and message == f"started the emergency stop {skew_state.path}"
               and "words: clock behind" in skew_state.text, (message, skew_state))
 
+        PP = program.PROGRAM_PATH
+        start_rerun = f"python3 {PP} start --words stop"
+
+        def reads_in_order(*answers):
+            calls = []
+
+            def read(f):
+                calls.append(f)
+                answer = answers[len(calls) - 1] if len(calls) <= len(answers) else None
+                return answer(f) if answer else _real_read_state(f)
+            return read
+
+        def run_start_with_reads(target, read_state):
+            program.common.read_state = read_state
+            program.now_utc = lambda: datetime(2026, 11, 14, 12, 0, 0, tzinfo=timezone.utc)
+            try:
+                return run(target, "start", "--words", "stop")
+            finally:
+                program.common.read_state = _real_read_state
+                program.now_utc = _real_now_utc
+
+        def both_tries_failed(holds, clause):
+            return ("FAILED: start wrote its emergency stop and read the emergency-stop folder back, twice, and "
+                    "neither time found its stop in force, so it deleted the stop files it wrote. A read of the "
+                    f"folder now finds that {holds}. {clause}\nTell the user this whole message.\n"
+                    f"Run start again only if the user says to: {start_rerun}\n")
+
+        def failed_write(command, target, holds, clause, last_line, error="[Errno 28] No space left on device"):
+            return (f"FAILED: {command} could not finish writing to the emergency-stop folder {target}: {error}. "
+                    f"A read of the folder now finds that {holds}. {clause}\nTell the user this whole message.\n"
+                    f"{last_line}\n")
+
+        not_refused = "So no emergency stop is in force, and pushes and merges are not refused."
+        refused = "So an emergency stop counts as in force, and pushes and merges are refused."
+
         written_but_lifted = root / "read-back" / "emergency-stop"
         written_but_lifted.parent.mkdir()
-        program.common.read_state = lambda f: (common.NoStop(f) if not f.exists() or not any(f.iterdir())
-                                               else common.Lifted(f / "2099-01-01T00-00-00Z.md", "#emergency_stop_lifted x"))
-        program.now_utc = lambda: datetime(2026, 11, 14, 12, 0, 0, tzinfo=timezone.utc)
-        try:
-            status, out = run(written_but_lifted, "start", "--words", "stop")
-        finally:
-            program.common.read_state = _real_read_state
-            program.now_utc = _real_now_utc
-        check("start whose stop is not the one in force when read back: FAILED, and says pushes are not refused",
-              status == 1 and out.startswith("FAILED") and "not the one in force" in out
-              and "Lifted" in out and "pushes and merges are not refused" in out, out)
+        status, out = run_start_with_reads(written_but_lifted, lambda f: (
+            common.NoStop(f) if not f.exists() or not any(f.iterdir())
+            else common.Lifted(f / "2099-01-01T00-00-00Z.md", "#emergency_stop_lifted x")))
+        check("start whose stop is twice not the one in force when read back: deletes both stop files it wrote, "
+              "and FAILED saying what the folder now holds",
+              status == 1 and out == both_tries_failed(f"no emergency-stop file in {written_but_lifted} is in force",
+                                                        not_refused)
+              and list(written_but_lifted.iterdir()) == [], (out, list(written_but_lifted.iterdir())))
+
+        first_read_back_fails = root / "read-back-once" / "emergency-stop"
+        first_read_back_fails.parent.mkdir()
+        status, out = run_start_with_reads(first_read_back_fails, reads_in_order(common.NoStop, common.NoStop))
+        own_file = first_read_back_fails / "2026-11-14T12-00-00Z.md"
+        own_state = common.read_state(first_read_back_fails)
+        check("start whose first read-back fails and whose second try appends to the first try's file: "
+              "keeps that file, which is in force",
+              status == 0 and out == f"added to the emergency stop in force, {own_file}\n"
+              and isinstance(own_state, common.InForce) and own_state.path == own_file
+              and "words added by prime-intellect: stop" in own_state.text, (out, own_state))
+
+        read_back_unreadable = root / "read-back-unreadable" / "emergency-stop"
+        read_back_unreadable.parent.mkdir()
+        old_lifted = read_back_unreadable / "2099-01-01T00-00-00Z.md"
+        unreadable_answer = lambda f: common.Unreadable(old_lifted, "bad bytes")
+        status, out = run_start_with_reads(read_back_unreadable, reads_in_order(
+            common.NoStop, lambda f: common.Lifted(old_lifted, "#emergency_stop_lifted x"), common.NoStop,
+            unreadable_answer, unreadable_answer))
+        check("start whose second read-back finds an unreadable file: deletes its stop file, FAILED, "
+              "and says pushes are refused",
+              status == 1 and out == both_tries_failed(
+                  f"the newest emergency-stop file, {old_lifted}, cannot be read: bad bytes", refused)
+              and list(read_back_unreadable.iterdir()) == [], (out, list(read_back_unreadable.iterdir())))
+
+        second_try_unreadable = root / "second-try-unreadable" / "emergency-stop"
+        second_try_unreadable.parent.mkdir()
+        newer_unreadable = second_try_unreadable / "2099-01-01T00-00-00Z.md"
+        newer_unreadable_answer = lambda f: common.Unreadable(newer_unreadable, "bad bytes")
+        status, out = run_start_with_reads(second_try_unreadable, reads_in_order(
+            common.NoStop, lambda f: common.Lifted(newer_unreadable, "#emergency_stop_lifted x"),
+            newer_unreadable_answer, newer_unreadable_answer))
+        check("start whose second try finds the newest file unreadable: deletes the first try's stop file, "
+              "and FAILED saying, from a fresh read, that the unreadable file keeps pushes refused",
+              status == 1 and out == both_tries_failed(
+                  f"the newest emergency-stop file, {newer_unreadable}, cannot be read: bad bytes", refused)
+              and list(second_try_unreadable.iterdir()) == [], (out, list(second_try_unreadable.iterdir())))
+
+        nothing_written = root / "unreadable-before-any-write" / "emergency-stop"
+        nothing_written.parent.mkdir()
+        status, out = run_start_with_reads(nothing_written, reads_in_order(
+            lambda f: common.Unreadable(nothing_written / "2099-01-01T00-00-00Z.md", "bad bytes")))
+        check("start that finds the newest file unreadable before writing anything: FAILED saying it wrote no "
+              "emergency-stop file",
+              status == 1 and out.startswith("FAILED: start wrote no emergency-stop file: the newest "
+                                             "emergency-stop file, ") and not nothing_written.exists(), out)
+
+        own_unreadable = root / "own-file-unreadable" / "emergency-stop"
+        own_unreadable.parent.mkdir()
+        own_written = own_unreadable / "2026-11-14T12-00-00Z.md"
+        own_unreadable_answer = lambda f: common.Unreadable(own_written, "[Errno 5] Input/output error")
+        status, out = run_start_with_reads(own_unreadable, reads_in_order(
+            common.NoStop, own_unreadable_answer, own_unreadable_answer))
+        check("start whose own stop file reads back unreadable twice: deletes it, and FAILED saying from a fresh "
+              "read that nothing is refused, not to leave the deleted file",
+              status == 1 and out == both_tries_failed(f"no emergency-stop file in {own_unreadable} is in force",
+                                                        not_refused)
+              and list(own_unreadable.iterdir()) == [], (out, list(own_unreadable.iterdir())))
+
+        appended_then_lifted = root / "appended-then-lifted" / "emergency-stop"
+        appended_then_lifted.parent.mkdir()
+        first_file = appended_then_lifted / "2026-11-14T12-00-00Z.md"
+
+        def other_seat_appends_then_user_lifts(f):
+            program.append(first_file, "2026-11-14T12:00:00+00:00 evidence added by md-skills: main is red")
+            program.append(first_file, "#emergency_stop_lifted all clear")
+            return common.Lifted(first_file, "#emergency_stop_lifted all clear")
+
+        status, out = run_start_with_reads(appended_then_lifted, reads_in_order(
+            common.NoStop, other_seat_appends_then_user_lifts))
+        newer_state = common.read_state(appended_then_lifted)
+        check("start whose first stop file another agent-seat added to before the read-back: the retry keeps "
+              "that file, with the other agent-seat's words and the lift, and says so",
+              status == 0 and isinstance(newer_state, common.InForce) and newer_state.path != first_file
+              and out == (f"started the emergency stop {newer_state.path}; it kept {first_file}, the stop file "
+                          "its first try wrote, because another agent-seat added to it after start wrote it\n")
+              and "evidence added by md-skills: main is red" in first_file.read_text(), (out, newer_state))
+
+        mount = root / "mount-lost"
+        lost_folder = mount / "emergency-stop"
+        mount.mkdir()
+        moved_mount = root / "mount-lost-moved"
+
+        def mount_lost(f):
+            mount.rename(moved_mount)
+            return _real_read_state(f)
+
+        status, out = run_start_with_reads(lost_folder, reads_in_order(common.NoStop, mount_lost))
+        lost_file = lost_folder / "2026-11-14T12-00-00Z.md"
+        check("start whose folder becomes unreachable after its first write: the delete fails, so FAILED says "
+              "the write could not finish, not that the stop files were deleted",
+              status == 1 and out == failed_write(
+                  "start", lost_folder, f"the folder {lost_folder} cannot be reached: {mount} does not exist or "
+                  "cannot be reached", "So no one on this machine can tell whether an emergency stop is in force, "
+                  "and pushes and merges are not refused here.",
+                  f"Run this command again only if the user says to: {start_rerun}",
+                  error=f"[Errno 2] No such file or directory: '{lost_file}'")
+              and (moved_mount / "emergency-stop" / lost_file.name).exists(), out)
+
+        same_second_other = root / "read-back-same-second" / "emergency-stop"
+        same_second_other.mkdir(parents=True)
+        others_file = same_second_other / "2026-11-14T12-00-00Z.md"
+        others_file.write_text("# another agent-seat's stop\n")
+        lifted_answer = lambda f: common.Lifted(others_file, "#emergency_stop_lifted x")
+        status, out = run_start_with_reads(same_second_other, reads_in_order(
+            common.NoStop, lifted_answer, common.NoStop, lifted_answer))
+        check("start that only appended to another agent-seat's stop file, both tries failing: that file is kept",
+              status == 1 and out == both_tries_failed(f"the emergency-stop file in force is {others_file}", refused)
+              and sorted(p.name for p in same_second_other.iterdir()) == [others_file.name], out)
 
         another_in_force = root / "read-back-another" / "emergency-stop"
-        another_in_force.parent.mkdir()
+        another_in_force.mkdir(parents=True)
         other_file = another_in_force / "2099-01-01T00-00-00Z.md"
-        program.common.read_state = lambda f: (common.NoStop(f) if not f.exists() or not any(f.iterdir())
-                                               else common.InForce(other_file, "someone else's stop\n"))
-        program.now_utc = lambda: datetime(2026, 11, 14, 12, 0, 0, tzinfo=timezone.utc)
-        try:
-            status, out = run(another_in_force, "start", "--words", "stop")
-        finally:
-            program.common.read_state = _real_read_state
-            program.now_utc = _real_now_utc
-        check("start whose read-back finds another stop file in force: FAILED, naming that file",
-              status == 1 and out.startswith("FAILED") and "not the one in force" in out
-              and "InForce" in out and str(other_file) in out, out)
+        other_file.write_text("# someone else's stop\n")
+        status, out = run_start_with_reads(another_in_force, reads_in_order(common.NoStop))
+        check("start whose first read-back finds another stop in force and whose second try adds to it: "
+              "deletes the first try's stop file",
+              status == 0 and out == f"added to the emergency stop in force, {other_file}\n"
+              and sorted(p.name for p in another_in_force.iterdir()) == [other_file.name]
+              and "words added by prime-intellect: stop" in other_file.read_text(), out)
 
-        status, out = run(folder, "start", "--words", "again", agent_seat=None)
-        check("no agent-seat known: FAILED", status == 1 and "GIT_AUTHOR_NAME" in out, out)
+        no_seat_message = ("FAILED: start wrote nothing: no agent-seat is known, because GIT_AUTHOR_NAME is unset or "
+                           "empty.\nRun this command, with your agent-seat's name in place of <your agent-seat "
+                           f"name>:\npython3 {PP} --as-agent-seat <your agent-seat name> start --words 'again now'\n")
+        status, out = run(folder, "start", "--words", "again now", agent_seat=None)
+        check("no agent-seat known: FAILED, printing the command to run with a name placeholder",
+              status == 1 and out == no_seat_message, out)
+        status, out = run(folder, "--as-agent-seat", "", "start", "--words", "again now", agent_seat=None)
+        check("empty --as-agent-seat: FAILED, and the command printed carries the option once",
+              status == 1 and out == no_seat_message, out)
+
+        unreachable_for_lift = root / "gone-for-lift" / "emergency-stop"
+        unreachable_error = common.read_state(unreachable_for_lift).error
+        status, out = run(unreachable_for_lift, "lift", "--words", "all clear")
+        check("lift with unreachable folder: FAILED, the folder holds what it held, add a task to run it again",
+              status == 1 and out == (
+                  f"FAILED: the emergency-stop folder {unreachable_for_lift} cannot be reached: {unreachable_error}; "
+                  "nothing was written, so the folder holds what it held before. While this machine cannot reach "
+                  "the folder, its emergency-stop hook refuses no pushes or merges here.\nAdd a task to run this "
+                  f"command again once this machine can reach that folder: python3 {PP} lift --words 'all clear'\n"
+                  "Tell the user now that this machine cannot reach that folder.\n"), out)
+
+        failing_lift = root / "lift-write-fails" / "emergency-stop"
+        failing_lift.parent.mkdir()
+        program.start(failing_lift, "md-skills", "words", "stop", program.SCHEDULED_JOBS_FILE,
+                      datetime(2026, 11, 14, 12, 0, 0, tzinfo=timezone.utc))
+        real_append = program.append
+
+        def append_that_fails(_path, _line):
+            raise OSError(28, "No space left on device")
+
+        program.append = append_that_fails
+        try:
+            status, out = run(failing_lift, "--as-agent-seat", "md-skills", "lift", "--words", "all clear")
+        finally:
+            program.append = real_append
+        check("lift whose write fails: FAILED, says the stop is still in force and pushes are refused",
+              status == 1 and out == failed_write(
+                  "lift", failing_lift,
+                  f"the emergency-stop file in force is {failing_lift / '2026-11-14T12-00-00Z.md'}",
+                  refused, "Add a task to run this command again once a write to that folder can succeed: "
+                  f"python3 {PP} --as-agent-seat md-skills lift --words 'all clear'"), out)
+
+        program.append = append_that_fails
+        program.common.read_state = reads_in_order(None, lambda f: common.FolderUnreachable(f, "mount gone"))
+        try:
+            status, out = run(failing_lift, "push-notification", "sent")
+        finally:
+            program.append = real_append
+            program.common.read_state = _real_read_state
+        check("push-notification whose write fails and whose folder is then unreachable: FAILED, "
+              "says no one here can tell whether a stop is in force",
+              status == 1 and out == failed_write(
+                  "push-notification", failing_lift, f"the folder {failing_lift} cannot be reached: mount gone",
+                  "So no one on this machine can tell whether an emergency stop is in force, and pushes and merges "
+                  "are not refused here.", "Add a task to run this command again once a write to that folder can "
+                  f"succeed: python3 {PP} push-notification sent"), out)
 
         unreachable = root / "gone" / "emergency-stop"
+        unreachable_error = common.read_state(unreachable).error
         status, out = run(unreachable, "start", "--words", "stop")
-        check("start with unreachable folder: FAILED, no retry", status == 1 and out.startswith("FAILED"), out)
+        check("start with unreachable folder: FAILED, no retry, and says no stop was started", status == 1
+              and out == (f"FAILED: start wrote nothing: the emergency-stop folder {unreachable} cannot be reached: "
+                          f"{unreachable_error}. No emergency stop was started. This machine cannot tell whether "
+                          "another emergency stop is in force, so its emergency-stop hook refuses no pushes or merges "
+                          "here.\nTell the user at once that the emergency stop was not started, and why.\nRun this "
+                          f"command again only if the user says to: {start_rerun}\n"), out)
 
         if os.geteuid() != 0:
             blocked = root / "blocked"
@@ -176,12 +373,22 @@ def main():
             (blocked / "emergency-stop").chmod(0o500)
             try:
                 status, out = run(blocked / "emergency-stop", "start", "--words", "stop")
-                check("stop file cannot be written: FAILED", status == 1 and out.startswith("FAILED"), out)
+                # The temporary file's name is random, so the text is checked on each side of it.
+                check("stop file cannot be written: FAILED, saying no stop is in force, to run start only on the "
+                      "user's word", status == 1 and out.startswith(
+                          "FAILED: start could not finish writing to the emergency-stop folder "
+                          f"{blocked / 'emergency-stop'}: "
+                          f"[Errno 13] Permission denied: '{blocked / 'emergency-stop'}/.") and out.endswith(
+                          ".partial'. A read of the folder now finds that no emergency-stop file in "
+                          f"{blocked / 'emergency-stop'} is in force. {not_refused}\nTell the user this whole "
+                          f"message.\nRun this command again only if the user says to: {start_rerun}\n"), out)
             finally:
                 (blocked / "emergency-stop").chmod(0o755)
 
         broken_folder = root / "write-fails" / "emergency-stop"
-        broken_folder.parent.mkdir()
+        broken_folder.mkdir(parents=True)
+        lifted_before = broken_folder / "2026-01-01T00-00-00Z.md"
+        lifted_before.write_text("started\n#emergency_stop_lifted all clear\n")
         real_fdopen = program.os.fdopen
 
         def fdopen_whose_write_fails(descriptor, *arguments, **keywords):
@@ -196,17 +403,27 @@ def main():
             status, out = run(broken_folder, "start", "--words", "stop")
         finally:
             program.os.fdopen = real_fdopen
-        check("a write that fails part-way: FAILED, and no stop file or temporary file is left",
-              status == 1 and out.startswith("FAILED") and "No space left" in out
-              and list(broken_folder.iterdir()) == [], (out, list(broken_folder.iterdir())))
+        check("a write that fails part-way: FAILED saying the newest file is lifted, and no stop file or temporary "
+              "file is left", status == 1 and out == failed_write(
+                  "start", broken_folder, f"the newest emergency-stop file, {lifted_before}, is lifted", not_refused,
+                  f"Run this command again only if the user says to: {start_rerun}")
+              and sorted(p.name for p in broken_folder.iterdir()) == [lifted_before.name],
+              (out, list(broken_folder.iterdir())))
 
         unreadable_folder = root / "unreadable" / "emergency-stop"
         unreadable_folder.mkdir(parents=True)
-        (unreadable_folder / "2029-01-01T00-00-00Z.md").write_bytes(b"\xff\xfe not utf-8")
+        unreadable_file = unreadable_folder / "2029-01-01T00-00-00Z.md"
+        unreadable_file.write_bytes(b"\xff\xfe not utf-8")
+        unreadable_error = common.read_state(unreadable_folder).error
         status, out = run(unreadable_folder, "start", "--words", "stop")
         check("start while the newest stop file is unreadable: FAILED, and no new stop file hides it",
-              status == 1 and out.startswith("FAILED: the emergency-stop file") and "only the user" in out
-              and sorted(p.name for p in unreadable_folder.iterdir()) == ["2029-01-01T00-00-00Z.md"], out)
+              status == 1 and out == (
+                  f"FAILED: start wrote no emergency-stop file: the newest emergency-stop file, {unreadable_file}, "
+                  f"cannot be read: {unreadable_error}. That unreadable file already counts as an emergency stop in "
+                  "force, so pushes and merges stay refused; writing a newer emergency-stop file would hide the "
+                  "unreadable one.\nTell the user the file's path and this error, and leave the file as it is: only "
+                  "the user repairs or moves it.\n")
+              and sorted(p.name for p in unreadable_folder.iterdir()) == [unreadable_file.name], out)
 
         jobs_without_a_program = root / "jobs-without-a-program.json"
         jobs_without_a_program.write_text('{"jobs": [{"name": "nightly"}]}')
