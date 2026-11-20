@@ -151,4 +151,4 @@ Unless named otherwise, files are in `~/.claude/handoffs/` on the agent-seat's m
 - GHI [The handoff-supervisor writes the memory review's started mark when it puts the memory-review reminder into the initial-agent-instructions](https://github.com/nedschorus/nedschorus/issues/2545)
 - GHI [Agent-seats run on a last known good commit of main, while main's newest commit is tested as the release candidate up to four times a day](https://github.com/nedschorus/nedschorus/issues/2636)
 
-**Checked against:** commit [b514ec8e38942e3ac569f16e463c20b8f3f58325](https://github.com/nedschorus/nedschorus/commit/b514ec8e38942e3ac569f16e463c20b8f3f58325)
+**Checked against:** commit [47b7f0bb3e3416391f4f8a5b8145fe577bf12443](https://github.com/nedsnodes/nedsnodes/commit/47b7f0bb3e3416391f4f8a5b8145fe577bf12443)
