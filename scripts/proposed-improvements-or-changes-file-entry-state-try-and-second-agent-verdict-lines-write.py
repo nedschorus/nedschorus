@@ -98,7 +98,7 @@ def _load(module_name, relative_path):
 
 command_line_prefix = _load(
     "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
-    "nc-systems/general-tools/claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
+    "nn-systems/general-tools/claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
 
 ghi_issue_write = _load("ghi_issue_write", "scripts/ghi-issue-write.py")
 
@@ -164,7 +164,7 @@ def now() -> str:
 
 def refuse_unless_on_ned_box(what: str, argv):
     if socket.gethostname().split(".")[0] != LOG_STORE_HOSTNAME:
-        remote = shlex.join(["cd", "/home/nedlern/Projects/nedschorus"]) + " && " + shlex.join(
+        remote = shlex.join(["cd", "/home/nedlern/Projects/nedsnodes"]) + " && " + shlex.join(
             ["python3", "scripts/proposed-improvements-or-changes-file-entry-state-try-and-second-agent-verdict-lines-write.py", *argv])
         raise Refused(
             f"{what} in the log-store on ned-box, and this machine is not ned-box, so nothing was changed.\n"
