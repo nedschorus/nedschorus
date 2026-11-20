@@ -1,6 +1,6 @@
 # cold-read programs design
 
-This design covers the programs in `nn-systems/cold-read/` and the reviewer prompts in `.claude/skills/cold-read/prompts/` that /cold-read runs. The skill itself, `.claude/skills/cold-read/SKILL.md`, says when and how an agent uses them. How a cold-read-full-run handles a cold-read-cell that fails is designed in `nn-systems/cold-read/cold-read-grid-cell-failure-handling-design.md`. Each program's docstring gives the user-rulings behind its behaviour.
+This design covers the programs in `nn-systems/cold-read/` and the reviewer prompts in `.claude/skills/cold-read/prompts/` that /cold-read runs. The skill itself, `.claude/skills/cold-read/SKILL.md`, says when and how an agent uses them. How a cold-read-full-run handles a cold-read-cell that fails is designed in `nn-systems/cold-read/cold-read-grid-cell-failure-handling.tool.design.md`. Each program's docstring gives the user-rulings behind its behaviour.
 
 ## Programs
 

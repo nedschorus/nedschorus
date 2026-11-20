@@ -1304,7 +1304,7 @@ class TeachingArgumentParser(argparse.ArgumentParser):
         raise Refusal(
             "malformed-field", f"the command line is malformed: {message}",
             "Resubmit with a corrected invocation; the request grammar is in the "
-            "specification (nn-systems/main-gatekeeper/main-gatekeeper-design.md). "
+            "specification (nn-systems/main-gatekeeper/main-gatekeeper.system.design.md). "
             "(--help is deliberately not cited here: it prints usage text, "
             "not the JSON every other invocation returns.)",
         )
