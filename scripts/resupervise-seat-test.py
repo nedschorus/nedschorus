@@ -390,7 +390,7 @@ def run_missing_launcher_case(workspace: Path):
           result.returncode == 1
           and f"{missing} does not exist, so no successor can be launched; nothing was killed"
           in result.stderr
-          and "Clone nedschorus to ~/Projects/nedsnodes on this Mac" in result.stderr,
+          and "Clone nedsnodes to ~/Projects/nedsnodes on this Mac" in result.stderr,
           result.stdout + result.stderr)
 
 

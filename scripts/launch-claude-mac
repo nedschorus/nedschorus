@@ -204,7 +204,7 @@ command -v claude >/dev/null 2>&1 || {
 }
 [ -f "$SUPERVISOR" ] || {
     echo "launch-claude-mac: refused, because $SUPERVISOR does not exist, so $SUPERVISOR_CHECKOUT, the checkout the seat's handoff-supervisor would run from, holds no nedschorus checkout; nothing was started." >&2
-    echo "launch-claude-mac: if ~/Projects/nedsnodes is missing on this Mac, clone nedschorus there and launch again." >&2
+    echo "launch-claude-mac: if ~/Projects/nedsnodes is missing on this Mac, clone nedsnodes there and launch again." >&2
     echo "launch-claude-mac: if you passed --supervisor-checkout, pass the root of a nedschorus checkout that exists." >&2
     exit 2
 }

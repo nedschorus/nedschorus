@@ -466,7 +466,7 @@ def main(argv=None) -> int:
     if not arguments.prepare_only and not launcher.is_file():
         return refuse(
             f"{launcher} does not exist, so no successor can be launched; nothing was killed. "
-            "Clone nedschorus to ~/Projects/nedsnodes on this Mac, then re-run."
+            "Clone nedsnodes to ~/Projects/nedsnodes on this Mac, then re-run."
         )
 
     # Never kill the operator's own tmux session mid-recovery. Without $TMUX, display-message can select an unrelated session.
