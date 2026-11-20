@@ -1,5 +1,5 @@
 ---
-issue: "[Hierarchical, cross-linked wiki, and a wiki-agent to build it and keep it current](https://github.com/nedschorus/nedschorus/issues/2709)"
+issue: "[Hierarchical, cross-linked wiki, and a wiki-agent to build it and keep it current](https://github.com/nedsnodes/nedsnodes/issues/2709)"
 ---
 
 # Hierarchical, cross-linked wiki, and a wiki-agent to build it and keep it current
@@ -29,6 +29,7 @@ Measured on `origin/main` on 2026-10-27:
 
 ## Related issues
 
+- GHI [Wiki-agent: an interactive agent-seat that keeps the project wiki, `docs/nedsnodes-wiki/`, current](https://github.com/nedsnodes/nedsnodes/issues/3950) is the wiki-agent's design, the GHI-MD of its own that this GHI's Next action asks for, written from the three parts the user approved on 2026-11-20 in item 4 of agent-seat overall-cleanup's approval-walk overall-cleanup-wiki-structure-and-wiki-agent-questions-2026-11-20. Its three parts answer part of open questions 4 and 5 below. It does not design the wiki's new structure, whose first step, five folders by subject, shorter page names and a home page in one pull request, the user approved in item 2 of the same approval-walk.
 - GHI [One documentation tree in place of the wiki and the rest of docs, with Obsidian opened on it](https://github.com/nedschorus/nedschorus/issues/1066), open and waiting for the user's decision, proposes merging the wiki and the rest of `docs/` into one tree. It decides where the tree lives, not how pages inside it are arranged or linked, and it has no agent to maintain them.
 - GHI [wiki-write skill, and the detect-set-aside-ask hook that enforces it — checking the file, not the tool call](https://github.com/nedschorus/nedschorus/issues/343) is the procedure for writing a wiki page, which a wiki-agent would follow.
 - GHI [overview-write skill: how an overview of a system is written and checked before it lands](https://github.com/nedschorus/nedschorus/issues/168) is how a page describing one system is written.
