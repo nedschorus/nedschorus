@@ -9,7 +9,7 @@ Usage:
   --repository-checkout  default the checkout this program is in; the checkout's docs/issues/*.md are read
                          as they stand in the working tree, and its git history gives each design's past
                          file names
-  --log-store            default /home/nedlern/nedschorus-logs; its walk/*-minutes.md and
+  --log-store            default /home/nedlern/nedsnodes-logs; its walk/*-minutes.md and
                          cold-read-records/*/ are read
   --agents-directory     default /home/nedlern/agents; its */docs/walk/*-minutes.md are read when the
                          log-store holds no walk-minutes of the same name
@@ -60,7 +60,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-DEFAULT_LOG_STORE = Path("/home/nedlern/nedschorus-logs")
+DEFAULT_LOG_STORE = Path("/home/nedlern/nedsnodes-logs")
 DEFAULT_AGENTS_DIRECTORY = Path("/home/nedlern/agents")
 DESIGN_KIND_LINE = re.compile(r"^kind: design", re.MULTILINE)
 # Old walk-minutes quote him as `The user, <date>: "..."`, `Item 4 answer in full: "..."`, or under a bare

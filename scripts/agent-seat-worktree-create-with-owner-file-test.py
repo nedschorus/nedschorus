@@ -49,18 +49,18 @@ def check(case_name, condition, detail=""):
 
 
 class ScratchMachine:
-    """A HOME with one agent-seat, SEAT, and a clone at ~/Projects/nedschorus with an origin."""
+    """A HOME with one agent-seat, SEAT, and a clone at ~/Projects/nedsnodes with an origin."""
 
     def __init__(self, root):
         self.home = root / "home"
-        self.clone = self.home / "Projects" / "nedschorus"
+        self.clone = self.home / "Projects" / "nedsnodes"
         self.managed = self.clone / ".claude" / "worktrees"
         handoffs = self.home / ".claude" / "handoffs"
         handoffs.mkdir(parents=True)
         (handoffs / f"{SEAT}-handoff.md").write_text("handoff\n")
         (self.home / "agents" / SEAT).mkdir(parents=True)
         self.environment = {key: value for key, value in os.environ.items()
-                            if not key.startswith(("GIT_", "CLAUDE_", "NEDSCHORUS_"))}
+                            if not key.startswith(("GIT_", "CLAUDE_", "NEDSNODES_"))}
         (root / "empty-gitconfig").write_text("")
         self.environment.update(HOME=str(self.home), GIT_CONFIG_NOSYSTEM="1",
                                 GIT_CONFIG_GLOBAL=str(root / "empty-gitconfig"),
