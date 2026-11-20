@@ -66,3 +66,9 @@ A printed string is one that `tool_message_to_agent_string_nodes_in_source`, in 
 ## What to do next
 
 PR [Review plan: only printed strings, not every string constant, get the Codex-only tier](https://github.com/nedsnodes/nedsnodes/pull/3952) makes that change. Its tests are the reproduction's three cases, which now get `claude-and-codex-review-and-head-tests-tier`, and cases showing that printed strings still get `codex-review-and-head-tests-tier`. merge-lane-2 reviews it. When it merges, reboot-test writes the outcome into this GHI-MD and runs `python3 scripts/ghi-issue-write.py close <this GHI-MD> --reason completed`.
+
+## Outcome
+
+Fixed by PR [Review plan: only printed strings, not every string constant, get the Codex-only tier](https://github.com/nedsnodes/nedsnodes/pull/3952), merged on 2026-11-20 as 8f90500f95bb. `scripts/pull-request-review-plan.py` now blanks only docstrings and printed strings before it compares a Python file's syntax trees, so a change to any other string, such as a regular expression, a command's arguments or a path, gets `claude-and-codex-review-and-head-tests-tier`. Its test covers the reproduction's three cases.
+
+Two pieces of related work remain, each outside this GHI. reboot-test's next pull request renames the change's "printed strings" to the project-term tool-message-to-agent in the function `normalized_syntax_tree_dump_without_docstrings_or_printed_strings`, its class and the module docstring, because the finder it uses also returns message constants that are never printed. merge-lane-2's seat-brief restates the tier rule in its own words, which is how the seat-brief and the program came to disagree; merge-lane-2 was told, and the seat-brief is its own to change.
