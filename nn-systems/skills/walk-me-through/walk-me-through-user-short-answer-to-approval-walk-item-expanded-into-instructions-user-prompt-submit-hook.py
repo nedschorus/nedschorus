@@ -502,7 +502,7 @@ SHOWN_QUOTE_LIMIT = 300
 MODEL = "claude-haiku-5-5"
 # .claude/settings.json gives this hook 10 seconds, and a real call takes about 3; the transcript read needs the rest.
 MODEL_TIMEOUT_SECONDS = 7
-COMMAND_LINE_PREFIX_FILE = (CHECKOUT / "nc-systems" / "general-tools"
+COMMAND_LINE_PREFIX_FILE = (CHECKOUT / "nn-systems" / "general-tools"
                             / "claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
 MODEL_SCHEMA = {"type": "object",
                 "properties": {"pairs": {"type": "array", "items": {
