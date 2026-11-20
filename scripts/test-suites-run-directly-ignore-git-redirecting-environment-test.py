@@ -12,7 +12,7 @@ branch and overwrote the `user.name` and `user.email` shared by every
 worktree of that clone; on 2026-09-24 another wrote `core.bare=true` there.
 GitHub issue "Test suites write into the ambient repository when GIT_DIR is
 set: git init's result is unchecked and the suite runner passes no
-environment" (https://github.com/nedschorus/nedschorus/issues/639).
+environment" (https://github.com/nedsnodes/nedsnodes/issues/639).
 scripts/run-all-test-suites.py removes the variables from every suite it
 launches, which does nothing for a suite run directly. Measured 2026-10-01
 on main, 80 of its 82 suites each run directly with GIT_DIR naming a

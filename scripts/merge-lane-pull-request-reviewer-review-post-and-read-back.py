@@ -101,7 +101,7 @@ fix_round = load_program(
     "pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-"
     "answered-check.py", "pull_request_fix_round_author_brief")
 
-REPOSITORY = "nedschorus/nedschorus"
+REPOSITORY = "nedsnodes/nedsnodes"
 MAC_CLAUDE_ACCOUNT = "mac-claude"
 MERGE_LANE_ACCOUNT = "ned-review-merge"
 POSTED_VERDICTS = ("APPROVE", "REQUEST_CHANGES")
