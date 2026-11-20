@@ -9,6 +9,7 @@ shipper's COLD_READ_RECORD_SHIP_DESTINATION, so no case reaches ned-box or launc
 Run: python3 nn-systems/cold-read/tests/cold-read-fast-read-finding-outcomes-record-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
+import contextlib
 import importlib.util
 import json
 import os
@@ -153,6 +154,31 @@ with tempfile.TemporaryDirectory() as scratch:
           and (unshipped / OUTCOMES_FILE_NAME).is_file() and "record: FAILED" in result.stderr
           and "did not reach the log-store" in result.stderr and "cold-read-record-ship.py" in result.stderr,
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr[-600:]!r}")
+
+    # In process, so the file's text is built while the outcomes file is open: a shipment started then would
+    # copy half a file, so the record's being-written lock must be held at that moment.
+    locked = scratch_record(root, "e-2026-11-19")
+    held_while_written = []
+    original_file_text = fast_read.finding_outcomes.finding_outcomes_file_text
+    original_ship_record = fast_read.ship_record
+
+    def file_text_noting_the_lock(*arguments):
+        held_while_written.append(
+            fast_read.record_shipper.record_directory_being_written_lock_is_held_by_any_process(locked))
+        return original_file_text(*arguments)
+
+    fast_read.finding_outcomes.finding_outcomes_file_text = file_text_noting_the_lock
+    fast_read.ship_record = lambda record_dir: fast_read.RECORD_SHIPPED_LINE_PREFIX
+    try:
+        with open(os.devnull, "w") as quiet, contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+            exit_code = fast_read.finding_outcomes_record(locked, ["Q2.1=applied", "Q4.1=applied"])
+    finally:
+        fast_read.finding_outcomes.finding_outcomes_file_text = original_file_text
+        fast_read.ship_record = original_ship_record
+        fast_read.record_shipper.record_directory_being_written_lock_release(locked)
+    check("the record's being-written lock is held while the outcomes file is written, so no shipment copies "
+          "half of it",
+          exit_code == 0 and held_while_written == [True], f"exit {exit_code}; held {held_while_written}")
 
     result = subprocess.run([sys.executable, str(PROGRAM), "--finding-outcome", "Q2.1=applied"],
                             capture_output=True, text=True)
