@@ -416,9 +416,16 @@ case("show by name shows the GHI-MD's files, -2 and unnumbered ones included, an
     f"nedlern@ned-box:{store}/daily-x-proposed-improvements-or-changes-ghi-guide-agent-2026-10-01.md"])
 case("show by name shows each file's entries under its path",
      out.count("E1: State: open; tries since the user last decided: 0 of 3") == 3)
-code, out, _ = show_by_name("daily-x")
-case("show by a name with no GHI number shows the numbered files too",
-     code == 0 and sum(line.startswith("nedlern@ned-box:") for line in out.splitlines()) == 4)
+code, out, err = show_by_name("daily-x")
+case("show by a name with no GHI number that files of two GHIs carry is refused, naming both numbers",
+     code == 1 and "REFUSED:" in err and "GHIs 999, 1058" in err and "nedlern@ned-box:" not in out)
+one_ghi = Path(tempfile.mkdtemp())
+for name in ("1058-daily-x-proposed-improvements-or-changes-ghi-guide-agent-2026-10-19.md",
+             "daily-x-proposed-improvements-or-changes-ghi-guide-agent-2026-10-01.md"):
+    (one_ghi / name).write_text(FILE_TEXT, encoding="utf-8")
+code, out, _ = show_by_name("daily-x", directory=one_ghi)
+case("show by a name with no GHI number shows the one GHI's numbered files and the unnumbered ones",
+     code == 0 and sum(line.startswith("nedlern@ned-box:") for line in out.splitlines()) == 2)
 code, _, err = show_by_name("1058-nothing-here")
 case("show by a name no file has is refused", code == 1 and "REFUSED:" in err and "No file in" in err)
 code, _, err = show_by_name("1058-daily-x", directory=store / "missing")

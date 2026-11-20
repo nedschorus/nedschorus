@@ -194,6 +194,13 @@ def ghi_md_file_names(ghi_md_name: str, argv):
         raise Refused(
             f"No file in {GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY} is named after GHI-MD {ghi_md_name}.\n"
             f"Give the GHI-MD's name as the part of the given file's name before {FILE_NAME_INFIX}, or give the file itself.")
+    numbers = sorted({match.group(1) for match in (re.match(r"(\d+)-", name) for name in names) if match}, key=int)
+    if len(numbers) > 1:
+        # Two GHIs can share a slug; their files must not be read as one GHI-MD's.
+        raise Refused(
+            f"GHI-MD name {ghi_md_name} has no GHI number, and files of GHIs {', '.join(numbers)} in "
+            f"{GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY} carry it, so nothing was shown.\n"
+            f"Give the name with its GHI number, such as {numbers[0]}-{bare}.")
     return names
 
 
