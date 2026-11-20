@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Tests for git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook.py,
-and for the waiter it starts, nc-systems/general-tools/git-worktree-remove-deferred-until-cold-read-record-and-sanity-check-record-being-written-locks-release-then-ship-to-log-store-waiter.py.
+and for the waiter it starts, nn-systems/general-tools/git-worktree-remove-deferred-until-cold-read-record-and-sanity-check-record-being-written-locks-release-then-ship-to-log-store-waiter.py.
 
 The shipping cases run the hook end to end as a subprocess, the way Claude
 Code does, on real git worktrees in a scratch directory, with the real
@@ -65,8 +65,8 @@ STORE = _scratch / "store"
 os.environ[SHIP_DESTINATION_VARIABLE] = str(STORE / "cold-read-records")
 # Where the deferred-removal cases' waiters write their logs and user-alerts, never the real ned-box home.
 SCRATCH_NED_BOX_HOME = _scratch / "ned-box-home"
-WAITER_LOGS = SCRATCH_NED_BOX_HOME / "nedschorus-logs" / hook.GIT_WORKTREE_REMOVE_DEFERRED_WAITER_LOG_STORE_DIRECTORY_NAME
-PENDING_ALERTS = SCRATCH_NED_BOX_HOME / ".local" / "state" / "nedschorus" / "user-alerts" / "pending"
+WAITER_LOGS = SCRATCH_NED_BOX_HOME / "nedsnodes-logs" / hook.GIT_WORKTREE_REMOVE_DEFERRED_WAITER_LOG_STORE_DIRECTORY_NAME
+PENDING_ALERTS = SCRATCH_NED_BOX_HOME / ".local" / "state" / "nedsnodes" / "user-alerts" / "pending"
 # A waiter writes its failure task on the task list CLAUDE_CODE_TASK_LIST_ID names, and a waiter the hook starts
 # inherits the variable, so a test run started by an agent-session would write tasks on that agent-seat's real
 # list: every waiter here starts without it, except where a case names a list under SCRATCH_HOME.
@@ -240,7 +240,7 @@ code, output, stderr = run_hook_process(f"git worktree remove {worktree}", check
 reason = refusal(output) or ""
 cold_read_record = worktree / "cold-read-records" / "unreachable-doc-2026-11-03"
 sanity_check_record = worktree / "sanity-check-records" / "2026-11-03-unreachable-doc"
-cold_read_rerun = f"python3 {hook.REPOSITORY_ROOT}/nc-systems/cold-read/cold-read-record-ship.py {cold_read_record}"
+cold_read_rerun = f"python3 {hook.REPOSITORY_ROOT}/nn-systems/cold-read/cold-read-record-ship.py {cold_read_record}"
 sanity_check_rerun = f"python3 {hook.REPOSITORY_ROOT}/scripts/sanity-check-record-ship.py {sanity_check_record}"
 check("a failed shipment refuses the removal",
       code == 0 and output["hookSpecificOutput"]["permissionDecision"] == "deny", (code, output, stderr))
@@ -645,7 +645,7 @@ check("the hook's timeout in .claude/settings.json exceeds its shipping limit pl
       len(hook_timeouts) == 1 and isinstance(hook_timeouts[0], (int, float))
       and hook_timeouts[0] > hook.SHIPPING_BUDGET_SECONDS + hook.GIT_TIMEOUT_SECONDS, hook_timeouts)
 
-for shipper in ("nc-systems/cold-read/cold-read-record-ship.py", "scripts/sanity-check-record-ship.py"):
+for shipper in ("nn-systems/cold-read/cold-read-record-ship.py", "scripts/sanity-check-record-ship.py"):
     usage = subprocess.run([sys.executable, str(hook.REPOSITORY_ROOT / shipper), "--help"],
                            capture_output=True, text=True, check=False)
     check(f"{shipper}, which the ship-them-yourself lines name, takes --all",
@@ -698,7 +698,7 @@ if sys.argv[3:] == ["finish-and-ship"]:
     shipper.record_directory_being_written_lock_release(record)
     subprocess.run([sys.executable, sys.argv[1], str(record)], check=False, capture_output=True)
 """
-COLD_READ_RECORD_SHIPPER = hook.REPOSITORY_ROOT / "nc-systems" / "cold-read" / "cold-read-record-ship.py"
+COLD_READ_RECORD_SHIPPER = hook.REPOSITORY_ROOT / "nn-systems" / "cold-read" / "cold-read-record-ship.py"
 
 
 def record_writer_started(record, *mode):

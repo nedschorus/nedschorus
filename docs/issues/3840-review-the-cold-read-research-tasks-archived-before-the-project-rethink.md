@@ -10,8 +10,8 @@ On 2026-11-17 the user asked agent-seat cold-read-research to set aside its olde
 
 The archive is in the log-store:
 
-- the index, one line per archived task with its number, its status before archiving and its subject: `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/cold-read-research/task-archive-2026-11-17/archived-tasks-index-2026-11-17.md`
-- every task's full record as it stood before archiving, one JSON file per task: `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/cold-read-research/task-archive-2026-11-17/task-files/`. That directory also holds copies of tasks 390 to 398, for reference only; they are not part of this review.
+- the index, one line per archived task with its number, its status before archiving and its subject: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/cold-read-research/task-archive-2026-11-17/archived-tasks-index-2026-11-17.md`
+- every task's full record as it stood before archiving, one JSON file per task: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/cold-read-research/task-archive-2026-11-17/task-files/`. That directory also holds copies of tasks 390 to 398, for reference only; they are not part of this review.
 
 Why a review is needed: the archived tasks were set aside, not judged. Some may still matter after the rethink, some will be obsolete, and some name pull requests, worktrees, branches or other agent-seats that are still waiting on them. Before the review, nobody has checked which is which.
 

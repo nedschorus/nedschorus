@@ -130,8 +130,8 @@ git("add", "-A")
 git("commit", "-q", "-m", "the suite's own commit")
 
 # A child this suite gives GIT_DIR of its own must still get it: that is the
-# fixture pattern nc-systems/cold-read/tests/cold-read-grid-test.py and
-# nc-systems/cold-read/tests/cold-read-cell-common-test.py are built on.
+# fixture pattern nn-systems/cold-read/tests/cold-read-grid-test.py and
+# nn-systems/cold-read/tests/cold-read-cell-common-test.py are built on.
 child = dict(os.environ)
 child["GIT_DIR"] = str(here / "the-child-s-own-git-directory")
 child_saw = subprocess.run(
@@ -695,14 +695,14 @@ with tempfile.TemporaryDirectory() as scratch:
         f"here = pathlib.Path(os.environ['{RAN_FILE_VARIABLE}']).parent\n"
         "(here / 'session-variables-the-suite-saw.json').write_text(json.dumps("
         "{name: os.environ.get(name) for name in "
-        "['CLAUDE_CODE_SESSION_ATTENDED', 'NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER']}))\n")})
+        "['CLAUDE_CODE_SESSION_ATTENDED', 'NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER']}))\n")})
     result = run(root, environment_extra={"CLAUDE_CODE_SESSION_ATTENDED": "0",
-                                         "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "1"})
+                                         "NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER": "1"})
     saw_file = root / "session-variables-the-suite-saw.json"
     saw = json.loads(saw_file.read_text()) if saw_file.exists() else None
     check("a suite launched by the program sees neither variable that says whether a user attends",
           saw == {"CLAUDE_CODE_SESSION_ATTENDED": None,
-                  "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": None},
+                  "NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER": None},
           (saw, result.returncode, result.stdout[-300:], result.stderr[-300:]))
 
 # --- The program's own git calls: no git redirection either ------------------
@@ -1344,7 +1344,7 @@ with tempfile.TemporaryDirectory() as scratch:
           in lines(result.stdout), (ran(root), result.stdout))
 
 # A new directory under a listed one: the shape of a new system directory
-# under nc-systems/, which a glob of `nc-systems/*/*.py` reads.
+# under nn-systems/, which a glob of `nn-systems/*/*.py` reads.
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
     repo = make_repo(root, {"globs-systems-test.py": (
@@ -1742,7 +1742,7 @@ check("when no suite has a list, the agent is told to tell the user, with the lo
       notice is not None and notice.startswith("scripts/run-all-test-suites.py: 1 of 1 suites")
       and "If you have not yet told the user in this agent-session that the scheduled full test "
           "run's lists are stale: tell him" in notice
-      and "nedlern@ned-box:/home/nedlern/nedschorus-logs/scheduled-full-test-runs-of-main/ned-box/." in notice,
+      and "nedlern@ned-box:/home/nedlern/nedsnodes-logs/scheduled-full-test-runs-of-main/ned-box/." in notice,
       notice)
 notice = module.suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
     ["a-test.py", "b-test.py", "c-test.py"],
