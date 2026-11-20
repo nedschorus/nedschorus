@@ -13,7 +13,7 @@ _tables_spec.loader.exec_module(tables)
 
 _git_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
-    pathlib.Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
+    pathlib.Path(__file__).resolve().parents[2] / "nn-systems" / "general-tools"
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)

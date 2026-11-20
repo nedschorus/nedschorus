@@ -57,7 +57,7 @@ Line numbers are at origin/main commit `1846c5282`, and each cites the line that
 ### Says the agent need not act
 
 - `scripts/cold-read-fast-read-due-for-linked-document-reminder-hook.py:120` (Stop).
-- `nc-systems/skills/walk-me-through/walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook.py:539` (Stop).
+- `nn-systems/skills/walk-me-through/walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook.py:539` (Stop).
 
 These two say the agent need not act, so an agent that never reads them loses nothing. They are listed so that step 2 of the next action decides their channel too: leave them at exit 1, or move them with the rest.
 
@@ -67,7 +67,7 @@ How the list was made: for every program registered in `.claude/settings.json` a
 
 - GHI [Design the project's Claude Code hooks: requirements drawn from the existing hooks, then keep, fix, merge, rewrite or remove each one](https://github.com/nedschorus/nedschorus/issues/1790) does not mention which channel a hook's output reaches.
 - GHI [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956) is about the wording of such messages, not about whether they reach the agent.
-- reboot-test's approval-walk on exit codes, whose walk-document is `nedlern@ned-box:/home/nedlern/agents/reboot-test/docs/walk/exit-code-convention-wiki-page-2026-10-20.md` (the 17-item version in reboot-test's agent-home; the copy in the log-store is older and has 11 items), proposes in item 6 that "When the agent's next act depends on the check having run, as with a guard that could not check a command, the hook exits 0 and tells the agent in `additionalContext`", and in item 15 that a hook tells the agent things through `additionalContext` at exit 0 and, when it breaks, prints the cause on stderr and exits 1. The user has not decided items 6 and 15: the walk-minutes, `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/exit-code-convention-wiki-page-2026-10-20-minutes.md`, record items 1 and 2 approved and item 3 as the next to present. This GHI does not decide those items.
+- reboot-test's approval-walk on exit codes, whose walk-document is `nedlern@ned-box:/home/nedlern/agents/reboot-test/docs/walk/exit-code-convention-wiki-page-2026-10-20.md` (the 17-item version in reboot-test's agent-home; the copy in the log-store is older and has 11 items), proposes in item 6 that "When the agent's next act depends on the check having run, as with a guard that could not check a command, the hook exits 0 and tells the agent in `additionalContext`", and in item 15 that a hook tells the agent things through `additionalContext` at exit 0 and, when it breaks, prints the cause on stderr and exits 1. The user has not decided items 6 and 15: the walk-minutes, `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/exit-code-convention-wiki-page-2026-10-20-minutes.md`, record items 1 and 2 approved and item 3 as the next to present. This GHI does not decide those items.
 
 ## Next action
 

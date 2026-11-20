@@ -25,14 +25,14 @@ from pathlib import Path, PurePosixPath
 
 _git_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
 GIT_CALL_TIMEOUT_SECONDS = 20
 MAIN_REF = "origin/main"
-ORDINARY_HYPHENATED_WORDS_LIST_PATH = "docs/nedschorus-wiki/nedschorus-ordinary-hyphenated-words-list.md"
+ORDINARY_HYPHENATED_WORDS_LIST_PATH = "docs/nedsnodes-wiki/nedsnodes-ordinary-hyphenated-words-list.md"
 GLOSSARY_FILE_SUFFIX = "-glossary.md"
 # One token set per main commit, shared by every caller on this machine.
 MAIN_TOKEN_CACHE_DIRECTORY = Path(tempfile.gettempdir()) / "new-shared-names-main-token-cache"

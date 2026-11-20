@@ -1,0 +1,11 @@
+[Unit]
+Description=nn-shared-database service: one record of every agent-seat on both machines
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /home/nedlern/Projects/nedsnodes/nn-systems/nn-shared-database/nn-shared-database-service.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

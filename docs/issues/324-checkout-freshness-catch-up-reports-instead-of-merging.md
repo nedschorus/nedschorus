@@ -25,7 +25,7 @@ anyone deciding to push anything new.
 
 **The hook never merges into the working branch.** It reports instead. The
 reference checkout's `--ff-only` refresh stays; it produced no occurrence and
-is what keeps each machine's `~/Projects/nedschorus` current.
+is what keeps each machine's `~/Projects/nedsnodes` current.
 
 **The report is for the agent's knowledge, not a prompt to act.** The response
 stays with the agent: new work is cut from `origin/main`; a frozen head is

@@ -2,11 +2,11 @@
 """The checkout and git-tracking helpers the Markdown-edit hooks share are defined
 in one module, and this test keeps it that way.
 
-nc-systems/general-tools/edited-file-path-within-checkout-root-and-git-check-ignore-common.py
+nn-systems/general-tools/edited-file-path-within-checkout-root-and-git-check-ignore-common.py
 holds them. A copy defined in another program drifts from the module: one copy
 reports a git failure, another reads the failure as "not tracked" and stays
 silent. The test fails when any production script, in scripts/ or in an
-nc-systems/<system>/ directory, defines a function or class under one of the
+nn-systems/<system>/ directory, defines a function or class under one of the
 module's shared names, and when the module itself stops defining one, so a
 rename inside the module cannot pass by hunting a name nothing defines.
 
@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SHARED_MODULE = (REPO_ROOT / "nc-systems" / "general-tools"
+SHARED_MODULE = (REPO_ROOT / "nn-systems" / "general-tools"
                  / "edited-file-path-within-checkout-root-and-git-check-ignore-common.py")
 SHARED_NAMES = ("enclosing_checkout_root", "checkout_relative_path", "git_would_track",
                 "file_lines_at_head_unless_git_ignores_file")
@@ -36,9 +36,9 @@ def check(case_name, condition, detail=""):
 
 
 def production_scripts():
-    """Every Python program in scripts/ and in each nc-systems/<system>/, test files excluded."""
+    """Every Python program in scripts/ and in each nn-systems/<system>/, test files excluded."""
     found = (list((REPO_ROOT / "scripts").glob("*.py"))
-             + list((REPO_ROOT / "nc-systems").glob("*/*.py")))
+             + list((REPO_ROOT / "nn-systems").glob("*/*.py")))
     return sorted(path for path in found if not path.name.endswith("-test.py"))
 
 

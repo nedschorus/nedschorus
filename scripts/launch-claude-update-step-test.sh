@@ -74,7 +74,7 @@ run_mac_launcher() {
     CLAUDE_UPDATE_MARKER="$WORKSPACE/update-ran-$label"
     TMUX_CALL_LOG="$WORKSPACE/tmux-calls-$label"
     : > "$TMUX_CALL_LOG"
-    HOME="$WORKSPACE/home" NEDSCHORUS_AGENTS_ROOT="$WORKSPACE/agents" \
+    HOME="$WORKSPACE/home" NEDSNODES_AGENTS_ROOT="$WORKSPACE/agents" \
         PATH="$STUBS:$PATH" \
         CLAUDE_UPDATE_MARKER="$CLAUDE_UPDATE_MARKER" CLAUDE_UPDATE_MODE="$update_mode" \
         TMUX_CALL_LOG="$TMUX_CALL_LOG" LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS=2 \
@@ -134,7 +134,7 @@ check "the mac launcher's window title reads [mac] <seat>" $?
 # seat on -L default. HOME is sandboxed like every invocation here (see the
 # note below: an unsandboxed run edits the operator's real ~/.claude.json).
 : > "$WORKSPACE/tmux-calls-transition"
-HOME="$WORKSPACE/home" NEDSCHORUS_AGENTS_ROOT="$WORKSPACE/agents" \
+HOME="$WORKSPACE/home" NEDSNODES_AGENTS_ROOT="$WORKSPACE/agents" \
     PATH="$STUBS:$PATH" \
     CLAUDE_UPDATE_MARKER="$WORKSPACE/update-ran-transition" CLAUDE_UPDATE_MODE=ok \
     TMUX_CALL_LOG="$WORKSPACE/tmux-calls-transition" LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS=2 \
@@ -297,7 +297,7 @@ esac
 HOME="$WORKSPACE/home" \
 TMUX_CALL_LOG="$WORKSPACE/tmux-calls-afterexit" \
 CLAUDE_UPDATE_MARKER="$WORKSPACE/update-ran-afterexit" \
-NEDSCHORUS_AGENTS_ROOT="$WORKSPACE/agents" \
+NEDSNODES_AGENTS_ROOT="$WORKSPACE/agents" \
 PATH="$STUBS:$PATH" sh "$SCRIPT_DIRECTORY/launch-claude-mac" seatprompt \
     > "$WORKSPACE/out-mac-prompt" 2>&1
 assert_supervised_option_is_first "mac tmux command" "$(cat "$WORKSPACE/tmux-calls-afterexit")"

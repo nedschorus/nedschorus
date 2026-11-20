@@ -60,7 +60,7 @@ with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(
         __file__, __name__ == "__main__"):
     shell_reader = _load(
         "shell_command_tree_sitter_bash_reader_common",
-        _REPOSITORY_ROOT / "nc-systems" / "general-tools"
+        _REPOSITORY_ROOT / "nn-systems" / "general-tools"
         / "shell-command-tree-sitter-bash-reader-common.py")
     _marker_common = _load("guard_approval_marker_common",
                            _REPOSITORY_ROOT / ".claude" / "guard-hooks" / "guard-approval-marker-common.py")
@@ -73,7 +73,7 @@ REASON_MARKER_NAME = ".ghi-md-whole-file-replacement-reason"
 GHI_MD_DIRECTORY_PARTS = ("docs", "issues")
 GHI_MD_NAME_PATTERN = re.compile(r"^\d+-.*\.md$")
 
-# Messages to agents follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
+# Messages to agents follow docs/nedsnodes-wiki/nedsnodes-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 GHI_MD_WHOLE_FILE_REPLACEMENT_REFUSAL = (
     "[rule bash-guard-ghi-md-whole-file-replacement] Refused: this command replaces the whole GHI-MD {path}, which can undo changes merged "
     "into it on main after your copy was written.\n"
