@@ -1125,7 +1125,7 @@ print(json.dumps([hit.get("occurrence") for hit in kept]))
                  environment={PREFIX + "THIS_MACHINE_OVERRIDE": "mac", PREFIX + "SSH_PROGRAM_OVERRIDE": echoing})
     check("from the Mac, the program runs on ned-box with the same arguments, and passes its exit through",
           result.returncode == 1 and "ARG:nedlern@ned-box" in result.stdout
-          and ("ARG:python3 /home/nedlern/Projects/nedschorus/scripts/"
+          and ("ARG:python3 /home/nedlern/Projects/nedsnodes/scripts/"
                "log-store-past-discussions-regex-search-newest-first.py "
                "--own-session '' 'heron'\"'\"'s plan' --seat prime") in result.stdout.splitlines(), result.stdout)
     result = run(Path(scratch) / "absent", "heron",

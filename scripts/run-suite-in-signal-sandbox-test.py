@@ -83,7 +83,7 @@ PID_ONE_SUITE_SOURCE = (
     "print('pid one:', pathlib.Path('/proc/1/comm').read_text().strip())\n"
     "print('inside variable:', os.environ.get('RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX'))\n"
     "print('session variables:', os.environ.get('CLAUDE_CODE_SESSION_ATTENDED'),\n"
-    "      os.environ.get('NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER'))\n")
+    "      os.environ.get('NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER'))\n")
 # Passes at once without the mutant; with it, runs long enough for the case to
 # terminate the program while the mutant is in.
 TERMINATES_THE_PROGRAM_SUITE_SOURCE = (
@@ -871,7 +871,7 @@ else:
         completed, last = run_program(
             scratch, repository, "pid-one-test.py",
             environment={**os.environ, "CLAUDE_CODE_SESSION_ATTENDED": "0",
-                         "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "1"})
+                         "NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER": "1"})
         check("the suite runs with process 1 bwrap and the inside variable set to 1",
               completed.returncode == 0 and "pid one: bwrap" in completed.stdout
               and "inside variable: 1" in completed.stdout, completed.stdout)

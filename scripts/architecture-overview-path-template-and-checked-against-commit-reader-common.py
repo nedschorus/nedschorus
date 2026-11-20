@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Where a system's nc-architecture-overview lives, and the commit its last line names.
 
-docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md defines
+docs/nedsnodes-wiki/nedsnodes-how-to-write-an-architecture-overview.md defines
 both; programs that find an overview or read its **Checked against:** line
 import them from here, so a change to the page is made in one place in code.
 """
 import re
 
-PATH_TEMPLATE = "docs/nedschorus-wiki/nedschorus-{system}-architecture-overview.md"
+PATH_TEMPLATE = "docs/nedsnodes-wiki/nedsnodes-{system}-architecture-overview.md"
 
 CHECKED_AGAINST_PREFIX = "**Checked against:** commit ["
 

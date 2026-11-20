@@ -35,7 +35,7 @@ ghi-info, asked on 2026-10-28 with closed GHIs included, found none that covers 
 
 ## Next action
 
-The user decides, through the queue-drain (GHI [Queue drain procedure — the review process that empties the wiki queue, the pair queue, nc-queue, the drafts directory and the queue-drain-candidate-label issue queue](https://github.com/nedschorus/nedschorus/issues/24)), whether to build this, drop it, or leave it waiting. Until he decides, no agent builds it.
+The user decides, through the queue-drain (GHI [Queue drain procedure — the review process that empties the wiki queue, the pair queue, nn-queue, the drafts directory and the queue-drain-candidate-label issue queue](https://github.com/nedschorus/nedschorus/issues/24)), whether to build this, drop it, or leave it waiting. Until he decides, no agent builds it.
 
 ## Deferred-decisions
 

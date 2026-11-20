@@ -20,7 +20,7 @@ What remains true: the log-store copy of a Mac transcript can be up to an hour b
 
 ## Reproduction
 
-`scripts/transcript-mirror-to-log-store.py` runs hourly at :17 from cron on the Mac. It copies `~/.claude/projects/` to `nedlern@ned-box:/home/nedlern/nedschorus-logs/transcripts/mac/projects/`.
+`scripts/transcript-mirror-to-log-store.py` runs hourly at :17 from cron on the Mac. It copies `~/.claude/projects/` to `nedlern@ned-box:/home/nedlern/nedsnodes-logs/transcripts/mac/projects/`.
 
 One transcript, the cold-read-research seat's session `8a00a4e5-6823-45ff-84c2-5becb95a8daa.jsonl` under `-Users-el-agents-cold-read-research/`, measured on 2026-09-27:
 

@@ -3,7 +3,7 @@
 
 Usage, on ned-box: scripts/open-file-in-typora-on-mac-from-ned-box-hack.py <path>
 
-for example `scripts/open-file-in-typora-on-mac-from-ned-box-hack.py docs/nedschorus-wiki/nedschorus-glossary.md`.
+for example `scripts/open-file-in-typora-on-mac-from-ned-box-hack.py docs/nedsnodes-wiki/nedsnodes-glossary.md`.
 The path may be relative to the current directory. It must name a file under
 /home/nedlern, because the Mac sees ned-box's home through its mount
 /Volumes/nedhome and nothing else on ned-box.
@@ -18,7 +18,7 @@ request the Mac would refuse for its text is refused here, before any
 connection is made.
 
 The environment overrides open-mac-window-from-ned-box.py reads apply here too,
-and NEDSCHORUS_NED_BOX_HOME overrides ned-box's home: the seams the test suite
+and NEDSNODES_NED_BOX_HOME overrides ned-box's home: the seams the test suite
 uses.
 """
 
@@ -48,7 +48,7 @@ def main(arguments):
         print(f"usage: {PROGRAM} <path>", file=sys.stderr)
         print("Opens one file from ned-box in Typora on the user's Mac.", file=sys.stderr)
         return window_sender.EXIT_USAGE_OR_REFUSED
-    ned_box_home = os.environ.get("NEDSCHORUS_NED_BOX_HOME") or forced_command.NED_BOX_HOME
+    ned_box_home = os.environ.get("NEDSNODES_NED_BOX_HOME") or forced_command.NED_BOX_HOME
     resolved = os.path.realpath(arguments[0])
     if not os.path.isfile(resolved):
         print(f"{PROGRAM}: no request was sent, because {resolved} is not a file on ned-box.", file=sys.stderr)
