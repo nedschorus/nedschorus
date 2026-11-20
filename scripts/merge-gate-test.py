@@ -270,8 +270,8 @@ def review(channel_capture, review_id):
 
 
 # merge-lane-2's reviews posted through scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py,
-# whose marks the gate requires of ned-review-merge's latest review with a verdict: on PR 3885, an
-# approval and a request for changes with four blocking comments.
+# whose marks the gate requires of ned-review-merge's latest review with a verdict: an approval and a
+# request for changes with four blocking comments, from the captures named below.
 POSTED_REVIEWS = "nedsnodes-nedsnodes-3885-reviews-channel-paginated.json"
 POSTED_APPROVAL_BODY = review(POSTED_REVIEWS, 5988089520)["body"]
 POSTED_REQUEST_BODY = review(POSTED_REVIEWS, 5952986576)["body"]
@@ -1659,10 +1659,11 @@ def case_description_unparsable(gate):
 
 # THE VERDICT REVIEW MARKS CASES. The gate refuses when ned-review-merge's latest
 # review whose state is APPROVED or CHANGES_REQUESTED lacks the marks
-# scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py writes. PR 3881's
-# approval 5950181743 and its request for changes 5949985134 were typed by hand; PR 3885's
-# 5952986576 was posted by that program, with four comments opening "**Blocks**". Case A1
-# is the pass with no such review, B6 the pass of a posted request for changes.
+# scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py writes. In the captures,
+# approval 5950181743 was typed by hand, as was request for changes 5949985134, whose capture
+# of no inline comments stands in for a hand-typed request's; 5952986576 was posted by that
+# program, with four comments opening "**Blocks**". Case A1 is the pass with no such review,
+# B6 the pass of a posted request for changes.
 PR_3881_REVIEWS = "nedsnodes-nedsnodes-3881-reviews-channel-paginated.json"
 
 

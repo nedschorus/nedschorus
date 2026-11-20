@@ -11,6 +11,7 @@ Exits 0 when the review has the marks; 1 when it lacks them, printing why on sta
 2 when standard input is not that object.
 """
 
+import argparse
 import importlib.util
 import json
 import sys
@@ -28,6 +29,8 @@ EXIT_INPUT_UNUSABLE = 2
 
 
 def main():
+    argparse.ArgumentParser(description=__doc__.split("\n\n")[0], epilog="\n\n".join(__doc__.split("\n\n")[1:]),
+                            formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
     try:
         given = json.loads(sys.stdin.read())
         review, comments = given["review"], given["comments"]
