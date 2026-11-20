@@ -184,7 +184,7 @@ This is skill text, so before it is merged it takes the skill's own route: a col
 
 ## 11. A 4-hour timeout per attempt
 
-An attempt still running 4 hours after it started, counted in time the machine was awake (`time.monotonic()`, which leaves out sleep on Linux and on macOS), is stopped with its child processes, is not retried, and is `FAILED` with the cause `timed-out — timed out after 4 hours`. Its `FAILED` line is preceded by a `WRITE CHECK DID NOT RUN:` line, since the stopped cold-read-cell never ran its stray-write check. The user approved this on 2026-10-28; no recorded cold-read-cell has needed more than 72 minutes awake.
+An attempt still running 4 hours after it started, counted in time the machine was awake (`time.monotonic()`, which leaves out sleep on Linux and on macOS), is stopped with its child processes, is not retried, and is `FAILED` with the cause `timed-out — timed out after 4 hours`. The stopped cold-read-cell never runs its own stray-write check, so after its `FAILED` line the cold-read-grid checks for it: it prints a `STRAY WRITE:` line for each file changed since the snapshot the grid took before the cold-read-cells launched, with the command that undoes it, and none for a file that already had uncommitted changes in that snapshot. When the snapshot or the check fails, it prints a `WRITE CHECK DID NOT RUN:` line with the reason instead. The user approved this on 2026-10-28; no recorded cold-read-cell has needed more than 72 minutes awake.
 
 ## 12. Order of work
 
