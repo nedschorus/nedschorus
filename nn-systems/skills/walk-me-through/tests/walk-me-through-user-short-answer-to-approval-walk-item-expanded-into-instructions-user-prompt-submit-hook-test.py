@@ -2396,6 +2396,26 @@ def test_items_under_a_shared_heading_with_no_openings_and_no_recommendation_lin
               and not any("has no opening it reads" in line for line in lines), f"lines {lines!r}")
 
 
+def test_bump_on_an_open_walk_runs_check_bump_with_the_title_and_without_a_walk_prints_nothing():
+    case = Case(next_to_present="item 4 of 9")
+    result = case.run("Bump the code proposals ")
+    context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"] if result.stdout else ""
+    check("bump and a title tell the agent to run check --bump with that title and the reply as typed",
+          result.returncode == 0
+          and f"before item 4 of 9 of approval-walk {WALK_NAME}" in context
+          and "check --bump 'the code proposals' --user-reply-as-typed 'Bump the code proposals'" in context
+          and str(HOOK_SCRIPT.parent / "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py")
+          in context,
+          f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
+    result = Case().run("bump the code proposals")
+    check("bump with no approval-walk open prints nothing",
+          result.returncode == 0 and result.stdout == "" and result.stderr == "",
+          f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
+    result = case.run("bump")
+    check("bump with no title is not a bump and prints nothing",
+          result.returncode == 0 and result.stdout == "", f"exit {result.returncode}, stdout {result.stdout!r}")
+
+
 def main():
     try:
         for name, function in sorted(globals().items()):

@@ -73,7 +73,7 @@ SSH alone cannot reconnect to a running process: a process's terminal belongs to
 
 `new-session -A` attaches to the session named `<name>` when it exists and creates it when it does not, which is the requested behavior exactly. Closing the iTerm2 window detaches; the agent keeps working; the same command reattaches.
 
-This also settles the open question recorded against the seat move in `nn-systems/handoff/handoff-design.md`: inside tmux the supervisor is the pane's own process, so every successor it launches inherits the pane's terminal and is visible on reattach. The detached-supervisor stdio problem does not arise in this topology.
+This also settles the open question recorded against the seat move in `nn-systems/handoff/handoff.system.design.md`: inside tmux the supervisor is the pane's own process, so every successor it launches inherits the pane's terminal and is visible on reattach. The detached-supervisor stdio problem does not arise in this topology.
 
 ## Where per-agent identity lives (user-ruled 2026-08-07)
 

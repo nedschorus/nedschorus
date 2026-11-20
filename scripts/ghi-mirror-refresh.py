@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Regenerate the local GHI mirror (nedschorus#46, design doc
-docs/issues/46-ghi-guide-agent-design.md § The GHI mirror).
+docs/issues/46-ghi-guide-agent.system.design.md § The GHI mirror).
 
 `ghi-guide-agent` — the project's knowledge agent over its GitHub-issue corpus —
 answers only from this mirror, never from GitHub directly (the cold-start

@@ -2,7 +2,7 @@
 """Write the handoff file for a retiring session, and report who is watching.
 
 The handoff system's writer (specification:
-nn-systems/handoff/handoff-design.md). The retiring agent writes one
+nn-systems/handoff/handoff.system.design.md). The retiring agent writes one
 thing — the prompt telling its successor what to do first — and this script
 does everything else a machine can do: it stamps the timestamp, derives the
 restart counter, derives the roster of subagents still working and the list of
@@ -34,7 +34,7 @@ quotes, and newlines survive: a shell mangles all three inside an inline
 argument.
 
 A multi-line next step is written TWICE, and this is deliberate (R20; format
-specified in nn-systems/handoff/handoff-design.md). `next-step:` is
+specified in nn-systems/handoff/handoff.system.design.md). `next-step:` is
 always the whitespace-collapsed single line, because that is what every
 reader already handles — including a supervisor process that started before
 this format existed and is still running. When the text spans lines, a

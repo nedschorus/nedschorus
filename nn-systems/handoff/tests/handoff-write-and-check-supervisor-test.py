@@ -105,7 +105,7 @@ def handoff_text(workspace: Path, agent: str) -> str:
 def run_multi_line_next_step_cases(workspace: Path):
     """R20: a multi-line next step survives, without changing what old readers see.
 
-    Format in nn-systems/handoff/handoff-design.md. `next-step:` stays the
+    Format in nn-systems/handoff/handoff.system.design.md. `next-step:` stays the
     collapsed single line every existing reader handles; a verbatim block is
     appended LAST when, and only when, the text spans lines.
     """

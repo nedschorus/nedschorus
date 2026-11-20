@@ -96,8 +96,10 @@ os.execv(os.environ[{REAL_GIT_VARIABLE!r}], ["git", *sys.argv[1:]])
 BASELINE_FILE_CONTENTS = {
     "docs/review-note.md": "A prose heading\n\nOld prose.\n\n```python\nprint('old')\n```\n",
     "operative-note.md": "Old prose outside docs.\n",
-    "scripts/example-program.py": '"""Old module documentation."""\n# Old comment\nVALUE = "old"\n\ndef show_value():\n    """Old function documentation."""\n    print(VALUE)\n    return 1\n',
+    "scripts/example-program.py": '"""Old module documentation."""\n# Old comment\nVALUE_MESSAGE = "old"\n\ndef show_value():\n    """Old function documentation."""\n    print(VALUE_MESSAGE)\n    return 1\n',
     "scripts/example-program-test.py": 'EXPECTED = "old"\nassert EXPECTED\n',
+    "scripts/guard-example.py": 'REFUSED_GIT_SUBCOMMANDS = ["push", "reset"]\n\ndef refused(c):\n    return c in REFUSED_GIT_SUBCOMMANDS\n',
+    "scripts/pattern-example.py": 'import re\nPATTERN = re.compile(r"^git push\\b")\nLIMIT = 1\n',
     ".claude/guard-hooks/example-hook.py": 'print("old")\n',
     ".claude/guard-hooks/example-hook-test.py": 'print("old")\n',
     ".claude/guard-hooks/synthetic-keystroke-guard-hook.py": 'print("old")\n',
@@ -243,14 +245,32 @@ def run_unit_cases():
           review_plan_module.fenced_code_block_line_numbers_in_markdown(fence_source) == {2, 3, 4, 5, 6, 8, 9})
     check("fence detection distinguishes tildes from backticks",
           review_plan_module.fenced_code_block_line_numbers_in_markdown("~~~\n```\n~~~~\nprose\n") == {1, 2, 3})
-    old_source = '"""module old"""\nclass Example:\n    """class old"""\n    async def show(self, x):\n        """function old"""\n        return f"old {x}"\n'
+    normalized = review_plan_module.normalized_syntax_tree_dump_without_docstrings_or_printed_strings
+    old_source = '"""module old"""\nclass Example:\n    """class old"""\n    async def show(self, x):\n        """function old"""\n        print(f"old {x}", "old " + x)\n'
     new_source = old_source.replace("old", "new") + "# a comment\n"
-    check("normalized AST ignores docstrings, comments and f-string constant parts",
-          review_plan_module.normalized_syntax_tree_dump_without_strings(old_source)
-          == review_plan_module.normalized_syntax_tree_dump_without_strings(new_source))
+    check("normalized AST ignores docstrings, comments, printed f-string constant parts and printed + chain pieces",
+          normalized(old_source) == normalized(new_source))
     check("normalized AST preserves behaviour and f-string expressions",
-          review_plan_module.normalized_syntax_tree_dump_without_strings(old_source)
-          != review_plan_module.normalized_syntax_tree_dump_without_strings(old_source.replace("{x}", "{x + 1}")))
+          normalized(old_source) != normalized(old_source.replace("{x}", "{x + 1}")))
+    behaviour_string_cases = [
+        ("a command list element", 'REFUSED_GIT_SUBCOMMANDS = ["push", "reset"]\n\ndef refused(c):\n    return c in REFUSED_GIT_SUBCOMMANDS\n',
+         '"push"', '"push --force"'),
+        ("a regular expression", 'import re\nPATTERN = re.compile(r"^git push\\b")\n', 'r"^git push\\b"', 'r"^git (push|reset)\\b"'),
+        ("a string beside a printed one on the same line", 'import re\nprint(re.sub("a", "b", "shown"))\n', '"a"', '"z"'),
+    ]
+    for case_name, source, old_text, new_text in behaviour_string_cases:
+        check(f"normalized AST keeps a string that carries behaviour: {case_name}",
+              normalized(source) != normalized(source.replace(old_text, new_text)))
+    printed_string_cases = [
+        ("a raised exception's message", 'def f():\n    raise ValueError("old failure")\n'),
+        ("a helper printer's text", 'import sys\ndef say(stream, text):\n    print(text, file=stream)\nsay(sys.stderr, "old line")\n'),
+        ("a .format template that is printed", 'print("old {}".format(1))\n'),
+    ]
+    for case_name, source in printed_string_cases:
+        check(f"normalized AST ignores a printed string: {case_name}",
+              normalized(source) == normalized(source.replace("old", "new")))
+    check("normalized AST ignores a printed module constant named as a message",
+          normalized('CHECK_MESSAGE = "old"\nprint(CHECK_MESSAGE)\n') == normalized('CHECK_MESSAGE = "new"\nprint(CHECK_MESSAGE)\n'))
     prompt_before = "# Task\n\nRead the whole file, then\nreport each name.\n\n- first step\n- second step\n"
     compare = review_plan_module.prompt_texts_differ_only_in_trailing_whitespace_or_blank_lines
     cosmetic_cases = [
@@ -330,7 +350,7 @@ def run_classification_cases(fixture):
     plan = fixture.plan_for_changed_file("scripts/example-program-test.py", 'EXPECTED = "new"\nassert EXPECTED\n')
     check("a changed test gets codex-review-and-head-tests-tier", plan["tier"] == "codex-review-and-head-tests-tier" and plan["changed_files"][0]["class"] == "test", plan)
     plan = fixture.plan_for_changed_file("scripts/example-program.py", BASELINE_FILE_CONTENTS["scripts/example-program.py"].replace("Old", "New").replace('"old"', '"new"'))
-    check("Python string, docstring and comment changes get codex-review-and-head-tests-tier", plan["tier"] == "codex-review-and-head-tests-tier" and "string constants" in plan["tier_decided_by"], plan)
+    check("Python printed string, docstring and comment changes get codex-review-and-head-tests-tier", plan["tier"] == "codex-review-and-head-tests-tier" and "printed strings" in plan["tier_decided_by"], plan)
     plan = fixture.plan_for_changed_file("docs/review-note.md", BASELINE_FILE_CONTENTS["docs/review-note.md"].replace("print('old')", "print('new')"))
     check("fenced Markdown code changes get codex-review-and-head-tests-tier", plan["tier"] == "codex-review-and-head-tests-tier" and "fenced code blocks" in plan["tier_decided_by"], plan)
     full_reviewer_cases = [
@@ -341,6 +361,12 @@ def run_classification_cases(fixture):
         ("a registered hook string-only change gets claude-and-codex-review-and-head-tests-tier", "scripts/registered-example-hook.py", 'print("new")\n'),
         ("a new Python program gets claude-and-codex-review-and-head-tests-tier", "scripts/new-example-program.py", 'print("new")\n'),
         ("a test under the hook directory gets claude-and-codex-review-and-head-tests-tier", ".claude/guard-hooks/example-hook-test.py", 'print("new")\n'),
+        ("a command list element that is not printed gets claude-and-codex-review-and-head-tests-tier", "scripts/guard-example.py",
+         BASELINE_FILE_CONTENTS["scripts/guard-example.py"].replace('"push"', '"push --force"')),
+        ("a widened regular expression gets claude-and-codex-review-and-head-tests-tier", "scripts/pattern-example.py",
+         BASELINE_FILE_CONTENTS["scripts/pattern-example.py"].replace("push", "(push|reset)")),
+        ("a number constant change gets claude-and-codex-review-and-head-tests-tier", "scripts/pattern-example.py",
+         BASELINE_FILE_CONTENTS["scripts/pattern-example.py"].replace("LIMIT = 1", "LIMIT = 2")),
     ]
     for case_name, path, content in full_reviewer_cases:
         plan = fixture.plan_for_changed_file(path, content)

@@ -44,7 +44,7 @@ import unittest
 
 MACHINE_DIRECTORY = pathlib.Path(__file__).resolve().parent.parent
 REPOSITORY_ROOT = MACHINE_DIRECTORY.parent.parent
-DESIGN_RELATIVE_PATH = "docs/design-to-main/design-to-main-state-machine-design.md"
+DESIGN_RELATIVE_PATH = "docs/design-to-main/design-to-main-state-machine.system.design.md"
 DESIGN_PATH = REPOSITORY_ROOT / DESIGN_RELATIVE_PATH
 
 _rule_failure_lines_spec = importlib.util.spec_from_file_location(

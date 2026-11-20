@@ -25,6 +25,11 @@ letters of AO, O2 and O3 (`A-O`, `a - o`, `O-2`):
               then, also or plus (`a but ...`, `d and r`, `a, ...`); a word
               needs only a space (`repeat with context`). Text that opens with
               an item number, `item` before it or not, is never a rider.
+  BUMP        `bump` and the title of an item not yet shown, as in `bump the
+              code proposals`: while an approval-walk is open, the text
+              tells the agent to run CHECK_PROGRAM's `check --bump` with that
+              title, which shows that item next and the waiting item after it;
+              with no walk open, the hook prints nothing.
 Every other prompt prints nothing and exits 0 without reading any file: Y and
 C are not answers, and N, like next, is a navigation word the agent reads.
 
@@ -371,6 +376,14 @@ NUMBERED_LINES = (
      "which answers were recorded and what was printed, and ask him how to go on."),
     ("The answer gives each numbered question or point of your last message its own letter: {pairs}.",
      "Every question or point the answer does not name stays open; say so in your reply."),
+)
+BUMP = re.compile(r"^bump\s+(?P<title>\S.*?)\s*$", re.I | re.S)
+BUMP_LINES = (
+    "[rule walk-me-through-user-bump-request-moves-named-approval-walk-item-to-next-shown] The user said bump: he wants the item titled \"{title}\" shown next, before {item} of approval-walk {walk}, "
+    "which waits for his answer and is shown again after it.",
+    "Run `python3 {program} check --bump {quoted_title} --user-reply-as-typed {reply}` and do what it prints; "
+    "it numbers that item, moves it and writes the minutes' `#next_to_present` line, so write nothing in the "
+    "minutes by hand.",
 )
 NUMBERED_REFUSED_LINES = (
     "The answer {problems}, and the minutes' `#next_to_present` line names only {item}.",
@@ -1004,8 +1017,23 @@ def unseen_item_lines(answer, walk, transcript_path):
     return lines
 
 
+def bump_output(payload, bump):
+    """Return the hook's output for a `bump <title>` prompt, or None when no approval-walk is open."""
+    walk = read_walk(payload.get("cwd") or os.getcwd())
+    if walk is None:
+        return None
+    context = "\n".join(line.format(title=bump["title"], item=walk.item, walk=walk.name, program=CHECK_PROGRAM,
+                                     quoted_title=shlex.quote(bump["title"]),
+                                     reply=shlex.quote(" ".join(payload["prompt"].split())))
+                         for line in BUMP_LINES)
+    return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}}
+
+
 def output_for(payload):
     """Return the hook's output for the payload as a dict, or None."""
+    bump = BUMP.match((payload.get("prompt") or "").strip())
+    if bump:
+        return bump_output(payload, bump)
     answer = parsed_answer(payload.get("prompt") or "")
     if answer is None:
         return None
