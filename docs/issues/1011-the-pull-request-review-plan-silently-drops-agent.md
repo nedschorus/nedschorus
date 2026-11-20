@@ -11,12 +11,12 @@ Filed without the user's sign-off by the agent-seat ned-box-helper on 2026-10-03
 The program is `scripts/pull-request-review-plan.py` as it is on main at `8d9751d`. Every command below ran on ned-box in a checkout of that commit; `<checkout>` stands for the checkout's top level.
 
 1. The plan for PR [install-scheduled-jobs: back up the crontab before each write, and name the backup in every FAILED write](https://github.com/nedschorus/nedschorus/pull/999), at head commit `d660caf4`, computed twice. The first run used `--repository <checkout>` and the second `--repository <checkout>/scripts`, each with `--json`. Both runs exited 0, and both gave the same head commit, merge base, tier (`full-reviewer`) and test files. Only one field differs:
-   - `tool_message_to_agent_text_whole_pull_request`: 2 entries from the top level, the first being the changed `--help` docstring of `nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py`, and 0 entries from `scripts/`.
+   - `tool_message_to_agent_text_whole_pull_request`: 2 entries from the top level, the first being the changed `--help` docstring of `nn-systems/general-tools/install-scheduled-jobs-on-this-machine.py`, and 0 entries from `scripts/`.
 2. The underlying git call, with that pull request's merge base `dc6ff64a` and head commit `d660caf4`:
-   - From `<checkout>`, `git diff -U0 dc6ff64a d660caf4 -- nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py | wc -l` prints `101`.
+   - From `<checkout>`, `git diff -U0 dc6ff64a d660caf4 -- nn-systems/general-tools/install-scheduled-jobs-on-this-machine.py | wc -l` prints `101`.
    - From `<checkout>/scripts`, the same command prints `0`.
-3. The program's test-file selection function, `test_files_to_run_for_changed_files(repository, head, changed_files)`, called directly with `head` set to `"HEAD"` and `changed_files` set to one changed program, `[{"path": "nc-systems/handoff/handoff-supervisor.py", "status": "M"}]`:
-   - with `repository` set to `<checkout>`, the function returns the three suites `nc-systems/handoff/tests/handoff-supervisor-session-end-and-resume-test.py`, `nc-systems/handoff/tests/handoff-supervisor-session-launch-and-seat-lock-test.py` and `nc-systems/handoff/tests/handoff-supervisor-successor-prompt-test.py`;
+3. The program's test-file selection function, `test_files_to_run_for_changed_files(repository, head, changed_files)`, called directly with `head` set to `"HEAD"` and `changed_files` set to one changed program, `[{"path": "nn-systems/handoff/handoff-supervisor.py", "status": "M"}]`:
+   - with `repository` set to `<checkout>`, the function returns the three suites `nn-systems/handoff/tests/handoff-supervisor-session-end-and-resume-test.py`, `nn-systems/handoff/tests/handoff-supervisor-session-launch-and-seat-lock-test.py` and `nn-systems/handoff/tests/handoff-supervisor-successor-prompt-test.py`;
    - with `repository` set to `<checkout>/scripts`, the function returns `[]`.
 
 Neither run printed a warning or an error. The plan is what the merge-lane reads to write the reviewer brief when it commissions a review of a pull request. A reviewer brief written from the second plan would list no changed tool-message-to-agent text and, for a change to the supervisor, no test file to run.

@@ -47,7 +47,7 @@ _spec.loader.exec_module(program)
 
 _shipper_spec = importlib.util.spec_from_file_location(
     "cold_read_record_ship",
-    REPOSITORY_ROOT / "nc-systems" / "cold-read" / "cold-read-record-ship.py")
+    REPOSITORY_ROOT / "nn-systems" / "cold-read" / "cold-read-record-ship.py")
 record_shipper = importlib.util.module_from_spec(_shipper_spec)
 _shipper_spec.loader.exec_module(record_shipper)
 

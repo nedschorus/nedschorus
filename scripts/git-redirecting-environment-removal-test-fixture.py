@@ -40,7 +40,7 @@ makes the repository where it was told to, and there is nothing left for the
 check to catch.
 
 WHICH VARIABLES. The list is GIT_REDIRECTING_ENVIRONMENT_VARIABLES in
-nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py,
+nn-systems/general-tools/git-redirecting-environment-variables-removal-common.py,
 read from that module and not copied here; scripts/run-all-test-suites.py
 reads the same module, so a suite run directly and a suite the runner
 launches have the same ones removed.
@@ -54,7 +54,7 @@ from pathlib import Path
 
 _removal_spec = importlib.util.spec_from_file_location(
     "git_redirecting_environment_variables_removal_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "git-redirecting-environment-variables-removal-common.py")
 _removal = importlib.util.module_from_spec(_removal_spec)
 _removal_spec.loader.exec_module(_removal)

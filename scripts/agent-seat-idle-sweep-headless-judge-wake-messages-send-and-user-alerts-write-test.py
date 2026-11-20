@@ -207,7 +207,7 @@ class Machine:
                 stream.write(json.dumps(record) + "\n")
 
     def task(self, seat, task_id):
-        directory = self.tasks / f"nedschorus-{seat}-tasks"
+        directory = self.tasks / f"nedsnodes-{seat}-tasks"
         directory.mkdir(exist_ok=True)
         (directory / f"{task_id}.json").write_text(json.dumps(
             {"id": task_id, "subject": f"task {task_id}", "status": "pending", "blocks": [],
@@ -245,7 +245,7 @@ class Machine:
         return [task["subject"] for task in self.owner_tasks()]
 
     def alerts(self):
-        pending = self.home / ".local" / "state" / "nedschorus" / "user-alerts" / "pending"
+        pending = self.home / ".local" / "state" / "nedsnodes" / "user-alerts" / "pending"
         return ([json.loads(path.read_text()) for path in sorted(pending.glob("*.json"))]
                 if pending.is_dir() else [])
 
@@ -582,7 +582,7 @@ for opener in ("rule 5", "rule 3"):
         machine.script(sent_ok())
     machine.run(0)
     if opener == "rule 5":
-        (machine.tasks / "nedschorus-alpha-tasks" / "1.json").unlink()
+        (machine.tasks / "nedsnodes-alpha-tasks" / "1.json").unlink()
     else:
         (machine.handoffs / "s-1-handoff-deferred").unlink()
     machine.append("alpha", cross_session(machine.events("message_sent")[-1]["text"], at(0.5)),
@@ -1680,7 +1680,7 @@ machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
 machine.task("alpha", "6")
 machine.task("alpha", "7")
 # blockedBy, not a pull request prerequisite, so that no gh query is made.
-older_task = machine.tasks / "nedschorus-alpha-tasks" / "7.json"
+older_task = machine.tasks / "nedsnodes-alpha-tasks" / "7.json"
 older_task.write_text(json.dumps(dict(json.loads(older_task.read_text()), blockedBy=["6"])))
 # Judged backed, rule 5 follows for the open task 6, and its judge sends nothing.
 machine.script({"answer": {"sentences": [{"index": 0, "backed": True, "reason": "task 7"}]}},

@@ -866,7 +866,7 @@ with tempfile.TemporaryDirectory() as temporary:
         "transcript); WINDOW NOT OPENED on the Mac — open-mac-window-from-ned-box.py "
         "exited 1: ned-box could not reach the Mac. The seat is running; to open its "
         "window, run in a Terminal on the Mac: "
-        "/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu A-windowless")
+        "/Users/el/Projects/nedsnodes/scripts/launch-claude-ubuntu A-windowless")
     recovery = RecoveryToolStub(outcomes={"A-windowless": (3, window_not_opened_report)})
     exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], recovery=recovery,
                                          box=BoxStub(platform="linux"))
@@ -1065,16 +1065,16 @@ with tempfile.TemporaryDirectory() as temporary:
           and run_log_lines(handoffs)[0]["box_windows"]
           == {"answered": True, "opened": ["gatekeeper", "prof"]},
           (report, run_log_lines(handoffs)))
-    real_box = os.environ.pop("NEDSCHORUS_AGENT_BOX", None)
+    real_box = os.environ.pop("NEDSNODES_AGENT_BOX", None)
     try:
         default_alias = restart.box_seat_query_command(BOOT_AT)[5]
-        os.environ["NEDSCHORUS_AGENT_BOX"] = "ned-wifi"
+        os.environ["NEDSNODES_AGENT_BOX"] = "ned-wifi"
         overridden_alias = restart.box_seat_query_command(BOOT_AT)[5]
     finally:
-        os.environ.pop("NEDSCHORUS_AGENT_BOX", None)
+        os.environ.pop("NEDSNODES_AGENT_BOX", None)
         if real_box is not None:
-            os.environ["NEDSCHORUS_AGENT_BOX"] = real_box
-    check("the box alias is the launcher's: ned by default, NEDSCHORUS_AGENT_BOX when set",
+            os.environ["NEDSNODES_AGENT_BOX"] = real_box
+    check("the box alias is the launcher's: ned by default, NEDSNODES_AGENT_BOX when set",
           default_alias == "ned" and overridden_alias == "ned-wifi",
           (default_alias, overridden_alias))
     listing_command = (
@@ -1199,7 +1199,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # ~/agents/<name>, since launch-claude-ubuntu reads no agents-root
     # variable (user-ruled 2026-09-22), so the box listing reads none either.
     check("the remote listing reads no agents-root variable: a box seat home is ~/agents",
-          "NEDSCHORUS_AGENTS_ROOT" not in listing_command, listing_command)
+          "NEDSNODES_AGENTS_ROOT" not in listing_command, listing_command)
 
     # Recovery on the box opens a window on the Mac after each seat it brings up,
     # so a seat may already have one from this login: it gets no second window.
