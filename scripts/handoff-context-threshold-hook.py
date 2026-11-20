@@ -134,7 +134,7 @@ NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION = (
     "that writes its result to a file; name that file in your next-step file, "
     "since the handoff writer script cannot name that process. A command or an "
     "edit that finishes within your turn needs none of these. When you run the "
-    "handoff writer script, nc-systems/handoff/handoff-write-and-check-supervisor.py, "
+    "handoff writer script, nn-systems/handoff/handoff-write-and-check-supervisor.py, "
     "before this agent-session ends, it names in your session-handoff each subagent "
     "still working, whenever it started, and each background Bash task that "
     "started since this handoff-deferral began and is still running, so you need "

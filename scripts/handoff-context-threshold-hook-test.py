@@ -1649,7 +1649,7 @@ with tempfile.TemporaryDirectory() as workspace:
               " stopped at the session-handoff."
               in hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION,
               hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION)
-        writer_script = "nc-systems/handoff/handoff-write-and-check-supervisor.py"
+        writer_script = "nn-systems/handoff/handoff-write-and-check-supervisor.py"
         check("the instruction on new work says unlisted work means running the writer again with a new next-step file",
               "Write work the writer could not list into a new next-step file that holds your next step and"
               " names that work, and run the writer again with --next-step-file."
