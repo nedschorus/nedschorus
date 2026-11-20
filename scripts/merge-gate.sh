@@ -136,7 +136,7 @@ REPO=nedsnodes/nedsnodes
 # GitHub redirects the repository's old name, and descriptions written before the rename still link with it.
 OLD_REPOSITORY=nedschorus/nedschorus
 MERGE_ACCOUNT=ned-review-merge
-TOKEN_FILE=$HOME/.config/nedschorus/$MERGE_ACCOUNT.token
+TOKEN_FILE=$HOME/.config/nedsnodes/$MERGE_ACCOUNT.token
 
 # The first argument follows the prefix; each further argument is a line of its own.
 fail()    { printf 'GATE REFUSED (#%s): %s\n' "${PR:-?}" "$1" >&2; shift; [ $# -eq 0 ] || printf '%s\n' "$@" >&2; exit 1; }

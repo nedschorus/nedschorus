@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for open-mac-window-from-ned-box.py.
 
-ssh is replaced by a stub (NEDSCHORUS_SSH_PROGRAM) that records its arguments
+ssh is replaced by a stub (NEDSNODES_SSH_PROGRAM) that records its arguments
 and answers as told, so no test connects to the Mac. The round-trip cases make
 the stub play sshd: it runs the Mac's forced command with SSH_ORIGINAL_COMMAND
 set to the request, and a stub opener records what window would open.
@@ -41,16 +41,16 @@ def run_caller(arguments, ssh_body=None, destination=None, play_sshd=False, time
         opener = scratch / "opener-stub"
         opener.write_text(f"""python3 -c 'import json,sys; json.dump(sys.argv[1:], open("{opened_record}","w"))' "$@"\n""")
         lines.append('for last; do :; done')
-        lines.append(f'SSH_ORIGINAL_COMMAND="$last" NEDSCHORUS_MAC_WINDOW_OPENER="{opener}" HOME="{scratch}" exec "{sys.executable}" "{FORCED_COMMAND_PATH}"')
+        lines.append(f'SSH_ORIGINAL_COMMAND="$last" NEDSNODES_MAC_WINDOW_OPENER="{opener}" HOME="{scratch}" exec "{sys.executable}" "{FORCED_COMMAND_PATH}"')
     else:
         lines.append(ssh_body or "exit 0")
     stub.write_text("\n".join(lines) + "\n")
     stub.chmod(0o755)
-    environment = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(scratch), "NEDSCHORUS_SSH_PROGRAM": str(stub)}
+    environment = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(scratch), "NEDSNODES_SSH_PROGRAM": str(stub)}
     if destination:
-        environment["NEDSCHORUS_MAC_SSH_DESTINATION"] = destination
+        environment["NEDSNODES_MAC_SSH_DESTINATION"] = destination
     if timeout_seconds:
-        environment["NEDSCHORUS_MAC_SSH_TIMEOUT_SECONDS"] = str(timeout_seconds)
+        environment["NEDSNODES_MAC_SSH_TIMEOUT_SECONDS"] = str(timeout_seconds)
     result = subprocess.run([sys.executable, str(CALLER_PATH), *arguments], capture_output=True, text=True, env=environment)
     sent = json.loads(record.read_text()) if record.exists() else None
     opened = json.loads(opened_record.read_text()) if opened_record.exists() else None
@@ -103,8 +103,8 @@ check("an ssh that does not finish in time exits 1 and says the window may not h
       (result.returncode, result.stderr))
 
 for words in (["tmux", "attach", "-t", "merge-lane-2"],
-              ["git", "-C", "/home/nedlern/Projects/nedschorus", "log", "--oneline", "-5"],
-              ["less", "/home/nedlern/nedschorus-logs/walk/x-minutes.md"]):
+              ["git", "-C", "/home/nedlern/Projects/nedsnodes", "log", "--oneline", "-5"],
+              ["less", "/home/nedlern/nedsnodes-logs/walk/x-minutes.md"]):
     result, sent, opened = run_caller(words, play_sshd=True)
     check(f"round trip: the Mac opens a window running exactly these words on ned-box: {words!r}",
           result.returncode == 0 and opened == ["ssh", "-t", "--", "nedlern@ned-box", *words], (result.returncode, opened, result.stderr))

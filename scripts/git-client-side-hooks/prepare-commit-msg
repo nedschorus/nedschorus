@@ -18,8 +18,8 @@
 #
 # Installed once per clone, as an absolute path into the clone's reference
 # checkout, which stays on main, so every seat's worktree runs main's copy:
-#   Mac:      git config core.hooksPath /Users/el/Projects/nedschorus/scripts/git-client-side-hooks
-#   ned-box:  git config core.hooksPath /home/nedlern/Projects/nedschorus/scripts/git-client-side-hooks
+#   Mac:      git config core.hooksPath /Users/el/Projects/nedsnodes/scripts/git-client-side-hooks
+#   ned-box:  git config core.hooksPath /home/nedlern/Projects/nedsnodes/scripts/git-client-side-hooks
 #
 # A prepare-commit-msg hook that exits non-zero aborts the commit, and this
 # one runs on every commit of every seat on the machine, so it always exits 0.
