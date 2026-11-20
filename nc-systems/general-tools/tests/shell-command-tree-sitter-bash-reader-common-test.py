@@ -1874,7 +1874,7 @@ except r.ShellParserUnavailable as error:
         return hook_output["additionalContext"]
 
     NEXT_STEPS = "If the command did X, tell the user.\nDo not do Y to correct it."
-    first = context_of(reader.parser_unavailable_hook_output("The force-push guard", error, NEXT_STEPS, {}))
+    first = context_of(reader.parser_unavailable_hook_output("The synthetic keystroke guard", error, NEXT_STEPS, {}))
     again = context_of(reader.parser_unavailable_hook_output("The tmux kill guard", error, NEXT_STEPS, {}))
     unattended = context_of(reader.parser_unavailable_hook_output(
         "The tmux kill guard", error, NEXT_STEPS, {"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
@@ -1884,7 +1884,7 @@ except r.ShellParserUnavailable as error:
           and "Tell the user" in first and "network is unreachable" in first
           and str(reader.REQUIREMENTS_FILE) in first and "subagent" in first, first)
     check("every report has the user told again; nothing is counted",
-          "Tell the user" in again and again.replace("tmux kill", "force-push") == first, again)
+          "Tell the user" in again and again.replace("tmux kill", "synthetic keystroke") == first, again)
     this_host = __import__("socket").gethostname().split(".")[0]
     install = reader.tree_sitter_bash_install_failure_report_words_build(
         this_host, "", "").splitlines()[1]
@@ -1941,7 +1941,6 @@ except r.ShellParserUnavailable as error:
     # --- each Bash guard lets the command through and says so ---
     GUARDS = [
         (".claude/guard-hooks/synthetic-keystroke-guard-hook.py", "The synthetic keystroke guard"),
-        (".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py", "The force-push guard"),
         (".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py", "The GHI write redirect guard"),
         (".claude/guard-hooks/search-file-argument-read-as-option-guard-hook.py",
          "The search-file-argument guard"),
@@ -1977,16 +1976,16 @@ except r.ShellParserUnavailable as error:
             ("the parser is missing", error, "tree-sitter-bash is missing"),
             ("the reader failed", unreadable, "the shell command reader failed on it")):
         user_notice = json.loads(reader.parser_unavailable_hook_output(
-            "The force-push guard", failure, NEXT_STEPS, {})).get("systemMessage", "")
+            "The synthetic keystroke guard", failure, NEXT_STEPS, {})).get("systemMessage", "")
         check(f"when {label}, the user is told which guard let a command through unchecked, why, "
               f"and that the agent was told",
-              user_notice.startswith("The force-push guard let a command through unchecked on ")
+              user_notice.startswith("The synthetic keystroke guard let a command through unchecked on ")
               and cause_words in user_notice and failure.install_output in user_notice
               and "The agent has been told" in user_notice, user_notice)
     attended = context_of(reader.parser_unavailable_hook_output(
-        "The force-push guard", unreadable, NEXT_STEPS, {}))
+        "The synthetic keystroke guard", unreadable, NEXT_STEPS, {}))
     unattended = context_of(reader.parser_unavailable_hook_output(
-        "The force-push guard", unreadable, NEXT_STEPS, {"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
+        "The synthetic keystroke guard", unreadable, NEXT_STEPS, {"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
     check("when the reader fails, the guard's message says the command ran, then gives the guard's "
           "own next-step lines, and nothing tells the agent to undo",
           "the command has run" in attended and attended.splitlines()[1:3] == NEXT_STEPS.splitlines()
@@ -2017,7 +2016,7 @@ except r.ShellParserUnavailable as error:
             for session in ({}, {"CLAUDE_CODE_SESSION_ATTENDED": "0"}):
                 built.clear()
                 message = context_of(reader.parser_unavailable_hook_output(
-                    "The force-push guard", failure, NEXT_STEPS, session))
+                    "The synthetic keystroke guard", failure, NEXT_STEPS, session))
                 check(f"when {label}, with the session variables {session}, the guard's message "
                       f"ends with the report", len(built) == 1 and message.endswith(built[0]),
                       (built, message))
@@ -2027,7 +2026,7 @@ except r.ShellParserUnavailable as error:
                                      ((None, "1"), False)]:
         with reader.agent_session_attendance_environment_variables_temporarily_set_for_test(*session):
             from_session = context_of(reader.parser_unavailable_hook_output(
-                "The force-push guard", unreadable, NEXT_STEPS))
+                "The synthetic keystroke guard", unreadable, NEXT_STEPS))
         check(f"with the session variables {session}, the message reads the session from them",
               ("Tell the user" in from_session) == attended_wanted
               and ("do not tell the user" in from_session) != attended_wanted, from_session)
@@ -2040,7 +2039,7 @@ except r.ShellParserUnavailable as error:
     check("the session variables are set inside the block and put back as they were after it",
           inside == (None, "1") and after == ("outer", None), (inside, after))
     missing_unattended = context_of(reader.parser_unavailable_hook_output(
-        "The force-push guard", reader.ShellParserUnavailable("pip: no network"), NEXT_STEPS,
+        "The synthetic keystroke guard", reader.ShellParserUnavailable("pip: no network"), NEXT_STEPS,
         {"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
     check("in an agent-session no user attends, the parser-missing message still has a subagent "
           "report to the agent that dispatched it",

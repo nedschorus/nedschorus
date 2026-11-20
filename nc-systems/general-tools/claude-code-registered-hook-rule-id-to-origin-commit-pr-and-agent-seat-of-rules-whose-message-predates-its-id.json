@@ -59,11 +59,6 @@
     "pull_request": "3605",
     "agent_seat": "prime-intellect"
   },
-  "bash-guard-git-push-force": {
-    "commit": "01a20a3032ee0160f4c1cc3293fa403ab372e469",
-    "pull_request": "487",
-    "agent_seat": "identity-probe"
-  },
   "bash-guard-git-worktree-remove-cold-read-and-sanity-check-records-not-shipped": {
     "commit": "642ae25470c03684c762fc11751a2ae080f5c571",
     "pull_request": "2587",

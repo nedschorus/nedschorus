@@ -12,10 +12,8 @@ refspec, or with --all, --mirror or --tags and no refspec, is taken to push
 HEAD. A push that deletes a remote branch is not reminded. A push of several
 refs gets one reminder for each ref that changes a Markdown file.
 
-The push is found as .claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py
-finds it, with that guard's parser: behind the wrappers the shared shell
-module knows, with git -C, env --chdir and a literal cd earlier in the
-command line followed. Commands run by ssh, bash -c, eval or a script file
+The push is found behind the wrappers the shared shell module knows, with
+git -C, env --chdir and a literal cd earlier in the command line followed. Commands run by ssh, bash -c, eval or a script file
 are outside its reach. A checkout without both citation programs, such as
 another repository, gets no reminder, since the commands would not run there.
 
@@ -28,9 +26,9 @@ that moves, copies or renames a branch, and git fetch with a src:dst refspec
 after its repository.
 
 Any failure, git erroring, the git calls running past the hook's time budget,
-the shell reader failing, or the force-push guard's file failing to load,
-gives one line saying the reminder could not be checked, and the push goes on.
-Without the guard's parser the hook cannot tell a push from a command that
+the shell reader failing, or the shell reader's file failing to load, gives
+one line saying the reminder could not be checked, and the push goes on.
+Without the shell reader the hook cannot tell a push from a command that
 only contains the word push, so after a load failure every command
 containing that word gets the line, and every other command stays silent.
 """
@@ -44,18 +42,16 @@ import sys
 import time
 from pathlib import Path
 
-FORCE_PUSH_GUARD_PATH = (Path(__file__).resolve().parents[2] / ".claude" / "guard-hooks"
-                         / "force-push-with-open-pull-request-guard-hook.py")
-# Set when the guard's file fails to load: main() then gives the failure line for a push.
-force_push_guard_load_error = None
+SHELL_READER_PATH = Path(__file__).resolve().with_name("shell-command-tree-sitter-bash-reader-common.py")
+# Set when the shell reader's file fails to load: main() then gives the failure line for a push.
+shell_reader_load_error = None
 try:
-    _force_push_guard_spec = importlib.util.spec_from_file_location(
-        "force_push_with_open_pull_request_guard_hook", FORCE_PUSH_GUARD_PATH)
-    force_push_guard = importlib.util.module_from_spec(_force_push_guard_spec)
-    _force_push_guard_spec.loader.exec_module(force_push_guard)
-    shell_reader = force_push_guard.shell_reader
+    _shell_reader_spec = importlib.util.spec_from_file_location(
+        "shell_command_tree_sitter_bash_reader_common", SHELL_READER_PATH)
+    shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
+    _shell_reader_spec.loader.exec_module(shell_reader)
 except Exception as error:  # Any load failure must give the one line, not a crash on every command.
-    force_push_guard_load_error = f"{FORCE_PUSH_GUARD_PATH} could not be loaded: {type(error).__name__}: {error}"
+    shell_reader_load_error = f"{SHELL_READER_PATH} could not be loaded: {type(error).__name__}: {error}"
 
 HOOK_NAME = "claude-code-bash-git-push-of-markdown-change-citation-checks-reminder"
 COMPARED_BRANCH = "origin/main"
@@ -69,6 +65,15 @@ GIT_BUDGET_SECONDS = 20.0
 NAMED_FILE_LIMIT = 5
 
 ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+UNEXPANDED_PATTERN = re.compile(r"[$`*?]|\{\}")
+GIT_GLOBAL_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree",
+                          "--namespace", "--config-env", "--exec-path"}
+# Option values must not be mistaken for refspecs.
+PUSH_VALUE_OPTIONS = {"--repo", "--receive-pack", "--exec", "--push-option", "-o"}
+# Letters after a value-taking short option are its value.
+SHORT_VALUE_LETTERS = "o"
+# A wrapper option that runs the program in another directory.
+WRAPPER_DIRECTORY_OPTIONS = {("env", "-C"), ("env", "--chdir"), ("sudo", "-D"), ("sudo", "--chdir")}
 # git subcommands that can move a ref or HEAD before a later push in the same call.
 REF_CHANGING_GIT_SUBCOMMANDS = {"am", "checkout", "cherry-pick", "commit", "merge", "pull",
                                 "rebase", "reset", "revert", "switch", "update-ref"}
@@ -156,6 +161,96 @@ class GitCaller:
         return completed.stdout
 
 
+def find_git_push_invocation(words):
+    """Return push words and directory override, or None for a non-push."""
+    index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
+    if index is None or not shell_reader.is_program(words[index], "git"):
+        return None
+    wrapper_directory = directory_a_wrapper_sets(words)
+    index += 1
+    directory_override = None
+    while index < len(words):
+        word = words[index]
+        if word == "-C" and index + 1 < len(words):
+            directory_override = words[index + 1]
+            index += 2
+            continue
+        if word.startswith("-C") and len(word) > 2:
+            directory_override = word[2:]
+            index += 1
+            continue
+        if word in GIT_GLOBAL_VALUE_FLAGS:
+            index += 2
+            continue
+        if word.startswith("-"):
+            index += 1
+            continue
+        break
+    if index >= len(words) or words[index] != "push":
+        return None
+    if wrapper_directory is not None:
+        directory_override = (wrapper_directory if directory_override is None
+                              else directory_joined(wrapper_directory, directory_override))
+    return {"push_words": words[index + 1:],
+            "directory_override": directory_override}
+
+
+def directory_a_wrapper_sets(words):
+    """Return the directory the wrappers in front of the program run it in, or None.
+
+    A wrapper given more than one directory option uses its last, as env does; a
+    wrapper inside another runs in a directory taken relative to the outer one's.
+    """
+    directory = None
+    wrappers = shell_reader.simple_command_wrapper_options_and_values_parsed_from_words(words)
+    for wrapper, options in wrappers:
+        own = [value for option, value in options if (wrapper, option) in WRAPPER_DIRECTORY_OPTIONS]
+        if own:
+            directory = directory_joined(directory, own[-1])
+    return directory
+
+
+def directory_joined(base, target):
+    """Return target with a ~ bash expands expanded, taken relative to base when base is given."""
+    target = shell_reader.shell_word_tilde_prefix_expand_as_bash_would(target)
+    return target if base is None else os.path.join(base, target)
+
+
+def resolve_directory(base, target):
+    expanded = shell_reader.shell_word_tilde_prefix_expand_as_bash_would(target)
+    if os.path.isabs(expanded):
+        return os.path.normpath(expanded)
+    return os.path.normpath(os.path.join(base, expanded))
+
+
+def push_refspecs(push_words):
+    """Return the refspecs among the words after git push: every operand after the repository."""
+    positionals = []
+    index = 0
+    while index < len(push_words):
+        word = push_words[index]
+        if word == "--":
+            positionals.extend(push_words[index + 1:])
+            break
+        if word.startswith("--"):
+            if word.split("=", 1)[0] in PUSH_VALUE_OPTIONS and "=" not in word:
+                index += 2
+                continue
+            index += 1
+            continue
+        if word.startswith("-") and len(word) > 1:
+            consumes_next_word = False
+            for position, letter in enumerate(word[1:], start=1):
+                if letter in SHORT_VALUE_LETTERS:
+                    consumes_next_word = position == len(word) - 1
+                    break
+            index += 2 if consumes_next_word else 1
+            continue
+        positionals.append(word)
+        index += 1
+    return positionals[1:]
+
+
 def git_subcommand(words):
     """Return a git simple command's subcommand and the words after it, or (None, []) when the
     words do not run git."""
@@ -165,7 +260,7 @@ def git_subcommand(words):
     index += 1
     while index < len(words):
         word = words[index]
-        if word in force_push_guard.GIT_GLOBAL_VALUE_FLAGS:
+        if word in GIT_GLOBAL_VALUE_FLAGS:
             index += 2
         elif word.startswith("-"):
             index += 1
@@ -254,7 +349,7 @@ def pushed_refs(push_words):
     """Return the refs a push sends: each refspec's source, or HEAD when none is written."""
     if push_deletes(push_words):
         return []
-    _, refspecs = force_push_guard.parse_push_arguments(push_words)
+    refspecs = push_refspecs(push_words)
     if not refspecs:
         return ["HEAD"]
     refs = []
@@ -267,12 +362,12 @@ def pushed_refs(push_words):
 
 def push_messages(invocation, directory, unresolved_directory, earlier_ref_change, git):
     """Return the reminders for one git push, one per pushed ref that changes a Markdown file."""
-    unexpanded = force_push_guard.UNEXPANDED_PATTERN
+    unexpanded = UNEXPANDED_PATTERN
     override = invocation["directory_override"]
     if override is not None:
         if unexpanded.search(override):
             raise ReminderCheckFailure(f"the push runs in a directory this hook cannot read, {override}")
-        directory = force_push_guard.resolve_directory(directory, override)
+        directory = resolve_directory(directory, override)
     elif unresolved_directory is not None:
         raise ReminderCheckFailure(
             f"the push runs in a directory this hook cannot read, {unresolved_directory}")
@@ -327,14 +422,14 @@ def messages_for_command(command, payload_cwd, runner=None, clock=time.monotonic
             program_index += 1
         if program_index + 1 < len(words) and shell_reader.is_program(words[program_index], "cd"):
             target = words[program_index + 1]
-            if force_push_guard.UNEXPANDED_PATTERN.search(target):
+            if UNEXPANDED_PATTERN.search(target):
                 unresolved_directory = target
             else:
-                directory = force_push_guard.resolve_directory(directory, target)
+                directory = resolve_directory(directory, target)
                 unresolved_directory = None
             directories[words.child_shell] = (directory, unresolved_directory)
             continue
-        invocation = force_push_guard.find_git_push_invocation(words)
+        invocation = find_git_push_invocation(words)
         if invocation is None:
             ref_change = ref_changing_git_command(words)
             if ref_change is not None:
@@ -370,8 +465,8 @@ def main(stdin=sys.stdin):
     command = (payload.get("tool_input") or {}).get("command")
     if not isinstance(command, str) or "push" not in command:
         return 0
-    if force_push_guard_load_error is not None:
-        add_context(failure_line(force_push_guard_load_error))
+    if shell_reader_load_error is not None:
+        add_context(failure_line(shell_reader_load_error))
         return 0
     payload_cwd = payload.get("cwd") or os.getcwd()
     try:

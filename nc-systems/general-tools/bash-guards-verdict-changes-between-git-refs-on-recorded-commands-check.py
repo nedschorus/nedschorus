@@ -23,9 +23,10 @@ Steps:
      .claude/settings.json, and, less the guards the head adds, in the base checkout's. A base hook
      at a former path, a key of this script's BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH map, is the
      guard that key maps to, read at the base from its former path; its rows are named by its current
-     path, so a renamed guard is not an added guard.
+     path, so a renamed guard is not an added guard. A base hook in this script's
+     BASH_GUARD_PATHS_OF_REMOVED_GUARDS set is a guard the head removes, and is not read at either ref.
   3. At each ref, run the guards' analysis functions on every pair, with the guards' probes
-     of git and gh stubbed so a verdict depends only on the command text and the working directory
+     of other programs, such as git and tmux, stubbed so a verdict depends only on the command text and the working directory
      (in-process mode). Run the search-file guard's main() with each pair's own working
      directory, at the head only when the head adds the search-file guard. Then run the analysis again on every pair with the shell reader in new-process
      mode, unless --new-process-pairs is none: each pool worker keeps one shell reader child
@@ -402,7 +403,10 @@ def check_guards_match_settings(hooks, replayed, label):
             "so the base's hook at the former path is read as the same guard. End the former path's line with the "
             "comment \"# in git history only\", or scripts/branch-leaves-no-citations-of-removed-paths-test.py "
             "fails on it.\n"
-            "Make the change in the pull request that adds or renames the hook, and run this check from that pull "
+            "When the pull request removes a hook: remove it from GUARDS, with its reading function, and add the "
+            "line \"<removed path>\", to the BASH_GUARD_PATHS_OF_REMOVED_GUARDS set in this script, ending it "
+            "with the same comment.\n"
+            "Make the change in the pull request that adds, renames or removes the hook, and run this check from that pull "
             "request's copy of this script, because only that copy has the change.")
 
 
@@ -412,7 +416,7 @@ def guards_added_at_head(checkouts):
     head_hooks = bash_hook_files(checkouts["head"])
     check_guards_match_settings(head_hooks, set(GUARDS), "head")
     base_files = {BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH.get(path, path): path
-                  for path in bash_hook_files(checkouts["base"])}
+                  for path in bash_hook_files(checkouts["base"]) if path not in BASH_GUARD_PATHS_OF_REMOVED_GUARDS}
     added = head_hooks - set(base_files)
     check_guards_match_settings(set(base_files), set(GUARDS) - added, "base")
     return sorted(added), base_files
@@ -511,18 +515,14 @@ def guards_loaded(checkout, new_process, bash_guard_paths_at_git_ref_by_current_
 
 
 class StubbedProbeRunner:
-    """Answers the guards' git and gh probes the same way at both refs, and records them."""
+    """Answers the guards' probes the same way at both refs, and records them."""
 
     def __init__(self):
         self.calls = []
 
     def __call__(self, argv, **keywords):
         argv = list(argv)
-        self.calls.append(" ".join(argv[:3]) if argv[:1] == ["git"] else f"{argv[0]} in {keywords.get('cwd')}")
-        if argv[:1] == ["git"]:
-            return subprocess.CompletedProcess(argv, 0, "the-pull-request-branch\n", "")
-        if argv[:1] == ["gh"]:
-            return subprocess.CompletedProcess(argv, 0, json.dumps([{"title": "t", "url": "u"}]), "")
+        self.calls.append(f"{argv[0]} in {keywords.get('cwd')}")
         return subprocess.CompletedProcess(argv, 0, "1\n", "")
 
 
@@ -555,12 +555,6 @@ def read_synthetic_keystroke(guard, command, working_directory, search_file_dire
     runner = StubbedProbeRunner()
     reason = guard.analyze_command_text(command, None, False, guard.GuardRun(runner, fixed_clock))
     return ["refused" if reason else "passed", sorted(set(runner.calls))], reason
-
-
-def read_force_push(guard, command, working_directory, search_file_directory):
-    runner = StubbedProbeRunner()
-    decision, reason = guard.analyze_command_text(command, working_directory, guard.GuardRun(runner, fixed_clock))
-    return [decision, sorted(set(runner.calls))], reason
 
 
 def read_issue_write(guard, command, working_directory, search_file_directory):
@@ -650,8 +644,6 @@ BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = {
         ".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py",
     "scripts/synthetic-keystroke-guard-hook.py":  # in git history only
         ".claude/guard-hooks/synthetic-keystroke-guard-hook.py",
-    "scripts/force-push-with-open-pull-request-guard-hook.py":  # in git history only
-        ".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py",
     ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py":  # in git history only
         ".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py",
     "nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py":  # in git history only
@@ -664,12 +656,17 @@ BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = {
         ".claude/guard-hooks/ghi-md-whole-file-replacement-soft-block.py",
 }
 
+# A removed guard's file path, which a base ref's settings.json may still run; the replay reads it at neither ref.
+# The line does nothing once main's settings.json no longer runs the path, and may then be removed.
+BASH_GUARD_PATHS_OF_REMOVED_GUARDS = {
+    ".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py",  # in git history only
+}
+
 # Every Bash PreToolUse hook in .claude/settings.json, by the file it runs, with the function
 # that reads one command through it. check_guards_match_settings() names each hook missing here,
 # so a new guard is one line: its file and a reading function like the ones above.
 GUARDS = {
     ".claude/guard-hooks/synthetic-keystroke-guard-hook.py": read_synthetic_keystroke,
-    ".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py": read_force_push,
     ".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py": read_issue_write,
     ".claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py": read_tmux_kill,
     ".claude/guard-hooks/pkill-killall-and-process-name-pattern-kill-refusal-hook.py": read_pkill_pattern_kill,

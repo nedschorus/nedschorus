@@ -133,7 +133,150 @@ def run_hook_file(hook_file, command):
     return completed.returncode, context, completed.stderr
 
 
+class PushReadingRecorder:
+    """Answers the hook's git as a checkout, this repository, where every ref changes one Markdown file,
+    and records the directory each push is read in and the ref each diff compares."""
+
+    def __init__(self):
+        self.directories, self.refs = [], []
+
+    def __call__(self, argv, **options):
+        directory, arguments = argv[2], argv[3:]
+        if arguments[:2] == ["rev-parse", "--show-toplevel"]:
+            self.directories.append(directory)
+            return subprocess.CompletedProcess(argv, 0, str(REPOSITORY_ROOT) + "\n", "")
+        if arguments[:1] == ["diff"]:
+            self.refs.append(arguments[3].split("...", 1)[1])
+            return subprocess.CompletedProcess(argv, 0, "docs/page.md\0", "")
+        if arguments[:1] == ["branch"]:
+            return subprocess.CompletedProcess(argv, 0, "the-checked-out-branch\n", "")
+        return subprocess.CompletedProcess(argv, 0, "0" * 40 + "\n", "")
+
+
+SESSION_DIRECTORY = "/session/worktree"
+
+
+def push_reading(command, cwd=SESSION_DIRECTORY):
+    """Return (directories, refs) the hook reads the command's pushes in and compares."""
+    recorder = PushReadingRecorder()
+    hook.messages_for_command(command, cwd, recorder)
+    return recorder.directories, recorder.refs
+
+
+def run_push_reading_cases():
+    """Which refs a push sends and where it runs, read from the command text alone."""
+    for command, refs in (
+            ("git push origin a-local-name:the-branch", ["a-local-name"]),
+            ("git push origin +the-branch", ["the-branch"]),
+            ("git push origin HEAD:refs/heads/the-branch", ["HEAD"]),
+            ("git push --repo somewhere origin the-branch", ["the-branch"]),
+            ("git push -o ci.skip origin the-branch", ["the-branch"]),
+            ("git push -fo ci.skip origin the-branch", ["the-branch"]),
+            ("git push --push-option --force origin the-branch", ["the-branch"]),
+            ("git push --push-option=x origin the-branch", ["the-branch"]),
+            ("git push --force -- origin the-branch", ["the-branch"]),
+            ("git push origin branch-one branch-two", ["branch-one", "branch-two"]),
+            ("git push origin 2>&1", ["HEAD"]),
+            ("git push --force-with-lease origin 2>&1 | tail -5", ["HEAD"]),
+            ("git push -f origin > /tmp/x.log", ["HEAD"]),
+            ("git push origin 2> err.log the-branch", ["the-branch"]),
+            ("0</dev/null git push origin the-branch", ["the-branch"]),
+            ("env -u GH_TOKEN git push origin the-branch", ["the-branch"]),
+            ("env GIT_TRACE=1 git push origin the-branch", ["the-branch"]),
+            ("timeout 60 git push origin the-branch", ["the-branch"]),
+            ("git -c push.default=current push origin the-branch", ["the-branch"]),
+            ("git push --delete origin the-branch", []),
+            ("git push -d origin the-branch", []),
+            ("git push origin :the-branch", []),
+            ("env -u GH_TOKEN git status", []),
+            ('git commit -m "git push origin the-branch"', []),
+            ("cat <<'EOF'\ngit push origin the-branch\nEOF", [])):
+        _, found = push_reading(command)
+        check(f"the hook compares the refs the push sends: {command!r}", found == refs, repr(found))
+
+    for command, directory in (
+            ("git push origin", SESSION_DIRECTORY),
+            ("git -C /elsewhere/wt push origin", "/elsewhere/wt"),
+            ("git -C/elsewhere/wt push origin", "/elsewhere/wt"),
+            ("git -C wt push origin", f"{SESSION_DIRECTORY}/wt"),
+            ("cd /elsewhere/wt && git push origin", "/elsewhere/wt"),
+            ("SOME_SETTING=1 cd /elsewhere/wt && git push origin", "/elsewhere/wt"),
+            ("env -C /elsewhere/wt git push origin", "/elsewhere/wt"),
+            ("env --chdir=/elsewhere/wt git push origin", "/elsewhere/wt"),
+            ("sudo -D /elsewhere git -C wt push origin", "/elsewhere/wt"),
+            ("env -u X -C /elsewhere/wt git push origin", "/elsewhere/wt"),
+            ("sudo -u r -D /elsewhere/wt git push origin", "/elsewhere/wt"),
+            ("env -C /elsewhere env -C wt git push origin", "/elsewhere/wt"),
+            ("env -C /nowhere env -C /elsewhere/wt git push origin", "/elsewhere/wt"),
+            ("env -C /nowhere -C /elsewhere/wt git push origin", "/elsewhere/wt"),
+            ("env -C /nowhere -C wt git push origin", f"{SESSION_DIRECTORY}/wt"),
+            ("sudo -D /nowhere -D /elsewhere/wt git push origin", "/elsewhere/wt"),
+            ("cd /elsewhere/wt && git log 2>/dev/null | head 2>/dev/null | cat; git push origin",
+             "/elsewhere/wt"),
+            ("python3 - <<'PY' || { cd /elsewhere/wt; git push origin; }\nprint(1)\nPY", "/elsewhere/wt"),
+            ("cat <<'EOF'; cd /elsewhere/wt; git push origin\nx\nEOF", "/elsewhere/wt"),
+            ("make 2>&1 | tail -1 | sed s/a/b/\ncd /elsewhere/wt >/dev/null\ngit push origin", "/elsewhere/wt"),
+            ("cd /elsewhere/wt | cat; git push origin", SESSION_DIRECTORY),
+            ('echo "$(cd /elsewhere/wt)"; git push origin', SESSION_DIRECTORY)):
+        found, _ = push_reading(command)
+        check(f"the hook reads the push in the directory it runs in: {command!r}",
+              found == [directory], repr(found))
+
+    saved_home = os.environ.get("HOME")
+    os.environ["HOME"] = "/elsewhere"
+    try:
+        for command, directory in (
+                ("env -C /nowhere env -C ~/wt git push origin", "/elsewhere/wt"),
+                ("env -C /nowhere git -C ~/wt push origin", "/elsewhere/wt"),
+                ("cd ~/wt && git push origin", "/elsewhere/wt"),
+                # bash leaves a quoted ~, and one after --chdir=, as written: the push runs in a folder named ~.
+                ("env -C /nowhere env --chdir=~/wt git push origin", "/nowhere/~/wt"),
+                ("env -C '~/wt' git push origin", f"{SESSION_DIRECTORY}/~/wt"),
+                ("git -C '~/wt' push origin", f"{SESSION_DIRECTORY}/~/wt"),
+                ("cd \\~/wt && git push origin", f"{SESSION_DIRECTORY}/~/wt")):
+            found, _ = push_reading(command)
+            check(f"a ~ in the push's directory is read as bash reads it: {command!r}",
+                  found == [directory], repr(found))
+    finally:
+        if saved_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved_home
+
+    # bash and the real env are the oracle for where nested wrappers run a command.
+    with tempfile.TemporaryDirectory() as place:
+        place = os.path.realpath(place)
+        for relative in ("a/b", "c", "home/x", "a/~/x"):
+            os.makedirs(os.path.join(place, relative))
+        for wrappers in (f"env -C {place}/a env -C b",
+                         f"env -C {place}/a env -C {place}/c",
+                         f"env -C {place}/a env -C ~/x",
+                         f"env -C {place}/a env --chdir=~/x",
+                         f"env -C {place}/a env -C '~/x'",
+                         f"env -C {place}/a env -C \\~/x",
+                         f"env -C {place}/c -C {place}/a/b"):
+            real = subprocess.run(["bash", "-c", f"{wrappers} pwd"], capture_output=True,
+                                  text=True, env={**os.environ, "HOME": f"{place}/home"}, cwd=place)
+            if real.returncode != 0:
+                print(f"SKIP  [this machine cannot run it] {wrappers}: this env refuses it "
+                      f"({real.stderr.strip()[:80]})")
+                continue
+            saved_home = os.environ.get("HOME")
+            os.environ["HOME"] = f"{place}/home"
+            try:
+                found, _ = push_reading(f"{wrappers} git push origin", place)
+            finally:
+                if saved_home is None:
+                    os.environ.pop("HOME", None)
+                else:
+                    os.environ["HOME"] = saved_home
+            check(f"the hook reads the push in the directory the real env runs it in: {wrappers}",
+                  [os.path.normpath(path) for path in found] == [real.stdout.strip()],
+                  (found, real.stdout.strip()))
+
+
 def main():
+    run_push_reading_cases()
     root = Path(tempfile.mkdtemp(prefix="markdown-push-reminder-test-"))
     try:
         repository = scratch_repository(root)
@@ -314,15 +457,15 @@ def main():
               len(registered) == 1 and isinstance(registered[0], (int, float))
               and registered[0] > hook.GIT_BUDGET_SECONDS, repr(registered))
 
-        # A copy without .claude/guard-hooks/ beside it cannot load the force-push guard's file.
+        # A copy without the shell reader's file beside it cannot load the shell reader.
         copy = root / "copy" / "nc-systems" / "general-tools" / HOOK_SCRIPT.name
         copy.parent.mkdir(parents=True)
         shutil.copy(HOOK_SCRIPT, copy)
         code, text, stderr = run_hook_file(copy, "ls -la")
-        check("when the force-push guard's file cannot load, a command without the word push is silent",
+        check("when the shell reader's file cannot load, a command without the word push is silent",
               code == 0 and text is None and not stderr, f"exit {code}, {text!r}, {stderr!r}")
         code, text, stderr = run_hook_file(copy, "git push origin markdown-branch")
-        check("when the force-push guard's file cannot load, a push gives the one failure line",
+        check("when the shell reader's file cannot load, a push gives the one failure line",
               code == 0 and is_failure_line(text, "could not be loaded: FileNotFoundError"),
               f"exit {code}, {text!r}, {stderr!r}")
 

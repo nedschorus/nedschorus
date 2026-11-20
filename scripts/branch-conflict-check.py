@@ -12,17 +12,16 @@ CONFLICTING verdict takes precedence. UNKNOWN is not evidence of a clean merge.
 A CONFLICT report names, for each conflicting file, each commit on the base
 that changed it since the branch forked, the commit's author, which the
 launchers set to the agent-seat that wrote it, and the pull request whose merge
-brought the commit in. It then says how the conflict is cleared, by the answer
-of nc-systems/general-tools/pull-request-conflict-with-main-rebase-or-replace-answer-common.py
-for the branch's open pull request: --pull-request names one; otherwise `gh pr
-list` is asked about --branch, or, with neither --head nor --branch, about the
-current branch. A branch with no open pull request is rebased onto the base
-when `git ls-remote` finds it missing from --fetch-remote, and has the base
-merged into it when the remote has it. A branch missing from the remote whose
-commits a remote branch already holds, such as one cut at a pull request's
-pushed head, is never rebased: when a --fetch-remote branch holding its newest
-pushed commit has an open pull request, it gets that pull request's answer;
-otherwise the base is merged into it. Every merge and rebase step acts on
+brought the commit in. It then says how the conflict is cleared. A branch with
+an open pull request has that pull request replaced by a new pull request:
+--pull-request names it; otherwise `gh pr list` is asked about --branch, or,
+with neither --head nor --branch, about the current branch. A branch with no
+open pull request is rebased onto the base when `git ls-remote` finds it
+missing from --fetch-remote, and has the base merged into it when the remote
+has it. A branch missing from the remote whose commits a remote branch already
+holds, such as one cut at a pull request's pushed head, is never rebased: when
+a --fetch-remote branch holding its newest pushed commit has an open pull
+request, that pull request is replaced; otherwise the base is merged into it. Every merge and rebase step acts on
 HEAD, so when the checked commit is not HEAD, as for a branch pushed while
 another is checked out, the steps first say where to stand: the worktree that
 has the commit's local branch checked out, the pushed branch preferred, else
@@ -48,13 +47,6 @@ _git_output_spec = importlib.util.spec_from_file_location(
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
-
-_rebase_or_replace_spec = importlib.util.spec_from_file_location(
-    "pull_request_conflict_with_main_rebase_or_replace_answer_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
-    / "pull-request-conflict-with-main-rebase-or-replace-answer-common.py")
-rebase_or_replace = importlib.util.module_from_spec(_rebase_or_replace_spec)
-_rebase_or_replace_spec.loader.exec_module(rebase_or_replace)
 
 DEFAULT_BASE = "origin/main"
 DEFAULT_FETCH_REMOTE = "origin"
@@ -694,8 +686,6 @@ def clearing_lines(pull_request, branch, head, base, remote, head_hash, base_has
                 "its pull request replaced." % (branch, why),
                 "If gh is logged out or cannot reach GitHub, fix that, then rerun.",
             ]
-    answer = rebase_or_replace.pull_request_conflict_with_main_rebase_or_replace_answer(
-        pull_request is not False)
     understand = [
         "Read each pull request a MAIN'S SIDE line names to learn what its change "
         "was for; %s's side is already reviewed, so leave its lines working." % base,
@@ -703,7 +693,7 @@ def clearing_lines(pull_request, branch, head, base, remote, head_hash, base_has
         "its MAIN'S SIDE line names, with SendMessage, naming the file and the "
         "pull request on that line." % base,
     ]
-    if answer == rebase_or_replace.REPLACE_WITH_NEW_PULL_REQUEST:
+    if pull_request is not False:
         return replace_lines(
             "ANSWER: replace -- pull request #%s is open, so it is replaced by a new "
             "pull request; its branch is never rebased, merged into or force-pushed."

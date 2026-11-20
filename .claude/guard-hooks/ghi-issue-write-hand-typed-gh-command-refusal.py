@@ -97,13 +97,12 @@ WHAT IT CANNOT SEE, so nobody mistakes a choice for an oversight:
   its link-repair edits are untouched.
 - A `gh` behind `ssh`, `sh -c`, `eval`, or in a heredoc body is not
   recognised; one behind a wrapper the shared shell module knows, such as
-  `env`, `timeout` or `command`, is. The same limits as the force-push
-  guard, whose reading this shares.
+  `env`, `timeout` or `command`, is.
 - A gh alias the user defined is not expanded.
 
 Commands are read with nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py,
-the project's shared shell module on tree-sitter-bash, as the force-push guard
-does: one reader, reviewed once.
+the project's shared shell module on tree-sitter-bash, as the other Bash guards
+read them: one reader, reviewed once.
 """
 
 import importlib.util

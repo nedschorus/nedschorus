@@ -58,10 +58,6 @@ COMMAND_MODE = "printed when an agent runs the file as a command, not when it ru
 CONSTANTS_THAT_OPEN_NO_RULE_MESSAGE = {
     # fork A
     (".claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py", "PARSER_UNAVAILABLE_NEXT_STEP_LINES"): HOOK_FAILED,
-    (".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py", "PARSER_UNAVAILABLE_NEXT_STEP_LINES"): HOOK_FAILED,
-    (".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py", "UNCHECKED_NOTE_FIRST_LINE"): HOOK_FAILED,
-    (".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py", "UNCHECKED_NOTE_NO_RETRY_TEMPLATE"): HOOK_FAILED,
-    (".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py", "UNCHECKED_NOTE_RETRY_TEMPLATE"): HOOK_FAILED,
     (".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py", "CLOSE_LINES"): LATER_PART,
     (".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py", "LABELS_ONLY_LINE"): LATER_PART,
     (".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py", "PARSER_UNAVAILABLE_NEXT_STEP_LINES"): HOOK_FAILED,
@@ -270,7 +266,6 @@ HOOKS_THAT_PRINT_NO_RULE_MESSAGE = {
 # more than one; each is a variant of the one rule's message.
 MESSAGE_VARIANTS_OF_ONE_RULE = {
     (".claude/guard-hooks/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py", "bash-guard-tmux-kill-without-socket-option"): {"REFUSAL_WITHOUT_COMMAND_MESSAGE", "REFUSAL_WITH_COMMAND_TEMPLATE"},
-    (".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py", "bash-guard-git-push-force"): {"DENY_REASON_TEMPLATE", "UNRESOLVED_REASON_TEMPLATE"},
     (".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py", "bash-guard-gh-issue-body-or-title-set-by-hand"): {"EDIT_BODY_REFUSAL", "EDIT_TITLE_REFUSAL"},
     (".claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py", "bash-guard-gh-issue-comment"): {"CLOSE_WITH_COMMENT_REFUSAL", "COMMENT_REFUSAL", "NO_COMMENTS_LINE", "REOPEN_WITH_COMMENT_REFUSAL"},
     (".claude/guard-hooks/git-worktree-remove-cold-read-record-and-sanity-check-record-ship-to-log-store-first-guard-hook.py", "bash-guard-git-worktree-remove-record-being-written"): {"RECORD_BEING_WRITTEN_IN_REMOVED_WORKTREE_REFUSAL_TEMPLATE", "REMOVED_WORKTREE_UNRESOLVED_REFUSAL_TEMPLATE"},
@@ -345,10 +340,10 @@ check("a listed group whose ID now opens one constant fails",
       == [("r", ["A_MESSAGE"], ["A_MESSAGE", "B_MESSAGE"])])
 
 # The pattern, on texts whose answer is known.
-for text, expected in (("[rule bash-guard-git-push-force] Refused on purpose", "bash-guard-git-push-force"),
+for text, expected in (("[rule bash-guard-tmux-kill-without-socket-option] Refused on purpose", "bash-guard-tmux-kill-without-socket-option"),
                        ("[rule a1-b2] x", "a1-b2"),
                        ("[rule stop] x", "stop"),
-                       ("Refused [rule bash-guard-git-push-force] x", None),
+                       ("Refused [rule bash-guard-tmux-kill-without-socket-option] x", None),
                        ("[rule Bash-guard] x", None),
                        ("[rule bash_guard] x", None),
                        ("[rule bash-guard]x", None),

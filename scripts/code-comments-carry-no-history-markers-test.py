@@ -108,7 +108,6 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/file-name-collision-warning-hook-test.py": 5,
     "scripts/find-deleted-path-across-backups-test.py": 37,
     "scripts/find-deleted-path-across-backups.py": 33,
-    ".claude/guard-hooks/force-push-with-open-pull-request-guard-hook-test.py": 2,
     "scripts/ghi-guide-agent-ask-test.py": 18,
     "scripts/ghi-guide-agent-ask.py": 38,
     "scripts/ghi-issue-write-test.py": 38,

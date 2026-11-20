@@ -445,15 +445,14 @@ try:
           and "Reworded at the end." in out, f"status {status}\n{out}\n{err}")
 
     # The shell reader is loaded by file path, so its classes cannot be pickled by name between processes.
-    verdict_of_path_loaded_class = commit_with_guard_changed(
-        ".claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py", (
-            "_analyze_command_text_as_written = analyze_command_text\n"
-            "def analyze_command_text(command, payload_cwd, guard):\n"
-            "    if command == 'ls -la':\n"
-            "        return shell_reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand('~/refused'), None\n"
-            "    return _analyze_command_text_as_written(command, payload_cwd, guard)"), scratch)
-    status, out, err = run_replay(verdict_of_path_loaded_class, scratch, "--new-process-pairs", "none")
-    check("a verdict holding a value of a class from a path-loaded module crosses from the pool worker: exit 1",
+    reading_of_path_loaded_class = commit_with_guard_changed(TMUX_KILL_GUARD, (
+        "_refusal_for_as_written = refusal_for\n"
+        "def refusal_for(command):\n"
+        "    if command == 'ls -la':\n"
+        "        return [shell_reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand('~/refused')]\n"
+        "    return _refusal_for_as_written(command)"), scratch)
+    status, out, err = run_replay(reading_of_path_loaded_class, scratch, "--new-process-pairs", "none")
+    check("a reading holding a value of a class from a path-loaded module crosses from the pool worker: exit 1",
           status == 1 and "in-process: rows whose verdict differs: 1" in out and "~/refused" in out
           and "PicklingError" not in out + err, f"status {status}\n{out}\n{err}")
 
@@ -745,6 +744,27 @@ try:
               f"status {status}\n{out}\n{err}")
     finally:
         replay.BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = renames_as_written
+
+    without_codex_guard = commit_with_change(drop_codex_hook, scratch)
+    codex_guard = ".claude/guard-hooks/hand-typed-codex-exec-command-refusal-hook.py"
+    guards_as_written = replay.GUARDS
+    removals_as_written = replay.BASH_GUARD_PATHS_OF_REMOVED_GUARDS
+    replay.GUARDS = {path: read for path, read in guards_as_written.items() if path != codex_guard}
+    try:
+        replay.BASH_GUARD_PATHS_OF_REMOVED_GUARDS = set()
+        status, out, err = run_replay(without_codex_guard, scratch)
+        check("a head that removes a guard the replay is not told is removed: exit 2, naming the guard "
+              "and the set that takes it",
+              status == 2 and "at the base ref" in err and f"not replayed: ['{codex_guard}']" in err
+              and "BASH_GUARD_PATHS_OF_REMOVED_GUARDS" in err, f"status {status}\n{out}\n{err}")
+        replay.BASH_GUARD_PATHS_OF_REMOVED_GUARDS = {codex_guard}
+        status, out, err = run_replay(without_codex_guard, scratch)
+        check("a head that removes a guard the replay is told is removed: exit 0, and the guard is read at neither ref",
+              status == 0 and "NO VERDICT CHANGED" in out and codex_guard not in out + err,
+              f"status {status}\n{out}\n{err}")
+    finally:
+        replay.GUARDS = guards_as_written
+        replay.BASH_GUARD_PATHS_OF_REMOVED_GUARDS = removals_as_written
 
     def commit_without_guard(guard_path):
         """Return a commit made from HEAD that has neither the guard's file nor its hook, as a base before the guard."""
@@ -2024,6 +2044,8 @@ check("each renamed guard's former path maps to a path in GUARDS, and no former 
       not renames_to_paths_not_in_guards and not former_paths_still_in_guards,
       f"mapped to paths not in GUARDS: {renames_to_paths_not_in_guards}; former paths in GUARDS: "
       f"{former_paths_still_in_guards}")
+removed_paths_still_in_guards = sorted(replay.BASH_GUARD_PATHS_OF_REMOVED_GUARDS & set(replay.GUARDS))
+check("no removed guard's path is in GUARDS", not removed_paths_still_in_guards, removed_paths_still_in_guards)
 
 
 def wall_clock_that_jumps_past_the_search_file_budget():

@@ -1,14 +1,11 @@
 #!/bin/sh
-# Refuses a push from a mutation-testing worktree, a push that rewrites the head
-# branch of an open pull request that is or once was ready for review, a push
-# that deletes the head branch of an open pull request, and a push of a branch that
+# Refuses a push from a mutation-testing worktree, and a push of a branch that
 # conflicts with main or sets a file back to a version main has replaced; lets
 # every other push through. It runs no test suites: the command that marks a pull
 # request ready for review runs them, the fix-round's check runs them before its
 # push, and merge-lane-2 runs them at the pull request's head. The work is
-# done by three Python files,
-# scripts/git-client-side-hooks-pre-push-mutation-testing-worktree-push-refusal.py,
-# scripts/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal.py and
+# done by two Python files,
+# scripts/git-client-side-hooks-pre-push-mutation-testing-worktree-push-refusal.py and
 # scripts/git-client-side-hooks-pre-push-conflict-check.py, whose docstrings
 # have the reasons and what is and is not checked. This file only guards the way
 # into them.
@@ -32,9 +29,7 @@
 # The pushed refs are read once, into a variable, so the messages below can
 # name each branch the conflict check would have checked, and so a push with
 # no such branch (main, a tag, a deletion, another remote) does not run the
-# conflict check. Such a push still runs the open
-# pull request check, which asks GitHub about a forced update or a deletion of
-# a branch on origin.
+# conflict check.
 # The filter matches branches_to_check in the Python file; the pre-push nc-test-suite
 # pins both against the same pushes.
 
@@ -43,7 +38,6 @@ conflict_check="$hook_directory/../git-client-side-hooks-pre-push-conflict-check
 # Resolved, so a message names the file by a path a reader can open.
 scripts_directory=$(cd "$hook_directory/.." 2>/dev/null && pwd -P) || scripts_directory="$hook_directory/.."
 mutation_testing_worktree_check="$scripts_directory/git-client-side-hooks-pre-push-mutation-testing-worktree-push-refusal.py"
-open_pull_request_branch_check="$scripts_directory/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal.py"
 refuse_push_status=10
 checked_remote=origin
 # Prints the command that runs a check by hand from a copy of it that exists, as
@@ -127,23 +121,6 @@ if [ -f "$mutation_testing_worktree_check" ]; then
     fi
 else
     echo "pre-push: the check for mutation-testing worktrees did not run, because $mutation_testing_worktree_check is missing, so this check lets the push through without checking whether it comes from a mutation-testing worktree." >&2
-    echo "$tell_user_line" >&2
-fi
-
-# Every push goes to this check too, since the branch filter above leaves out deletions and
-# main, which this check covers. It fails open, as the checks before and after it do.
-if [ -f "$open_pull_request_branch_check" ]; then
-    printf '%s\n' "$pushed_refs" | python3 "$open_pull_request_branch_check" "$@"
-    open_pull_request_branch_status=$?
-    if [ "$open_pull_request_branch_status" -eq "$refuse_push_status" ]; then
-        exit 1
-    fi
-    if [ "$open_pull_request_branch_status" -ne 0 ]; then
-        echo "pre-push: the check for rewrites and deletions of open pull requests' head branches, $open_pull_request_branch_check, exited with status $open_pull_request_branch_status, so this check lets the push through without checking whether it rewrites or deletes the head branch of an open pull request." >&2
-        echo "$tell_user_line" >&2
-    fi
-else
-    echo "pre-push: the check for rewrites and deletions of open pull requests' head branches did not run, because $open_pull_request_branch_check is missing, so this check lets the push through without checking whether it rewrites or deletes the head branch of an open pull request." >&2
     echo "$tell_user_line" >&2
 fi
 

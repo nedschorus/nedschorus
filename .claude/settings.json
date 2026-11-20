@@ -152,11 +152,6 @@
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py",
-            "timeout": 30
-          },
-          {
-            "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py",
             "timeout": 30
           },
