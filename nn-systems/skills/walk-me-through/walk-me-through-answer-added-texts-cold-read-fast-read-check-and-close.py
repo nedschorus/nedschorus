@@ -41,7 +41,9 @@ shown, numbering it and moving it to stand right before the waiting item in the
 walk-document, so that close comes back to the waiting item once ITEM is
 answered, and it writes the minutes' `#next_to_present` line. It refuses, writing
 nothing, an ITEM no item heading has, and one already shown, which is every
-numbered item, decided or not.
+numbered item, decided or not; and it refuses, writing nothing, while close
+has not yet recorded the last answer check wrote, since close would then take
+that answer as the answer to ITEM too.
 --moved-on-no-decision records that the user moved on from an
 item that asks for no decision, such as a summary item: it needs no
 `#case_against` line, runs no fast read, and close records the item as `<moved on, no
@@ -605,11 +607,15 @@ BUMP_ALREADY_SHOWN = (
 BUMP_ALREADY_SHOWN_DECIDED = "the minutes record it as decided"
 BUMP_ALREADY_SHOWN_WAITING = "it is not decided yet"
 BUMP_ANSWER_NOT_CLOSED = (
-    "check --bump refused: the last answer line in {minutes}, for {item}, has no close line after it, so nothing "
-    "was bumped and nothing was written. Close reads that answer as held for whatever item waits when it runs, "
-    "so a bump now would record the user's answer to {item} against the bumped item too.\n"
-    "Run `python3 {program} close` first and do what it prints; then run check --bump again.")
+    "check --bump refused: the walk-minutes {minutes} hold the user's answer to {item}, which check wrote and close "
+    "has not yet recorded, so nothing was bumped and nothing was written. If the bump went ahead, close would "
+    "then take that answer as the answer to the item you bump as well.\n"
+    "Run `python3 {program} close --cwd {top}` first and do what it prints, except reading and presenting the item "
+    "it names next: in place of that, run `{bump_command}` and do what it prints, so that the item the user "
+    "bumped is shown next.")
 BUMP_MINUTES = "Bumped by the user: {bumped} is shown next, before {waiting}, which waits again after it.{words}"
+BUMP_MINUTES_LINE = re.compile(r"^Bumped by the user: (?P<bumped>items? .+?) is shown next, before "
+                               r"(?P<waiting>items? .+?), which waits again after it\.")
 BUMP_DONE = (
     "{bumped} is now the waiting item, and {waiting} comes right after it.\n"
     "Then run `{command}`, which gives {bumped} its cold-read-fast-read, and do what it prints before you "
@@ -2435,16 +2441,19 @@ def rated_none_item_not_to_be_shown(walk_finder, top, minutes, value, numbers, t
     without showing it, as the step's docstring says, or None. named is the item as check names it."""
     if numbers[1:]:
         return None
-    document, lines, _, _, _ = item_lines(walk_finder, minutes, value, numbers, total, parser)
+    document, lines, marks, _, _ = item_lines(walk_finder, minutes, value, numbers, total, parser)
     ratings = [CASE_AGAINST_RATING.match(match[1]) for match in map(CASE_AGAINST_LINE.match, lines) if match]
     if not (ratings and ratings[0] and ratings[0][1].lower() == NOT_ASKED_RATED_NONE
             and any(FACT_LABELS[0] in line for line in lines)):
         return None
-    if guarded_paths(top, words(evidence(lines)[TOUCHES])):
+    # A missing touches line is left for the agent to add, as RATED_NONE_NOT_SHOWN_LINES says; any other refusal
+    # of the settling command means the item is shown.
+    if TOUCHES in evidence(lines) and not_asked_problems(NOT_ASKED_RATED_NONE, NOT_ASKED_RATED_NONE, lines, marks,
+                                                         top, named):
         return None
     match = unclosed_last_answer(walk_finder, minutes, parser)
-    if (match and match["item"].lower() == named.lower()
-            and match["answered"] == f"not asked, {not_asked_label(NOT_ASKED_RATED_NONE)}"):
+    settled = {f"not asked, {not_asked_label(kind)}" for kind in NOT_ASKED_KINDS + NOT_ASKED_NO_KIND_VALUES}
+    if match and match["item"].lower() == named.lower() and match["answered"] in settled:
         return None
     return document
 
@@ -3199,6 +3208,20 @@ def next_item(walk_finder, minutes, parser, order, summary, answered_numbers, wa
     return [item for item in to_come if not placing.get(item, (None, set()))[1] & set(to_come)][:1]
 
 
+def item_a_bump_suspended(walk_finder, minutes, parser, answered_numbers):
+    """Return the numbers of the item that waited when the user last bumped the answered item, while the minutes
+    record it as neither decided nor deferred twice; else []."""
+    text = minutes.read_text(encoding="utf-8")
+    for line in reversed(walk_finder.prose_lines(text, parser)):
+        match = BUMP_MINUTES_LINE.match(line)
+        if match and walk_finder.parse_items(match["bumped"])[0] == list(answered_numbers):
+            suspended = walk_finder.parse_items(match["waiting"])[0]
+            decided = approval_walk_minutes_read_returning_decided_item_numbers(walk_finder, minutes, parser)
+            deferrals = minutes_record(walk_finder, text, parser)[1]
+            return [] if any(number in decided or deferrals[number] > 1 for number in suspended) else suspended
+    return []
+
+
 def held_items_decided_with(walk_finder, minutes, parser, answered_numbers, item, outcome):
     """Return the close lines that give outcome to each item whose answer the minutes hold for the answered
     items, directly or through a chain of held items, and that no close line decides yet."""
@@ -3292,8 +3315,12 @@ def bump(arguments):
     top, minutes, value, parser = the_open_walk(walk_finder, arguments.cwd)
     pending = unclosed_last_answer(walk_finder, minutes, parser)
     if pending:
-        raise Failure(BUMP_ANSWER_NOT_CLOSED.format(minutes=minutes, item=pending["item"],
-                                                    program=Path(__file__).resolve()))
+        program = Path(__file__).resolve()
+        bump_command = shlex.join(["python3", str(program), "check", "--bump", arguments.bump, "--cwd", str(top)]
+                                  + (["--user-reply-as-typed", arguments.user_reply_as_typed]
+                                     if arguments.user_reply_as_typed else []))
+        raise Failure(BUMP_ANSWER_NOT_CLOSED.format(minutes=minutes, item=pending["item"], program=program,
+                                                    top=shlex.quote(str(top)), bump_command=bump_command))
     waiting, numbers, total = waiting_items(walk_finder, value, minutes)
     _, _, _, units, placing = walk_document_items(walk_finder, minutes, value, numbers, total, parser,
                                                   "check --bump", top, stamp=False)
@@ -3432,7 +3459,10 @@ def close(arguments):
     rulings += [(number, inferred_word) for number, inferred_word
                 in items_decided_through_sub_steps(order, words, sub_steps_of, unresolved).items()
                 if number not in inferred_before]
-    numbers = next_item(walk_finder, minutes, parser, order, summary, answered_numbers, waiting_numbers, placing)
+    # The walk order alone can put another unshown item before the item a bump suspended, as when that item was
+    # deferred once, so the bump's own record names the item that comes back.
+    numbers = (item_a_bump_suspended(walk_finder, minutes, parser, answered_numbers)
+               or next_item(walk_finder, minutes, parser, order, summary, answered_numbers, waiting_numbers, placing))
     if numbers and isinstance(numbers[0], int):
         first = numbers[0]
         if first in placing:  # Not the summary item, which stays where it is.
