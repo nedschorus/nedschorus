@@ -133,7 +133,7 @@ _command_line_prefix_spec = importlib.util.spec_from_file_location(
     / "claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
 command_line_prefix = importlib.util.module_from_spec(_command_line_prefix_spec)
 _command_line_prefix_spec.loader.exec_module(command_line_prefix)
-JSON_SCHEMA_CHECK_MODULE = (Path(__file__).resolve().parent.parent / "nc-systems" / "general-tools"
+JSON_SCHEMA_CHECK_MODULE = (Path(__file__).resolve().parent.parent / "nn-systems" / "general-tools"
                             / "json-schema-keyword-subset-answer-check-common.py")
 _json_schema_check_spec = importlib.util.spec_from_file_location(
     "json_schema_keyword_subset_answer_check_common", JSON_SCHEMA_CHECK_MODULE)

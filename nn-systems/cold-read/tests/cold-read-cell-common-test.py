@@ -408,7 +408,7 @@ def build_scratch_repository(scratch):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("# Target\n\nOne committed line.\n", encoding="utf-8")
     # The terminology cell looks terms up in the project glossary, and refuses to run without one.
-    scratch_glossary = repository / "docs" / "nedschorus-wiki" / "nedschorus-glossary.md"
+    scratch_glossary = repository / "docs" / "nedsnodes-wiki" / "nedsnodes-glossary.md"
     scratch_glossary.parent.mkdir(parents=True, exist_ok=True)
     scratch_glossary.write_text("# Glossary\n", encoding="utf-8")
     return scratch_repository_fixture.commit_seeded_cold_read_scratch_repository(
@@ -2211,7 +2211,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # One scratch repository with a glossary, so the lookups have an entry to find.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    glossary = repository / "docs" / "nedschorus-wiki" / "nedschorus-glossary.md"
+    glossary = repository / "docs" / "nedsnodes-wiki" / "nedsnodes-glossary.md"
     glossary.parent.mkdir(parents=True, exist_ok=True)
     glossary.write_text("# Glossary\n\n- **agent-seat** — a named, long-lived agent.\n",
                         encoding="utf-8")
@@ -2270,7 +2270,7 @@ with tempfile.TemporaryDirectory() as scratch:
             "cell.common.compose_prompt = lambda *_: os.kill(os.getpid(), signal.SIGTERM)\n"
             "sys.argv = ['cold-read-claude-cell.py', *sys.argv[2:]]\n"
             "sys.exit(cell.main())\n"),
-         str(repository / "nc-systems" / "cold-read" / "cold-read-claude-cell.py"),
+         str(repository / "nn-systems" / "cold-read" / "cold-read-claude-cell.py"),
          "--cell", "terminology", "--tier", "second-strongest-model",
          "--target", TARGET_RELATIVE_PATH, "--report", str(report)],
         capture_output=True, text=True, check=False, cwd=repository,

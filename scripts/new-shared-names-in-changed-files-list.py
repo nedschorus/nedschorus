@@ -31,14 +31,14 @@ git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 _glossary_entries_spec = importlib.util.spec_from_file_location(
     "glossary_entries_of_project_and_system_glossaries_read_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "glossary-entries-of-project-and-system-glossaries-read-common.py")
 glossary_entries = importlib.util.module_from_spec(_glossary_entries_spec)
 _glossary_entries_spec.loader.exec_module(glossary_entries)
 
 GIT_CALL_TIMEOUT_SECONDS = 20
 MAIN_REF = "origin/main"
-ORDINARY_HYPHENATED_WORDS_LIST_PATH = "docs/nedschorus-wiki/nedschorus-ordinary-hyphenated-words-list.md"
+ORDINARY_HYPHENATED_WORDS_LIST_PATH = "docs/nedsnodes-wiki/nedsnodes-ordinary-hyphenated-words-list.md"
 GLOSSARY_FILE_SUFFIX = glossary_entries.GLOSSARY_FILE_SUFFIX
 # One token set per main commit, shared by every caller on this machine.
 MAIN_TOKEN_CACHE_DIRECTORY = Path(tempfile.gettempdir()) / "new-shared-names-main-token-cache"

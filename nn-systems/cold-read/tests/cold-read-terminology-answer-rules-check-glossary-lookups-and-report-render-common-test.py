@@ -7,7 +7,7 @@ rule's words, and that the base still passes, so a rule that stopped firing,
 or one that fired on a valid answer, fails here. The lookup and report cases
 read what the runner adds to the base.
 
-Run: python3 nc-systems/cold-read/tests/cold-read-terminology-answer-rules-check-glossary-lookups-and-report-render-common-test.py
+Run: python3 nn-systems/cold-read/tests/cold-read-terminology-answer-rules-check-glossary-lookups-and-report-render-common-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -36,7 +36,7 @@ terminology = load(
     SYSTEM_DIRECTORY / "cold-read-terminology-answer-rules-check-glossary-lookups-and-report-render-common.py")
 glossary_reader = load(
     "glossary_entries_of_project_and_system_glossaries_read_common",
-    REPO_ROOT / "nc-systems" / "general-tools"
+    REPO_ROOT / "nn-systems" / "general-tools"
     / "glossary-entries-of-project-and-system-glossaries-read-common.py")
 
 failures = []
@@ -335,7 +335,7 @@ check("a clashing term the document holds is located in the document, over stand
 variant_document = (
     "The agent seat runs. Agent seats rest. Each Cold-Read-Cell reads; agent-seats too.\n"
     "An Agent-seat starts a sentence. `agent seat` in code, and [x](agent%20seat) too.\n"
-    "An obvious error fix, a cpc, and nc-systems/code based test.\n"
+    "An obvious error fix, a cpc, and nn-systems/code based test.\n"
     "The /cold-read skill.\n")
 found = terminology.glossary_terms_written_differently(variant_document, GLOSSARY)
 check("Part 5 finds a glossary term written with a space, a case or a plural, once per term",
@@ -425,13 +425,13 @@ check("glossary_terms keeps the first bold name of each entry",
       glossary_reader.glossary_terms(GLOSSARY_TEXT))
 real_entries = glossary_reader.glossary_entries_of_checkout(REPO_ROOT)
 check("the checkout's glossaries are read, the project glossary and a system glossary included",
-      {"docs/nedschorus-wiki/nedschorus-glossary.md", "nc-systems/handoff/handoff-system-glossary.md"}
+      {"docs/nedsnodes-wiki/nedsnodes-glossary.md", "nn-systems/handoff/handoff-system-glossary.md"}
       <= {entry.glossary_path for entry in real_entries}
       and any(entry.term == "agent-seat" for entry in real_entries))
 check("the system glossaries are the paths the project glossary names above its entries",
       glossary_reader.system_glossary_paths_named_on_project_glossary(
           "Lists `a/one-glossary.md`, [two](../../b/two-glossary.md) and "
-          "docs/nedschorus-wiki/nedschorus-glossary.md.\n\n- **x** — see c/three-glossary.md\n")
+          "docs/nedsnodes-wiki/nedsnodes-glossary.md.\n\n- **x** — see c/three-glossary.md\n")
       == ["a/one-glossary.md", "b/two-glossary.md"])
 with tempfile.TemporaryDirectory() as scratch:
     scratch = Path(scratch)
@@ -443,7 +443,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a checkout without the project glossary raises GlossaryFilesUnreadable",
           unreadable is not None and "could not read the project glossary" in str(unreadable),
           str(unreadable))
-    page = scratch / "docs" / "nedschorus-wiki" / "nedschorus-glossary.md"
+    page = scratch / "docs" / "nedsnodes-wiki" / "nedsnodes-glossary.md"
     page.parent.mkdir(parents=True)
     page.write_text("Also `x/gone-glossary.md`.\n\n- **a** — b\n", encoding="utf-8")
     try:

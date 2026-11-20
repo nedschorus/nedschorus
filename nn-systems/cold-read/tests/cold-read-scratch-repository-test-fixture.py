@@ -107,13 +107,13 @@ def commit_seeded_cold_read_scratch_repository(repository):
     # The cell reads git status through the shared git-output module, and
     # cold-read-fast-read.py strips the variables that redirect git through
     # the shared removal module.
-    (repository / "nc-systems" / "general-tools").mkdir(parents=True)
-    shutil.copy2(GIT_OUTPUT_MODULE, repository / "nc-systems" / "general-tools")
-    shutil.copy2(GIT_REDIRECTING_REMOVAL_MODULE, repository / "nc-systems" / "general-tools")
-    shutil.copy2(NED_BOX_HOME_MODULE, repository / "nc-systems" / "general-tools")
-    shutil.copy2(CLAUDE_CODE_COMMAND_LINE_PREFIX_MODULE, repository / "nc-systems" / "general-tools")
-    shutil.copy2(JSON_SCHEMA_CHECK_MODULE, repository / "nc-systems" / "general-tools")
-    shutil.copy2(GLOSSARY_ENTRIES_MODULE, repository / "nc-systems" / "general-tools")
+    (repository / "nn-systems" / "general-tools").mkdir(parents=True)
+    shutil.copy2(GIT_OUTPUT_MODULE, repository / "nn-systems" / "general-tools")
+    shutil.copy2(GIT_REDIRECTING_REMOVAL_MODULE, repository / "nn-systems" / "general-tools")
+    shutil.copy2(NED_BOX_HOME_MODULE, repository / "nn-systems" / "general-tools")
+    shutil.copy2(CLAUDE_CODE_COMMAND_LINE_PREFIX_MODULE, repository / "nn-systems" / "general-tools")
+    shutil.copy2(JSON_SCHEMA_CHECK_MODULE, repository / "nn-systems" / "general-tools")
+    shutil.copy2(GLOSSARY_ENTRIES_MODULE, repository / "nn-systems" / "general-tools")
     # The records tree is gitignored in the real repository, which is what
     # keeps a reviewer's own report out of the detector's sight.
     (repository / ".gitignore").write_text("cold-read-records/\n", encoding="utf-8")

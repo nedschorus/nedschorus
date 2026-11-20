@@ -457,14 +457,14 @@ with tempfile.TemporaryDirectory() as scratch:
     # refusal, the temporary directory stays empty.
     copied_checkout = scratch / "a-checkout-with-no-prompt-templates"
     for relative_path in (
-            "nc-systems/cold-read/cold-read-codex-cell.py",
-            "nc-systems/cold-read/cold-read-cell-common.py",
-            "nc-systems/cold-read/cold-read-record-names-common.py",
-            "nc-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py",
-            "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py",
-            "nc-systems/cold-read/cold-read-terminology-answer-rules-check-glossary-lookups-and-report-render-common.py",
-            "nc-systems/general-tools/json-schema-keyword-subset-answer-check-common.py",
-            "nc-systems/general-tools/glossary-entries-of-project-and-system-glossaries-read-common.py"):
+            "nn-systems/cold-read/cold-read-codex-cell.py",
+            "nn-systems/cold-read/cold-read-cell-common.py",
+            "nn-systems/cold-read/cold-read-record-names-common.py",
+            "nn-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py",
+            "nn-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py",
+            "nn-systems/cold-read/cold-read-terminology-answer-rules-check-glossary-lookups-and-report-render-common.py",
+            "nn-systems/general-tools/json-schema-keyword-subset-answer-check-common.py",
+            "nn-systems/general-tools/glossary-entries-of-project-and-system-glossaries-read-common.py"):
         (copied_checkout / relative_path).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO_ROOT / relative_path, copied_checkout / relative_path)
     copied_temporary_directory = scratch / "a-temporary-directory"

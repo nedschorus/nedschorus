@@ -332,8 +332,8 @@ def structured_answer_to_report_function(
         raise CellRefusal(
             f"the {cell} cell answers in JSON, to {schema_path}, and {program} cannot ask "
             f"its agent-binary for a JSON answer, so no model was started.\n"
-            f"Run the {cell} cell with nc-systems/cold-read/cold-read-claude-cell.py or "
-            f"nc-systems/cold-read/cold-read-codex-cell.py instead.")
+            f"Run the {cell} cell with nn-systems/cold-read/cold-read-claude-cell.py or "
+            f"nn-systems/cold-read/cold-read-codex-cell.py instead.")
     try:
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, ValueError) as error:

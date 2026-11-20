@@ -8,7 +8,7 @@ of the frozen-copy and the entries of every glossary. It:
 
 1. checks the answer against the schema, and raises TerminologyAnswerRejected
    listing every break when it fails; then checks it against every rule of
-   nc-systems/cold-read/cold-read-terminology-answer-rules-the-runner-validates-beyond-the-schema.md,
+   nn-systems/cold-read/cold-read-terminology-answer-rules-the-runner-validates-beyond-the-schema.md,
    one function per row of that page's table, each break tied to the flag it
    is about or to the answer as a whole, and raises TerminologyAnswerRejected
    only when more than half the flags break a rule;
@@ -58,7 +58,7 @@ _json_schema_check_spec = importlib.util.spec_from_file_location(
 json_schema_check = importlib.util.module_from_spec(_json_schema_check_spec)
 _json_schema_check_spec.loader.exec_module(json_schema_check)
 
-RULES_PAGE = ("nc-systems/cold-read/"
+RULES_PAGE = ("nn-systems/cold-read/"
               "cold-read-terminology-answer-rules-the-runner-validates-beyond-the-schema.md")
 TESTS = (1, 2, 3, 4, 5)
 WORDS_A_RESTATEMENT_AVOIDS = ("kind", "type", "category", "sort", "class", "form")

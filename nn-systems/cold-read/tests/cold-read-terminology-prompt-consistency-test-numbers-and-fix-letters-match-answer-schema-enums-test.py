@@ -13,7 +13,7 @@ cannot make, or an answer the schema refuses.
 The mismatch cases at the end run the same comparison on altered copies of
 the two files, and fail if the comparison stops seeing a difference.
 
-Run: python3 nc-systems/cold-read/tests/cold-read-terminology-prompt-consistency-test-numbers-and-fix-letters-match-answer-schema-enums-test.py
+Run: python3 nn-systems/cold-read/tests/cold-read-terminology-prompt-consistency-test-numbers-and-fix-letters-match-answer-schema-enums-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -29,7 +29,7 @@ PROMPT_FILE = PROMPTS_DIR / "terminology-prompt.md"
 SCHEMA_FILE = PROMPTS_DIR / "terminology-answer-schema.json"
 _rule_failure_lines_spec = importlib.util.spec_from_file_location(
     "rule_enforcing_nc_test_suite_failure_message_closing_lines_text_common",
-    REPO_ROOT / "nc-systems" / "general-tools"
+    REPO_ROOT / "nn-systems" / "general-tools"
     / "rule-enforcing-nc-test-suite-failure-message-closing-lines-text-common.py")
 RULE_FAILURE_LINES = importlib.util.module_from_spec(_rule_failure_lines_spec)
 _rule_failure_lines_spec.loader.exec_module(RULE_FAILURE_LINES)

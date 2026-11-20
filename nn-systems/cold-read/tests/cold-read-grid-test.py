@@ -450,7 +450,7 @@ def build_scratch_repository(scratch, name):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("# Target\n\nOne committed line.\n", encoding="utf-8")
     # The terminology cell looks terms up in the project glossary, and refuses to run without one.
-    scratch_glossary = repository / "docs" / "nedschorus-wiki" / "nedschorus-glossary.md"
+    scratch_glossary = repository / "docs" / "nedsnodes-wiki" / "nedsnodes-glossary.md"
     scratch_glossary.parent.mkdir(parents=True, exist_ok=True)
     scratch_glossary.write_text("# Glossary\n", encoding="utf-8")
     return scratch_repository_fixture.commit_seeded_cold_read_scratch_repository(

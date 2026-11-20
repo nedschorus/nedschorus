@@ -2,7 +2,7 @@
 """Read the entries of the project glossary and of every system glossary.
 
 The glossaries are the project glossary,
-docs/nedschorus-wiki/nedschorus-glossary.md, and each system glossary it names
+docs/nedsnodes-wiki/nedsnodes-glossary.md, and each system glossary it names
 above its entries; scripts/system-glossaries-listed-on-the-project-glossary-test.py
 holds that list to every `*-glossary.md` file git tracks. No git command
 runs, so the glossaries are read in a checkout whose git cannot answer. An entry is a line beginning
@@ -27,7 +27,7 @@ import typing
 from pathlib import Path
 
 GLOSSARY_FILE_SUFFIX = "-glossary.md"
-PROJECT_GLOSSARY_PATH = "docs/nedschorus-wiki/nedschorus-glossary.md"
+PROJECT_GLOSSARY_PATH = "docs/nedsnodes-wiki/nedsnodes-glossary.md"
 PROJECT_GLOSSARY_DIRECTORY = posixpath.dirname(PROJECT_GLOSSARY_PATH)
 GLOSSARY_PATH_PATTERN = re.compile(r"[\w./-]+" + re.escape(GLOSSARY_FILE_SUFFIX))
 GLOSSARY_ENTRY_PATTERN = re.compile(r"^- \*\*([^*]+)\*\*", re.M)
