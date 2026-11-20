@@ -14,7 +14,7 @@ each saying "once it exists":
   durable files: `ghi-write` disposes an issue, and the pull-request skill
   disposes a durable file, "because a durable file reaches main through a pull
   request and that is where its fate is decided."
-- `docs/issues/142-draft-md-skill-design.md` has it invoke `draft-md` to write
+- `docs/issues/142-draft-md-skill.tool.design.md` has it invoke `draft-md` to write
   the pull request description, and repeats the disposition assignment.
 
 Searched and NOT FOUND: `gh issue list --state all --limit 100` searched for
@@ -183,5 +183,5 @@ activation shape where the gate opens the pull request "with attribution
 computed", and GHI [Topic-branch base enforcement: a branch-creation script and a gh pr create check that refuses an undeclared carry of another PR's commits](https://github.com/nedschorus/nedschorus/issues/238)
 records the user's 2026-09-18 ruling that the gate stamps a `Claude-Session`
 trailer on both the commit and the pull request it composes. So this section is
-re-examined when GHI [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)'s
+re-examined when GHI [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper.system.design.md)](https://github.com/nedschorus/nedschorus/issues/3)'s
 slice has the gate composing pull requests, not before.

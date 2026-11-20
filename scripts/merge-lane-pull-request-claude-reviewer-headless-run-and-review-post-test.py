@@ -584,7 +584,7 @@ def main():
                 ("could-not-review", "the reviewer could not finish the review"),
                 ("nonzero", "claude exited 3: claude: API error 529"),
                 ("not-json", "claude printed no JSON output"),
-                ("move-head", f"moved to")):
+                ("move-head", "moved to")):
             case = Case(scratch).run(mode)
             check(f"a {mode} run posts nothing, exits 1, says why, and removes the reviewer's "
                   f"worktree",

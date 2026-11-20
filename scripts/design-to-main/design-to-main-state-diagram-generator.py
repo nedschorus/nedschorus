@@ -72,7 +72,7 @@ import sys
 
 MACHINE_DIRECTORY = pathlib.Path(__file__).resolve().parent
 REPOSITORY_ROOT = MACHINE_DIRECTORY.parent.parent
-DESIGN_PATH = REPOSITORY_ROOT / "docs" / "design-to-main" / "design-to-main-state-machine-design.md"
+DESIGN_PATH = REPOSITORY_ROOT / "docs" / "design-to-main" / "design-to-main-state-machine.system.design.md"
 
 
 def load_state_tables_module():

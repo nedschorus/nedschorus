@@ -386,7 +386,7 @@ this tool with no one watching. A seat it cannot bring back stays down, is
 recorded as parked with the reason and date, and is asked about in the restart's
 own window on the Mac, where whatever goes unanswered stays parked. The full
 ruling is in the fleet-restart design
-([116-fleet-survives-machine-restart-design.md](116-fleet-survives-machine-restart-design.md)).
+([116-fleet-survives-machine-restart.system.design.md](116-fleet-survives-machine-restart.system.design.md)).
 The part that lands beside this tool: **a by-hand launch — `launch-claude-mac
 <seat>` or `launch-claude-ubuntu <seat>` — of a seat with no waiting handoff and
 no recorded clean exit tries again to resume its last transcript, and clears the

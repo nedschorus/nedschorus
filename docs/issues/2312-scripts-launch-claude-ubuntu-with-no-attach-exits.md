@@ -25,7 +25,7 @@ HOME=$F/home CLAUDE_CODE_TASK_LIST_ID=nedsnodes-repro978seat-tasks python3 $F/ho
 
 printed `handoff-supervisor: the agent-seat repro978seat was not started, because the token file .../.config/nedsnodes/ubuntu-claude.token of the GitHub account ubuntu-claude, which the agent-seat repro978seat acts as, does not exist.`, with the steps to fix it, and exited 5.
 
-Not affected: `scripts/recover-crashed-seats.py`'s `launch_seat` reads the token file itself before it starts the tmux session (`scripts/recover-crashed-seats.py:714-719`), so its report shows the refusal.
+Not affected: `scripts/recover-crashed-seats.py`'s `launch_seat` reads the token file itself before it starts the tmux session (`scripts/recover-crashed-seats.py:713-718`), so its report shows the refusal.
 
 Judged from reading the code, not reproduced:
 - `scripts/launch-claude-mac --no-attach` starts the tmux session the same way (`scripts/launch-claude-mac:498`) and has the same defect.
@@ -40,7 +40,7 @@ The launcher reports success for an agent-seat that never started. The `start-ag
 
 For reboot-test, the agent-seat that wrote PR 2238: make `scripts/launch-claude-ubuntu --no-attach` and `scripts/launch-claude-mac --no-attach` exit nonzero and print the handoff-supervisor's refusal when the handoff-supervisor exits before starting an agent-session. Choose between two designs:
 - Catch every early exit: keep the handoff-supervisor's stderr, for example with tmux's `remain-on-exit` option or by copying stderr to a file, then check a few seconds after `tmux new-session` whether the tmux session still exists, and when it does not, print what the handoff-supervisor printed and exit with its status. This covers the token refusal and exits 3 and 4 alike.
-- Catch only the token refusal: before `tmux new-session`, call the handoff-supervisor's own `agent_seat_github_account_lookup_and_token_file_read` and `agent_seat_github_token_unreadable_so_agent_seat_not_started_message_build` through `python3`, as `scripts/recover-crashed-seats.py:714-719` does, so the refusal text has one copy. On ned-box that call runs inside the command the launcher sends over ssh.
+- Catch only the token refusal: before `tmux new-session`, call the handoff-supervisor's own `agent_seat_github_account_lookup_and_token_file_read` and `agent_seat_github_token_unreadable_so_agent_seat_not_started_message_build` through `python3`, as `scripts/recover-crashed-seats.py:713-718` does, so the refusal text has one copy. On ned-box that call runs inside the command the launcher sends over ssh.
 
 Either way, add a test to `scripts/launch-claude-ubuntu-test.py` and to `scripts/launch-claude-mac-test.py` that launches with no token file and expects a nonzero exit and the handoff-supervisor's refusal text in the launcher's output.
 

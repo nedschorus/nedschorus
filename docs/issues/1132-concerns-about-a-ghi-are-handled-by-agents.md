@@ -62,7 +62,7 @@ In the example, the fix for the broken link changes no such document in such a w
 
 ## Reuse of design-to-main
 
-The design takes these rules from `docs/design-to-main/design-to-main-state-machine-design.md` on main:
+The design takes these rules from `docs/design-to-main/design-to-main-state-machine.system.design.md` on main:
 
 - §1: code routes and agents judge; "The state machine is code and holds no judgement." Rule 2's forked subagent is a stopgap until a program routes these files.
 - §6.1: a reviewer's notes file, each material entry "a finding with a failure scenario"; the reviewer names the artifact at fault that is furthest upstream, "since whatever is downstream of it is rewritten from the corrected version anyway" (rules 1 and 3).
