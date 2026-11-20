@@ -44,6 +44,7 @@ MERGE_TOKEN = "stand-in-ned-review-merge-token-value"
 FIX_ROUND_PROGRAM = Path(__file__).with_name(
     "pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-"
     "answered-check.py")
+MARKS_CHECK_PROGRAM = Path(__file__).with_name("merge-gate-approval-or-changes-request-review-has-review-posting-program-marks-check.py")
 FOLLOW_UP_PROGRAM = Path(__file__).with_name(
     "pull-request-follow-up-request-after-merge-finding-answers-and-next-step.py")
 FAKE_GH = """#!/usr/bin/env python3
@@ -548,10 +549,64 @@ def merge_lane_cases(scratch):
           f"exit {code}\nstdout: {out}\nstderr: {err}")
 
 
+def marks_check(review_as_github_holds_it, comments):
+    """Run the merge gate's marks check program on a review and its comments; return (exit code, stdout, stderr)."""
+    done = subprocess.run([sys.executable, str(MARKS_CHECK_PROGRAM)], capture_output=True, text=True,
+                          input=json.dumps({"review": review_as_github_holds_it, "comments": comments}))
+    return done.returncode, done.stdout, done.stderr
+
+
+def verdict_review_marks_cases(scratch):
+    """The marks the merge gate requires of merge-lane-2's latest verdict review are the ones this program
+    writes: each review it posts passes the check, and a review posted any other way fails it."""
+    posting = load_posting_program()
+    # Line 9 is outside the stand-in diff, so its blocking finding is moved into the body.
+    result = run_program(scratch, review("REQUEST_CHANGES", comments=[
+        finding(2, "must-fix-now"), finding(9, "must-fix-now"), finding(3, "fix-next")]), arguments=MERGE_LANE_ARGUMENTS)
+    posted_request = {"state": "CHANGES_REQUESTED", "body": result.posted["body"]} if result.posted else {}
+    check("a request for changes this program posted, with a blocking finding moved into its body, has the marks",
+          result.code == 0 and posting.posted_verdict_review_missing_review_posting_program_marks_reason_or_none(
+              posted_request, result.posted["comments"]) is None
+          and len(result.posted["comments"]) == 2, result.detail)
+    check("the same request for changes without its inline blocking comment lacks the marks, naming the count",
+          posting.posted_verdict_review_missing_review_posting_program_marks_reason_or_none(
+              posted_request, [comment for comment in result.posted["comments"] if "**Blocks**" not in comment["body"]])
+          == "its body states **Blocking: 2**, but 1 of its comments open with **Blocks**"
+          if result.posted else False, result.detail)
+    result = run_program(scratch, review("APPROVE", comments=[finding(2, "fix-next")]), arguments=MERGE_LANE_ARGUMENTS)
+    posted_approval = {"state": "APPROVED", "body": result.posted["body"]} if result.posted else {}
+    check("an approval this program posted has the marks",
+          result.code == 0 and posting.posted_verdict_review_missing_review_posting_program_marks_reason_or_none(posted_approval, []) is None,
+          result.detail)
+    for body in ("Approved by merge-lane-2 at head 3bf000d", "APPROVE, by merge-lane-2 (ned-review-merge)"):
+        check(f"a hand-typed approval opening {body[:20]!r} lacks the marks",
+              posting.posted_verdict_review_missing_review_posting_program_marks_reason_or_none({"state": "APPROVED", "body": body}, [])
+              == "its body does not open with the line APPROVE")
+    check("a hand-typed request for changes lacks the marks",
+          posting.posted_verdict_review_missing_review_posting_program_marks_reason_or_none(
+              {"state": "CHANGES_REQUESTED", "body": "REQUEST_CHANGES\n\nOne blocking finding."},
+              [{"body": "**Blocks** A finding."}])
+          == "its body does not open with the line REQUEST_CHANGES, a blank line and the line **Blocking: N**")
+    check("a review without a verdict needs no marks",
+          posting.posted_verdict_review_missing_review_posting_program_marks_reason_or_none({"state": "COMMENTED", "body": "Read it."}, []) is None)
+
+    code, out, err = marks_check(posted_approval, [])
+    check("the marks check program exits 0 on a review with the marks", code == 0 and out == "", (code, out, err))
+    code, out, err = marks_check({"state": "APPROVED", "body": "LGTM"}, [])
+    check("the marks check program exits 1 on a review without them, printing why",
+          code == 1 and out == "its body does not open with the line APPROVE\n", (code, out, err))
+    for given in ("not json", "[]", '{"review": {}}', '{"review": [], "comments": []}'):
+        done = subprocess.run([sys.executable, str(MARKS_CHECK_PROGRAM)], capture_output=True, text=True, input=given)
+        check(f"the marks check program exits 2 on the input {given!r}",
+              done.returncode == 2 and "standard input is not one JSON object" in done.stderr,
+              (done.returncode, done.stdout, done.stderr))
+
+
 def main():
     scratch = Path(tempfile.mkdtemp(prefix="reviewer-review-post-test-")).resolve()
     try:
         merge_lane_cases(scratch)
+        verdict_review_marks_cases(scratch)
         comment = {"path": "scripts/thing.py", "line": 3, "body": "A finding."}
         result = run_program(scratch, review("APPROVE", comments=[comment]),
                              FAKE_GH_AUTHOR="ned-review-merge")

@@ -172,6 +172,7 @@ command -v jq >/dev/null 2>&1 || cannot "jq is not on PATH. Put jq on PATH, then
 command -v gh >/dev/null 2>&1 || cannot "gh is not on PATH. Put gh on PATH, then rerun the gate." \
   "If gh is not installed on this machine, tell the user this message."
 DESCRIPTION_DEFECT_LINE_READER="$(dirname "${BASH_SOURCE[0]}")/pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py"
+VERDICT_REVIEW_POSTING_PROGRAM_MARKS_CHECK_PROGRAM_PATH="$(dirname "${BASH_SOURCE[0]}")/merge-gate-approval-or-changes-request-review-has-review-posting-program-marks-check.py"
 
 # An abbreviated or malformed EXPECTED used to refuse as "head moved", naming the
 # wrong cause: the head had not moved, the caller had passed a short sha.
@@ -235,6 +236,59 @@ approval_at=$(jq -r '.submitted_at' <<<"$approval")  || cannot "$APPROVAL_UNPARS
 approver=$(jq -r '.user.login' <<<"$approval")       || cannot "$APPROVAL_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
 [ -n "$approved_sha" ] && [ "$approved_sha" != "null" ] || fail "the approving review https://github.com/$REPO/pull/$PR#pullrequestreview-$approval_id records no commit_id, so the gate cannot tell which commit it approved." \
   "Do not merge. Tell the user this message."
+
+# Read from the review GitHub holds, so it catches a verdict however it was posted.
+verdict_review=$(jq -s -c --arg merge_account "$MERGE_ACCOUNT" \
+  '[.[][] | select(.user.login == $merge_account and (.state == "APPROVED" or .state == "CHANGES_REQUESTED"))]
+   | sort_by(.submitted_at) | last // empty' <<<"$reviews_raw")
+[ $? -eq 0 ] || cannot "could not parse the review channel" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+if [ -n "$verdict_review" ]; then
+  VERDICT_REVIEW_UNPARSABLE="could not parse $MERGE_ACCOUNT's latest approving or changes-requesting review"
+  verdict_review_id=$(jq -r '.id' <<<"$verdict_review")       || cannot "$VERDICT_REVIEW_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+  verdict_review_state=$(jq -r '.state' <<<"$verdict_review") || cannot "$VERDICT_REVIEW_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+  verdict_review_commit=$(jq -r '.commit_id' <<<"$verdict_review") || cannot "$VERDICT_REVIEW_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+  verdict_review_comments='[]'
+  # An approval's marks are all in its body; only a request for changes carries marked comments.
+  if [ "$verdict_review_state" = "CHANGES_REQUESTED" ]; then
+    verdict_review_comments_raw=$(gh api "repos/$REPO/pulls/$PR/reviews/$verdict_review_id/comments" --paginate)
+    [ $? -eq 0 ] || cannot "could not read the inline comments of review $verdict_review_id on pull request $PR; any error gh printed is just above this line." "$RERUN_ONCE_GH"
+    verdict_review_comments=$(jq -s -c 'add // []' <<<"$verdict_review_comments_raw")
+    [ $? -eq 0 ] || cannot "could not parse the inline comments of review $verdict_review_id" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+  fi
+  marks_check_input=$(jq -n -c --argjson review "$verdict_review" --argjson comments "$verdict_review_comments" \
+    '{review: $review, comments: $comments}')
+  [ $? -eq 0 ] || cannot "$VERDICT_REVIEW_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+  marks_missing=$(python3 "$VERDICT_REVIEW_POSTING_PROGRAM_MARKS_CHECK_PROGRAM_PATH" <<<"$marks_check_input")
+  marks_check_status=$?
+  case "$marks_check_status" in
+    0) : ;;
+    1) if [ "$verdict_review_state" = "APPROVED" ]; then
+         unread="scripts/pull-request-follow-up-request-after-merge-finding-answers-and-next-step.py cannot read its non-blocking findings to send the author after the merge"
+       else
+         unread="scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py cannot read its blocking findings to brief the author's fix-round"
+       fi
+       marks_refused="$MERGE_ACCOUNT's latest review with a verdict, https://github.com/$REPO/pull/$PR#pullrequestreview-$verdict_review_id ($verdict_review_state), lacks the marks scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py writes: $marks_missing."
+       marks_unread="It was posted some other way, such as by hand with gh pr review, so $unread."
+       marks_rerun="Then run the gate again: scripts/merge-gate.sh $PR $head <submitted_at>, where submitted_at is what gh api repos/$REPO/pulls/$PR/reviews/<id> --jq .submitted_at prints for the review id the posting program's success line names."
+       # The posting program records a review on the --head-commit it is given, so reposting an older
+       # commit's verdict on the head would let the stale-approval check below pass unreviewed commits.
+       if [ "$verdict_review_commit" = "$head" ]; then
+         fail "$marks_refused" "$marks_unread" \
+           "Write a review file holding that review's verdict, body and inline comments, each comment with its finding_category, in the form the docstring at the top of scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py describes for --github-account $MERGE_ACCOUNT." \
+           "Post it with: python3 scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py --pull-request $PR --head-commit $verdict_review_commit --github-account $MERGE_ACCOUNT <review file>" \
+           "Leave the review above as it is: the gate reads only $MERGE_ACCOUNT's latest review with a verdict." \
+           "$marks_rerun"
+       else
+         fail "$marks_refused" "$marks_unread" \
+           "That review covers $verdict_review_commit, and the nc-head-commit is now $head, so do not post its verdict again: a review posted now is recorded on $head, which no one has reviewed." \
+           "Have $head reviewed, and post that review with: python3 scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py --pull-request $PR --head-commit $head --github-account $MERGE_ACCOUNT <review file>" \
+           "$marks_rerun"
+       fi ;;
+    *) cannot "python3 $VERDICT_REVIEW_POSTING_PROGRAM_MARKS_CHECK_PROGRAM_PATH exited $marks_check_status when the gate gave it review $verdict_review_id, so the gate cannot tell whether that review carries the posting program's marks; any error it printed is just above this line." \
+         "Do not run the gate again, do not merge pull request $PR another way, and do not repair that program or python3 yourself." \
+         "Send this whole message, with the error printed above it, to the agent-seat reboot-test, which owns that program, with SendMessage; run the gate again when reboot-test says the program is fixed." ;;
+  esac
+fi
 
 # "Since now" made every activity check below a no-op (F2). A PENDING review has
 # no submitted_at and is left out of the bound.
