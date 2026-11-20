@@ -236,7 +236,7 @@ def run_unit_cases():
           claim_check.nc_architecture_overview_described_system_name_from_page_path(
               "docs/nedsnodes-wiki/nedsnodes-handoff-architecture-overview-proposed-improvements-or-changes-x.md") is None)
     check("an overview's one proposed-improvements-or-changes-file is in its system's docs/, outside the wiki folder",
-          claim_check.architecture_overview_proposed_improvements_or_changes_file_path(OVERVIEW) == PROPOSALS)
+          claim_check.nc_architecture_overview_proposed_improvements_or_changes_file_path_from_page_path(OVERVIEW) == PROPOSALS)
     check("the pointer line names the file and its directory in separate backtick spans, so md-drift-lint at an older "
           "commit, where the file is missing, finds no path to check",
           claim_check.overview_pointer_line_to_proposed_improvements_or_changes_file(OVERVIEW)

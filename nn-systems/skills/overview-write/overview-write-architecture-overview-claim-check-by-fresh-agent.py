@@ -371,14 +371,14 @@ def result_from_fresh_agent_report(report, recheck_reports=None):
     return claims, result_from_ranked_claims(claims)
 
 
-def architecture_overview_proposed_improvements_or_changes_file_path(overview_path):
+def nc_architecture_overview_proposed_improvements_or_changes_file_path_from_page_path(overview_path):
     """Return the repository-relative path of the overview's one proposed-improvements-or-changes-file."""
     return PROPOSED_IMPROVEMENTS_OR_CHANGES_FILE_PATH_TEMPLATE.format(
         system=nc_architecture_overview_described_system_name_from_page_path(overview_path))
 
 
 def overview_pointer_line_to_proposed_improvements_or_changes_file(overview_path):
-    path = Path(architecture_overview_proposed_improvements_or_changes_file_path(overview_path))
+    path = Path(nc_architecture_overview_proposed_improvements_or_changes_file_path_from_page_path(overview_path))
     return PROPOSED_IMPROVEMENTS_OR_CHANGES_POINTER_LINE_TEMPLATE.format(name=path.name, directory=path.parent)
 
 
@@ -395,7 +395,7 @@ def write_fix_later_claims_to_proposed_improvements_or_changes_file(repository, 
                                                                     report_path, for_regular_maintenance):
     """Append the claims ranked fix later that the overview's proposed-improvements-or-changes-file does not hold yet
     to that file in the checkout, creating it when it is missing; return its path, or None when no claim is new."""
-    destination = repository / architecture_overview_proposed_improvements_or_changes_file_path(overview_path)
+    destination = repository / nc_architecture_overview_proposed_improvements_or_changes_file_path_from_page_path(overview_path)
     existing = destination.read_text(encoding="utf-8") if destination.exists() else ""
     recorded = claims_in_proposed_improvements_or_changes_file(existing)
     new_claims = []
@@ -546,7 +546,7 @@ def check_overview_claims(arguments):
         raise ClaimCheckRefusal(f"origin/main is missing from the repository at {repository}, so this program cannot "
                                 "tell whether a follow-up pull request is due for claims ranked fix later.\n"
                                 f"To make it available: run `git -C {repository} fetch origin`, then run this again.")
-    proposals_path = architecture_overview_proposed_improvements_or_changes_file_path(overview_path)
+    proposals_path = nc_architecture_overview_proposed_improvements_or_changes_file_path_from_page_path(overview_path)
     fix_later_for_regular_maintenance = bool(claims_in_proposed_improvements_or_changes_file(
         text_at_revision_or_empty(repository, "refs/remotes/origin/main", proposals_path)))
     report_directory = Path(arguments.report_directory)
