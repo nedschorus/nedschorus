@@ -1,19 +1,19 @@
 ---
-issue: "[Restore and discard commands in `nc-systems/handoff/uncommitted-work-snapshots.py` replace the restore steps an agent runs by hand](https://github.com/nedschorus/nedschorus/issues/2539)"
+issue: "[Restore and discard commands in `nn-systems/handoff/uncommitted-work-snapshots.py` replace the restore steps an agent runs by hand](https://github.com/nedschorus/nedschorus/issues/2539)"
 ---
 
-# Restore and discard commands in `nc-systems/handoff/uncommitted-work-snapshots.py` replace the restore steps an agent runs by hand
+# Restore and discard commands in `nn-systems/handoff/uncommitted-work-snapshots.py` replace the restore steps an agent runs by hand
 
 ## What is wrong
 
-When an agent-seat's earlier agent-session died with uncommitted work, the handoff-supervisor lists each leftover work-snapshot in the first prompt of the next agent-session, followed by the restore steps, the constant `RESTORE_STEPS` in `nc-systems/handoff/uncommitted-work-snapshots.py` (line 571 on main at 78716fd58). Most of those steps need no judgment, yet the agent carries them out by hand, one shell command at a time:
+When an agent-seat's earlier agent-session died with uncommitted work, the handoff-supervisor lists each leftover work-snapshot in the first prompt of the next agent-session, followed by the restore steps, the constant `RESTORE_STEPS` in `nn-systems/handoff/uncommitted-work-snapshots.py` (line 571 on main at 78716fd58). Most of those steps need no judgment, yet the agent carries them out by hand, one shell command at a time:
 
 - it works out a branch name from the ref (`restored-` and the ref's last two parts joined by a hyphen) and the clone's directory from `git rev-parse --path-format=absolute --git-common-dir`;
 - it runs `git worktree add -b <name> <clone>/.claude/worktrees/<name> <ref>^`, then `git diff --binary <ref>^ <ref> -- <files to keep> | git apply --index` and `git commit -m "Restore work from <ref>"` in the new worktree;
 - it applies the rule that a work-snapshot taken during a merge, rebase, cherry-pick, revert or am is never restored, only deleted;
 - it deletes the ref with `git update-ref -d <ref>`, whether the work was kept or dropped, and leaves the ref in place when a command fails.
 
-At 78716fd58 the program's command line had one command, `list` (`main()` in the same file), and the design, `nc-systems/handoff/handoff-uncommitted-work-snapshots-across-crashes-design.md`, wrote these steps as instructions to the agent in its § 3, then titled "The restore steps, printed with the list"; § 3 is now "Restoring or discarding a leftover: the `restore` and `discard` commands, and the task a restore opens".
+At 78716fd58 the program's command line had one command, `list` (`main()` in the same file), and the design, `nn-systems/handoff/handoff-uncommitted-work-snapshots-across-crashes-design.md`, wrote these steps as instructions to the agent in its § 3, then titled "The restore steps, printed with the list"; § 3 is now "Restoring or discarding a leftover: the `restore` and `discard` commands, and the task a restore opens".
 
 ## Why it matters
 
@@ -21,7 +21,7 @@ The project builds code-prompt-code: a step that needs no judgment, such as sequ
 
 ## What to build
 
-Two commands on `nc-systems/handoff/uncommitted-work-snapshots.py`:
+Two commands on `nn-systems/handoff/uncommitted-work-snapshots.py`:
 
 - `restore <ref> --keep <file> [<file> ...]` makes the branch and worktree the restore steps name today (`restored-` and the ref's last two parts joined by a hyphen, under `<clone>/.claude/worktrees/`) from the work-snapshot's parent, applies the diff of the kept files, commits it with the message "Restore work from <ref>", deletes the ref, prints the branch and worktree it made, and opens a task on the agent-seat's task list naming the restored branch, which code closes when the branch's pull request merges or the branch is deleted. Paths are relative to the clone's root, as the list entry prints them. Before it changes anything, it refuses when a kept path is not among the work-snapshot's changed files, when the branch or the worktree directory already exists, or when the work-snapshot was taken during a merge, rebase, cherry-pick, revert or am, in which case it tells the agent to run `discard` and tell the user which operation was discarded. When a step before the commit fails, it removes the branch and worktree it made, leaves the ref in place, and prints what failed; when only the ref's deletion fails, it keeps the restored branch and prints the `git update-ref -d <ref>` to run.
 - `discard <ref>` deletes the ref and prints its list entry, which names the files it held and, for a work-snapshot taken during an operation, the operation.
@@ -30,7 +30,7 @@ Each list entry the handoff-supervisor prints then ends with the command to run:
 
 `RESTORE_STEPS` then keeps only what needs judgment: reading the diff and the end of the dead agent-session's transcript to decide which files to keep, removing any mutant left by nc-mutation-testing from a kept file, in a commit of its own after `restore`, before the branch is pushed, choosing between `restore` and `discard`, and telling the user what failed when the command refuses or fails.
 
-Tests for both commands, the task and the cleaner's closing of it go in `nc-systems/handoff/tests/uncommitted-work-snapshots-test.py`, with each failure injected: a kept path not in the work-snapshot, an empty `--keep`, a branch or worktree directory that already exists, a branch that already holds the restore, an unset `CLAUDE_CODE_TASK_LIST_ID` or `GIT_AUTHOR_NAME`, a `git worktree add`, an owner file write, an apply and a commit that fail, a worktree or branch the undo cannot remove, a task that cannot be opened, a ref deletion that fails, a merge-time work-snapshot, and, for both commands, a ref that no longer exists; and, for the cleaner, a restore commit that reached `origin/main`, a branch deleted with `git branch -D`, a renamed branch, one deleted locally but still on origin, a fetch that fails, a task with no `Restore commit: ` line, a commit git cannot judge, and a task file that cannot be read or rewritten.
+Tests for both commands, the task and the cleaner's closing of it go in `nn-systems/handoff/tests/uncommitted-work-snapshots-test.py`, with each failure injected: a kept path not in the work-snapshot, an empty `--keep`, a branch or worktree directory that already exists, a branch that already holds the restore, an unset `CLAUDE_CODE_TASK_LIST_ID` or `GIT_AUTHOR_NAME`, a `git worktree add`, an owner file write, an apply and a commit that fail, a worktree or branch the undo cannot remove, a task that cannot be opened, a ref deletion that fails, a merge-time work-snapshot, and, for both commands, a ref that no longer exists; and, for the cleaner, a restore commit that reached `origin/main`, a branch deleted with `git branch -D`, a renamed branch, one deleted locally but still on origin, a fetch that fails, a task with no `Restore commit: ` line, a commit git cannot judge, and a task file that cannot be read or rewritten.
 
 ## User-rulings
 
@@ -40,7 +40,7 @@ The user approved this GHI-MD's plan on 2026-11-07, as item 2 of the approval-wa
 - `restore` also opens a task on the agent-seat's task list naming the restored branch, and code closes that task when the branch's pull request merges or the branch is deleted.
 - The new text of the design's § 3 comes to the user, its old and new text side by side, as an approval-walk item of its own, before the build.
 
-The user approved the new text of the design's § 3 on 2026-11-07, as item 1 of the approval-walk `handoff-uncommitted-work-snapshots-design-section-3-restore-and-discard-commands-approval-walk-2026-11-07`, whose walk-minutes are `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/handoff-uncommitted-work-snapshots-design-section-3-restore-and-discard-commands-approval-walk-2026-11-07-minutes.md`, answering "A". The approved text is the file the walk presented, `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/fleet-restart-at-login/ghi-2539-design-section-3-draft-2026-11-08.md`; the date in its name is the drafter's. Decided:
+The user approved the new text of the design's § 3 on 2026-11-07, as item 1 of the approval-walk `handoff-uncommitted-work-snapshots-design-section-3-restore-and-discard-commands-approval-walk-2026-11-07`, whose walk-minutes are `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/handoff-uncommitted-work-snapshots-design-section-3-restore-and-discard-commands-approval-walk-2026-11-07-minutes.md`, answering "A". The approved text is the file the walk presented, `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/fleet-restart-at-login/ghi-2539-design-section-3-draft-2026-11-08.md`; the date in its name is the drafter's. Decided:
 
 - The design's § 3 is replaced with the approved text, and the build follows it; where What to build above and the approved text differ, the approved text holds.
 - `scripts/clean-worktrees.py` is the code that closes the task `restore` opens, at its runs with `--remove`.
@@ -49,7 +49,7 @@ The user approved the new text of the design's § 3 on 2026-11-07, as item 1 of 
 
 The user approved a change to the rule that closes the task on 2026-11-08, as item 3.2 of the approval-walk `memory-refusal-only-the-callers-lines-and-restored-branch-task-rebase-gap-approval-walk-2026-11-08`, whose walk-minutes are `nedlern@ned-box:/home/nedlern/agents/fleet-restart-at-login/docs/walk/memory-refusal-only-the-callers-lines-and-restored-branch-task-rebase-gap-approval-walk-2026-11-08-minutes.md`, answering "A". The item, with the exact design sentences he approved, is under the heading "Item 3.2 of 4: The design's new sentences" in `nedlern@ned-box:/home/nedlern/agents/fleet-restart-at-login/docs/walk/memory-refusal-only-the-callers-lines-and-restored-branch-task-rebase-gap-approval-walk-2026-11-08.md`. The defect it fixes: a rebase copies the restore commit under a new id, so no ref holds the commit the task's `Restore commit: ` line names, and the cleaner marks the task completed while the work is still unmerged. Decided:
 
-- `restore` gives the commit it makes the trailer `Restored-from-work-snapshot: <the work-snapshot's ref>`, whose key is the constant `RESTORED_FROM_WORK_SNAPSHOT_TRAILER_KEY` in `nc-systems/handoff/uncommitted-work-snapshots.py`, and writes the same line in the task's description, whose instructions add "Keep this trailer in the commit message."; the task's `Restore commit: ` line stays, for the reader only.
+- `restore` gives the commit it makes the trailer `Restored-from-work-snapshot: <the work-snapshot's ref>`, whose key is the constant `RESTORED_FROM_WORK_SNAPSHOT_TRAILER_KEY` in `nn-systems/handoff/uncommitted-work-snapshots.py`, and writes the same line in the task's description, whose instructions add "Keep this trailer in the commit message."; the task's `Restore commit: ` line stays, for the reader only.
 - After `git fetch --prune origin`, `scripts/clean-worktrees.py` reads each commit's trailers in `git log --all` and marks the task completed when a commit with the task's `Restored-from-work-snapshot: ` line is reachable from `origin/main`, or when no commit with that line is on any ref. A rebase copies the commit message, so a rebased or renamed branch keeps the task open until its work is on main or deleted.
 - A task with no `Restored-from-work-snapshot: ` line, opened before `restore` wrote one, is judged by its `Restore commit: ` line, as before.
 - This is built in a follow-up pull request after PR 2790 merges, not on PR 2790's branch; that pull request also puts the approved sentences into the design's § 3.
@@ -60,4 +60,4 @@ The user approved a change to the rule that closes the task on 2026-11-08, as it
 
 ## Where this came from
 
-Item 2 of Question 4, "What should be code", in the cold-read-fast-read of the handoff-system's nc-architecture-overview draft on 2026-11-03: `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/nedschorus-handoff-architecture-overview-draft-2026-11-03/cold-read-fast-read.md`. Checked against main at 78716fd58 on 2026-11-03. ghi-guide-agent, asked with `--include-closed`, named no issue, open or closed, that covers it.
+Item 2 of Question 4, "What should be code", in the cold-read-fast-read of the handoff-system's nc-architecture-overview draft on 2026-11-03: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/nedsnodes-handoff-architecture-overview-draft-2026-11-03/cold-read-fast-read.md`. Checked against main at 78716fd58 on 2026-11-03. ghi-guide-agent, asked with `--include-closed`, named no issue, open or closed, that covers it.

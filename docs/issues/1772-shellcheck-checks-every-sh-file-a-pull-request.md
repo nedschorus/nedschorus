@@ -11,7 +11,7 @@ ShellCheck is the standard linter for shell scripts. It finds defects that a rev
 
 - A shell defect such as an unquoted variable passes review and fails only when a path or an argument holds a space or is empty. ShellCheck finds such defects mechanically, and a review prompt does not find them reliably.
 - GHI [Replace the hand-written parsers in the project's hooks and scripts with real parsers](https://github.com/nedschorus/nedschorus/issues/1196) holds the open question on linters, Deferred-decision 3, and GHI [Agents reuse what the project has already solved: shared helpers, one page of reusable components, and a reuse check before, during and after the build](https://github.com/nedschorus/nedschorus/issues/1123) listed "whether ShellCheck gets a GHI of its own" as open. The user decided on 2026-10-20 that it does, by approving item 37 of agent-instructions-editor's approval-walk, whose minutes are `nedlern@ned-box:/home/nedlern/agents/agent-instructions-editor/docs/walk/agent-instructions-editor-every-open-decision-2026-10-15-minutes.md`.
-- The trawl of linters, `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/reboot-test/detection-and-correction-techniques-research-2026-10-10/linters-trawl.md`, recommends ShellCheck.
+- The trawl of linters, `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/reboot-test/detection-and-correction-techniques-research-2026-10-10/linters-trawl.md`, recommends ShellCheck.
 
 ## What is decided
 

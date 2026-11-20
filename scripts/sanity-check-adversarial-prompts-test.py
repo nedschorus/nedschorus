@@ -95,11 +95,11 @@ SANITY_CHECK_RECORD_SHIPPER_SCRIPT = pathlib.Path(__file__).with_name(
 # resolves to the production log-store. On 2026-09-17 a run of this suite
 # copied its own fixture reports -- `model=a-test-model ... cli=1.1.1-test ...
 # commit=test` -- into
-# nedlern@ned-box:/home/nedlern/nedschorus-logs/sanity-check-records/, where
+# nedlern@ned-box:/home/nedlern/nedsnodes-logs/sanity-check-records/, where
 # they read as a real sanity check of a real document; found in review of
 # nedschorus#453, the change that gave the runner its shipper. Every run now
 # ships into a temporary directory of its own instead, the way
-# nc-systems/cold-read/tests/cold-read-grid-test.py contains its own runs: the store is real and
+# nn-systems/cold-read/tests/cold-read-grid-test.py contains its own runs: the store is real and
 # the copy is the real rsync, only the destination is scratch. The override
 # names the cold-read kind because the shipper picks its own kind beside it,
 # so records land in <scratch>/sanity-check-records/. It is set here, at
@@ -1013,7 +1013,7 @@ def main():
     # CREDENTIAL_DIRECTORIES drops out of the profile.
     credential_scratch = tempfile.TemporaryDirectory()
     scratch_home = pathlib.Path(credential_scratch.name)
-    (scratch_home / ".config" / "nedschorus").mkdir(parents=True)
+    (scratch_home / ".config" / "nedsnodes").mkdir(parents=True)
     (scratch_home / ".config" / "gh").mkdir(parents=True)
     login_canary = scratch_home / ".codex" / "auth.json"
     login_canary.parent.mkdir(parents=True)
@@ -1051,7 +1051,7 @@ def main():
           and "permissions.sanity-check-no-credentials.network.enabled=true" in codex_overrides,
           repr(codex_overrides))
     check("run_codex's profile denies the credential directories and a reviewer program's login file",
-          f'"{scratch_home}/.config/nedschorus"="deny"' in denied_table
+          f'"{scratch_home}/.config/nedsnodes"="deny"' in denied_table
           and f'"{scratch_home}/.config/gh"="deny"' in denied_table
           and f'"{login_canary}"="deny"' in denied_table, denied_table)
     credential_scratch.cleanup()
@@ -1097,7 +1097,7 @@ def main():
     # not available, so it should fall back to opus in that case"), so the cell
     # tries Fable 5.1 and falls back to Opus 5. The three ways an attempt can
     # produce no review are the house chain's (run_model_chain in
-    # nc-systems/cold-read/cold-read-cell-common.py). No model is called: the
+    # nn-systems/cold-read/cold-read-cell-common.py). No model is called: the
     # launch is replaced for the length of these cases and answers per model.
     runner_chain = load_runner()
     fable, opus = runner_chain.CLAUDE_MODEL_CHAIN
@@ -1268,7 +1268,7 @@ def main():
         def fake_run(command, **kwargs):
             shipper_calls.append(command)
             return ShipperResult(0, "shipped: 2026-09-17-design — 3 file(s) added to "
-                                    "nedlern@ned-box:/home/nedlern/nedschorus-logs/"
+                                    "nedlern@ned-box:/home/nedlern/nedsnodes-logs/"
                                     "sanity-check-records/2026-09-17-design\n")
         runner_ship.subprocess.run = fake_run
         line = runner_ship.ship_record(pathlib.Path("sanity-check-records/2026-09-17-design"))
@@ -2078,7 +2078,7 @@ def main():
     # The classes come from what each CLI really prints, through the real
     # launchers: the launch is replaced under them. The texts are the
     # captured ones kept beside the cold-read cells
-    # (nc-systems/cold-read/cold-read-claude-cell.py and
+    # (nn-systems/cold-read/cold-read-claude-cell.py and
     # cold-read-codex-cell.py, recognised_failure_texts_for_model).
     runner_classes = load_runner()
     real_classes_run = agent_binary_launch_a_case_replaces(runner_classes)

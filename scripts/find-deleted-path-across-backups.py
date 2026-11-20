@@ -41,7 +41,7 @@ THE SEVEN SURFACES, in the order they are searched:
                     rebase left behind. Surface 2 walks refs and cannot see
                     them. git prunes these reflog entries after 30 days by
                     default, so this surface's memory is about a month.
-  4. log-store    — every file name under /home/nedlern/nedschorus-logs on the
+  4. log-store    — every file name under /home/nedlern/nedsnodes-logs on the
                     box, where seats ship what git does not carry. FOUND only
                     for a file whose path ends with the path asked for, the
                     rule git's surface uses; any other file whose name
@@ -70,7 +70,7 @@ THE SEVEN SURFACES, in the order they are searched:
 
 WHY SURFACES 3 AND 4, AND WHY EACH SURFACE PRINTS AS IT FINISHES. Both were
 added on 2026-09-23 after the lost-file research
-(nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane/lost-file-research-report-2026-09-23.md,
+(nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/merge-lane/lost-file-research-report-2026-09-23.md,
 episodes E11 and E14). Two seats, three days apart, could not find
 docs/drafts/pr-main-process-design.md. It was in commits 12c18b5 and 28e4f5f,
 which only the merge-lane worktree's HEAD reflog still named after its seat
@@ -259,8 +259,8 @@ Usage:
   python3 scripts/find-deleted-path-across-backups.py <40-hex git blob id>
   python3 scripts/find-deleted-path-across-backups.py <path> --skip box
   python3 scripts/find-deleted-path-across-backups.py <path> --skip localsnapshots
-  python3 scripts/find-deleted-path-across-backups.py <path> --log-store-root /home/nedlern/nedschorus-logs
-  python3 scripts/find-deleted-path-across-backups.py <path> --repo ~/Projects/nedschorus
+  python3 scripts/find-deleted-path-across-backups.py <path> --log-store-root /home/nedlern/nedsnodes-logs
+  python3 scripts/find-deleted-path-across-backups.py <path> --repo ~/Projects/nedsnodes
   python3 scripts/find-deleted-path-across-backups.py <path> --prompt-for-root
 
 Each FOUND surface says where this run copied what it found, under
@@ -272,7 +272,7 @@ fragment of a path ("dispositions.md"). A fragment matches whole trailing
 path components: "dispositions.md" matches "docs/dispositions.md", not
 "docs/old-dispositions.md". It
 may also be written as it is cited: in the scp form
-("nedlern@ned-box:/home/nedlern/nedschorus-logs/x.md", or "ned-box:<path>"),
+("nedlern@ned-box:/home/nedlern/nedsnodes-logs/x.md", or "ned-box:<path>"),
 from the current directory ("../x.md", "./x.md"), or from a home ("~/x.md").
 Each of those is turned into the path it names before any surface is
 searched, and the header shows both.
@@ -354,14 +354,14 @@ _locator_spec.loader.exec_module(locator)
 
 _git_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
     "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
@@ -387,13 +387,16 @@ DEFAULT_FOUND_COPIES_ROOT = "~/Downloads/nedschorus-found-copies"
 
 DEFAULT_BOX_SSH_HOST = "nedlern@ned-box"
 DEFAULT_TIMESHIFT_SNAPSHOT_ROOT = "/mnt/backup/timeshift/snapshots"
+# Snapshots taken before the project rename hold the reference-checkout under this name.
+REFERENCE_CHECKOUT_DIRECTORY_NAME_BEFORE_PROJECT_RENAME = "nedschorus"
 # Each seat has its own directory, so a repo-relative path may exist under several roots.
 DEFAULT_BOX_SEARCH_ROOTS = (
-    "/home/nedlern/Projects/nedschorus",
+    "/home/nedlern/Projects/nedsnodes",
+    "/home/nedlern/Projects/" + REFERENCE_CHECKOUT_DIRECTORY_NAME_BEFORE_PROJECT_RENAME,
     "/home/nedlern/agents/*",
 )
 DEFAULT_TRANSCRIPTS_DIR = "~/.claude/projects"
-DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
+DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedsnodes-logs"
 MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE = (
     *transcript_mirror.split_destination(transcript_mirror.LOG_STORE_AGENT_SESSION_FILES_DESTINATION)[1]
     .relative_to(DEFAULT_LOG_STORE_ROOT).parts,
