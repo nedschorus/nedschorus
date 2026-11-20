@@ -34,7 +34,7 @@ Do it now rather than refining the word list: the user decided on 2026-10-23, "o
 
 ### Two traps found on ned-box with Claude Code 2.1.309
 
-reboot-test tested `claude -p --json-schema` on 2026-10-23, record `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/reboot-test/claude-p-json-schema-spike-2026-10-23/README.md`. The final answer was schema-valid after many tool calls. Two traps:
+reboot-test tested `claude -p --json-schema` on 2026-10-23, record `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/reboot-test/claude-p-json-schema-spike-2026-10-23/README.md`. The final answer was schema-valid after many tool calls. Two traps:
 
 1. An invocation of `claude -p` that never produces valid output still looks successful. When the model could not satisfy the schema, `claude -p` exited 0 with `"subtype": "success"` and `"is_error": false`; only `"structured_output": null` showed the failure. The runner must treat a null `structured_output`, and one that lacks a required field, as a failed sanity-check-cell, for example with the existing cause class `not-a-report`, and never save it. What Codex does when it cannot satisfy `--output-schema` has not been tested, so the runner parses the Codex sanity-check-cell's final message as JSON and checks its required fields too; text that is not JSON, or JSON that lacks a field, fails the same way.
 2. `--allowedTools` takes any number of values and swallows a prompt given after it as one more tool name. `run_claude` already gives the prompt on stdin; keep it there when adding `--json-schema`.

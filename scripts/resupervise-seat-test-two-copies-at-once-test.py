@@ -22,7 +22,7 @@ from pathlib import Path
 SUITE = Path(__file__).with_name("resupervise-seat-test.py")
 _git_redirecting_removal_spec = importlib.util.spec_from_file_location(
     "git_redirecting_environment_variables_removal_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "git-redirecting-environment-variables-removal-common.py")
 git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
 _git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
