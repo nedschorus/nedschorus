@@ -12,7 +12,7 @@ The design has a test-design for each component that design-to-main builds, but 
 
 ## What the work produces
 
-1. A test-design for the design-to-main machine and its per-state agent-instructions: its test-requirements, and what runs the tests that need a real agent, which today's scripted launcher cannot; it starts from the sixteen candidate tests T1 to T16 in `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/prime-intellect/design-to-main-lessons-from-current-system-2026-10-14.md`, section 1.
+1. A test-design for the design-to-main machine and its per-state agent-instructions: its test-requirements, and what runs the tests that need a real agent, which today's scripted launcher cannot; it starts from the sixteen candidate tests T1 to T16 in `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/prime-intellect/design-to-main-lessons-from-current-system-2026-10-14.md`, section 1.
 2. A review of the design against what the current path learned, with each finding proposed to the user as a change to the design or as a deferred line. The starting list:
    - The twelve gaps G1 to G12 in section 2 of the same file, among them review depth by change kind, root-cause lines in fix pull requests, resource limits and hangs, concurrency with the fleet's hooks, what a launched agent may write or reach, nn-hack files, where the run record lives, and who restarts the machine after a crash.
    - States with no state-exit for stopping when they cannot proceed: `design-writing` has one verdict, `emitted`, so a run cannot stop or park itself from inside the design conversation when the user will neither settle nor defer a line; `implementation-writing` and `test-writing` have no `escalate-to-user`.
@@ -25,11 +25,11 @@ The design has a test-design for each component that design-to-main builds, but 
 
 ## Next action
 
-After the deferred-decisions pull request under GHI 282 merges, prime-intellect reads the design whole and the lessons file, writes the test-design and the review's findings as one document, `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/prime-intellect/design-to-main-test-design-and-design-review-<date>.md`, gives it a /cold-read, and walks it with the user. The changes the user approves land on the design by one pull request; a finding he rejects is recorded in the design as a `#rejected` line.
+After the deferred-decisions pull request under GHI 282 merges, prime-intellect reads the design whole and the lessons file, writes the test-design and the review's findings as one document, `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/prime-intellect/design-to-main-test-design-and-design-review-<date>.md`, gives it a /cold-read, and walks it with the user. The changes the user approves land on the design by one pull request; a finding he rejects is recorded in the design as a `#rejected` line.
 
 ## Outcome
 
-Done, 2026-10-19. The review document is `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/prime-intellect/design-to-main-test-design-and-design-review-2026-10-18.md`, with its cold-read-record `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/design-to-main-test-design-and-design-review-2026-10-18-2026-10-17-2/`. The user ruled on it in two approval-walks, minutes `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/design-to-main-test-design-and-design-review-2026-10-18-2026-10-17-2-minutes.md` and `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/design-to-main-open-questions-and-defects-fixed-instructions-2026-10-19-minutes.md`. What he approved landed:
+Done, 2026-10-19. The review document is `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/prime-intellect/design-to-main-test-design-and-design-review-2026-10-18.md`, with its cold-read-record `nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/design-to-main-test-design-and-design-review-2026-10-18-2026-10-17-2/`. The user ruled on it in two approval-walks, minutes `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/design-to-main-test-design-and-design-review-2026-10-18-2026-10-17-2-minutes.md` and `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/design-to-main-open-questions-and-defects-fixed-instructions-2026-10-19-minutes.md`. What he approved landed:
 - PR [design-to-main design: an agent leaving no state-exit stops the machine, a Defects fixed section, how the machine is tested, and sorted deferred lines with #reason](https://github.com/nedschorus/nedschorus/pull/1623): the fifth rule in §3.2, the `Defects fixed` section, how the machine is tested with its test plan, three `#not_in_this_run` lines and a sandbox line in §11, §11 sorted with `#reason`.
 - PR [design-to-main: writer and checker instructions require the Defects fixed section; design defers merge-lane-2's misread-message hold](https://github.com/nedschorus/nedschorus/pull/1658): the design writer's and checker's sentences for `Defects fixed`, and the §11 line for merge-lane-2's hold on a misread message.
 - The three code questions under "Decided elsewhere" were ruled and recorded in GHI 282's GHI-MD: the four entry reasons stay distinct, unrecognised rulings stay free text, and the counters test file stays one file.
@@ -38,6 +38,6 @@ Done, 2026-10-19. The review document is `nedlern@ned-box:/home/nedlern/nedschor
 
 ## Prior work
 
-- The lessons inventory, mined from main's history, merge-lane-2's rules and the review, merge and frozen-head GHIs on 2026-10-14: `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/prime-intellect/design-to-main-lessons-from-current-system-2026-10-14.md`.
-- The deferred-decisions proposal: `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/prime-intellect/design-to-main-deferred-decisions-proposal-2026-10-15.md`.
+- The lessons inventory, mined from main's history, merge-lane-2's rules and the review, merge and frozen-head GHIs on 2026-10-14: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/prime-intellect/design-to-main-lessons-from-current-system-2026-10-14.md`.
+- The deferred-decisions proposal: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/prime-intellect/design-to-main-deferred-decisions-proposal-2026-10-15.md`.
 - GHI [Review-system design requirements learned from the legacy gate — dormant until a class of work first requires review](https://github.com/nedschorus/nedschorus/issues/31) collected an earlier set of such lessons.

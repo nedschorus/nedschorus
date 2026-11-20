@@ -3,7 +3,7 @@
 and this test keeps it that way.
 
 The list lives in
-nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py.
+nn-systems/general-tools/git-redirecting-environment-variables-removal-common.py.
 A program that writes out its own copy can fall behind the module: a copy that
 holds only some of the variables lets the others point that program's git at
 another repository. So every Python file git lists, tracked or untracked and
@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = "nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py"
+MODULE_PATH = "nn-systems/general-tools/git-redirecting-environment-variables-removal-common.py"
 
 _spec = importlib.util.spec_from_file_location(
     "git_redirecting_environment_variables_removal_common", REPOSITORY_ROOT / MODULE_PATH)
@@ -48,7 +48,7 @@ ALLOWED_COPIES = {
         "it is sent over ssh alone and run from stdin on the other machine, where it cannot "
         "load a sibling module; scripts/locate-file-copies-across-machines-test.py fails "
         "when its copy differs from the module's",
-    "nc-systems/general-tools/tests/git-redirecting-environment-variables-removal-common-test.py":
+    "nn-systems/general-tools/tests/git-redirecting-environment-variables-removal-common-test.py":
         "the oracle the module is checked against, written out so a variable dropped from "
         "the module fails there",
     "scripts/git-redirecting-environment-variables-removed-by-every-caller-test.py":
