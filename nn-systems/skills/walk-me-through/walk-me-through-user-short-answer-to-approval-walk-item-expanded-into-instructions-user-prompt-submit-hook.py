@@ -224,7 +224,7 @@ AA_SKILL_TEXT = (
     "section \"Advisor\", then call the advisor. If the advisor finds something that would change what the "
     "item decides, revise the item, mark what changed [advisor], and show the revised item again for the "
     "user to answer. Otherwise record the approval and go to the next item; what the advisor raised "
-    "outside the item becomes a new item in the walk or a loose end. If the call fails, say so and show "
+    "outside the item becomes a new item in the walk or a loose-end. If the call fails, say so and show "
     "the item again, unapproved; the user may then answer A to approve it without the check."
 )
 # Each answer's lines: (lines while an approval-walk is open, lines while none is).
