@@ -209,13 +209,19 @@ def waiting_handoff_verdict(handoff_directory: Path, name: str, state_path: Path
     return None
 
 
+# The project rename leaves this value alone: task lists on disk keep the old prefix.
+TASK_LIST_ID_PREFIX_BEFORE_PROJECT_RENAME = "nedschorus-"
+
+
 def seat_of(list_id):
     """Return the seat name from a task list ID, leaving unfamiliar IDs whole."""
     # scripts/seat-shared-file-ship.py's seat_name_from_environment reads the same IDs
     # but returns None for an unfamiliar one; the two are kept apart on purpose.
     name = list_id
-    if name.startswith("nedschorus-"):
-        name = name[len("nedschorus-"):]
+    for prefix in ("nedschorus-", TASK_LIST_ID_PREFIX_BEFORE_PROJECT_RENAME):
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+            break
     if name.endswith("-tasks"):
         name = name[: -len("-tasks")]
     return name or list_id
