@@ -2631,6 +2631,69 @@ def mac_store_backlog_cases(scratch):
                                             Path("/dev/null")).read_text()
           and next((world.repo / ".git").glob("*-state.json"), None) is not None)
 
+    # -- a file the cut-off first run already settled, then changed by the agent before the first
+    # run is finished, is checked like any changed file, not approved as found
+    world = mac_world_without_first_run(scratch, "mac-stocking-backlog-settled-file-changed")
+    for name in documents:
+        (world.repo / name).parent.mkdir()
+        (world.repo / name).write_text(f"{name} uncommitted\n")
+    world.git("add", ".")
+    hook = hook_with_slow_store_appends(0.1)
+    first = run_hook_in_this_process(world, hook, "session-a", "owner-a")
+    settled = [name for name in documents
+               if str(world.repo / name) in json.loads(state_file_of_checkout(world).read_text())["files"]]
+    check("the cut-off first run settled some files and left others",
+          "reached its time limit" in "".join(first) and 0 < len(settled) < len(documents),
+          (first, settled))
+    changed = world.repo / (settled or documents)[0]
+    changed.write_text("changed by the agent before the first run is finished\n")
+    runs = runs_until_done(world, hook, 8)
+    every_message = [message for messages in runs for message in messages]
+    check("the agent's change to a file the cut-off first run settled is asked about once",
+          asked_count(every_message, changed) == 1
+          and world.key(changed) not in world.store_file(changed, "approved"),
+          every_message)
+
+    # -- a file the first run left unstored, forgotten while git ignored it and then put back
+    # unchanged by a reset, is git's own work and stays unstored; a run cut off in its approvals,
+    # with that file among them, still saves its state
+    world = mac_world_without_first_run(scratch, "mac-reset-backlog-unstored-file")
+    late = world.repo / "zz" / "CLAUDE.md"
+    late.parent.mkdir()
+    late.write_text("left unstored by the first run\n")
+    for name in documents:
+        (world.repo / name).parent.mkdir()
+        (world.repo / name).write_text(f"{name} v1\n")
+    world.git("add", ".")
+    world.git("commit", "-q", "-m", "documents and a late file")
+    world.run()
+    world.git("rm", "-q", "--cached", str(late))
+    (world.repo / ".gitignore").write_text("zz/\n")
+    for name in documents:
+        (world.repo / name).write_text(f"{name} v2\n")
+    world.git("add", ".")
+    world.git("commit", "-q", "-m", "ignore the late file and change the documents")
+    world.run()
+    world.git("reset", "-q", "--hard", "HEAD~1")
+    hook = load_hook_in_this_process()
+    approved = hook.Store.approved
+
+    def slow_approved(self, path):
+        time.sleep(0.1)
+        return approved(self, path)
+
+    hook.Store.approved = slow_approved
+    try:
+        messages = run_hook_in_this_process(world, hook, "session-a", "owner-a")
+        error = None
+    except Exception as raised:
+        messages, error = [], raised
+    check("a run cut off in its approvals, with an unstored file put back by a reset among them, "
+          "saves its state instead of failing",
+          error is None and "reached its time limit" in "".join(messages)
+          and str(late) in json.loads(state_file_of_checkout(world).read_text())["files"],
+          (error, messages))
+
 
 if __name__ == "__main__":
     sys.exit(main())

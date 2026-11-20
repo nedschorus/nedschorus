@@ -1393,7 +1393,9 @@ def run_hook(payload):
                 how = ""
                 if (path, key) in on_main:
                     how = HOW_ORIGIN_MAIN
-                elif stocking:
+                elif stocking and path not in state["files"]:
+                    # A path an earlier, cut-off stocking run settled has had its first look; a
+                    # change to it since is checked like any other.
                     log = store.log(path)
                     if not (key not in store.approved(path) and seen_lines(log, key)):
                         how = HOW_STOCK
@@ -1417,6 +1419,9 @@ def run_hook(payload):
                                                              unsettled, approvals, quiet,
                                                              out_of_time)
             settled.update({path: True for path in skipped})
+            # A skipped path needs no store work, so it is done even when an approval of it was
+            # cut off: its first-run version is kept for its first change.
+            deferred -= skipped
             # The outside group runs first, so its stocking is unfinished while a seat-brief is.
             unfinished = bool(deferred) or (kind == "outside" and briefs_unfinished)
             results.append((asks, reminders, settled, skipped, unreadable, deferred, unfinished))
