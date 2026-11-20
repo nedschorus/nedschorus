@@ -1565,7 +1565,7 @@ def cases(scratch):
     check("when one of several files cannot be put back, --restore says what it did to each and "
           "exits 1",
           result.returncode == 1 and first.read_text() == "x v1\n"
-          and f"Put back the approved version" in result.stdout
+          and "Put back the approved version" in result.stdout
           and f"Failed on {second}" in result.stdout and "not every file" in result.stderr,
           (result.returncode, result.stdout, result.stderr))
     check("when a file cannot be put back, --restore says what a failed file may hold and that "

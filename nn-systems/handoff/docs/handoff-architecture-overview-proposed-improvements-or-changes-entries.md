@@ -40,8 +40,8 @@ State: open
 ## E6 — improvement: bring up to date, or cut, the stale parts of the design of record
 
 Found by: the two agents that wrote drafts of the overview, reading the code at commit 8e7ddb10a6e1efbbd9bbc08f8fae3d0159aa457a, re-checked against commit a6b1471e0263e72475cf11e362d0ce311af3cbe2; the line numbers below are at a6b1471e.
-Gain: a reader of `nn-systems/handoff/handoff-design.md`, which the overview links, is not misled. The design still says the block form of the next step is queued, not built, though the writer and the handoff-supervisor both build it; and it still describes a writer that starts an adopting handoff-supervisor when none is watching ("self-healing"), a path the code no longer has: the writer script starts nothing, and the launchers run the handoff-supervisor as the pane's command. Under the refresh-design of GHI [refresh-design: when a system's code lands, bring its design, build-slice plan and overview into line — removing, never revising](https://github.com/nedschorus/nedschorus/issues/670), the stale parts would be removed.
-Rests on: `nn-systems/handoff/handoff-design.md:47` ("the block form below is QUEUED, not built"), `:243` ("the writer starts an adopting supervisor"), `:278` ("the hook-fired skill run starts an adopting supervisor"), `:282` (a self-started supervisor's output); `nn-systems/handoff/handoff-write-and-check-supervisor.py:344-347` and `nn-systems/handoff/handoff-supervisor.py:194-196` (the block form, built); the writer script's only subprocess call is the audit at `:367`.
+Gain: a reader of `nn-systems/handoff/handoff.system.design.md`, which the overview links, is not misled. The design still says the block form of the next step is queued, not built, though the writer and the handoff-supervisor both build it; and it still describes a writer that starts an adopting handoff-supervisor when none is watching ("self-healing"), a path the code no longer has: the writer script starts nothing, and the launchers run the handoff-supervisor as the pane's command. Under the refresh-design of GHI [refresh-design: when a system's code lands, bring its design, build-slice plan and overview into line — removing, never revising](https://github.com/nedschorus/nedschorus/issues/670), the stale parts would be removed.
+Rests on: `nn-systems/handoff/handoff.system.design.md:47` ("the block form below is QUEUED, not built"), `:243` ("the writer starts an adopting supervisor"), `:278` ("the hook-fired skill run starts an adopting supervisor"), `:282` (a self-started supervisor's output); `nn-systems/handoff/handoff-write-and-check-supervisor.py:344-347` and `nn-systems/handoff/handoff-supervisor.py:194-196` (the block form, built); the writer script's only subprocess call is the audit at `:367`.
 State: open
 
 ## E7 — improvement: drop the queue that no longer exists from the queue status line
@@ -947,4 +947,35 @@ Fixed by: regular maintenance, in the overview.
 Goes wrong when: a reader takes the assertion as exact.
 The claim check's evidence:
 > nn-systems/handoff/handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py:27-29 `then runs git switch --no-overwrite-ignore -C main origin/main ... whether or not every push succeeded`. Also :52-54 `except a failed push of a leftovers branch ..., which still lets the checkout go back on main: the unpushed branch stays in the checkout`. The switch does not wait for a successful push, so "only then" is wrong. No agent acts wrongly on it, though: the successor notice (handoff-supervisor.py:2444-2445) already says an unpushed branch stays in the checkout. The rest of the sentence (the supervisor calls `put_reference_checkout_back_on_main` itself, and the successor runs the program when that call failed) is supported at handoff-supervisor.py:2541-2549.
+State: open
+
+## E81 — possible problem: an assertion of the overview is contradicted
+
+Claim: `clean-worktrees.py` removal rules, including "a worktree locked by Claude Code for a subagent whose process has ended is unlocked by `--remove` and then judged like any other".
+Found by: the overview claim check of 2026-11-20 against commit 47b7f0bb3e3416391f4f8a5b8145fe577bf12443; its report is /home/nedlern/nedsnodes-logs/overview-write-architecture-overview-claim-check-reports/nedsnodes-handoff-architecture-overview/2f0219bf69a7d6aa36f34ae8b162971021b35cfb-2026-11-20T16-40-42-343880Z.md.
+Fixed by: regular maintenance, in the overview.
+Goes wrong when: a reader takes the assertion as exact.
+The claim check's evidence:
+> - The process in Claude Code's lock is the dispatching agent-session's `claude`, not a process of the subagent.
+> - worktree-owner-file-read-and-write.py:32-34 "locks it while the subagent runs with the reason "claude agent agent-<id> (pid N start M)", N being the dispatching agent-session's `claude` process"
+> - clean-worktrees.py:80-87 "once no process N that started at T runs ... --remove unlocks the worktree, first writing it an owner file ... naming that ended agent-session"
+> - The other rules in the sentence hold: clean-worktrees.py:60-67 and :397 for idle worktrees, :94-101 and :395 for merge-lane review checkouts, and :44-58 for the owner rules.
+State: open
+
+
+## E82 — possible problem: an assertion of the overview is contradicted
+
+Claim: Shared state `worktree-owner.json`, including "or by `clean-worktrees.py` once that subagent's `claude` process has ended".
+Found by: the overview claim check of 2026-11-20 against commit 47b7f0bb3e3416391f4f8a5b8145fe577bf12443; its report is /home/nedlern/nedsnodes-logs/overview-write-architecture-overview-claim-check-reports/nedsnodes-handoff-architecture-overview/2f0219bf69a7d6aa36f34ae8b162971021b35cfb-2026-11-20T16-40-42-343880Z.md.
+Fixed by: regular maintenance, in the overview.
+Goes wrong when: a reader takes the assertion as exact.
+The claim check's evidence:
+> - The process is the dispatching agent-session's `claude`, not the subagent's.
+> - worktree-owner-file-read-and-write.py:32-34 "N being the dispatching agent-session's `claude` process"
+> - clean-worktrees.py:80-86 "once no process N that started at T runs ... writing it an owner file ... naming that ended agent-session"
+> - The rest of the bullet holds:
+>   - agent-seat-worktree-create-with-owner-file.py:197 `core.hooksPath={NO_HOOKS_DIRECTORY}`;
+>   - the WorktreeCreate hook, line 39, runs that creator;
+>   - the post-checkout program writes owner files (git-client-side-hooks-post-checkout-new-worktree-owner-file-write.py:125);
+>   - the first-prompt list reads them through cleaner.owner_file (first-prompt list:220).
 State: open

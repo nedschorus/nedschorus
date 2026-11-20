@@ -43,8 +43,8 @@ PROMPT_DRAFT_DIRECTORY_NAMES = ("queue", "nn-queue")
 PROMPT_EXEMPT_DIRECTORY_PREFIXES = (("docs", "drafts"), (".claude", "jobs"), (".claude", "handoffs"))
 REVIEWED_DOCUMENT_SUFFIX = ".md"
 REVIEWED_HOME_DIRECTORY_PREFIXES = (("docs", "agents"), ("docs", "nedsnodes-wiki"), ("nn-systems", "skills"))
-REVIEWED_DESIGN_SUFFIX = "-design.md"
-UNREVIEWED_DOCUMENT_SUFFIXES = ("-test-design.md", "-contract.md")
+REVIEWED_DESIGN_SUFFIX = ".design.md"
+UNREVIEWED_DOCUMENT_SUFFIXES = (".test-design.md", ".contract.md")
 REVIEW_RECORD_DIRECTORY_NAMES = ("cold-read-records", "md-review-records", "sanity-check-records")
 APPROVAL_MARKER_NAME = ".walk-approved"
 

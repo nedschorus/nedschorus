@@ -323,7 +323,7 @@ def run_first_prompt_file_cases(workspace: Path):
 def run_multi_line_next_step_cases(workspace: Path, recent: str):
     """R20's reader half: a verbatim block is parsed, preferred, and survives.
 
-    Format in nn-systems/handoff/handoff-design.md. The block is the last
+    Format in nn-systems/handoff/handoff.system.design.md. The block is the last
     thing in the file and its lines are taken verbatim; an unterminated block
     is a damaged handoff and falls back to the collapsed line rather than
     handing over a partial instruction.

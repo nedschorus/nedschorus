@@ -52,7 +52,7 @@ passing review.
   model uses).
 - **The gatekeeper** — `nn-systems/main-gatekeeper/main-gatekeeper.py`, the main-gatekeeper:
   the permanent and only way a change reaches main; specification
-  `nn-systems/main-gatekeeper/main-gatekeeper-design.md`
+  `nn-systems/main-gatekeeper/main-gatekeeper.system.design.md`
   (canonical for everything gate-related, including credential ruling C2:
   the credential able to push main belongs to a dedicated system user,
   reached only through the main-gatekeeper, which logs every use). Dormant
@@ -78,7 +78,7 @@ enforcement programs that implement them. Deliberately excluded: workflow
 governance content (the cold read's cells, ghi-write's routing, approval-walk conduct),
 prose-quality rules, and communication conventions. Coverage is bounded by
 the sweep that built the inventory — the agent-seats' briefs
-(`docs/agents/*-instructions.md`), `nn-systems/handoff/handoff-design.md`,
+(`docs/agents/*-instructions.md`), `nn-systems/handoff/handoff.system.design.md`,
 and agent-seat `CLAUDE.local.md` files were not swept.
 
 Reach, so nothing below is assumed to protect more than it does: every
@@ -386,7 +386,7 @@ delimited multi-line block and the reader
 (`nn-systems/handoff/handoff-supervisor.py`) parses it — a reader-only fix could not
 have restored newlines already destroyed. The format specification, and
 the exact-terminator trade it records, live in
-`nn-systems/handoff/handoff-design.md`, given a cold read before the build
+`nn-systems/handoff/handoff.system.design.md`, given a cold read before the build
 per design-first.
 
 ### Q5 — What piles up, and who sweeps it?
@@ -499,7 +499,7 @@ pull request.
    (ruling and reopen trigger at R1).
 2. **R20** — the handoff both-ends structure fix — LANDED (PR [handoff: a multi-line next step survives the channel end to end (R20)](https://github.com/nedschorus/nedschorus/pull/108),
    merged 2026-08-20; design section given a cold read in
-   `handoff-design.md` first, per design-first).
+   `handoff.system.design.md` first, per design-first).
 3. **R25** — the dead-registration report line in `clean-worktrees.py` —
    LANDED (PR [clean-worktrees: one report line names dead registrations and the prune command (R25)](https://github.com/nedschorus/nedschorus/pull/112), merged 2026-08-20), with the review discussion
    permanent on the pull request.
