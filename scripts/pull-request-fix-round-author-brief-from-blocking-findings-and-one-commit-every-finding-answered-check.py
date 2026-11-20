@@ -396,15 +396,15 @@ def verdict_line(review):
     return (review.get("body") or "").split("\n", 1)[0]
 
 
-def verdicts_posted_as_comments(own):
+def are_merge_lane_verdicts_on_pull_request_comment_reviews(own):
     """Are merge-lane-2's verdicts on this pull request COMMENT reviews? On a pull request ned-review-merge
     opened, GitHub takes that account's verdict only as a COMMENT review, which the posting program opens
     with the verdict line; on any other, the posting program gives each verdict its own review state."""
     return not any(review.get("state") in ("CHANGES_REQUESTED", "APPROVED") for review in own)
 
 
-def requests_changes(review, as_comments):
-    """Does this merge-lane-2 review ask for a fix-round? as_comments is verdicts_posted_as_comments()."""
+def does_merge_lane_review_ask_for_fix_round(review, as_comments):
+    """Does this merge-lane-2 review ask for a fix-round? as_comments is are_merge_lane_verdicts_on_pull_request_comment_reviews()."""
     return (review.get("state") == "CHANGES_REQUESTED"
             or as_comments and review.get("state") == "COMMENTED" and verdict_line(review) == "REQUEST_CHANGES")
 
@@ -422,8 +422,8 @@ def round_reviews(number, reviewer_login):
         raise Refused(f"Pull request {number} has no review by {reviewer_login}, merge-lane-2's "
                       "account, so there is no fix-round to brief.\n"
                       "Wait for merge-lane-2's review; run this again when it requests changes.")
-    as_comments = verdicts_posted_as_comments([review for _, review in own])
-    requested = [index for index, (_, review) in enumerate(own) if requests_changes(review, as_comments)]
+    as_comments = are_merge_lane_verdicts_on_pull_request_comment_reviews([review for _, review in own])
+    requested = [index for index, (_, review) in enumerate(own) if does_merge_lane_review_ask_for_fix_round(review, as_comments)]
     if requested:
         _, anchor = own[requested[-1]]
         frozen_head = anchor.get("commit_id")
@@ -453,8 +453,8 @@ def changes_requested_round_count(number, reviewer_login):
     reviews = gh_json_lines(["api", "--paginate", f"repos/{{owner}}/{{repo}}/pulls/{number}/reviews",
                              "--jq", ".[]"])
     own = [review for review in reviews if (review.get("user") or {}).get("login") == reviewer_login]
-    as_comments = verdicts_posted_as_comments(own)
-    return round_count([review for review in own if requests_changes(review, as_comments)], round_records(number))
+    as_comments = are_merge_lane_verdicts_on_pull_request_comment_reviews(own)
+    return round_count([review for review in own if does_merge_lane_review_ask_for_fix_round(review, as_comments)], round_records(number))
 
 
 def replaced_pull_requests(number, url, description):

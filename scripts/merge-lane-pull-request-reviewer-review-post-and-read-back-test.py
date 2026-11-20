@@ -267,8 +267,8 @@ def merge_account_comment_review_cases(scratch):
               isinstance(found, list) and [comment["line"] for comment in found] == [2], found)
         check("the fix-round program counts that COMMENT review, which opens with REQUEST_CHANGES, as "
               "asking for a fix-round",
-              fix_round.requests_changes({"state": "COMMENTED", "body": result.posted["body"]},
-                                         fix_round.verdicts_posted_as_comments([])), result.posted)
+              fix_round.does_merge_lane_review_ask_for_fix_round({"state": "COMMENTED", "body": result.posted["body"]},
+                                         fix_round.are_merge_lane_verdicts_on_pull_request_comment_reviews([])), result.posted)
 
     result = run_program(scratch, review("APPROVE", comments=[finding(2, "fix-next")]),
                          arguments=MERGE_LANE_ARGUMENTS, FAKE_GH_AUTHOR="ned-review-merge")
