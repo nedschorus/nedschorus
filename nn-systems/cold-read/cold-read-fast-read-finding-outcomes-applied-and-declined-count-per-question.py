@@ -58,7 +58,9 @@ def cold_read_fast_read_finding_outcomes_count_table(records_directory):
     """Return (the table as text, the unreadable outcomes files, one line each). Raise RecordsDirectoryUnreadable
     when records_directory cannot be listed."""
     try:
-        records = sorted(path for path in Path(records_directory).iterdir() if path.is_dir())
+        # An interrupted shipment's staging copy holds the same files as its record.
+        records = sorted(path for path in Path(records_directory).iterdir()
+                         if path.is_dir() and not path.name.startswith(record_shipper.STAGING_DIRECTORY_PREFIX))
     except OSError as error:
         raise RecordsDirectoryUnreadable(f"{records_directory} cannot be listed: {error}") from error
     counts = {question: collections.Counter() for question in finding_outcomes.FINDING_QUESTION_NUMBERS}

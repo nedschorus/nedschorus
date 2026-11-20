@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Cases for nn-systems/cold-read/cold-read-fast-read-finding-outcomes-applied-and-declined-count-per-question.py,
 run as a subprocess on scratch cold-read-records directories: the table's counts and shares, the line on records
-without outcomes, an unreadable outcomes file, and a records directory that cannot be listed.
+without outcomes, a shipment's leftover staging copy, an unreadable outcomes file, and a records directory that cannot be listed.
 
 Run: python3 nn-systems/cold-read/tests/cold-read-fast-read-finding-outcomes-applied-and-declined-count-per-question-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -78,6 +78,16 @@ with tempfile.TemporaryDirectory() as scratch:
     check("an outcomes file that is not the program's JSON is left out of the table and named on stderr, exit 1",
           result.returncode == 1 and "| Question 2, Where you struggled | 1 | 1 | 50% |" in result.stdout
           and f"{records / 'b-2026-11-20' / OUTCOMES_FILE_NAME}:" in result.stderr, result.stdout + result.stderr)
+
+    staged = Path(scratch) / "staged"
+    record(staged, "a-2026-11-19", [(2, "applied"), (4, "declined")], report_time=2_000_000_000)
+    # cold-read-record-ship.py leaves a staging copy beside the record when a shipment stops before removing it.
+    record(staged, ".ship-staging-a-2026-11-19-0123456789ab", [(2, "applied"), (4, "declined")],
+           report_time=2_000_000_000)
+    result = run(staged)
+    check("a shipment's leftover staging copy beside a record is not counted as a record of its own",
+          result.returncode == 0 and "1 records hold them" in result.stdout.splitlines()[0]
+          and "| All questions | 1 | 1 | 50% |" in result.stdout, result.stdout + result.stderr)
 
     empty = Path(scratch) / "empty"
     empty.mkdir()
