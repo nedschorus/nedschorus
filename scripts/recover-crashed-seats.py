@@ -95,7 +95,7 @@ box the same recovery drives the supervisor's launcher conventions there).
 Recovering box seats from the Mac is `ssh ned` plus this script there.
 
 Agents root: on the Mac a seat's directory is <root>/<name>, the root being
---agents-root, else $NEDSCHORUS_AGENTS_ROOT, else ~/agents, as
+--agents-root, else $NEDSNODES_AGENTS_ROOT, else ~/agents, as
 launch-claude-mac resolves it. Off macOS — where launcher_path() is None — it
 is always ~/agents/<name>: --agents-root is refused (exit 2, nothing read or
 launched) and the variable is ignored. A box seat is always ~/agents/<name>
@@ -106,7 +106,7 @@ here anyway split the recovery: the automatic launch seated <root>/<name>,
 while the by-hand command printed when that launch fails runs
 launch-claude-ubuntu, which seats ~/agents/<name>, not the seat that was
 assessed. Raised by ned-review-merge's inline question 4088153045 on PR
-[The ubuntu launcher reads no agents-root variable: a box seat is always ~/agents/<name>](https://github.com/nedschorus/nedschorus/pull/684);
+[The ubuntu launcher reads no agents-root variable: a box seat is always ~/agents/<name>](https://github.com/nedsnodes/nedsnodes/pull/684);
 the user answered "Y" at 2026-09-28T16:37:05Z, closing question 1 of
 merge-lane-2's walk merge-lane-2-meta-walk-open-items-2026-09-23, to refuse
 the flag off macOS as resupervise-seat.py refuses it with --machine ubuntu.
@@ -115,7 +115,7 @@ restart-live-seats-at-login.py, which reads ~/agents, and this tool agree on
 where a box seat lives by rule rather than because nothing sets it.
 
 Checkout: a seat this tool launches runs its supervisor from the durable
-checkout — --checkout, default ~/Projects/nedschorus, the name and default the
+checkout — --checkout, default ~/Projects/nedsnodes, the name and default the
 login restart's install scripts give it — whichever checkout this tool itself
 runs from. On the Mac it runs that checkout's launch-claude-mac, which takes
 the supervisor from its own checkout; off macOS the tmux command names that
@@ -124,10 +124,10 @@ came from this tool's own checkout, so a recovery run by hand from a worktree
 left the seat's supervisor running that worktree's code for the rest of its
 life, and the seat stopped at its next handoff once the worktree was removed,
 because at every handoff the supervisor runs the conversation extractor from
-its own checkout (GHI [recover-crashed-seats: a recovered seat's supervisor runs from whichever checkout the recovery was run from, and stops at its next handoff once that checkout is removed](https://github.com/nedschorus/nedschorus/issues/659)).
+its own checkout (GHI [recover-crashed-seats: a recovered seat's supervisor runs from whichever checkout the recovery was run from, and stops at its next handoff once that checkout is removed](https://github.com/nedsnodes/nedsnodes/issues/659)).
 The user answered "y" on 2026-09-29, walk
 open-items-this-seat-holds-2026-09-24, item 12, to: "The choices: always run
-the supervisor from the machine's reference clone, `~/Projects/nedschorus`, as
+the supervisor from the machine's reference clone, `~/Projects/nedsnodes`, as
 the login restart already does; or warn or refuse when recovery runs from any
 other checkout. I recommend the reference clone. It is the one checkout that
 is never removed, and the login restart already relies on it." So when the
@@ -180,11 +180,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Share the relative path so imports and box launches cannot diverge.
-SUPERVISOR_SCRIPT_WITHIN_A_CHECKOUT = Path("nc-systems") / "handoff" / "handoff-supervisor.py"
+SUPERVISOR_SCRIPT_WITHIN_A_CHECKOUT = Path("nn-systems") / "handoff" / "handoff-supervisor.py"
 SUPERVISOR_SCRIPT = Path(__file__).resolve().parent.parent / SUPERVISOR_SCRIPT_WITHIN_A_CHECKOUT
 LAUNCH_CLAUDE_MAC_WITHIN_A_CHECKOUT = Path("scripts") / "launch-claude-mac"
 # Use a durable checkout: removing a worktree must not break a recovered supervisor.
-durable_checkout = Path("~/Projects/nedschorus").expanduser()
+durable_checkout = Path("~/Projects/nedsnodes").expanduser()
 
 _supervisor_spec = importlib.util.spec_from_file_location(
     "handoff_supervisor", SUPERVISOR_SCRIPT
@@ -247,10 +247,10 @@ FRESH_SESSION_FROM_CONVERSATION_TAIL_PROMPT_PHRASE = "it is the dialog from this
 
 
 def default_agents_root() -> Path:
-    # Match the launcher: only the Mac launcher reads NEDSCHORUS_AGENTS_ROOT.
+    # Match the launcher: only the Mac launcher reads NEDSNODES_AGENTS_ROOT.
     if not agents_root_is_movable_on_this_machine():
         return Path("~/agents").expanduser()
-    return Path(os.environ.get("NEDSCHORUS_AGENTS_ROOT") or "~/agents").expanduser()
+    return Path(os.environ.get("NEDSNODES_AGENTS_ROOT") or "~/agents").expanduser()
 
 
 def default_handoff_directory() -> Path:
@@ -661,7 +661,7 @@ WINDOW_SENDER_PATH = Path(__file__).resolve().with_name(
     "open-mac-window-from-ned-box.py")
 _mac_reference_checkout_path_constant_specification = importlib.util.spec_from_file_location(
     "mac_reference_checkout_launcher_scripts_directory_path_constant_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "mac-reference-checkout-launcher-scripts-directory-path-constant-common.py")
 mac_reference_checkout_path_constant = importlib.util.module_from_spec(_mac_reference_checkout_path_constant_specification)
 _mac_reference_checkout_path_constant_specification.loader.exec_module(mac_reference_checkout_path_constant)
@@ -755,7 +755,7 @@ def by_hand_launch_command_for_seat(name: str, seat_directory: Path, handoff_dir
                                     first_prompt_file: Path = None) -> str:
     launcher = launcher_path()
     words = [] if launcher is None else [
-        f"NEDSCHORUS_AGENTS_ROOT={shlex.quote(str(seat_directory.parent))}"]
+        f"NEDSNODES_AGENTS_ROOT={shlex.quote(str(seat_directory.parent))}"]
     words += [
         "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS=" + shlex.quote(
             compose_supervisor_arguments_for_seat_launch(handoff_directory,
@@ -789,7 +789,7 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
         handoff_directory, extra_supervisor_arguments)
     if launcher is not None:
         environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = supervisor_arguments
-        environment["NEDSCHORUS_AGENTS_ROOT"] = str(seat_directory.parent)
+        environment["NEDSNODES_AGENTS_ROOT"] = str(seat_directory.parent)
         command = [str(launcher), name, "--no-attach"]
         if first_prompt_file is not None:
             command += ["--first-prompt-file", str(first_prompt_file)]
@@ -813,10 +813,10 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
     supervisor_command = (
         'export PATH="$HOME/.local/bin:$PATH"; '
         f'if [ -d "$HOME/.claude/tasks/{name}-tasks" ] && '
-        f'[ ! -e "$HOME/.claude/tasks/nedschorus-{name}-tasks" ]; then '
+        f'[ ! -e "$HOME/.claude/tasks/nedsnodes-{name}-tasks" ]; then '
         f'mv "$HOME/.claude/tasks/{name}-tasks" '
-        f'"$HOME/.claude/tasks/nedschorus-{name}-tasks"; fi; '
-        f"export CLAUDE_CODE_TASK_LIST_ID={shlex.quote(f'nedschorus-{name}-tasks')}; "
+        f'"$HOME/.claude/tasks/nedsnodes-{name}-tasks"; fi; '
+        f"export CLAUDE_CODE_TASK_LIST_ID={shlex.quote(f'nedsnodes-{name}-tasks')}; "
         "export CLAUDE_CODE_ENABLE_TODO_TOOLS=1; "
         f"export GIT_AUTHOR_NAME={shlex.quote(name)} "
         f"GIT_AUTHOR_EMAIL={shlex.quote(f'{name}@nedschorus.invalid')} "
@@ -873,7 +873,7 @@ def iterm_window_command_text(name: str, seat_directory: Path, handoff_directory
              "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS="
              + compose_supervisor_arguments_for_seat_launch(
                  handoff_directory, extra_supervisor_arguments),
-             f"NEDSCHORUS_AGENTS_ROOT={seat_directory.parent}",
+             f"NEDSNODES_AGENTS_ROOT={seat_directory.parent}",
              str(launcher_path()), name]
     if first_prompt_file is not None:
         words += ["--first-prompt-file", str(first_prompt_file)]
@@ -1430,7 +1430,7 @@ def main(argv=None) -> int:
                              "newest conversation-tail (degraded mode, #120)")
     parser.add_argument("--agents-root", default="",
                         help="seat home root, macOS only (default "
-                             "$NEDSCHORUS_AGENTS_ROOT, else ~/agents); off macOS a "
+                             "$NEDSNODES_AGENTS_ROOT, else ~/agents); off macOS a "
                              "seat is always ~/agents/<name>")
     parser.add_argument("--handoff-dir", default="",
                         help="handoff directory (default ~/.claude/handoffs)")
@@ -1442,7 +1442,7 @@ def main(argv=None) -> int:
                              "gets a window on the Mac anyway, so it changes nothing")
     parser.add_argument("--checkout", default="",
                         help="the durable checkout whose launcher and supervisor a "
-                             "launched seat runs (default ~/Projects/nedschorus)")
+                             "launched seat runs (default ~/Projects/nedsnodes)")
     arguments = parser.parse_args(argv)
 
     if arguments.checkout:

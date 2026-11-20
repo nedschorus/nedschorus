@@ -8,7 +8,7 @@ handoff writer. Until 2026-09-19 each built the name from its own f-string --
 eleven sites across the five, plus a second copy of the suffix constant in
 scripts/restart-live-seats-at-login.py -- so a rename had eleven places to
 find and nothing that failed when it missed one. The suffixes now live in
-nc-systems/handoff/handoff-supervisor.py alone, and the path is composed only by its
+nn-systems/handoff/handoff-supervisor.py alone, and the path is composed only by its
 supervisor_state_path(), supervisor_lock_path() and supervisor_state_paths()
 (user-ruled 2026-09-19, walk
 file-naming-and-location-standards-cold-read-findings, item 4: reduce each
@@ -23,21 +23,21 @@ and globbing with it. Missing one site on a rename is silent and reads as the
 opposite of what happened: the supervisor writes <seat>-handoff.md, the
 recovery tool looks for the old name, finds nothing, and reports a seat that
 handed off cleanly as one that died leaving no handoff. HANDOFF_FILE_SUFFIX
-now lives in nc-systems/handoff/handoff-supervisor.py with the other two, and
+now lives in nn-systems/handoff/handoff-supervisor.py with the other two, and
 the path is composed only by its handoff_file_path() and
 handoff_file_paths(). Item 4 above did not cover this name: the ruling it
 carried out named the state file, the cold-read-record names and the
 walk-file endings, and the handoff name was recorded on the file-naming wiki
 page as its own unruled topic until item 2 ruled it.
 
-The supervisor and the writer both left scripts/ for nc-systems/handoff/ on
+The supervisor and the writer both left scripts/ for nn-systems/handoff/ on
 2026-09-20. The first version of that change named the supervisor explicitly
 beside the scripts/ glob and left the writer out, which is the silent pass
 production_scripts() warns about below: the writer stopped being parsed, and
 its three cases went on passing by finding nothing in a file they no longer
 read (finding 2 of the review of pull request [The handoff system moves into
-nc-systems/handoff/, except what a live seat holds]
-(https://github.com/nedschorus/nedschorus/pull/578), 2026-09-21; measured
+nn-systems/handoff/, except what a live seat holds]
+(https://github.com/nedsnodes/nedsnodes/pull/578), 2026-09-21; measured
 that day -- a hand-built name added to the writer failed nothing). The set
 of scripts read is derived from the layout now, and
 PROGRAMS_THAT_NEED_THESE_FILE_NAMES fails loudly when a program this suite
@@ -108,20 +108,20 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 THIS_SUITE_RELATIVE_PATH = "scripts/" + Path(__file__).name
 _rule_failure_lines_spec = importlib.util.spec_from_file_location(
     "rule_enforcing_nc_test_suite_failure_message_closing_lines_text_common",
-    REPO_ROOT / "nc-systems" / "general-tools"
+    REPO_ROOT / "nn-systems" / "general-tools"
     / "rule-enforcing-nc-test-suite-failure-message-closing-lines-text-common.py")
 RULE_FAILURE_LINES = importlib.util.module_from_spec(_rule_failure_lines_spec)
 _rule_failure_lines_spec.loader.exec_module(RULE_FAILURE_LINES)
 SCRIPTS_DIRECTORY = REPO_ROOT / "scripts"
-# Production code lives in two places since nc-systems/ was made: scripts/,
+# Production code lives in two places since nn-systems/ was made: scripts/,
 # and one directory per system. Tests sit a level deeper, in
-# nc-systems/<system>/tests/, so the system glob reaches production code only.
-NC_SYSTEMS_DIRECTORY = REPO_ROOT / "nc-systems"
-# The supervisor and the writer moved into nc-systems/handoff/ on 2026-09-20.
+# nn-systems/<system>/tests/, so the system glob reaches production code only.
+NN_SYSTEMS_DIRECTORY = REPO_ROOT / "nn-systems"
+# The supervisor and the writer moved into nn-systems/handoff/ on 2026-09-20.
 # The supervisor is still named here because it is the one file allowed to
 # define the suffixes and to compose the paths, which two cases below ask
 # about by name; which files are READ is derived, not named.
-SUPERVISOR_SCRIPT = NC_SYSTEMS_DIRECTORY / "handoff" / "handoff-supervisor.py"
+SUPERVISOR_SCRIPT = NN_SYSTEMS_DIRECTORY / "handoff" / "handoff-supervisor.py"
 # The programs that need these names, by file name, wherever they live. The
 # docstring above names them: the supervisor, the recovery tool,
 # resupervise-seat.py, the login restart and the handoff writer. A program
@@ -178,13 +178,13 @@ def module_level_suffix_constant_names(tree):
     Until 2026-09-28 these names were a hand-typed set beside
     SPELLED_OUT_NAMES, and the pull request [The name guard reads the
     supervisor's constants instead of its own
-    copy](https://github.com/nedschorus/nedschorus/pull/599) anchored only
+    copy](https://github.com/nedsnodes/nedsnodes/pull/599) anchored only
     the values. A constant added under a new name was then invisible to every
     case: the seat merge-lane-2 added a fourth *_SUFFIX constant to the
     supervisor and built a file name from it by hand, and the suite exited 0,
     while changing a known constant's value exited 1. The case is not hypothetical: the pull
     request [The handoff file's name is defined
-    once](https://github.com/nedschorus/nedschorus/pull/579) added
+    once](https://github.com/nedsnodes/nedsnodes/pull/579) added
     HANDOFF_FILE_SUFFIX as the third constant, and both lists had to be
     updated by hand. User-approved 2026-09-28, walk
     open-items-this-seat-holds-2026-09-24, item 7.
@@ -252,11 +252,11 @@ check("the supervisor's syntax tree yields at least the three known suffix "
 
 def programs_not_read_failure_detail(programs_not_read):
     return "\n".join([
-        f"{programs_not_read} not found directly in scripts/ or in an nc-systems/<system>/ "
+        f"{programs_not_read} not found directly in scripts/ or in an nn-systems/<system>/ "
         f"directory, the places this suite reads; the cases below cannot check a program they "
         f"do not read.",
         f"If your change moved one of those programs, put it directly in scripts/ or in an "
-        f"nc-systems/<system>/ directory; if it must live deeper, change production_scripts() "
+        f"nn-systems/<system>/ directory; if it must live deeper, change production_scripts() "
         f"in {THIS_SUITE_RELATIVE_PATH} to read that whole directory, not to name the one program.",
         f"If your change renamed one of those programs, rename it in "
         f"PROGRAMS_THAT_NEED_THESE_FILE_NAMES in {THIS_SUITE_RELATIVE_PATH}.",
@@ -271,9 +271,9 @@ def suffix_constants_defining_failure_detail(defining):
         f"defined in {defining or 'no script'}, expected only {supervisor}; every other script "
         f"imports them from {supervisor}, so that a renamed suffix changes in one definition.",
         f"If a script other than {supervisor} defines one, delete that definition there and "
-        f"import the constant from nc-systems/handoff/{supervisor}.",
+        f"import the constant from nn-systems/handoff/{supervisor}.",
         f"If {supervisor} no longer defines them, put the definitions back in "
-        f"nc-systems/handoff/{supervisor}.",
+        f"nn-systems/handoff/{supervisor}.",
         RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
 
 
@@ -303,7 +303,7 @@ def production_scripts():
     writer for the length of one review round.
     """
     found = (list(SCRIPTS_DIRECTORY.glob("*.py"))
-             + list(NC_SYSTEMS_DIRECTORY.glob("*/*.py")))
+             + list(NN_SYSTEMS_DIRECTORY.glob("*/*.py")))
     return sorted(path for path in found
                   if not path.name.endswith("-test.py"))
 
@@ -423,7 +423,7 @@ def definitions_by_constant(tree):
     remedy clause at all -- finding 3 of PR #599 coming back for that shape
     (reviewer of the pull request [A suffix constant defined twice is named
     as a duplicate, annotation
-    included](https://github.com/nedschorus/nedschorus/pull/643),
+    included](https://github.com/nedsnodes/nedsnodes/pull/643),
     2026-09-22).
 
     WHICH LINE IS IN FORCE IS A QUESTION ONLY WHEN EVERY DEFINITION IS
@@ -753,10 +753,10 @@ check("a program moved out of the places this suite reads fails with the rule an
       "per cause",
       not moved_out_passed and moved_out_detail.split("\n") == [
           "['recover-crashed-seats.py'] not found directly in scripts/ or in an "
-          "nc-systems/<system>/ directory, the places this suite reads; the cases below cannot "
+          "nn-systems/<system>/ directory, the places this suite reads; the cases below cannot "
           "check a program they do not read.",
           "If your change moved one of those programs, put it directly in scripts/ or in an "
-          "nc-systems/<system>/ directory; if it must live deeper, change production_scripts() "
+          "nn-systems/<system>/ directory; if it must live deeper, change production_scripts() "
           "in scripts/supervisor-file-names-defined-once-test.py to read that whole directory, "
           "not to name the one program.",
           "If your change renamed one of those programs, rename it in "
@@ -854,9 +854,9 @@ check("a second script defining the suffix constants fails with the rule and one
           "handoff-supervisor.py; every other script imports them from handoff-supervisor.py, so "
           "that a renamed suffix changes in one definition.",
           "If a script other than handoff-supervisor.py defines one, delete that definition there "
-          "and import the constant from nc-systems/handoff/handoff-supervisor.py.",
+          "and import the constant from nn-systems/handoff/handoff-supervisor.py.",
           "If handoff-supervisor.py no longer defines them, put the definitions back in "
-          "nc-systems/handoff/handoff-supervisor.py.",
+          "nn-systems/handoff/handoff-supervisor.py.",
           RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
       second_definer_detail)
 no_definer_passed, no_definer_detail = suffix_constants_defined_once_case([])

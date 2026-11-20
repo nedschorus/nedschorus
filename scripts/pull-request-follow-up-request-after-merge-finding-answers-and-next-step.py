@@ -16,7 +16,7 @@ merge-lane-2 ends a merge message that asks for follow-ups with the line
 "#follow_up_request pull request <number>", then each non-blocking finding on a
 numbered line of its own, "1. ", "2. " and so on, which
 print-follow-up-request-block-from-merge-lane-2-reviews prints for it. The hook
-nc-systems/general-tools/pull-request-follow-up-request-from-merge-lane-2-message-save-and-forked-subagent-brief-hand-over-user-prompt-submit-hook.py
+nn-systems/general-tools/pull-request-follow-up-request-from-merge-lane-2-message-save-and-forked-subagent-brief-hand-over-user-prompt-submit-hook.py
 saves that block word for word to SAVED_FINDINGS_FILE_NAME_FORMAT in
 PULL_REQUEST_FOLLOW_UP_REQUESTS_DIRECTORY_NAME under the git common directory,
 which every worktree of the checkout shares, and hands the author
@@ -146,7 +146,7 @@ from pathlib import Path
 
 _git_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
@@ -167,11 +167,11 @@ pre_push_conflict_check = load_script_beside_this_one("git-client-side-hooks-pre
 new_shared_names_lister = load_script_beside_this_one("new-shared-names-in-changed-files-list.py")
 
 PROGRAM = "scripts/" + Path(__file__).name
-REPOSITORY = "nedschorus/nedschorus"
+REPOSITORY = "nedsnodes/nedsnodes"
 POSTING_PROGRAM_FILE_NAME = "merge-lane-pull-request-reviewer-review-post-and-read-back.py"
 REPLACES_READER_FILE_NAME = "pull-request-description-replaces-line-replaced-pull-request-chain-reader-common.py"
 FOLLOW_UP_REQUEST_LINE_START = "#follow_up_request"
-FOLLOW_UP_REQUEST_BLOCK_SAVE_HOOK_PATH = ("nc-systems/general-tools/pull-request-follow-up-request-from-merge-lane-2-message-save-and-"
+FOLLOW_UP_REQUEST_BLOCK_SAVE_HOOK_PATH = ("nn-systems/general-tools/pull-request-follow-up-request-from-merge-lane-2-message-save-and-"
                   "forked-subagent-brief-hand-over-user-prompt-submit-hook.py")
 MERGE_LANE_2_MERGED_MESSAGE_TO_AUTHOR = "the SendMessage message in which merge-lane-2 tells the pull request's author that the pull request merged"
 FOLLOW_UP_REQUEST_LINE_PATTERN = re.compile(r"^#follow_up_request pull request (\d+)[ \t]*$")
@@ -200,7 +200,7 @@ TITLE_AND_DESCRIPTION_FORM = "the pull request's title on the first line, a blan
 DO_NOT_COMMIT_LINE = "Do not commit it: it is never part of the pull request."
 SUBAGENT_LINE = "If you are a subagent, pass that sentence to the agent that dispatched you instead."
 # Each text this program hands an agent follows
-# docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
+# docs/nedsnodes-wiki/nedsnodes-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 
 
 def push_time_limit_seconds(environment):

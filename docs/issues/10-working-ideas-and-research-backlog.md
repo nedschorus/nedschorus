@@ -45,7 +45,7 @@ The governing approach is:
 
 - [Open-source publishing and community strategy](cops-nedschorus-open-source-publishing-community-strategy-2026-07-21.md) contains the detailed publishing/channel design.
 - [Engineering methods and source research](cops-neds-notes-2026-07-21.md) contains the curated software-engineering skill shortlist, source assessments, rejected alternatives, and accepted `walk-me-through` changes.
-- The NedsChorus repository contains the admitted publishing artifact at `/Users/el/Projects/nedschorus/docs/issues/4-open-source-publishing-community-strategy.md`.
+- The NedsChorus repository contains the admitted publishing artifact at `/Users/el/Projects/nedsnodes/docs/issues/4-open-source-publishing-community-strategy.md`.
 
 ## Decided direction
 
@@ -77,16 +77,16 @@ rule); this is the summary, updated 2026-07-26 to the ruled state:
 
 - A request for a durable Markdown document creates an MD-GitHub-issue pair.
 - Working documents live at `docs/issues/<number>-<slug>.md`.
-- Permanent truth graduates to `docs/nedschorus-wiki/`.
+- Permanent truth graduates to `docs/nedsnodes-wiki/`.
 - Session continuity lives under `handoff/`.
 - Cross-project founding material lives under `docs/cross-project/`.
 - Every artifact is either FINAL at its home or sitting in a NAMED QUEUE that
   states its destination, and every queue drains by one four-outcome process
-  (promote / edit / demote / drop): `docs/nedschorus-wiki/queue/` for wiki-bound
-  doctrine, `docs/issues/queue/` for pair-bound documents, `nc-queue/` for
+  (promote / edit / demote / drop): `docs/nedsnodes-wiki/queue/` for wiki-bound
+  doctrine, `docs/issues/queue/` for pair-bound documents, `nn-queue/` for
   user-requested notes awaiting their first walk, `legacy-feature-queue/` for
   consider-features outliving their slice
-  (issue [Queue drain procedure — the review process that empties the wiki queue, the pair queue, nc-queue, the drafts directory and the queue-drain-candidate-label issue queue](https://github.com/nedschorus/nedschorus/issues/24) tracks
+  (issue [Queue drain procedure — the review process that empties the wiki queue, the pair queue, nn-queue, the drafts directory and the queue-drain-candidate-label issue queue](https://github.com/nedschorus/nedschorus/issues/24) tracks
   the drain procedure).
 - Draft GitHub issues carry the **`queue-drain-candidate` label** — the issue-world's queue
   membership (renamed from `boss-review`, 2026-07-24, and from `draft`, 2026-10-19).
@@ -417,7 +417,7 @@ Recoverable from git history. This shrinks walk item 17 cluster 6.
 
 DISPERSED 2026-07-27 (walk item 17 cluster 4, user-ruled per entry; marks in
 place below). Net result: two sentences captured (the one-coherent-change-set
-workflow rule on issue [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3);
+workflow rule on issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3);
 the reply-incapable-sender terminal-state requirement on
 issue [Founding program — boot up nedschorus (plan of record: docs/cross-project/nedschorus-founding-plan.md)](https://github.com/nedschorus/nedschorus/issues/1)); one entry
 answered directly by ruling (check-in composition — lifecycle bundling is
@@ -427,7 +427,7 @@ wake when the user gates an artifact class (the item-15 grow-back trigger).
 
 - Keep PRs atomic and independently mergeable.
   — processed 2026-07-27 → sentence on
-  issue [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3): the
+  issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3): the
   gatekeeper's CLAUDE.md workflow lines teach one coherent change set per
   check-in (NC has no pull requests).
 - Decide by change type whether code, tests, design, and test plans should be checked
@@ -490,7 +490,7 @@ the many-parts overview rule) written into § Draft document and directory
 structure with four duplicate bullets folded there; the steward ideal to
 issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26) as a
 candidate domain-expert duty; the scrub-duty enumeration to
-issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nc-systems/handoff/handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2); two
+issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nn-systems/handoff/handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2); two
 entries recognized as landed (the artifact-lifecycle promote path; the
 no-junk-drawer disposal machinery); one already dispersed (memory-to-page
 pointing, issue [Runtime-behavior research bundle: instruction compression + deliberate scrub, instruction precedence, output styles, context clearing, names reviewer, memory maintenance](https://github.com/nedschorus/nedschorus/issues/29)
@@ -500,7 +500,7 @@ walk; the org-vs-artifact-rules distinction — enforced structurally).
 - Move durable, current design material into the wiki at the proper lifecycle
   transition.
   — processed 2026-07-27 → landed: the artifact-lifecycle rule's promote
-  path (wiki-bound doctrine queues in docs/nedschorus-wiki/queue/; the drain's
+  path (wiki-bound doctrine queues in docs/nedsnodes-wiki/queue/; the drain's
   git-mv promote IS the transition), with entry gated by the user's
   review ruling and the step-3 wiki walk. Nothing filed.
 - Link wiki pages to associated skill definitions when that relationship is
@@ -538,7 +538,7 @@ walk; the org-vs-artifact-rules distinction — enforced structurally).
   permanent junk drawer.
   — processed 2026-07-27 → landed (artifact-lifecycle no-stateless-piles +
   the handoff scrub step), PLUS a sentence on
-  issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nc-systems/handoff/handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2): the
+  issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nn-systems/handoff/handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2): the
   scrub-step build enumerates its standing maintenance duties from the
   specs that name the scrub, so the set is explicit in the built skill.
 - Decide whether a memory should point to one general page or a specific system

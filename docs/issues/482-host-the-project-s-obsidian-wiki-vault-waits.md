@@ -4,7 +4,7 @@ issue: "[Host the project's Obsidian wiki vault — waits for the user's word](h
 
 # Host the project's Obsidian wiki vault — waits for the user's word
 
-The project's Obsidian vault is stood up on the Mac, over `docs/nedschorus-wiki/` in the reference checkout at `/Users/el/Projects/nedschorus` — piece 1 of GHI [Stand up the Obsidian vault over docs/wiki, and rule which documents are standing knowledge that belongs in it](https://github.com/nedschorus/nedschorus/issues/338), now closed. It is not hosted anywhere. This issue carries the one piece of that work that was deferred.
+The project's Obsidian vault is stood up on the Mac, over `docs/nedsnodes-wiki/` in the reference checkout at `/Users/el/Projects/nedsnodes` — piece 1 of GHI [Stand up the Obsidian vault over docs/wiki, and rule which documents are standing knowledge that belongs in it](https://github.com/nedschorus/nedschorus/issues/338), now closed. It is not hosted anywhere. This issue carries the one piece of that work that was deferred.
 
 ## Why it is wanted
 
@@ -24,4 +24,4 @@ None. The user answered on 2026-09-29, below; the issue is closed as not planned
 
 ## Outcome
 
-Ruled by the user on 2026-09-29, at item 17 of the queue-drain walk queue-and-drafts-drain-2026-09-22: "Let's not use obsidian publish, at least not now." The vault stays on the Mac, over `docs/nedschorus-wiki/` in the reference checkout, and nothing is hosted. If hosting comes up again, a new issue is filed from his word; this one stays closed.
+Ruled by the user on 2026-09-29, at item 17 of the queue-drain walk queue-and-drafts-drain-2026-09-22: "Let's not use obsidian publish, at least not now." The vault stays on the Mac, over `docs/nedsnodes-wiki/` in the reference checkout, and nothing is hosted. If hosting comes up again, a new issue is filed from his word; this one stays closed.

@@ -37,8 +37,8 @@ Checks, per file type:
 
 An nc-architecture-overview, a file at the path
 scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py
-gives for a system with a directory under nc-systems/, gets the overview
-checks of docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md
+gives for a system with a directory under nn-systems/, gets the overview
+checks of docs/nedsnodes-wiki/nedsnodes-how-to-write-an-architecture-overview.md
 too, when this script is run (a program that calls lint_markdown() gets them
 only by asking):
         - a component written "`<path>`, a `<event>` hook", or with a name
@@ -51,10 +51,10 @@ only by asking):
           order; a line naming no such file is not checked
         - each list item, and each line linking an issue, under
           "## Planned work" is written
-          "- GHI [<title>](https://github.com/nedschorus/nedschorus/issues/<number>)",
+          "- GHI [<title>](https://github.com/nedsnodes/nedsnodes/issues/<number>)",
           and the GHI is open on GitHub with that title
         and, as a note that is not a finding, each program (.py, .sh, or a
-        file starting "#!") under nc-systems/<system>/, outside tests/, whose
+        file starting "#!") under nn-systems/<system>/, outside tests/, whose
         file name the overview does not contain.
 
 Usage:
@@ -388,8 +388,8 @@ def architecture_overview_system(path: Path, repo_root: Path):
     except ValueError:
         return None
     match = ARCHITECTURE_OVERVIEW_PATH.fullmatch(relative)
-    # The template alone also matches nedschorus-how-to-write-an-architecture-overview.md.
-    if match is None or not (repo_root / "nc-systems" / match.group("system")).is_dir():
+    # The template alone also matches nedsnodes-how-to-write-an-architecture-overview.md.
+    if match is None or not (repo_root / "nn-systems" / match.group("system")).is_dir():
         return None
     return match.group("system")
 
@@ -459,11 +459,13 @@ def check_overview_lock_and_environment_variable_sources(line: str, md_path: Pat
             yield f"{claim} does not appear in the source of {names}"
 
 
-GITHUB_REPOSITORY = "nedschorus/nedschorus"
+GITHUB_REPOSITORY = "nedsnodes/nedsnodes"
+# GitHub redirects the repository's old name, and text written before the rename still holds it.
+OLD_REPOSITORY = "nedschorus/nedschorus"
 PLANNED_WORK_HEADING = "## Planned work"
 PLANNED_WORK_GHI_LINE = re.compile(
     r"\s*(?:[-*+]|\d+[.)]) GHI \[(?P<title>.+)\]\(https://github\.com/"
-    + re.escape(GITHUB_REPOSITORY) + r"/issues/(?P<number>\d+)\)")
+    + r"(?:" + re.escape(GITHUB_REPOSITORY) + "|" + re.escape(OLD_REPOSITORY) + r")/issues/(?P<number>\d+)\)")
 PLANNED_WORK_ENTRY = re.compile(r"\s*(?:[-*+]|\d+[.)])\s|.*github\.com/[^)\s]+/issues/\d+")
 GITHUB_QUERY_TIMEOUT_SECONDS = 60
 
@@ -559,12 +561,12 @@ def is_program(path: Path) -> bool:
 
 
 def architecture_overview_unnamed_programs(path: Path, repo_root: Path):
-    """Return the programs under the overview's nc-systems/<system>/, outside
+    """Return the programs under the overview's nn-systems/<system>/, outside
     tests/, whose file name the overview does not contain."""
     system = architecture_overview_system(path, repo_root)
     if system is None:
         return []
-    system_directory = repo_root / "nc-systems" / system
+    system_directory = repo_root / "nn-systems" / system
     text = path.read_text(encoding="utf-8")
     unnamed = []
     for candidate in sorted(system_directory.rglob("*")):

@@ -66,11 +66,11 @@ HEAD = "a" * 40
 SINCE = "2026-10-09T21:00:00Z"
 BRANCH = "topic-of-pull-request-10"
 TOKEN = "merge-lane-merge-test-token-not-a-credential"
-EXPECTED_MERGE = ["pr", "merge", PULL_REQUEST, "--repo", "nedschorus/nedschorus", "--merge",
+EXPECTED_MERGE = ["pr", "merge", PULL_REQUEST, "--repo", "nedsnodes/nedsnodes", "--merge",
                   "--delete-branch", "--match-head-commit", HEAD]
 GATE_PASSED = ("gate passed (#10): approved commit " + HEAD + "\n"
                "MERGE WITH THIS EXACT COMMAND:\n"
-               "  gh pr merge 10 --repo nedschorus/nedschorus --merge --delete-branch "
+               "  gh pr merge 10 --repo nedsnodes/nedsnodes --merge --delete-branch "
                "--match-head-commit " + HEAD + "\n"
                "Run that command with GH_TOKEN set to the merge account's token.\n")
 GATE_UNKNOWN = "GATE REFUSED (#10): mergeStateStatus is UNKNOWN\nUNKNOWN: run the gate again.\n"
@@ -387,9 +387,9 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
         (directory / "runner.out").write_text(runner_answer[0])
         (directory / "runner.exit").write_text(str(runner_answer[1]))
     home = directory / "home"
-    (home / ".config" / "nedschorus").mkdir(parents=True)
+    (home / ".config" / "nedsnodes").mkdir(parents=True)
     if token is not None:
-        (home / ".config" / "nedschorus" / "ned-review-merge.token").write_text(token + "\n")
+        (home / ".config" / "nedsnodes" / "ned-review-merge.token").write_text(token + "\n")
 
     waits = []
     saved_path, saved_home = os.environ["PATH"], os.environ.get("HOME")
@@ -470,7 +470,7 @@ def printed_in_order(output, *lines):
 
 def default_recorded_inputs_directory(directory):
     """The runner's default recorded-inputs directory while run_case runs a case in directory."""
-    return directory / "home" / ".cache" / "nedschorus-test-suite-recorded-inputs"
+    return directory / "home" / ".cache" / "nedsnodes-test-suite-recorded-inputs"
 
 
 def index_of(calls, prefix):
@@ -531,7 +531,7 @@ def main():
         merge = index_of(calls, ["pr", "merge"])
         check("a pull request based on the merged branch is retargeted to main before the merge",
               edit_20 is not None and merge is not None and edit_20 < merge
-              and calls[edit_20] == ["pr", "edit", "20", "--repo", "nedschorus/nedschorus",
+              and calls[edit_20] == ["pr", "edit", "20", "--repo", "nedsnodes/nedsnodes",
                                      "--base", "main"], json.dumps(calls))
         check("a pull request based on main is left alone",
               index_of(calls, ["pr", "edit", "21"]) is None, json.dumps(calls))
@@ -1274,8 +1274,8 @@ def main():
               and not merge_commit_worktree.exists(), f"exit {exit_code}\n{output}")
 
         merge_502 = {"exit": 1, "stderr": "non-200 OK status code: 502 Bad Gateway\n"}
-        branch_path = f"repos/nedschorus/nedschorus/branches/{BRANCH}"
-        ref_path = f"repos/nedschorus/nedschorus/git/refs/heads/{BRANCH}"
+        branch_path = f"repos/nedsnodes/nedsnodes/branches/{BRANCH}"
+        ref_path = f"repos/nedsnodes/nedsnodes/git/refs/heads/{BRANCH}"
 
         routes = default_routes(STACKED_AND_NOT)
         routes["pr merge"] = merge_502
@@ -1367,7 +1367,7 @@ def main():
               "errors and how to read the state, and does nothing after the merge",
               exit_code == 4 and "STOP: whether pull request 10 merged is unknown: the merge "
                                  "command exited 1: non-200 OK status code: 502" in output
-              and "HTTP 503" in output and "gh pr view 10 --repo nedschorus/nedschorus" in output
+              and "HTTP 503" in output and "gh pr view 10 --repo nedsnodes/nedsnodes" in output
               and index_of(argvs(gh_calls), ["api"]) is None
               and (review_worktrees / "pr10-merged").is_dir()
               and runner_calls(scratch, "merge-outcome-unknown") == [],

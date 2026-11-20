@@ -165,24 +165,24 @@ _threshold_hook_spec.loader.exec_module(threshold_hook)
 
 _git_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
-    SCRIPT_DIRECTORY.parent / "nc-systems" / "general-tools"
+    SCRIPT_DIRECTORY.parent / "nn-systems" / "general-tools"
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
 _command_line_prefix_spec = importlib.util.spec_from_file_location(
     "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
-    SCRIPT_DIRECTORY.parent / "nc-systems" / "general-tools"
+    SCRIPT_DIRECTORY.parent / "nn-systems" / "general-tools"
     / "claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
 command_line_prefix = importlib.util.module_from_spec(_command_line_prefix_spec)
 _command_line_prefix_spec.loader.exec_module(command_line_prefix)
 
-AGENT_BOX = os.environ.get("NEDSCHORUS_AGENT_BOX", "ned")
+AGENT_BOX = os.environ.get("NEDSNODES_AGENT_BOX", "ned")
 # AGENT_BOX is the Mac's ssh alias for the box, which the box itself cannot resolve.
 NED_BOX_HOSTNAME = "ned-box"
-DEFAULT_AGENTS_ROOT = Path(os.environ.get("NEDSCHORUS_AGENTS_ROOT", "~/agents")).expanduser()
+DEFAULT_AGENTS_ROOT = Path(os.environ.get("NEDSNODES_AGENTS_ROOT", "~/agents")).expanduser()
 DEFAULT_SEAT_DIR = DEFAULT_AGENTS_ROOT / "ghi-guide-agent"
-DEFAULT_REPO = "nedschorus/nedschorus"
+DEFAULT_REPO = "nedsnodes/nedsnodes"
 STATE_FILE_NAME = ".ghi-guide-agent-state.json"
 LOCK_FILE_NAME = ".ghi-guide-agent-state.lock"
 
@@ -350,7 +350,7 @@ EXIT_RULING_QUESTION = 3
 NOT_ABOUT_ISSUES_MESSAGE = (
     "Not a question about GitHub issues: ghi-guide-agent reports which issues relate to a subject.\n"
     'Ask again as: scripts/ghi-guide-agent-ask.py "Which issues cover <your subject>?"\n'
-    "If that is refused too, search yourself: gh issue list --repo nedschorus/nedschorus "
+    "If that is refused too, search yourself: gh issue list --repo nedsnodes/nedsnodes "
     '--state all --search "<terms>"')
 RULING_QUESTION_MESSAGE_TEMPLATE = (
     "ghi-guide-agent found a ruling of the user's that it cannot tell still applies: {sentence}\n"
@@ -991,7 +991,7 @@ def main(argv=None) -> int:
         print(f"ghi-guide-agent-ask: the ask failed: ghi-guide-agent's agent-home "
               f"{seat_dir} does not exist on {NED_BOX_HOSTNAME}, and the ask runs inside it. "
               f"Create it, from either machine, with `ssh nedlern@{NED_BOX_HOSTNAME} "
-              f"'git -C ~/Projects/nedschorus worktree add --detach {seat_dir} origin/main && "
+              f"'git -C ~/Projects/nedsnodes worktree add --detach {seat_dir} origin/main && "
               f"touch \"$(git -C {seat_dir} rev-parse --absolute-git-dir)/agent-home-marker\"'`, "
               f"which makes it an agent-home resting at origin/main; then run the command that "
               f"printed this message again, unchanged, once. If the agent-home cannot be "

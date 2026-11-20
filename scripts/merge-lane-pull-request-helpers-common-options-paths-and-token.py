@@ -21,9 +21,9 @@ the gate, the retargets, the merge and every other gh call use one token.
 import importlib.util
 from pathlib import Path
 
-REPOSITORY = "nedschorus/nedschorus"
+REPOSITORY = "nedsnodes/nedsnodes"
 DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY = Path(
-    "/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers")
+    "/home/nedlern/nedsnodes-logs/seats/merge-lane-2/merge-helpers")
 REVIEW_WORKTREES_DIRECTORY_UNDER_HOME = Path(".cache") / "merge-lane-review-worktrees"
 # A clone or worktree of this repository, from which a missing review tools
 # worktree can be made.
@@ -41,7 +41,7 @@ class MergeAccountTokenUnusable(Exception):
 
 def merge_account_token_file():
     # Read at call time, as merge-gate.sh reads $HOME at run time.
-    return Path.home() / ".config" / "nedschorus" / "ned-review-merge.token"
+    return Path.home() / ".config" / "nedsnodes" / "ned-review-merge.token"
 
 
 def read_merge_account_token():

@@ -64,9 +64,9 @@ _ghi_md_edit_job_spec = importlib.util.spec_from_file_location(
 ghi_md_edit_job = importlib.util.module_from_spec(_ghi_md_edit_job_spec)
 _ghi_md_edit_job_spec.loader.exec_module(ghi_md_edit_job)
 
-DEFAULT_REPO = "nedschorus/nedschorus"
+DEFAULT_REPO = "nedsnodes/nedsnodes"
 DEFAULT_POLL_SECONDS = 60.0
-DEFAULT_TOKEN_FILE = "~/.config/nedschorus/ned-review-merge.token"
+DEFAULT_TOKEN_FILE = "~/.config/nedsnodes/ned-review-merge.token"
 
 # GitHub caps GraphQL pages at 100; bound page count to prevent an endless pagination loop.
 PAGE_SIZE = 100

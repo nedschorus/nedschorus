@@ -1015,7 +1015,7 @@ def commissioned_reviewer_cases(root, repository, base, frozen_head):
     then merge-lane-2 requests changes on the same commit. Round 1: after the fix commit is pushed,
     the commissioned reviewer posts on it before merge-lane-2's next review. The scratch repository's
     commits stand in for the pull request's."""
-    bash_guards = ("nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-"
+    bash_guards = ("nn-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-"
                    "transcript-recorded-commands-check.py")
     reviewer_round_0 = pull_request_2213_review(
         5718075290, "mac-claude", "COMMENTED", frozen_head,
@@ -1093,7 +1093,7 @@ def split_review_cases(root, repository, base, frozen_head):
     merge-lane-2 requested changes on an earlier head, then on the frozen-head it posted its review
     in two changes-requested parts, 14 s apart, after the commissioned reviewer's comment-only
     review; each part holds one **Blocks.** comment. base stands in for the earlier head."""
-    grid = "nc-systems/cold-read/cold-read-grid.py"
+    grid = "nn-systems/cold-read/cold-read-grid.py"
     reviews = [
         review(review_id=5721655691, commit_id=base, body="merge-lane-2: the head test run failed again."),
         review(state="COMMENTED", review_id=5722014373, commit_id=frozen_head, login="mac-claude",
@@ -1221,7 +1221,7 @@ def rounds_on_one_head_cases(root, repository, base, frozen_head):
 PULL_REQUEST_2620_MAC_CLAUDE_REVIEW = {
     "id": 5779061216, "user": {"login": 'mac-claude'}, "state": 'COMMENTED',
     "commit_id": 'dc0950712c83b79f47fecd3a2d7cf750dcb99b79',
-    "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#pullrequestreview-5779061216',
+    "html_url": 'https://github.com/nedsnodes/nedsnodes/pull/2620#pullrequestreview-5779061216',
     "body": ('APPROVE\n'
             '\n'
             'Reviewed the whole PR at head dc0950712 (first round). Merge base e7ab8b286 is the same as `git merge-base origin/main HEAD`. Environment: Python 3.14.4 at /usr/bin/python3, on ned-box.\n'
@@ -1256,7 +1256,7 @@ PULL_REQUEST_2620_MAC_CLAUDE_REVIEW = {
             '- The outside-the-diff body line format has the same text as before, and only the new reader parses it.\n'
             '- The new subcommand has no callers yet; per the description, the seat-brief sentence is held for the user.\n'
             '\n'
-            '**Tests** (env -u GIT_*; PYTHONDONTWRITEBYTECODE=1 python3 -B). Both files fake gh, and every git push goes to a local origin under a mkdtemp; neither writes to nedschorus-logs or a remote.\n'
+            '**Tests** (env -u GIT_*; PYTHONDONTWRITEBYTECODE=1 python3 -B). Both files fake gh, and every git push goes to a local origin under a mkdtemp; neither writes to nedsnodes-logs or a remote.\n'
             '- Head, `scripts/merge-lane-pull-request-reviewer-review-post-and-read-back-test.py`: exit 0, 71 PASS, 0 failed, no SKIP lines.\n'
             '- Head, `scripts/pull-request-follow-up-request-after-merge-finding-answers-and-next-step-test.py`: exit 0, 175 PASS, "PASSED: 0 failed", no SKIP lines.\n'
             '- Merge base, posting test: exit 1, 24 PASS, 2 FAIL, then an AttributeError traceback (`review_comment_opening_mark_for_finding_category` is missing) stops the file.\n'
@@ -1289,7 +1289,7 @@ PULL_REQUEST_2620_MAC_CLAUDE_REVIEW = {
             '- The full test run was not run; merge-lane-2 runs it.')}
 PULL_REQUEST_2620_MAC_CLAUDE_COMMENTS = [
     {"id": 4475925026, "path": 'scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py', "line": None, "original_line": None,
-     "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#discussion_r4475925026',
+     "html_url": 'https://github.com/nedsnodes/nedsnodes/pull/2620#discussion_r4475925026',
      "body": ('Surviving mutant: the line that joins a moved comment\'s continuation lines (`elif comments: comments[-1]["body"] += "\\n" + line`) has no test.\n'
               '\n'
               '- **Mutation:** I replaced it with `elif False: pass`. Both test files still pass: posting test exit 0, follow-up test exit 0.\n'
@@ -1298,7 +1298,7 @@ PULL_REQUEST_2620_MAC_CLAUDE_COMMENTS = [
               '\n'
               'A round-trip case with a multi-line comment on a line outside the diff would kill this mutant.')},
     {"id": 4475925031, "path": 'scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py', "line": None, "original_line": None,
-     "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#discussion_r4475925031',
+     "html_url": 'https://github.com/nedsnodes/nedsnodes/pull/2620#discussion_r4475925031',
      "body": ('A comment moved into the review body is read back as several comments when a continuation line of its text has the moved-comment form `- `<path>:<line>`: ...`. Reviewers often cite other places in exactly that form.\n'
               '\n'
               '**Reproduced at head:** I ran `with_finding_category_marks` then `with_outside_comments_in_body` (with no commentable lines) on one fix-in-maintenance comment on `x.py:5`, with this text:\n'
@@ -1322,7 +1322,7 @@ PULL_REQUEST_2620_MAC_CLAUDE_COMMENTS = [
 PULL_REQUEST_2620_MERGE_LANE_2_REVIEW = {
     "id": 5779070233, "user": {"login": 'ned-review-merge'}, "state": 'CHANGES_REQUESTED',
     "commit_id": 'dc0950712c83b79f47fecd3a2d7cf750dcb99b79',
-    "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#pullrequestreview-5779070233',
+    "html_url": 'https://github.com/nedsnodes/nedsnodes/pull/2620#pullrequestreview-5779070233',
     "body": ('REQUEST_CHANGES\n'
             '\n'
             '**Blocking: 1**\n'
@@ -1332,7 +1332,7 @@ PULL_REQUEST_2620_MERGE_LANE_2_REVIEW = {
             '**Checked**\n'
             '- Head test run on the merged tree 2ce6ced682f8: 59 passed, 0 failed.\n'
             '- mac-claude verified, against the repository, that blocking counting is unchanged (no category mark matches BLOCKING_MARKER_PATTERN; without_reposts and marked still applied), that the hook does not load the posting program, and that refusals go to stderr only; it ran 12 mutants, 11 killed.\n'
-            '- Fast reads of the 7 changed messages (records under nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/, the 2026-11-04 and 2026-11-04-2 records of the ids in the review plan): no misreading, so no hold. Set aside as coming from reading a message apart from its output: every struggle with an unexpanded {placeholder}, and the whole read of the block-printing line (it is the block itself).\n'
+            '- Fast reads of the 7 changed messages (records under nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/, the 2026-11-04 and 2026-11-04-2 records of the ids in the review plan): no misreading, so no hold. Set aside as coming from reading a message apart from its output: every struggle with an unexpanded {placeholder}, and the whole read of the block-printing line (it is the block itself).\n'
             '\n'
             "**Blocking (1)**, inline at posting :263, raised by both Codex (P2) and mac-claude, reproduced by mac-claude at head: a comment moved into the review body whose text has a continuation line of the form `- `<path>:<line>`: ...` is read back as several comments. When those lines carry a category mark, the subcommand prints a block with a truncated finding and a finding merge-lane-2 never made, and reports success. Graded must-fix-now under question 2 of merge-lane-2's grading (a result someone relies on can be wrong while the code reports success; a constructed case is enough).\n"
             '\n'
@@ -1347,10 +1347,10 @@ PULL_REQUEST_2620_MERGE_LANE_2_REVIEW = {
             "For each finding you fix, say in the fix commit's message whether the finding is one case of a wider pattern; if it is, name the pattern. Fix the other cases in this pull request when they run the same test suites or a reviewer would check them the same way; list in the commit message any you leave for a follow-up pull request. After the merge, merge-lane-2 sends you that list, as it does non-blocking findings, and you open a follow-up pull request for them or tell merge-lane-2 why not.")}
 PULL_REQUEST_2620_MERGE_LANE_2_COMMENTS = [
     {"id": 4475930572, "path": 'scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py', "line": None, "original_line": None,
-     "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#discussion_r4475930572',
+     "html_url": 'https://github.com/nedsnodes/nedsnodes/pull/2620#discussion_r4475930572',
      "body": ('**Blocks** A comment moved into the review body is read back as several comments when a continuation line of its text has the moved-comment form `- `<path>:<line>`: ...` (reproduced by mac-claude at head, also Codex P2). When such a line carries a category mark after the `: `, `print-follow-up-request-block-from-merge-lane-2-reviews` prints a truncated finding plus one merge-lane-2 never made, and exits 0. Fix: make the read-back detect this, for example by having the posting program check that the moved comments read back exactly as posted and refuse otherwise, or by a line format the text cannot reproduce; add a round-trip case with such a continuation line.')},
     {"id": 4475930574, "path": 'scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py', "line": None, "original_line": None,
-     "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#discussion_r4475930574',
+     "html_url": 'https://github.com/nedsnodes/nedsnodes/pull/2620#discussion_r4475930574',
      "body": ('The continuation-join line `elif comments: comments[-1]["body"] += "\\n" + line` has no test: replacing it with `elif False: pass` leaves both test files passing (mac-claude, mutant M4). A round-trip case with a multi-line comment on a line outside the diff would kill it.')}]
 
 
@@ -2083,12 +2083,12 @@ def suite_cases(root, repository, _base, _frozen_head):
     runner_calls(root)
 
 
-DEMO_OVERVIEW = "docs/nedschorus-wiki/nedschorus-demo-architecture-overview.md"
+DEMO_OVERVIEW = "docs/nedsnodes-wiki/nedsnodes-demo-architecture-overview.md"
 
 
 def demo_overview_text(checked_against, extra=""):
-    return (f"# Demo\n\n## Components\n\n- `nc-systems/demo/demo.py` runs the demo.\n{extra}\n"
-            f"**Checked against:** commit [{checked_against}](https://github.com/nedschorus/nedschorus/commit/"
+    return (f"# Demo\n\n## Components\n\n- `nn-systems/demo/demo.py` runs the demo.\n{extra}\n"
+            f"**Checked against:** commit [{checked_against}](https://github.com/nedsnodes/nedsnodes/commit/"
             f"{checked_against})\n")
 
 
@@ -2101,9 +2101,9 @@ def write_claim_check_report(report_directory, repository, revision, result="no 
 
 def architecture_overview_cases(root, repository, _base, _frozen_head):
     """PRs 3571 and 3591: the pull request changes the demo overview, and the round changes code it describes."""
-    (repository / "nc-systems" / "demo").mkdir(parents=True)
-    described = commit_file(repository, "nc-systems/demo/demo.py", "one\n", "demo code")
-    (repository / "docs" / "nedschorus-wiki").mkdir(parents=True)
+    (repository / "nn-systems" / "demo").mkdir(parents=True)
+    described = commit_file(repository, "nn-systems/demo/demo.py", "one\n", "demo code")
+    (repository / "docs" / "nedsnodes-wiki").mkdir(parents=True)
     frozen_head = commit_file(repository, DEMO_OVERVIEW, demo_overview_text(described), "demo overview")
     reviews = [review(commit_id=frozen_head)]
     answers = answers_file(root, GOOD_ANSWERS)
@@ -2123,14 +2123,14 @@ def architecture_overview_cases(root, repository, _base, _frozen_head):
     runner_calls(root)
 
     git(repository, "reset", "-q", "--hard", frozen_head)
-    fix = commit_file(repository, "nc-systems/demo/demo.py", "two\n", "round changes described code")
+    fix = commit_file(repository, "nn-systems/demo/demo.py", "two\n", "round changes described code")
     code, out, err = check_round_at(frozen_head)
     check("overview: a round whose commit changes code the overview describes, while its **Checked against:** "
           "names an earlier commit, refuses with exit 1 before the suites and the push, naming the overview, the "
           "code and the claim check",
           code == 1 and "Not pushed yet" not in out and runner_calls(root) == []
           and f"{DEMO_OVERVIEW} names commit {described}, and later commits of the pull request change code the "
-          "overview describes: nc-systems/demo/demo.py." in err
+          "overview describes: nn-systems/demo/demo.py." in err
           and "set each one's **Checked against:** line to name the fix commit's full id" in err
           and f"overview-write-architecture-overview-claim-check-by-fresh-agent.py --overview {DEMO_OVERVIEW}" in err
           and "so pushing it would cost a second push under review" in err, out + err)

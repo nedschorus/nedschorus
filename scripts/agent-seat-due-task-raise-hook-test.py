@@ -41,7 +41,7 @@ _hook_spec = importlib.util.spec_from_file_location("agent_seat_due_task_raise_h
                                                     HOOK_SCRIPT)
 hook = importlib.util.module_from_spec(_hook_spec)
 _hook_spec.loader.exec_module(hook)
-TASK_LIST_ID = "nedschorus-test-seat-tasks"
+TASK_LIST_ID = "nedsnodes-test-seat-tasks"
 MERGED_PR = 900
 MET = {"prerequisites": [{"pr_merged": MERGED_PR}]}
 STOP_PAYLOAD = json.dumps({
@@ -106,7 +106,7 @@ def seat_session_environment():
     # The cases move HOME, from which Python finds the user's site-packages; on the Mac markdown-it-py is there.
     environment["PYTHONUSERBASE"] = site.getuserbase()
     environment["CLAUDE_CODE_SESSION_ATTENDED"] = "1"
-    environment.pop("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER", None)
+    environment.pop("NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER", None)
     return environment
 
 
@@ -340,22 +340,22 @@ check("a task with no metadata and no blockedBy: no state written",
 seat = Seat()
 seat.task("40", metadata={"prerequisites": [{"pr_merged": 101}, {"issue_closed": 202}]})
 seat.respond({
-    "pr:101": {"state": "MERGED", "title": "Add the\nthing", "url": "https://github.com/nedschorus/nedschorus/pull/101"},
-    "issue:202": {"state": "CLOSED", "title": "The bug", "url": "https://github.com/nedschorus/nedschorus/issues/202"},
+    "pr:101": {"state": "MERGED", "title": "Add the\nthing", "url": "https://github.com/nedsnodes/nedsnodes/pull/101"},
+    "issue:202": {"state": "CLOSED", "title": "The bug", "url": "https://github.com/nedsnodes/nedsnodes/issues/202"},
 })
 result = seat.run()
 expected_text = (
     '[rule due-task-raise-when-prerequisites-met] Act on task 40 "Subject of task 40" now: its prerequisites are met: '
-    'PR "Add the thing" (https://github.com/nedschorus/nedschorus/pull/101) is merged; '
-    'GHI "The bug" (https://github.com/nedschorus/nedschorus/issues/202) is closed.'
+    'PR "Add the thing" (https://github.com/nedsnodes/nedsnodes/pull/101) is merged; '
+    'GHI "The bug" (https://github.com/nedsnodes/nedsnodes/issues/202) is closed.'
     f"\n{DEFER_LINE}")
 check("prerequisites met: raised with each prerequisite cited by title and link",
       context_of(result) == expected_text, repr(context_of(result)))
 calls = seat.gh_calls()
 check("prerequisites met: gh asked read-only view calls on the project repository",
       sorted(call["argv"] for call in calls) == [
-          ["issue", "view", "202", "--repo", "nedschorus/nedschorus", "--json", "state,title,url"],
-          ["pr", "view", "101", "--repo", "nedschorus/nedschorus", "--json", "state,title,url"]],
+          ["issue", "view", "202", "--repo", "nedsnodes/nedsnodes", "--json", "state,title,url"],
+          ["pr", "view", "101", "--repo", "nedsnodes/nedsnodes", "--json", "state,title,url"]],
       calls)
 check("prerequisites met: GH_TOKEN removed before gh runs",
       calls and not any(call["gh_token_present"] for call in calls), calls)
@@ -371,7 +371,7 @@ seat = Seat()
 seat.task("42", metadata={"prerequisites": [{"pr_merged": 103}]})
 seat.respond({"pr:103": "fail"})
 result = seat.run()
-GH_COMMAND_103 = "`gh pr view 103 --repo nedschorus/nedschorus --json state,title,url`"
+GH_COMMAND_103 = "`gh pr view 103 --repo nedsnodes/nedsnodes --json state,title,url`"
 GH_FAILURE_103 = ("This hook could not ask GitHub whether PR 103 is merged, so no task "
                   f"waiting on it was raised: {GH_COMMAND_103} exited 1: gh stand-in: "
                   "failing on purpose. It asks again at the first stop at least 5 minutes "
@@ -422,7 +422,7 @@ seat = Seat()
 seat.task("43", metadata={"prerequisites": [{"pr_merged": 104}]})
 seat.respond({"pr:104": "garbage"})
 check("gh answering unparsable output: reported, exit 1",
-      reported(seat.run(), "`gh pr view 104 --repo nedschorus/nedschorus --json "
+      reported(seat.run(), "`gh pr view 104 --repo nedsnodes/nedsnodes --json "
                            "state,title,url` exited 0 without printing a JSON object"))
 
 seat = Seat()
@@ -437,7 +437,7 @@ environment = {**seat_session_environment(), "HOME": str(seat.home), "PATH": str
 result = subprocess.run([sys.executable, str(HOOK_SCRIPT)], input=STOP_PAYLOAD,
                         capture_output=True, text=True, env=environment, check=False)
 check("gh not installed: reported, exit 1",
-      reported(result, "`gh pr view 105 --repo nedschorus/nedschorus --json state,title,url` "
+      reported(result, "`gh pr view 105 --repo nedsnodes/nedsnodes --json state,title,url` "
                        "could not be run: "), result)
 
 real_subprocess_run = hook.subprocess.run
@@ -453,7 +453,7 @@ try:
 finally:
     hook.subprocess.run = real_subprocess_run
 check("gh timing out is a gh failure naming the command and its time limit, not an answer",
-      timed_out == {"gh_failure": "`gh issue view 9 --repo nedschorus/nedschorus --json "
+      timed_out == {"gh_failure": "`gh issue view 9 --repo nedsnodes/nedsnodes --json "
                                   "state,title,url` did not answer within 8 seconds"},
       timed_out)
 
@@ -635,7 +635,7 @@ check("no task list id in the environment: silent", silent(seat.run(list_id=None
 check("a task list id that is a path, even to a real list: silent",
       silent(seat.run(list_id=f"../tasks/{TASK_LIST_ID}")))
 check("a task list with no directory: silent",
-      silent(seat.run(list_id="nedschorus-no-such-seat-tasks")))
+      silent(seat.run(list_id="nedsnodes-no-such-seat-tasks")))
 
 # --- a headless child of an agent-seat is never raised ------------------------------
 seat = Seat()
@@ -643,7 +643,7 @@ seat.task("68", metadata=MET)
 result = seat.run(environment_changes={"CLAUDE_CODE_SESSION_ATTENDED": "0"})
 check("unattended session (a claude -p child): silent", silent(result), result)
 result = seat.run(environment_changes={
-    "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "scripts/ghi-guide-agent-ask.py"})
+    "NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER": "scripts/ghi-guide-agent-ask.py"})
 check("session whose caller owns its reincarnation: silent", silent(result), result)
 check("silenced sessions record nothing, so the seat's own session still raises the task",
       not seat.state_path.exists(), seat.state_path)

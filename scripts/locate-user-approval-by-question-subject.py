@@ -76,12 +76,12 @@ NED_BOX_HOSTNAME = "ned-box"
 NED_BOX_SSH_TARGET = "nedlern@ned-box"
 SSH_OPTIONS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
 SSH_EXIT_CONNECTION_FAILED = 255
-WALK_MINUTES_DIRECTORY = "/home/nedlern/nedschorus-logs/walk"
+WALK_MINUTES_DIRECTORY = "/home/nedlern/nedsnodes-logs/walk"
 MIRROR_RELATIVE_PATH = Path("scripts") / "transcript-mirror-to-log-store.py"
 NED_BOX_TRANSCRIPTS_DIRECTORY = "/home/nedlern/.claude/projects"
 NED_BOX_UNREACHABLE_REMEDY = (f"make sure ned-box is on and on the LAN, then check that "
                               f"`ssh {NED_BOX_SSH_TARGET} true` succeeds")
-GITHUB_REPOSITORY = "nedschorus/nedschorus"
+GITHUB_REPOSITORY = "nedsnodes/nedsnodes"
 PLAN_ENVIRONMENT_VARIABLE = "LOCATE_USER_APPROVAL_PLAN_JSON"
 THIS_MACHINE_TRANSCRIPTS_JSON_FLAG = "--this-machine-transcripts-json"
 

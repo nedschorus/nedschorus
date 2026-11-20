@@ -57,7 +57,7 @@ DECISIONS, and where they depart from the design of record:
   edits (labels, title-only, milestones) pass through". The user approved it
   with "Y" on 2026-09-29, item 6 of the walk
   ghi-write-skill-link-only-rewalk-2026-09-28 (minutes:
-  nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/ghi-write-skill-link-only-rewalk-2026-09-28-minutes.md).
+  nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/ghi-write-skill-link-only-rewalk-2026-09-28-minutes.md).
   edit-GHI retitles an issue from its GHI-MD's first heading, so a title
   changed by hand no longer matches the file, and the next edit-GHI run that
   changes that heading sets the title from the file again; merge-lane-2
@@ -77,11 +77,11 @@ DECISIONS, and where they depart from the design of record:
   every spelling gh takes (`-R X`, `-RX`, `-R=X`, `--repo X`, `--repo=X`;
   each checked against gh 2.101.0 on 2026-09-24). When the flag is given
   more than once, gh uses the last one, and so does this guard. Reading it
-  only after the subcommand let `gh -R nedschorus/nedschorus issue create`
-  and `gh issue -R nedschorus/nedschorus comment` through while naming this
+  only after the subcommand let `gh -R nedsnodes/nedsnodes issue create`
+  and `gh issue -R nedsnodes/nedsnodes comment` through while naming this
   repository, and agents do write `gh --repo X issue ...`. Found in the
   review of PR "Hand-typed gh issue comments, creates and body edits are
-  refused" (https://github.com/nedschorus/nedschorus/pull/708), where Codex
+  refused" (https://github.com/nedsnodes/nedsnodes/pull/708), where Codex
   also raised it.
 - `gh api` writes to issue endpoints are out of scope: the design's accepted
   residual (user-ruled 2026-08-07, reaffirmed 2026-08-09), "the enumeration
@@ -101,7 +101,7 @@ WHAT IT CANNOT SEE, so nobody mistakes a choice for an oversight:
   guard, whose reading this shares.
 - A gh alias the user defined is not expanded.
 
-Commands are read with nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py,
+Commands are read with nn-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py,
 the project's shared shell module on tree-sitter-bash, as the force-push guard
 does: one reader, reviewed once.
 """
@@ -124,12 +124,18 @@ with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(
         __file__, __name__ == "__main__"):
     _shell_reader_spec = importlib.util.spec_from_file_location(
         "shell_command_tree_sitter_bash_reader_common",
-        _REPOSITORY_ROOT / "nc-systems" / "general-tools" / "shell-command-tree-sitter-bash-reader-common.py")
+        _REPOSITORY_ROOT / "nn-systems" / "general-tools" / "shell-command-tree-sitter-bash-reader-common.py")
     shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
     _shell_reader_spec.loader.exec_module(shell_reader)
+    _repository_names_spec = importlib.util.spec_from_file_location(
+        "github_repository_name_and_name_before_project_rename_common",
+        _REPOSITORY_ROOT / "nn-systems" / "general-tools"
+        / "github-repository-name-and-name-before-project-rename-common.py")
+    repository_names = importlib.util.module_from_spec(_repository_names_spec)
+    _repository_names_spec.loader.exec_module(repository_names)
 is_program = shell_reader.is_program
 
-PROJECT_REPOSITORY = "nedschorus/nedschorus"
+PROJECT_REPOSITORY = repository_names.REPOSITORY
 
 ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 ISSUE_URL_PATTERN = re.compile(
@@ -411,7 +417,8 @@ def names_another_repository(flags, positionals, repository_from_environment):
     elif repository_from_environment is not None:
         named.append(repository_from_environment)
     named.extend(word for word in positionals if ISSUE_URL_PATTERN.match(word))
-    return any(normalized_repository(value) != PROJECT_REPOSITORY
+    return any(repository_names.normalize_repository_name_reading_name_before_project_rename_as_current(normalized_repository(value))
+               != PROJECT_REPOSITORY
                for value in named if value)
 
 

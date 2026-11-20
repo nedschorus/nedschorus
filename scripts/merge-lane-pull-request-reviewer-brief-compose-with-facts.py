@@ -53,10 +53,16 @@ _common_spec = importlib.util.spec_from_file_location(
         "merge-lane-pull-request-helpers-common-options-paths-and-token.py"))
 common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
+_repository_names_spec = importlib.util.spec_from_file_location(
+    "github_repository_name_and_name_before_project_rename_common",
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
+    / "github-repository-name-and-name-before-project-rename-common.py")
+repository_names = importlib.util.module_from_spec(_repository_names_spec)
+_repository_names_spec.loader.exec_module(repository_names)
 run_all_test_suites = common.run_all_test_suites
 _git_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
@@ -146,9 +152,9 @@ def files_touched_text(review_tools_worktree, base, head):
 
 
 def linked_items(text):
-    """The issues and pull requests a text links to, as (owner/repository, number):
-    a repository numbers its issues and pull requests in one sequence."""
-    return {(repository.lower(), int(number))
+    """The issues and pull requests a text links to, as (owner/repository, number), the repository's name before
+    the project rename read as its name: a repository numbers its issues and pull requests in one sequence."""
+    return {(repository_names.normalize_repository_name_reading_name_before_project_rename_as_current(repository), int(number))
             for repository, number in GITHUB_ISSUE_OR_PULL_REQUEST_LINK.findall(text)}
 
 

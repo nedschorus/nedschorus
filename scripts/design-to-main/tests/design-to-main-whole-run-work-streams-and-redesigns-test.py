@@ -185,7 +185,10 @@ class TheTestWritersSetAgainstTheTestDesign(unittest.TestCase):
     nothing backs. A `no-tests` requirement runs nothing and counts as
     neither pass nor fail (section 6.4), so it is disregarded here;
     `no-tests` alone is what an empty set carries, never beside a type that
-    is present (section 2; the tenth walk, item 6)."""
+    is present (section 2; the tenth walk, item 6). A `user` requirement is
+    tested by a person by hand and the machine runs nothing for it
+    (sections 2 and 6.4), so the test writer writes no test for it and it
+    is disregarded as `no-tests` is."""
 
     def drive_a_test_write(self, test_design_coverage_types, emitted_coverage_types,
                            and_then=()):
@@ -252,6 +255,35 @@ class TheTestWritersSetAgainstTheTestDesign(unittest.TestCase):
                                                (T.COVERAGE_TYPE_NO_TESTS, "script"))
         self.assertEqual(len(machine.machine_errors), 1)
         self.assertEqual(run.paused_state, T.TEST_WRITING)
+
+    def test_a_user_requirement_is_left_out_of_the_set_the_test_writer_emits(self):
+        self.assertEqual(
+            M.the_set_of_coverage_types_the_test_design_asks_for(("script", "user")),
+            ("script",))
+        self.assertEqual(
+            M.the_set_of_coverage_types_the_test_design_asks_for(("user", "no-tests")),
+            (T.COVERAGE_TYPE_NO_TESTS,))
+        machine, run = self.drive_a_test_write(
+            ("script", "user"), ("script",),
+            and_then=[(T.TEST_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {})])
+        self.assertEqual(machine.machine_errors, [])
+        self.assertEqual(run.tests_coverage_types, ("script",))
+        # A `user` requirement is not agent-instructions: the user's check
+        # of standing-agent-instructions does not run for it.
+        self.assertNotEqual(run.current_state, T.TEST_ACCEPTANCE_BY_USER)
+        machine, run = self.drive_a_test_write(("user",), (T.COVERAGE_TYPE_NO_TESTS,))
+        self.assertEqual(machine.machine_errors, [])
+        self.assertEqual(run.tests_coverage_types, (T.COVERAGE_TYPE_NO_TESTS,))
+
+    def test_a_test_writer_that_emits_user_pauses_the_run_in_investigate_workflow(self):
+        # The writer claims a test for the `user` requirement, which the
+        # person tests by hand from the test-design.
+        machine, run = self.drive_a_test_write(("script", "user"), ("script", "user"))
+        self.assertEqual(len(machine.machine_errors), 1)
+        self.assertIn("test-design", run.machine_error)
+        self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+        self.assertEqual(run.paused_state, T.TEST_WRITING)
+        self.assertEqual(run.tests_coverage_types, ())
 
     def test_a_test_design_the_machine_cannot_read_is_not_checked_against(self):
         # Nothing is checked when the file names no requirement the

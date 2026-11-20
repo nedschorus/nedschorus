@@ -122,11 +122,11 @@ def run_program(scratch, review_text, token=TOKEN, arguments=("--pull-request", 
     for directory in (home, state, fake_gh_directory):
         directory.mkdir()
     if token is not None:
-        (home / ".config" / "nedschorus").mkdir(parents=True)
-        (home / ".config" / "nedschorus" / "mac-claude.token").write_text(token + "\n")
+        (home / ".config" / "nedsnodes").mkdir(parents=True)
+        (home / ".config" / "nedsnodes" / "mac-claude.token").write_text(token + "\n")
     if merge_token is not None:
-        (home / ".config" / "nedschorus").mkdir(parents=True, exist_ok=True)
-        (home / ".config" / "nedschorus" / "ned-review-merge.token").write_text(merge_token + "\n")
+        (home / ".config" / "nedsnodes").mkdir(parents=True, exist_ok=True)
+        (home / ".config" / "nedsnodes" / "ned-review-merge.token").write_text(merge_token + "\n")
     (fake_gh_directory / "gh").write_text(FAKE_GH)
     (fake_gh_directory / "gh").chmod(0o755)
     review_file = case / "review-to-post.txt"
@@ -564,7 +564,7 @@ def main():
               len(result.calls) == 4 and all(call["token"] == TOKEN for call in result.calls),
               result.detail)
         check("the review is read back by the id the post returned",
-              result.calls[-1]["arguments"] == ["api", "repos/nedschorus/nedschorus/pulls/7/reviews/42"]
+              result.calls[-1]["arguments"] == ["api", "repos/nedsnodes/nedsnodes/pulls/7/reviews/42"]
               if result.calls else False, result.detail)
         check("success names the review, the event and the commit, and never prints the token",
               "review 42 posted on pull request 7 by mac-claude as APPROVE" in result.stdout
@@ -721,7 +721,7 @@ def main():
               and "review may or may not be posted: posting the review failed: gh exited 1: "
               "gh: HTTP 502" in result.stderr
               and "Before running this command again, list mac-claude's reviews" in result.stderr
-              and "gh api --paginate 'repos/nedschorus/nedschorus/pulls/7/reviews'" in result.stderr
+              and "gh api --paginate 'repos/nedsnodes/nedsnodes/pulls/7/reviews'" in result.stderr
               and f'.commit_id == "{HEAD}"' in result.stderr, result.detail)
         result = run_program(scratch, review("APPROVE"), FAKE_GH_FAILS="read-back")
         check("a failed read-back exits 2, says review 42 was posted, and names gh's error",
@@ -755,7 +755,7 @@ def main():
                   result.code == 2 and not result.gh_left_running
                   and "review may or may not be posted: posting the review failed: this command "
                   "was interrupted" in result.stderr
-                  and "gh api --paginate 'repos/nedschorus/nedschorus/pulls/7/reviews'"
+                  and "gh api --paginate 'repos/nedsnodes/nedsnodes/pulls/7/reviews'"
                   in result.stderr and f'.commit_id == "{HEAD}"' in result.stderr, result.detail)
             result = run_program(scratch, review("APPROVE"), interrupt=signal_number,
                                  FAKE_GH_HANGS="read-back")

@@ -108,9 +108,9 @@ def run_program(scratch, helpers, specs, *extra, gh_routes=None, token=TEST_TOKE
     (scratch / "gh-calls.jsonl").write_text("")
     home = scratch / "home"
     shutil.rmtree(home, ignore_errors=True)
-    (home / ".config" / "nedschorus").mkdir(parents=True)
+    (home / ".config" / "nedsnodes").mkdir(parents=True)
     if token is not None:
-        (home / ".config" / "nedschorus" / "ned-review-merge.token").write_text(token + "\n")
+        (home / ".config" / "nedsnodes" / "ned-review-merge.token").write_text(token + "\n")
     return subprocess.run(
         [sys.executable, str(PROGRAM), str(specs_file),
          "--merge-lane-worktrees-and-outputs-directory", str(helpers),
@@ -130,19 +130,19 @@ def gh_calls(scratch):
     return [json.loads(line) for line in (scratch / "gh-calls.jsonl").read_text().splitlines()]
 
 
-ISSUE_THIS_PULL_REQUEST_CLOSES = "https://github.com/nedschorus/nedschorus/issues/50"
+ISSUE_THIS_PULL_REQUEST_CLOSES = "https://github.com/nedsnodes/nedsnodes/issues/50"
 MERGED_PULL_REQUESTS = [
-    {"number": 101, "title": "Kept a workaround", "url": "https://github.com/nedschorus/nedschorus/pull/101",
+    {"number": 101, "title": "Kept a workaround", "url": "https://github.com/nedsnodes/nedsnodes/pull/101",
      "body": f"Fixes a hang.\r\n\r\n- #root_cause_not_fixed the harness drops it. #follow_up {ISSUE_THIS_PULL_REQUEST_CLOSES}\r\n"},
-    {"number": 102, "title": "Kept another", "url": "https://github.com/nedschorus/nedschorus/pull/102",
+    {"number": 102, "title": "Kept another", "url": "https://github.com/nedsnodes/nedsnodes/pull/102",
      "body": "**Root cause not fixed:** the cause stays until https://github.com/NedSchorus/nedschorus/pull/7 merges."},
-    {"number": 103, "title": "Links elsewhere", "url": "https://github.com/nedschorus/nedschorus/pull/103",
-     "body": "#root_cause_not_fixed it stays. #follow_up https://github.com/nedschorus/nedschorus/issues/51"},
-    {"number": 104, "title": "A root-cause line", "url": "https://github.com/nedschorus/nedschorus/pull/104",
+    {"number": 103, "title": "Links elsewhere", "url": "https://github.com/nedsnodes/nedsnodes/pull/103",
+     "body": "#root_cause_not_fixed it stays. #follow_up https://github.com/nedsnodes/nedsnodes/issues/51"},
+    {"number": 104, "title": "A root-cause line", "url": "https://github.com/nedsnodes/nedsnodes/pull/104",
      "body": f"#root_cause the hook read a file. See {ISSUE_THIS_PULL_REQUEST_CLOSES}"},
-    {"number": 105, "title": "Another repository's issue 50", "url": "https://github.com/nedschorus/nedschorus/pull/105",
+    {"number": 105, "title": "Another repository's issue 50", "url": "https://github.com/nedsnodes/nedsnodes/pull/105",
      "body": "#root_cause_not_fixed it stays. #follow_up https://github.com/cli/cli/issues/50"},
-    {"number": 106, "title": "No description", "url": "https://github.com/nedschorus/nedschorus/pull/106",
+    {"number": 106, "title": "No description", "url": "https://github.com/nedsnodes/nedsnodes/pull/106",
      "body": None},
 ]
 FOLLOW_UP_GH_ROUTES = {
@@ -231,9 +231,9 @@ def main():
               completed.returncode == 0
               and ("- Merged pull requests whose not-fixed line links to an issue this pull "
                    "request closes, or to this pull request: #101 \"Kept a workaround\" "
-                   "(https://github.com/nedschorus/nedschorus/pull/101), whose line is "
+                   "(https://github.com/nedsnodes/nedsnodes/pull/101), whose line is "
                    f"`- #root_cause_not_fixed the harness drops it. #follow_up {ISSUE_THIS_PULL_REQUEST_CLOSES}`; "
-                   "#102 \"Kept another\" (https://github.com/nedschorus/nedschorus/pull/102), whose "
+                   "#102 \"Kept another\" (https://github.com/nedsnodes/nedsnodes/pull/102), whose "
                    "line is `**Root cause not fixed:** the cause stays until "
                    "https://github.com/NedSchorus/nedschorus/pull/7 merges.`.\n") in brief,
               f"exit {completed.returncode}\n{completed.stderr}\n--- brief ---\n{brief}")
@@ -263,7 +263,7 @@ def main():
         program_spec = importlib.util.spec_from_file_location("brief_compose", PROGRAM)
         program = importlib.util.module_from_spec(program_spec)
         program_spec.loader.exec_module(program)
-        log_store = Path("/home/nedlern/nedschorus-logs")
+        log_store = Path("/home/nedlern/nedsnodes-logs")
         default_parent = program.DEFAULT_MERGE_LANE_PULL_REQUEST_REVIEWER_SCRATCH_DIRECTORIES_PARENT_DIRECTORY
         check("the default reviewer scratch parent is outside the log-store, which the "
               "standing text forbids the reviewer to write to",
@@ -356,6 +356,21 @@ def main():
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
+    class MergedWithOldName:
+        def all(self):
+            return [{"number": 5, "title": "Kept with an old link", "url": "https://github.com/nedsnodes/nedsnodes/pull/5",
+                     "body": f"#root_cause_not_fixed it stays. #follow_up https://github.com/{program.repository_names.OLD_REPOSITORY}/pull/7"}]
+    old_name_fact = program.follow_up_pull_requests_text(7, [], MergedWithOldName())
+    check("a not-fixed line linking this pull request by the repository's old name, which GitHub redirects, is found",
+          "#5 " in old_name_fact, old_name_fact)
+    class MergedLinkingClosedIssueByOldName:
+        def all(self):
+            return [{"number": 5, "title": "Left an issue open", "url": "https://github.com/nedsnodes/nedsnodes/pull/5",
+                     "body": f"#root_cause_not_fixed it stays. #follow_up https://github.com/{program.repository_names.OLD_REPOSITORY}/issues/9"}]
+    old_issue_fact = program.follow_up_pull_requests_text(
+        30, [{"url": "https://github.com/nedsnodes/nedsnodes/issues/9"}], MergedLinkingClosedIssueByOldName())
+    check("a not-fixed line linking a closing issue by the repository's name before the project rename is found",
+          "#5 " in old_issue_fact, old_issue_fact)
     if failures:
         print(f"\n{len(failures)} case(s) failed")
         return 1

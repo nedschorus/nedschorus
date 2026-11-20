@@ -8,15 +8,15 @@ Usage:
 
 The seams are flags the tests use; cron passes none, so each takes its default:
   --clone                       the clone this program is in
-  --state-file                  ~/.local/state/nedschorus/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.json
-  --log-store-root              /home/nedlern/nedschorus-logs
+  --state-file                  ~/.local/state/nedsnodes/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.json
+  --log-store-root              /home/nedlern/nedsnodes-logs
   --temporary-directory         Python's tempfile.gettempdir(), /tmp on ned-box
   --runner-lock-file            ~/.claude/.run-all-test-suites.lock, the runner's own default
   --test-suite-runner-program   scripts/run-all-test-suites.py in the worktree of step 6
 
 The design is GHI "Test suites that run without a sandbox leave per-change test
 runs unless the change edits a file they read, and run on main in a quiet gap",
-https://github.com/nedschorus/nedschorus/issues/2381, parts 2 and 4. A selective
+https://github.com/nedsnodes/nedsnodes/issues/2381, parts 2 and 4. A selective
 run of scripts/run-all-test-suites.py leaves out each suite listed in its
 SUITES_RUN_WITHOUT_ANY_SANDBOX unless the change edits a file that suite reads,
 so this program is what runs every one of them after a change reaches main. It
@@ -98,10 +98,10 @@ another run or a no-sandbox suite held its lock; 2 bad invocation or a refused
 runner or a write failed, or the runner reported a suite NOT RUN, which the state file records where it can.
 
 SCHEDULE. Installed on ned-box alone by
-nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py, from the
+nn-systems/general-tools/install-scheduled-jobs-on-this-machine.py, from the
 table beside it, scheduled-jobs-on-each-machine.json:
 
-    */10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py >> /home/nedlern/.claude/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.log 2>&1
+    */10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py >> /home/nedlern/.claude/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.log 2>&1
 
 What it does not handle: it sees only whether a no-sandbox suite holds the lock
 at the moment it looks, not whether another run's suite is between two tries
@@ -129,9 +129,9 @@ from pathlib import Path
 PROGRAM = "no-sandbox-test-suites-run-on-main-in-a-quiet-gap"
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 
-DEFAULT_STATE_FILE = (Path.home() / ".local" / "state" / "nedschorus"
+DEFAULT_STATE_FILE = (Path.home() / ".local" / "state" / "nedsnodes"
                       / f"{PROGRAM}.json")
-DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
+DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedsnodes-logs"
 NO_SANDBOX_TEST_SUITES_RUNS_KIND_DIRECTORY_NAME = "no-sandbox-test-suites-runs"
 RUNNER_PATH_IN_WORKTREE = Path("scripts") / "run-all-test-suites.py"
 
@@ -162,11 +162,11 @@ def module_loaded_by_path(name, path):
 
 git_redirecting_environment = module_loaded_by_path(
     "git_redirecting_environment_variables_removal_common",
-    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    REPOSITORY_ROOT / "nn-systems" / "general-tools"
     / "git-redirecting-environment-variables-removal-common.py")
 git_output = module_loaded_by_path(
     "git_machine_readable_output_runner_and_parser_common",
-    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    REPOSITORY_ROOT / "nn-systems" / "general-tools"
     / "git-machine-readable-output-runner-and-parser-common.py")
 
 

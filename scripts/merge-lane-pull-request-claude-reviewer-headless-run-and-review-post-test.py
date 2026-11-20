@@ -273,8 +273,8 @@ class Case:
         self.main_settings_file = self.main_worktree / ".claude" / "settings.json"
         self.main_settings_file.parent.mkdir(parents=True)
         self.main_settings_file.write_text(json.dumps(MAIN_PROJECT_SETTINGS))
-        (home / ".config" / "nedschorus").mkdir(parents=True)
-        (home / ".config" / "nedschorus" / "mac-claude.token").write_text("stand-in-token\n")
+        (home / ".config" / "nedsnodes").mkdir(parents=True)
+        (home / ".config" / "nedsnodes" / "mac-claude.token").write_text("stand-in-token\n")
         for name, text in (("claude", FAKE_CLAUDE), ("gh", FAKE_GH)):
             (bin_directory / name).write_text(text)
             (bin_directory / name).chmod(0o755)
@@ -643,7 +643,7 @@ def main():
               lambda: case.code != 0
               and "the posting step was interrupted, so the review in" in case.stdout
               and "may or may not have been posted" in case.stdout
-              and "gh api --paginate 'repos/nedschorus/nedschorus/pulls/7/reviews' --jq "
+              and "gh api --paginate 'repos/nedsnodes/nedsnodes/pulls/7/reviews' --jq "
                   "'.[] | select(.user.login == \"mac-claude\" and .commit_id == "
                   f"\"{case.head}\") | [.id, .state, .html_url] | @tsv'" in case.stdout
               and not case.reviewer_worktree_left(), case.detail)

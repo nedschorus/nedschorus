@@ -88,11 +88,11 @@
 # WHY AN INLINE COMMENT POSTED WITH A REVIEW THE CALLER WROTE OR READ IS READ AT
 # THAT REVIEW'S TIME. GHI "The merge gate refuses a merge when the merge
 # account's own review carries inline comments stamped a second later",
-# https://github.com/nedschorus/nedschorus/issues/729. GitHub stamps an inline
+# https://github.com/nedsnodes/nedsnodes/issues/729. GitHub stamps an inline
 # comment posted as part of a review with its own clock, which can read one
 # second after the review's submitted_at. On PR "A handoff's worktree cleaner
 # stopped at its time bound is counted and leaves no process running"
-# (https://github.com/nedschorus/nedschorus/pull/722) the merge account's
+# (https://github.com/nedsnodes/nedsnodes/pull/722) the merge account's
 # COMMENTED review read 20:43:02Z and its three inline comments 20:43:03Z. F2
 # bounds SINCE at that review, so no accepted SINCE was later than the
 # comments, they always counted as new, and the merge could never pass.
@@ -132,9 +132,11 @@
 # rebuild's. Recorded so the next reader knows it was seen and left.
 set -u
 
-REPO=nedschorus/nedschorus
+REPO=nedsnodes/nedsnodes
+# GitHub redirects the repository's old name, and descriptions written before the rename still link with it.
+OLD_REPOSITORY=nedschorus/nedschorus
 MERGE_ACCOUNT=ned-review-merge
-TOKEN_FILE=$HOME/.config/nedschorus/$MERGE_ACCOUNT.token
+TOKEN_FILE=$HOME/.config/nedsnodes/$MERGE_ACCOUNT.token
 
 # The first argument follows the prefix; each further argument is a line of its own.
 fail()    { printf 'GATE REFUSED (#%s): %s\n' "${PR:-?}" "$1" >&2; shift; [ $# -eq 0 ] || printf '%s\n' "$@" >&2; exit 1; }
@@ -361,6 +363,11 @@ FOLLOW_UP_EDIT_ONLY="Editing the description is enough; no new commit is needed.
 FOLLOW_UP_RERUN="Once the description has the link, run the gate again."
 FOLLOW_UP_REPLACE="Replace that link with an open issue or pull request that fixes the cause, or, if the cause is not known, an open issue that looks for it."
 open_follow_up_issues=""
+link_is_this_repository() {
+  local lower
+  lower=$(tr '[:upper:]' '[:lower:]' <<<"$link_repo")
+  [ "$lower" = "$REPO" ] || [ "$lower" = "$OLD_REPOSITORY" ]
+}
 not_fixed_count=$(jq length <<<"$not_fixed")                    || cannot "$DESCRIPTION_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
 for ((line_index = 0; line_index < not_fixed_count; line_index++)); do
   line=$(jq -r ".[$line_index].line" <<<"$not_fixed")           || cannot "$DESCRIPTION_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
@@ -373,7 +380,7 @@ for ((line_index = 0; line_index < not_fixed_count; line_index++)); do
   [[ $link =~ ^https://github\.com/([^/]+)/([^/]+)/(issues|pull)/([0-9]+)$ ]]
   link_repo="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"; link_path_kind=${BASH_REMATCH[3]}; link_number=${BASH_REMATCH[4]}
   # GitHub sends /issues/<n> and /pull/<n> to the same item, so either form names this pull request.
-  [ "$(tr '[:upper:]' '[:lower:]' <<<"$link_repo")" != "$REPO" ] || [ "$link_number" != "$PR" ] || fail "the description's line \`$line\` names after \`#follow_up\` $link, which is this pull request; a pull request cannot be the follow-up for a cause it leaves in place." \
+  ! link_is_this_repository || [ "$link_number" != "$PR" ] || fail "the description's line \`$line\` names after \`#follow_up\` $link, which is this pull request; a pull request cannot be the follow-up for a cause it leaves in place." \
     "$FOLLOW_UP_REPLACE" "$FOLLOW_UP_IF_NO_ISSUE" \
     "If this pull request does remove the cause, replace the whole line with a \"#root_cause\" line that names the cause it removes, and link nothing." \
     "$FOLLOW_UP_EDIT_ONLY" "$FOLLOW_UP_RERUN"
@@ -391,7 +398,7 @@ for ((line_index = 0; line_index < not_fixed_count; line_index++)); do
   [ $? -eq 0 ] || cannot "could not parse what GitHub returned for $link" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
   case "$linked_kind" in
     # An open pull request is work already under way; another project's issue is not ours.
-    open-issue) [ "$(tr '[:upper:]' '[:lower:]' <<<"$link_repo")" != "$REPO" ] || open_follow_up_issues+="  $link from the line \`$line\`"$'\n' ;;
+    open-issue) ! link_is_this_repository || open_follow_up_issues+="  $link from the line \`$line\`"$'\n' ;;
     issue-closed-not-planned) fail "the description's line \`$line\` names after \`#follow_up\` $link, an issue closed as not planned, so no work is planned on the cause the line leaves in place." \
       "$FOLLOW_UP_REPLACE" "$FOLLOW_UP_IF_NO_ISSUE" "$FOLLOW_UP_EDIT_ONLY" "$FOLLOW_UP_RERUN" ;;
     pull-request-closed-unmerged) fail "the description's line \`$line\` names after \`#follow_up\` $link, a pull request closed without merging, so it will not fix the cause the line leaves in place." \

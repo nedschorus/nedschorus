@@ -18,7 +18,7 @@ put 14 test commits on a live seat's branch and overwrote the shared
 `user.name` and `user.email` on ned-box on 2026-09-22. GitHub issue "Test
 suites write into the ambient repository when GIT_DIR is set: git init's
 result is unchecked and the suite runner passes no environment"
-(https://github.com/nedschorus/nedschorus/issues/639), "Next action" item 2.
+(https://github.com/nedsnodes/nedsnodes/issues/639), "Next action" item 2.
 
 WHY THE PROCESS'S ENVIRONMENT, not the environment of one git helper. A suite
 starts the program it tests with its own environment, and that program runs
@@ -40,7 +40,7 @@ makes the repository where it was told to, and there is nothing left for the
 check to catch.
 
 WHICH VARIABLES. The list is GIT_REDIRECTING_ENVIRONMENT_VARIABLES in
-nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py,
+nn-systems/general-tools/git-redirecting-environment-variables-removal-common.py,
 read from that module and not copied here; scripts/run-all-test-suites.py
 reads the same module, so a suite run directly and a suite the runner
 launches have the same ones removed.
@@ -54,7 +54,7 @@ from pathlib import Path
 
 _removal_spec = importlib.util.spec_from_file_location(
     "git_redirecting_environment_variables_removal_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "git-redirecting-environment-variables-removal-common.py")
 _removal = importlib.util.module_from_spec(_removal_spec)
 _removal_spec.loader.exec_module(_removal)

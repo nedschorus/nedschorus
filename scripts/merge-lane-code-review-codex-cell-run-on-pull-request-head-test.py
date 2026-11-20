@@ -98,7 +98,7 @@ def main():
         instructions = scratch / "main-checkout" / "docs" / "agents" / "pr-reviewer-instructions.md"
         instructions.parent.mkdir(parents=True)
         instructions.write_text("# PR reviewer instructions\n")
-        token_directory = scratch / "home" / ".config" / "nedschorus"
+        token_directory = scratch / "home" / ".config" / "nedsnodes"
         token_directory.mkdir(parents=True)
         (token_directory / "ned-review-merge.token").write_text(TOKEN + "\n")
         helpers = scratch / "merge-helpers"
@@ -107,7 +107,7 @@ def main():
         completed, gh_calls, cell_calls = run_program(scratch, helpers)
         detail = f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}"
         check("the description is read from GitHub with the merge account's token",
-              gh_calls == [{"argv": ["pr", "view", "7", "--repo", "nedschorus/nedschorus",
+              gh_calls == [{"argv": ["pr", "view", "7", "--repo", "nedsnodes/nedsnodes",
                                      "--json", "body", "--jq", ".body"], "gh_token": TOKEN}],
               json.dumps(gh_calls))
         check("the description is saved under cx/pr<n>-<base>",
@@ -150,8 +150,8 @@ def main():
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
 
         blank_home = scratch / "home-with-blank-token"
-        (blank_home / ".config" / "nedschorus").mkdir(parents=True)
-        (blank_home / ".config" / "nedschorus" / "ned-review-merge.token").write_text(" \n\t\n")
+        (blank_home / ".config" / "nedsnodes").mkdir(parents=True)
+        (blank_home / ".config" / "nedsnodes" / "ned-review-merge.token").write_text(" \n\t\n")
         completed, gh_calls, cell_calls = run_program(scratch, helpers, home=blank_home)
         check("a token file holding only whitespace exits 2 before gh or the review runs",
               completed.returncode == 2 and gh_calls == [] and cell_calls == []
