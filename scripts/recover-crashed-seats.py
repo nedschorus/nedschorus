@@ -106,7 +106,7 @@ here anyway split the recovery: the automatic launch seated <root>/<name>,
 while the by-hand command printed when that launch fails runs
 launch-claude-ubuntu, which seats ~/agents/<name>, not the seat that was
 assessed. Raised by ned-review-merge's inline question 4088153045 on PR
-[The ubuntu launcher reads no agents-root variable: a box seat is always ~/agents/<name>](https://github.com/nedschorus/nedschorus/pull/684);
+[The ubuntu launcher reads no agents-root variable: a box seat is always ~/agents/<name>](https://github.com/nedsnodes/nedsnodes/pull/684);
 the user answered "Y" at 2026-09-28T16:37:05Z, closing question 1 of
 merge-lane-2's walk merge-lane-2-meta-walk-open-items-2026-09-23, to refuse
 the flag off macOS as resupervise-seat.py refuses it with --machine ubuntu.
@@ -124,7 +124,7 @@ came from this tool's own checkout, so a recovery run by hand from a worktree
 left the seat's supervisor running that worktree's code for the rest of its
 life, and the seat stopped at its next handoff once the worktree was removed,
 because at every handoff the supervisor runs the conversation extractor from
-its own checkout (GHI [recover-crashed-seats: a recovered seat's supervisor runs from whichever checkout the recovery was run from, and stops at its next handoff once that checkout is removed](https://github.com/nedschorus/nedschorus/issues/659)).
+its own checkout (GHI [recover-crashed-seats: a recovered seat's supervisor runs from whichever checkout the recovery was run from, and stops at its next handoff once that checkout is removed](https://github.com/nedsnodes/nedsnodes/issues/659)).
 The user answered "y" on 2026-09-29, walk
 open-items-this-seat-holds-2026-09-24, item 12, to: "The choices: always run
 the supervisor from the machine's reference clone, `~/Projects/nedschorus`, as

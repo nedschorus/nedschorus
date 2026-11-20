@@ -46,7 +46,7 @@ reference is not scanned itself, so a task subject that mentions another item
 is not reported; a bare reference after the name still is.
 
 A LINK TITLE is checked for a Markdown link outside code whose target is
-https://github.com/nedschorus/nedschorus/pull/<n> or .../issues/<n>, not a
+https://github.com/nedsnodes/nedsnodes/pull/<n> or .../issues/<n>, not a
 comment or a review in it, and whose text has at least
 TITLE_ATTEMPT_WORDS_AT_LEAST words; shorter text, such as "this PR" or
 "PR <number>", is no attempt at a title, and a URL is one word. The text and
@@ -125,8 +125,8 @@ LINK_TITLES_RECHECK_GH_TIMEOUT_SECONDS = 30
 LINK_TITLES_RECHECK_IN_FILE_COMMAND_LINE_FLAG = "--recheck-link-titles-in-file"
 LINK_TITLES_RECHECK_IN_REPLY_COMMAND_LINE_FLAG = "--recheck-link-titles-in-reply"
 EXIT_BAD_INVOCATION = 2
-GITHUB_REPOSITORY_OWNER = "nedschorus"
-GITHUB_REPOSITORY_NAME = "nedschorus"
+GITHUB_REPOSITORY_OWNER = "nedsnodes"
+GITHUB_REPOSITORY_NAME = "nedsnodes"
 TITLE_ATTEMPT_WORDS_AT_LEAST = 3
 EXCERPT_CHARACTERS_EACH_SIDE = 40
 SESSION_ID_SAFE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -166,8 +166,10 @@ STRAIGHT_QUOTED_NAME_PATTERN = re.compile(r"\"[^\"\n]+\"")
 CURLY_QUOTED_NAME_PATTERN = re.compile(r"\u201c[^\u201d\n]+\u201d")
 LINK_TEXT_AND_TARGET_PATTERN = re.compile(
     r"\[(?P<text>(?:[^\[\]\n]|\[[^\[\]\n]*\])*)\]\((?P<target>(?:[^()\s]|\([^()\s]*\))*)")
+# GitHub redirects the repository's old name, and text written before the rename still holds it.
+OLD_REPOSITORY = "nedschorus/nedschorus"
 REPOSITORY_ITEM_URL_PATTERN = re.compile(
-    r"^<?https://github\.com/" + GITHUB_REPOSITORY_OWNER + "/" + GITHUB_REPOSITORY_NAME
+    r"^<?https://github\.com/(?:" + GITHUB_REPOSITORY_OWNER + "/" + GITHUB_REPOSITORY_NAME + "|" + OLD_REPOSITORY + ")"
     + r"/(?:pull|issues)/(?P<number>\d+)"
     # A link to a comment or a review, a review comment on the files tab
     # (#r<id>) included, cites that comment, not the item's title.

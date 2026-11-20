@@ -2297,9 +2297,9 @@ check("a bare number is found, with its line",
       found("One.\nMerged as PR #466 today.") == [(2, "#466")])
 check("a repository prefix is kept with the number it cites",
       found("see nedschorus#418.") == [(1, "nedschorus#418")]
-      and found("in nedschorus/nedschorus#39") == [(1, "nedschorus/nedschorus#39")])
+      and found("in nedsnodes/nedsnodes#39") == [(1, "nedsnodes/nedsnodes#39")])
 check("a link whose text is the number is still a bare number",
-      found("[nedschorus#46](https://github.com/nedschorus/nedschorus/issues/46)")
+      found("[nedschorus#46](https://github.com/nedsnodes/nedsnodes/issues/46)")
       == [(1, "nedschorus#46")])
 check("a quoted reference keeps its repository prefix",
       found('`[s106] "nedschorus#385"`') == [(1, "nedschorus#385")])

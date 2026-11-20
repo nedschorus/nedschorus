@@ -39,11 +39,11 @@ NUMBER = 1964
 BLOCK = (f"#follow_up_request pull request {NUMBER}\n"
          "1. Codex P2 (:519-520): keep the padding when rebuilding code spans.\n"
          "2. mac-claude (inline at :713): send every R through repeat_line.\n")
-LINK = "https://github.com/nedschorus/nedschorus/pull/2001"
-OPEN_LINK = "https://github.com/nedschorus/nedschorus/pull/2002"
+LINK = "https://github.com/nedsnodes/nedsnodes/pull/2001"
+OPEN_LINK = "https://github.com/nedsnodes/nedsnodes/pull/2002"
 ALREADY_OPEN = f'a pull request for branch "topic-one" into branch "main" already exists:\n{OPEN_LINK}'
 TITLE = "Render code spans"
-FOLLOWED_UP_LINK = f"https://github.com/nedschorus/nedschorus/pull/{NUMBER}"
+FOLLOWED_UP_LINK = f"https://github.com/nedsnodes/nedsnodes/pull/{NUMBER}"
 FOLLOWED_UP = f"pull request [{TITLE}]({FOLLOWED_UP_LINK})"
 FOLLOWED_UP_LINK_ALONE = f"pull request {FOLLOWED_UP_LINK}"
 SUBAGENT_END = '"\nIf you are a subagent, pass that sentence to the agent that dispatched you instead.\n'
@@ -77,7 +77,7 @@ if [ -n "$FAKE_GH_CREATE_FAILS" ]; then
     echo "GraphQL: something went wrong" >&2
     exit 1
 fi
-printf 'Creating pull request\\n%s\\n' "${FAKE_GH_CREATE_OUTPUT-https://github.com/nedschorus/nedschorus/pull/2001}"
+printf 'Creating pull request\\n%s\\n' "${FAKE_GH_CREATE_OUTPUT-https://github.com/nedsnodes/nedsnodes/pull/2001}"
 """
 
 failures = []
@@ -652,7 +652,7 @@ def test_open_failures():
               and "again once" not in err, err)
         check("a refused push calls gh only for the title of the sentence for the user, records nothing and keeps "
               "the file",
-              case.gh_calls() == [f"pr view {NUMBER} --repo nedschorus/nedschorus --json title --jq .title"]
+              case.gh_calls() == [f"pr view {NUMBER} --repo nedsnodes/nedsnodes --json title --jq .title"]
               and "answers" not in case.answers() and description.exists(), str(case.gh_calls()))
         hook.write_text("#!/bin/sh\nsleep 5\n")
         original_time_limit = program.push_time_limit_seconds
@@ -772,7 +772,7 @@ def test_open_failures():
         check("a gh that exits nonzero without error text is FAILED, saying it printed none, and a title gh pr view "
               "cannot give leaves the link alone",
               code == 2 and "then gh pr create exited 1: it printed no error text\n" in err
-              and case.gh_calls()[-1] == f"pr view {NUMBER} --repo nedschorus/nedschorus --json title --jq .title"
+              and case.gh_calls()[-1] == f"pr view {NUMBER} --repo nedsnodes/nedsnodes --json title --jq .title"
               and fails_line("open-pull-request", FOLLOWED_UP_LINK_ALONE) in err, err)
         git_only = case.root / "git-only"
         git_only.mkdir()
@@ -1589,7 +1589,7 @@ def test_print_block():
 
 
 def test_print_block_with_replaced_pull_requests():
-    link = "https://github.com/nedschorus/nedschorus/pull/"
+    link = "https://github.com/nedsnodes/nedsnodes/pull/"
     replaced = {1900: (f"#replaces {link}1800", [merge_lane_review(5, state="CHANGES_REQUESTED")],
                        [merge_lane_comment(50, 5, "**Blocks** Fix it."),
                         merge_lane_comment(51, 5, "**fix-next** Old finding.", line=7),
