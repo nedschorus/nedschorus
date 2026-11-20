@@ -2229,8 +2229,9 @@ check("CLAUDE.md is recognised by its name, wherever it sits",
       and class_of(root / "nn-systems/cold-read/CLAUDE.md") == "CLAUDE.md")
 check("step 2's own exception is not in the class: a walk file",
       class_of(root / "docs/walk/an-item-draft.md") is None)
-check("a seat's CLAUDE.local.md at the checkout's root is not in the class",
-      class_of(root / "CLAUDE.local.md") is None)
+check("a seat-brief, a seat's CLAUDE.local.md, is recognised by its name, wherever it sits",
+      class_of(root / "CLAUDE.local.md") == "a seat-brief"
+      and class_of(root / "nn-systems/cold-read/CLAUDE.local.md") == "a seat-brief")
 check("an ordinary document is not in the class",
       class_of(root / "docs/issues/32-preservation-and-placement.md") is None)
 check("a file outside the checkout is not classified",
