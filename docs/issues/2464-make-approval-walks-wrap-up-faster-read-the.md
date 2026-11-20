@@ -4,11 +4,11 @@ issue: "[Make approval-walks wrap up faster: read the next item ahead, reread af
 
 # Make approval-walks wrap up faster: read the next item ahead, reread after a fix only when the fix touches facts, and stop the /Volumes false alarm in cold reads
 
-In an approval-walk, after the user answers one item, the agent runs checks before it shows the next item, chiefly a cold-read-fast-read (`nc-systems/cold-read/cold-read-fast-read.py`) of the next item and of each revision of it. The user waits through those checks. This GHI holds three changes, built as code, that cut the wait without dropping the first read of an item. Owner: the agent-seat cold-read-improvement, which owns the fast read.
+In an approval-walk, after the user answers one item, the agent runs checks before it shows the next item, chiefly a cold-read-fast-read (`nn-systems/cold-read/cold-read-fast-read.py`) of the next item and of each revision of it. The user waits through those checks. This GHI holds three changes, built as code, that cut the wait without dropping the first read of an item. Owner: the agent-seat cold-read-improvement, which owns the fast read.
 
 ## The measurement
 
-On 2026-11-01 a subagent of merge-lane-2 measured 284 waits between the user's answer and the next item, across 9 agent-seats, 2026-10-18 to 2026-11-01. Its data and scripts are in `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane-2/walk-wrap-up-check-measurement-2026-11-01/`; the hand classification of 33 reads is `classification.tsv` there, and the full cold read runs are `fullruns.txt`. The figures, as item 7.1.1 of the approval-walk merge-lane-2-open-rulings-2026-10-30 gave them to the user:
+On 2026-11-01 a subagent of merge-lane-2 measured 284 waits between the user's answer and the next item, across 9 agent-seats, 2026-10-18 to 2026-11-01. Its data and scripts are in `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/merge-lane-2/walk-wrap-up-check-measurement-2026-11-01/`; the hand classification of 33 reads is `classification.tsv` there, and the full cold read runs are `fullruns.txt`. The figures, as item 7.1.1 of the approval-walk merge-lane-2-open-rulings-2026-10-30 gave them to the user:
 
 - The median wait is 3.4 minutes. With no fast read it is 0.7 minutes; with one it is 5.2 minutes, and the read itself takes a median of 196 seconds. Fast reads are at least 37% of all the waiting.
 - The walk-me-through skill already asks for one fast read of the whole walk before item 1. Then it asks for a fast read of each item that is revised, and again after each fix that is more than an obvious-error-fix. Items are almost never read again unchanged: of 444 pairs of reads of the same item, only 4 were of identical text. The repeats are that read, fix, read loop, most within 5 minutes.
@@ -27,9 +27,9 @@ The approval keeps the Gemini fast read as the reader. The full cold read at the
 
 ## The three changes
 
-1. **Read the next item ahead.** The walk check program, `nc-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py`, gets a step that starts the fast read of item N+1 in the background as item N is shown, keyed to a hash of item N+1's text. When the user answers item N, the agent uses that read if item N+1's text is unchanged, and waits for it if it is still running; if item N+1's text changed meanwhile, the program reads it again.
+1. **Read the next item ahead.** The walk check program, `nn-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py`, gets a step that starts the fast read of item N+1 in the background as item N is shown, keyed to a hash of item N+1's text. When the user answers item N, the agent uses that read if item N+1's text is unchanged, and waits for it if it is still running; if item N+1's text changed meanwhile, the program reads it again.
 2. **Reread after a fix only when the fix touches facts.** After a fast read's fixes, the walk check program compares the item before and after, and starts another read only when the change touches a number, a path, a file or program name, a link, or the item's line that begins "Recommendation:", "The alternative:" or a `#case_against` tag such as `#case_against_weak`. Today `.claude/skills/walk-me-through/SKILL.md` leaves that call to the agent: "give it another fast read if a fix was more than an obvious-error-fix". The pull request for this change also changes that sentence of the skill, and the new wording goes to the user for approval before it merges, as every standing instruction does.
-3. **Stop the /Volumes false alarm.** `nc-systems/cold-read/cold-read-fast-read.py` rewrites `file:///Volumes/nedhome/` to `/home/nedlern/` in the copy of the text it hands the reader, and the full cold read, `nc-systems/cold-read/cold-read-grid.py`, does the same.
+3. **Stop the /Volumes false alarm.** `nn-systems/cold-read/cold-read-fast-read.py` rewrites `file:///Volumes/nedhome/` to `/home/nedlern/` in the copy of the text it hands the reader, and the full cold read, `nn-systems/cold-read/cold-read-grid.py`, does the same.
 
 ## Next action
 

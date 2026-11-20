@@ -6,7 +6,7 @@ issue: "[The walk-me-through check program reads untagged walk-minutes lines as 
 
 ## What is wrong
 
-The walk-me-through check program, `nc-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py`, decides which items of an approval-walk the user has already answered by reading the walk-minutes. A minutes line that carries an outcome tag, such as `<accepted>`, is read by that tag. A line with no outcome tag counts as deciding every item it names whenever a deciding word appears anywhere in it: approved, disapproved, accepted or rejected (`minutes_record()`, lines 508 to 544 on main). The word deferred counts the same way as a deferral. The close step then names the first item the minutes do not record as the next item to present, so a note that only mentions such a word marks items the user has not answered as answered, and the walk skips them.
+The walk-me-through check program, `nn-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py`, decides which items of an approval-walk the user has already answered by reading the walk-minutes. A minutes line that carries an outcome tag, such as `<accepted>`, is read by that tag. A line with no outcome tag counts as deciding every item it names whenever a deciding word appears anywhere in it: approved, disapproved, accepted or rejected (`minutes_record()`, lines 508 to 544 on main). The word deferred counts the same way as a deferral. The close step then names the first item the minutes do not record as the next item to present, so a note that only mentions such a word marks items the user has not answered as answered, and the walk skips them.
 
 ## What it has broken
 

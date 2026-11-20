@@ -85,9 +85,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNNER_PATH = "scripts/run-all-test-suites.py"
 FIXTURE_PATH = "scripts/git-redirecting-environment-removal-test-fixture.py"
 # The runner and the fixture both read the list from this module.
-REMOVAL_MODULE_PATH = "nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py"
+REMOVAL_MODULE_PATH = "nn-systems/general-tools/git-redirecting-environment-variables-removal-common.py"
 # The runner reads the attendance variable names from this module.
-ATTENDANCE_CHECK_MODULE_PATH = "nc-systems/general-tools/agent-session-unattended-by-user-check-common.py"
+ATTENDANCE_CHECK_MODULE_PATH = "nn-systems/general-tools/agent-session-unattended-by-user-check-common.py"
 REMOVAL_CALL = "remove_git_redirecting_environment_variables_from_this_process()"
 
 # A git `init` argument as the suites write it, in a list or as a helper's
@@ -100,9 +100,9 @@ GIT_INIT_ARGUMENT = re.compile(r"""["']init["']""")
 # run directly with GIT_DIR naming a throwaway repository left it
 # byte-identical.
 REMOVE_THE_VARIABLES_ANOTHER_WAY = {
-    "nc-systems/cold-read/tests/cold-read-scratch-repository-test-fixture.py":
+    "nn-systems/cold-read/tests/cold-read-scratch-repository-test-fixture.py":
         "its git() removes the runner's six from the environment of every git it runs",
-    "nc-systems/cold-read/tests/"
+    "nn-systems/cold-read/tests/"
     "cold-read-scratch-repository-fixture-ignores-git-redirecting-environment-test.py":
         "it removes the six from its own environment before it runs git",
     "scripts/branch-conflict-check-test.py":
@@ -128,17 +128,17 @@ SUITES_RUN_WITH_GIT_DIR = {
         "scripts/dangling-path-citation-check.py", "scripts/md-drift-lint.py",
         "scripts/branch-leaves-no-citations-of-removed-paths-test.py",
         "scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py",
-        "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py",
-        "nc-systems/general-tools/failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py"),
+        "nn-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py",
+        "nn-systems/general-tools/failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py"),
 }
 SUITE_RUN_WITH_EVERY_VARIABLE = "scripts/code-review-codex-cell-test.py"
 FILES_THE_SUITE_RUN_WITH_EVERY_VARIABLE_READS = (
     "scripts/code-review-codex-cell.py",
     "docs/agents/pr-reviewer-instructions.md",
-    "nc-systems/cold-read/cold-read-cell-common.py",
-    "nc-systems/cold-read/cold-read-record-names-common.py",
-    "nc-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py",
-    "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py",
+    "nn-systems/cold-read/cold-read-cell-common.py",
+    "nn-systems/cold-read/cold-read-record-names-common.py",
+    "nn-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py",
+    "nn-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py",
 )
 
 # Where each variable points, relative to the named repository's top

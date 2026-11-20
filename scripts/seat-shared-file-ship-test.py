@@ -34,12 +34,12 @@ import traceback
 
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 SHIP = SCRIPTS_DIR / "seat-shared-file-ship.py"
-RECORD_SHIP = SCRIPTS_DIR.parent / "nc-systems" / "cold-read" / "cold-read-record-ship.py"
+RECORD_SHIP = SCRIPTS_DIR.parent / "nn-systems" / "cold-read" / "cold-read-record-ship.py"
 DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
 SEAT_VARIABLE = "CLAUDE_CODE_TASK_LIST_ID"
 RULED_RECORDS_DESTINATION = (
-    "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records")
-RULED_SEATS_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/seats"
+    "nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records")
+RULED_SEATS_DESTINATION = "nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats"
 
 # The stub for both `ssh` and `rsync`: append argv to the log named in the
 # environment, and answer the call that renames the staged file into place as
@@ -135,11 +135,11 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
           result.returncode == 64 and "no seat name" in result.stderr,
           result.stdout + result.stderr)
     check("the refusal names the environment variable and the shape it wants",
-          SEAT_VARIABLE in result.stderr and "nedschorus-<seat>-tasks" in result.stderr,
+          SEAT_VARIABLE in result.stderr and "nedsnodes-<seat>-tasks" in result.stderr,
           result.stderr)
 
     result = ship(local_destination, str(survey),
-                  extra_env={SEAT_VARIABLE: "nedschorus-cold-read-research-tasks"})
+                  extra_env={SEAT_VARIABLE: "nedsnodes-cold-read-research-tasks"})
     check("the seat name is taken from the supervisor's task-list id",
           result.returncode == 0
           and (seats_root / "cold-read-research" / survey.name).is_file(),
@@ -227,7 +227,7 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
           result.stderr)
     check("the replacement tells the agent to match the displaced digest across the snapshots at the file's full path in the store on ned-box, not to search by path: a replaced file keeps its path, so the newest snapshots holding it hold the replacement",
           ("sha256sum /mnt/backup/timeshift/snapshots/*/localhost"
-           "/home/nedlern/nedschorus-logs/seats/cold-read-research/measurement.md") in result.stderr
+           "/home/nedlern/nedsnodes-logs/seats/cold-read-research/measurement.md") in result.stderr
           and "find-deleted-path-across-backups" not in result.stderr
           and "sudo timeshift --list" not in result.stderr
           and "every ten minutes" not in result.stderr, result.stderr)
@@ -243,7 +243,7 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
     check("a stored name with a space is quoted in the printed command, with the snapshot glob outside the quotes",
           result.returncode == 0 and "REPLACED" in result.stderr
           and ("sha256sum /mnt/backup/timeshift/snapshots/*/localhost"
-               "'/home/nedlern/nedschorus-logs/seats/cold-read-research/measurement two.md'")
+               "'/home/nedlern/nedsnodes-logs/seats/cold-read-research/measurement two.md'")
           in result.stderr, result.stderr)
 
     # rsync's own quick check is size and modification time to the second, and
@@ -348,7 +348,7 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
     # that matters is that they do not fight: an old README is replaced, not
     # extended, whichever program gets there first.
     readme = store_root / "README.md"
-    readme.write_text("# nedschorus-logs\n\n- `cold-read-records/` -- runs.\n",
+    readme.write_text("# nedsnodes-logs\n\n- `cold-read-records/` -- runs.\n",
                       encoding="utf-8")
     result = ship(local_destination, str(good), "--seat", "late-seat")
     text = readme.read_text(encoding="utf-8")
@@ -443,8 +443,8 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
     check("the remote script is the record shipper's, not a copy of it",
           " ".join(readme_calls[0]).endswith(
               record_shipper.make_directory_and_refresh_readme_script(
-                  "/home/nedlern/nedschorus-logs/seats/cold-read-research",
-                  "/home/nedlern/nedschorus-logs")),
+                  "/home/nedlern/nedsnodes-logs/seats/cold-read-research",
+                  "/home/nedlern/nedsnodes-logs")),
           str(readme_calls))
     check("one ssh call asks for the stored file's sha256 before copying",
           any("sha256sum" in " ".join(c) for c in ssh_calls), str(ssh_calls))
@@ -482,7 +482,7 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
           "written again here",
           all(before.endswith("shipper.")
               for before in ship_code.split("LOG_STORE")[:-1])
-          and "nedschorus-logs" not in ship_code,
+          and "nedsnodes-logs" not in ship_code,
           "the seats program should hold no store constant of its own")
 
     # --- IN-PROCESS: on ned-box the copy is local, the citation is not ------
