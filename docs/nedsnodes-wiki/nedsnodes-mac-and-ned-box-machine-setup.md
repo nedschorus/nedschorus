@@ -29,9 +29,9 @@ Verified 2026-09-14, every row checked on the box itself.
 
 | What | Full path | Branch |
 |---|---|---|
-| Main checkout | `/home/nedlern/Projects/nedschorus` | `main` |
+| Main checkout | `/home/nedlern/Projects/nedsnodes` | `main` |
 | Agent-homes | `/home/nedlern/agents/<name>` | detached at `origin/main` |
-| Task worktrees | `/home/nedlern/Projects/nedschorus/.claude/worktrees/<name>` | per job |
+| Task worktrees | `/home/nedlern/Projects/nedsnodes/.claude/worktrees/<name>` | per job |
 | Handoff files | `/home/nedlern/.claude/handoffs/<agent>-handoff.md` | — |
 | User-level instructions | `/home/nedlern/.claude/CLAUDE.md` | — |
 | Auto-memory | `/home/nedlern/.claude/projects/-home-nedlern-Projects-nedsnodes/memory/` | — |
@@ -59,14 +59,14 @@ Two naming notes that hold on both machines. A handoff file is `<agent>-handoff.
 
 | Goal | Type it on | Command |
 |---|---|---|
-| Reach a named agent on the box | Mac | `/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu <name>` |
-| Run a named agent on the Mac | Mac | `/Users/el/Projects/nedschorus/scripts/launch-claude-mac <name>` |
-| List agents running on a machine | Mac | run `/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu` (ned-box's agent-seats) or `/Users/el/Projects/nedschorus/scripts/launch-claude-mac` (the Mac's) with no name |
-| See every checkout of this machine's clone and its branch | either | `git -C ~/Projects/nedschorus worktree list` |
-| Update the box's main checkout | Mac | `ssh nedlern@ned-box 'git -C ~/Projects/nedschorus pull'` |
-| Clear stale worktree registrations | either | `git -C ~/Projects/nedschorus worktree prune` |
+| Reach a named agent on the box | Mac | `/Users/el/Projects/nedsnodes/scripts/launch-claude-ubuntu <name>` |
+| Run a named agent on the Mac | Mac | `/Users/el/Projects/nedsnodes/scripts/launch-claude-mac <name>` |
+| List agents running on a machine | Mac | run `/Users/el/Projects/nedsnodes/scripts/launch-claude-ubuntu` (ned-box's agent-seats) or `/Users/el/Projects/nedsnodes/scripts/launch-claude-mac` (the Mac's) with no name |
+| See every checkout of this machine's clone and its branch | either | `git -C ~/Projects/nedsnodes worktree list` |
+| Update the box's main checkout | Mac | `ssh nedlern@ned-box 'git -C ~/Projects/nedsnodes pull'` |
+| Clear stale worktree registrations | either | `git -C ~/Projects/nedsnodes worktree prune` |
 
-Both launchers are attach-or-create: running a name that is already up attaches to that agent rather than starting a second copy. Within one machine, duplicate agents are prevented three ways — the launcher asks the agent-seat's own tmux socket and the default socket for a session of that name before creating one, the supervisor holds an exclusive per-agent `flock` on its lock file for its whole life (the kernel releases the lock when the supervisor dies, so the next supervisor claims the lock at once), and an agent's home directory is derived from its name rather than chosen. The first of those changed on 2026-08-21, when each agent-seat moved to its OWN tmux server (`tmux -L <name>`, one socket per agent-seat, after a single server's crash killed three Mac agent-seats at once). A session name is therefore no longer unique across the machine, only within one agent-seat's socket, so the launcher asks the agent-seat's own socket, and its no-name listing walks the whole socket directory rather than asking one server. Across machines no launcher state or lock is shared, so nothing stops the same name on both. But the name is also the agent-seat's address for cross-session messages and its directory in the log-store (`seats/<seat>/`), so two agent-seats with one name confuse a sender and overwrite each other's shared files. One name means one agent-seat across both machines (see `nedschorus-agent-seat-model.md`), and nothing enforces that across machines.
+Both launchers are attach-or-create: running a name that is already up attaches to that agent rather than starting a second copy. Within one machine, duplicate agents are prevented three ways — the launcher asks the agent-seat's own tmux socket and the default socket for a session of that name before creating one, the supervisor holds an exclusive per-agent `flock` on its lock file for its whole life (the kernel releases the lock when the supervisor dies, so the next supervisor claims the lock at once), and an agent's home directory is derived from its name rather than chosen. The first of those changed on 2026-08-21, when each agent-seat moved to its OWN tmux server (`tmux -L <name>`, one socket per agent-seat, after a single server's crash killed three Mac agent-seats at once). A session name is therefore no longer unique across the machine, only within one agent-seat's socket, so the launcher asks the agent-seat's own socket, and its no-name listing walks the whole socket directory rather than asking one server. Across machines no launcher state or lock is shared, so nothing stops the same name on both. But the name is also the agent-seat's address for cross-session messages and its directory in the log-store (`seats/<seat>/`), so two agent-seats with one name confuse a sender and overwrite each other's shared files. One name means one agent-seat across both machines (see `nedsnodes-agent-seat-model.md`), and nothing enforces that across machines.
 
 ## What crosses between machines, and what does not
 
