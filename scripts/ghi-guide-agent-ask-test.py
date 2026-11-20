@@ -591,7 +591,7 @@ finally:
 APPROVED_NOT_ABOUT_ISSUES_MESSAGE = (
     "Not a question about GitHub issues: ghi-guide-agent reports which issues relate to a subject.\n"
     'Ask again as: scripts/ghi-guide-agent-ask.py "Which issues cover <your subject>?"\n'
-    'If that is refused too, search yourself: gh issue list --repo nedschorus/nedschorus '
+    'If that is refused too, search yourself: gh issue list --repo nedsnodes/nedsnodes '
     '--state all --search "<terms>"\n')
 ESCALATE_SENTENCE = ("the 2026-09-19 body ruling in #46 may not hold after "
                      "the 2026-09-29 ruling in #783")
@@ -698,7 +698,9 @@ try:
     check("any other reply has no caller message",
           ghi_ask.caller_message_for_passthrough_reply("read #1, #2") is None
           and ghi_ask.caller_message_for_passthrough_reply(
-              "Out-of-scope reasons are listed in #5") is None)
+              "Out-of-scope reasons are listed in #5") is None
+          and ghi_ask.caller_message_for_passthrough_reply(
+              "Not-about-issues reasons are listed in #5") is None)
     check("the two bare replies are still recognized case-insensitively",
           ghi_ask.caller_message_for_passthrough_reply("NOT-ABOUT-ISSUES")[1] == 2
           and ghi_ask.caller_message_for_passthrough_reply("Ask-User-About-Ruling: x")[1] == 3
@@ -854,8 +856,8 @@ def _commit(repository, name, content, message):
 
 
 def _make_origin_and_seat(root, seat_name):
-    """An origin repository and a seat checkout of it on its own branch —
-    the box's layout: ghi-guide-agent sits on a branch named `ghi-guide-agent`, never main."""
+    """An origin repository and a seat checkout of it detached at origin/main —
+    the box's layout: ghi-guide-agent's agent-home rests detached, on no branch."""
     origin = root / f"{seat_name}-origin"
     origin.mkdir()
     _git(["init", "-q", "-b", "main"], origin)
@@ -866,7 +868,7 @@ def _make_origin_and_seat(root, seat_name):
     _git(["clone", "-q", str(origin), str(seat)], root)
     _git(["config", "user.email", "test@example.invalid"], seat)
     _git(["config", "user.name", "ghi test"], seat)
-    _git(["checkout", "-q", "-b", "ghi-guide-agent"], seat)
+    _git(["checkout", "-q", "--detach", "origin/main"], seat)
     return origin, seat
 
 
@@ -880,8 +882,10 @@ with tempfile.TemporaryDirectory() as temporary:
           (seat / "design.md").exists(), line)
     check("and it says how far it moved",
           "refreshed the seat checkout 1 commit(s)" in line, line)
-    check("on its own branch, not main — the reference-checkout rule does not apply here",
-          _git(["rev-parse", "--abbrev-ref", "HEAD"], seat).stdout.strip() == "ghi-guide-agent")
+    check("and it stays detached, at origin/main — the reference-checkout rule does not apply here",
+          _git(["symbolic-ref", "-q", "HEAD"], seat).returncode == 1
+          and _git(["rev-parse", "HEAD"], seat).stdout.strip()
+          == _git(["rev-parse", "origin/main"], seat).stdout.strip())
 
     check("a checkout already level with main says nothing",
           ghi_ask.fast_forward_seat_checkout(seat) == "",
@@ -907,10 +911,10 @@ with tempfile.TemporaryDirectory() as temporary:
           "has 1 uncommitted tracked change(s)" in line
           and not (seat / "design.md").exists(), line)
 
-    # ghi-guide-agent commits its own document-side link repairs, so a checkout
-    # carrying a commit main does not have is a real state, not debris.
+    # A commit main does not have is someone's work, even though the
+    # pre-commit hook refuses commits in an agent-home: it may predate the hook.
     origin, seat = _make_origin_and_seat(root, "ff-diverged")
-    _commit(seat, "repair.md", "a link repair\n", "ghi-guide-agent repairs a link")
+    _commit(seat, "work.md", "work of its own\n", "a commit main does not have")
     _commit(origin, "design.md", "new design\n", "a design lands on main")
     head_before = _git(["rev-parse", "HEAD"], seat).stdout.strip()
     line = ghi_ask.fast_forward_seat_checkout(seat)

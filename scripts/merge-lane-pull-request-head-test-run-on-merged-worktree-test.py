@@ -96,12 +96,14 @@ def main():
             call["argv"][call["argv"].index("--checkout") + 1] for call in calls] == [
             str(review_worktrees_directory(helpers) / "pr7-merged"),
             str(review_worktrees_directory(helpers) / "pr8-merged")], detail)
-        check("the run gets the paths under the worktrees and outputs directory",
+        check("the run gets the paths under the worktrees and outputs directory, selecting by hr/store and saving its recordings under hr/pr<n>",
               calls and calls[0]["argv"] == [
                   "--checkout", str(review_worktrees_directory(helpers) / "pr7-merged"),
                   "--log-store-root", str(helpers / "hr" / "pr7" / "log-store"),
                   "--temporary-directory", str(helpers / "hr" / "pr7" / "tmp"),
-                  "--recorded-inputs-directory", str(helpers / "hr" / "store")],
+                  "--recorded-inputs-directory", str(helpers / "hr" / "store"),
+                  "--save-recorded-inputs-to-directory",
+                  str(helpers / "hr" / "pr7" / "recorded-inputs")],
               json.dumps(calls))
         check("the log-store root and temporary directory are made",
               (helpers / "hr" / "pr7" / "log-store").is_dir()

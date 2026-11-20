@@ -174,6 +174,18 @@ try:
         common.shutil = shutil
     check("a directory another run removed first is neither counted nor reported, and the next is still removed",
           kept == [] and removed == [staying] and not staying.exists(), (removed, kept))
+
+    # Literal ages, not ones derived from the module's constant, so a change to the three hours fails here.
+    unchanged_under_three_hours = temp_dir / f"{PREFIX}under3hr"
+    unchanged_over_three_hours = temp_dir / f"{PREFIX}over3hrs"
+    now = time.time()
+    for path, age in ((unchanged_under_three_hours, 10700), (unchanged_over_three_hours, 10900)):
+        path.mkdir()
+        os.utime(path, (now - age, now - age))
+    removed, kept = common.remove_scratch_directories_killed_runs_left(PREFIX, temp_dir=temp_dir, now=now)
+    check("a directory unchanged for 10700 seconds is kept and one unchanged for 10900 seconds is removed",
+          unchanged_under_three_hours.is_dir() and not unchanged_over_three_hours.exists()
+          and removed == [unchanged_over_three_hours] and kept == [], (removed, kept))
 finally:
     shutil.rmtree(temp_dir, ignore_errors=True)
 

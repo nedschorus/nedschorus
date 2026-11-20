@@ -124,10 +124,14 @@ def run_ask_user_before_restart_without_a_terminal_case(workspace: Path):
           result.returncode == 0 and "EOFError" not in result.stderr, result.stderr[-300:])
     check("ask-user-before-restart without a terminal says why it stopped",
           "no terminal to ask on" in result.stdout, result.stdout[-300:])
-    check("ask-user-before-restart without a terminal names the agent-seat, its launchers by their path in the Mac checkout, and the handoff file",
+    launcher = ("launch-claude-ubuntu"
+                if supervisor.handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box()
+                else "launch-claude-mac")
+    check("ask-user-before-restart without a terminal names the agent-seat, has the agent ask the user to run "
+          "this machine's launcher in a Terminal on his Mac, and names the handoff file",
           "the agent-seat noterm's session-handoff" in result.stdout
-          and "`/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu noterm`" in result.stdout
-          and "`/Users/el/Projects/nedschorus/scripts/launch-claude-mac noterm`" in result.stdout
+          and f"To start it again, ask the user to run `/Users/el/Projects/nedschorus/scripts/{launcher} noterm` "
+              "in a Terminal on his Mac." in result.stdout
           and str(handoff_directory / "noterm-handoff.md") in result.stdout,
           result.stdout[-600:])
 
@@ -848,9 +852,9 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
 
     kept_marker = supervisor.KEPT_FOR_RECORDS_MARKER + "cold-read-records/r-2026-10-19 "
     kept_summary = supervisor.summarize_worktree_cleanup_output([
-        "failed-ship-wt" + kept_marker + "(FAILED: r-2026-10-19 — ned-box unreachable)",
+        "failed-ship-wt" + kept_marker + "(FAILED: r-2026-10-19 — nedlern@ned-box unreachable)",
         "failed-ship-wt" + supervisor.KEPT_FOR_RECORDS_MARKER
-        + "sanity-check-records/s-2026-10-19 (FAILED: s-2026-10-19 — ned-box unreachable)",
+        + "sanity-check-records/s-2026-10-19 (FAILED: s-2026-10-19 — nedlern@ned-box unreachable)",
         "silent-ship-wt" + kept_marker
         + "(the shipper printed nothing (exit 1): NotADirectoryError: store)",
         "locked-wt: removal FAILED — locked",
@@ -985,7 +989,7 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
 
     # A printed failure explains a nonzero exit only when the cleaner went on to finish.
     kept_for_record_line = ("rec-wt" + supervisor.KEPT_FOR_RECORDS_MARKER
-                            + "cold-read-records/r (FAILED: ned-box unreachable)")
+                            + "cold-read-records/r (FAILED: nedlern@ned-box unreachable)")
     for kind, printed in (
             ("worktree kept for an unshipped record", f"print({kept_for_record_line!r})\n"),
             ("failed removal", "print('locked-wt: removal FAILED — locked')\n")):
@@ -1106,7 +1110,7 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
 
 def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
     """The ruling of 2026-09-21 (GHI [The handoff-supervisor resumes a session
-    that died without a handoff, instead of stopping the seat](https://github.com/nedschorus/nedschorus/issues/613)):
+    that died without a handoff, instead of stopping the seat](https://github.com/nedsnodes/nedsnodes/issues/613)):
     a session that dies without writing a handoff is resumed, chosen by how it
     died, under a budget of one resume that produces no new work.
 
@@ -1330,6 +1334,13 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
           all(supervisor.AGENT_EXIT_CODE_STATE_KEY not in launched_state
               for launched_state in looping.state_at_each_launch),
           str(looping.state_at_each_launch))
+    looping_session_id = looping.launches[0][0]
+    check("BUDGET: the console says launching for the first launch and resuming for the resume",
+          [line for line in looping.printed.splitlines()
+           if f" session {looping_session_id} (generation 0)" in line]
+          == [f"handoff-supervisor: launching session {looping_session_id} (generation 0)",
+              f"handoff-supervisor: resuming session {looping_session_id} (generation 0)"],
+          looping.printed[-600:])
 
     # 4. THE BUDGET RESETS. The second session does real work before dying, so
     # the resume that produced it is not a workless one and the budget comes
@@ -1353,7 +1364,7 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
     # 5a. A SUCCESSOR STARTS WITH THE BUDGET WHOLE. The predecessor spends its
     # one resume, works, and writes a handoff; the successor works and dies.
     # Found at c7419d4 by merge-lane-2's review of PR [The handoff-supervisor
-    # resumes a session that died without a handoff](https://github.com/nedschorus/nedschorus/pull/651):
+    # resumes a session that died without a handoff](https://github.com/nedsnodes/nedsnodes/pull/651):
     # the successor was measured against its predecessor's turn count and
     # spent budget, refused, and the seat went dark.
     reincarnated = supervise_a_seat_whose_sessions_die(

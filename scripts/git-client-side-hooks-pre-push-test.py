@@ -75,7 +75,7 @@ FAKE_TEST_SUITES_RUNNER_LOG_VARIABLE = "PRE_PUSH_TEST_FAKE_TEST_SUITES_RUNNER_LO
 FAKE_GH_OPEN_PULL_REQUESTS_VARIABLE = "PRE_PUSH_TEST_FAKE_GH_OPEN_PULL_REQUESTS"
 FAKE_GH_FAILURE_VARIABLE = "PRE_PUSH_TEST_FAKE_GH_FAILURE"
 FAKE_GH_LOG_VARIABLE = "PRE_PUSH_TEST_FAKE_GH_LOG"
-ESCAPE_HATCH_VARIABLE = "CLAUDE_MERGE_LANE_ASKED_FOR_THIS_REWRITE"
+RETIRED_EXEMPTION_VARIABLE = "CLAUDE_MERGE_LANE_ASKED_FOR_THIS_REWRITE"
 SESSION_VARIABLE = "CLAUDE_CODE_BRIDGE_SESSION_ID"
 LOCAL_SESSION_VARIABLE = "CLAUDE_CODE_SESSION_ID"
 FAKE_SESSION = "session_0FakePrePushTestSessionAAAA"
@@ -416,7 +416,6 @@ class Scenario:
         env[FAKE_CHECK_LOG_VARIABLE] = str(self.fake_check_log)
         env[FAKE_TEST_SUITES_RUNNER_LOG_VARIABLE] = str(self.fake_test_suites_runner_log)
         env[FAKE_GH_LOG_VARIABLE] = str(self.fake_gh_log)
-        env.pop(ESCAPE_HATCH_VARIABLE, None)
         path = self.path_override if self.path_override is not None else env.get("PATH", "")
         env["PATH"] = str(self.fake_gh_directory) + os.pathsep + path
         env.update(self.extra_environment)
@@ -1333,14 +1332,13 @@ def run_open_pull_request_branch_cases(scratch):
               f"request's head is refused, naming the branch and the pull request",
               was_refused(result) and refused_header in result.stderr
               and scenario.origin_ref("clean") == pushed, result.describe())
-    check("open pull request check: the refusal says to push a new commit on top, to do what "
-          "scripts/branch-conflict-check.py reports for a conflict, and how merge-lane-2 lets "
-          "the push through",
+    check("open pull request check: the refusal says to push a new commit on top and to do what "
+          "scripts/branch-conflict-check.py reports for a conflict, and offers no way past the "
+          "refusal",
           "new commit on top of origin/clean" in result.stderr
           and "If the branch conflicts with main: run python3 scripts/branch-conflict-check.py "
           "--pull-request 4242, and do what it reports." in result.stderr
-          and f"{ESCAPE_HATCH_VARIABLE}=1 directly in front of the git push command"
-          in result.stderr, result.describe())
+          and RETIRED_EXEMPTION_VARIABLE not in result.stderr, result.describe())
 
     # An unforced rewrite never reaches the hook: git rejects it first.
     scenario = fresh("unforced-rewrite")
@@ -1418,21 +1416,16 @@ def run_open_pull_request_branch_cases(scratch):
     check("open pull request check: deleting a branch with no open pull request goes through",
           went_through(result) and scenario.origin_ref("conflicting") is None, result.describe())
 
-    # The escape merge-lane-2 gives, the same assignment the Bash force-push guard reads.
-    scenario = fresh("escape")
-    escaped_old_head = scenario.origin_ref("clean")
+    # The retired exemption: the variable once let a forced rewrite through.
+    scenario = fresh("retired-exemption")
+    pushed = scenario.origin_ref("clean")
     rewrite(scenario, "clean")
-    scenario.extra_environment[ESCAPE_HATCH_VARIABLE] = "1"
+    scenario.extra_environment[RETIRED_EXEMPTION_VARIABLE] = "1"
     result = scenario.push("--force", "origin", "clean")
-    check(f"open pull request check: {ESCAPE_HATCH_VARIABLE}=1 lets a forced rewrite through",
-          scenario.origin_ref("clean") == scenario.head("clean")
-          and "this push is refused, because its update" not in result.stderr, result.describe())
-    escaped_ref = "refs/force-pushed-old-heads/clean/" + escaped_old_head
-    check(f"old head save: a forced rewrite {ESCAPE_HATCH_VARIABLE}=1 lets through still saves "
-          f"the commit it replaces",
-          f"is saved under {escaped_ref}." in result.stderr
-          and scenario.saved_old_head(escaped_ref) == escaped_old_head,
-          result.describe())
+    check(f"open pull request check: a forced rewrite of an open pull request's head is refused "
+          f"with {RETIRED_EXEMPTION_VARIABLE}=1 set",
+          was_refused(result) and refused_header in result.stderr
+          and scenario.origin_ref("clean") == pushed, result.describe())
 
     # Only origin is checked.
     scenario = fresh("other-remote")
@@ -1456,7 +1449,7 @@ def run_open_pull_request_branch_cases(scratch):
           and "Tell the user this whole message, and do not push clean again until he answers."
           in result.stderr
           and "Run gh auth status" not in result.stderr
-          and "CLAUDE_MERGE_LANE_ASKED_FOR_THIS_REWRITE=1" in result.stderr
+          and RETIRED_EXEMPTION_VARIABLE not in result.stderr
           and scenario.origin_ref("clean") == pushed, result.describe())
     result = scenario.push("origin", "--delete", "conflicting")
     check("open pull request check: when gh is logged out, a deletion is refused",
@@ -1539,7 +1532,7 @@ def run_open_pull_request_branch_cases(scratch):
              "gh pr list printed output that is not JSON")]:
         printed = io.StringIO()
         try:
-            status = loaded.main(["origin", "url"], pushed_refs, printed, {},
+            status = loaded.main(["origin", "url"], pushed_refs, printed,
                                  runner_whose_gh(behaviour))
         except Exception as error:  # A crash is this case's failure, not the suite's.
             status = repr(error)
@@ -1575,7 +1568,7 @@ def run_open_pull_request_branch_cases(scratch):
              loaded.EXIT_REFUSE_PUSH, refused_header)]:
         printed = io.StringIO()
         try:
-            status = loaded.main(["origin", "url"], pushed_refs, printed, {},
+            status = loaded.main(["origin", "url"], pushed_refs, printed,
                                  runner_whose_git(cat_file, is_ancestor, gh_behaviour))
         except Exception as error:  # A crash is this case's failure, not the suite's.
             status = repr(error)
@@ -1596,7 +1589,7 @@ def run_open_pull_request_branch_cases(scratch):
                     f"(delete) {'0' * 40} refs/heads/conflicting {'3' * 40}\n")
     printed = io.StringIO()
     try:
-        status = loaded.main(["origin", "url"], several_refs, printed, {},
+        status = loaded.main(["origin", "url"], several_refs, printed,
                              runner_whose_git(present, exits(128, "fatal: injected"),
                                               gh_with_open_pull_request_on("conflicting")))
     except Exception as error:  # A crash is this case's failure, not the suite's.
@@ -1634,24 +1627,20 @@ def run_open_pull_request_branch_cases(scratch):
         return save_failing_at("update-ref", "", cat_file=missing)(command, **options)
 
     old_head_ref = f"refs/force-pushed-old-heads/clean/{'2' * 40}"
-    for label, runner, environment, detail in [
+    for label, runner, detail in [
             ("the fetch of a replaced commit this clone lacks does not answer in time",
-             fetch_times_out, {},
+             fetch_times_out,
              "git fetch --quiet did not answer within %d seconds."
              % loaded.GIT_FETCH_TIMEOUT_SECONDS),
             ("update-ref fails", save_failing_at("update-ref", "fatal: injected lock failure"),
-             {}, "git update-ref " + old_head_ref + " exited with status 128: fatal: injected "
+             "git update-ref " + old_head_ref + " exited with status 128: fatal: injected "
              "lock failure"),
             ("the fetch of a replaced commit this clone lacks fails",
-             save_failing_at("fetch", "fatal: injected fetch failure", cat_file=missing), {},
-             "git fetch --quiet exited with status 128: fatal: injected fetch failure"),
-            (f"update-ref fails under {ESCAPE_HATCH_VARIABLE}=1",
-             save_failing_at("update-ref", "fatal: injected lock failure"),
-             {ESCAPE_HATCH_VARIABLE: "1"}, "git update-ref " + old_head_ref + " exited with status "
-             "128: fatal: injected lock failure")]:
+             save_failing_at("fetch", "fatal: injected fetch failure", cat_file=missing),
+             "git fetch --quiet exited with status 128: fatal: injected fetch failure")]:
         printed = io.StringIO()
         try:
-            status = loaded.main(["origin", "url"], pushed_refs, printed, environment, runner)
+            status = loaded.main(["origin", "url"], pushed_refs, printed, runner)
         except Exception as error:  # A crash is this case's failure, not the suite's.
             status = repr(error)
         check(f"old head save: when {label}, the forced update is refused, saying what failed "
@@ -1663,21 +1652,19 @@ def run_open_pull_request_branch_cases(scratch):
               and "do not push clean again until he answers." in printed.getvalue(),
               (status, printed.getvalue()))
 
-    # An update git cannot check is refused, under the escape too, since it would go through
-    # with its replaced commit saved nowhere.
-    for label, environment in (("", {}), (f" under {ESCAPE_HATCH_VARIABLE}=1", {ESCAPE_HATCH_VARIABLE: "1"})):
-        printed = io.StringIO()
-        status = loaded.main(["origin", "url"], pushed_refs, printed, environment,
-                             runner_whose_git(present, exits(128, "fatal: injected"),
-                                              gh_with_no_open_pull_request))
-        check(f"old head save{label}: an update git cannot check is refused, exit 10, naming it "
-              f"and saying why",
-              status == loaded.EXIT_REFUSE_PUSH
-              and "pre-push: this push is refused, because whether its update to branch clean on "
-              "origin builds on origin/clean could not be checked" in printed.getvalue()
-              and "whether this push's update to branch clean is a fast-forward could not be checked"
-              in printed.getvalue() and "is saved under" not in printed.getvalue(),
-              (status, printed.getvalue()))
+    # An update git cannot check is refused, since it would go through with its replaced commit
+    # saved nowhere.
+    printed = io.StringIO()
+    status = loaded.main(["origin", "url"], pushed_refs, printed,
+                         runner_whose_git(present, exits(128, "fatal: injected"),
+                                          gh_with_no_open_pull_request))
+    check("old head save: an update git cannot check is refused, exit 10, naming it and saying why",
+          status == loaded.EXIT_REFUSE_PUSH
+          and "pre-push: this push is refused, because whether its update to branch clean on "
+          "origin builds on origin/clean could not be checked" in printed.getvalue()
+          and "whether this push's update to branch clean is a fast-forward could not be checked"
+          in printed.getvalue() and "is saved under" not in printed.getvalue(),
+          (status, printed.getvalue()))
 
     # The test helper origin_ref tells a missing ref from a git failure.
     broken = Scenario(scratch, "origin-ref-broken-origin", real)

@@ -40,9 +40,14 @@ scripts/recover-crashed-seats.py makes (assess_seat), and:
 One rule says whether a death is already handled (death_already_handled): the
 watcher records the seat supervisor's last poll when it handles a death, and
 the death stays handled until that supervisor, or a new one, polls later. A
-later poll shows the seat ran again, so its next death is a new crash. Times
-are compared as parsed moments at the supervisor's own precision, which
-carries microseconds. A restart that succeeded counts as a sighting of the
+later poll shows the seat ran again, so its next death is a new crash. Each
+death is reported once, whichever verdict it is first confirmed under: a
+verdict that changes over the same death, as when a passing process makes
+recovery refuse a seat with a recorded exit, reports nothing more. A crash
+beneath a refusal already reported is still restarted, because that report
+restarted nothing; if that restart fails, its failure is reported, the one
+death reported a second time. Times are compared as parsed moments at the
+supervisor's own precision, which carries microseconds. A restart that succeeded counts as a sighting of the
 seat running; after a failed attempt the poll is recorded again, so the
 attempt's own brief run is part of the death it was handling.
 
@@ -134,6 +139,12 @@ _ned_box_home_specification = importlib.util.spec_from_file_location(
     REPOSITORY / "nc-systems" / "general-tools" / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
 ned_box_home_path_constants = importlib.util.module_from_spec(_ned_box_home_specification)
 _ned_box_home_specification.loader.exec_module(ned_box_home_path_constants)
+_mac_reference_checkout_path_constant_specification = importlib.util.spec_from_file_location(
+    "mac_reference_checkout_launcher_scripts_directory_path_constant_common",
+    REPOSITORY / "nc-systems" / "general-tools"
+    / "mac-reference-checkout-launcher-scripts-directory-path-constant-common.py")
+mac_reference_checkout_path_constant = importlib.util.module_from_spec(_mac_reference_checkout_path_constant_specification)
+_mac_reference_checkout_path_constant_specification.loader.exec_module(mac_reference_checkout_path_constant)
 _user_alerts_specification = importlib.util.spec_from_file_location(
     "user_alerts_pending_and_claimed_files_write_claim_release_and_delete_common",
     REPOSITORY / "nc-systems" / "general-tools" / "user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py")
@@ -169,8 +180,8 @@ RESTART_LIMIT_SECONDS = 3600
 # A path in a notice is rewritten to the Mac's mount, so the user can open it there.
 NED_BOX_HOME = ned_box_home_path_constants.NED_BOX_HOME
 MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home_path_constants.MAC_MOUNT_OF_NED_BOX_HOME
-# launch-claude-ubuntu is not on the Mac's PATH; the Mac's checkout holds it.
-MAC_LAUNCHER = "/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu"
+MAC_LAUNCHER = (mac_reference_checkout_path_constant.MAC_REFERENCE_CHECKOUT_LAUNCHER_SCRIPTS_DIRECTORY_PATH
+                + "/launch-claude-ubuntu")
 
 # open-html-page-in-mac-browser-from-ned-box.py's EXIT_USAGE_OR_REFUSED: the page was refused,
 # here or by the Mac, so retrying the page cannot help.
@@ -876,7 +887,10 @@ class Watcher:
                          verdict=verdict, detail=str(detail))
             return
         record.pop("left_alone_verdict", None)
-        if self.death_already_handled(seat, record):
+        # A noticed refusal handles its death, but its report restarted nothing: a crash
+        # found once the refusal clears is that same death, still the watcher's to restart.
+        crash_beneath_noticed_refusal = kind == "crash" and record.get("refusal_noticed")
+        if not crash_beneath_noticed_refusal and self.death_already_handled(seat, record):
             return
         last_seen_running = parse_timestamp(record.get("last_seen_running_at"))
         if last_seen_running is None or last_seen_running < self.boot_at:
@@ -893,14 +907,14 @@ class Watcher:
         if (self.now - first_seen_crashed).total_seconds() < CRASH_CONFIRMATION_SECONDS:
             return
         died_at = self.died_at_about(seat) or last_seen_running
+        self.mark_handled(seat, record)
         if kind == "refused":
-            # Not marked handled: once the refusal clears, as when the user closes a leftover
-            # shell by hand, the crash beneath it is restarted, after two sightings of its own.
             record["refusal_noticed"] = verdict
+            # The crash beneath the refusal gets two sightings of its own.
             record.pop("first_seen_crashed_at", None)
             self.report_refused(seat, verdict, detail, died_at)
             return
-        self.mark_handled(seat, record)
+        record.pop("refusal_noticed", None)
         if kind == "for-the-user":
             self.report_down_for_the_user(seat, verdict, detail, died_at)
             return

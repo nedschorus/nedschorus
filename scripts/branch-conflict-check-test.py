@@ -399,6 +399,11 @@ status, lines = run_without_head(fake_runner(gh_head_status=1, log=log))
 case("no --head and GitHub cannot say the pushed head: exit 2 as UNREAD",
      status == CHECK.EXIT_BAD_INVOCATION
      and lines == CHECK.pull_request_frozen_head_gh_read_failure_report_lines(605))
+case("no --head and GitHub cannot say the pushed head: the UNREAD line names "
+     "the pull request once",
+     lines[0] == "UNREAD: gh could not give pull request 605's pushed head, so "
+     "there is no commit to check; do not act on any conflict answer until a "
+     "run succeeds.")
 case("no --head and GitHub cannot say the pushed head: HEAD is not checked",
      not any(c[:2] == ["git", "merge-tree"] for c in log))
 

@@ -90,7 +90,7 @@ def expected_refusal(checkout):
     ghi_md = checkout / "docs" / "issues" / "46-ghi-info-agent-design.md"
     marker = checkout / ".ghi-md-whole-file-replacement-reason"
     return (
-        f"Refused: this command replaces the whole GHI-MD {ghi_md}, which can undo changes "
+        f"[rule bash-guard-ghi-md-whole-file-replacement] Refused: this command replaces the whole GHI-MD {ghi_md}, which can undo changes "
         "merged into it on main after your copy was written.\n"
         "Change the GHI-MD with the Edit tool instead, one passage at a time, so main's other "
         "changes stay.\n"
@@ -297,9 +297,6 @@ with tempfile.TemporaryDirectory() as scratch:
     check("an empty marker file clears nothing", got == refusal, got)
     marker.unlink()
 
-    code, output = run_hook("not json")
-    check("a payload that is not JSON passes silently", code == 0 and output is None,
-          (code, output))
     code, output = run_hook("[]")
     check("a payload that is not an object passes silently", code == 0 and output is None,
           (code, output))

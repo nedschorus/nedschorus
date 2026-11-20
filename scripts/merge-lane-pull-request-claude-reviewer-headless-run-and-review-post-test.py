@@ -643,7 +643,7 @@ def main():
               lambda: case.code != 0
               and "the posting step was interrupted, so the review in" in case.stdout
               and "may or may not have been posted" in case.stdout
-              and "gh api --paginate 'repos/nedschorus/nedschorus/pulls/7/reviews' --jq "
+              and "gh api --paginate 'repos/nedsnodes/nedsnodes/pulls/7/reviews' --jq "
                   "'.[] | select(.user.login == \"mac-claude\" and .commit_id == "
                   f"\"{case.head}\") | [.id, .state, .html_url] | @tsv'" in case.stdout
               and not case.reviewer_worktree_left(), case.detail)
@@ -757,6 +757,18 @@ def main():
                   and "PR 7: Claude review not run: " in case.stdout
                   and str(case.main_settings_file) in case.stdout
                   and expected in case.stdout, case.detail)
+
+        case = Case(scratch)
+        case.main_settings_file.write_text(json.dumps(
+            {**MAIN_PROJECT_SETTINGS, "env": {"${CLAUDE_PROJECT_DIR}_COPY": "x"}}))
+        case.run("valid")
+        settings_given = (case.claude_calls[0]["argv"][case.claude_calls[0]["argv"].index("--settings") + 1]
+                          if case.claude_calls else "")
+        check("a key naming the project directory in a form this program rewrites is rewritten "
+              "like a value, so the reviewer runs",
+              lambda: case.code == 0
+              and json.loads(settings_given)["env"] == {f"{case.main_worktree}_COPY": "x"},
+              case.detail)
 
         repository_settings = load_program().claude_code_project_settings_read_from_review_tools_worktree_at_main_with_claude_project_dir_replaced_by_its_path(
             PROGRAM.resolve().parents[1], 7)

@@ -67,7 +67,7 @@ one message for merge-lane-2: a file
 needs-a-look/pr<number>-<first 12 characters of the nc-head-commit>.txt under
 the state directory, <merge-lane-worktrees-and-outputs-directory>/merge-lane-ghi-md-edit-pull-requests-check-approve-and-merge-hold-list-reported-heads-and-needs-a-look-messages,
 by default /home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers/merge-lane-ghi-md-edit-pull-requests-check-approve-and-merge-hold-list-reported-heads-and-needs-a-look-messages.
-merge-lane-2's watcher, scripts/watch-open-pull-requests-nbd.py, prints one
+merge-lane-2's watcher, scripts/watch-open-pull-requests-hack.py, prints one
 event line for each file in needs-a-look/ at every start until the file is
 moved; the watcher loads this program by its path and calls its function
 needs_a_look_directory() for the directory. merge-lane-2 moves the file into
@@ -171,7 +171,7 @@ EXIT_STOPPED = 2
 
 def needs_a_look_directory(
         merge_lane_worktrees_and_outputs_directory=common.DEFAULT_MERGE_LANE_WORKTREES_AND_OUTPUTS_DIRECTORY):
-    """Return the directory of merge-lane-2's messages, which watch-open-pull-requests-nbd.py lists too."""
+    """Return the directory of merge-lane-2's messages, which watch-open-pull-requests-hack.py lists too."""
     return (Path(merge_lane_worktrees_and_outputs_directory) / STATE_DIRECTORY_NAME
             / MESSAGES_DIRECTORY_NAME)
 
@@ -516,8 +516,8 @@ class Invocation:
                 f"{(merge.stdout.splitlines() or [''])[-1]}")
             return
         self.failed = True
-        outcome = ("merged, but a step after the merge was not done" if merge.returncode == 3
-                   else "not merged")
+        outcome = {3: "merged, but a step after the merge was not done",
+                   4: "whether it merged is unknown"}.get(merge.returncode, "not merged")
         self.report(pull_request, f"{MERGE_PROGRAM.name} exited {merge.returncode}: {outcome}",
                     f"The last lines it printed:\n{last_lines}")
 
