@@ -37,7 +37,7 @@ production_scripts() warns about below: the writer stopped being parsed, and
 its three cases went on passing by finding nothing in a file they no longer
 read (finding 2 of the review of pull request [The handoff system moves into
 nc-systems/handoff/, except what a live seat holds]
-(https://github.com/nedschorus/nedschorus/pull/578), 2026-09-21; measured
+(https://github.com/nedsnodes/nedsnodes/pull/578), 2026-09-21; measured
 that day -- a hand-built name added to the writer failed nothing). The set
 of scripts read is derived from the layout now, and
 PROGRAMS_THAT_NEED_THESE_FILE_NAMES fails loudly when a program this suite
@@ -178,13 +178,13 @@ def module_level_suffix_constant_names(tree):
     Until 2026-09-28 these names were a hand-typed set beside
     SPELLED_OUT_NAMES, and the pull request [The name guard reads the
     supervisor's constants instead of its own
-    copy](https://github.com/nedschorus/nedschorus/pull/599) anchored only
+    copy](https://github.com/nedsnodes/nedsnodes/pull/599) anchored only
     the values. A constant added under a new name was then invisible to every
     case: the seat merge-lane-2 added a fourth *_SUFFIX constant to the
     supervisor and built a file name from it by hand, and the suite exited 0,
     while changing a known constant's value exited 1. The case is not hypothetical: the pull
     request [The handoff file's name is defined
-    once](https://github.com/nedschorus/nedschorus/pull/579) added
+    once](https://github.com/nedsnodes/nedsnodes/pull/579) added
     HANDOFF_FILE_SUFFIX as the third constant, and both lists had to be
     updated by hand. User-approved 2026-09-28, walk
     open-items-this-seat-holds-2026-09-24, item 7.
@@ -423,7 +423,7 @@ def definitions_by_constant(tree):
     remedy clause at all -- finding 3 of PR #599 coming back for that shape
     (reviewer of the pull request [A suffix constant defined twice is named
     as a duplicate, annotation
-    included](https://github.com/nedschorus/nedschorus/pull/643),
+    included](https://github.com/nedsnodes/nedsnodes/pull/643),
     2026-09-22).
 
     WHICH LINE IS IN FORCE IS A QUESTION ONLY WHEN EVERY DEFINITION IS

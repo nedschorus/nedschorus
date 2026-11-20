@@ -92,7 +92,7 @@ its successor receives.
 When a session dies WITHOUT writing a handoff, the supervisor resumes it
 rather than standing the seat down (user-ruled 2026-09-21, GHI [The
 handoff-supervisor resumes a session that died without a handoff, instead of
-stopping the seat](https://github.com/nedschorus/nedschorus/issues/613)). The
+stopping the seat](https://github.com/nedsnodes/nedsnodes/issues/613)). The
 behaviour that prompted it: on 2026-09-21 the MD-skills seat finished a turn
 cleanly, sat idle for 4m41s, was terminated with exit code 143 beside an
 intact 6.4 MB transcript, and stayed dark until the user happened to look.
@@ -1687,7 +1687,7 @@ def overview_refresh_due_lines(working_directory: Path,
         return ()
     try:
         answered = subprocess.run(
-            ["gh", "pr", "list", "--repo", "nedschorus/nedschorus", "--state", "open",
+            ["gh", "pr", "list", "--repo", "nedsnodes/nedsnodes", "--state", "open",
              "--json", "url,title,files", "--limit", "200"],
             capture_output=True, text=True, check=False,
             timeout=OVERVIEW_REFRESH_CHECK_GH_TIMEOUT_SECONDS)
