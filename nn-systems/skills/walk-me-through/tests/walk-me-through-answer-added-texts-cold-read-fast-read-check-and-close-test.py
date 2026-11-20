@@ -4705,8 +4705,7 @@ def test_a_reply_given_with_already_decided_or_moved_on_is_refused_writing_nothi
               and f"--user-reply-as-typed was given with {flag}" in result.stderr, described(result))
 
 
-# Item 22 of walk-me-through-skill-refactor-approval-walk-2026-11-02 as it stood when the agent showed it to the user:
-# revision had lowered its case against to none, and it has no `#not_asked_touches` line.
+# A real item whose revision lowered its case against to none, with no `#not_asked_touches` line.
 CLOSE_THE_ISSUE_ITEM = """## Item 22 of 26: GitHub issue "overview-write skill" has everything it asked for on main: close it
 
 The issue still holds one provisional-addition, and the page on main now covers all three of its gaps.
@@ -6128,6 +6127,23 @@ def test_bump_refuses_an_item_no_heading_has_or_one_already_shown_writing_nothin
     check("a refused check --bump writes nothing",
           walk_document(case) == document and case.minutes.read_text() == minutes)
 
+
+
+def test_bump_refuses_while_the_last_answer_has_no_close_line_writing_nothing():
+    case = Case(next_to_present="item 1 of 9", document=bump_walk())
+    answered = case.run("check")
+    document, minutes = walk_document(case), case.minutes.read_text()
+    bumped = case.run("check", "--bump", "three", reply="bump three")
+    check("check --bump refuses between check and close, saying to run close first",
+          answered.returncode == 0 and bumped.returncode == 1
+          and "for item 1 of 9, has no close line after it" in bumped.stderr and " close`" in bumped.stderr,
+          described(answered) + described(bumped))
+    check("a check --bump refused between check and close writes nothing",
+          walk_document(case) == document and case.minutes.read_text() == minutes)
+    closed = case.run("close")
+    check("close then records the answer for the item the user answered, not a held answer",
+          closed.returncode == 0 and "\nitem 1 of 9: approved" in case.minutes.read_text()
+          and "held" not in closed.stdout, described(closed) + case.minutes.read_text())
 
 _finding_outcomes_spec = importlib.util.spec_from_file_location(
     "cold_read_fast_read_report_findings_parse_and_finding_outcomes_check_common",

@@ -379,7 +379,7 @@ NUMBERED_LINES = (
 )
 BUMP = re.compile(r"^bump\s+(?P<title>\S.*?)\s*$", re.I | re.S)
 BUMP_LINES = (
-    "The user said bump: he wants the item titled \"{title}\" shown next, before {item} of approval-walk {walk}, "
+    "[rule walk-me-through-bump-shows-named-item-next] The user said bump: he wants the item titled \"{title}\" shown next, before {item} of approval-walk {walk}, "
     "which waits for his answer and is shown again after it.",
     "Run `python3 {program} check --bump {quoted_title} --user-reply-as-typed {reply}` and do what it prints; "
     "it numbers that item, moves it and writes the minutes' `#next_to_present` line, so write nothing in the "

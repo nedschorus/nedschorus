@@ -604,6 +604,11 @@ BUMP_ALREADY_SHOWN = (
     "Bump only an item not yet shown. To show a shown item again, end your message with its closing line.")
 BUMP_ALREADY_SHOWN_DECIDED = "the minutes record it as decided"
 BUMP_ALREADY_SHOWN_WAITING = "it is not decided yet"
+BUMP_ANSWER_NOT_CLOSED = (
+    "check --bump refused: the last answer line in {minutes}, for {item}, has no close line after it, so nothing "
+    "was bumped and nothing was written. Close reads that answer as held for whatever item waits when it runs, "
+    "so a bump now would record the user's answer to {item} against the bumped item too.\n"
+    "Run `python3 {program} close` first and do what it prints; then run check --bump again.")
 BUMP_MINUTES = "Bumped by the user: {bumped} is shown next, before {waiting}, which waits again after it.{words}"
 BUMP_DONE = (
     "{bumped} is now the waiting item, and {waiting} comes right after it.\n"
@@ -2437,15 +2442,21 @@ def rated_none_item_not_to_be_shown(walk_finder, top, minutes, value, numbers, t
         return None
     if guarded_paths(top, words(evidence(lines)[TOUCHES])):
         return None
-    minutes_lines = walk_finder.prose_lines(minutes.read_text(encoding="utf-8"), parser)
-    for index in range(len(minutes_lines) - 1, -1, -1):
-        match = ANSWER_LINE.match(minutes_lines[index])
-        if match:
-            if (match["item"].lower() == named.lower() and match["answered"] == f"not asked, {not_asked_label(NOT_ASKED_RATED_NONE)}"
-                    and not any(line.startswith(match["item"] + ": ") for line in minutes_lines[index + 1:])):
-                return None
-            break
+    match = unclosed_last_answer(walk_finder, minutes, parser)
+    if (match and match["item"].lower() == named.lower()
+            and match["answered"] == f"not asked, {not_asked_label(NOT_ASKED_RATED_NONE)}"):
+        return None
     return document
+
+
+def unclosed_last_answer(walk_finder, minutes, parser):
+    """Return the ANSWER_LINE match of the walk-minutes' last answer line when no close line follows it, else None."""
+    lines = walk_finder.prose_lines(minutes.read_text(encoding="utf-8"), parser)
+    for index in range(len(lines) - 1, -1, -1):
+        match = ANSWER_LINE.match(lines[index])
+        if match:
+            return None if any(line.startswith(match["item"] + ": ") for line in lines[index + 1:]) else match
+    return None
 
 
 def item_read_findings_without_outcomes_lines(item, report, outcome_file, fast_read_program, command, top):
@@ -3279,6 +3290,10 @@ def bump(arguments):
     as the docstring's --bump paragraph says."""
     walk_finder = load_walk_finder()
     top, minutes, value, parser = the_open_walk(walk_finder, arguments.cwd)
+    pending = unclosed_last_answer(walk_finder, minutes, parser)
+    if pending:
+        raise Failure(BUMP_ANSWER_NOT_CLOSED.format(minutes=minutes, item=pending["item"],
+                                                    program=Path(__file__).resolve()))
     waiting, numbers, total = waiting_items(walk_finder, value, minutes)
     _, _, _, units, placing = walk_document_items(walk_finder, minutes, value, numbers, total, parser,
                                                   "check --bump", top, stamp=False)
