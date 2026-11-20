@@ -94,7 +94,7 @@ def check(name, condition, detail=""):
     if not condition:
         failures.append(name)
         if detail:
-            print("      " + detail.replace("\n", "\n      "))
+            print("      " + str(detail).replace("\n", "\n      "))
 
 
 class Run:
@@ -602,7 +602,17 @@ def verdict_review_marks_cases(scratch):
               (done.returncode, done.stdout, done.stderr))
 
 
+def check_prints_a_failing_case_detail_that_is_not_a_string():
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        check("a case given a tuple as its detail", False, (1, "out", "err"))
+    failures.remove("a case given a tuple as its detail")
+    check("check prints a failing case's detail that is not a string",
+          "(1, 'out', 'err')" in printed.getvalue(), printed.getvalue())
+
+
 def main():
+    check_prints_a_failing_case_detail_that_is_not_a_string()
     scratch = Path(tempfile.mkdtemp(prefix="reviewer-review-post-test-")).resolve()
     try:
         merge_lane_cases(scratch)
