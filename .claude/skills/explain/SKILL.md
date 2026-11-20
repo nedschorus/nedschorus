@@ -49,7 +49,7 @@ on check 12's closing line.
    in this conversation included; otherwise read the user-ruling where it is
    recorded: a `(user-ruled …)` line in a file, or the walk-minutes, which are
    in `docs/walk/` of the checkout that ran the approval-walk and in the
-   log-store under `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/`. A
+   log-store under `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/`. A
    task's description is an agent's summary: use a task's description to find
    the user-ruling, never as the user-ruling. If you cannot re-read the
    evidence, say so. If anything was wrong, say so first: correct the wrong

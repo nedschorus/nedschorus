@@ -164,7 +164,7 @@ def fetch_mac_task_store_archive(runner):
 
     A warning from a Mac that exited 0 comes back as MacSentWithWarning, which
     read_task_lists settles once it knows whether the archive unpacked."""
-    destination = (os.environ.get("NEDSCHORUS_MAC_SSH_DESTINATION")
+    destination = (os.environ.get("NEDSNODES_MAC_SSH_DESTINATION")
                    or mac_window.DEFAULT_MAC_SSH_DESTINATION)
     completed = runner(mac_window.ssh_command(
         mac_forced_command.AGENT_SEAT_TASK_LISTS_READ_VERB, destination))

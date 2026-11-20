@@ -43,10 +43,10 @@ box's GitHub account is `ubuntu-claude` and the Mac's Unix user is `el`. A bare
 | account | where the credential lives | kind | expires |
 |---|---|---|---|
 | `nedlern` | this Mac, `gh`'s own store (keychain) | classic | 2027-08-24 |
-| `ned-review-merge` | `~/.config/nedschorus/ned-review-merge.token`, on this Mac and on ned-box | fine-grained | 2027-08-20 |
+| `ned-review-merge` | `~/.config/nedsnodes/ned-review-merge.token`, on this Mac and on ned-box | fine-grained | 2027-08-20 |
 | `ned-git-gatekeeper` | this Mac's keychain, item `nedschorus-git-gatekeeper-github-token` (created 2026-08-29; present 2026-09-28) | fine-grained | 2027-08-30, as the main-gatekeeper design records it; not re-measured |
-| `mac-claude` | `~/.config/nedschorus/mac-claude.token`, on this Mac and on ned-box | fine-grained | 2027-08-25 |
-| `ubuntu-claude` | ned-box: `~/.config/nedschorus/ubuntu-claude.token`, which ned-box agent-seats other than merge-lane-2 use; a classic token also remains in `gh`'s own store there | fine-grained (the file); classic (`gh`'s store) | 2027-09-24 (the file); 2027-08-24 (`gh`'s store) |
+| `mac-claude` | `~/.config/nedsnodes/mac-claude.token`, on this Mac and on ned-box | fine-grained | 2027-08-25 |
+| `ubuntu-claude` | ned-box: `~/.config/nedsnodes/ubuntu-claude.token`, which ned-box agent-seats other than merge-lane-2 use; a classic token also remains in `gh`'s own store there | fine-grained (the file); classic (`gh`'s store) | 2027-09-24 (the file); 2027-08-24 (`gh`'s store) |
 
 Token files are mode 600.
 

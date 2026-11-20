@@ -79,7 +79,7 @@ def run_unpinned_task_list_startup_refusal_cases(workspace: Path):
                   and "not started by a launcher that pins its task list" in result.stderr
                   and "CLAUDE_CODE_TASK_LIST_ID is unset or empty" in result.stderr
                   and ("To start the agent-seat, ask the user to run "
-                       f"`/Users/el/Projects/nedschorus/scripts/{this_machine_launcher} unpinned` "
+                       f"`/Users/el/Projects/nedsnodes/scripts/{this_machine_launcher} unpinned` "
                        "in a Terminal on his Mac.") in result.stderr
                   and not (workspace / "unpinned").exists(), result.stderr)
         result = subprocess.run(
@@ -862,9 +862,9 @@ def run_launched_session_seat_environment_cases(workspace: Path):
         "import json, os, sys\n"
         f"with open({str(record_path)!r}, 'w', encoding='utf-8') as handle:\n"
         "    recorded = {variable: os.environ.get(variable) for variable in (\n"
-        "        'NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME',\n"
-        "        'NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY',\n"
-        "        'NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID',\n"
+        "        'NEDSNODES_HANDOFF_SUPERVISOR_AGENT_NAME',\n"
+        "        'NEDSNODES_HANDOFF_SUPERVISOR_WORKING_DIRECTORY',\n"
+        "        'NEDSNODES_HANDOFF_SUPERVISOR_SESSION_ID',\n"
         "        'IS_DEMO')}\n"
         "    recorded['argv'] = sys.argv[1:]\n"
         "    json.dump(recorded, handle)\n",
@@ -872,9 +872,9 @@ def run_launched_session_seat_environment_cases(workspace: Path):
     )
     stub_agent.chmod(0o755)
     environment = dict(os.environ)
-    environment["NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME"] = "decoy-outer-seat"
-    environment["NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY"] = str(workspace / "decoy-outer-seat")
-    environment["NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID"] = "decoy-outer-session"
+    environment["NEDSNODES_HANDOFF_SUPERVISOR_AGENT_NAME"] = "decoy-outer-seat"
+    environment["NEDSNODES_HANDOFF_SUPERVISOR_WORKING_DIRECTORY"] = str(workspace / "decoy-outer-seat")
+    environment["NEDSNODES_HANDOFF_SUPERVISOR_SESSION_ID"] = "decoy-outer-session"
     environment.pop("IS_DEMO", None)
     subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", name, "--cd", str(seat_directory),
@@ -887,10 +887,10 @@ def run_launched_session_seat_environment_cases(workspace: Path):
     check("the launched session ran and recorded its environment",
           record_path.is_file(), "the stub agent wrote no record, so no session launched")
     check("the launched session is told the agent name its supervisor watches",
-          recorded.get("NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME") == name, str(recorded))
+          recorded.get("NEDSNODES_HANDOFF_SUPERVISOR_AGENT_NAME") == name, str(recorded))
     # main() resolves --cd, so on macOS a /var tempdir arrives as /private/var.
     check("the launched session is told the directory its supervisor launched it in",
-          recorded.get("NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY")
+          recorded.get("NEDSNODES_HANDOFF_SUPERVISOR_WORKING_DIRECTORY")
           == str(seat_directory.resolve()), str(recorded))
     check("the launched session runs with IS_DEMO=1, which skips Claude Code's onboarding screens",
           recorded.get("IS_DEMO") == "1", str(recorded))
@@ -900,7 +900,7 @@ def run_launched_session_seat_environment_cases(workspace: Path):
     state = supervisor.read_supervisor_state(handoff_directory / f"{name}-supervisor-state.json")
     check("the launched session is told the session id it was launched with",
           launched_session_id is not None
-          and recorded.get("NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID") == launched_session_id
+          and recorded.get("NEDSNODES_HANDOFF_SUPERVISOR_SESSION_ID") == launched_session_id
           and state.get("launched_session_id") == launched_session_id,
           f"{recorded} state session_id={state.get('session_id')}")
 
@@ -963,8 +963,8 @@ def run_launched_session_github_token_cases(workspace: Path):
              "readable by the Unix user"),
     ):
         home = directory / f"home-with-{label}-token-file"
-        (home / ".config" / "nedschorus").mkdir(parents=True, exist_ok=True)
-        token_file = home / ".config" / "nedschorus" / "ned-review-merge.token"
+        (home / ".config" / "nedsnodes").mkdir(parents=True, exist_ok=True)
+        token_file = home / ".config" / "nedsnodes" / "ned-review-merge.token"
         prepare(token_file)
         completed, recorded = start_supervisor("merge-lane-2", home=home)
         check(f"a {label} token file: the supervisor starts no session and exits 5, "
@@ -980,7 +980,7 @@ def run_launched_session_github_token_cases(workspace: Path):
               and ("Once the file is fixed: ask the user, in the Terminal on his Mac that shows the "
                    "agent-seat's tmux session, first to exit the shell the launcher left open there, if it "
                    "left one, and then to run "
-                   f"`/Users/el/Projects/nedschorus/scripts/{machine_launcher} merge-lane-2`.") in completed.stderr,
+                   f"`/Users/el/Projects/nedsnodes/scripts/{machine_launcher} merge-lane-2`.") in completed.stderr,
               f"{recorded!r}; exit {completed.returncode}: {completed.stderr[-800:]}")
         if token_file.exists():
             token_file.chmod(0o600)

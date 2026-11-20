@@ -36,8 +36,8 @@ NED_BOX_HOSTNAME = "ned-box"
 NED_BOX_SSH_TARGET = "nedlern@ned-box"
 NED_BOX_SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
 
-MAC_MEMORY_STORE_DIRECTORY = "/Users/el/.claude/projects/-Users-el-Projects-nedschorus/memory"
-NED_BOX_MEMORY_STORE_UNDER_HOME = ".claude/projects/-home-nedlern-Projects-nedschorus/memory"
+MAC_MEMORY_STORE_DIRECTORY = "/Users/el/.claude/projects/-Users-el-Projects-nedsnodes/memory"
+NED_BOX_MEMORY_STORE_UNDER_HOME = ".claude/projects/-home-nedlern-Projects-nedsnodes/memory"
 NED_BOX_MEMORY_STORE_DIRECTORY = ned_box_home_path_constants.NED_BOX_HOME + "/" + NED_BOX_MEMORY_STORE_UNDER_HOME
 # Reviewers read and delete entries through the mount, falling back to ssh.
 # This reader uses ssh because a hung mount has no read timeout.
@@ -45,7 +45,7 @@ NED_BOX_MEMORY_STORE_MAC_MOUNT_DIRECTORY = (
     ned_box_home_path_constants.MAC_MOUNT_OF_NED_BOX_HOME + "/" + NED_BOX_MEMORY_STORE_UNDER_HOME)
 MEMORY_STORE_INDEX_FILE_NAME = "MEMORY.md"
 
-DAILY_MEMORY_REVIEW_MARKS_DIRECTORY = ned_box_home_path_constants.NED_BOX_HOME + "/nedschorus-logs/daily-memory-review-marks"
+DAILY_MEMORY_REVIEW_MARKS_DIRECTORY = ned_box_home_path_constants.NED_BOX_HOME + "/nedsnodes-logs/daily-memory-review-marks"
 DAILY_MEMORY_REVIEW_MARK_KINDS = ("started", "done")
 
 # Look up the timeout at call time so tests can lower it.

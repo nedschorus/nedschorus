@@ -74,7 +74,7 @@ def main():
               "gh -Ro/r pr merge 5", "gh api -X PUT repos/o/r/pulls/5/merge", "gh api --method put /repos/o/r/pulls/5/merge",
               "gh api repos/o/r/pulls/5/merge -XPUT", "gh api --method=PUT repos/o/r/pulls/5/merge",
               "gh -R o/r api -X PUT repos/o/r/pulls/5/merge",
-              "ssh nedlern@ned-box 'cd ~/Projects/nedschorus && git push'", "ssh -p 22 ned-box git push origin b",
+              "ssh nedlern@ned-box 'cd ~/Projects/nedsnodes && git push'", "ssh -p 22 ned-box git push origin b",
               "ssh ned-box 'gh pr merge 5 --squash'", "zsh -c 'git push'"]
     not_pushes = ["git log --grep push", "git status", "echo git push-notes", "gh pr view 12", "git pushd",
                   "gh -R o/r pr view 5", "gh pr -R o/r view 5", "gh api repos/o/r/pulls/5/merge",
@@ -97,7 +97,7 @@ def main():
     with tempfile.TemporaryDirectory() as scratch:
         root = Path(scratch)
         folder = root / "emergency-stop"
-        environment = {"NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(folder), "GIT_AUTHOR_NAME": "md-skills"}
+        environment = {"NEDSNODES_EMERGENCY_STOP_FOLDER": str(folder), "GIT_AUTHOR_NAME": "md-skills"}
 
         check("no stop: silent", hook.output_for(payload(), environment) is None)
 
@@ -162,7 +162,7 @@ def main():
               and "resume the work you held back" in first["additionalContext"] and second is None, (first, second))
         check("lifted: push allowed", hook.output_for(payload("PreToolUse", "git push", session), environment) is None)
 
-        gone = {**environment, "NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(root / "gone" / "emergency-stop")}
+        gone = {**environment, "NEDSNODES_EMERGENCY_STOP_FOLDER": str(root / "gone" / "emergency-stop")}
         session = uuid.uuid4().hex
         first = decoded(hook.output_for(payload(session=session), gone))
         second = hook.output_for(payload(session=session), gone)
@@ -215,7 +215,7 @@ def main():
         check("note record cannot be written: note shown, no error",
               hook.shown_before(not_a_folder / "session.json", "unknown") is False)
 
-        broken = {**environment, "NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(folder)}
+        broken = {**environment, "NEDSNODES_EMERGENCY_STOP_FOLDER": str(folder)}
         status, out = main_with_failing_read_state(payload())
         shown = decoded(out)
         check("hook failure: says so in context, that the prompt went ahead, exit 0",

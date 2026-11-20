@@ -8,8 +8,8 @@ Usage:
 
 The seams are flags the tests use; cron passes none, so each takes its default:
   --clone                       the clone this program is in
-  --state-file                  ~/.local/state/nedschorus/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.json
-  --log-store-root              /home/nedlern/nedschorus-logs
+  --state-file                  ~/.local/state/nedsnodes/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.json
+  --log-store-root              /home/nedlern/nedsnodes-logs
   --temporary-directory         Python's tempfile.gettempdir(), /tmp on ned-box
   --runner-lock-file            ~/.claude/.run-all-test-suites.lock, the runner's own default
   --test-suite-runner-program   scripts/run-all-test-suites.py in the worktree of step 6
@@ -101,7 +101,7 @@ SCHEDULE. Installed on ned-box alone by
 nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py, from the
 table beside it, scheduled-jobs-on-each-machine.json:
 
-    */10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py >> /home/nedlern/.claude/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.log 2>&1
+    */10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py >> /home/nedlern/.claude/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.log 2>&1
 
 What it does not handle: it sees only whether a no-sandbox suite holds the lock
 at the moment it looks, not whether another run's suite is between two tries
@@ -129,9 +129,9 @@ from pathlib import Path
 PROGRAM = "no-sandbox-test-suites-run-on-main-in-a-quiet-gap"
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 
-DEFAULT_STATE_FILE = (Path.home() / ".local" / "state" / "nedschorus"
+DEFAULT_STATE_FILE = (Path.home() / ".local" / "state" / "nedsnodes"
                       / f"{PROGRAM}.json")
-DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
+DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedsnodes-logs"
 NO_SANDBOX_TEST_SUITES_RUNS_KIND_DIRECTORY_NAME = "no-sandbox-test-suites-runs"
 RUNNER_PATH_IN_WORKTREE = Path("scripts") / "run-all-test-suites.py"
 

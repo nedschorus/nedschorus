@@ -74,9 +74,9 @@ nc-systems/general-tools/scheduled-jobs-on-each-machine.json and installed
 with nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py
 --install --job handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher,
 on each machine. On ned-box it is the cron line
-    * * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py >> /home/nedlern/.claude/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.log 2>&1
+    * * * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/nc-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py >> /home/nedlern/.claude/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.log 2>&1
 On the Mac it is the cron line
-    * * * * * /opt/homebrew/bin/python3 /Users/el/Projects/nedschorus/nc-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py >> /Users/el/.claude/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.log 2>&1
+    * * * * * /opt/homebrew/bin/python3 /Users/el/Projects/nedsnodes/nc-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py >> /Users/el/.claude/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.log 2>&1
 It is not a launchd job, because the Mac's launchd never starts a StartInterval
 job (scripts/transcript-mirror-to-log-store.py says the same). Cron's PATH on
 the Mac lacks Homebrew's directories, so on the Mac the program looks for tmux
@@ -115,19 +115,19 @@ _claude_code_session_transcript_lookup_and_text_search_common_specification = im
 claude_code_session_transcript_lookup_and_text_search_common = importlib.util.module_from_spec(_claude_code_session_transcript_lookup_and_text_search_common_specification)
 _claude_code_session_transcript_lookup_and_text_search_common_specification.loader.exec_module(claude_code_session_transcript_lookup_and_text_search_common)
 
-LOG_DIRECTORY = Path.home() / "nedschorus-logs" / PROGRAM
+LOG_DIRECTORY = Path.home() / "nedsnodes-logs" / PROGRAM
 MAC_LOG_DIRECTORY = Path.home() / ".local" / "state" / "claude" / PROGRAM
 SESSION_RECORDS_DIRECTORY = Path.home() / ".claude" / "sessions"
 PROJECTS_DIRECTORY = Path.home() / ".claude" / "projects"
 PROCESS_TABLE_DIRECTORY = Path("/proc")
 LOG_DIRECTORY_ENVIRONMENT_VARIABLE = (
-    "NEDSCHORUS_HANDOFF_AGENT_SEAT_REMOTE_CONTROL_LOST_AT_CLAUDE_LOGIN_RECONNECT_BY_TMUX_TYPING_WATCHER_LOG_DIRECTORY")
+    "NEDSNODES_HANDOFF_AGENT_SEAT_REMOTE_CONTROL_LOST_AT_CLAUDE_LOGIN_RECONNECT_BY_TMUX_TYPING_WATCHER_LOG_DIRECTORY")
 SESSION_RECORDS_DIRECTORY_ENVIRONMENT_VARIABLE = (
-    "NEDSCHORUS_HANDOFF_AGENT_SEAT_REMOTE_CONTROL_LOST_AT_CLAUDE_LOGIN_RECONNECT_BY_TMUX_TYPING_WATCHER_SESSION_RECORDS_DIRECTORY")
+    "NEDSNODES_HANDOFF_AGENT_SEAT_REMOTE_CONTROL_LOST_AT_CLAUDE_LOGIN_RECONNECT_BY_TMUX_TYPING_WATCHER_SESSION_RECORDS_DIRECTORY")
 PROJECTS_DIRECTORY_ENVIRONMENT_VARIABLE = (
-    "NEDSCHORUS_HANDOFF_AGENT_SEAT_REMOTE_CONTROL_LOST_AT_CLAUDE_LOGIN_RECONNECT_BY_TMUX_TYPING_WATCHER_PROJECTS_DIRECTORY")
+    "NEDSNODES_HANDOFF_AGENT_SEAT_REMOTE_CONTROL_LOST_AT_CLAUDE_LOGIN_RECONNECT_BY_TMUX_TYPING_WATCHER_PROJECTS_DIRECTORY")
 PROCESS_TABLE_DIRECTORY_ENVIRONMENT_VARIABLE = (
-    "NEDSCHORUS_HANDOFF_AGENT_SEAT_REMOTE_CONTROL_LOST_AT_CLAUDE_LOGIN_RECONNECT_BY_TMUX_TYPING_WATCHER_PROCESS_TABLE_DIRECTORY")
+    "NEDSNODES_HANDOFF_AGENT_SEAT_REMOTE_CONTROL_LOST_AT_CLAUDE_LOGIN_RECONNECT_BY_TMUX_TYPING_WATCHER_PROCESS_TABLE_DIRECTORY")
 
 DISCONNECT_TEXT = ("Remote Control disconnected — signed-in claude.ai account or organization "
                    "changed on this machine")

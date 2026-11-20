@@ -2,7 +2,7 @@
 """Whether a user attends this agent-session, read from two environment variables.
 
 No user attends an agent-session when either holds:
-- NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER is set, to any non-empty
+- NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER is set, to any non-empty
   value: a program of this project started the agent-session and reads its
   answer itself, as scripts/ghi-guide-agent-ask.py does;
 - CLAUDE_CODE_SESSION_ATTENDED is "0": Claude Code sets it so for a headless
@@ -19,7 +19,7 @@ does. It reads only the mapping it is given and cannot fail on one.
 
 SESSION_ATTENDED_VARIABLE = "CLAUDE_CODE_SESSION_ATTENDED"
 SESSION_UNATTENDED_VALUE = "0"
-REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"
+REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER"
 AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES = (
     SESSION_ATTENDED_VARIABLE,
     REINCARNATION_OWNED_BY_CALLER_VARIABLE,

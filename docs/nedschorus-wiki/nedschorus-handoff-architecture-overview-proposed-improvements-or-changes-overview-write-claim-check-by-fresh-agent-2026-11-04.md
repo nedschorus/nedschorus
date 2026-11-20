@@ -1,6 +1,6 @@
 # Proposed improvements or changes: nedschorus-handoff-architecture-overview.md (overview claim check, 2026-11-04)
 
-Assertions of the overview that the claim check against commit 9ecda8345f6d2062befc44c042236d7e6c6ae6fa found contradicted or unsupported and ranked fix later: loose, incomplete or badly worded, but no agent would act wrongly on them. Its report is /home/nedlern/nedschorus-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/0e70ae713f204f4060a2c90726caef86c5b80c19-2026-11-04T23-15-57-960804Z.md. Regular maintenance fixes them in the overview.
+Assertions of the overview that the claim check against commit 9ecda8345f6d2062befc44c042236d7e6c6ae6fa found contradicted or unsupported and ranked fix later: loose, incomplete or badly worded, but no agent would act wrongly on them. Its report is /home/nedlern/nedsnodes-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/0e70ae713f204f4060a2c90726caef86c5b80c19-2026-11-04T23-15-57-960804Z.md. Regular maintenance fixes them in the overview.
 
 ## E1 — possible problem: an assertion of the overview is contradicted
 

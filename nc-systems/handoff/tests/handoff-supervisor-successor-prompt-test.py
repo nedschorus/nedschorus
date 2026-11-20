@@ -456,9 +456,9 @@ def run_multi_line_next_step_cases(workspace: Path, recent: str):
     # otherwise record that seat's directory rather than this fixture's.
     environment = {key: value for key, value in os.environ.items()
                    if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID",
-                                  "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME",
-                                  "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY",
-                                  "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID",
+                                  "NEDSNODES_HANDOFF_SUPERVISOR_AGENT_NAME",
+                                  "NEDSNODES_HANDOFF_SUPERVISOR_WORKING_DIRECTORY",
+                                  "NEDSNODES_HANDOFF_SUPERVISOR_SESSION_ID",
                                   # The writer would prune this task list against this log-store.
                                   "CLAUDE_CODE_TASK_LIST_ID", "TRANSCRIPT_MIRROR_DESTINATION")}
     environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"
@@ -2592,7 +2592,7 @@ EXPECTED_MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE = (
 # home. The fixtures leave it as it is: the supervisor never reads the mount,
 # it only names it.
 NED_BOX_MEMORY_STORE_MAC_MOUNT_PATH = (
-    "/Volumes/nedhome/.claude/projects/-home-nedlern-Projects-nedschorus/memory")
+    "/Volumes/nedhome/.claude/projects/-home-nedlern-Projects-nedsnodes/memory")
 
 HANDOFF_USER_REVIEW_OF_AGENT_MEMORY_STORES_MARK_SCRIPT_PATH = SYSTEM_DIRECTORY / "handoff-user-review-of-agent-memory-stores-mark.py"
 

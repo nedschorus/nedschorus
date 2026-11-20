@@ -9,8 +9,8 @@ source, in this program's own checkout, as
 nc-systems/general-tools/claude-code-registered-hook-rule-id-pattern-hook-files-list-and-source-scan-common.py
 finds them. Each is counted in the transcripts under each --transcript-directory, by default the two
 copies scripts/transcript-mirror-to-log-store.py keeps in the log-store on ned-box:
-/home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/projects, the Mac's, and
-/home/nedlern/nedschorus-logs/agent-session-files-by-machine/ned-box/projects, ned-box's. Subagents' transcripts below them are read too.
+/home/nedlern/nedsnodes-logs/agent-session-files-by-machine/mac/projects, the Mac's, and
+/home/nedlern/nedsnodes-logs/agent-session-files-by-machine/ned-box/projects, ned-box's. Subagents' transcripts below them are read too.
 
 What counts as a firing: an ID in text a hook handed the agent, and nowhere else, so a transcript in
 which an agent reads, tests or quotes a hook's source counts nothing. Within that text, only an ID that
@@ -56,9 +56,9 @@ that commit:
 
 The report goes to <report directory>/<job name>-<YYYY-MM-DD>-report.md, the job name being this
 file's name without .py and the date UTC, replacing a report written earlier the same day; the default
-report directory is the directory the environment variable NEDSCHORUS_MAINTENANCE_JOB_REPORTS_DIRECTORY
+report directory is the directory the environment variable NEDSNODES_MAINTENANCE_JOB_REPORTS_DIRECTORY
 names when it is set, as the test sets it, and otherwise the log-store's
-/home/nedlern/nedschorus-logs/maintenance-job-reports. The report lists the rules not seen, each
+/home/nedlern/nedsnodes-logs/maintenance-job-reports. The report lists the rules not seen, each
 with its hook, the date its ID was added, the agent-seat that wrote it and its pull request, as
 candidates to question, not verdicts: a guard against a rare, permanent harm may rightly never fire.
 It then gives every rule's count, and the IDs found in transcripts that no registered hook writes. It
@@ -66,7 +66,7 @@ keeps no state: each run counts again from each ID's commit. The program prints 
 
 It runs once a week on ned-box, from the table nc-systems/general-tools/scheduled-jobs-on-each-machine.json,
 which nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py installs as this cron line:
-    30 5 * * 1 /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report.py >> /home/nedlern/.claude/claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report.log 2>&1
+    30 5 * * 1 /usr/bin/python3 /home/nedlern/Projects/nedsnodes/nc-systems/general-tools/claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report.py >> /home/nedlern/.claude/claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report.log 2>&1
 
 Not counted: a firing in a transcript the mirror has not copied yet, about a minute behind; a rule
 written only in prose, such as in CLAUDE.md; a rule whose message carries no ID, such as text built
@@ -105,10 +105,10 @@ from pathlib import Path
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 JOB_NAME = Path(__file__).stem
-LOG_STORE = Path("/home/nedlern/nedschorus-logs")
+LOG_STORE = Path("/home/nedlern/nedsnodes-logs")
 DEFAULT_TRANSCRIPT_DIRECTORIES = (LOG_STORE / "agent-session-files-by-machine" / "mac" / "projects",
                                   LOG_STORE / "agent-session-files-by-machine" / "ned-box" / "projects")
-REPORT_DIRECTORY_ENVIRONMENT_VARIABLE = "NEDSCHORUS_MAINTENANCE_JOB_REPORTS_DIRECTORY"
+REPORT_DIRECTORY_ENVIRONMENT_VARIABLE = "NEDSNODES_MAINTENANCE_JOB_REPORTS_DIRECTORY"
 DEFAULT_REPORT_DIRECTORY = Path(os.environ.get(REPORT_DIRECTORY_ENVIRONMENT_VARIABLE)
                                 or LOG_STORE / "maintenance-job-reports")
 GIT_TIMEOUT_SECONDS = 60

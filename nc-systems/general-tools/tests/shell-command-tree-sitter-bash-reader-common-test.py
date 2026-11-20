@@ -1317,9 +1317,9 @@ check("a substitution in a body that never closes runs nothing", [list(f) for f 
 found = reader.simple_commands("cat <<EOF\n$(echo `tmux send-keys -t a b`)\nEOF")
 check("a backticked command inside a body's $( ) is read once",
       [list(f) for f in found].count(["tmux", "send-keys", "-t", "a", "b"]) == 1, [list(f) for f in found])
-found = reader.simple_commands("cat < NEDSCHORUS_HEREDOC_0 <<EOF\nx\nEOF")
+found = reader.simple_commands("cat < NEDSNODES_HEREDOC_0 <<EOF\nx\nEOF")
 check("a file of the name a heredoc stands in for is still a file",
-      found and found[0].redirects == [("<", "NEDSCHORUS_HEREDOC_0"), ("<<", "x\n")],
+      found and found[0].redirects == [("<", "NEDSNODES_HEREDOC_0"), ("<<", "x\n")],
       [(list(f), f.redirects) for f in found])
 found = reader.simple_commands("python3 - <<'PY'\nprint(1)\nPY")
 check("the - of `python3 - <<'PY'` stays a word", [list(f) for f in found] == [["python3", "-"]],
@@ -1356,7 +1356,7 @@ for command, expected in [
     # Inside backticks \` opens a nested backticked command.
     ("cat <<A\n`echo \\`xb\\``\nA", [(["xb"], []), (["echo", "`xb`"], []), (["cat"], ["`echo \\`xb\\``\n"])]),
     # A body line that the reader's own delimiter would end.
-    ("cat <<A\nNEDSCHORUS_BODY_END\n'$(xa)'\nA", [(["xa"], []), (["cat"], ["NEDSCHORUS_BODY_END\n'$(xa)'\n"])]),
+    ("cat <<A\nNEDSNODES_BODY_END\n'$(xa)'\nA", [(["xa"], []), (["cat"], ["NEDSNODES_BODY_END\n'$(xa)'\n"])]),
     # A case ended by ;;& inside a body's substitution, and a substitution after it.
     ("cat <<A\n$(case x in x) :;;& esac) $(tmux kill-server)\nA",
      [([":"], []), (["tmux", "kill-server"], []), (["cat"], ["$(case x in x) :;;& esac) $(tmux kill-server)\n"])]),
@@ -1443,7 +1443,7 @@ found = reader.simple_commands(nested)
 inner = words_of(found[0].heredocs[0].body) if found and found[0].heredocs else []
 check("a body line starting with the outer delimiter, then a later heredoc: the body is whole",
       [list(f) for f in found] == [["bash"]]
-      and "NEDSCHORUS_HEREDOC" not in found[0].heredocs[0].body
+      and "NEDSNODES_HEREDOC" not in found[0].heredocs[0].body
       and inner[-1:] == [["tmux", "send-keys", "-t", "seat-a", "x"]],
       ([(list(f), f.heredocs) for f in found], inner))
 # A real Mac agent's command (cold-read-research, 2026-09), with a guarded line added before its end.
@@ -1461,7 +1461,7 @@ REAL_MAC_SSH_BASH_S = (
 found = reader.simple_commands(REAL_MAC_SSH_BASH_S)
 body = found[0].heredocs[0].body if found and found[0].heredocs else ""
 check("the real Mac ssh 'bash -s' heredoc keeps its whole body, with no placeholder in it",
-      "NEDSCHORUS_HEREDOC" not in body and body.endswith("tmux send-keys -t seat-a x\n")
+      "NEDSNODES_HEREDOC" not in body and body.endswith("tmux send-keys -t seat-a x\n")
       and ["tmux", "send-keys", "-t", "seat-a", "x"] in words_of(body), body[-200:])
 found = words_of("cat <<OUTER\n$(tmux send-keys -t a Enter <<INNER\nx\nINNER\n)\nOUTER")
 check("a heredoc inside a substitution inside another heredoc's body is read",
@@ -1473,7 +1473,7 @@ check("a nested heredoc in a $( ) inside a body ends at its own delimiter line, 
       [(list(f), f.heredocs) for f in found])
 found = reader.simple_commands("cat <<A\n$(cat <<B\nB)\ntmux send-keys -t s x\n")
 check("a body that holds a nested heredoc keeps it as written",
-      found and all("NEDSCHORUS_HEREDOC" not in h.body for f in found for h in f.heredocs)
+      found and all("NEDSNODES_HEREDOC" not in h.body for f in found for h in f.heredocs)
       and any("$(cat <<B\nB)" in h.body for f in found for h in f.heredocs),
       [(list(f), f.heredocs) for f in found])
 found = words_of('cat <<"E\'OF"\nbody\nE\'OF\ntmux kill-server')
@@ -2034,9 +2034,9 @@ except r.ShellParserUnavailable as error:
     with reader.agent_session_attendance_environment_variables_temporarily_set_for_test("outer", None):
         with reader.agent_session_attendance_environment_variables_temporarily_set_for_test(None, "1"):
             inside = (os.environ.get("CLAUDE_CODE_SESSION_ATTENDED"),
-                      os.environ.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"))
+                      os.environ.get("NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER"))
         after = (os.environ.get("CLAUDE_CODE_SESSION_ATTENDED"),
-                 os.environ.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"))
+                 os.environ.get("NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER"))
     check("the session variables are set inside the block and put back as they were after it",
           inside == (None, "1") and after == ("outer", None), (inside, after))
     missing_unattended = context_of(reader.parser_unavailable_hook_output(

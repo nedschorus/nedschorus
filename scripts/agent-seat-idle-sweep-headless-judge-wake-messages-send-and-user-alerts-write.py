@@ -111,9 +111,9 @@ headless_command_line = _load(
     _SCRIPTS.parent / "nc-systems" / "general-tools"
     / "claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
 
-LOG_FILE = (Path.home() / "nedschorus-logs" / "agent-seat-idle-sweep"
+LOG_FILE = (Path.home() / "nedsnodes-logs" / "agent-seat-idle-sweep"
             / "agent-seat-idle-sweep-messages-sent-and-verdicts.jsonl")
-STATE_DIRECTORY = (Path.home() / ".local" / "state" / "nedschorus"
+STATE_DIRECTORY = (Path.home() / ".local" / "state" / "nedsnodes"
                    / "agent-seat-idle-sweep-run-lock-and-headless-agent-session-empty-working-directory")
 # The folder's name is the name the receiving agent-seat sees the message come from.
 HEADLESS_WORKING_DIRECTORY_NAME = "agent-seat-idle-sweep"
@@ -665,7 +665,7 @@ class Sweep:
     def owning_agent_seat_task_opened_unless_open(self):
         """Open the sent-text task on OWNING_AGENT_SEAT's task list unless one not marked
         completed is there; return the new task's id, or None. Raises OSError."""
-        list_directory = self.paths.tasks_root / f"nedschorus-{OWNING_AGENT_SEAT}-tasks"
+        list_directory = self.paths.tasks_root / f"nedsnodes-{OWNING_AGENT_SEAT}-tasks"
         if list_directory.is_dir():
             for path in list_directory.glob("*.json"):
                 try:

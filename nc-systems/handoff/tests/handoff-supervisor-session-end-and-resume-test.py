@@ -130,7 +130,7 @@ def run_ask_user_before_restart_without_a_terminal_case(workspace: Path):
     check("ask-user-before-restart without a terminal names the agent-seat, has the agent ask the user to run "
           "this machine's launcher in a Terminal on his Mac, and names the handoff file",
           "the agent-seat noterm's session-handoff" in result.stdout
-          and f"To start it again, ask the user to run `/Users/el/Projects/nedschorus/scripts/{launcher} noterm` "
+          and f"To start it again, ask the user to run `/Users/el/Projects/nedsnodes/scripts/{launcher} noterm` "
               "in a Terminal on his Mac." in result.stdout
           and str(handoff_directory / "noterm-handoff.md") in result.stdout,
           result.stdout[-600:])
@@ -293,7 +293,7 @@ def run_agent_exit_record_cases(workspace: Path):
     state = supervisor.read_supervisor_state(handoff_directory / f"{name}-supervisor-state.json")
     check("EXIT RECORD: the in-cycle ask-user-before-restart stop records the terminated session's code",
           result.returncode == 0 and f"stopped {name} without restarting it" in result.stdout
-          and f"`/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu {name}`" in result.stdout
+          and f"`/Users/el/Projects/nedsnodes/scripts/launch-claude-ubuntu {name}`" in result.stdout
           and state.get("consumed_counter") == 1
           and supervisor.agent_exit_record_from_supervisor_state(state) is not None
           and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY) == -15
@@ -831,7 +831,7 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
     os.utime(hanging_record_worktree / ".git", (long_ago, long_ago))
     saved_path = os.environ["PATH"]
     os.environ["COLD_READ_RECORD_SHIP_DESTINATION"] = (
-        "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records")
+        "nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records")
     os.environ["PATH"] = f"{failing_then_hanging_stubs}{os.pathsep}{saved_path}"
     try:
         hanging_ship_report = supervisor.remove_finished_worktrees_at_handoff(

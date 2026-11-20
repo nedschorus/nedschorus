@@ -6,15 +6,15 @@ checkout's top directory, after every merge, a fast-forward included):
   nc-systems/nc-shared-database/nc-shared-database-service-restart-after-merge.py
       [--reference-checkout DIR]
 
-  --reference-checkout  default /home/nedlern/Projects/nedschorus, ned-box's
+  --reference-checkout  default /home/nedlern/Projects/nedsnodes, ned-box's
                         reference-checkout, from which the systemd user unit
-                        nc-shared-database-service.service runs the service
+                        nn-shared-database-service.service runs the service
 
 Every checkout of the clone on both machines runs the same post-merge hook,
 because core.hooksPath names the reference-checkout's hook directory. In any
 checkout but ned-box's reference-checkout this program does nothing. There,
 when `git diff ORIG_HEAD HEAD` names a file of NC_SHARED_DATABASE_SERVICE_RESTART_AFTER_MERGE_TRIGGER_FILES, it runs
-`systemctl --user restart nc-shared-database-service.service`, so the
+`systemctl --user restart nn-shared-database-service.service`, so the
 service runs the merged code and no person has to restart it. When the caller
 has no XDG_RUNTIME_DIR, systemctl is given /run/user/<uid>, where the user
 bus lives. A change to the unit file itself is not picked up this way: run the
@@ -37,7 +37,7 @@ import sys
 from pathlib import Path
 
 PROGRAM = "nc-systems/nc-shared-database/nc-shared-database-service-restart-after-merge.py"
-UNIT_NAME = "nc-shared-database-service.service"
+UNIT_NAME = "nn-shared-database-service.service"
 NC_SHARED_DATABASE_SERVICE_RESTART_AFTER_MERGE_TRIGGER_FILES = ("nc-systems/nc-shared-database/nc-shared-database-service.py",)
 EXIT_DONE = 0
 EXIT_FAILED = 1
@@ -49,7 +49,7 @@ _ned_box_paths_spec = importlib.util.spec_from_file_location(
 ned_box_paths = importlib.util.module_from_spec(_ned_box_paths_spec)
 _ned_box_paths_spec.loader.exec_module(ned_box_paths)
 
-NED_BOX_REFERENCE_CHECKOUT = f"{ned_box_paths.NED_BOX_HOME}/Projects/nedschorus"
+NED_BOX_REFERENCE_CHECKOUT = f"{ned_box_paths.NED_BOX_HOME}/Projects/nedsnodes"
 
 
 def main(argv=None):

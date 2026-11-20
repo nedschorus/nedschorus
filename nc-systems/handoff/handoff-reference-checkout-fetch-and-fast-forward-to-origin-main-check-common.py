@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The reference-checkout ~/Projects/nedschorus, and the git steps that put it at origin/main.
+"""The reference-checkout ~/Projects/nedsnodes, and the git steps that put it at origin/main.
 
 Used by handoff-supervisor-restart-onto-main-code-by-relaunch-from-reference-checkout.py, whose
 step 0 fetches and fast-forwards the reference-checkout, and by
@@ -38,7 +38,7 @@ git_redirecting_removal = _load_module(
     "git_redirecting_environment_variables_removal_common",
     _GENERAL_TOOLS_DIRECTORY / "git-redirecting-environment-variables-removal-common.py")
 
-REFERENCE_CHECKOUT = Path("~/Projects/nedschorus").expanduser()
+REFERENCE_CHECKOUT = Path("~/Projects/nedsnodes").expanduser()
 # A fetch, a push or a fast-forward of the whole repository can take minutes on a slow link.
 NETWORK_OR_TREE_GIT_STEP_TIMEOUT_SECONDS = 300
 GIT_STEP_TIMEOUT_SECONDS = 60

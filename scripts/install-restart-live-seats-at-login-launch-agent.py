@@ -11,7 +11,7 @@ the machine stopped and brings them back, each in its own iTerm window.
 What the plist says, and why:
 
   - The program is run from the durable checkout (--checkout, default
-    ~/Projects/nedschorus), never from a worktree: worktrees are removed when
+    ~/Projects/nedsnodes), never from a worktree: worktrees are removed when
     their topic lands, and a plist pointing at one would run nothing at the
     next login and say so only in its output file.
   - PATH is set explicitly. launchd gives a job a bare PATH — no Homebrew,
@@ -54,7 +54,7 @@ _next_step_lines_spec = importlib.util.spec_from_file_location(
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 
-DEFAULT_LABEL = "com.nedschorus.restart-live-seats-at-login"
+DEFAULT_LABEL = "com.nedsnodes.restart-live-seats-at-login"
 PROGRAM_FILE_NAME = "restart-live-seats-at-login.py"
 LAUNCHD_OUTPUT_FILE_NAME = "restart-live-seats-at-login-launchd-output.txt"
 # Use Homebrew’s unversioned link so login restart follows interpreter upgrades.
@@ -167,9 +167,9 @@ def main(argv=None, platform: str = sys.platform,
                     "at login on the Mac.",
         formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
     parser.add_argument("--checkout", type=Path,
-                        default=Path("~/Projects/nedschorus").expanduser(),
+                        default=Path("~/Projects/nedsnodes").expanduser(),
                         help="the durable checkout whose scripts/ the agent runs "
-                             "(default ~/Projects/nedschorus)")
+                             "(default ~/Projects/nedsnodes)")
     parser.add_argument("--label", default=DEFAULT_LABEL,
                         help=f"the launchd label and plist name (default {DEFAULT_LABEL}); "
                              "a throwaway label for a test install")

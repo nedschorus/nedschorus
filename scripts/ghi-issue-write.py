@@ -94,7 +94,7 @@ hash of the source's content, so it finds a filing only while that filing's
 issue still carries it and only while the source is unchanged. Two cases
 fall outside it. Both were walked with the user item by item on 2026-09-21
 and approved there, the in-flight refusal's wording included (walk-minutes
-nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/ghi-write-create-verb-follow-ups-and-two-open-questions-minutes.md).
+nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/ghi-write-create-verb-follow-ups-and-two-open-questions-minutes.md).
 
 A FINISHED FILING LEAVES NO KEY ANYWHERE. Step 5 makes the body links, and a
 source the tool did not move — any file not already tracked on main, which
@@ -486,7 +486,7 @@ PROPOSED_IMPROVEMENTS_OR_CHANGES_FILE_PATTERN = re.compile(
     + r"[a-z0-9]+(?:-[a-z0-9]+)*-(\d{4}-\d{2}-\d{2})(?:-\d+)?\.md$")
 GHI_GUIDE_AGENT_LOG_STORE_HOST = "nedlern@ned-box"
 GHI_GUIDE_AGENT_LOG_STORE_HOSTNAME = "ned-box"
-GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY = "/home/nedlern/nedschorus-logs/ghi-guide-agent-proposed-improvements-or-changes"
+GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY = "/home/nedlern/nedsnodes-logs/ghi-guide-agent-proposed-improvements-or-changes"
 GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY_VARIABLE = "GHI_ISSUE_WRITE_GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY"
 GHI_GUIDE_AGENT_LOG_STORE_SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o",
                                   "ConnectTimeout=10"]
@@ -1964,7 +1964,7 @@ def ghi_md_paths_for_issue(number: int, repository_root: Path, runner,
     DIRECTLY IN, NOT ANYWHERE BENEATH, and that is the user's ruling rather
     than this function's choice. The walk
     ghi-info-design-write-path-becomes-link-only, 2026-09-19 (minutes at
-    nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/ghi-info-design-write-path-becomes-link-only-minutes.md),
+    nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/ghi-info-design-write-path-becomes-link-only-minutes.md),
     ruled that step 5 "writes a computed list: one link per file matching
     `docs/issues/<number>-*`, globbed at every write, never curated". That
     glob is a literal prefix and does not descend, and the ruling's own

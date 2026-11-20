@@ -10,7 +10,7 @@ while the agy cell's sandbox leaves agy's own login files readable. They do not 
 CREDENTIAL_FILE_NAME_PATTERNS, `*.token` and `.env`; only the macOS sandboxes and the Claude cell's
 Read(//**/<pattern>) rule do. A file with such a name anywhere else under the home directory is therefore
 readable to the Codex and agy reviewer programs. This program walks the home directory, read from HOME,
-skipping the folders CREDENTIAL_DIRECTORIES lists and the log-store (~/nedschorus-logs, whose test leftovers match the patterns but
+skipping the folders CREDENTIAL_DIRECTORIES lists and the log-store (~/nedsnodes-logs, whose test leftovers match the patterns but
 hold no credential), and when it finds such a file writes one user-alert naming every one found, through
 nc-systems/general-tools/user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py.
 It keeps no state, so the alert comes again each day until the file is moved into a folder
@@ -19,7 +19,7 @@ in the home folder can only be moved or deleted.
 
 It runs once a day on ned-box, from the table nc-systems/general-tools/scheduled-jobs-on-each-machine.json,
 which nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py installs as this cron line:
-    45 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/cold-read/cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write.py >> /home/nedlern/.claude/cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write.log 2>&1
+    45 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/nc-systems/cold-read/cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write.py >> /home/nedlern/.claude/cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write.log 2>&1
 
 Skipped: a folder this user cannot read, because the reviewers run as the same user and cannot read it
 either; a folder removed while the walk runs; the target of a symbolic link to a folder.
@@ -68,7 +68,7 @@ FAILED_ACTION = (
 
 
 def skipped_directories(home):
-    return {Path(directory) for directory in cell_common.CREDENTIAL_DIRECTORIES} | {home / "nedschorus-logs"}
+    return {Path(directory) for directory in cell_common.CREDENTIAL_DIRECTORIES} | {home / "nedsnodes-logs"}
 
 
 def _raise_unless_unreadable_or_gone(error):
@@ -105,7 +105,7 @@ def main(argv=None):
         return 1
     if not found:
         print(f"The search found no file named {NAME_PATTERNS} under {home} outside the folders CREDENTIAL_DIRECTORIES "
-              f"lists in nc-systems/cold-read/cold-read-cell-common.py and outside the log-store {home / 'nedschorus-logs'}.")
+              f"lists in nc-systems/cold-read/cold-read-cell-common.py and outside the log-store {home / 'nedsnodes-logs'}.")
         return 0
     text = (f"Each file below is named {NAME_PATTERNS} and lies in no folder that CREDENTIAL_DIRECTORIES lists in "
             "nc-systems/cold-read/cold-read-cell-common.py, so on Linux the Codex and agy programs that the "

@@ -21,7 +21,7 @@ handoff_user_review_of_agent_memory_stores_mark = importlib.util.module_from_spe
 _handoff_user_review_of_agent_memory_stores_mark_spec.loader.exec_module(handoff_user_review_of_agent_memory_stores_mark)
 
 DAILY_OVERVIEW_REFRESH_REMINDER_MARKS_DIRECTORY = (
-    "/home/nedlern/nedschorus-logs/daily-overview-refresh-reminder-marks")
+    "/home/nedlern/nedsnodes-logs/daily-overview-refresh-reminder-marks")
 
 # Refuse paths: a mark under anything but the system directory name would never be read.
 SYSTEM_NAME_PATTERN = r"[A-Za-z0-9][A-Za-z0-9_-]*"

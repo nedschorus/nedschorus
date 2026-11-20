@@ -115,7 +115,7 @@ closes, not only a record kept as first written. The rules are PER FILE:
     announced the same way, on a stderr line of its own. Each such stderr
     line also names the walk in which the user decided the rule that allowed
     the replacement; that walk's walk-minutes are at
-    nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/<the walk the stderr line names>-minutes.md.
+    nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/<the walk the stderr line names>-minutes.md.
     The copy passes
     --ignore-times, for the reason rsync_one_file in
     scripts/seat-shared-file-ship.py records:

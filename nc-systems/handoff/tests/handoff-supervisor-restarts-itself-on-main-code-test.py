@@ -183,7 +183,7 @@ def run_ask_user_before_restart_case(workspace: Path):
           str(run.events))
 
 
-HANDOFF_PROGRAMS = "~/Projects/nedschorus/nc-systems/handoff/"
+HANDOFF_PROGRAMS = "~/Projects/nedsnodes/nc-systems/handoff/"
 BACK_ON_MAIN_COMMAND = (f"python3 {HANDOFF_PROGRAMS}handoff-reference-checkout-back-on-main-after-"
                         "pushing-leftovers-to-a-branch.py")
 

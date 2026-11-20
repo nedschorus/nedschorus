@@ -6,7 +6,7 @@ Usage:
   scripts/standing-user-rulings-store-add-from-transcripts-and-walk-minutes-then-index-file-and-anchor-list-for-hooks-write.py
       [--log-store DIR] [--agents-directory DIR] [--repository-checkout DIR]
 
-  --log-store            default /home/nedlern/nedschorus-logs, the log-store on ned-box
+  --log-store            default /home/nedlern/nedsnodes-logs, the log-store on ned-box
   --agents-directory     default /home/nedlern/agents, whose agent-seats' docs/walk/*-minutes.md are read
   --repository-checkout  default the checkout this file is in; its origin/main, as last fetched, resolves the
                          repository paths and GHI-MD paths that become tags and anchors. Nothing is fetched.
@@ -129,7 +129,7 @@ GIT_ENVIRONMENT_FILE = (HERE.parent / "nc-systems" / "general-tools"
                         / "git-redirecting-environment-variables-removal-common.py")
 RUN_AGAIN_COMMAND = f"python3 {Path(__file__).resolve()}"
 
-DEFAULT_LOG_STORE = Path("/home/nedlern/nedschorus-logs")
+DEFAULT_LOG_STORE = Path("/home/nedlern/nedsnodes-logs")
 DEFAULT_AGENTS_DIRECTORY = Path("/home/nedlern/agents")
 STORE_DIRECTORY_NAME = "user-rulings"
 STORE_FILE_NAME = "standing-user-rulings-decided-by-the-user-full-text-searchable.sqlite3"
@@ -264,8 +264,19 @@ TASK_REFERENCE = re.compile(r"(?:\b([a-z][a-z0-9-]*[a-z0-9])(?:'s|’s)\s+)?\bta
                             re.IGNORECASE)
 # Each part ends on a word character, @ or -, so a path at a sentence's end leaves its full stop out.
 PATH_TOKEN = re.compile(r"[\w.~@-]*(?:/[\w.@-]*[\w@-])+/?")
-NEDSCHORUS_SESSION_DIRECTORY = re.compile(
-    r"^/(?:home/nedlern|Users/el)/(?:agents/(?P<seat>[^/]+)|Projects/nedschorus)(?:/|$)")
+# Transcripts written before the project rename record the reference-checkout under its old directory name, and a
+# transcript is read again from its start once the rename moves the copy it is read from.
+OLD_REFERENCE_CHECKOUT_DIRECTORY_NAME = "nedschorus"
+# The project rename moves the log-store, the checkouts and the mirror's project-key directories made from them. An
+# entry keeps the path it was first read from, since a second read of the moved copy skips it as a duplicate, so a
+# stored path is moved to its new name once that new path exists; a project-key directory the rename left under its
+# old name, such as one of a worktree since removed, keeps its path.
+STORED_PATH_PARTS_RENAMED_BY_PROJECT_RENAME = (
+    re.compile(r"(?<=/)" + re.escape(OLD_REFERENCE_CHECKOUT_DIRECTORY_NAME) + r"(?=(?:-logs|-worktrees)?(?:/|$))"),
+    re.compile(r"(?<=-Projects-)" + re.escape(OLD_REFERENCE_CHECKOUT_DIRECTORY_NAME) + r"(?=-|/|$)"))
+NEDSNODES_SESSION_DIRECTORY = re.compile(
+    r"^/(?:home/nedlern|Users/el)/(?:agents/(?P<seat>[^/]+)|Projects/(?:nedsnodes|"
+    + re.escape(OLD_REFERENCE_CHECKOUT_DIRECTORY_NAME) + r"))(?:/|$)")
 AGENT_SEAT_DIRECTORY = re.compile(r"/agents/(?P<seat>[^/]+)/docs/walk/[^/]+$")
 # The answer line walk-me-through's check program writes (its CHECK_MINUTES); "deferred" has no such line.
 ANSWER_LINE_WITH_TIME = re.compile(
@@ -294,7 +305,7 @@ REPOSITORY_UNREADABLE_INSTRUCTIONS = (
     "Nothing was added: tags are fixed when an entry is added, so no entry is added without origin/main's files.",
     "Run `git -C {checkout} fetch origin main`, then `" + RUN_AGAIN_COMMAND + "` again.",
     "If origin/main still cannot be read, run it again with --repository-checkout naming another nedschorus "
-    "checkout on ned-box, such as /home/nedlern/Projects/nedschorus; if that fails too, send prime-intellect, "
+    "checkout on ned-box, such as /home/nedlern/Projects/nedsnodes; if that fails too, send prime-intellect, "
     "the agent-seat that owns this program, the FAILED line above with SendMessage.",
 )
 STORE_UNOPENABLE_INSTRUCTIONS = (
@@ -529,6 +540,20 @@ def add_entry(connection, entry, tags_by_source):
     return True
 
 
+def source_paths_moved_by_project_rename_update(connection):
+    """Point each entry whose source file the project rename moved at the file's new path; return how many moved."""
+    moved = 0
+    for (old_path,) in connection.execute("SELECT DISTINCT source_path FROM entries").fetchall():
+        log_store_and_checkouts_only = STORED_PATH_PARTS_RENAMED_BY_PROJECT_RENAME[0].sub("nedsnodes", old_path)
+        every_part = STORED_PATH_PARTS_RENAMED_BY_PROJECT_RENAME[1].sub("nedsnodes", log_store_and_checkouts_only)
+        new_path = next((path for path in (every_part, log_store_and_checkouts_only)
+                         if path != old_path and os.path.exists(path)), None)
+        if new_path:
+            moved += connection.execute("UPDATE entries SET source_path = ? WHERE source_path = ?",
+                                        (new_path, old_path)).rowcount
+    return moved
+
+
 def previous_reading(connection, path):
     return connection.execute("SELECT device, inode, size_read, mtime_ns, lines_read, reader_state "
                               "FROM source_files_read WHERE path = ?", (str(path),)).fetchone()
@@ -546,7 +571,7 @@ def record_reading(connection, path, status, size_read, lines_read, reader_state
 
 def session_context(cwd):
     """(whether the agent-session ran in a nedschorus checkout, its agent-seat or None)."""
-    match = NEDSCHORUS_SESSION_DIRECTORY.match(cwd or "")
+    match = NEDSNODES_SESSION_DIRECTORY.match(cwd or "")
     if not match:
         return False, None
     return True, match.group("seat")
@@ -732,9 +757,15 @@ def run(log_store, agents_directory, repository_checkout):
         print("\n".join(error.instructions), file=sys.stderr)
         return EXIT_COULD_NOT_RUN
     started = utc_now_text()
+    source_failures, output_failures = [], []
+    try:
+        with connection:
+            source_paths_moved_by_project_rename_update(connection)
+    except sqlite3.Error as error:
+        source_failures.append(FAILED_LINE.format(
+            what="moving stored source paths to the names the project rename gave them", error=error))
     mirror_directory = log_store / MIRROR_DIRECTORY_NAME
     known_seats = known_agent_seats(agents_directory, mirror_directory)
-    source_failures, output_failures = [], []
     user_words_added = walk_added = 0
     for machine, pattern in TRANSCRIPT_GLOBS:
         for path in sorted(mirror_directory.glob(pattern)):

@@ -49,7 +49,7 @@ WHAT IS PINNED HERE.
     2026-09-28). The stub is run by the launcher inside the machine's real
     sandbox -- sandbox-exec on macOS, bwrap on Linux -- and tries to read
     canaries in a scratch home and the repository: one in each credential
-    directory, `.config/nedschorus/`, `gh`'s login directory `.config/gh/`,
+    directory, `.config/nedsnodes/`, `gh`'s login directory `.config/gh/`,
     `.ssh/`, `.steam/` and `nedsmessenger/secrets/`, none named like a
     credential, so only the rule for the directory covers them; `.token` and
     `.env` files outside them; and an ordinary file. The directory canaries
@@ -68,7 +68,7 @@ WHAT IS PINNED HERE.
     launcher refuses, exit 64, and never starts agy.
 
   - The Google login. A GEMINI_API_KEY the caller set never reaches agy,
-    and a key file at .config/nedschorus/gemini-api.key in the scratch home
+    and a key file at .config/nedsnodes/gemini-api.key in the scratch home
     is not read. When agy prints what the real agy prints with no login, the
     cell exits 1 and its cause line is logged-out, saying how to log agy in.
 
@@ -453,7 +453,7 @@ def credential_files_unreadable_inside_the_real_sandbox_cases(scratch, stubs):
     report = report_path_for(repository, "credential-files")
     scratch_home = scratch_home_for(stubs)
     canary_text = "CANARY-NOT-A-SECRET-cold-read-agy-cell-test\n"
-    nedschorus_canary = scratch_home / ".config" / "nedschorus" / "probe-canary"
+    nedschorus_canary = scratch_home / ".config" / "nedsnodes" / "probe-canary"
     gh_canary = scratch_home / ".config" / "gh" / "hosts.yml"
     ssh_canary = scratch_home / ".ssh" / "id_canary"
     steam_canary = scratch_home / ".steam" / "probe-canary"
@@ -508,7 +508,7 @@ def credential_files_unreadable_inside_the_real_sandbox_cases(scratch, stubs):
                   if cell_reads_dump.is_file() else {})
     check("a cell whose agy tries the canaries still exits 0",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
-    for label, canary in (("a file in .config/nedschorus/", nedschorus_canary),
+    for label, canary in (("a file in .config/nedsnodes/", nedschorus_canary),
                           ("a file in gh's login directory .config/gh/", gh_canary),
                           ("a file in .ssh/", ssh_canary),
                           ("a file in .steam/", steam_canary),
@@ -718,7 +718,7 @@ with tempfile.TemporaryDirectory() as scratch:
           f"which cannot start in the nc-test-sandbox; {REAL_SANDBOX_CASES_SUITE} runs them")
 
     # --- The Google login, not a Gemini API key -------------------------------
-    gemini_api_key_file = scratch_home_for(stubs) / ".config" / "nedschorus" / "gemini-api.key"
+    gemini_api_key_file = scratch_home_for(stubs) / ".config" / "nedsnodes" / "gemini-api.key"
     gemini_api_key_file.parent.mkdir(parents=True, exist_ok=True)
     gemini_api_key_file.write_text("test-key-from-file\n", encoding="utf-8")
 

@@ -39,7 +39,7 @@ import time
 SYSTEM_DIRECTORY = pathlib.Path(__file__).resolve().parent.parent
 SHIP = SYSTEM_DIRECTORY / "cold-read-record-ship.py"
 DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
-RULED_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records"
+RULED_DESTINATION = "nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records"
 
 # What a stub `ssh` answers to the call that runs the placing step: the outcome of a store no other shipment is writing to, in which every
 # file the request names is new and lands with the bytes the shipment asked
@@ -537,7 +537,7 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           "REPLACED" not in result.stdout, result.stdout)
     check("the replacement tells the agent to match the displaced digest across the snapshots at the file's full path in the store on ned-box, not to search by path: a replaced file keeps its path, so the newest snapshots holding it hold the replacement",
           ("sha256sum /mnt/backup/timeshift/snapshots/*/localhost"
-           f"/home/nedlern/nedschorus-logs/cold-read-records/{demo.name}/triage.md") in result.stderr
+           f"/home/nedlern/nedsnodes-logs/cold-read-records/{demo.name}/triage.md") in result.stderr
           and "find-deleted-path-across-backups" not in result.stderr
           and "sudo timeshift --list" not in result.stderr
           and "every ten minutes" not in result.stderr, result.stderr)
@@ -900,7 +900,7 @@ subprocess.Popen([sys.executable, "-c", "import sys; print('cell', flush=True); 
                             for c in ssh_calls), str(ssh_calls))
     check("the store is prepared over ssh: mkdir -p of the records path and the README",
           any("mkdir -p" in " ".join(c) and "README.md" in " ".join(c)
-              and "/home/nedlern/nedschorus-logs/cold-read-records" in " ".join(c)
+              and "/home/nedlern/nedsnodes-logs/cold-read-records" in " ".join(c)
               for c in ssh_calls), str(ssh_calls))
     check("the README is compared and renamed into place only on a "
           "difference, never written only when absent",
@@ -947,9 +947,9 @@ subprocess.Popen([sys.executable, "-c", "import sys; print('cell', flush=True); 
           and staging_used not in placing_calls[0][-1]
           and len(placing_requests) == 1
           and placing_requests[0]["store_dir"]
-          == f"/home/nedlern/nedschorus-logs/cold-read-records/{demo.name}"
+          == f"/home/nedlern/nedsnodes-logs/cold-read-records/{demo.name}"
           and placing_requests[0]["staging_dir"]
-          == f"/home/nedlern/nedschorus-logs/cold-read-records/{staging_used}"
+          == f"/home/nedlern/nedsnodes-logs/cold-read-records/{staging_used}"
           and sorted(placing_requests[0]["local_digests"])
           == sorted(p.relative_to(demo).as_posix() for p in demo.rglob("*") if p.is_file()),
           f"{placing_calls} {placing_requests}")

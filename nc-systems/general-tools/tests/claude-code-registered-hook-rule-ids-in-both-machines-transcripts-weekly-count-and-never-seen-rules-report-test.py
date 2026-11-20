@@ -3,7 +3,7 @@
 
 Each case builds a scratch git repository holding a registered hook, scratch transcripts and a
 scratch report directory, so the real log-store and the real transcripts are never read or written.
-NEDSCHORUS_MAINTENANCE_JOB_REPORTS_DIRECTORY is set to a scratch directory before the program is
+NEDSNODES_MAINTENANCE_JOB_REPORTS_DIRECTORY is set to a scratch directory before the program is
 loaded, so a run that loses its --report-directory still cannot write into the log-store.
 
 Run: python3 nc-systems/general-tools/tests/claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report-test.py
@@ -25,7 +25,7 @@ from pathlib import Path
 # Kept in a variable so the directory is removed at exit even when a case raises.
 _SCRATCH_REPORT_DIRECTORY_HOLDER = tempfile.TemporaryDirectory(prefix="hook-rule-ids-weekly-reports-")
 SCRATCH_REPORT_DIRECTORY = Path(_SCRATCH_REPORT_DIRECTORY_HOLDER.name)
-os.environ["NEDSCHORUS_MAINTENANCE_JOB_REPORTS_DIRECTORY"] = str(SCRATCH_REPORT_DIRECTORY)
+os.environ["NEDSNODES_MAINTENANCE_JOB_REPORTS_DIRECTORY"] = str(SCRATCH_REPORT_DIRECTORY)
 PROGRAM = (Path(__file__).resolve().parents[1]
            / "claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report.py")
 _specification = importlib.util.spec_from_file_location("hook_rule_ids_weekly_count", PROGRAM)
@@ -636,7 +636,7 @@ with tempfile.TemporaryDirectory() as scratch:
           in report.read_text(encoding="utf-8"), (status, errors))
     program.REPOSITORY = repository
 
-    check("the default report directory is the one NEDSCHORUS_MAINTENANCE_JOB_REPORTS_DIRECTORY names",
+    check("the default report directory is the one NEDSNODES_MAINTENANCE_JOB_REPORTS_DIRECTORY names",
           program.DEFAULT_REPORT_DIRECTORY == SCRATCH_REPORT_DIRECTORY, program.DEFAULT_REPORT_DIRECTORY)
     if program.DEFAULT_REPORT_DIRECTORY == SCRATCH_REPORT_DIRECTORY:
         status, output, _ = run_program(["--transcript-directory", str(transcripts)], now)

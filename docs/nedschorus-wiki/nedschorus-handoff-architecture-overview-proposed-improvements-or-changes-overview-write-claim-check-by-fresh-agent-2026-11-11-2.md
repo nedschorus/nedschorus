@@ -1,6 +1,6 @@
 # Proposed improvements or changes: nedschorus-handoff-architecture-overview.md (overview claim check, 2026-11-11)
 
-Assertions of the overview that the claim check against commit 84a92dd16d5d3d180f2214e2f3a7c2541fb62562 found contradicted or unsupported and ranked fix later: loose, incomplete or badly worded, but no agent would act wrongly on them. Its report is /home/nedlern/nedschorus-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/2849acdfa8c72239374f9f407c895e6404784896-2026-11-11T23-05-48-837391Z.md. Regular maintenance fixes them in the overview.
+Assertions of the overview that the claim check against commit 84a92dd16d5d3d180f2214e2f3a7c2541fb62562 found contradicted or unsupported and ranked fix later: loose, incomplete or badly worded, but no agent would act wrongly on them. Its report is /home/nedlern/nedsnodes-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/2849acdfa8c72239374f9f407c895e6404784896-2026-11-11T23-05-48-837391Z.md. Regular maintenance fixes them in the overview.
 
 ## E1 — possible problem: an assertion of the overview is contradicted
 
@@ -38,7 +38,7 @@ Goes wrong when: a reader takes the assertion as exact.
 The claim check's evidence:
 > - Files read: handoff-agent-crash-watcher.py, uncommitted-work-snapshots.py, clean-worktrees.py.
 > - Programs in this system also write the task list, and the overview leaves them out:
->   - handoff-agent-crash-watcher.py:1101-1104 `task_list = task_lists_directory / f"nedschorus-{agent_seat}-tasks"` writes new tasks.
+>   - handoff-agent-crash-watcher.py:1101-1104 `task_list = task_lists_directory / f"nedsnodes-{agent_seat}-tasks"` writes new tasks.
 >   - uncommitted-work-snapshots.py:949-952: `restore` opens a task.
 >   - clean-worktrees.py:221 `Last, it closes the tasks that uncommitted-work-snapshots.py restore opens`.
 State: open

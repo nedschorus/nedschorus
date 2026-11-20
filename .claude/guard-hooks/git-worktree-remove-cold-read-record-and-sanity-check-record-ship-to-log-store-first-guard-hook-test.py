@@ -65,8 +65,8 @@ STORE = _scratch / "store"
 os.environ[SHIP_DESTINATION_VARIABLE] = str(STORE / "cold-read-records")
 # Where the deferred-removal cases' waiters write their logs and user-alerts, never the real ned-box home.
 SCRATCH_NED_BOX_HOME = _scratch / "ned-box-home"
-WAITER_LOGS = SCRATCH_NED_BOX_HOME / "nedschorus-logs" / hook.GIT_WORKTREE_REMOVE_DEFERRED_WAITER_LOG_STORE_DIRECTORY_NAME
-PENDING_ALERTS = SCRATCH_NED_BOX_HOME / ".local" / "state" / "nedschorus" / "user-alerts" / "pending"
+WAITER_LOGS = SCRATCH_NED_BOX_HOME / "nedsnodes-logs" / hook.GIT_WORKTREE_REMOVE_DEFERRED_WAITER_LOG_STORE_DIRECTORY_NAME
+PENDING_ALERTS = SCRATCH_NED_BOX_HOME / ".local" / "state" / "nedsnodes" / "user-alerts" / "pending"
 # A waiter writes its failure task on the task list CLAUDE_CODE_TASK_LIST_ID names, and a waiter the hook starts
 # inherits the variable, so a test run started by an agent-session would write tasks on that agent-seat's real
 # list: every waiter here starts without it, except where a case names a list under SCRATCH_HOME.

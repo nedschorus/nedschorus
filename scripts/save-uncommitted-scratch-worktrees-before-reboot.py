@@ -90,8 +90,8 @@ import tarfile
 import tempfile
 from pathlib import Path, PurePosixPath
 
-DEFAULT_CLONE = Path.home() / "Projects" / "nedschorus"
-DEFAULT_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/seats"
+DEFAULT_CLONE = Path.home() / "Projects" / "nedsnodes"
+DEFAULT_DESTINATION = "nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats"
 DEFAULT_SCRATCH_ROOTS = ("/tmp", "/private/tmp")
 LOG_STORE_HOSTNAME = "ned-box"
 UNKNOWN_SEAT = "unknown-seat"

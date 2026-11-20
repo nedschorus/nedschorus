@@ -936,7 +936,7 @@ with tempfile.TemporaryDirectory() as workspace:
 
     # Each waiting-task shape, as recorded background launches wrote it, gets 0 alone; with work
     # beside it, before it, after it or inside its loop, the command gets the no-match limit.
-    waiter = "/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers/loop/watch-and-merge-provisional-ghi-md-edits.sh"
+    waiter = "/home/nedlern/nedsnodes-logs/seats/merge-lane-2/merge-helpers/loop/watch-and-merge-provisional-ghi-md-edits.sh"
     waiting_task_shapes = (
         "sleep 120",
         "sleep 120 >/dev/null 2>&1",
@@ -984,7 +984,7 @@ with tempfile.TemporaryDirectory() as workspace:
             f"sleep 120 > $({work})",
             "sleep 120 >/dev/null;./work.sh",
             "gh run watch 12345 && gh pr merge 3101",
-            "cd /home/nedlern/agents/merge-lane-2; H=/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers; "
+            "cd /home/nedlern/agents/merge-lane-2; H=/home/nedlern/nedsnodes-logs/seats/merge-lane-2/merge-helpers; "
             "python3 scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py "
             "3220 abc t > $H/merge-3220.log 2>&1; while true; do bash $H/loop/watch-and-merge-provisional-ghi-md-edits.sh; done",
             "python3 scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py 3220 abc t "

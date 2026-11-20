@@ -2,7 +2,7 @@
 
 **Status.** Two different things in this file have two different standings, and a reader needs to know which is which.
 
-The *substance* of the standing decisions below was approved by the user in an approval-walk held on 2026-09-03 and 2026-09-04. That approval-walk's record is its minutes, which are kept in the log-store rather than on main (user-ruled 2026-09-08) at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/2026-09-03-ai-native-architecture-overview-decisions-minutes.md`, and which are named for the day it opened and carries both days' rulings, quoting his words where the wording was his and summarising where it was not.
+The *substance* of the standing decisions below was approved by the user in an approval-walk held on 2026-09-03 and 2026-09-04. That approval-walk's record is its minutes, which are kept in the log-store rather than on main (user-ruled 2026-09-08) at `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/2026-09-03-ai-native-architecture-overview-decisions-minutes.md`, and which are named for the day it opened and carries both days' rulings, quoting his words where the wording was his and summarising where it was not.
 
 The *wording* of this file is pending approval. Nobody has yet read it as a stranger would, and the user has not read it whole. So: treat a standing decision's substance as settled, and treat any sentence here, including the decisions' own phrasing, as text that may still be wrong.
 

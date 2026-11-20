@@ -10,7 +10,7 @@ the way such a file gets into a directory both machines can reach.
 WHERE IT GOES. `seats/<seat>/<name>` under the log-store, alongside the kinds
 that are organized by kind:
 
-    nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/<seat>/<name>
+    nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/<seat>/<name>
 
 `seats/` is the one kind organized by PRODUCER rather than by kind, because
 what it holds has nothing else in common: it is whatever one seat needed to
@@ -101,7 +101,7 @@ USAGE
   scripts/seat-shared-file-ship.py --as survey-notes.md /tmp/out.md
 
 THE SEAT NAME comes from `--seat`, else from CLAUDE_CODE_TASK_LIST_ID, which
-the supervisor sets to `nedschorus-<seat name>-tasks` in every seat's
+the supervisor sets to `nedsnodes-<seat name>-tasks` in every seat's
 environment. With neither, the program refuses rather than guessing: a
 directory named for the wrong seat is worse than an error, because the file
 is then filed where nobody will look for it.
@@ -142,7 +142,7 @@ _shipper_spec.loader.exec_module(shipper)
 
 SEATS_KIND_DIRECTORY = "seats"
 SEAT_NAME_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_TASK_LIST_ID"
-SEAT_NAME_PREFIX = "nedschorus-"
+SEAT_NAME_PREFIX = "nedsnodes-"
 SEAT_NAME_SUFFIX = "-tasks"
 
 EXIT_SHIPPED = shipper.EXIT_SHIPPED
@@ -154,7 +154,7 @@ EXIT_BAD_INVOCATION = shipper.EXIT_BAD_INVOCATION
 def seat_name_from_environment():
     """The seat's name from the task-list id the supervisor sets, or None.
 
-    `nedschorus-cold-read-research-tasks` -> `cold-read-research`. Anything
+    `nedsnodes-cold-read-research-tasks` -> `cold-read-research`. Anything
     not of that shape returns None rather than a guess.
     """
     value = os.environ.get(SEAT_NAME_ENVIRONMENT_VARIABLE, "").strip()

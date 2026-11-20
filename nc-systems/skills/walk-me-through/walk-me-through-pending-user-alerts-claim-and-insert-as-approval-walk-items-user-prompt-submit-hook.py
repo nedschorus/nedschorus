@@ -8,7 +8,7 @@ Mac agent-sessions take no alerts until a renaming test over /Volumes/nedhome sa
 ONLY A PROMPT THE USER TYPED claims, so only an agent-session he can see claims. A headless `claude -p`
 agent-session claims nothing: Claude Code sets CLAUDE_CODE_SESSION_ATTENDED to "0" for its hooks, even when it
 inherited "1" from the agent-seat that started it, and a caller's headless child may also carry
-NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER; either silences the hook, as
+NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER; either silences the hook, as
 nc-systems/general-tools/agent-session-unattended-by-user-check-common.py decides. A missing CLAUDE_CODE_SESSION_ATTENDED does not. The transcript cannot
 tell: on a session's first prompt Claude Code may not have written the prompt's record when this hook runs.
 In an attended agent-session Claude Code also starts this hook for a background-task notice and for another

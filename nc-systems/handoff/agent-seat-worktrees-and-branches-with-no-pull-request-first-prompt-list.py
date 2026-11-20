@@ -25,7 +25,7 @@ WHAT IS LISTED.
   counts it among the branches with no pull request.
 
 WHAT AN OPEN TASK HOLDS IS LEFT OUT. A task on the agent-seat's task list,
-~/.claude/tasks/nedschorus-<agent-seat>-tasks/, read with the due-task hook's
+~/.claude/tasks/nedsnodes-<agent-seat>-tasks/, read with the due-task hook's
 reader (scripts/agent-seat-due-task-raise-hook.py), may name in the
 `branches` list of its metadata the branch names and worktree paths it holds.
 An entry is left out when an open task (status pending or in_progress) names
@@ -151,7 +151,7 @@ def tasks_holding(agent_seat, task_list_directory=None):
     try:
         hook = due_task_raise_hook_module()
         if directory is None:
-            directory = Path.home() / hook.TASKS_ROOT_UNDER_HOME / f"nedschorus-{agent_seat}-tasks"
+            directory = Path.home() / hook.TASKS_ROOT_UNDER_HOME / f"nedsnodes-{agent_seat}-tasks"
         directory = Path(directory)
         tasks = hook.read_tasks(directory, unreadable)
     except Exception as error:

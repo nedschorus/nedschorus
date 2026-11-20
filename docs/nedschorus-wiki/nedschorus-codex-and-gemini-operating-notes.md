@@ -1,6 +1,6 @@
 # Notes on using the Codex and Gemini (Antigravity) agents from an agent-seat
 
-This page tells an agent-seat how to run Codex and Gemini, and what to expect from them. Facts about an installed program say which machine and date they were checked on, because the programs update often. Measurements the cold-read-research agent-seat made from 2026-09-03 to 2026-09-07 are in their own section near the end, and the campaign's data is in the record `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-03-cold-read-tier-roster-campaign/`. Claude Code, the program the agent-seats themselves run in, is covered elsewhere; it appears here only where it was measured beside the other two or where it broke their runs.
+This page tells an agent-seat how to run Codex and Gemini, and what to expect from them. Facts about an installed program say which machine and date they were checked on, because the programs update often. Measurements the cold-read-research agent-seat made from 2026-09-03 to 2026-09-07 are in their own section near the end, and the campaign's data is in the record `nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/2026-09-03-cold-read-tier-roster-campaign/`. Claude Code, the program the agent-seats themselves run in, is covered elsewhere; it appears here only where it was measured beside the other two or where it broke their runs.
 
 ## Run them through the project's programs
 

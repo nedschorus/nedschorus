@@ -37,7 +37,7 @@ ORIGINAL = {"id": "3", "subject": "the subject", "description": "the description
 CHANGED = dict(ORIGINAL, status="completed", description="the description\nMarked completed.")
 
 with tempfile.TemporaryDirectory() as scratch:
-    list_directory = Path(scratch) / "nedschorus-alpha-tasks"
+    list_directory = Path(scratch) / "nedsnodes-alpha-tasks"
     list_directory.mkdir()
     task_file = list_directory / "3.json"
     task_file.write_text(json.dumps(ORIGINAL, indent=2), encoding="utf-8")

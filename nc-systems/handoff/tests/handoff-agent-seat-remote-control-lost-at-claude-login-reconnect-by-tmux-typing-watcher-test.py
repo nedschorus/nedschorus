@@ -8,7 +8,7 @@ builds a fixture: a process table directory holding one stand-in supervisor
 and its claude, a session record, a transcript, and a detached tmux session,
 named for this run, on a tmux server in a private TMUX_TMPDIR, whose pane
 paints a Claude Code input box and then echoes what is typed. The Mac window
-opener runs for real, with NEDSCHORUS_SSH_PROGRAM pointing at a stand-in ssh
+opener runs for real, with NEDSNODES_SSH_PROGRAM pointing at a stand-in ssh
 that records each request.
 
 Prints one line per case and exits non-zero if any case fails.
@@ -112,8 +112,8 @@ class Fixture:
                         f"if [ -f '{self.ssh_exit}' ]; then exit \"$(cat '{self.ssh_exit}')\"; fi\n"
                         "exit 0\n", encoding="utf-8")
         stub.chmod(0o755)
-        os.environ["NEDSCHORUS_SSH_PROGRAM"] = str(stub)
-        os.environ["NEDSCHORUS_MAC_SSH_DESTINATION"] = "mac-stand-in.invalid"
+        os.environ["NEDSNODES_SSH_PROGRAM"] = str(stub)
+        os.environ["NEDSNODES_MAC_SSH_DESTINATION"] = "mac-stand-in.invalid"
         self.environment = {
             watcher.LOG_DIRECTORY_ENVIRONMENT_VARIABLE: str(self.logs),
             watcher.SESSION_RECORDS_DIRECTORY_ENVIRONMENT_VARIABLE: str(self.records),

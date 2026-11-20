@@ -11,7 +11,7 @@ running. It is installed on ned-box alone by
 nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py, from the
 table beside it, scheduled-jobs-on-each-machine.json:
 
-    */5 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge.py >> /home/nedlern/.claude/merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge.log 2>&1
+    */5 * * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge.py >> /home/nedlern/.claude/merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge.log 2>&1
 
 Each invocation lists every open pull request
 whose title starts "GHI-MD edit for issue" and, for each one that is not a
@@ -66,7 +66,7 @@ Every other pull request, and every one whose approval or merge fails, gets
 one message for merge-lane-2: a file
 needs-a-look/pr<number>-<first 12 characters of the nc-head-commit>.txt under
 the state directory, <merge-lane-worktrees-and-outputs-directory>/merge-lane-ghi-md-edit-pull-requests-check-approve-and-merge-hold-list-reported-heads-and-needs-a-look-messages,
-by default /home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers/merge-lane-ghi-md-edit-pull-requests-check-approve-and-merge-hold-list-reported-heads-and-needs-a-look-messages.
+by default /home/nedlern/nedsnodes-logs/seats/merge-lane-2/merge-helpers/merge-lane-ghi-md-edit-pull-requests-check-approve-and-merge-hold-list-reported-heads-and-needs-a-look-messages.
 merge-lane-2's watcher, scripts/watch-open-pull-requests-hack.py, prints one
 event line for each file in needs-a-look/ at every start until the file is
 moved; the watcher loads this program by its path and calls its function
@@ -116,7 +116,7 @@ invocation stopped before handling every pull request, and the pull request
 it was handling, if any, and those after it wait for the next invocation,
 because the lock file could
 not be opened, the held list, the record, ned-review-merge's token in
-~/.config/nedschorus/ned-review-merge.token, a gh read, the Markdown parser,
+~/.config/nedsnodes/ned-review-merge.token, a gh read, the Markdown parser,
 the review tools worktree or a message file could not be read, loaded or
 written, the held list or the record is malformed, or anything else raised
 an exception the program does not expect, whose traceback goes to the log.

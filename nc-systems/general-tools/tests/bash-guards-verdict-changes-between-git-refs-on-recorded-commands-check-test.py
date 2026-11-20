@@ -2011,9 +2011,9 @@ finally:
 check("the default transcript folders are this machine's and the three copies the mirror keeps on ned-box",
       replay.DEFAULT_TRANSCRIPT_DIRECTORIES == [
           str(Path.home() / ".claude" / "projects"),
-          "/home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/projects",
-          "/home/nedlern/nedschorus-logs/agent-session-files-by-machine/ned-box",
-          "/home/nedlern/nedschorus-logs/agent-session-files-by-machine/recovered"],
+          "/home/nedlern/nedsnodes-logs/agent-session-files-by-machine/mac/projects",
+          "/home/nedlern/nedsnodes-logs/agent-session-files-by-machine/ned-box",
+          "/home/nedlern/nedsnodes-logs/agent-session-files-by-machine/recovered"],
       replay.DEFAULT_TRANSCRIPT_DIRECTORIES)
 
 # A deleted entry passes this case; only a replay against a base that still runs the former path shows it.

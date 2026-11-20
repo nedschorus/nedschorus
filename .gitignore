@@ -11,7 +11,7 @@ walk-ledgers/
 # walk-me-through's files per walk (draft, suggestions, walk text, minutes,
 # and a cold-read walk's dispositions): logs, not the system — a record of
 # what was presented and what the user ruled. Their home is the log-store's
-# walk/ kind, nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/, and before
+# walk/ kind, nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/, and before
 # the drain main held a second copy of walk files the store already had, with
 # neither copy governed by any program. The drain (PR #305) shipped all 29
 # committed files add-only, verified by sha256, and deleted them here; this

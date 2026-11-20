@@ -35,7 +35,7 @@ def check(name, condition, detail=None):
 with tempfile.TemporaryDirectory() as scratch:
     root = Path(scratch)
 
-    missing = root / "nedschorus-gone-tasks"
+    missing = root / "nedsnodes-gone-tasks"
     try:
         write(missing, "subject", "description")
         raised = None

@@ -46,7 +46,7 @@ def check(case_name, condition, detail=""):
 class Case:
     def __init__(self, root, name, walk_open=False, waiting="item 1 of 2"):
         self.home = root / name / "home"
-        self.alerts = self.home / ".local/state/nedschorus/user-alerts"
+        self.alerts = self.home / ".local/state/nedsnodes/user-alerts"
         (self.alerts / "pending").mkdir(parents=True)
         self.checkout = root / name / "checkout"
         walk = self.checkout / "docs" / "walk"
@@ -227,7 +227,7 @@ def run_headless_cases(root):
     for name, record_origin, environment_extra in (
             ("headless-first-prompt-no-record", None, {"CLAUDE_CODE_SESSION_ATTENDED": "0"}),
             ("headless-first-prompt-sdk-record", "sdk", {"CLAUDE_CODE_SESSION_ATTENDED": "0"}),
-            ("caller-owned-child", None, {"NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "1"})):
+            ("caller-owned-child", None, {"NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER": "1"})):
         case = Case(root, name)
         case.alert("alert-a")
         if record_origin:

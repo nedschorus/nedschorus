@@ -209,9 +209,9 @@ CLAUDE_CODE_COMMAND_LINE_PREFIX_FILE = (
 
 MODEL = "claude-haiku-5-5"
 MODEL_TIMEOUT_SECONDS = 25
-LOG_STORE_DIRECTORY_NAME = "nedschorus-logs"
+LOG_STORE_DIRECTORY_NAME = "nedsnodes-logs"
 LOG_FILE_NAME = "walk-me-through-agent-question-to-user-outside-approval-walk-items-refusal-stop-hook-refusals.jsonl"
-LOG_PATH_VARIABLE = "NEDSCHORUS_WALK_ME_THROUGH_AGENT_QUESTION_REFUSAL_LOG"
+LOG_PATH_VARIABLE = "NEDSNODES_WALK_ME_THROUGH_AGENT_QUESTION_REFUSAL_LOG"
 
 NUMBER_LIST = r"\d+(?:\.\d+)*(?:\s*(?:,|&|\band\b|\bto\b|-|–)\s*\d+(?:\.\d+)*)*"
 WAITING_REMINDER = re.compile(

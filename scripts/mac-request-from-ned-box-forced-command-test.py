@@ -2,7 +2,7 @@
 """Tests for mac-request-from-ned-box-forced-command.py.
 
 No test opens a real window: the opener is replaced by a stub that records its
-arguments (NEDSCHORUS_MAC_WINDOW_OPENER), or the real opener runs in its dry-run
+arguments (NEDSNODES_MAC_WINDOW_OPENER), or the real opener runs in its dry-run
 mode, which prints the AppleScript instead of running it. HOME points at a
 scratch directory, so the request log is written there.
 
@@ -50,9 +50,9 @@ def refusal_of(request):
 
 ACCEPTED = {
     "open-window tmux attach -t merge-lane-2": ["tmux", "attach", "-t", "merge-lane-2"],
-    "open-window less /home/nedlern/nedschorus-logs/walk/a-minutes.md": ["less", "/home/nedlern/nedschorus-logs/walk/a-minutes.md"],
-    "open-window git -C /home/nedlern/Projects/nedschorus diff origin/main -- scripts/a.py":
-        ["git", "-C", "/home/nedlern/Projects/nedschorus", "diff", "origin/main", "--", "scripts/a.py"],
+    "open-window less /home/nedlern/nedsnodes-logs/walk/a-minutes.md": ["less", "/home/nedlern/nedsnodes-logs/walk/a-minutes.md"],
+    "open-window git -C /home/nedlern/Projects/nedsnodes diff origin/main -- scripts/a.py":
+        ["git", "-C", "/home/nedlern/Projects/nedsnodes", "diff", "origin/main", "--", "scripts/a.py"],
     "open-window tail -n 100 -f run.log": ["tail", "-n", "100", "-f", "run.log"],
     "open-window env A=1 B=x,y prog --flag=%s user@host:path +5": ["env", "A=1", "B=x,y", "prog", "--flag=%s", "user@host:path", "+5"],
     "open-window true -oProxyCommand=/usr/bin/true": ["true", "-oProxyCommand=/usr/bin/true"],
@@ -127,12 +127,12 @@ def run_program(request, opener_body=None, use_real_opener=False, log_unwritable
         environment["SSH_ORIGINAL_COMMAND"] = request
     record = scratch / "opener-arguments.json"
     if use_real_opener:
-        environment["NEDSCHORUS_MAC_WINDOW_OPENER"] = str(REAL_OPENER)
+        environment["NEDSNODES_MAC_WINDOW_OPENER"] = str(REAL_OPENER)
         environment["OPEN_ITERM_WINDOW_DRY_RUN"] = "1"
     else:
         stub = scratch / "opener-stub"
         stub.write_text(opener_body or f"""python3 -c 'import json,sys; json.dump(sys.argv[1:], open("{record}","w"))' "$@"\n""")
-        environment["NEDSCHORUS_MAC_WINDOW_OPENER"] = str(stub)
+        environment["NEDSNODES_MAC_WINDOW_OPENER"] = str(stub)
     result = subprocess.run([sys.executable, str(PROGRAM_PATH)], capture_output=True, text=True, env=environment)
     opened = json.loads(record.read_text()) if record.exists() else None
     log_path = scratch / ".claude" / "mac-window-opened-for-ned-box.log"
@@ -226,12 +226,12 @@ def launcher_accepts_seat_name(name, bash_options=(), locale_environment=None, b
         stub_ssh = stub_directory / "ssh"
         stub_ssh.write_text("#!/bin/sh\necho 'stub ssh reached' >&2\nexit 1\n", encoding="utf-8")
         stub_ssh.chmod(0o755)
-        environment = dict(os.environ, NEDSCHORUS_SEAT_GITHUB_ACCOUNT="any-account", HOME=scratch,
+        environment = dict(os.environ, NEDSNODES_SEAT_GITHUB_ACCOUNT="any-account", HOME=scratch,
                            PATH=f"{stub_directory}{os.pathsep}{os.environ.get('PATH', '')}",
                            **(locale_environment or {}))
         result = subprocess.run([bash, *bash_options, str(PROGRAM_PATH.with_name("launch-claude-ubuntu")), name],
                                 capture_output=True, text=True, env=environment, timeout=30)
-    if "NEDSCHORUS_SEAT_GITHUB_ACCOUNT" in result.stderr:
+    if "NEDSNODES_SEAT_GITHUB_ACCOUNT" in result.stderr:
         return True
     if "agent names are" in result.stderr or "cannot start with -" in result.stderr:
         return False
@@ -339,9 +339,9 @@ def typora_refusal_of(request, ned_box_home="/home/nedlern"):
     return None
 
 
-for request in ["open-in-typora /home/nedlern/nedschorus-logs/walk/a-minutes.md",
+for request in ["open-in-typora /home/nedlern/nedsnodes-logs/walk/a-minutes.md",
                 "open-in-typora /home/nedlern/a.md",
-                "open-in-typora /home/nedlern/Projects/nedschorus/docs/x_y.z,v=1@2+3%4:5.md"]:
+                "open-in-typora /home/nedlern/Projects/nedsnodes/docs/x_y.z,v=1@2+3%4:5.md"]:
     check(f"typora accepted: {request!r}", typora_refusal_of(request) is None, typora_refusal_of(request))
 
 TYPORA_REFUSED = {
@@ -396,9 +396,9 @@ def run_typora(request, home, mount, open_body=None, log_unwritable=False):
     stub.write_text("#!/bin/sh\n" + (open_body or f"""python3 -c 'import json,sys; json.dump(sys.argv[1:], open("{record}","w"))' "$@"\n"""))
     stub.chmod(0o755)
     environment = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(scratch), "SSH_ORIGINAL_COMMAND": request,
-                   "NEDSCHORUS_MAC_OPEN_PROGRAM": str(stub), "NEDSCHORUS_NED_BOX_HOME": home,
-                   "NEDSCHORUS_MAC_NED_BOX_HOME_MOUNT": mount,
-                   "NEDSCHORUS_MAC_WINDOW_OPENER": str(scratch / "no-window-opener-must-run")}
+                   "NEDSNODES_MAC_OPEN_PROGRAM": str(stub), "NEDSNODES_NED_BOX_HOME": home,
+                   "NEDSNODES_MAC_NED_BOX_HOME_MOUNT": mount,
+                   "NEDSNODES_MAC_WINDOW_OPENER": str(scratch / "no-window-opener-must-run")}
     result = subprocess.run([sys.executable, str(PROGRAM_PATH)], capture_output=True, text=True, env=environment)
     opened = json.loads(record.read_text()) if record.exists() else None
     log_path = scratch / ".claude" / "mac-window-opened-for-ned-box.log"
@@ -487,18 +487,18 @@ def browser_refusal_of(request, ned_box_home="/home/nedlern"):
     return None
 
 
-for request in ["open-in-browser /home/nedlern/nedschorus-logs/watcher/notices/20261013T000000Z-a-leftover-shell.html",
-                "open-in-browser /home/nedlern/nedschorus-logs/a.html"]:
+for request in ["open-in-browser /home/nedlern/nedsnodes-logs/watcher/notices/20261013T000000Z-a-leftover-shell.html",
+                "open-in-browser /home/nedlern/nedsnodes-logs/a.html"]:
     check(f"browser accepted: {request!r}", browser_refusal_of(request) is None, browser_refusal_of(request))
 
 BROWSER_REFUSED = {
-    "another verb": ("open-in-typora /home/nedlern/nedschorus-logs/a.html", "does not start with the verb 'open-in-browser'"),
-    "a page outside the log-store": ("open-in-browser /home/nedlern/a.html", "not under /home/nedlern/nedschorus-logs/"),
-    "a directory that only starts like the log-store": ("open-in-browser /home/nedlern/nedschorus-logsx/a.html", "not under /home/nedlern/nedschorus-logs/"),
-    "a file that is not .html": ("open-in-browser /home/nedlern/nedschorus-logs/a.md", "does not end in .html"),
-    "a '..' out of the log-store": ("open-in-browser /home/nedlern/nedschorus-logs/../.ssh/a.html", "'..' component"),
-    "two paths": ("open-in-browser /home/nedlern/nedschorus-logs/a.html /home/nedlern/nedschorus-logs/b.html", "exactly one path"),
-    "a quote": ("open-in-browser /home/nedlern/nedschorus-logs/a'b.html", "outside letters, digits"),
+    "another verb": ("open-in-typora /home/nedlern/nedsnodes-logs/a.html", "does not start with the verb 'open-in-browser'"),
+    "a page outside the log-store": ("open-in-browser /home/nedlern/a.html", "not under /home/nedlern/nedsnodes-logs/"),
+    "a directory that only starts like the log-store": ("open-in-browser /home/nedlern/nedsnodes-logsx/a.html", "not under /home/nedlern/nedsnodes-logs/"),
+    "a file that is not .html": ("open-in-browser /home/nedlern/nedsnodes-logs/a.md", "does not end in .html"),
+    "a '..' out of the log-store": ("open-in-browser /home/nedlern/nedsnodes-logs/../.ssh/a.html", "'..' component"),
+    "two paths": ("open-in-browser /home/nedlern/nedsnodes-logs/a.html /home/nedlern/nedsnodes-logs/b.html", "exactly one path"),
+    "a quote": ("open-in-browser /home/nedlern/nedsnodes-logs/a'b.html", "outside letters, digits"),
     "a path outside the home": ("open-in-browser /etc/a.html", "not under /home/nedlern/"),
 }
 for case_name, (request, expected) in BROWSER_REFUSED.items():
@@ -517,7 +517,7 @@ if mount is None or not os.access(mount, os.W_OK):
           "/dev/shm is one on Linux")
 else:
     # The log-store sits inside the stand-in home, a real mount point, so a path maps onto itself.
-    log_store = Path(mount) / "nedschorus-logs"
+    log_store = Path(mount) / "nedsnodes-logs"
     # Shared with the other browser suite, which may run at the same time, so it is
     # created if missing and never removed: each suite removes only its own directory in it.
     log_store.mkdir(exist_ok=True)
@@ -561,7 +561,7 @@ def run_task_lists_read(request, with_store=True, tar_body=None, log_is_a_direct
     """Run the program as sshd would for a task-list read; return (result, log, stdout bytes)."""
     scratch = Path(tempfile.mkdtemp(prefix="mac-task-lists-read-test-"))
     if with_store:
-        task_list = scratch / ".claude" / "tasks" / "nedschorus-mac-seat-tasks"
+        task_list = scratch / ".claude" / "tasks" / "nedsnodes-mac-seat-tasks"
         task_list.mkdir(parents=True)
         (task_list / "1.json").write_text(json.dumps({"id": "1", "subject": "Mac task", "status": "pending"}))
     if log_is_a_directory:
@@ -589,12 +589,12 @@ try:
 except tarfile.TarError as unreadable:
     member_names = [f"not a tar archive: {unreadable}"]
 check("task lists: standard output is a tar archive of the store, and nothing else",
-      "./nedschorus-mac-seat-tasks/1.json" in member_names, member_names)
+      "./nedsnodes-mac-seat-tasks/1.json" in member_names, member_names)
 check("task lists: a read is logged as accepted before it is sent",
       " accepted 'read-agent-seat-task-lists'" in log and " sent " in log
       and log.index(" accepted ") < log.index(" sent "), log)
 
-result, log, archive = run_task_lists_read("read-agent-seat-task-lists nedschorus-mac-seat-tasks")
+result, log, archive = run_task_lists_read("read-agent-seat-task-lists nedsnodes-mac-seat-tasks")
 check("task lists: a request with words after the verb is refused and exits 2, sending nothing",
       result.returncode == forced_command.EXIT_REFUSED and archive == b"" and b"takes no words" in result.stderr,
       (result.returncode, result.stderr))

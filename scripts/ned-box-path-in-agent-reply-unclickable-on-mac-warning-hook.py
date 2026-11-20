@@ -103,7 +103,7 @@ HIT_LINES_LISTED_AT_MOST = 10
 NOTE_RECORD_DIRECTORY_NAME = "ned-box-path-in-agent-reply-unclickable-on-mac-warning-hook-state"
 NED_BOX_HOME = ned_box_home_path_constants.NED_BOX_HOME + "/"
 MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home_path_constants.MAC_MOUNT_OF_NED_BOX_HOME + "/"
-LOG_STORE_DIRECTORY_UNDER_NED_BOX_HOME = "nedschorus-logs/"
+LOG_STORE_DIRECTORY_UNDER_NED_BOX_HOME = "nedsnodes-logs/"
 SCP_CITATION_HOST_PREFIX = "nedlern@ned-box:"
 
 # Characters that end a path in prose: whitespace, quotes, brackets, Markdown
@@ -129,7 +129,7 @@ PREVIOUS_REPLY_OPENING_LINES = (
     "file:///Volumes/nedhome/<the path after /home/nedlern/>. Each line below shows the link to "
     "write in place of what your reply wrote.",
     "In your next reply, write in that form each file listed below that you mention again.",
-    "For a log-store file, keep the scp citation nedlern@ned-box:/home/nedlern/nedschorus-logs/<path> "
+    "For a log-store file, keep the scp citation nedlern@ned-box:/home/nedlern/nedsnodes-logs/<path> "
     "as the link text, as the lines below do; only the link target takes the /Volumes/nedhome form.",
     "A path inside a shell command, written in a code span or a fenced code block, is not listed "
     "and needs no change: the command runs on ned-box, where the path is right.",

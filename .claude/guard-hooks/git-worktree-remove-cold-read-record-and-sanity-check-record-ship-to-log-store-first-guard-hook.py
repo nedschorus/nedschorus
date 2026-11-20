@@ -665,7 +665,7 @@ def git_worktree_remove_deferred_waiter_start_unless_one_already_waits(worktree,
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return None
-        log_directory = ned_box_home / "nedschorus-logs" / GIT_WORKTREE_REMOVE_DEFERRED_WAITER_LOG_STORE_DIRECTORY_NAME
+        log_directory = ned_box_home / "nedsnodes-logs" / GIT_WORKTREE_REMOVE_DEFERRED_WAITER_LOG_STORE_DIRECTORY_NAME
         log_directory.mkdir(parents=True, exist_ok=True)
         log_path = log_directory / f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{Path(worktree).name}-{os.getpid()}.log"
         command = [sys.executable, str(GIT_WORKTREE_REMOVE_DEFERRED_WAITER_SCRIPT), "--worktree", str(worktree),

@@ -3,7 +3,7 @@ Description=nc-shared-database service: one record of every agent-seat on both m
 After=network-online.target
 
 [Service]
-ExecStart=/usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/nc-shared-database/nc-shared-database-service.py
+ExecStart=/usr/bin/python3 /home/nedlern/Projects/nedsnodes/nc-systems/nc-shared-database/nc-shared-database-service.py
 Restart=on-failure
 RestartSec=10
 

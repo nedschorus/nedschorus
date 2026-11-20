@@ -43,9 +43,9 @@ for _task_list_environment_variable in ("CLAUDE_CODE_TASK_LIST_ID", "TRANSCRIPT_
 # fixture's handoff after the real seat and record the real seat's directory
 # in it.
 HANDOFF_SUPERVISOR_SEAT_ENVIRONMENT_VARIABLES = (
-    "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME",
-    "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY",
-    "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID",
+    "NEDSNODES_HANDOFF_SUPERVISOR_AGENT_NAME",
+    "NEDSNODES_HANDOFF_SUPERVISOR_WORKING_DIRECTORY",
+    "NEDSNODES_HANDOFF_SUPERVISOR_SESSION_ID",
 )
 
 
@@ -1490,9 +1490,9 @@ def run_seat_name_and_directory_from_the_handoff_supervisor_cases(workspace: Pat
     subdirectory = seat / "scripts"
     subdirectory.mkdir(parents=True, exist_ok=True)
     seat_environment = {
-        "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": seat_name,
-        "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": str(seat),
-        "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID": FIXTURE_SESSION_ID,
+        "NEDSNODES_HANDOFF_SUPERVISOR_AGENT_NAME": seat_name,
+        "NEDSNODES_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": str(seat),
+        "NEDSNODES_HANDOFF_SUPERVISOR_SESSION_ID": FIXTURE_SESSION_ID,
     }
 
     def write_from(directory: Path, handoffs: Path, text: str, environment_overrides, *extra,
@@ -1575,9 +1575,9 @@ def run_seat_name_and_directory_from_the_handoff_supervisor_cases(workspace: Pat
     empty_handoffs = workspace / "launched-seat-empty-variable-handoffs"
     empty_handoffs.mkdir(parents=True, exist_ok=True)
     write_from(subdirectory, empty_handoffs, "no supervisor told this session anything\n",
-               {"NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": "",
-                "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": "",
-                "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID": FIXTURE_SESSION_ID},
+               {"NEDSNODES_HANDOFF_SUPERVISOR_AGENT_NAME": "",
+                "NEDSNODES_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": "",
+                "NEDSNODES_HANDOFF_SUPERVISOR_SESSION_ID": FIXTURE_SESSION_ID},
                home=empty_home, session_id=FIXTURE_SESSION_ID)
     empty_handoff = empty_handoffs / "scripts-handoff.md"
     check("with the variables empty, the name and written-in are the working directory's",
@@ -1604,9 +1604,9 @@ def run_seat_name_and_directory_from_the_handoff_supervisor_cases(workspace: Pat
     child_route_handoffs = workspace / "session-match-child-route-handoffs"
     child_route_handoffs.mkdir(parents=True, exist_ok=True)
     parent_environment = {
-        "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": parent_name,
-        "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": str(parent),
-        "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID": parent_session_id,
+        "NEDSNODES_HANDOFF_SUPERVISOR_AGENT_NAME": parent_name,
+        "NEDSNODES_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": str(parent),
+        "NEDSNODES_HANDOFF_SUPERVISOR_SESSION_ID": parent_session_id,
     }
     write_from(parent, child_route_handoffs, "the parent's own next step\n", parent_environment,
                home=empty_home, session_id=parent_session_id)
@@ -1641,8 +1641,8 @@ def run_seat_name_and_directory_from_the_handoff_supervisor_cases(workspace: Pat
     # session match, so the working directory decides both. (g) is the case an
     # unguarded comparison gets wrong, since two absent ids compare equal.
     name_and_directory_only = {
-        "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": seat_name,
-        "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": str(seat),
+        "NEDSNODES_HANDOFF_SUPERVISOR_AGENT_NAME": seat_name,
+        "NEDSNODES_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": str(seat),
     }
     for case_slug, case_label, environment_overrides, session_id in (
         ("no-session-variable", "the session-id variable is absent",
@@ -1697,7 +1697,7 @@ def run_written_by_session_field_cases(workspace: Path):
 PRUNE_LIST_ID = "prune.case-tasks"
 # Claude Code names the list's directory with the "." mapped to "-".
 PRUNE_LIST_DIRECTORY_NAME = "prune-case-tasks"
-REMOTE_STORE_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/agent-session-files-by-machine"
+REMOTE_STORE_DESTINATION = "nedlern@ned-box:/home/nedlern/nedsnodes-logs/agent-session-files-by-machine"
 
 
 def task_bytes(task_id: int, status: str, subject: str = "", blocks=(), blocked_by=()) -> bytes:
@@ -2391,7 +2391,7 @@ def run_threshold_hook_defer_then_fire_then_writer_case(workspace: Path):
     def run_hook(running_shell_task_ids):
         """running_shell_task_ids: the background_tasks list Claude Code would send."""
         environment = {key: value for key, value in os.environ.items()
-                       if key != "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"}
+                       if key != "NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER"}
         environment["HOME"] = str(home)
         background_tasks = [{"id": task_id, "type": "shell", "status": "running"}
                             for task_id in running_shell_task_ids]

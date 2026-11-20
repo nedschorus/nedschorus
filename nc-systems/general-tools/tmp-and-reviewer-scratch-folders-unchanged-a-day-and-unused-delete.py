@@ -37,7 +37,7 @@ WHAT IS KEPT. An entry is kept when any of these holds:
 OUTPUT. Before each deletion, `deleting <folder>` on stdout, flushed, and the line
 `<UTC time><tab>deleting<tab><folder>` appended to the deleted-folders log in the log-store,
 --deleted-folders-log-file, default
-/home/nedlern/nedschorus-logs/tmp-and-reviewer-scratch-folders-deleted-log/ned-box.txt, so the
+/home/nedlern/nedsnodes-logs/tmp-and-reviewer-scratch-folders-deleted-log/ned-box.txt, so the
 log names every folder a run stopped part way may have deleted; then a summary line on stdout.
 --dry-run prints `would delete`, and deletes nothing and writes nothing to the log. No user-alert
 is written.
@@ -69,7 +69,7 @@ GENERAL_TOOLS = Path(__file__).resolve().parent
 REPOSITORY_ROOT = GENERAL_TOOLS.parents[1]
 DEFAULT_TMP_PLACE = Path("/tmp")
 DEFAULT_REVIEWER_SCRATCH_DIRECTORIES_PLACE = Path.home() / ".cache" / "merge-lane-pull-request-reviewer-scratch-directories"
-DEFAULT_DELETED_FOLDERS_LOG_FILE = Path("/home/nedlern/nedschorus-logs/tmp-and-reviewer-scratch-folders-deleted-log/ned-box.txt")
+DEFAULT_DELETED_FOLDERS_LOG_FILE = Path("/home/nedlern/nedsnodes-logs/tmp-and-reviewer-scratch-folders-deleted-log/ned-box.txt")
 UNCHANGED_SECONDS = 24 * 60 * 60
 PULL_REQUEST_LISTING_LIMIT = 100000
 PULL_REQUEST_LISTING_TIMEOUT_SECONDS = 300

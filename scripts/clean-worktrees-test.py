@@ -1662,7 +1662,7 @@ with tempfile.TemporaryDirectory() as scratch:
         (unreachable_stubs / tool).chmod(0o755)
     unreachable_wt = worktree_holding_records("unreachable-wt")
     unreachable = run_clean_shipping_to(
-        "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records",
+        "nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records",
         unreachable_stubs, "--remove")
     check("--remove keeps a worktree whose record fails to ship, exits 1, and says why",
           unreachable_wt.exists()
@@ -1789,7 +1789,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     unreachable_walk_wt = worktree_holding_a_walk("unreachable-walk-wt")
     unreachable = run_clean_shipping_to(
-        "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records",
+        "nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records",
         unreachable_stubs, "--remove")
     check("--remove keeps a worktree whose walk fails to ship, exits 1, and says why",
           unreachable_walk_wt.exists()
@@ -3862,7 +3862,7 @@ with tempfile.TemporaryDirectory() as scratch:
     git(checkout, "commit", "-m", "seed")
     git(checkout, "update-ref", "refs/remotes/origin/main", "HEAD")
     home = scratch / "home"
-    machine_task_list = home / ".claude" / "tasks" / "nedschorus-someseat-tasks"
+    machine_task_list = home / ".claude" / "tasks" / "nedsnodes-someseat-tasks"
     machine_task_list.mkdir(parents=True)
     (machine_task_list / "1.json").write_text(json.dumps({
         "id": "1", "subject": "Restored branch restored-1-abc: open its pull request or delete it",
@@ -3916,7 +3916,7 @@ with tempfile.TemporaryDirectory() as scratch:
     git(checkout, "worktree", "add", "-q", str(scratch / "checked-out-wt"), "checked-out-head-branch")
 
     task_lists = scratch / "task-lists"
-    seat_tasks = task_lists / "nedschorus-some-seat-tasks"
+    seat_tasks = task_lists / "nedsnodes-some-seat-tasks"
     seat_tasks.mkdir(parents=True)
     (seat_tasks / "1.json").write_text(json.dumps({
         "id": "1", "subject": "carry on task-held-head-branch", "status": "pending",
@@ -3982,8 +3982,8 @@ with tempfile.TemporaryDirectory() as scratch:
           origin_down.stdout + origin_down.stderr)
 
     malformed_tasks = scratch / "malformed-task-lists"
-    (malformed_tasks / "nedschorus-other-seat-tasks").mkdir(parents=True)
-    (malformed_tasks / "nedschorus-other-seat-tasks" / "1.json").write_text(json.dumps({
+    (malformed_tasks / "nedsnodes-other-seat-tasks").mkdir(parents=True)
+    (malformed_tasks / "nedsnodes-other-seat-tasks" / "1.json").write_text(json.dumps({
         "id": "1", "subject": "holds a branch, badly", "status": "pending",
         "metadata": {"branches": "closed-head-branch"}}), encoding="utf-8")
     malformed = run_head_branch_clean("--remove", tasks=malformed_tasks)
@@ -3991,7 +3991,7 @@ with tempfile.TemporaryDirectory() as scratch:
           "which list on a FAILED line, and exits 1",
           every_head_branch <= local_branches()
           and "FAILED: no branch judged for deletion with git branch -D, since the task list "
-              f"{malformed_tasks / 'nedschorus-other-seat-tasks'} could not be read in full"
+              f"{malformed_tasks / 'nedsnodes-other-seat-tasks'} could not be read in full"
               in malformed.stdout
           and malformed.returncode == 1,
           f"{malformed.returncode}\n{malformed.stdout}{malformed.stderr}")
@@ -4014,7 +4014,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # ~/.claude itself untraversable: Path.exists() answers False for ~/.claude/tasks, as if absent.
     untraversable_parent = scratch / "untraversable-claude"
     behind_untraversable = untraversable_parent / "tasks"
-    (behind_untraversable / "nedschorus-some-seat-tasks").mkdir(parents=True)
+    (behind_untraversable / "nedsnodes-some-seat-tasks").mkdir(parents=True)
     untraversable_parent.chmod(0)
     try:
         untraversable = run_head_branch_clean("--remove", tasks=behind_untraversable)
@@ -4041,7 +4041,7 @@ with tempfile.TemporaryDirectory() as scratch:
           head_branch_module.agent_seat_task_list_directory_paths_in_claude_code_tasks_directory_collect(
               scratch / "no-such-task-lists") == [])
     unenterable_tasks = scratch / "unenterable-task-lists"
-    (unenterable_tasks / "nedschorus-some-seat-tasks").mkdir(parents=True)
+    (unenterable_tasks / "nedsnodes-some-seat-tasks").mkdir(parents=True)
     unenterable_tasks.chmod(0o444)
     try:
         unenterable_error = raised_by(
@@ -4077,7 +4077,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # EIO cannot be caused for real here, so the listing calls raise it for one task list.
     failing_disk_tasks = scratch / "failing-disk-task-lists"
-    failing_disk_list = failing_disk_tasks / "nedschorus-some-seat-tasks"
+    failing_disk_list = failing_disk_tasks / "nedsnodes-some-seat-tasks"
     failing_disk_list.mkdir(parents=True)
     (failing_disk_list / "1.json").write_text(json.dumps({
         "id": "1", "subject": "holds nothing", "status": "pending"}), encoding="utf-8")

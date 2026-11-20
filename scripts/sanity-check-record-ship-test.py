@@ -28,7 +28,7 @@ import tempfile
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 SHIP = SCRIPTS_DIR / "sanity-check-record-ship.py"
 DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
-RULED_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records"
+RULED_DESTINATION = "nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records"
 
 _spec = importlib.util.spec_from_file_location("sanity_check_record_ship", SHIP)
 shipper_under_test = importlib.util.module_from_spec(_spec)
@@ -159,9 +159,9 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
     check("a replaced sanity-check triage prints the sha256sum path under sanity-check-records, not cold-read-records",
           result.returncode == 0 and "REPLACED" in result.stderr
           and ("sha256sum /mnt/backup/timeshift/snapshots/*/localhost"
-               f"/home/nedlern/nedschorus-logs/sanity-check-records/{triaged.name}/triage.md")
+               f"/home/nedlern/nedsnodes-logs/sanity-check-records/{triaged.name}/triage.md")
           in result.stderr
-          and "localhost/home/nedlern/nedschorus-logs/cold-read-records/" not in result.stderr,
+          and "localhost/home/nedlern/nedsnodes-logs/cold-read-records/" not in result.stderr,
           result.stderr)
 
     # --- A failed copy names this program in its rerun command ---------------

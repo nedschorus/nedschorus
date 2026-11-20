@@ -48,7 +48,7 @@ Usage:
                 SELECTIVE RUN below
   --recorded-inputs-directory
                 where each suite's recorded inputs are kept; default
-                ~/.cache/nedschorus-test-suite-recorded-inputs
+                ~/.cache/nedsnodes-test-suite-recorded-inputs
   --save-recorded-inputs-to-directory
                 where this run saves the recordings of the suites it runs;
                 default, --recorded-inputs-directory. Selection, starting
@@ -66,7 +66,7 @@ Usage:
                 where a run given --record-inputs-with-strace keeps, for each
                 suite, the files only strace saw it read, and where every
                 selective run reads them; default
-                ~/.cache/nedschorus-test-suite-recorded-inputs, where the scheduled
+                ~/.cache/nedsnodes-test-suite-recorded-inputs, where the scheduled
                 full run keeps them
   --leave-recorded-inputs-and-failure-history-unchanged
                 record no suite's inputs, save no recording and add nothing
@@ -921,7 +921,7 @@ TEST_SANDBOX_HOME_PATHS_SHOWN_READ_ONLY = {
     ".local/bin/ruff": "the Ruff binary pip installs for this account, which `python3 -m ruff` "
                        "looks for here",
     ".gitconfig": "git's settings for this account, which suites that run git read",
-    "nedschorus-logs/seats/ned-box-helper/absence-claim-trigger-phrases-2026-10-05/out/"
+    "nedsnodes-logs/seats/ned-box-helper/absence-claim-trigger-phrases-2026-10-05/out/"
     "precision/labels.csv": "the labelled replies scripts/absence-claim-locator-reminder-"
                             "hook-test.py measures the reminder's precision against",
 }
@@ -1134,7 +1134,7 @@ TEST_SUITE_MEMORY_CEILING_BYTES = 4 * 10**9
 # weight competes only with its siblings. A dash in a slice's name makes a parent slice of
 # each prefix, so the dashes are escaped. A weight, not idle, so busy agent-seats slow the
 # suites without stalling them into their timeouts.
-TEST_SUITE_CGROUP_SLICE = r"nc\x2dtest\x2dsuites.slice"
+TEST_SUITE_CGROUP_SLICE = r"nn\x2dtest\x2dsuites.slice"
 TEST_SUITE_CGROUP_SLICE_CPU_WEIGHT = 10
 TEST_SUITE_MEMORY_CEILING_BYTES_OF_SUITES_THAT_NEED_MORE = {
     "scripts/scheduled-full-test-run-of-main-test.py": 24 * 10**9,
@@ -1170,7 +1170,7 @@ REPORT_FILE_NAME = "test-run-report.txt"
 SUITES_RUN_AT_ONCE_WHEN_CORE_COUNT_UNKNOWN = 4
 
 DEFAULT_RECORDED_INPUTS_DIRECTORY = (
-    Path.home() / ".cache" / "nedschorus-test-suite-recorded-inputs")
+    Path.home() / ".cache" / "nedsnodes-test-suite-recorded-inputs")
 # Bump when the recording format changes so older recordings trigger a fresh run.
 RECORDED_INPUTS_FORMAT_VERSION = 5
 RECORDED_INPUTS_LOG_VARIABLE = "RUN_ALL_TEST_SUITES_RECORDED_INPUTS_LOG"
@@ -4377,7 +4377,7 @@ def suites_with_missing_or_stale_files_only_strace_saw_list_notice_or_none(
             f"list in the last {hours} hours for {len(missing) + len(old)} of {len(recorded)} "
             f"suites, so selective test runs there can miss a suite whose git or shell reads "
             f"changed. The scheduled run's records are in "
-            f"nedlern@ned-box:/home/nedlern/nedschorus-logs/scheduled-full-test-runs-of-main/ned-box/.\" "
+            f"nedlern@ned-box:/home/nedlern/nedsnodes-logs/scheduled-full-test-runs-of-main/ned-box/.\" "
             f"A subagent passes the quoted text to the agent that dispatched it instead.")
 
 

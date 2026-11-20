@@ -190,20 +190,20 @@ def locations_in(store, machine="mac"):
 
 
 SAMPLE = {
-    "nedschorus-cold-read-research-tasks": [
+    "nedsnodes-cold-read-research-tasks": [
         task(9, "Nine comes before ten"),
         task(10, "PR \"a commit-pinned citation\" — with merge-lane"),
         task(11, "Already done", status="completed"),
     ],
-    "nedschorus-merge-lane-tasks": [task(1, "Review the lane")],
+    "nedsnodes-merge-lane-tasks": [task(1, "Review the lane")],
 }
 
 # --- seat_of ---------------------------------------------------------------
 
 check("seat_of strips the project's prefix and suffix",
-      reader.seat_of("nedschorus-cold-read-research-tasks")
+      reader.seat_of("nedsnodes-cold-read-research-tasks")
       == "cold-read-research",
-      reader.seat_of("nedschorus-cold-read-research-tasks"))
+      reader.seat_of("nedsnodes-cold-read-research-tasks"))
 
 check("seat_of leaves a list id of another shape whole",
       reader.seat_of("some-other-store") == "some-other-store",
@@ -265,13 +265,13 @@ with tempfile.TemporaryDirectory() as root:
     check("a seat name resolves to its list",
           reader.resolve_task_list(
               locations_in(store), "cold-read-research").directory.name
-          == "nedschorus-cold-read-research-tasks")
+          == "nedsnodes-cold-read-research-tasks")
 
     check("a whole list id resolves to its list",
           reader.resolve_task_list(
               locations_in(store),
-              "nedschorus-merge-lane-tasks").directory.name
-          == "nedschorus-merge-lane-tasks")
+              "nedsnodes-merge-lane-tasks").directory.name
+          == "nedsnodes-merge-lane-tasks")
 
     try:
         reader.resolve_task_list(locations_in(store), "no-such-seat")
@@ -295,9 +295,9 @@ with tempfile.TemporaryDirectory() as root:
 # A seat name that two machines both hold. Answering with one machine's tasks
 # would be the silent wrong answer in its purest form.
 with tempfile.TemporaryDirectory() as root:
-    here = build_store(root, {"nedschorus-merge-lane-tasks": [task(1, "A")]})
+    here = build_store(root, {"nedsnodes-merge-lane-tasks": [task(1, "A")]})
     there = build_store(Path(root) / "other",
-                        {"nedschorus-merge-lane-tasks": [task(1, "B")]})
+                        {"nedsnodes-merge-lane-tasks": [task(1, "B")]})
     two_machines = (locations_in(here, "mac")
                     + locations_in(there, "ned-box"))
     try:
@@ -323,7 +323,7 @@ with tempfile.TemporaryDirectory() as root:
                               str(empty_store)])
 
 with tempfile.TemporaryDirectory() as root:
-    store = build_store(root, {"nedschorus-quiet-seat-tasks": []})
+    store = build_store(root, {"nedsnodes-quiet-seat-tasks": []})
     present_output, present_message = run(
         ["--seat", "quiet-seat", "--store", str(store)])
 
@@ -394,7 +394,7 @@ with tempfile.TemporaryDirectory() as root:
 
 with tempfile.TemporaryDirectory() as root:
     store = build_store(root, {
-        "nedschorus-cold-read-research-tasks": [
+        "nedsnodes-cold-read-research-tasks": [
             task(85, "PR with merge-lane", description="Head 6f38854.",
                  owner="cold-read-research", blockedBy=["84"]),
         ]})
@@ -416,8 +416,8 @@ with tempfile.TemporaryDirectory() as root:
 
 with tempfile.TemporaryDirectory() as root:
     store = build_store(root, {
-        "nedschorus-cold-read-research-tasks": [task(1, "Readable")]})
-    directory = store / "nedschorus-cold-read-research-tasks"
+        "nedsnodes-cold-read-research-tasks": [task(1, "Readable")]})
+    directory = store / "nedsnodes-cold-read-research-tasks"
     (directory / "2.json").write_text("{not json")
     # A file that does not parse must come back named, not raised, so the
     # raise fails these two cases by name rather than ending the suite.
@@ -444,8 +444,8 @@ with tempfile.TemporaryDirectory() as root:
 # 2026-09-22; here the file is named like any other unreadable one.
 with tempfile.TemporaryDirectory() as root:
     store = build_store(root, {
-        "nedschorus-cold-read-research-tasks": [task(1, "Readable")]})
-    directory = store / "nedschorus-cold-read-research-tasks"
+        "nedsnodes-cold-read-research-tasks": [task(1, "Readable")]})
+    directory = store / "nedsnodes-cold-read-research-tasks"
     (directory / "4.json").write_bytes(
         b'{"id": "4", "subject": "cut here \xe2\x80')
     # The defect this pins raises out of the program, so the raise is caught
@@ -489,10 +489,10 @@ check("the notice names the files it was given, so the checks below cannot "
 
 with tempfile.TemporaryDirectory() as root:
     store = build_store(root, {
-        "nedschorus-cold-read-research-tasks": [task(1, "Readable")],
-        "nedschorus-merge-lane-tasks": [task(1, "Nothing broken here")],
+        "nedsnodes-cold-read-research-tasks": [task(1, "Readable")],
+        "nedsnodes-merge-lane-tasks": [task(1, "Nothing broken here")],
     })
-    broken_directory = store / "nedschorus-cold-read-research-tasks"
+    broken_directory = store / "nedsnodes-cold-read-research-tasks"
     (broken_directory / "2.json").write_text("{not json")   # not JSON at all
     (broken_directory / "3.json").write_text("[]")          # JSON, not a task
 
@@ -533,9 +533,9 @@ with tempfile.TemporaryDirectory() as root:
     # check above while telling the reader nothing about WHICH seat is short.
     check("--seats: the notice sits under the seat whose files they are",
           NOTICE_FOR_TWO in path_seats
-          and path_seats.index("nedschorus-cold-read-research-tasks")
+          and path_seats.index("nedsnodes-cold-read-research-tasks")
           < path_seats.index(NOTICE_FOR_TWO)
-          < path_seats.index("nedschorus-merge-lane-tasks"), path_seats)
+          < path_seats.index("nedsnodes-merge-lane-tasks"), path_seats)
 
     check("--every-task-list: the notice sits under the seat whose files "
           "they are",
@@ -556,7 +556,7 @@ with tempfile.TemporaryDirectory() as root:
 # program that printed the notice unconditionally would pass them all.
 with tempfile.TemporaryDirectory() as root:
     clean_store = build_store(root, {
-        "nedschorus-cold-read-research-tasks": [task(1, "Readable")]})
+        "nedsnodes-cold-read-research-tasks": [task(1, "Readable")]})
     _, clean_denied = run(["--seat", "cold-read-research", "--task", "999",
                            "--store", str(clean_store)])
     clean_answered, _ = run(["--seat", "cold-read-research", "--task", "1",
@@ -629,16 +629,16 @@ with tempfile.TemporaryDirectory() as root:
 
 # --- reading the other machine over ssh ------------------------------------
 
-BOX_LIST = "nedschorus-merge-lane-2-tasks"
+BOX_LIST = "nedsnodes-merge-lane-2-tasks"
 BOX_TAR = a_tar_of({BOX_LIST: [task(7, "Box task"),
                                task(8, "Box task done", status="completed")]},
                    extra_files=[(f"./{BOX_LIST}/.lock", b""),
                                 (f"./{BOX_LIST}/.highwatermark", b"99")],
-                   empty_lists=["nedschorus-quiet-box-seat-tasks"])
+                   empty_lists=["nedsnodes-quiet-box-seat-tasks"])
 
 with tempfile.TemporaryDirectory() as root:
     store = build_store(root, {
-        "nedschorus-merge-lane-tasks": [task(1, "Mac task")]})
+        "nedsnodes-merge-lane-tasks": [task(1, "Mac task")]})
     ssh_calls = []
     with pretending_the_host_is("Edwards-MacBook-Air.local"):
         both_out, both_message, both_code = run_and_code(
@@ -680,12 +680,12 @@ with tempfile.TemporaryDirectory() as root:
             runner=a_runner_returning(stdout=BOX_TAR))
     check("--machine ned-box reads that machine alone",
           "merge-lane-2" in only_box_out
-          and "nedschorus-merge-lane-tasks" not in only_box_out,
+          and "nedsnodes-merge-lane-tasks" not in only_box_out,
           only_box_out)
 
 # --- ned-box never ssh's to itself, and reads the Mac through its forced command
 
-MAC_LIST = "nedschorus-cold-read-research-tasks"
+MAC_LIST = "nedsnodes-cold-read-research-tasks"
 MAC_TAR = a_tar_of({MAC_LIST: [task(3, "Mac task")]})
 MAC_READ_REQUEST = "read-agent-seat-task-lists"
 
@@ -880,7 +880,7 @@ with tempfile.TemporaryDirectory() as root:
 
 with tempfile.TemporaryDirectory() as root:
     store = build_store(root, {
-        "nedschorus-merge-lane-tasks": [task(1, "Mac task")]})
+        "nedsnodes-merge-lane-tasks": [task(1, "Mac task")]})
     unreachable = a_runner_returning(
         stderr=b"ssh: connect to host ned-box port 22: No route to host",
         returncode=255)
@@ -1005,7 +1005,7 @@ for cut_name, cut_archive in (
         ("at a member boundary", BOX_TAR_CUT_AT_A_MEMBER_BOUNDARY)):
     with tempfile.TemporaryDirectory() as root:
         store = build_store(root, {
-            "nedschorus-merge-lane-tasks": [task(1, "Mac task")]})
+            "nedsnodes-merge-lane-tasks": [task(1, "Mac task")]})
         with pretending_the_host_is("Edwards-MacBook-Air.local"):
             cut_out, cut_message, cut_code = run_and_code(
                 ["--seats", "--store", str(store), "--machine", "both"],
@@ -1023,7 +1023,7 @@ for cut_name, cut_archive in (
 # as one on this machine, because it is the same reader reading it.
 with tempfile.TemporaryDirectory() as root:
     store = build_store(root, {
-        "nedschorus-merge-lane-tasks": [task(1, "Mac task")]})
+        "nedsnodes-merge-lane-tasks": [task(1, "Mac task")]})
     half_written = a_tar_of({BOX_LIST: [task(7, "Box task")]},
                             extra_files=[(f"./{BOX_LIST}/9.json",
                                           b"{half written")])
@@ -1081,7 +1081,7 @@ with tempfile.TemporaryDirectory() as root:
 
 with tempfile.TemporaryDirectory() as root:
     store = build_store(root, {
-        "nedschorus-merge-lane-tasks": [task(1, "Mac task")]})
+        "nedsnodes-merge-lane-tasks": [task(1, "Mac task")]})
     commands = []
     with pretending_the_host_is("Edwards-MacBook-Air.local"):
         run(["--seats", "--store", str(store), "--machine", "both"],
@@ -1097,7 +1097,7 @@ with tempfile.TemporaryDirectory() as root:
 with tempfile.TemporaryDirectory() as root:
     store = build_store(root, SAMPLE)
     kept = os.environ.get(reader.LIST_ID_VARIABLE)
-    os.environ[reader.LIST_ID_VARIABLE] = "nedschorus-merge-lane-tasks"
+    os.environ[reader.LIST_ID_VARIABLE] = "nedsnodes-merge-lane-tasks"
     try:
         from_env, _ = run(["--store", str(store)])
         from_flag, _ = run(["--seat", "cold-read-research", "--store",

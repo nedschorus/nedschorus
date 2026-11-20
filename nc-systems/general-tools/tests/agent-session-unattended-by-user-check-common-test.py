@@ -34,14 +34,14 @@ for name, environment, expected in (
         ("CLAUDE_CODE_SESSION_ATTENDED=0: no user", {"CLAUDE_CODE_SESSION_ATTENDED": "0"}, True),
         ("CLAUDE_CODE_SESSION_ATTENDED empty: attended", {"CLAUDE_CODE_SESSION_ATTENDED": ""}, False),
         ("caller owns the session: no user",
-         {"NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "scripts/ghi-guide-agent-ask.py"}, True),
-        ("caller variable empty: attended", {"NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": ""}, False),
+         {"NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER": "scripts/ghi-guide-agent-ask.py"}, True),
+        ("caller variable empty: attended", {"NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER": ""}, False),
         ("caller owns it though attended=1: no user",
-         {"NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "1", "CLAUDE_CODE_SESSION_ATTENDED": "1"}, True)):
+         {"NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER": "1", "CLAUDE_CODE_SESSION_ATTENDED": "1"}, True)):
     result = attendance_check.agent_session_unattended_by_user(environment)
     check(name, result is expected, result)
 
-original = {"CLAUDE_CODE_SESSION_ATTENDED": "0", "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "1",
+original = {"CLAUDE_CODE_SESSION_ATTENDED": "0", "NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER": "1",
             "PATH": "/usr/bin"}
 stripped = attendance_check.environment_without_agent_session_attendance_variables(original)
 check("the copy keeps every other variable and drops both", stripped == {"PATH": "/usr/bin"}, stripped)

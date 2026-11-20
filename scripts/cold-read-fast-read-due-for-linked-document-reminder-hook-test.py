@@ -6,7 +6,7 @@ cold-read-fast-read since their last change.
 Each hook case runs the hook as a subprocess, its real stdin-to-stdout path,
 in a scratch checkout this suite made, whose origin/main is an empty first
 commit unless the case commits to it, with the log-store cold-read-records directory pointed by
-NEDSCHORUS_LOG_STORE_COLD_READ_RECORDS_DIRECTORY into a scratch directory, so no
+NEDSNODES_LOG_STORE_COLD_READ_RECORDS_DIRECTORY into a scratch directory, so no
 case reads the live log-store. The exit code is asserted on every case: the
 hook exits 0 unless it hit a fault, which it names on stderr with exit 1.
 """
@@ -37,7 +37,7 @@ attendance_check = importlib.util.module_from_spec(_attendance_check_spec)
 _attendance_check_spec.loader.exec_module(attendance_check)
 
 HOOK_SCRIPT = Path(__file__).with_name("cold-read-fast-read-due-for-linked-document-reminder-hook.py")
-STORE_VARIABLE = "NEDSCHORUS_LOG_STORE_COLD_READ_RECORDS_DIRECTORY"
+STORE_VARIABLE = "NEDSNODES_LOG_STORE_COLD_READ_RECORDS_DIRECTORY"
 SUITE_TOP = Path(tempfile.mkdtemp(prefix="cold-read-fast-read-due-for-linked-document-test-"))
 (SUITE_TOP / "real").mkdir()
 # Every case runs through a symlink, as on the Mac, whose temporary directory is
@@ -810,12 +810,12 @@ def main():
     hook = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(hook)
     fake_home = SUITE_ROOT / "fake-ned-box-home"
-    mapped = fake_home / "Projects" / "nedschorus" / "docs" / "two words.md"
+    mapped = fake_home / "Projects" / "nedsnodes" / "docs" / "two words.md"
     mapped.parent.mkdir(parents=True)
     mapped.write_text("x\n")
     hook.NED_BOX_HOME = str(fake_home) + "/"
     found = hook.find_markdown_file_paths_linked_or_named_in_agent_reply(
-        "[doc](file:///Volumes/nedhome/Projects/nedschorus/docs/two%20words.md).", None)
+        "[doc](file:///Volumes/nedhome/Projects/nedsnodes/docs/two%20words.md).", None)
     check("a file:///Volumes/nedhome link maps to the file under ned-box's home",
           found == [mapped.resolve()], f"found {found!r}")
 

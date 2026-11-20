@@ -1,6 +1,6 @@
 # Proposed improvements or changes: nedschorus-handoff-architecture-overview.md (overview claim check, 2026-11-12)
 
-Assertions of the overview that the claim check against commit 1b6fb19aeab73778f234b7552b2f7dfec1ef2cef found contradicted or unsupported and ranked fix later: loose, incomplete or badly worded, but no agent would act wrongly on them. Its report is /home/nedlern/nedschorus-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/fd86d56b9bc675e893af7a8f405bbde8898a40f5-2026-11-12T05-18-38-382372Z.md. Regular maintenance fixes them in the overview.
+Assertions of the overview that the claim check against commit 1b6fb19aeab73778f234b7552b2f7dfec1ef2cef found contradicted or unsupported and ranked fix later: loose, incomplete or badly worded, but no agent would act wrongly on them. Its report is /home/nedlern/nedsnodes-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/fd86d56b9bc675e893af7a8f405bbde8898a40f5-2026-11-12T05-18-38-382372Z.md. Regular maintenance fixes them in the overview.
 
 ## E1 — possible problem: an assertion of the overview is contradicted
 
@@ -17,7 +17,7 @@ State: open
 Claim: The agent-seat's task list under `~/.claude/tasks/` is "written by Claude Code"; the writer script removes completed tasks; the log-store copy is "written by `transcript-mirror-to-log-store.py`".
 Goes wrong when: a reader takes the assertion as exact.
 The claim check's evidence:
-> - nc-systems/handoff/handoff-agent-crash-watcher.py:1101-1104 `task_list = task_lists_directory / f"nedschorus-{agent_seat}-tasks"` ... `agent_seat_task_list_new_pending_task_write(` (the crash watcher writes tasks to agent-seat task lists).
+> - nc-systems/handoff/handoff-agent-crash-watcher.py:1101-1104 `task_list = task_lists_directory / f"nedsnodes-{agent_seat}-tasks"` ... `agent_seat_task_list_new_pending_task_write(` (the crash watcher writes tasks to agent-seat task lists).
 > - nc-systems/handoff/uncommitted-work-snapshots.py:34 "opens a task naming the branch on the task list ~/.claude/tasks/<CLAUDE_CODE_TASK_LIST_ID>"
 > - scripts/clean-worktrees.py:221-230 (marks restore tasks completed in every task list)
 > - nc-systems/handoff/handoff-write-and-check-supervisor.py:616-618 "Copy the named task files into the log-store's copy of the list ... The mirror runs on a timer" (the writer also writes the log-store copy)

@@ -5,14 +5,14 @@ Usage:
   nc-systems/nc-shared-database/nc-shared-database-nightly-backup-with-integrity-check.py
       [--database PATH] [--backup-directory DIR]
 
-  --database          default ~/.local/state/nedschorus/nc-shared-database.sqlite3
+  --database          default ~/.local/state/nedsnodes/nc-shared-database.sqlite3
   --backup-directory  default ~/backups/nc-shared-database
 
 ned-box runs it each night, from the table
 nc-systems/general-tools/scheduled-jobs-on-each-machine.json, which
 nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py installs as:
 
-    15 2 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/nc-shared-database/nc-shared-database-nightly-backup-with-integrity-check.py >> /home/nedlern/.claude/nc-shared-database-nightly-backup-with-integrity-check.log 2>&1
+    15 2 * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/nc-systems/nc-shared-database/nc-shared-database-nightly-backup-with-integrity-check.py >> /home/nedlern/.claude/nc-shared-database-nightly-backup-with-integrity-check.log 2>&1
 
 The copy is made with SQLite's online backup, never a plain file copy, which
 can catch the file mid-write, into nc-shared-database-<UTC time>.sqlite3, as

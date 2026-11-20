@@ -43,7 +43,7 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 SCRATCH_HOME = Path(tempfile.mkdtemp(prefix="handoff-supervisor-restart-test-home-"))
 atexit.register(shutil.rmtree, SCRATCH_HOME, True)
 os.environ["HOME"] = str(SCRATCH_HOME)
-os.environ["NEDSCHORUS_HANDOFF_SUPERVISOR_RESTART_LOG_DIRECTORY"] = str(SCRATCH_HOME / "restart-logs")
+os.environ["NEDSNODES_HANDOFF_SUPERVISOR_RESTART_LOG_DIRECTORY"] = str(SCRATCH_HOME / "restart-logs")
 
 SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
 SCRIPT_PATH = SYSTEM_DIRECTORY / "handoff-supervisor-restart-onto-main-code-by-relaunch-from-reference-checkout.py"
@@ -512,7 +512,7 @@ def fresh_state(**changes):
     supervisor_id, claude_id = start_fake_supervisor()
     os.kill(supervisor_id, signal.SIGSTOP)
     directory = program.restart_log_directory(SEAT, Path(os.environ[
-        "NEDSCHORUS_HANDOFF_SUPERVISOR_RESTART_LOG_DIRECTORY"]))
+        "NEDSNODES_HANDOFF_SUPERVISOR_RESTART_LOG_DIRECTORY"]))
     directory = Path(tempfile.mkdtemp(dir=directory))
     table = program.process_table()
     state = {"seat": SEAT, "supervisor_id": supervisor_id,
@@ -975,16 +975,16 @@ def mac_cases():
               f"stopped: {stopped} with ps state {stopped_state!r}; then ps state {running_state!r}")
     stoppable.kill()
 
-    saved = os.environ.pop("NEDSCHORUS_HANDOFF_SUPERVISOR_RESTART_LOG_DIRECTORY")
+    saved = os.environ.pop("NEDSNODES_HANDOFF_SUPERVISOR_RESTART_LOG_DIRECTORY")
     try:
         on_ned_box = program.default_log_directory()
         with replaced(program, "on_the_mac", lambda: True):
             on_mac = program.default_log_directory()
     finally:
-        os.environ["NEDSCHORUS_HANDOFF_SUPERVISOR_RESTART_LOG_DIRECTORY"] = saved
+        os.environ["NEDSNODES_HANDOFF_SUPERVISOR_RESTART_LOG_DIRECTORY"] = saved
     check("the log directory is in the log-store, on ned-box and through the Mac's mount",
-          str(on_ned_box) == f"/home/nedlern/nedschorus-logs/{program.PROGRAM}"
-          and str(on_mac) == f"/Volumes/nedhome/nedschorus-logs/{program.PROGRAM}", (on_ned_box, on_mac))
+          str(on_ned_box) == f"/home/nedlern/nedsnodes-logs/{program.PROGRAM}"
+          and str(on_mac) == f"/Volumes/nedhome/nedsnodes-logs/{program.PROGRAM}", (on_ned_box, on_mac))
 
 
 def detached_start_cases():

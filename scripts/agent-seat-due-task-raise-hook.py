@@ -8,7 +8,7 @@ WHAT A TASK IS. A Claude Code task is the file
 `~/.claude/tasks/<CLAUDE_CODE_TASK_LIST_ID>/<id>.json`, with the keys
 activeForm, blockedBy, blocks, description, id, metadata, status and subject
 (activeForm and metadata are optional, and a few files carry `owner`). An
-agent-seat's list id is `nedschorus-<seat>-tasks`, read from the environment
+agent-seat's list id is `nedsnodes-<seat>-tasks`, read from the environment
 variable CLAUDE_CODE_TASK_LIST_ID, which the hook inherits from the session;
 a session without one prints nothing. A list whose directory does not exist
 yet holds no tasks, and its session can still get the next-action prompt.

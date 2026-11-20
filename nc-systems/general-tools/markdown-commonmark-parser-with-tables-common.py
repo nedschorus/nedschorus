@@ -12,7 +12,7 @@ from pathlib import Path
 
 # PostToolUse hooks run under a 30-second timeout; a cached wheel installs in about a second.
 INSTALL_TIMEOUT_SECONDS = 8
-INSTALL_STATE_DIRECTORY = Path.home() / ".cache" / "nedschorus-markdown-commonmark-parser-install"
+INSTALL_STATE_DIRECTORY = Path.home() / ".cache" / "nedsnodes-markdown-commonmark-parser-install"
 
 
 class MarkdownParserMissing(Exception):

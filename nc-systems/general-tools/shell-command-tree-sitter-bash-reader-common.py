@@ -77,7 +77,7 @@ REQUIREMENTS_FILE = python_libraries_pinned_requirements_install_if_missing_then
 # The Bash guards run in parallel with a 30-second hook timeout; a cached wheel installs in about a second.
 INSTALL_TIMEOUT_SECONDS = 8
 INSTALL_RETRY_SECONDS = python_libraries_pinned_requirements_install_if_missing_then_import_common.INSTALL_RETRY_SECONDS
-STATE_DIRECTORY = Path.home() / ".cache" / "nedschorus-shell-command-reader"
+STATE_DIRECTORY = Path.home() / ".cache" / "nedsnodes-shell-command-reader"
 INSTALL_LOCK_FILE_NAME = python_libraries_pinned_requirements_install_if_missing_then_import_common.INSTALL_LOCK_FILE_NAME
 INSTALL_FAILURE_FILE_NAME = python_libraries_pinned_requirements_install_if_missing_then_import_common.INSTALL_FAILURE_FILE_NAME
 
@@ -1625,7 +1625,7 @@ def _heredoc_body_substitution_commands(body, glob_markers):
     rejects is still read: a guard reading too much refuses a command bash would
     not run, and reading too little lets one through.
     """
-    delimiter = b"NEDSCHORUS_BODY_END"
+    delimiter = b"NEDSNODES_BODY_END"
     while any(line.startswith(delimiter) for line in body.split(b"\n")):
         delimiter += b"_"
     prefix = b"cat <<" + delimiter + b"\n"
@@ -1880,7 +1880,7 @@ class _HeredocTakenOut:
         self.number = number
 
 
-HEREDOC_PLACEHOLDER_PREFIX = "NEDSCHORUS_HEREDOC_"
+HEREDOC_PLACEHOLDER_PREFIX = "NEDSNODES_HEREDOC_"
 HEREDOC_START_WITH_DESCRIPTOR_PATTERN = re.compile(rb"([0-9]+)(<<-?)")
 BLANKS_AND_LINE_CONTINUATIONS_PATTERN = re.compile(rb"(?:[ \t]|\\\n)*")
 # Each heredoc taken out costs a parse; real commands hold far fewer.

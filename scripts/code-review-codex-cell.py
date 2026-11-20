@@ -128,7 +128,7 @@ Measured 2026-09-30 on codex-cli 0.156.0, on both machines, for GHI 804
 denials, because `codex exec review` drops the cell's permission profile",
 docs/issues/804-the-codex-review-cell-s-commands-run-writable.md). Each run
 had a scratch HOME holding two canary credentials,
-`.config/nedschorus/canary.token` and `.ssh/id_canary`, and a scratch
+`.config/nedsnodes/canary.token` and `.ssh/id_canary`, and a scratch
 CODEX_HOME whose config.toml trusted the scratch repository and, on the
 Mac, also carried the Mac config's `sandbox_mode = "workspace-write"` and
 `approval_policy = "never"`. Each ran this cell's command as a built-in

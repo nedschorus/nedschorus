@@ -126,7 +126,7 @@ class Machine:
         return project, transcript
 
     def task(self, seat, task_id, status="pending", metadata=None, blocked_by=()):
-        directory = self.tasks / f"nedschorus-{seat}-tasks"
+        directory = self.tasks / f"nedsnodes-{seat}-tasks"
         directory.mkdir(exist_ok=True)
         task = {"id": task_id, "subject": f"task {task_id}", "status": status,
                 "blocks": [], "blockedBy": list(blocked_by)}
@@ -985,13 +985,13 @@ try:
     code, verdicts, _ = machine.run()
     check("a task whose prerequisites are unmet is held: rule 4, no wake",
           code == 0 and verdicts["alpha"]["rule"] == 4, verdicts["alpha"])
-    (machine.tasks / "nedschorus-alpha-tasks" / "2.json").write_text("{not json")
+    (machine.tasks / "nedsnodes-alpha-tasks" / "2.json").write_text("{not json")
     code, verdicts, _ = machine.run()
     check("a task file that will not read: an error and exit 1, not rule 4",
           code == 1 and verdicts["alpha"]["rule"] is None
           and "2.json could not be read as a task" in verdicts["alpha"]["errors"][0]
           and "then run this program again" in verdicts["alpha"]["errors"][0], verdicts["alpha"])
-    (machine.tasks / "nedschorus-alpha-tasks" / "1.json").write_text("{not json")
+    (machine.tasks / "nedsnodes-alpha-tasks" / "1.json").write_text("{not json")
     code, verdicts, _ = machine.run()
     check("two task files that will not read: the error names the first",
           code == 1 and "1.json could not be read as a task" in verdicts["alpha"]["errors"][0],
@@ -1019,7 +1019,7 @@ try:
     machine.task("alpha", "1")
     machine.task("beta", "1", metadata={"prerequisites": [{"pr_merged": 50}]})
     machine.gh_responses.write_text(json.dumps({"pr:50": {"state": "OPEN"}}))
-    unlistable_tasks = machine.tasks / "nedschorus-alpha-tasks"
+    unlistable_tasks = machine.tasks / "nedsnodes-alpha-tasks"
     unlistable_tasks.chmod(0o000)
     try:
         code, verdicts, _ = machine.run("--agent-seat", "alpha", "--agent-seat", "beta")
@@ -1110,7 +1110,7 @@ try:
     machine = Machine()
     machine.seat("alpha", IDLE_TURN)
     machine.task("alpha", "1")
-    (machine.tasks / "nedschorus-alpha-tasks" / "2.json").write_text("{not json")
+    (machine.tasks / "nedsnodes-alpha-tasks" / "2.json").write_text("{not json")
     code, verdicts, _ = machine.run()
     check("a sentence for the judge whose rules 3 to 5 read fails: an error, rule null, no decision",
           code == 1 and verdicts["alpha"]["rule"] is None and "decision" not in verdicts["alpha"]

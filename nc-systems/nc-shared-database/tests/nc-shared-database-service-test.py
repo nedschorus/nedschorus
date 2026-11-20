@@ -53,7 +53,7 @@ def event(operation, fields, seat_id=SEAT, machine="mac", event_id=None, **extra
 
 
 SEAT_FIELDS = {"seat_name": "merge-lane-2", "seat_directory": "/home/nedlern/agents/merge-lane-2",
-               "task_list_name": "nedschorus-merge-lane-2-tasks"}
+               "task_list_name": "nedsnodes-merge-lane-2-tasks"}
 
 with tempfile.TemporaryDirectory() as scratch:
     scratch = Path(scratch)
@@ -406,9 +406,9 @@ with tempfile.TemporaryDirectory() as scratch:
               and f"Authorization: {scheme} {TOKEN}".encode() in b"".join(received),
               (status, answer, received))
 
-    check("the database file is ~/.local/state/nedschorus/nc-shared-database.sqlite3 by default",
+    check("the database file is ~/.local/state/nedsnodes/nc-shared-database.sqlite3 by default",
           service.NC_SHARED_DATABASE_FILE_PATH
-          == Path.home() / ".local" / "state" / "nedschorus" / "nc-shared-database.sqlite3",
+          == Path.home() / ".local" / "state" / "nedsnodes" / "nc-shared-database.sqlite3",
           service.NC_SHARED_DATABASE_FILE_PATH)
 
     try:

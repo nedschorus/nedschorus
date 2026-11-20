@@ -53,8 +53,8 @@ THE LOG gets one JSON line per triggering reply, whatever the outcome
 error, so precision can be rechecked from what the hook saw. On ned-box it is
 the log-store file LOG_STORE_FILE_ON_NED_BOX; elsewhere it is under
 ~/.local/state/claude/, for shipping to the log-store later, because a hook
-must not wait on ssh. NEDSCHORUS_ABSENCE_CLAIM_REMINDER_LOG overrides the
-path, and NEDSCHORUS_ABSENCE_CLAIM_REMINDER_STATE_DIRECTORY overrides where
+must not wait on ssh. NEDSNODES_ABSENCE_CLAIM_REMINDER_LOG overrides the
+path, and NEDSNODES_ABSENCE_CLAIM_REMINDER_STATE_DIRECTORY overrides where
 the once-per-session markers go.
 
 A fault, such as a payload that is not a JSON object, a transcript that
@@ -119,13 +119,13 @@ SEARCH_PROGRAM_NAMES = (
 TURN_STARTING_ORIGIN_KINDS = ("human", "peer", "coordinator")
 LOG_STORE_HOSTNAME = "ned-box"
 LOG_STORE_FILE_ON_NED_BOX = Path(
-    "/home/nedlern/nedschorus-logs/seats/ned-box-helper/"
+    "/home/nedlern/nedsnodes-logs/seats/ned-box-helper/"
     "absence-claim-locator-reminder-fires-ned-box.jsonl")
 STATE_DIRECTORY_UNDER_HOME = (Path(".local") / "state" / "claude"
                               / "absence-claim-locator-reminder")
 LOG_FILE_NAME_ELSEWHERE = "absence-claim-locator-reminder-fires-mac.jsonl"
-LOG_ENVIRONMENT_VARIABLE = "NEDSCHORUS_ABSENCE_CLAIM_REMINDER_LOG"
-STATE_ENVIRONMENT_VARIABLE = "NEDSCHORUS_ABSENCE_CLAIM_REMINDER_STATE_DIRECTORY"
+LOG_ENVIRONMENT_VARIABLE = "NEDSNODES_ABSENCE_CLAIM_REMINDER_LOG"
+STATE_ENVIRONMENT_VARIABLE = "NEDSNODES_ABSENCE_CLAIM_REMINDER_STATE_DIRECTORY"
 REPLY_TEXT_LOGGED_CHARACTERS = 4000
 
 REMINDER_HEAD = (

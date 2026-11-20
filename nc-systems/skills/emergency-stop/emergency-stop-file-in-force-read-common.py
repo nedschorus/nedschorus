@@ -3,9 +3,9 @@
 program and for every hook that behaves differently during an emergency stop.
 
 The emergency-stop folder is the log-store's `emergency-stop/`: on ned-box
-/home/nedlern/nedschorus-logs/emergency-stop/, on the Mac the same folder
-through its mount, /Volumes/nedhome/nedschorus-logs/emergency-stop/.
-NEDSCHORUS_EMERGENCY_STOP_FOLDER overrides both, for tests.
+/home/nedlern/nedsnodes-logs/emergency-stop/, on the Mac the same folder
+through its mount, /Volumes/nedhome/nedsnodes-logs/emergency-stop/.
+NEDSNODES_EMERGENCY_STOP_FOLDER overrides both, for tests.
 
 Only files named by the UTC time a stop started, as STOP_FILE_NAME_PATTERN
 matches, are stop files; the repair brief and anything else in the folder is
@@ -32,10 +32,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-NED_BOX_LOG_STORE = Path("/home/nedlern/nedschorus-logs")
-MAC_LOG_STORE = Path("/Volumes/nedhome/nedschorus-logs")
+NED_BOX_LOG_STORE = Path("/home/nedlern/nedsnodes-logs")
+MAC_LOG_STORE = Path("/Volumes/nedhome/nedsnodes-logs")
 FOLDER_NAME = "emergency-stop"
-FOLDER_OVERRIDE_VARIABLE = "NEDSCHORUS_EMERGENCY_STOP_FOLDER"
+FOLDER_OVERRIDE_VARIABLE = "NEDSNODES_EMERGENCY_STOP_FOLDER"
 STOP_FILE_NAME_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z\.md")
 LIFT_LINE_PREFIX = "#emergency_stop_lifted "
 COORDINATING_LINE_PREFIX = "coordinating agent-seat: "

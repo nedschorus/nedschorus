@@ -29,12 +29,12 @@ Verified 2026-09-14, every row checked on the box itself.
 
 | What | Full path | Branch |
 |---|---|---|
-| Main checkout | `/home/nedlern/Projects/nedschorus` | `main` |
+| Main checkout | `/home/nedlern/Projects/nedsnodes` | `main` |
 | Agent-homes | `/home/nedlern/agents/<name>` | detached HEAD |
-| Task worktrees | `/home/nedlern/Projects/nedschorus/.claude/worktrees/<name>` | per job |
+| Task worktrees | `/home/nedlern/Projects/nedsnodes/.claude/worktrees/<name>` | per job |
 | Handoff files | `/home/nedlern/.claude/handoffs/<agent>-handoff.md` | — |
 | User-level instructions | `/home/nedlern/.claude/CLAUDE.md` | — |
-| Auto-memory | `/home/nedlern/.claude/projects/-home-nedlern-Projects-nedschorus/memory/` | — |
+| Auto-memory | `/home/nedlern/.claude/projects/-home-nedlern-Projects-nedsnodes/memory/` | — |
 | Legacy reference system | `/home/nedlern/Projects/nedlern` | **absent on this box** |
 
 The legacy checkout's absence is expected and safe: the main-gatekeeper's `--import` machinery refuses `import-invalid` ("not a readable git repository") until one exists, which is a named refusal rather than a failure. Clone it only when an import is actually needed.
@@ -45,12 +45,12 @@ Verified 2026-09-14. The checkout path is also pinned by the repository's own te
 
 | What | Full path |
 |---|---|
-| Main checkout | `/Users/el/Projects/nedschorus` |
+| Main checkout | `/Users/el/Projects/nedsnodes` |
 | Agent-homes | `/Users/el/agents/<name>` |
-| Task worktrees | `/Users/el/Projects/nedschorus/.claude/worktrees/<name>` |
+| Task worktrees | `/Users/el/Projects/nedsnodes/.claude/worktrees/<name>` |
 | Handoff files | `/Users/el/.claude/handoffs/<agent>-handoff.md` |
 | User-level instructions | `/Users/el/.claude/CLAUDE.md` |
-| Auto-memory | `/Users/el/.claude/projects/-Users-el-Projects-nedschorus/memory/` |
+| Auto-memory | `/Users/el/.claude/projects/-Users-el-Projects-nedsnodes/memory/` |
 | Legacy reference system | `/Users/el/Projects/nedlern` |
 
 Two naming notes that hold on both machines. A handoff file is `<agent>-handoff.md` for the current one and `<agent>-handoff-<NNNN>.md` for numbered earlier ones, with `<agent>-dialog-<NNNN>.md` beside them; the `<session-uuid>-handoff-asked` and `-handoff-deferred` files in the same directory are markers, not handoffs. A task worktree is named for its job when a person made it and `agent-<id>` when a subagent did.
@@ -59,12 +59,12 @@ Two naming notes that hold on both machines. A handoff file is `<agent>-handoff.
 
 | Goal | Type it on | Command |
 |---|---|---|
-| Reach a named agent on the box | Mac | `/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu <name>` |
-| Run a named agent on the Mac | Mac | `/Users/el/Projects/nedschorus/scripts/launch-claude-mac <name>` |
+| Reach a named agent on the box | Mac | `/Users/el/Projects/nedsnodes/scripts/launch-claude-ubuntu <name>` |
+| Run a named agent on the Mac | Mac | `/Users/el/Projects/nedsnodes/scripts/launch-claude-mac <name>` |
 | List agents running on a machine | Mac | run the matching launcher with no name |
-| See every checkout and its branch | either | `git -C ~/Projects/nedschorus worktree list` |
-| Update the box's main checkout | Mac | `ssh nedlern@ned-box 'git -C ~/Projects/nedschorus pull'` |
-| Clear stale worktree registrations | either | `git -C ~/Projects/nedschorus worktree prune` |
+| See every checkout and its branch | either | `git -C ~/Projects/nedsnodes worktree list` |
+| Update the box's main checkout | Mac | `ssh nedlern@ned-box 'git -C ~/Projects/nedsnodes pull'` |
+| Clear stale worktree registrations | either | `git -C ~/Projects/nedsnodes worktree prune` |
 
 Both launchers are attach-or-create: running a name that is already up attaches to that agent rather than starting a second copy. Within one machine, duplicate agents are prevented three ways — the launcher walks every tmux socket before creating a session, the supervisor holds an exclusive per-agent `flock` on its lock file for its whole life (the kernel releases the lock when the supervisor dies, so the next supervisor claims the lock at once), and an agent's home directory is derived from its name rather than chosen. The first of those changed on 2026-08-21, when each agent-seat moved to its OWN tmux server (`tmux -L <name>`, one socket per agent-seat, after a single server's crash killed three Mac agent-seats at once). A session name is therefore no longer unique across the machine, only within one agent-seat's socket, so the launcher walks the whole socket directory rather than asking one server. Across machines no agent state is shared, so nothing stops the same name on both. But the name is also the agent-seat's address for cross-session messages and its directory in the log-store (`seats/<seat>/`), so two agent-seats with one name confuse a sender and overwrite each other's shared files. One name means one agent-seat across both machines (see `nedschorus-agent-seat-model.md`), and nothing enforces that across machines.
 
@@ -80,7 +80,7 @@ Both launchers are attach-or-create: running a name that is already up attaches 
 
 Three things must hold. When one of them fails, an agent tells the user what failed and the remedy the failing program gave. Until the failure is fixed, the agent goes on with the work that does not need the failed part, and leaves the rest waiting; it does not find a way around the failure.
 
-- **ned-box is up and reachable from the Mac as `ssh nedlern@ned-box`.** Most agent-seats run on ned-box, merge-lane-2 merges every pull request there, and the log-store, `/home/nedlern/nedschorus-logs/`, lives there. A Mac agent that cannot reach ned-box can still edit and commit on the Mac, but it cannot have work reviewed or merged, and it cannot write to the log-store or read from it.
+- **ned-box is up and reachable from the Mac as `ssh nedlern@ned-box`.** Most agent-seats run on ned-box, merge-lane-2 merges every pull request there, and the log-store, `/home/nedlern/nedsnodes-logs/`, lives there. A Mac agent that cannot reach ned-box can still edit and commit on the Mac, but it cannot have work reviewed or merged, and it cannot write to the log-store or read from it.
 - **`claude` on ned-box is logged in.** Every agent-seat on ned-box, and every program that starts a Claude agent there, such as a cold-read or ghi-guide-agent, runs as that login. When it is logged out, nothing on ned-box can start a Claude agent, and only the user can log it back in.
 - **The Mac has ned-box's home directory mounted at `/Volumes/nedhome`.** The mount is how the user opens a file on ned-box from the Mac, through a `file:///Volumes/nedhome/...` link an agent gives him. The Mac's copy of `.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py` also writes its backups into the log-store through it. Without the mount, those links do not open and the Mac's backups are not written; the hook says so when it runs. To link a ned-box file for the user, replace `/home/nedlern/` with `file:///Volumes/nedhome/` in a markdown link; if he reports the file cannot be found, have him click `smb://ned-box.local/nedhome`, the share's root, to remount it.
 

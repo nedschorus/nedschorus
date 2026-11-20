@@ -29,7 +29,7 @@ While reading the code, a writer may notice something worth changing: an improve
 
 ## Length
 
-Size an overview by its components: about one sentence each, and a short paragraph for the few a reader must understand first. For a system of about ten components that is roughly 300 to 800 words, Planned work aside. Measured architecture overviews of 18 open-source systems, from 500 to 2,000,000 lines of code, had a median of about 1,200 words and barely grew with the code (`nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/cold-read-improvement/overview-definition-research-2026-10-04/overview-length-versus-code-size-codex/report.md`). A section much longer than its components need usually holds something the list above leaves out.
+Size an overview by its components: about one sentence each, and a short paragraph for the few a reader must understand first. For a system of about ten components that is roughly 300 to 800 words, Planned work aside. Measured architecture overviews of 18 open-source systems, from 500 to 2,000,000 lines of code, had a median of about 1,200 words and barely grew with the code (`nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/cold-read-improvement/overview-definition-research-2026-10-04/overview-length-versus-code-size-codex/report.md`). A section much longer than its components need usually holds something the list above leaves out.
 
 ## Terms
 

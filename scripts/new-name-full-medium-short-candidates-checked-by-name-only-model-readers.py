@@ -92,7 +92,7 @@ command_line_prefix = importlib.util.module_from_spec(_command_line_prefix_spec)
 _command_line_prefix_spec.loader.exec_module(command_line_prefix)
 LOG_STORE_HOSTNAME = "ned-box"
 LOG_STORE_SSH_HOST = "nedlern@ned-box"
-READER_RESULTS_LOG = "/home/nedlern/nedschorus-logs/name-checks/new-name-name-only-model-reader-results.jsonl"
+READER_RESULTS_LOG = "/home/nedlern/nedsnodes-logs/name-checks/new-name-name-only-model-reader-results.jsonl"
 READER_TIMEOUT_SECONDS = 300
 CANDIDATE_LENGTHS = ("full", "medium", "short")
 MAX_FAILED_READERS_FOR_A_PASS = 0

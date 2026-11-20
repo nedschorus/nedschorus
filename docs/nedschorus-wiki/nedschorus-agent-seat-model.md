@@ -36,15 +36,15 @@ They are different, and confusing them loses work.
 1. **Stop the handoff-supervisor first.** A running agent-seat writes a fresh handoff each time reincarnate-seat replaces its session, so archiving while its handoff-supervisor is alive only clears the file until the next one. Exit the session and confirm no handoff-supervisor process remains for the agent-seat.
 2. **Archive the handoff.** Move it to `~/.claude/handoffs/retired/<seat>-handoff-YYYY-MM-DD.md`, creating the directory if needed; if that name exists, append `-2`, `-3` before `.md`; never move onto an existing archive.
 3. **Archive the seat-brief.** Copy `~/agents/<seat>/CLAUDE.local.md` to `~/.claude/handoffs/retired/<seat>-seat-brief-YYYY-MM-DD.md`, under the same naming rule as the handoff. Git does not track the seat-brief, so the next step deletes it from the agent-home; the log-store keeps the transcript mirror's last copy.
-4. **Release the worktree and the branch.** On the agent-seat's machine, `git -C ~/Projects/nedschorus worktree remove ~/agents/<seat>` (not `rm` — the worktree stays registered otherwise, and `git worktree prune` is then needed), and then delete the branch, `git -C ~/Projects/nedschorus branch -d <seat>`, since removing a worktree leaves its branch behind. An agent-seat launched but never used may have an empty directory and no worktree at all; `rmdir` is correct there.
+4. **Release the worktree and the branch.** On the agent-seat's machine, `git -C ~/Projects/nedsnodes worktree remove ~/agents/<seat>` (not `rm` — the worktree stays registered otherwise, and `git worktree prune` is then needed), and then delete the branch, `git -C ~/Projects/nedsnodes branch -d <seat>`, since removing a worktree leaves its branch behind. An agent-seat launched but never used may have an empty directory and no worktree at all; `rmdir` is correct there.
 
 ## Launching an agent-seat
 
 From the **Mac**, using the Mac's own clone of this repository:
 
 ```
-~/Projects/nedschorus/scripts/launch-claude-ubuntu <seat> \
-    --first-prompt-file /home/nedlern/Projects/nedschorus/docs/agents/seat-first-prompt.md
+~/Projects/nedsnodes/scripts/launch-claude-ubuntu <seat> \
+    --first-prompt-file /home/nedlern/Projects/nedsnodes/docs/agents/seat-first-prompt.md
 ```
 
 The script runs on the Mac and reaches the box over SSH. The `--first-prompt-file` path is a **box-side** path, because the handoff-supervisor reads that file on the box. One generic file serves every agent-seat: the agent learns its own name from its working directory, so nothing needs substituting.
@@ -52,11 +52,11 @@ The script runs on the Mac and reaches the box over SSH. The `--first-prompt-fil
 **Both halves must actually exist where they are named**, and they are read on different machines: the script in the Mac's clone, the prompt file in the box's. A clone that has not pulled since these landed has neither. Check before launching an agent-seat for the first time:
 
 ```
-ls ~/Projects/nedschorus/scripts/launch-claude-ubuntu                        # on the Mac
-ssh nedlern@ned-box 'ls /home/nedlern/Projects/nedschorus/docs/agents/seat-first-prompt.md'
+ls ~/Projects/nedsnodes/scripts/launch-claude-ubuntu                        # on the Mac
+ssh nedlern@ned-box 'ls /home/nedlern/Projects/nedsnodes/docs/agents/seat-first-prompt.md'
 ```
 
-If the box's copy is missing, `ssh nedlern@ned-box 'git -C ~/Projects/nedschorus pull'` and try again.
+If the box's copy is missing, `ssh nedlern@ned-box 'git -C ~/Projects/nedsnodes pull'` and try again.
 
 Three things about that command worth knowing before you rely on it:
 

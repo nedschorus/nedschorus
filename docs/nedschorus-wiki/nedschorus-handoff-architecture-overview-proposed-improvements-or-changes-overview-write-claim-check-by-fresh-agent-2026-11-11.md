@@ -1,6 +1,6 @@
 # Proposed improvements or changes: nedschorus-handoff-architecture-overview.md (overview claim check, 2026-11-11)
 
-Assertions of the overview that the claim check against commit 84a92dd16d5d3d180f2214e2f3a7c2541fb62562 found contradicted or unsupported and ranked fix later: loose, incomplete or badly worded, but no agent would act wrongly on them. Its report is /home/nedlern/nedschorus-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/38d35b2b5174f76b24a910ba1bd21d16812534dd-2026-11-11T22-22-26-436876Z.md. Regular maintenance fixes them in the overview.
+Assertions of the overview that the claim check against commit 84a92dd16d5d3d180f2214e2f3a7c2541fb62562 found contradicted or unsupported and ranked fix later: loose, incomplete or badly worded, but no agent would act wrongly on them. Its report is /home/nedlern/nedsnodes-logs/overview-write-architecture-overview-claim-check-reports/nedschorus-handoff-architecture-overview/38d35b2b5174f76b24a910ba1bd21d16812534dd-2026-11-11T22-22-26-436876Z.md. Regular maintenance fixes them in the overview.
 
 ## E1 — possible problem: an assertion of the overview is contradicted
 
@@ -21,14 +21,14 @@ Goes wrong when: a reader takes the assertion as exact.
 The claim check's evidence:
 > - uncommitted-work-snapshots.py:34-35 restore "opens a task naming the branch on the task list ~/.claude/tasks/<CLAUDE_CODE_TASK_LIST_ID>"
 > - clean-worktrees.py:227-230 "--remove ... marks the task completed, adding a line at the end of its description"
-> - handoff-agent-crash-watcher.py:49-51 "A failure an agent can fix becomes a task on an agent-seat's task list, ~/.claude/tasks/nedschorus-<seat>-tasks/"
+> - handoff-agent-crash-watcher.py:49-51 "A failure an agent can fix becomes a task on an agent-seat's task list, ~/.claude/tasks/nedsnodes-<seat>-tasks/"
 > - handoff-write-and-check-supervisor.py:611-617 `copy_task_files_to_log_store`: the writer itself rsyncs the log-store copies before comparing.
 > - The path agent-session-files-by-machine/<machine>/tasks/ is supported: transcript-mirror-to-log-store.py:33.
 State: open
 
 ## E3 — possible problem: an assertion of the overview is contradicted
 
-Claim: Shared state, the reference-checkout `~/Projects/nedschorus`: "fast-forwarded to main by launch-claude-ubuntu ..., by launch-claude-mac ..., by every handoff-supervisor that runs from it, and by the restart program; put back on main by the reference-checkout leftovers-saving back-on-main program"
+Claim: Shared state, the reference-checkout `~/Projects/nedsnodes`: "fast-forwarded to main by launch-claude-ubuntu ..., by launch-claude-mac ..., by every handoff-supervisor that runs from it, and by the restart program; put back on main by the reference-checkout leftovers-saving back-on-main program"
 Goes wrong when: a reader takes the assertion as exact.
 The claim check's evidence:
 > - scripts/checkout-freshness-catch-up.py:1896-1898 `reference = reference_checkout_of(root)` / `fast_forward_reference_checkout(reference, ...)` in the Stop hook path. :1661-1662 "operator_facing=False is the Stop hook", so every agent-session's turn end also fast-forwards it.

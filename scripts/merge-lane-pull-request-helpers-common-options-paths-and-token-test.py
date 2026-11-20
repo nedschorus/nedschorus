@@ -150,7 +150,7 @@ def main():
               f"{arguments.review_tools_worktree_at_main}")
         check("the token file is the one merge-gate.sh reads, under HOME at call time",
               common.merge_account_token_file()
-              == home / ".config" / "nedschorus" / "ned-review-merge.token",
+              == home / ".config" / "nedsnodes" / "ned-review-merge.token",
               str(common.merge_account_token_file()))
         try:
             common.read_merge_account_token()

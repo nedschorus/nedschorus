@@ -2,7 +2,7 @@
 """Replace an existing task file in an agent-seat's Claude Code task list, for a program that
 changes a task it or another program opened, such as marking it completed.
 
-An agent-seat's task list is the directory `~/.claude/tasks/nedschorus-<seat>-tasks/`; each task
+An agent-seat's task list is the directory `~/.claude/tasks/nedsnodes-<seat>-tasks/`; each task
 is `<id>.json` there. A new task is written by
 nc-systems/general-tools/agent-seat-task-list-new-pending-task-write-common.py.
 
