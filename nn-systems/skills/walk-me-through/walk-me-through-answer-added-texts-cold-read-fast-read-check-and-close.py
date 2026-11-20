@@ -395,6 +395,24 @@ every changed word counts as a fact, so the item is read. Since the comparison
 is always with the latest text read, wording fixes each let pass cannot add up
 to a changed fact unread.
 
+FINDING OUTCOMES. The step hands the item over, printing the line that tells
+the agent to present it, only when the report of the read it uses, the item's
+latest read of its current text, has no finding without a recorded outcome,
+as nn-systems/cold-read/cold-read-fast-read-report-findings-parse-and-finding-outcomes-check-common.py finds
+findings and reads the outcomes file in the report's cold-read-record. A read
+the step finds or runs is that read; with
+--after-fixes-reread-only-when-facts-change and no fact touched, it is the
+item's latest read that wrote its report. Otherwise the step lists the
+findings, prints the cold-read-fast-read.py command that records an outcome for
+each, naming the record, and tells the agent to run the step again, with
+--after-fixes-reread-only-when-facts-change, once the outcomes are recorded,
+and exits 1. When the report or its outcomes file cannot be read, the step
+says so, with what to do, such as deleting that read's `<key>-outcome.json` so
+that the step reads the item again when the record is gone, and exits 1. The
+step exits 0 only when it hands the
+item over. CHECK's reads of the texts an answer adds need no outcomes, and it
+prints no such command.
+
 Before it reads, the step keeps each earlier version of the item: each text of
 the item that a read wrote its report for, oldest first, goes below the item's
 live version, after the versions kept there already and before the next item,
@@ -465,6 +483,8 @@ FAST_READ_PROGRAM = REPOSITORY_TOP / "nn-systems" / "cold-read" / "cold-read-fas
 FAST_READ_WITHOUT_QUESTION_4_OPTION = "--without-question-4"
 RECORD_SHIPPER_FILE = REPOSITORY_TOP / "nn-systems" / "cold-read" / "cold-read-record-ship.py"
 RECORD_NAMES_FILE = REPOSITORY_TOP / "nn-systems" / "cold-read" / "cold-read-record-names-common.py"
+FINDING_OUTCOMES_COMMON_FILE = (REPOSITORY_TOP / "nn-systems" / "cold-read"
+                                / "cold-read-fast-read-report-findings-parse-and-finding-outcomes-check-common.py")
 PATH_CONSTANTS_FILE = (REPOSITORY_TOP / "nn-systems" / "general-tools"
                        / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
 COUNTS_LOG_FILE_NAME = "walk-me-through-answer-added-texts-cold-read-fast-read-already-done-or-had-to-run-counts-per-check.tsv"
@@ -1043,6 +1063,25 @@ ITEM_READ_LINES = (
     "Then present {item}" + PRESENT_UNLESS_NOW_OVER_LATER_CLAUSE,
 )
 ITEM_READ_NOT_RUN_NEXT = "Present {item}" + PRESENT_UNLESS_NOW_OVER_LATER_CLAUSE
+ITEM_READ_FINDINGS_WITHOUT_OUTCOMES = (
+    "{item} is not handed over to be presented yet: its cold-read-fast-read report {report} has findings with no "
+    "recorded outcome, {missing} of {count}. The user is shown an item only once each finding of its latest "
+    "cold-read-fast-read is recorded as applied or declined, so that how often each question's findings are "
+    "applied can be counted. The findings:")
+ITEM_READ_FINDING_OUTCOMES_COMMAND_LINES = (
+    "After you revise {item}, run the command below, with `{applied}` or `{declined}: <your reason>` in place of each "
+    "`{placeholder}`, keeping the single quotes; it refuses a list that leaves out a finding or names one the report "
+    "does not have:",
+    "{outcomes_command}",
+    "Then run `{command}` and do what it prints: it hands {item} over once every finding has its outcome, and reads "
+    "{item} again only when your changes touch a fact, in which case the new read's findings need outcomes too.",
+)
+ITEM_READ_FINDING_OUTCOMES_UNREADABLE = (
+    "{item} is not handed over to be presented: whether each finding of its cold-read-fast-read report {report} has "
+    "a recorded outcome could not be read ({error}).\n"
+    "If {record} is gone: delete {outcome_file}, this program's record of that read, then run `{read_again}`, which "
+    "gives {item} a new cold-read-fast-read, and do what it prints.\n"
+    "Otherwise fix what the error names, then run `{command}` again.")
 ITEM_READ_SUB_STEP_NAMED = (
     "{item} is split into numbered sub-steps, which the user is shown one at a time, so the step added the line "
     "`#next_to_present {sub_step}` to {minutes}, naming the first sub-step of {item} the walk-minutes record no answer "
@@ -2322,6 +2361,33 @@ def approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minut
                 if level in sub_steps)
 
 
+def item_read_findings_without_outcomes_lines(item, report, outcome_file, fast_read_program, command, top):
+    """The lines that withhold item from being presented while the report of its latest cold-read-fast-read has
+    findings with no recorded outcome; empty when every finding has one or the report has none. Raise Failure when
+    the report or its outcomes file cannot be read."""
+    finding_outcomes = load_module("cold_read_fast_read_report_findings_parse_and_finding_outcomes_check_common", FINDING_OUTCOMES_COMMON_FILE)
+    record = Path(report).parent
+    try:
+        missing = finding_outcomes.cold_read_fast_read_findings_without_outcomes(record)
+    except (OSError, ValueError) as error:
+        raise Failure(ITEM_READ_FINDING_OUTCOMES_UNREADABLE.format(
+            item=item, report=report, error=error, record=record, outcome_file=outcome_file, command=command,
+            read_again=READ_STEP_COMMAND.format(program=Path(__file__).resolve(), flags="",
+                                                top=shlex.quote(str(top)))))
+    if not missing:
+        return []
+    findings = finding_outcomes.cold_read_fast_read_record_findings(record)
+    return ([ITEM_READ_FINDINGS_WITHOUT_OUTCOMES.format(item=item, report=report, count=len(findings),
+                                                       missing=len(missing))]
+            + finding_outcomes.finding_list_lines(findings)
+            + [line.format(item=item, command=command, applied=finding_outcomes.APPLIED,
+                           declined=finding_outcomes.DECLINED,
+                           placeholder=finding_outcomes.FINDING_OUTCOME_PLACEHOLDER,
+                           outcomes_command=finding_outcomes.cold_read_fast_read_finding_outcomes_record_command(
+                               Path(fast_read_program).resolve(), record, findings))
+               for line in ITEM_READ_FINDING_OUTCOMES_COMMAND_LINES])
+
+
 def waiting_item_read(arguments, sub_step_of=None):
     """Give the item the `#next_to_present` line names its cold-read-fast-read, as its text stands.
 
@@ -2389,10 +2455,13 @@ def waiting_item_read(arguments, sub_step_of=None):
             last_text = (reads / f"{latest[0]}.md").read_text(encoding="utf-8").rstrip("\n")
             facts = approval_walk_item_before_and_after_fixes_compare_for_changed_fact_words_needing_another_cold_read_fast_read(last_text, text, top)
             if not facts:
-                print("\n".join([ITEM_READ_NOT_RUN.format(item=item, report=latest[1]["report"]),
-                                 ITEM_READ_NOT_RUN_NEXT.format(item=item, program=program,
-                                                               top=shlex.quote(str(top)))]))
-                return 0
+                withheld = item_read_findings_without_outcomes_lines(
+                    item, latest[1]["report"], reads / f"{latest[0]}-outcome.json", arguments.fast_read_program,
+                    command, top)
+                print("\n".join([ITEM_READ_NOT_RUN.format(item=item, report=latest[1]["report"])]
+                                 + (withheld or [ITEM_READ_NOT_RUN_NEXT.format(item=item, program=program,
+                                                                               top=shlex.quote(str(top)))])))
+                return 1 if withheld else 0
             why = ITEM_READ_RUN_FACTS.format(report=latest[1]["report"], facts=", ".join(facts[:FACTS_LISTED]))
         walk_name = minutes.name[:-len(walk_finder.MINUTES_SUFFIX)]
         outcome = fast_read_outcome(text, walk_fast_read_name(walk_name, item), arguments.fast_read_program)
@@ -2406,10 +2475,14 @@ def waiting_item_read(arguments, sub_step_of=None):
             return 1
         how = ITEM_READ_HOW_RUN.format(why=why)
     notes = "".join(STATUS_FAST_READ_NOTE.format(note=note) for note in outcome["notes"])
+    withheld = item_read_findings_without_outcomes_lines(item, outcome["report"], reads / f"{key}-outcome.json",
+                                                         arguments.fast_read_program, command, top)
     print("\n".join([ITEM_READ_USED.format(item=item, how=how, report=outcome["report"], notes=notes)]
                     + [line.format(item=item, document=document, command=command, program=program,
-                                   top=shlex.quote(str(top))) for line in ITEM_READ_LINES]))
-    return 0
+                                   top=shlex.quote(str(top)))
+                       for line in (ITEM_READ_LINES[:1] if withheld else ITEM_READ_LINES)]
+                    + withheld))
+    return 1 if withheld else 0
 
 
 def last_answer(walk_finder, minutes, parser):
