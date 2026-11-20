@@ -15,10 +15,10 @@ reading the previous reply from transcript_path (a turn starts where
 is_human_or_parent_message() from absence-claim-locator-reminder-hook.py
 says), masking fenced code, code spans, links and bare URLs, the record of
 the last reply noted and the hook output. It stays silent where
-nc-systems/general-tools/agent-session-unattended-by-user-check-common.py says
+nn-systems/general-tools/agent-session-unattended-by-user-check-common.py says
 no user attends the agent-session, such as a headless `claude -p` child, and on every
 machine but ned-box, as this_machine_is_ned_box() from
-nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py decides: a session on the Mac
+nn-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py decides: a session on the Mac
 names its own files by their Mac paths.
 
 NOTED, outside fenced code blocks:
@@ -90,11 +90,11 @@ def fault_exit(error):
 try:
     ned_box_home_path_constants = _load_module_by_path(
         "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
-        Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+        Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
         / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
     agent_session_unattended_by_user_check_common = _load_module_by_path(
         "agent_session_unattended_by_user_check_common",
-        Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+        Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
         / "agent-session-unattended-by-user-check-common.py")
 except Exception as error:
     sys.exit(fault_exit(error))
@@ -103,7 +103,7 @@ HIT_LINES_LISTED_AT_MOST = 10
 NOTE_RECORD_DIRECTORY_NAME = "ned-box-path-in-agent-reply-unclickable-on-mac-warning-hook-state"
 NED_BOX_HOME = ned_box_home_path_constants.NED_BOX_HOME + "/"
 MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home_path_constants.MAC_MOUNT_OF_NED_BOX_HOME + "/"
-LOG_STORE_DIRECTORY_UNDER_NED_BOX_HOME = "nedschorus-logs/"
+LOG_STORE_DIRECTORY_UNDER_NED_BOX_HOME = "nedsnodes-logs/"
 SCP_CITATION_HOST_PREFIX = "nedlern@ned-box:"
 
 # Characters that end a path in prose: whitespace, quotes, brackets, Markdown
@@ -129,7 +129,7 @@ PREVIOUS_REPLY_OPENING_LINES = (
     "file:///Volumes/nedhome/<the path after /home/nedlern/>. Each line below shows the link to "
     "write in place of what your reply wrote.",
     "In your next reply, write in that form each file listed below that you mention again.",
-    "For a log-store file, keep the scp citation nedlern@ned-box:/home/nedlern/nedschorus-logs/<path> "
+    "For a log-store file, keep the scp citation nedlern@ned-box:/home/nedlern/nedsnodes-logs/<path> "
     "as the link text, as the lines below do; only the link target takes the /Volumes/nedhome form.",
     "A path inside a shell command, written in a code span or a fenced code block, is not listed "
     "and needs no change: the command runs on ned-box, where the path is right.",
@@ -156,7 +156,7 @@ def bare_number_hook():
 def handoff_user_review_of_agent_memory_stores_mark():
     return _load_module_by_path(
         "handoff_user_review_of_agent_memory_stores_mark",
-        Path(__file__).resolve().parents[1] / "nc-systems" / "handoff" / "handoff-user-review-of-agent-memory-stores-mark.py")
+        Path(__file__).resolve().parents[1] / "nn-systems" / "handoff" / "handoff-user-review-of-agent-memory-stores-mark.py")
 
 
 class UnopenablePath:

@@ -79,7 +79,7 @@ Getting a change to main. Four parts:
    picture weeks stale.
 
    - The open-issue sweep walked on 2026-09-21
-     (`nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/open-issue-sweep-into-piles.md`,
+     (`nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/open-issue-sweep-into-piles.md`,
      items 1 and 3) found ten GHIs whose finished work their own text never
      recorded: eight finished and still open, and two still open whose landed
      half was invisible on the GHI.
@@ -172,7 +172,7 @@ appears nowhere in this repository. Seen failing two ways: a thin brief
 this over: not yet, and the rule stands.** The gatekeeper writes a five-line
 trailer at check-in — `Gatekeeper-origin` (the session id from
 `CLAUDE_CODE_SESSION_ID`), agent, digest, import, issue — in
-`nc-systems/main-gatekeeper/main-gatekeeper.py`. It never writes the
+`nn-systems/main-gatekeeper/main-gatekeeper.py`. It never writes the
 `Co-Authored-By` model line, it stamps only at check-in rather than on every
 commit and pull request description, and `CLAUDE.md` still routes merges
 through the merge-lane seat "until the gatekeeper activates". The single
@@ -183,5 +183,5 @@ activation shape where the gate opens the pull request "with attribution
 computed", and GHI [Topic-branch base enforcement: a branch-creation script and a gh pr create check that refuses an undeclared carry of another PR's commits](https://github.com/nedschorus/nedschorus/issues/238)
 records the user's 2026-09-18 ruling that the gate stamps a `Claude-Session`
 trailer on both the commit and the pull request it composes. So this section is
-re-examined when GHI [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)'s
+re-examined when GHI [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)'s
 slice has the gate composing pull requests, not before.
