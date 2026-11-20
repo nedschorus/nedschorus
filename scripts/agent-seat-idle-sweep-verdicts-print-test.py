@@ -768,7 +768,7 @@ try:
           and verdicts["alpha"]["open_tasks_nothing_holds"] == [{"id": "3", "subject": "task 3"}],
           verdicts["alpha"])
     machine.due_task_raise_state.mkdir()
-    (machine.due_task_raise_state / "nedschorus-alpha-tasks.json").write_text(json.dumps(
+    (machine.due_task_raise_state / "nedsnodes-alpha-tasks.json").write_text(json.dumps(
         {"raised": {"3": {"pull_requests_closed_without_merging": [50]}}, "checks": {}}))
     _, verdicts, _ = machine.run()
     check("the same task once the due-task hook has raised it for that pull request: rule 4",
