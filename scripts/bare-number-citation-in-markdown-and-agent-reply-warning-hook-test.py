@@ -135,7 +135,7 @@ for text, expected in (
 check("an ID-type word with # is one hit, not also a hit for the # alone",
       found("PR #426 and #427") == ["PR #426", "#427"], found("PR #426 and #427"))
 
-for text in ("- **GHI 1196:** [Replace the hand-written parsers](https://github.com/nedschorus/nedschorus/issues/1196)",
+for text in ("- **GHI 1196:** [Replace the hand-written parsers](https://github.com/nedsnodes/nedsnodes/issues/1196)",
              '**Task #168,** "GHI 1121 build: freshness hook changes"',
              '*PR 12:* "A title"',
              'task #166, "GHI 1121 build: freshness hook changes"',
@@ -169,7 +169,7 @@ check("text in an inline code span is skipped",
       found("run `gh pr view 931` and `#37`") == [], found("run `gh pr view 931` and `#37`"))
 check("text in a double-backtick code span is skipped",
       found("run ``PR 931`` now") == [], found("run ``PR 931`` now"))
-link = "PR [PR 931: the fix](https://github.com/nedschorus/nedschorus/pull/931#issue-12)"
+link = "PR [PR 931: the fix](https://github.com/nedsnodes/nedsnodes/pull/931#issue-12)"
 check("a Markdown link's text and target are both skipped", found(link) == [], found(link))
 nested = "GHI [Fix [the] issue 7](https://example.com/issues/7) closed"
 check("a link whose text holds brackets is skipped whole", found(nested) == [], found(nested))
@@ -287,8 +287,8 @@ check("the Markdown note also says where a task's subject is",
 # Link titles, called directly.
 # ---------------------------------------------------------------------------
 
-PULL_URL = "https://github.com/nedschorus/nedschorus/pull/1256"
-ISSUE_URL = "https://github.com/nedschorus/nedschorus/issues/1196"
+PULL_URL = "https://github.com/nedsnodes/nedsnodes/pull/1256"
+ISSUE_URL = "https://github.com/nedsnodes/nedsnodes/issues/1196"
 TITLES = {"1256": "Shell reader: \\u and `~` expanded where bash expands it",
           "1196": "Replace the hand-written parsers with real parsers"}
 
@@ -409,7 +409,7 @@ os.environ[GH_STAND_IN_MODE_VARIABLE] = "titles"
 os.environ[GH_STAND_IN_TITLES_VARIABLE] = json.dumps({"1256": "A real title here"})
 mismatches, reason, _ = hook.link_title_mismatches_in(
     f"[A wrong title here]({PULL_URL}) and [Some three words]"
-    "(https://github.com/nedschorus/nedschorus/pull/999999)")
+    "(https://github.com/nedsnodes/nedsnodes/pull/999999)")
 check("a mismatch is found by one gh call, and a number with no item is not reported",
       reason is None and [(m.text, m.title) for m in mismatches]
       == [("A wrong title here", "A real title here")],
@@ -1140,6 +1140,10 @@ with tempfile.TemporaryDirectory() as directory:
     read = hook.note_record_read(note_record)
     check("a note record that is not an object is reported without Python's type name",
           read == ({}, "it holds JSON, but not an object"), read)
+
+old_name_link = hook.REPOSITORY_ITEM_URL_PATTERN.match(f"https://github.com/{hook.OLD_REPOSITORY}/pull/12")
+check("a link with the repository's old name, which GitHub redirects, is read as this repository's item",
+      old_name_link is not None and old_name_link.group("number") == "12", repr(old_name_link))
 
 print()
 if failures:
