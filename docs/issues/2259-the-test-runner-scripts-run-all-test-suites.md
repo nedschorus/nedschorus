@@ -6,7 +6,7 @@ issue: "[The test runner `scripts/run-all-test-suites.py` records which code eac
 
 ## What this GHI asks for
 
-A mapping from each test case to the lines and branches of code it executes, recorded by the test runner, `scripts/run-all-test-suites.py`, when it runs the test suites. coverage.py can record, for each line it measures, which test executed it, through its dynamic contexts; coverage 7.16.2 is pinned in `nc-systems/general-tools/python-libraries-pinned-requirements.txt`, and the runner does not use it today.
+A mapping from each test case to the lines and branches of code it executes, recorded by the test runner, `scripts/run-all-test-suites.py`, when it runs the test suites. coverage.py can record, for each line it measures, which test executed it, through its dynamic contexts; coverage 7.16.2 is pinned in `nn-systems/general-tools/python-libraries-pinned-requirements.txt`, and the runner does not use it today.
 
 This GHI is a placeholder: no design exists yet. The design answers these questions:
 

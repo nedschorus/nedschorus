@@ -19,7 +19,7 @@ reviewer's answer without its "note", which is for merge-lane-2 and never
 posted: the shape of merge-lane-pull-request-claude-reviewer-review-schema.json
 less "note", each comment with exactly "path", "line" and "body". A file that
 still carries "note" is refused, like any other extra key. It is posted with
-the token in ~/.config/nedschorus/mac-claude.token, with the file's verdict.
+the token in ~/.config/nedsnodes/mac-claude.token, with the file's verdict.
 Its event is the verdict when the pull request's author is ned-review-merge,
 because GitHub refuses an approving review from a pull request's author and
 merge-lane-2 approves as that account; for any other author the event is
@@ -338,7 +338,7 @@ def read_token(account):
             return common.read_merge_account_token()
         except common.MergeAccountTokenUnusable as error:
             raise GhFailed(str(error))
-    token_file = Path.home() / ".config" / "nedschorus" / "mac-claude.token"
+    token_file = Path.home() / ".config" / "nedsnodes" / "mac-claude.token"
     try:
         token = token_file.read_text(encoding="utf-8").strip()
     except (OSError, UnicodeDecodeError) as error:

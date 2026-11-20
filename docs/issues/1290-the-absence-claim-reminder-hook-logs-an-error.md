@@ -8,10 +8,10 @@ Filed by a subagent of the merge-lane-2 agent-seat on 2026-10-13 (UTC), from a f
 
 ## Reproduction
 
-Run on ned-box at 2026-10-13T22:41Z against the hook's fires log, `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/ned-box-helper/absence-claim-locator-reminder-fires-ned-box.jsonl`. The hook writes one line per triggering reply and one per internal error; an error line carries only `time`, `outcome` and `error`. The counts below are the log as it stood at that time. The fix-round of pull request 1287, at head `19991ff9`, makes the hook exit 0 and log nothing for a SubagentStop whose transcript is missing. It merged into main as `dc1cbe74` at 2026-10-13T23:08:15Z, so from then on the log no longer records these errors, and the command below gives the counts as they stood at that merge.
+Run on ned-box at 2026-10-13T22:41Z against the hook's fires log, `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/ned-box-helper/absence-claim-locator-reminder-fires-ned-box.jsonl`. The hook writes one line per triggering reply and one per internal error; an error line carries only `time`, `outcome` and `error`. The counts below are the log as it stood at that time. The fix-round of pull request 1287, at head `19991ff9`, makes the hook exit 0 and log nothing for a SubagentStop whose transcript is missing. It merged into main as `dc1cbe74` at 2026-10-13T23:08:15Z, so from then on the log no longer records these errors, and the command below gives the counts as they stood at that merge.
 
 ```
-python3 -I - /home/nedlern/nedschorus-logs/seats/ned-box-helper/absence-claim-locator-reminder-fires-ned-box.jsonl <<'EOF'
+python3 -I - /home/nedlern/nedsnodes-logs/seats/ned-box-helper/absence-claim-locator-reminder-fires-ned-box.jsonl <<'EOF'
 import json, sys, re, os, glob, collections
 counts = collections.Counter(); paths = set(); present = 0
 for line in open(sys.argv[1]):
@@ -59,4 +59,4 @@ The remaining 3 error lines are not about subagents: two `Stop` events on 2026-1
 
 ## Outcome
 
-These events stay dropped silently, as the pull request [Report the hard-wrap reminder, obsolete-file warning, post-compaction continue and absence-claim reminder hooks' own failures on stderr](https://github.com/nedschorus/nedschorus/pull/1287) left them: the hook exits 0 and logs nothing for a SubagentStop whose `agent_transcript_path` does not exist. ned-box-helper, the hook's owner, decided this on 2026-10-13. Such a subagent has no reply for the hook to check, no program or person reads a count of these events, and before the fix they were 9,813 of the 9,840 lines in `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/ned-box-helper/absence-claim-locator-reminder-fires-ned-box.jsonl`, so counting them would bury the lines the log exists for. Subagents that do have a transcript are still checked.
+These events stay dropped silently, as the pull request [Report the hard-wrap reminder, obsolete-file warning, post-compaction continue and absence-claim reminder hooks' own failures on stderr](https://github.com/nedschorus/nedschorus/pull/1287) left them: the hook exits 0 and logs nothing for a SubagentStop whose `agent_transcript_path` does not exist. ned-box-helper, the hook's owner, decided this on 2026-10-13. Such a subagent has no reply for the hook to check, no program or person reads a count of these events, and before the fix they were 9,813 of the 9,840 lines in `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/ned-box-helper/absence-claim-locator-reminder-fires-ned-box.jsonl`, so counting them would bury the lines the log exists for. Subagents that do have a transcript are still checked.

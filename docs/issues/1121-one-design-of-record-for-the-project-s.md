@@ -9,8 +9,8 @@ issue: "[One design of record for the project's git checkouts, worktrees and bra
 How this project keeps its git checkouts current with main, and what an agent may and may not do to a branch on its way to main, is decided in many places and described whole in none:
 
 - `CLAUDE.md` holds the rules on topic branches, atomic pull requests, frozen heads, commits on top and hand-merges.
-- `scripts/checkout-freshness-catch-up.py`, a Stop hook, rebases a never-pushed branch, moves a detached checkout with no work of its own forward, fast-forwards the machine's reference checkout (the clone's main worktree, kept on the main branch, such as `/Users/el/Projects/nedschorus` on the Mac), and tells the agent what changed; its rules live in its docstring.
-- `launch_time_git_sync` in `nc-systems/handoff/handoff-supervisor.py`, formerly `sync_working_branch_with_main`, fast-forwards a seat's checkout at launch; no document describes it.
+- `scripts/checkout-freshness-catch-up.py`, a Stop hook, rebases a never-pushed branch, moves a detached checkout with no work of its own forward, fast-forwards the machine's reference checkout (the clone's main worktree, kept on the main branch, such as `/Users/el/Projects/nedsnodes` on the Mac), and tells the agent what changed; its rules live in its docstring.
+- `launch_time_git_sync` in `nn-systems/handoff/handoff-supervisor.py`, formerly `sync_working_branch_with_main`, fast-forwards a seat's checkout at launch; no document describes it.
 - The git hooks, `scripts/branch-conflict-check.py`, `.claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py`, `scripts/obsolete-file-edit-warning-hook.py`, `.claude/guard-hooks/session-location-write-guard.py`, `scripts/clean-worktrees.py` and `scripts/merge-gate.sh` each enforce one piece.
 - Closed GHIs record past rulings: [checkout-freshness catch-up merges main into a branch whose head is frozen under review](https://github.com/nedschorus/nedschorus/issues/324) and [The checkout-freshness hook treats a new branch cut at a pull request's pushed head as never pushed, and rebases it](https://github.com/nedschorus/nedschorus/issues/913).
 
@@ -18,9 +18,9 @@ Because nothing states the whole, the pieces disagree, and agents act on the dis
 
 - the documents place every agent-home on its own seat-branch, while live seat checkouts sit detached and nothing creates or describes that shape;
 - `CLAUDE.md` says merge-lane-2 tests a pull request's head commit merged onto main, while merge-lane-2 tests the head as it stands;
-- the first prompt the supervisor built for a seat told an agent to rebase a never-pushed branch, which the Stop hook already does; `nc-systems/handoff/handoff-supervisor.py` now gives no branch-state instruction for a never-pushed branch, and `BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION` only for a pushed one;
+- the first prompt the supervisor built for a seat told an agent to rebase a never-pushed branch, which the Stop hook already does; `nn-systems/handoff/handoff-supervisor.py` now gives no branch-state instruction for a never-pushed branch, and `BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION` only for a pushed one;
 - "frozen" means "has an open pull request" to `.claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py` and "pushed" to the freshness hook;
-- worktrees under agent-homes and in scratchpads are never removed, while `docs/nedschorus-wiki/nedschorus-fleet-git-worktree-working-model.md` (R21) and `docs/nedschorus-wiki/nedschorus-mac-and-ned-box-machine-setup.md` describe every session worktree as removed once merged;
+- worktrees under agent-homes and in scratchpads are never removed, while `docs/nedsnodes-wiki/nedsnodes-fleet-git-worktree-working-model.md` (R21) and `docs/nedsnodes-wiki/nedsnodes-mac-and-ned-box-machine-setup.md` describe every session worktree as removed once merged;
 - a subagent's worktree gets no freshness check, because no hook runs when a subagent stops;
 - several documents describe behaviour the code no longer has.
 
@@ -56,5 +56,5 @@ The design's first draft, written from the 2026-10-09 reading of every place the
 - MD-skills, 2026-10-14: Build: merge-lane-2's merged-onto-main test script moved into the repository (MD-skills task #169).
 - MD-skills, 2026-10-14: Edit the other GitHub issues the design's approval-walks changed, one edit-GHI each (MD-skills task #170).
 - MD-skills, 2026-10-14: Write the git and GitHub architecture overview for the wiki (MD-skills task #171).
-- MD-skills, 2026-10-14: Build: a hook that refuses a topic worktree made outside `~/Projects/nedschorus/.claude/worktrees/` (MD-skills task #173).
+- MD-skills, 2026-10-14: Build: a hook that refuses a topic worktree made outside `~/Projects/nedsnodes/.claude/worktrees/` (MD-skills task #173).
 - reboot-test, 2026-10-14: on the Mac, macOS's daily `/usr/libexec/tmp_cleaner` (from `/System/Library/LaunchDaemons/com.apple.tmp_cleaner.plist`) deletes files under `/tmp` untouched for 3 days, and Claude Code's scratchpad is under `/private/tmp`, so a worktree an agent makes in its scratchpad loses its `.git` link and its gitignored cold-read-records. This happened to three worktrees on 2026-10-08 and 2026-10-09, and lost a GHI 3 cold-read-record. The design should say where worktrees are created, outside `/tmp`, and what enforces it.

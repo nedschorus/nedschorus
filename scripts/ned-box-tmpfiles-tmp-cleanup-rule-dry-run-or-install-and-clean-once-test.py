@@ -268,7 +268,7 @@ with tempfile.TemporaryDirectory() as scratch:
     (clone / "ignored-here" / "notes.txt").write_text("the only copy\n")
     on_ned_box = installer.USER_INSTALL_COMMAND_LINE.split("'")[1]
     fast_forward = on_ned_box.split(" && python3 ")[0].replace(
-        "~/Projects/nedschorus", str(clone))
+        "~/Projects/nedsnodes", str(clone))
     ran = subprocess.run(fast_forward, shell=True, capture_output=True, text=True)
     survived = (clone / "ignored-here" / "notes.txt").read_text()
 check("the install command's fast-forward over an ignored file at a path main tracks fails, "
@@ -296,7 +296,7 @@ with tempfile.TemporaryDirectory() as tmp:
     topic_before = git(["rev-parse", "HEAD"], clone)
     on_ned_box = installer.USER_INSTALL_COMMAND_LINE.split("'")[1]
     fast_forward = on_ned_box.split(" && python3 ")[0].replace(
-        "~/Projects/nedschorus", str(clone), 1)
+        "~/Projects/nedsnodes", str(clone), 1)
     ran = subprocess.run(fast_forward, shell=True, capture_output=True, text=True)
     topic_after = git(["rev-parse", "HEAD"], clone)
 check("the install command stops when the reference-checkout is on a branch other than main, "

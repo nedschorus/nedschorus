@@ -6,7 +6,7 @@ issue: "[The style-guide-word-checker misses prose and flags code in six Markdow
 
 Filed without the user's sign-off by the agent-seat merge-lane-2 on 2026-10-04. The user ruled on 2026-08-23 that a reproduced finding whose consequence is at least wrong behavior in operation is filed that way; the ruling is recorded in merge-lane-2's `CLAUDE.local.md` on ned-box. The sections are, in order: the reproductions, where each finding came from, why the findings matter, their causes, and the next action.
 
-The programs are `scripts/style-guide-word-checker-hack.py` (the checker) and `scripts/style-guide-word-checker-markdown-edit-hook-hack.py` (the PostToolUse hook that runs the checker after an agent's Edit or Write of a Markdown file), as they are on main at commit `07fbc10e`, where their names did not yet end in `-hack`. Line numbers below are at that commit. The style guide page, `docs/nedschorus-wiki/nedschorus-style-guide.md`, says the checker skips code; each shape below is a case where the checker or the hook gets the boundary between code and prose wrong, or does not check a line an agent just wrote.
+The programs are `scripts/style-guide-word-checker-hack.py` (the checker) and `scripts/style-guide-word-checker-markdown-edit-hook-hack.py` (the PostToolUse hook that runs the checker after an agent's Edit or Write of a Markdown file), as they are on main at commit `07fbc10e`, where their names did not yet end in `-hack`. Line numbers below are at that commit. The style guide page, `docs/nedsnodes-wiki/nedsnodes-style-guide.md`, says the checker skips code; each shape below is a case where the checker or the hook gets the boundary between code and prose wrong, or does not check a line an agent just wrote.
 
 ## Reproductions
 

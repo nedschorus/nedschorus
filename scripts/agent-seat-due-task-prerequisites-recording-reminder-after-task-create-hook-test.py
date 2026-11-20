@@ -17,7 +17,7 @@ from pathlib import Path
 
 HOOK_SCRIPT = Path(__file__).with_name("agent-seat-due-task-prerequisites-recording-reminder-after-task-create-hook.py")
 DUE_TASK_RAISE_HOOK_SCRIPT = Path(__file__).with_name("agent-seat-due-task-raise-hook.py")
-FIRST_PROMPT_LIST_SCRIPT = (Path(__file__).resolve().parents[1] / "nc-systems" / "handoff"
+FIRST_PROMPT_LIST_SCRIPT = (Path(__file__).resolve().parents[1] / "nn-systems" / "handoff"
                             / "agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py")
 
 EXPECTED_TEXT_WITH_ID_7 = (

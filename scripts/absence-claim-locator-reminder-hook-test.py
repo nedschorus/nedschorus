@@ -27,7 +27,7 @@ from pathlib import Path
 
 HOOK_SCRIPT = Path(__file__).with_name("absence-claim-locator-reminder-hook.py")
 LABELLED_REPLIES = Path(
-    "/home/nedlern/nedschorus-logs/seats/ned-box-helper/"
+    "/home/nedlern/nedsnodes-logs/seats/ned-box-helper/"
     "absence-claim-trigger-phrases-2026-10-05/out/precision/labels.csv")
 EXPECTED_PRECISION_LINE = "fires 103: correct 88, incorrect 15, unclear 0; precision 0.8544"
 B01_CLAIM = "The transcripts it points to are gone."
@@ -173,11 +173,11 @@ class Case:
 
     def environment(self, **overrides):
         environment = dict(os.environ)
-        environment.pop("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER", None)
+        environment.pop("NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER", None)
         environment["CLAUDE_CODE_SESSION_ATTENDED"] = "1"
         environment["HOME"] = str(self.root / "home")
-        environment["NEDSCHORUS_ABSENCE_CLAIM_REMINDER_LOG"] = str(self.log)
-        environment["NEDSCHORUS_ABSENCE_CLAIM_REMINDER_STATE_DIRECTORY"] = str(self.state)
+        environment["NEDSNODES_ABSENCE_CLAIM_REMINDER_LOG"] = str(self.log)
+        environment["NEDSNODES_ABSENCE_CLAIM_REMINDER_STATE_DIRECTORY"] = str(self.state)
         environment.update(overrides)
         return environment
 
@@ -543,7 +543,7 @@ result = case.run(CLAUDE_CODE_SESSION_ATTENDED="0")
 check("a headless claude -p child: silent, logged as headless",
       result.stdout == "" and [line.get("outcome") for line in case.log_lines()] == ["headless"],
       (result.stdout, case.log_lines()))
-result = case.run(NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER="1")
+result = case.run(NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER="1")
 check("a session its caller owns: silent", result.stdout == "", result.stdout)
 
 # --- subagents -------------------------------------------------------------------

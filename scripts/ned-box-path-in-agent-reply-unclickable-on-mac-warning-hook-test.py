@@ -55,10 +55,10 @@ def replacements_in(text):
 
 # --- The scanner -------------------------------------------------------------
 
-LOG_STORE_LINK = ("[nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/x-minutes.md]"
-                  "(file:///Volumes/nedhome/nedschorus-logs/walk/x-minutes.md)")
+LOG_STORE_LINK = ("[nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/x-minutes.md]"
+                  "(file:///Volumes/nedhome/nedsnodes-logs/walk/x-minutes.md)")
 
-found = replacements_in("The minutes are at /home/nedlern/nedschorus-logs/walk/x-minutes.md.")
+found = replacements_in("The minutes are at /home/nedlern/nedsnodes-logs/walk/x-minutes.md.")
 check("a bare log-store path is noted, with the scp citation as the suggested link's text",
       found == [LOG_STORE_LINK], found)
 
@@ -67,12 +67,12 @@ check("a bare path outside the log-store is noted, with the path as the suggeste
       found == ["[/home/nedlern/agents/merge-lane-2/report.md]"
                 "(file:///Volumes/nedhome/agents/merge-lane-2/report.md)"], found)
 
-found = replacements_in("Read [the minutes](/home/nedlern/nedschorus-logs/walk/x-minutes.md) first.")
+found = replacements_in("Read [the minutes](/home/nedlern/nedsnodes-logs/walk/x-minutes.md) first.")
 check("a link whose target is a /home/nedlern/ path is noted, keeping the link text",
-      found == ["[the minutes](file:///Volumes/nedhome/nedschorus-logs/walk/x-minutes.md)"], found)
+      found == ["[the minutes](file:///Volumes/nedhome/nedsnodes-logs/walk/x-minutes.md)"], found)
 
-found = replacements_in("Read [nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/x-minutes.md]"
-                        "(file:///home/nedlern/nedschorus-logs/walk/x-minutes.md).")
+found = replacements_in("Read [nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/x-minutes.md]"
+                        "(file:///home/nedlern/nedsnodes-logs/walk/x-minutes.md).")
 check("a link whose target is a file:///home/nedlern/ URL is noted once, for its target",
       found == [LOG_STORE_LINK], found)
 
@@ -84,18 +84,18 @@ check("bare and angle-bracketed file:///home/nedlern/ URLs are noted",
 found = replacements_in("The minutes: " + LOG_STORE_LINK + ".")
 check("an scp-form citation linked to its /Volumes/nedhome file is not noted", found == [], found)
 
-found = replacements_in("Cited as nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/x-minutes.md, "
-                        "or ned-box:/home/nedlern/nedschorus-logs/y.md.")
+found = replacements_in("Cited as nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/x-minutes.md, "
+                        "or ned-box:/home/nedlern/nedsnodes-logs/y.md.")
 check("an scp-form citation as plain text is not noted", found == [], found)
 
 found = replacements_in("Open [the report](file:///Volumes/nedhome/agents/a/report.md).")
 check("a link to a /Volumes/nedhome file is not noted", found == [], found)
 
-found = replacements_in("Run `ssh nedlern@ned-box cat /home/nedlern/nedschorus-logs/x.md` to see it, "
+found = replacements_in("Run `ssh nedlern@ned-box cat /home/nedlern/nedsnodes-logs/x.md` to see it, "
                         "or `ls /home/nedlern/agents`.")
 check("a command in a code span is not noted", found == [], found)
 
-found = replacements_in("Run this on ned-box:\n\n```\ncat /home/nedlern/nedschorus-logs/x.md\n```\n"
+found = replacements_in("Run this on ned-box:\n\n```\ncat /home/nedlern/nedsnodes-logs/x.md\n```\n"
                         "~~~sh\nls file:///home/nedlern/y\n~~~\n")
 check("a path in a fenced code block is not noted", found == [], found)
 
@@ -103,7 +103,7 @@ found = replacements_in("The report is `/home/nedlern/agents/a/report.md`.")
 check("a code span holding only a path is noted",
       found == ["[/home/nedlern/agents/a/report.md](file:///Volumes/nedhome/agents/a/report.md)"], found)
 
-found = replacements_in("The link `nedlern@ned-box:/home/nedlern/nedschorus-logs/x.md` is the scp form.")
+found = replacements_in("The link `nedlern@ned-box:/home/nedlern/nedsnodes-logs/x.md` is the scp form.")
 check("a code span holding only the scp form is not noted", found == [], found)
 
 found = replacements_in("Paths /home/nedlern/a.md and /home/nedlern/a.md, again (/home/nedlern/a.md).")
@@ -193,7 +193,7 @@ def note_of(output):
 
 
 FLAGGED_REPLY = transcript(user("where is it?"),
-                           assistant("m1", "It is at /home/nedlern/nedschorus-logs/walk/x-minutes.md."))
+                           assistant("m1", "It is at /home/nedlern/nedsnodes-logs/walk/x-minutes.md."))
 
 output = hook.run(json.dumps(prompt_payload(FLAGGED_REPLY)), ATTENDED, on_ned_box=True)
 note = note_of(output)
@@ -201,14 +201,14 @@ check("on ned-box, a reply with a /home/nedlern/ path gets a UserPromptSubmit no
       output is not None and json.loads(output)["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
       and "showed 1 path(s) under /home/nedlern/" in note, output)
 check("the note shows the /Volumes/nedhome link to write",
-      '"/home/nedlern/nedschorus-logs/walk/x-minutes.md" in "It is at' in note
+      '"/home/nedlern/nedsnodes-logs/walk/x-minutes.md" in "It is at' in note
       and "write " + LOG_STORE_LINK in note, note)
 check("the note never blocks the prompt", "decision" not in json.loads(output or "{}"), output)
 
 output = hook.run(json.dumps(prompt_payload(FLAGGED_REPLY)), ATTENDED, on_ned_box=False)
 check("off ned-box the hook is silent", output is None, output)
 
-for variable, value in (("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER", "1"),
+for variable, value in (("NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER", "1"),
                         ("CLAUDE_CODE_SESSION_ATTENDED", "0")):
     output = hook.run(json.dumps(prompt_payload(FLAGGED_REPLY)), {variable: value}, on_ned_box=True)
     check(f"a headless child ({variable}={value}) gets no note", output is None, output)
@@ -259,7 +259,7 @@ check("a record that cannot be read keeps the note and adds one line saying so",
 
 def run_hook(stdin_text):
     environment = {**os.environ, **ATTENDED, "TMPDIR": str(RECORD_TEMPORARY_DIRECTORY)}
-    environment.pop("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER", None)
+    environment.pop("NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER", None)
     return subprocess.run([sys.executable, str(HOOK_PATH)], input=stdin_text, capture_output=True,
                           text=True, timeout=60, env=environment)
 
