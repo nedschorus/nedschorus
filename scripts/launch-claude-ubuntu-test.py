@@ -979,6 +979,59 @@ def main() -> int:
         check("--help alone: nothing was sent to the box",
               result["remote"] == "", result["remote"][:200])
 
+        # With no name, the usage lists the agent tmux sessions on the box.
+        # A listing whose ssh fails says so, passing ssh's message through,
+        # and is never read as an empty box.
+        # ssh exits 255 when it cannot connect, so only then is the reader
+        # sent to check the connection.
+        for label, ssh_exit_code, connected in (
+                ("ssh cannot reach the box", 255, False),
+                ("the listing command fails on the box", 1, True)):
+            harness = LaunchHarness(root / f"no-name-listing-fails-{ssh_exit_code}")
+            write_stub(harness.stubs, "ssh",
+                       'echo "ssh: Could not resolve hostname stub-box" >&2\n'
+                       f'exit {ssh_exit_code}\n')
+            result = harness.run([])
+            stderr = result["launched"].stderr
+            check(f"no name, {label}: exit nonzero, naming the failed listing "
+                  "and ssh's message, never 'No agent tmux sessions'",
+                  result["launched"].returncode != 0
+                  and "could not list the agent tmux sessions on stub-box: "
+                      f"ssh exited {ssh_exit_code}" in stderr
+                  and "ssh: Could not resolve hostname stub-box" in stderr
+                  and "No agent tmux sessions" not in stderr,
+                  (result["launched"].returncode, stderr[:800]))
+            connection_lines_shown = ("run it from the Mac instead" in stderr
+                                      and "check that the box is up and that ssh stub-box works" in stderr)
+            box_answered_line_shown = ("stub-box answered, so the connection works; "
+                                       "the listing command failed there" in stderr)
+            check(f"no name, {label}: "
+                  + ("says the box answered and the listing failed there, not to check the connection"
+                     if connected else
+                     "says to run it from the Mac or check the connection, not that the box answered"),
+                  (box_answered_line_shown and not connection_lines_shown) if connected
+                  else (connection_lines_shown and not box_answered_line_shown),
+                  stderr[:800])
+
+        harness = LaunchHarness(root / "no-name-listing-empty")
+        result = harness.run([])
+        check("no name, the listing succeeds and finds none: 'No agent tmux "
+              "sessions on the box now.'",
+              result["launched"].returncode == 2
+              and "No agent tmux sessions on the box now." in result["launched"].stderr
+              and "could not list" not in result["launched"].stderr,
+              (result["launched"].returncode, result["launched"].stderr[:800]))
+
+        harness = LaunchHarness(root / "no-name-listing-finds-sessions")
+        write_stub(harness.stubs, "ssh",
+                   "printf 'seat-a@seat-a\\nseat-b@default\\n'\n")
+        result = harness.run([])
+        check("no name, the listing finds sessions: they are named on one line",
+              result["launched"].returncode == 2
+              and "Agent tmux sessions on the box now (running agent-seats or "
+                  "leftover-shells): seat-a@seat-a seat-b@default" in result["launched"].stderr,
+              (result["launched"].returncode, result["launched"].stderr[:800]))
+
         # A first argument starting with - is refused as a seat name: the
         # first argument is always the name, so the launcher would otherwise
         # launch a seat named after the option.
@@ -1004,20 +1057,25 @@ def main() -> int:
         harness = LaunchHarness(root / "update-lock-bound")
         harness.update_timeout_seconds = 30
         with AnotherUpdateHoldsTheLock(harness.update_lock_path()):
-            started = time.monotonic()
             result = harness.run(["seat-v", "--no-attach"])
-            elapsed = time.monotonic() - started
         check("update lock (box): a held lock skips this update immediately",
               harness.claude_updates() == [], harness.claude_updates())
         check("update lock (box): the skip is reported in exactly one line",
               "Another claude update is running; this launch uses the claude already installed.\n"
               == result["replay"].stderr,
               result["replay"].stderr[:400])
-        check("update lock (box): the seat is still prepared, without hanging",
-              result["replay"].returncode == 0 and harness.prepare_ran()
-              and elapsed < 15,
-              (result["replay"].returncode, f"{elapsed:.1f}s",
-               result["replay"].stderr[:300]))
+        # The skip line above is the marker that the lock was tried without
+        # waiting; handoff-supervisor-session-launch-and-seat-lock-test.py counts
+        # the helper's lock attempts.
+        check("update lock (box): the seat is still prepared",
+              result["replay"].returncode == 0 and harness.prepare_ran(),
+              (result["replay"].returncode, result["replay"].stderr[:300]))
+
+        # The timed-out outcome and the killed command are what show the
+        # helper's timeout fired; elapsed time is only a backstop, at
+        # least ten times the timeout so a busy machine cannot fail it.
+        helper_timeout_seconds = 2
+        helper_timeout_backstop_seconds = 15 * helper_timeout_seconds
 
         # --- the pseudo-terminal helper: a command that closes its terminal
         # and its stderr and then keeps running is stopped at the timeout
@@ -1030,7 +1088,8 @@ def main() -> int:
                  "import os, sys, time; "
                  f"open({str(pid_file)!r}, 'w').write(str(os.getpid())); "
                  "os.close(1); os.close(2); time.sleep(600)"],
-                str(root), dict(os.environ), timeout_seconds=2)
+                str(root), dict(os.environ),
+                timeout_seconds=helper_timeout_seconds)
             closed_streams_timed_out = False
         except subprocess.TimeoutExpired:
             closed_streams_timed_out = True
@@ -1047,7 +1106,7 @@ def main() -> int:
         check("pseudo-terminal helper: a command that closes both streams "
               "and keeps running is stopped at the timeout and does not "
               "survive",
-              closed_streams_timed_out and elapsed < 15
+              closed_streams_timed_out and elapsed < helper_timeout_backstop_seconds
               and pid_file.is_file() and not closed_streams_command_survived,
               (closed_streams_timed_out, f"{elapsed:.1f}s",
                pid_file.is_file(), closed_streams_command_survived))

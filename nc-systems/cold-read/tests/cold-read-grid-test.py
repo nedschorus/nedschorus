@@ -55,7 +55,7 @@ WHAT IS PINNED HERE.
     model; the lift machinery stays.
 
   - The read is seven cells: the defect-hunt pass on both tiers of both
-    runtimes, the terminology pass (user-ruled 2026-09-05) on the
+    agent-binaries, the terminology pass (user-ruled 2026-09-05) on the
     `deep` tier of both, and the defect-hunt pass on agy, on Gemini Argon at
     high. The terminology cells and the agy cell run
     at the effort the grid pins, which the stub reads off its own command
@@ -64,7 +64,7 @@ WHAT IS PINNED HERE.
     the nc-test-sandbox, where the real bwrap cannot start.
 
   - The model's echoed words are not the cell's status. The cell re-emits its
-    runtime's stderr into the log the grid lifts from, and the Codex CLI
+    agent-binary's stderr into the log the grid lifts from, and the Codex CLI
     copies the model's own text onto stderr — so on 2026-09-02 a reviewed
     document that quoted a code comment containing "fell back to" made two
     cells read as fallen back when both had run on the models asked for
@@ -220,7 +220,7 @@ def reviews_saved_lines(result):
     return [line for line in result.stdout.splitlines()
             if line.startswith("saved:") and not line.endswith("/" + QUESTION_4_REPORT_NAME)]
 
-# A stand-in for both runtimes. It takes the report path from the prompt it
+# A stand-in for both agent-binaries. It takes the report path from the prompt it
 # was given rather than from the environment, because the grid gives each of
 # its four cells a different one and only the prompt carries which: the
 # Claude leg feeds the prompt on stdin, the Codex leg passes it as an
@@ -455,8 +455,8 @@ def run_grid(repository, stub_directory, environment_overrides=None,
         stub.write_text(STUB_MODEL_RUNTIME, encoding="utf-8")
         stub.chmod(0o755)
     scratch_repository_fixture.install_fake_sandbox_programs(stub_directory)
-    # Every Codex cell scans HOME for credential files at launch, and the
-    # real home takes seconds to walk.
+    # A scratch HOME, so every cell's credential rules name paths in it, not
+    # the real home's.
     scratch_home = repository.parent / "scratch-home"
     scratch_home.mkdir(exist_ok=True)
     environment = dict(os.environ)
@@ -523,7 +523,7 @@ _scratch_directory_common_spec = importlib.util.spec_from_file_location(
     / "test-scratch-directory-whose-earlier-killed-runs-leftovers-are-removed-first-common.py")
 _scratch_directory_common = importlib.util.module_from_spec(_scratch_directory_common_spec)
 _scratch_directory_common_spec.loader.exec_module(_scratch_directory_common)
-SCRATCH_ROOT = _scratch_directory_common.scratch_directory_after_removing_ones_killed_runs_left(
+SCRATCH_ROOT = _scratch_directory_common.make_test_scratch_directory_after_removing_killed_runs_leftovers(
     "cold-read-grid-test-")
 
 
@@ -550,7 +550,7 @@ try:
           not_checked_lines != [],
           f"stdout was {result.stdout!r}")
     check("the lifted line keeps the words that distinguish it from a clean run",
-          any(cell_common.STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE in line
+          any(cell_common.COLD_READ_CELL_STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE in line
               for line in not_checked_lines),
           f"lifted lines were {not_checked_lines!r}")
     check("every cell that could not be checked is named, the Question 4 cell's included",
@@ -763,7 +763,7 @@ try:
           repr(unchecked_lines))
     check("the not-checked line says the missing check is not a clean result, in cell-common's words",
           unchecked_lines != []
-          and all(cell_common.STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE in line for line in unchecked_lines),
+          and all(cell_common.COLD_READ_CELL_STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE in line for line in unchecked_lines),
           repr(unchecked_lines))
 
     # --- A frozen copy that moves while reviewers have written but not exited
@@ -1257,7 +1257,7 @@ try:
           f"{decisions(result.stdout)} vs {decisions(result_plain.stdout)}")
 
     # --- The terminology cells run at the effort the grid pins ---------------
-    # max on both runtimes (user-ruled 2026-09-05, measured on the final
+    # max on both agent-binaries (user-ruled 2026-09-05, measured on the final
     # prompt: opus-max 20/15/28 flags on three targets, sol-max 44/41/49).
     # The grid passes it explicitly; the defect-hunt cells carry no override
     # and run at their launchers' own pins, which this case does not restate.
@@ -1317,7 +1317,7 @@ try:
     # The 2026-09-02 false positive (nedschorus#244): the Codex CLI copies the
     # model's text onto stderr, the cell re-emits that stderr into the log the
     # grid reads, and a reviewed document that quoted a comment containing
-    # "fell back to" made two cells read as fallen back. Here every runtime
+    # "fell back to" made two cells read as fallen back. Here every agent-binary
     # echoes a passage carrying all four lifted phrases mid-line, and nothing
     # is lifted. This case used to carry its own positive control, one cell
     # that really fell back; since the 2026-09-04 ruling no pinned chain has
@@ -1651,7 +1651,7 @@ try:
     reference_directory.mkdir()
     reference_target = reference_directory / "target.md"
     reference_target.write_text(
-        "See [PR 661](https://github.com/nedschorus/nedschorus/pull/661) and"
+        "See [PR 661](https://github.com/nedsnodes/nedsnodes/pull/661) and"
         " defect-hunt-prompt.md, then no-such-prompt-anywhere.md and"
         " nc-systems/cold-read/no-such-file.py.\n", encoding="utf-8")
     grid_module.reference_integrity_pre_pass(reference_target, reference_directory)
@@ -1670,7 +1670,7 @@ try:
           repr(reference_lines))
     link_followed_by_path_target = reference_directory / "link-then-path.md"
     link_followed_by_path_target.write_text(
-        "[PR 661](https://github.com/nedschorus/nedschorus/pull/661)nc-systems/cold-read/"
+        "[PR 661](https://github.com/nedsnodes/nedsnodes/pull/661)nc-systems/cold-read/"
         "no-such-file-after-link.py\n", encoding="utf-8")
     grid_module.reference_integrity_pre_pass(link_followed_by_path_target, reference_directory)
     reference_lines = (reference_directory / "cold-read-reference-check.md").read_text(
@@ -1980,7 +1980,7 @@ try:
     # the reviewer's review on PR "cold-read-grid: a failed cell is retried
     # once and reported with its cause, and every run closes with one
     # closing text":
-    # https://github.com/nedschorus/nedschorus/pull/508#pullrequestreview-5252230189
+    # https://github.com/nedsnodes/nedsnodes/pull/508#pullrequestreview-5252230189
     repository = build_scratch_repository(scratch, "checkout-incomplete-set-ships-marked")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
         [{"fragment": "claude-terminology-deep.md", "attempts": 2}])})
@@ -2269,7 +2269,7 @@ try:
     link_directory = scratch / "mac-link-freeze"
     link_directory.mkdir()
     link_original = link_directory / "document.md"
-    link_original.write_text("See file:///Volumes/nedhome/agents/x/log.md now.\n", encoding="utf-8")
+    link_original.write_text("See [the log](file:///Volumes/nedhome/agents/x/log.md) now.\n", encoding="utf-8")
     link_record = link_directory / "record"
     link_record.mkdir()
     saved_mount_override = os.environ.get(mount_override)
@@ -2284,7 +2284,7 @@ try:
     link_frozen = grid_module.record_names.frozen_target_path(link_original, link_record)
     check("the frozen copy holds the link as a /home/nedlern/ path",
           link_frozen.is_file()
-          and link_frozen.read_text(encoding="utf-8") == "See /home/nedlern/agents/x/log.md now.\n",
+          and link_frozen.read_text(encoding="utf-8") == "See [the log](/home/nedlern/agents/x/log.md) now.\n",
           repr(link_frozen.read_bytes() if link_frozen.is_file() else None))
     check("the document keeps its link and the digest returned is the document's",
           "file:///Volumes/nedhome/" in link_original.read_text(encoding="utf-8")

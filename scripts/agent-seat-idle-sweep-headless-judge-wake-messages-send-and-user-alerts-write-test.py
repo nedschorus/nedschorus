@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import site
 import subprocess
 import sys
 import tempfile
@@ -43,7 +44,8 @@ def emit(event):
     print(json.dumps(event), flush=True)
 text = prompt.split("----------\n", 1)[-1].rsplit("\n----------", 1)[0]
 for number, send in enumerate(answer.get("sends", [])):
-    message = text if send.get("message") == "@prompt-text" else send.get("message", "")
+    message = {{"@prompt-text": text, "@prompt-text-without-last-paragraph": text.rsplit("\n\n", 1)[0]
+               }}.get(send.get("message"), send.get("message", ""))
     emit({{"type": "assistant", "message": {{"content": [
         {{"type": "tool_use", "id": f"t{{number}}", "name": "SendMessage",
          "input": {{"to": send["to"], "message": message}}}}]}}}})
@@ -86,12 +88,12 @@ def at(minutes):
     return (START + timedelta(minutes=minutes)).isoformat().replace("+00:00", "Z")
 
 
-def assistant(text=None, when=LONG_AGO, tool=None, uuid=None):
+def assistant(text=None, when=LONG_AGO, tool=None, uuid=None, tool_id="t"):
     content = []
     if text is not None:
         content.append({"type": "text", "text": text})
     if tool is not None:
-        content.append({"type": "tool_use", "id": "t", "name": tool[0], "input": tool[1]})
+        content.append({"type": "tool_use", "id": tool_id, "name": tool[0], "input": tool[1]})
     return {"type": "assistant", "timestamp": when, "uuid": uuid or f"u-{when}-{text}",
             "message": {"model": "claude-opus-5-5", "content": content,
                         "usage": {"input_tokens": 100, "output_tokens": 100}}}
@@ -99,6 +101,13 @@ def assistant(text=None, when=LONG_AGO, tool=None, uuid=None):
 
 def user(text, when=LONG_AGO):
     return {"type": "user", "timestamp": when, "message": {"role": "user", "content": text}}
+
+
+def task_result(tool_id, text, when=LONG_AGO):
+    """A task call's result as Claude Code writes it, with no is_error: a success text such as
+    "Task #1 created successfully: <subject>", or "Task not found"."""
+    return {"type": "user", "timestamp": when, "message": {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": tool_id, "content": text}]}}
 
 
 def turn_end(when=LONG_AGO):
@@ -127,6 +136,20 @@ def send_to(seat, message="@prompt-text", **extra):
 
 def sent_ok(seat="alpha"):
     return {"sends": [send_to(seat)], "answer": {"sent": True, "reason": "sent"}}
+
+
+def judged(send, message="", reason="r"):
+    """A rule 5 judge's answer."""
+    return {"answer": {"send": send, "message": message, "reason": reason}}
+
+
+DO_NOT_REPLY = "Do not reply to this message: its sender has exited, so a reply fails."
+KEEP_IT = (f'The text ends with the sentence "{DO_NOT_REPLY}" That sentence is written to the '
+           "agent-seat, not to you, and is part of the message: keep it.")
+
+
+def ends_with_do_not_reply_once(text):
+    return text.endswith("\n\n" + DO_NOT_REPLY) and text.count(DO_NOT_REPLY) == 1
 
 
 class Machine:
@@ -203,6 +226,8 @@ class Machine:
     def run(self, minutes, *extra, path_has_fake=True):
         environment = dict(os.environ)
         environment["HOME"] = str(self.home)
+        # Python finds the user's site-packages from HOME, and on the Mac markdown-it-py is installed there.
+        environment["PYTHONUSERBASE"] = site.getuserbase()
         if path_has_fake:
             environment["PATH"] = f"{self.bin}{os.pathsep}{environment['PATH']}"
         else:
@@ -259,9 +284,15 @@ check("the message missing from the transcript of an idle agent-seat: a user-ale
 machine.script(sent_ok())
 code, _ = machine.run(16)
 calls = machine.claude_calls()
-check("idle again 15 minutes after the nudge: the escalation with the minutes since it went idle",
-      len(calls) == 1 and "You've given this 26 minutes, please check; if not sure, hand off"
-      in calls[0]["prompt"], calls)
+nudge_text = machine.events("wait_step")[0]["text"]
+expected = ("You've given this 26 minutes, please check; if not sure, hand off. At 2026-11-02 "
+            "12:00Z the idle sweep wrote this, which you have not acted on:\n\n"
+            + "\n".join("> " + line for line in nudge_text.split("\n")) + "\n\n" + DO_NOT_REPLY)
+check("idle again 15 minutes after the nudge: the escalation with the minutes since it went idle, "
+      "quoting the nudge without its do-not-reply sentence",
+      len(calls) == 1 and machine.events("message_sent")[-1]["text"] == expected
+      and expected in calls[0]["prompt"] and DO_NOT_REPLY not in nudge_text,
+      (calls, machine.events("message_sent")))
 # The agent-seat reads the escalation and answers it, and the delivery check finds it.
 escalation = machine.events("message_sent")[-1]["text"]
 machine.append("alpha", cross_session(escalation, at(16.2)), assistant("Still waiting.", at(16.3)),
@@ -275,6 +306,10 @@ code, _ = machine.run(31.5)
 check("idle again 15 minutes after the escalation: the user is told, and no message is sent",
       not machine.claude_calls() and len(machine.alerts()) == 2
       and "after a nudge and an escalation" in machine.alerts()[1]["title"], machine.alerts())
+check("a text-only reply keeps the wait, and the user-alert counts the minutes from when the "
+      "agent-seat first went idle, not from the reply",
+      len(machine.alerts()) == 2 and machine.alerts()[1]["title"].startswith(
+          "alpha has been idle 41 minutes after"), machine.alerts())
 code, _ = machine.run(40)
 check("after telling the user, nothing more while the agent-seat spends no tokens",
       not machine.claude_calls() and len(machine.alerts()) == 2, machine.alerts())
@@ -286,6 +321,37 @@ check("spending tokens after the user was told starts the steps over, with a new
       == ["nudge", "escalate", "tell_user", "nudge"]
       and machine.events("wait_ended")[-1]["why"] == "it spent tokens after the user was told",
       machine.events("wait_step"))
+
+# --- a tool call after the nudge ends the wait ---------------------------------------------------
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(tool=("Bash", {"command": "ls"})), turn_end()])
+machine.handoff_put_off()
+machine.script(sent_ok())
+machine.run(0)
+machine.script()
+machine.run(16)
+check("a tool call made before the nudge does not end the wait: the escalation is sent",
+      [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"],
+      machine.events("wait_step"))
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+machine.script(sent_ok())
+machine.run(0)
+nudge = machine.events("message_sent")[-1]["text"]
+machine.append("alpha", cross_session(nudge, at(0.2)),
+               assistant(tool=("Bash", {"command": "make"}), when=at(1)),
+               assistant("Built it.", at(9)), turn_end(at(9.5)))
+machine.script(sent_ok())
+code, _ = machine.run(16)
+check("a tool call after the nudge ends the wait: no escalation, the next idle stretch gets a new "
+      "nudge counted from its own start",
+      code == 0 and [event["why"] for event in machine.events("wait_ended")]
+      == ["it made a tool call after the nudge"]
+      and [(event["step"], event.get("first_idle_at")) for event in machine.events("wait_step")]
+      == [("nudge", LONG_AGO), ("nudge", at(9))]
+      and not any(event["step"] == "escalate" for event in machine.events("message_sent")),
+      (machine.events("wait_step"), machine.events("wait_ended")))
 
 # --- rule 4 ends a wait; a new agent-session ends one too -------------------------------------
 machine = Machine()
@@ -317,14 +383,17 @@ check("a new agent-session ends the wait and starts a new nudge, not the escalat
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
 machine.task("alpha", "1")
-machine.script({"answer": {"sent": False, "reason": "a subagent started 3 minutes ago is still running"}})
+# The judge takes over a second, as under load, so its answer is logged after the invocation's time.
+machine.script(dict(judged(False, reason="a subagent started 3 minutes ago is still running"),
+                    sleep=1.2))
 code, _ = machine.run(0)
 calls = machine.claude_calls()
-check("rule 5: the judge is handed the open task and the agent-seat's last message",
+check("rule 5: the judge is handed the open task and the agent-seat's last message, and no tool",
       len(calls) == 1 and '"task 1"' in calls[0]["prompt"] and '"Done."' in calls[0]["prompt"]
-      and "SendMessage,ListAgents,ToolSearch" in calls[0]["argv"], calls)
+      and calls[0]["argv"][calls[0]["argv"].index("--tools") + 1] == ""
+      and "--allowedTools" not in calls[0]["argv"], calls)
 check("rule 5: a verdict not to send is logged with its reason, and no wait starts",
-      [(event["sent"], event["reason"]) for event in machine.events("judge_answer")]
+      [(event["send"], event["reason"]) for event in machine.events("judge_answer")]
       == [(False, "a subagent started 3 minutes ago is still running")]
       and not machine.events("wait_step"), machine.events())
 walk_item_machine = Machine()
@@ -333,7 +402,7 @@ walk_item_machine.task("alpha", "1")
 walk = walk_item_machine.agents / "alpha" / "docs" / "walk"
 walk.mkdir(parents=True)
 (walk / "w-minutes.md").write_text("#next_to_present item 2 of 3\n")
-walk_item_machine.script({"answer": {"sent": False, "reason": "it is answering the user"}})
+walk_item_machine.script(judged(False, reason="it is answering the user"))
 walk_item_machine.run(0)
 calls = walk_item_machine.claude_calls()
 check("rule 5 with a walk item waiting: the judge is still asked, and is handed the walk item",
@@ -344,20 +413,22 @@ machine.script()
 machine.run(10)
 check("rule 5: not asked again within 15 minutes while the agent-seat spends no tokens",
       not machine.claude_calls(), machine.claude_calls())
-machine.script({"sends": [send_to("alpha", "What's going on?")],
-                "answer": {"sent": True, "reason": "nothing runs"}})
+machine.script(judged(True, "What's going on?", "nothing runs"), sent_ok())
 machine.run(15)
-check("rule 5: asked again 15 minutes later; a message it sent starts the wait with its text",
-      len(machine.claude_calls()) == 1 and machine.events("message_sent")[-1]["text"]
-      == "What's going on?" and machine.events("wait_step")[-1]["step"] == "nudge",
-      machine.events())
+calls = machine.claude_calls()
+check("rule 5: asked again 15 minutes later; the message it wrote starts the wait with its text, "
+      "and a sender sends it",
+      len(calls) == 2 and "What's going on?" in calls[1]["prompt"]
+      and machine.events("message_sent")[-1]["text"] == "What's going on?\n\n" + DO_NOT_REPLY
+      and machine.events("wait_step")[-1]["step"] == "nudge"
+      and machine.events("wait_step")[-1]["text"] == "What's going on?", machine.events())
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
 machine.task("alpha", "1")
-machine.script({"answer": {"sent": False, "reason": "busy"}})
+machine.script(judged(False, reason="busy"))
 machine.run(0)
 machine.append("alpha", user("go on", at(1)), assistant("Done again.", at(2)), turn_end(at(2)))
-machine.script({"answer": {"sent": False, "reason": "busy"}})
+machine.script(judged(False, reason="busy"))
 machine.run(8)
 check("rule 5: asked again when the agent-seat spent tokens and went idle again",
       len(machine.claude_calls()) == 1, machine.events())
@@ -375,7 +446,7 @@ transcript = machine.seat("alpha", [
     json.dumps(record) + "\n" for record in [
         dict(user("", when=at(-50)), toolUseResult={"backgroundTaskId": "b3c4"}),
         assistant("Fix-round pushed.", when=at(-41))]))
-machine.script({"answer": {"sent": False, "reason": "its test-suite run may be needed"}})
+machine.script(judged(False, reason="its test-suite run may be needed"))
 machine.run(0)
 calls = machine.claude_calls()
 prompt = calls[0]["prompt"] if calls else "\n{}"
@@ -386,6 +457,21 @@ check("rule 5: a subagent stopped with a background command of its own still run
           "id": "a1b2", "started": at(-60), "minutes_running": 60, "stopped_at": at(-40),
           "own_running_background_commands": [
               {"id": "b3c4", "started": at(-50), "minutes_running": 50}]}], calls)
+
+machine = Machine()
+machine.seat("alpha", [
+    user("go"),
+    dict(user("", when=at(-30)), toolUseResult={
+        "status": "async_launched", "taskId": "wn6fctb8y", "taskType": "local_workflow"}),
+    assistant("Waiting on the workflow."), turn_end()])
+machine.script(judged(False, reason="the workflow is still running"))
+machine.run(0)
+calls = machine.claude_calls()
+prompt = calls[0]["prompt"] if calls else "\n{}"
+judge_facts = json.loads(prompt[prompt.rindex("\n{") + 1:])
+check("rule 5: a running Workflow-tool run is handed to the judge with its minutes",
+      judge_facts.get("running_workflows") == [
+          {"id": "wn6fctb8y", "started": at(-30), "minutes_running": 30}], calls)
 
 # --- rule 2: promises and announced actions -------------------------------------------------------
 PROMISE = "I'll report when PR 927 merges."
@@ -438,14 +524,30 @@ check("rule 2: the second promise did not put off the escalation",
       [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"],
       machine.events("wait_step"))
 
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
+machine.script(sent_ok())
+machine.run(0)
+machine.append("alpha", cross_session("You promised", at(0.5)),
+               assistant(tool=("Bash", {"command": "ls"}), when=at(0.8)),
+               assistant(SECOND_PROMISE, at(1)), turn_end(at(1)))
+machine.script(sent_ok())
+machine.run(7)
+machine.script(sent_ok())
+machine.run(16)
+check("rule 2: a tool call and a fresh promise in answer to the message do not end the wait, "
+      "and the escalation is sent",
+      not machine.events("wait_ended")
+      and [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"],
+      (machine.events("wait_step"), machine.events("wait_ended")))
+
 # A promise sent on a wait a rule 5 or rule 3 message opened keeps that wait going through rule 4.
 for opener in ("rule 5", "rule 3"):
     machine = Machine()
     machine.seat("alpha", DONE_TURN)
     if opener == "rule 5":
         machine.task("alpha", "1")
-        machine.script({"sends": [send_to("alpha", "What's going on?")],
-                        "answer": {"sent": True, "reason": "nothing runs"}})
+        machine.script(judged(True, "What's going on?", "nothing runs"), sent_ok())
     else:
         machine.handoff_put_off()
         machine.script(sent_ok())
@@ -475,6 +577,240 @@ for opener in ("rule 5", "rule 3"):
           (machine.events("wait_step"), machine.alerts()))
 
 ANNOUNCED = "I'm starting the PR 1633 work now."
+
+# An agent-seat that records the task a promise message asked for, and then sits idle waiting on it.
+RECORDED_TASK = assistant(tool=("TaskCreate", {"subject": "report on PR 927", "metadata": {
+    "prerequisites": [{"pr_merged": 927}]}}), when=at(0.8), tool_id="t-recorded")
+RECORDED_TASK_RESULT = task_result("t-recorded", "Task #1 created successfully: report on PR 927",
+                                   at(0.81))
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
+machine.script(sent_ok())
+machine.run(0)
+machine.append("alpha", cross_session(machine.events("message_sent")[-1]["text"], at(0.5)),
+               RECORDED_TASK, RECORDED_TASK_RESULT,
+               assistant("Recorded.", at(1)), turn_end(at(1)))
+machine.script()
+machine.run(7)
+check("rule 2: a task call recording what a task waits on, after the promise message, ends the wait",
+      [event["why"] for event in machine.events("wait_ended")]
+      == ["it recorded what a task waits on after the promise message"], machine.events())
+machine.script(sent_ok())
+machine.run(16)
+machine.script()
+machine.run(32)
+check("rule 2: the agent-seat that recorded the task is neither escalated nor reported to the user",
+      [event["step"] for event in machine.events("wait_step")] == ["nudge"]
+      and not machine.events("message_sent")[1:] and not machine.alerts(),
+      (machine.events("wait_step"), machine.events("message_sent"), machine.alerts()))
+check("rule 2: the wait_ended event lists the sentence and the task call taken to settle it",
+      [(event.get("sentences"), event.get("task_calls")) for event in machine.events("wait_ended")]
+      == [([PROMISE], [{"time": at(0.8), "name": "TaskCreate", "task": "1"}])],
+      machine.events("wait_ended"))
+
+
+def promise_wait_after(transcript, *answer_records):
+    """A machine whose agent-seat gave the promise message an answer, run to minute 16."""
+    machine = Machine()
+    machine.seat("alpha", transcript)
+    machine.script(sent_ok())
+    machine.run(0)
+    machine.append("alpha", cross_session(machine.events("message_sent")[-1]["text"], at(0.5)),
+                   *answer_records, assistant("Recorded.", at(1)), turn_end(at(1)))
+    machine.script()
+    machine.run(7)
+    machine.script(sent_ok())
+    machine.run(16)
+    return machine
+
+
+def waited_on_to_escalation(machine):
+    return (not machine.events("wait_ended")
+            and [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"])
+
+
+# A task call made in an earlier turn, before the promise message, backs nothing that message asks.
+machine = promise_wait_after(
+    [user("plan", "2026-11-02T11:40:00Z"),
+     assistant(tool=("TaskCreate", {"subject": "older task",
+                                    "metadata": {"prerequisites": [{"pr_merged": 5}]}}),
+               when="2026-11-02T11:41:00Z", tool_id="t-older"),
+     task_result("t-older", "Task #1 created successfully: older task", "2026-11-02T11:41:01Z"),
+     assistant("Set up.", "2026-11-02T11:42:00Z"), turn_end("2026-11-02T11:42:00Z"),
+     user("go"), assistant(PROMISE), turn_end()])
+check("rule 2: a task call made before the promise message does not end the wait, and the "
+      "escalation is sent", waited_on_to_escalation(machine),
+      (machine.events("wait_step"), machine.events("wait_ended")))
+
+HOLD_SENTENCE = "I'll hold the deploy until you approve."
+TWO_PROMISES = [user("go"), assistant(f"{PROMISE} {HOLD_SENTENCE}"), turn_end()]
+machine = promise_wait_after(TWO_PROMISES, RECORDED_TASK, RECORDED_TASK_RESULT)
+check("rule 2: one task call does not end a wait whose message named two promises",
+      waited_on_to_escalation(machine), (machine.events("wait_step"), machine.events("wait_ended")))
+SAME_TASK_UPDATED = [
+    record for number in range(2)
+    for record in (assistant(tool=("TaskUpdate", {"taskId": "2", "addBlockedBy": ["1"]}),
+                             when=at(0.8), tool_id=f"t-same-{number}"),
+                   task_result(f"t-same-{number}", "Updated task #2 blockedBy", at(0.81)))]
+machine = promise_wait_after(TWO_PROMISES, *SAME_TASK_UPDATED)
+check("rule 2: two calls on one task do not end a wait whose message named two promises",
+      waited_on_to_escalation(machine), (machine.events("wait_step"), machine.events("wait_ended")))
+machine = promise_wait_after(
+    TWO_PROMISES, RECORDED_TASK, RECORDED_TASK_RESULT,
+    assistant(tool=("TaskUpdate", {"taskId": "2", "addBlockedBy": ["1"]}), when=at(0.9),
+              tool_id="t2"),
+    task_result("t2", "Updated task #2 blockedBy", at(0.91)))
+check("rule 2: a task call for each of the message's two promises ends the wait, and the "
+      "wait_ended event lists both sentences and both calls",
+      [(event["why"], event.get("sentences"), [call["task"] for call in event.get("task_calls", [])])
+       for event in machine.events("wait_ended")]
+      == [("it recorded what a task waits on after the promise message",
+           [PROMISE, HOLD_SENTENCE], ["1", "2"])],
+      machine.events("wait_ended"))
+
+machine = promise_wait_after(
+    [user("go"), assistant(PROMISE), turn_end()],
+    assistant(tool=("TaskUpdate", {"taskId": "2", "metadata": {
+        "prerequisites": [{"pr_merged": 927}]}}), when=at(0.8), tool_id="t-no-result"))
+check("rule 2: a TaskUpdate with no result, as when its turn was interrupted, does not end the wait",
+      waited_on_to_escalation(machine), (machine.events("wait_step"), machine.events("wait_ended")))
+
+machine = promise_wait_after(
+    [user("go"), assistant(PROMISE), turn_end()],
+    assistant(tool=("TaskUpdate", {"taskId": "99", "metadata": {
+        "prerequisites": [{"pr_merged": 927}]}}), when=at(0.8), tool_id="t-failed"),
+    task_result("t-failed", "Task not found", at(0.85)))
+check("rule 2: a TaskUpdate answered 'Task not found', with no is_error, does not end the wait",
+      waited_on_to_escalation(machine), (machine.events("wait_step"), machine.events("wait_ended")))
+
+# A wait whose rule 2 message was logged by the version before PROMISE_MESSAGE events named their
+# sentences: what that message named is unknown, so no task call ends the wait.
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
+machine.script(sent_ok())
+machine.run(0)
+machine.log.write_text("".join(
+    json.dumps({key: value for key, value in event.items() if key != "sentences"}) + "\n"
+    for event in machine.events()))
+machine.append("alpha", cross_session(machine.events("message_sent")[-1]["text"], at(0.5)),
+               RECORDED_TASK, RECORDED_TASK_RESULT, assistant("Recorded.", at(1)), turn_end(at(1)))
+machine.script()
+machine.run(7)
+machine.script(sent_ok())
+machine.run(16)
+check("rule 2: a task call does not end a wait whose promise message was logged without its "
+      "sentences", waited_on_to_escalation(machine),
+      (machine.events("wait_step"), machine.events("wait_ended")))
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
+machine.script(sent_ok())
+machine.run(0)
+machine.log.write_text("".join(json.dumps(event) + "\n" for event in machine.events()
+                               if event["event"] != "promise_message"))
+machine.append("alpha", cross_session(machine.events("message_sent")[-1]["text"], at(0.5)),
+               assistant(HOLD_SENTENCE, at(1)), turn_end(at(1)))
+machine.script(sent_ok())
+machine.run(7)
+machine.append("alpha", user("ok", at(7.5)),
+               assistant(tool=("TaskCreate", {"subject": "hold the deploy", "metadata": {
+                   "prerequisites": [{"pr_merged": 9}]}}), when=at(7.8), tool_id="t-hold"),
+               task_result("t-hold", "Task #2 created successfully: hold the deploy", at(7.81)),
+               assistant("Recorded.", at(8)), turn_end(at(8)))
+machine.script()
+machine.run(14)
+check("rule 2: a promise message logged on a wait whose first rule 2 message has no "
+      "promise_message event does not let a task call end the wait",
+      not machine.events("wait_ended") and len(machine.events("promise_message")) == 1,
+      (machine.events("promise_message"), machine.events("wait_ended")))
+
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
+machine.script(sent_ok())
+machine.run(0)
+machine.log.write_text("".join(
+    json.dumps({key: value for key, value in event.items()
+                if key != "agent_seat_idle_sweep_invocation_started_at"}) + "\n"
+    for event in machine.events() if event["event"] != "promise_message"))
+machine.append("alpha", cross_session(machine.events("message_sent")[-1]["text"], at(0.5)),
+               assistant(HOLD_SENTENCE, at(1)), turn_end(at(1)))
+machine.script(sent_ok())
+machine.run(7)
+machine.append("alpha", user("ok", at(7.5)),
+               assistant(tool=("TaskCreate", {"subject": "hold the deploy", "metadata": {
+                   "prerequisites": [{"pr_merged": 9}]}}), when=at(7.8), tool_id="t-hold"),
+               task_result("t-hold", "Task #2 created successfully: hold the deploy", at(7.81)),
+               assistant("Recorded.", at(8)), turn_end(at(8)))
+machine.script()
+machine.run(14)
+check("rule 2: on a wait whose first rule 2 message was logged with no invocation stamp and no "
+      "promise_message event, a later promise message does not let a task call end the wait",
+      not machine.events("wait_ended") and len(machine.events("promise_message")) == 1,
+      (machine.events("promise_message"), machine.events("wait_ended")))
+
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
+machine.script(sent_ok())
+machine.run(0)
+machine.append("alpha", cross_session(machine.events("message_sent")[-1]["text"], at(0.5)),
+               assistant(HOLD_SENTENCE, at(1)), turn_end(at(1)))
+machine.script(sent_ok())
+machine.run(7)
+machine.append("alpha", user("ok", at(7.5)),
+               assistant(tool=("TaskCreate", {"subject": "hold the deploy", "metadata": {
+                   "prerequisites": [{"pr_merged": 9}]}}), when=at(7.8), tool_id="t-hold"),
+               task_result("t-hold", "Task #2 created successfully: hold the deploy", at(7.81)),
+               assistant("Recorded.", at(8)), turn_end(at(8)))
+machine.script()
+machine.run(14)
+check("rule 2: two rule 2 messages on one wait, each naming one promise, and one task call after "
+      "the second: the first message's promise has no task of its own, so the wait stays open",
+      not machine.events("wait_ended") and len(machine.events("promise_message")) == 2,
+      (machine.events("promise_message"), machine.events("wait_ended")))
+
+CREATED_THEN_UPDATED = [
+    RECORDED_TASK, RECORDED_TASK_RESULT,
+    assistant(tool=("TaskUpdate", {"taskId": "1", "addBlockedBy": ["4"]}), when=at(0.9),
+              tool_id="t-update-1"),
+    task_result("t-update-1", "Updated task #1 blockedBy", at(0.91))]
+machine = promise_wait_after(TWO_PROMISES, *CREATED_THEN_UPDATED)
+check("rule 2: a TaskCreate and a later TaskUpdate of the same task count as one task, so they do "
+      "not end a wait whose message named two promises",
+      waited_on_to_escalation(machine), (machine.events("wait_step"), machine.events("wait_ended")))
+SAME_SUBJECT_CREATED_TWICE = [
+    record for number in (1, 2)
+    for record in (assistant(tool=("TaskCreate", {"subject": "report", "metadata": {
+                       "prerequisites": [{"pr_merged": 927}]}}), when=at(0.8 + number / 100),
+                             tool_id=f"t-create-{number}"),
+                   task_result(f"t-create-{number}", f"Task #{number} created successfully: report",
+                               at(0.81 + number / 100)))]
+machine = promise_wait_after(TWO_PROMISES, *SAME_SUBJECT_CREATED_TWICE)
+check("rule 2: two TaskCreates with one subject create two tasks, which end a wait whose message "
+      "named two promises",
+      [[call["task"] for call in event.get("task_calls", [])]
+       for event in machine.events("wait_ended")] == [["1", "2"]],
+      machine.events("wait_ended"))
+
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(f"{PROMISE} {ANNOUNCED}"), turn_end()])
+machine.script({"answer": {"sentences": [{"index": 0, "backed": False, "reason": "no tool call"}]}},
+               sent_ok())
+machine.run(0)
+machine.append("alpha", cross_session(machine.events("message_sent")[-1]["text"], at(0.5)),
+               *CREATED_THEN_UPDATED[:2],
+               assistant(tool=("TaskUpdate", {"taskId": "2", "addBlockedBy": ["1"]}), when=at(0.9),
+                         tool_id="t2"),
+               task_result("t2", "Updated task #2 blockedBy", at(0.91)),
+               assistant("Recorded.", at(1)), turn_end(at(1)))
+machine.script()
+machine.run(7)
+machine.script(sent_ok())
+machine.run(16)
+check("rule 2: a task call does not end a wait whose message also named an announced action, "
+      "which only the judge can find done",
+      not machine.events("wait_ended")
+      and [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate"],
+      (machine.events("wait_step"), machine.events("wait_ended")))
+
 machine = Machine()
 machine.seat("alpha", [user("go"), assistant(ANNOUNCED), turn_end()])
 machine.script({"answer": {"sentences": [{"index": 0, "backed": True, "reason": "a test runs"}]}})
@@ -492,6 +828,19 @@ calls = machine.claude_calls()
 check("rule 2 judged unbacked: a second headless agent-session sends the announced-action line",
       len(calls) == 2 and 'You said "I\'m starting the PR 1633 work now." 12 minutes ago and have '
       "not done it. Do it now, or tell the user why not." in calls[1]["prompt"], calls)
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(f"{PROMISE} {ANNOUNCED}"), turn_end()])
+machine.script({"answer": {"sentences": [{"index": 0, "backed": True, "reason": "a test runs"}]}},
+               sent_ok())
+machine.run(0)
+calls = machine.claude_calls()
+prompt = calls[0]["prompt"] if calls else "\n{}"
+judge_facts = json.loads(prompt[prompt.rindex("\n{") + 1:])
+check("rule 2, a promise code finds unbacked and an announced action to judge: the judge gets only "
+      "the announced action, and the message names only the promise",
+      [item["sentence"] for item in judge_facts.get("sentences", [])] == [ANNOUNCED]
+      and len(calls) == 2 and "You promised \"I'll report when PR 927 merges.\"" in calls[1]["prompt"]
+      and ANNOUNCED not in calls[1]["prompt"], calls)
 for case, answer in (("an index missing", {"sentences": []}),
                      ("backed not true or false", {"sentences": [{"index": 0, "backed": "yes",
                                                                   "reason": "r"}]})):
@@ -520,7 +869,7 @@ machine.script()
 machine.run(3)
 check("rule 1: no second wake for the same limit record", not machine.claude_calls(),
       machine.claude_calls())
-machine.script({"answer": {"sent": False, "reason": "r"}})
+machine.script(judged(False))
 machine.run(6)
 check("rule 1: still idle 5 minutes after the wake, rules 2 to 5 decide (rule 5's judge)",
       len(machine.claude_calls()) == 1 and machine.events("judge_answer"), machine.events())
@@ -558,6 +907,8 @@ check("an account change: one headless agent-session sends the notice to every a
 check("an account change: the notice is the wake of an agent-seat idle at a limit, no second one",
       [event["agent_seat"] for event in machine.events("limit_wake")] == ["alpha"]
       and len(calls) == 1, machine.events("limit_wake"))
+check("an account change: the notice's sender is told that the do-not-reply sentence is part of "
+      "the message", KEEP_IT in calls[0]["prompt"].replace("\n", " "), calls)
 machine.script()
 machine.run(3)
 check("the account change is noticed once", not machine.claude_calls(), machine.claude_calls())
@@ -591,6 +942,186 @@ check("a notice missing from a listed agent-seat's transcript: a user-alert, exi
       code == 1 and len(machine.alerts()) == 1 and "account notice" in machine.alerts()[0]["title"],
       machine.alerts())
 
+# --- a sender that sends a text other than the one code wrote --------------------------------------
+# Every such case seen dropped the do-not-reply sentence and still reached the agent-seat.
+OWNER_TASKS = "nedschorus-ned-box-helper-tasks"
+SENT_TEXT_TASK_SUBJECT = "Idle sweep: a headless sender sent a text other than the one code wrote"
+DROPPED = send_to("alpha", "@prompt-text-without-last-paragraph")
+
+
+def owner_tasks(machine):
+    directory = machine.tasks / OWNER_TASKS
+    tasks = []
+    for path in sorted(directory.glob("*.json")) if directory.is_dir() else []:
+        try:
+            tasks.append(json.loads(path.read_text()))
+        except ValueError:
+            pass
+    return tasks
+
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+(machine.tasks / OWNER_TASKS).mkdir()
+(machine.tasks / OWNER_TASKS / "7.json").write_text("{not json")
+machine.script({"sends": [DROPPED], "answer": {"sent": True, "reason": "r"}})
+code, output = machine.run(0)
+differs = machine.events("sent_text_differs_from_code_text")
+sent = machine.events("message_sent")
+check("a sender that drops the do-not-reply sentence: no user-alert, no headless failure, exit 0",
+      code == 0 and not machine.alerts() and not machine.events("headless_failed"),
+      (code, output, machine.alerts()))
+check("a sender that drops the do-not-reply sentence: the text code wrote and the text sent are logged",
+      len(differs) == 1 and differs[0]["agent_seat"] == "alpha" and differs[0]["step"] == "nudge"
+      and ends_with_do_not_reply_once(differs[0]["text"])
+      and differs[0]["sent_text"] == differs[0]["text"].rsplit("\n\n", 1)[0], differs)
+check("a sender that drops the do-not-reply sentence: the send is logged with the text sent, for the "
+      "delivery check", len(sent) == 1 and sent[0]["text"] == differs[0]["sent_text"], sent)
+tasks = owner_tasks(machine)
+check("a sender that drops the do-not-reply sentence: ned-box-helper gets a pending task, past a task "
+      "file that is not JSON",
+      len(tasks) == 1 and tasks[0]["subject"] == SENT_TEXT_TASK_SUBJECT
+      and tasks[0]["status"] == "pending" and str(machine.log) in tasks[0]["description"]
+      and [event["task_id"] for event in machine.events("owning_agent_seat_task_opened")] == [8],
+      (tasks, machine.events("owning_agent_seat_task_opened")))
+machine.append("alpha", cross_session(sent[0]["text"], at(0.2)), assistant("On it.", at(0.3)),
+               turn_end(at(0.4)))
+machine.script()
+code, _ = machine.run(2)
+check("the text sent found in the agent-seat's transcript: no user-alert",
+      [event["found"] for event in machine.events("delivery_checked")] == [True]
+      and not machine.alerts(), (machine.events("delivery_checked"), machine.alerts()))
+machine.script({"sends": [DROPPED], "answer": {"sent": True, "reason": "r"}})
+machine.run(17)
+check("a second difference while the task is open: logged, and no second task",
+      len(machine.events("sent_text_differs_from_code_text")) == 2 and len(owner_tasks(machine)) == 1
+      and len(machine.events("owning_agent_seat_task_opened")) == 1, owner_tasks(machine))
+task_path = machine.tasks / OWNER_TASKS / "8.json"
+task_path.write_text(json.dumps(dict(json.loads(task_path.read_text()), status="completed")))
+machine.script({"sends": [DROPPED], "answer": {"sent": True, "reason": "r"}})
+machine.handoff_put_off("s-2")
+machine.seat("alpha", DONE_TURN, session="s-2")
+machine.run(40)
+check("a difference after the task is completed: a new task",
+      [event["task_id"] for event in machine.events("owning_agent_seat_task_opened")] == [8, 9],
+      machine.events("owning_agent_seat_task_opened"))
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+machine.script({"sends": [DROPPED], "answer": {"sent": True, "reason": "r"}})
+code, _ = machine.run(0)
+alerts = machine.alerts()
+check("a difference whose task cannot be written: one user-alert naming the error, without the "
+      "claude -p remedy, exit 1",
+      code == 1 and len(alerts) == 1 and "could not give ned-box-helper a task" in alerts[0]["title"]
+      and "FileNotFoundError" in json.dumps(alerts[0]) and "claude -p" not in json.dumps(alerts[0])
+      and len(machine.events("sent_text_differs_from_code_text")) == 1
+      and len(machine.events("message_sent")) == 1, (code, alerts))
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+(machine.tasks / OWNER_TASKS).mkdir()
+machine.script({"sends": [DROPPED, send_to("beta")], "answer": {"sent": True, "reason": "r"}})
+code, _ = machine.run(0)
+failed = machine.events("headless_failed")
+check("a difference beside a send to another entry: the difference goes to the task, the other "
+      "entry to a user-alert",
+      code == 1 and len(machine.events("sent_text_differs_from_code_text")) == 1 and len(owner_tasks(machine)) == 1
+      and len(failed) == 1 and failed[0]["problem"] == "sent to 'beta [abc123]', which is not alpha"
+      and len(machine.alerts()) == 1, (failed, machine.alerts()))
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.seat("beta", DONE_TURN)
+(machine.tasks / OWNER_TASKS).mkdir()
+machine.run(0)
+machine.account("account-2")
+machine.script({"sends": [DROPPED, send_to("beta")], "answer": {"sent": True, "reason": "r"}})
+code, _ = machine.run(1)
+differs = machine.events("sent_text_differs_from_code_text")
+sent = {event["agent_seat"]: event["text"] for event in machine.events("message_sent")}
+check("an account notice sent to one agent-seat with another text: logged, a task, no user-alert, "
+      "and each agent-seat's send logged with the text it was sent",
+      code == 0 and not machine.alerts() and [event["agent_seat"] for event in differs] == ["alpha"]
+      and differs[0]["step"] == "account_notice" and len(owner_tasks(machine)) == 1
+      and sent["alpha"] == differs[0]["sent_text"] and sent["beta"] == differs[0]["text"],
+      (code, machine.alerts(), differs, sent))
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.seat("beta", DONE_TURN)
+(machine.tasks / OWNER_TASKS).mkdir()
+machine.run(0)
+machine.account("account-2")
+machine.script({"sends": [send_to("beta"), DROPPED], "answer": {"sent": True, "reason": "r"}})
+code, _ = machine.run(1)
+differs = machine.events("sent_text_differs_from_code_text")
+sent = {event["agent_seat"]: event["text"] for event in machine.events("message_sent")}
+check("an account notice whose last send went to another agent-seat: each agent-seat's send is "
+      "logged with the text sent to it, not the last send's text",
+      code == 0 and [event["agent_seat"] for event in differs] == ["alpha"]
+      and sent["alpha"] == differs[0]["sent_text"] and sent["beta"] == differs[0]["text"],
+      (code, differs, sent))
+
+# "~" sorts after every letter, so the first message sorts after the text code wrote.
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+(machine.tasks / OWNER_TASKS).mkdir()
+machine.script({"sends": [send_to("alpha", "~ another text"), send_to("alpha")],
+                "answer": {"sent": True, "reason": "r"}})
+code, _ = machine.run(0)
+differs = machine.events("sent_text_differs_from_code_text")
+sent = machine.events("message_sent")
+check("two sends to one agent-seat, the first with a text that sorts after code's: the first is "
+      "logged as a difference, and the send is logged with the last send's text",
+      code == 0 and [event["sent_text"] for event in differs] == ["~ another text"]
+      and len(sent) == 1 and sent[0]["text"] == differs[0]["text"], (code, differs, sent))
+
+
+def owner_task_file_write(machine, name, subject, status="pending"):
+    (machine.tasks / OWNER_TASKS / name).write_text(json.dumps({"subject": subject, "status": status}))
+
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+(machine.tasks / OWNER_TASKS).mkdir()
+owner_task_file_write(machine, "1.json", "A" + SENT_TEXT_TASK_SUBJECT)
+owner_task_file_write(machine, "2.json", SENT_TEXT_TASK_SUBJECT + " too")
+machine.script({"sends": [DROPPED], "answer": {"sent": True, "reason": "r"}})
+machine.run(0)
+check("open tasks whose subjects sort before and after the sent-text task's: a new task",
+      [event["task_id"] for event in machine.events("owning_agent_seat_task_opened")] == [3],
+      (owner_tasks(machine), machine.events("owning_agent_seat_task_opened")))
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+(machine.tasks / OWNER_TASKS).mkdir()
+for name in ("1.json", "2.json"):
+    (machine.tasks / OWNER_TASKS / name).write_text("")
+# The program reads the task files in the order glob lists them, which the file system sets.
+first, second = (machine.tasks / OWNER_TASKS).glob("*.json")
+first.write_text("{not json")
+owner_task_file_write(machine, second.name, SENT_TEXT_TASK_SUBJECT)
+machine.script({"sends": [DROPPED], "answer": {"sent": True, "reason": "r"}})
+machine.run(0)
+check("a task file that is not JSON listed before the open sent-text task: no second task",
+      not machine.events("owning_agent_seat_task_opened") and len(owner_tasks(machine)) == 1,
+      (owner_tasks(machine), machine.events("owning_agent_seat_task_opened")))
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+machine.script(sent_ok())
+machine.run(0)
+check("the sender is told that the do-not-reply sentence is part of the message",
+      KEEP_IT in machine.claude_calls()[0]["prompt"].replace("\n", " "), machine.claude_calls())
+
 # --- headless agent-sessions that fail --------------------------------------------------------------
 FAILURES = (
     ("exits nonzero", {"exit": 1}, "claude exited 1"),
@@ -601,8 +1132,6 @@ FAILURES = (
      "no JSON answer"),
     ("sends to another entry", {"sends": [send_to("beta")], "answer": {"sent": True, "reason": "r"}},
      "sent to 'beta [abc123]'"),
-    ("sends another text", {"sends": [send_to("alpha", "hello")],
-                            "answer": {"sent": True, "reason": "r"}}, "a text other than"),
     ("has its send fail", {"sends": [send_to("alpha", is_error=True)],
                            "answer": {"sent": False, "reason": "r"}}, "no SendMessage to alpha"),
     ("runs past its time", {"sleep": 5, "answer": {"sent": True, "reason": "r"}}, "stopped after"),
@@ -633,7 +1162,10 @@ for case, answer, words in FAILURES + EXACT_FAILURES:
     machine.seat("alpha", DONE_TURN)
     machine.handoff_put_off()
     machine.script(answer)
-    code, output = machine.run(0, "--headless-timeout-seconds", "1")
+    # Only the case that runs past its time gets the 1-second limit: under load, starting the fake
+    # claude alone can take a second, which would turn any other case into a stop.
+    code, output = machine.run(0, *(("--headless-timeout-seconds", "1")
+                                    if case == "runs past its time" else ()))
     failed = machine.events("headless_failed")
     exact = (case, answer, words) in EXACT_FAILURES
     check(f"a sender that {case}: logged, a user-alert, exit 1, no delivery check pending",
@@ -655,21 +1187,75 @@ check("claude that cannot be started: a user-alert, exit 1",
       code == 1 and "could not start claude" in machine.events("headless_failed")[0]["problem"],
       machine.events("headless_failed"))
 
+for case, answer in (("send with no message", judged(True, "  ")),
+                     ("send not true or false", judged("yes", "hi")),
+                     ("no message field", {"answer": {"send": False, "reason": "r"}})):
+    machine = Machine()
+    machine.seat("alpha", DONE_TURN)
+    machine.task("alpha", "1")
+    machine.script(answer)
+    code, _ = machine.run(0)
+    check(f"a rule 5 judge whose answer has {case}: a user-alert, exit 1, no wait, nothing sent",
+          code == 1 and "the judge's answer does not give send" in
+          machine.events("headless_failed")[0]["problem"] and len(machine.claude_calls()) == 1
+          and not machine.events("wait_step") and machine.events("judge_answer")[0]["send"] is False,
+          machine.events())
+
+# --- one cause of a headless failure, met again the same day with other text from claude --------
+def usage_limit_exit(uuid, duration_ms):
+    """claude at a usage limit, as ned-box's claude gives it: exit 1 after a result event whose
+    reset time, ids and duration differ from one invocation to the next."""
+    return {"exit": 1, "result": {
+        "subtype": "success", "is_error": True, "api_error_status": 429,
+        "api_error": "usage_limit_reached",
+        "result": "You've hit your weekly limit · resets Nov 16, 8pm (America/Los_Angeles)",
+        "duration_ms": duration_ms, "uuid": uuid}}
+
+
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
 machine.task("alpha", "1")
-machine.script({"answer": {"sent": True, "reason": "sent it"}})
-code, _ = machine.run(0)
-check("a judge that answers sent but made no send: a user-alert, exit 1, no wait",
-      code == 1 and "no SendMessage call succeeded" in machine.events("headless_failed")[0]["problem"]
-      and not machine.events("wait_step"), machine.events())
-machine = Machine()
-machine.seat("alpha", DONE_TURN)
-machine.task("alpha", "1")
-machine.script({"sends": [send_to("beta", "hi")], "answer": {"sent": True, "reason": "r"}})
-code, _ = machine.run(0)
-check("a judge that sends to another entry: a user-alert, exit 1, no wait",
-      code == 1 and not machine.events("wait_step") and len(machine.alerts()) == 1, machine.events())
+machine.script(usage_limit_exit("34551553-ce2f-4bed-88d6-09449375602d", 394))
+machine.run(0)
+machine.script(usage_limit_exit("c28e3474-6909-42c5-a3e7-fc096dd93dfe", 402))
+code, _ = machine.run(16)
+problems = [event["problem"] for event in machine.events("headless_failed")]
+check("one usage limit failing the judge twice in a day, with different text from claude each "
+      "time: both failures logged, one user-alert",
+      code == 1 and len(problems) == 2 and problems[0] != problems[1]
+      and len(machine.alerts()) == 1, (code, problems, machine.alerts()))
+machine.script({"exit": 1, "stderr": "Invalid API key · Please run /login"})
+machine.run(32)
+check("another cause the same day for the same agent-seat: a second user-alert",
+      len(machine.events("headless_failed")) == 3 and len(machine.alerts()) == 2, machine.alerts())
+
+USAGE_LIMIT_KEY = f"headless-failed:{{seat}}:claude exited 1: usage_limit_reached:{START.date()}"
+
+
+def machine_with_one_seat(records):
+    machine = Machine()
+    machine.seat("alpha", records)
+    return machine
+
+
+def account_changed_machine():
+    machine = machine_with_one_seat(DONE_TURN)
+    machine.run(0)
+    machine.account("account-2")
+    return machine
+
+
+for path, machine, seat, start_minute in (
+        ("a sender of a rule 2 message",
+         machine_with_one_seat([user("go"), assistant(PROMISE), turn_end()]), "alpha", 0),
+        ("the rule 2 judge",
+         machine_with_one_seat([user("go"), assistant(ANNOUNCED), turn_end()]), "alpha", 0),
+        ("the sender of the account-change notice", account_changed_machine(), "alpha", 1)):
+    machine.script(usage_limit_exit("34551553-ce2f-4bed-88d6-09449375602d", 394))
+    code, _ = machine.run(start_minute)
+    keys = [event["key"] for event in machine.events("user_alert")]
+    check(f"{path} at a usage limit: the user-alert is keyed on the cause code names",
+          code == 1 and keys == [USAGE_LIMIT_KEY.format(seat=seat)], (code, keys))
 
 # --- delivery while the agent-seat is busy ----------------------------------------------------------
 machine = Machine()
@@ -889,17 +1475,20 @@ check("every headless agent-session loads no MCP server and asks no permission i
                               and call["argv"][call["argv"].index("--permission-mode") + 1]
                               == "dontAsk" for call in calls), calls)
 
-# --- a rule 5 judge whose send failed ------------------------------------------------------------------
+# --- a rule 5 message whose send failed ------------------------------------------------------------
 machine = Machine()
 machine.seat("alpha", DONE_TURN)
 machine.task("alpha", "1")
-machine.script({"sends": [send_to("alpha", "What's going on?", is_error=True)],
-                "answer": {"sent": False, "reason": "the send failed"}})
+machine.script(judged(True, "What's going on?"),
+               {"sends": [send_to("alpha", is_error=True)], "answer": {"sent": False, "reason": "r"}})
 code, _ = machine.run(0)
-check("a rule 5 judge whose SendMessage failed, answering not sent: a user-alert, exit 1, no wait",
+check("a rule 5 message whose send failed: a user-alert, exit 1, the wait started so that the send "
+      "is not retried every minute",
       code == 1
-      and any("SendMessage" in event["problem"] for event in machine.events("headless_failed"))
-      and len(machine.alerts()) == 1 and not machine.events("wait_step"), machine.events())
+      and any("no SendMessage to alpha" in event["problem"]
+              for event in machine.events("headless_failed"))
+      and len(machine.alerts()) == 1 and len(machine.events("wait_step")) == 1
+      and not machine.events("message_sent"), machine.events())
 
 # --- each event carries the time it was written, not the time the run started ---------------------
 machine = Machine()
@@ -913,6 +1502,36 @@ check("a nudge logged after an earlier headless agent-session carries the time i
       set(nudges) == {"alpha", "beta"} and max(datetime.fromisoformat(stamp.replace("Z", "+00:00"))
                                                for stamp in nudges.values())
       >= START + timedelta(seconds=2), nudges)
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+machine.seat("beta", DONE_TURN)
+(machine.handoffs / "beta-supervisor-state.json").write_text("{not json")
+machine.script(dict(sent_ok(), sleep=1.2))
+machine.run(0)
+machine.script()
+code, _ = machine.run(2)
+check("a read failure logged after an earlier headless agent-session: alerted 2 minutes after the "
+      "invocation that logged it",
+      code == 1 and any("for beta" in alert["title"] for alert in machine.alerts()),
+      (code, machine.alerts()))
+
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.task("alpha", "1")
+machine.log.parent.mkdir()
+machine.log.write_text(json.dumps(
+    {"event": "judge_answer", "at": at(0), "agent_seat": "alpha", "rule": 5, "session_id": "s-1",
+     "last_activity": LONG_AGO, "send": False, "reason": "r", "failed": False}) + "\n")
+machine.script(judged(False))
+machine.run(14)
+asked_at_14 = machine.claude_calls()
+machine.script(judged(False))
+machine.run(15)
+check("a judge answer logged without agent_seat_idle_sweep_invocation_started_at: "
+      "the next ask is counted from its at",
+      not asked_at_14 and len(machine.claude_calls()) == 1, (asked_at_14, machine.events()))
 
 # --- a read failure that persists keeps the run failing ---------------------------------------------
 machine = Machine()
@@ -947,7 +1566,7 @@ older_task = machine.tasks / "nedschorus-alpha-tasks" / "7.json"
 older_task.write_text(json.dumps(dict(json.loads(older_task.read_text()), blockedBy=["6"])))
 # Judged backed, rule 5 follows for the open task 6, and its judge sends nothing.
 machine.script({"answer": {"sentences": [{"index": 0, "backed": True, "reason": "task 7"}]}},
-               {"answer": {"sent": False, "reason": "busy"}})
+               judged(False, reason="busy"))
 machine.run(0)
 calls = machine.claude_calls()
 check("a promise with an older open task held by blockedBy: the judge is handed that task",
@@ -1036,6 +1655,71 @@ check("the failure back days later: logged anew, no user-alert at once",
 code, _ = machine.run(13)
 check("the failure back, minutes after its return: one user-alert",
       code == 1 and len(machine.alerts()) == 1, (code, machine.alerts()))
+
+# --- the escalation quotes a nudge of several lines --------------------------------------------------
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(f"{PROMISE} {SECOND_PROMISE}"), turn_end()])
+machine.script(sent_ok())
+machine.run(0)
+nudge_text = machine.events("wait_step")[0]["text"]
+machine.script(sent_ok())
+machine.run(16)
+escalation = machine.events("message_sent")[-1]["text"]
+quote = escalation.split("which you have not acted on:\n\n", 1)[-1].rsplit("\n\n", 1)[0]
+check("an escalation after a nudge of two lines: each line of the nudge quoted with \"> \", the "
+      "do-not-reply sentence once, after the quote and on no quoted line",
+      len(nudge_text.split("\n")) == 2 and machine.events("message_sent")[-1]["step"] == "escalate"
+      and quote == "\n".join("> " + line for line in nudge_text.split("\n"))
+      and ends_with_do_not_reply_once(escalation)
+      and not any(DO_NOT_REPLY in line for line in escalation.split("\n") if line.startswith(">")),
+      (nudge_text, escalation))
+
+# --- every wake message ends with the do-not-reply sentence ---------------------------------------
+wake_texts = []
+def sender_texts(machine):
+    return [call["prompt"].split("----------\n", 1)[1].rsplit("\n----------", 1)[0]
+            for call in machine.claude_calls() if "----------\n" in call["prompt"]]
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.handoff_put_off()
+machine.script(sent_ok())
+machine.run(0)
+wake_texts += [("rule 3 nudge", text) for text in sender_texts(machine)]
+machine.script(sent_ok())
+machine.run(16)
+wake_texts += [("escalation", text) for text in sender_texts(machine)]
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
+machine.script(sent_ok())
+machine.run(0)
+wake_texts += [("rule 2 nudge", text) for text in sender_texts(machine)]
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.task("alpha", "1")
+machine.script(judged(True, "What's going on?"), sent_ok())
+machine.run(0)
+wake_texts += [("rule 5 nudge", text) for text in sender_texts(machine)]
+machine = Machine()
+machine.seat("alpha", [user("go"), usage_limit(RESET_PASSED)])
+machine.script(sent_ok())
+machine.run(0)
+wake_texts += [("limit wake", text) for text in sender_texts(machine)]
+machine = Machine()
+machine.seat("alpha", DONE_TURN)
+machine.seat("beta", DONE_TURN)
+machine.run(0)
+machine.account("account-2")
+machine.script({"sends": [send_to("alpha"), send_to("beta")], "answer": {"sent": True, "reason": "r"}})
+machine.run(1)
+wake_texts += [("account notice", text) for text in sender_texts(machine)]
+check("every wake message a sender is handed ends with the do-not-reply sentence, once",
+      [kind for kind, _ in wake_texts] == ["rule 3 nudge", "escalation", "rule 2 nudge",
+                                           "rule 5 nudge", "limit wake", "account notice"]
+      and all(ends_with_do_not_reply_once(text) for _, text in wake_texts), wake_texts)
+check("the account notice is logged for each agent-seat as sent, with the do-not-reply sentence",
+      len(machine.events("message_sent")) == 2
+      and all(event["text"] == wake_texts[-1][1] for event in machine.events("message_sent")),
+      machine.events("message_sent"))
 
 if failures:
     print(f"{len(failures)} case(s) failed")

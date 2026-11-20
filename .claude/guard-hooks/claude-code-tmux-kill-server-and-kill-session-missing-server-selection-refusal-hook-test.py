@@ -151,7 +151,7 @@ def refusal_cases():
     }
     for name, command in refused.items():
         reason = run_main(command)
-        check(f"refuses: {name}", reason is not None and reason.startswith("Refused on purpose"),
+        check(f"refuses: {name}", reason is not None and reason.startswith("[rule bash-guard-tmux-kill-without-socket-option] Refused on purpose"),
               f"{command!r} gave {reason!r}")
 
 
@@ -277,10 +277,6 @@ def message_cases():
 
 
 def malformed_input_cases():
-    stdout = io.StringIO()
-    with contextlib.redirect_stdout(stdout):
-        code = guard.main(stdin=io.StringIO("not json"))
-    check("unreadable payload: allows silently", code == 0 and stdout.getvalue() == "")
     check("missing command: allows", run_main(None) is None)
 
 

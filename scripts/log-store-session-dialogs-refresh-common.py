@@ -1,6 +1,6 @@
 """Find the log-store's mirrored session transcripts and write the session dialog of each one that changed.
 
-Not a program to run: scripts/log-store-session-dialogs-refresh-nbd.py, the
+Not a program to run: scripts/log-store-session-dialogs-refresh-hack.py, the
 cron job, and scripts/log-store-past-discussions-regex-search-newest-first.py,
 the past-discussion search, load it, so both write a session dialog the same
 way and leave it current by the same rule.
@@ -55,7 +55,7 @@ SESSION_DIALOG_EXTRACTOR_SHA256_LAST_LINE_OPENING = "<!-- written by the session
 SESSION_DIALOG_EXTRACTOR_SHA256_LAST_LINE_CLOSING = " -->"
 EXTRACTOR_PATH = pathlib.Path(__file__).resolve().with_name("handoff-extract-conversation.py")
 SUBAGENT_TRACKER_PATHS = (
-    pathlib.Path(__file__).resolve().with_name("handoff-extract-conversation-subagent-tracker-nbd.py"),
+    pathlib.Path(__file__).resolve().with_name("handoff-extract-conversation-subagent-tracker-hack.py"),
     pathlib.Path(__file__).resolve().with_name("claude-code-subagent-task-notification-interim-recognizer-common.py"))
 
 

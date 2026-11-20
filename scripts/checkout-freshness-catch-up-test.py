@@ -137,6 +137,11 @@ def configure_identity(repository: Path):
     git(["config", "user.name", "freshness test"], repository)
 
 
+def mark_as_agent_home(worktree: Path):
+    git_directory = Path(git(["rev-parse", "--absolute-git-dir"], worktree).stdout.strip())
+    (git_directory / "agent-home-marker").write_text("", encoding="utf-8")
+
+
 def commit_file(repository: Path, name: str, content: str, message: str):
     # Parents created: the telling's categories are decided by PATH, so its
     # cases need real ones (scripts/, docs/, .claude/skills/), not flat files.
@@ -406,8 +411,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     # A conflict with main is the one case a commit on top cannot clear; the
     # pushed-branch advice sends it to scripts/branch-conflict-check.py's report.
     check("a pushed branch is told how to clear a conflict with main, byte for byte",
-          "If the branch conflicts with main, as python3 scripts/branch-conflict-check.py "
-          "run in its checkout reports, do what that report says." in agent_text(result),
+          "To learn whether the branch conflicts with main, run python3 "
+          "scripts/branch-conflict-check.py in this checkout. If it prints `VERDICT: "
+          "CONFLICT`, do what its report says. If it exits 2, it has no answer: do what "
+          "its lines say, then run it again." in agent_text(result),
           agent_text(result))
     check("the pushed head's status says how a conflict is cleared, byte for byte",
           "(frozen: a fix is a new commit on top, never an amend; for a conflict with "
@@ -559,11 +566,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         "files listed above stay older here than on main.")
     detached_work_line = (
         "It holds work of its own.\n"
-        "If this checkout is an agent-home, git refuses commits in it: carry that work to a "
+        "This checkout is an agent-home, so git refuses commits in it: carry that work to a "
         "worktree of your own on an nc-topic-branch, as the refusal of `git commit` here says "
-        "how.\n"
-        "Otherwise run `git switch -c <branch name>` to put that work on a branch, and commit "
-        "any uncommitted changes there; from then on the hook's rules for a branch apply.")
+        "how.")
     detached_bisect_line = (
         "A bisect is in progress: finish it or abort it; the next turn's end moves the "
         "checkout forward.")
@@ -573,11 +578,13 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         "If git names anything else, leave the checkout as it is: the refusal has been "
         "reported to the user.")
 
-    def detached_worktree_behind_main(name):
+    def detached_worktree_behind_main(name, agent_home=True):
         git(["fetch", "-q"], reference)
         path = tmp / name
         git(["worktree", "add", "-q", "--detach", str(path), "origin/main~1"], reference)
         configure_identity(path)
+        if agent_home:
+            mark_as_agent_home(path)
         return path
 
     def head_of(checkout):
@@ -599,6 +606,19 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = run_catch_up(["--cwd", str(detached)])
     check("a detached HEAD already at origin/main prints nothing",
           result.stdout.strip() == "", result.stdout)
+
+    # A review worktree pinned at the commit under review, which main already
+    # holds: detached, behind, nothing of its own, but no agent-home.
+    pinned = detached_worktree_behind_main("detached-pinned-review-worktree", agent_home=False)
+    pinned_head = head_of(pinned)
+    result = run_catch_up(["--cwd", str(pinned)])
+    check("a detached HEAD at an ancestor of main that is not an agent-home is not moved",
+          head_of(pinned) == pinned_head and pinned_head != main_tip()
+          and not (pinned / "scripts/detached-advance.py").exists(), pinned_head)
+    check("and neither the agent nor the user is told anything, and no note is queued",
+          agent_text(result) == "" and display_text(result) == ""
+          and not stamp_of(pinned).get("pending_agent_notes"),
+          agent_text(result) + display_text(result) + str(stamp_of(pinned)))
 
     tracked = detached_worktree_behind_main("detached-tracked-change-worktree")
     tracked_head = head_of(tracked)
@@ -2141,6 +2161,7 @@ with tempfile.TemporaryDirectory() as notes_scratch:
     detached = notes_seat.parent / "detached"
     git(["worktree", "add", "-q", "--detach", str(detached), "main"], notes_seat.parent / "clone")
     configure_identity(detached)
+    mark_as_agent_home(detached)
     (detached / "shared.txt").write_text("dirty\n", encoding="utf-8")
     commit_file(origin_repo, "a.txt", "a\n", "advance a")
     stop_only(detached)
@@ -2318,7 +2339,7 @@ with tempfile.TemporaryDirectory() as notes_scratch:
             ("the did-not-fit line", catch_up_module.delivery_text(many)),
             ("the could-not-be-read line", catch_up_module.NOTES_UNREADABLE_LINE.format(
                 path="stamp.json", error="unreadable")),
-            ("the moved-without-a-list note", catch_up_module.MOVED_WITHOUT_LIST_NOTE.format(
+            ("the moved-without-a-list note", catch_up_module.MOVED_WITHOUT_LIST_NOTICE.format(
                 error="no list"))):
         check(f"{note_name} says to invoke the skill again, and to stop following a skill "
               f"main deleted, byte for byte", skill_reload_lines in rendered, rendered[:600])
@@ -2515,14 +2536,14 @@ with tempfile.TemporaryDirectory() as failing_git_scratch:
         git(["fetch", "-q", "origin"], seat_path)
         return origin_repo, seat_path
 
-    def failing_git_shim(name, shell_pattern):
-        """A git that exits 128 for argument lists matching shell_pattern and
+    def failing_git_shim(name, shell_pattern, stderr=INJECTED_STDERR):
+        """A git that exits 128, printing stderr, for argument lists matching shell_pattern and
         passes every other call to the real git."""
         directory = failing_tmp / name
         directory.mkdir()
         (directory / "git").write_text(
             "#!/bin/sh\n"
-            f'case " $* " in {shell_pattern}) echo "{INJECTED_STDERR}" >&2; exit 128;; esac\n'
+            f'case " $* " in {shell_pattern}) echo "{stderr}" >&2; exit 128;; esac\n'
             f'exec "{failing_real_git}" "$@"\n', encoding="utf-8")
         (directory / "git").chmod(0o755)
         return str(directory)
@@ -2727,7 +2748,7 @@ with tempfile.TemporaryDirectory() as failing_git_scratch:
     check("note delivery tells the agent when git cannot find the git directory, "
           "with the hook's next steps",
           run.returncode == 0 and INJECTED_STDERR in agent_text(run)
-          and "this check runs again when the next prompt arrives." in agent_text(run)
+          and catch_up_module.GIT_FAILED_NOTES_DELIVERY_AGENT_NEXT_STEP_LINES in agent_text(run)
           and "end of your next turn" not in agent_text(run)
           and "you gave that name to" not in agent_text(run), run.stdout + run.stderr)
     run = run_catch_up_once(["--report", "--repo", str(level_seat)], git_dir_fails)
@@ -2735,11 +2756,23 @@ with tempfile.TemporaryDirectory() as failing_git_scratch:
           run.returncode == 0 and INJECTED_STDERR in run.stdout
           and "not a git checkout" not in run.stdout
           and catch_up_module.next_step_lines.git_failure_next_step_lines(
-              f"`python3 {SCRIPT_PATH.resolve()} --report --repo {level_seat.resolve()}`",
-              text_the_failure_line_contains="because a git command failed",
-              include_the_misspelt_branch_commit_or_path_line=False) in run.stdout
+              f"python3 {SCRIPT_PATH.resolve()} --report --repo {level_seat.resolve()}",
+              git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=INJECTED_STDERR,
+              text_the_failure_line_contains="because a git command failed") in run.stdout
           and "you gave" not in run.stdout
           and "Nothing needs rerunning" not in run.stdout, run.stdout + run.stderr)
+    lock_file = level_seat.resolve() / ".git" / "index.lock"
+    run = run_catch_up_once(["--report", "--repo", str(level_seat)], failing_git_shim(
+        "git-dir-fails-on-a-lock-file", '*" --absolute-git-dir "*',
+        f"fatal: Unable to create '{lock_file}': File exists."))
+    check("--report given a git error that names a lock file gives the step that waits for that "
+          "lock file, then reruns the same --report command",
+          f"Git's error names the lock file {lock_file}: " in run.stdout
+          and catch_up_module.next_step_lines.git_error_names_a_lock_file_wait_then_rerun_line_or_none(
+              f"fatal: Unable to create '{lock_file}': File exists.",
+              f"exactly `python3 {SCRIPT_PATH.resolve()} --report --repo {level_seat.resolve()}`")
+          in run.stdout,
+          run.stdout + run.stderr)
     worktree_list_fails = failing_git_shim("worktree-list-fails-in-modes", '*" worktree list "*')
     run = run_catch_up_once(["--reference-pull", "--repo", str(level_seat)], worktree_list_fails)
     check("--reference-pull prints the git failure instead of saying nothing, "
@@ -3055,6 +3088,29 @@ with tempfile.TemporaryDirectory() as reference_pull_exit_scratch:
           "a branch other than main",
           run.returncode == 1 and "on some-feature, not main" in run.stdout,
           f"rc={run.returncode} {run.stdout} {run.stderr}")
+
+# ---------------------------------------------------------------------------
+# shortened_file_list: a short list is left whole; a long one keeps its whole
+# leading names and says where to see the rest
+# ---------------------------------------------------------------------------
+check("shortened_file_list leaves a list shorter than the limit whole",
+      catch_up_module.shortened_file_list("a.txt, b.txt") == "a.txt, b.txt",
+      catch_up_module.shortened_file_list("a.txt, b.txt"))
+long_file_names = [f"directory/file-{number:04d}.txt" for number in range(200)]
+long_file_list = ", ".join(long_file_names)
+shortened = catch_up_module.shortened_file_list(long_file_list)
+kept_names = shortened.removesuffix(
+    ", and more; run `git status --ignored --untracked-files=all` to see them all").split(", ")
+check("shortened_file_list cuts a list longer than the limit after its last whole name "
+      "within the limit, keeping the names before that cut and ending with where to see the rest",
+      len(long_file_list) > catch_up_module.IGNORED_FILES_SHORT_LIST_CHARACTER_LIMIT
+      and shortened.endswith("to see them all")
+      and kept_names[0] == long_file_names[0]
+      and kept_names == long_file_names[:len(kept_names)]
+      and len(", ".join(kept_names)) <= catch_up_module.IGNORED_FILES_SHORT_LIST_CHARACTER_LIMIT
+      and len(", ".join(long_file_names[:len(kept_names) + 1]))
+          > catch_up_module.IGNORED_FILES_SHORT_LIST_CHARACTER_LIMIT,
+      shortened)
 
 print()
 if failures:

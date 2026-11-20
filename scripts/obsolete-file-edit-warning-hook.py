@@ -139,9 +139,11 @@ NEVER_PUSHED_ADVICE = (
 # whether it is rebased or its pull request replaced.
 PUSHED_ADVICE = (
     "This branch is pushed, so its review may be running: do not rebase or amend "
-    "it. A fix for this topic is a new commit on top. If the branch conflicts with "
-    "main, as python3 scripts/branch-conflict-check.py run in its checkout reports, "
-    "do what that report says. Your next topic starts with "
+    "it. A fix for this topic is a new commit on top. To learn whether the branch "
+    "conflicts with main, run python3 scripts/branch-conflict-check.py in this "
+    "checkout. If it prints `VERDICT: CONFLICT`, do what its report says. If it exits "
+    "2, it has no answer: do what its lines say, then run it again. Your next "
+    "topic starts with "
     "`git checkout -b <name> origin/main`."
 )
 # `git pull --rebase` moves only the commits origin/<branch> lacks, which are
@@ -294,11 +296,9 @@ GIT_FAILURE_CAUSE_LINE = (
     "against origin/main; the edit itself succeeded."
 )
 GIT_FAILURE_TOOL_MESSAGE_TO_AGENT_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CHECKS_IT_NOW = (
-    "A later run of this hook checks only the file that run's Edit or Write touched, so check "
-    "{path} by running the command printed on its own line below this paragraph. If git's error "
-    "above names no lock file, run that "
-    "command now. {lock_file_condition}, {wait_for_lock_file}. The command "
-    "prints nothing when there is nothing new to tell you about the file. Otherwise it prints JSON "
+    "A later run of this hook checks only the file that run's Edit or Write touched, so "
+    "{path} is checked by the command printed on its own line below this paragraph. {when_to_run_it} "
+    "The command prints nothing when there is nothing new to tell you about the file. Otherwise it prints JSON "
     "whose hookSpecificOutput.additionalContext field holds one of two texts: this hook's warning, "
     "whose instructions you follow; or, when git fails again, a git-failure message like this one, "
     "and the last line here says what to do then.\n"
@@ -658,6 +658,11 @@ def head_advice(freshness, checkout: Path, git_directory: Path, repository_path:
     return BRANCH_STATE_UNKNOWN_LINE.format(text=state_text), True, True
 
 
+WARNING_OPENING_TEMPLATE = (
+    "[rule obsolete-file-edit-on-old-copy-warning] obsolete-file-edit-warning: you just changed {path}, "
+    "{moved} and this checkout does not have, so your edit is built on an old copy of the file.")
+
+
 def obsolete_file_warning_line(repository_path: str, commit_count, advice: str,
                                advice_on_own_lines: bool = False,
                                count_failure=None) -> str:
@@ -668,9 +673,7 @@ def obsolete_file_warning_line(repository_path: str, commit_count, advice: str,
     else:
         moved = (f"which {commit_count} commit(s) on origin/main have changed "
                  f"since this checkout's merge base with origin/main")
-    line = (f"obsolete-file-edit-warning: you just changed {repository_path}, "
-            f"{moved} and this checkout does not have, so your edit is built on an "
-            f"old copy of the file.")
+    line = WARNING_OPENING_TEMPLATE.format(path=repository_path, moved=moved)
     if count_failure is not None:
         line += " " + COMMIT_COUNT_FAILED_LINE.format(failure=count_failure)
     if not advice:
@@ -711,9 +714,8 @@ def main() -> int:
             GIT_FAILURE_CAUSE_LINE.format(failure=failure),
             GIT_FAILURE_TOOL_MESSAGE_TO_AGENT_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CHECKS_IT_NOW.format(
                 path=file_path, rerun=rerun,
-                lock_file_condition=freshness.next_step_lines.LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION,
-                wait_for_lock_file=freshness.next_step_lines
-                .lock_file_named_by_git_error_wait_then_rerun_instruction("the command below this paragraph")),
+                when_to_run_it=freshness.next_step_lines.git_error_names_a_lock_file_wait_then_rerun_line_or_none(
+                    failure.stderr, "the command below this paragraph") or "Run that command now."),
             freshness.next_step_lines
             .hook_agent_instruction_if_rerun_command_reports_git_failure_tell_user_both_outputs_line(
                 "obsolete-file-edit-warning-hook:"))))

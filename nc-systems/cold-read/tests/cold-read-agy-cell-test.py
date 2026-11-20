@@ -33,8 +33,9 @@ WHAT IS PINNED HERE.
   - The chat-instead-of-file quirk. The campaign measured gemini-3.8-flash
     sometimes answering the whole review in chat rather than writing the
     file. A model that exits 0 with no file and a stdout long enough to be a
-    review (the campaign's 120-word threshold) has its stdout taken as the
-    report, stamped, and the recovery announced on stderr. Three things
+    review (the campaign's 120-word threshold, exactly 120 words included)
+    has its stdout taken as the report, stamped, and the recovery announced
+    on stderr. Three things
     bound that: a short stdout -- a remark, not a review -- still fails the
     cell with no report left behind; a non-zero exit is a failure whatever
     stdout holds, as on every leg; and a report the model wrote one directory
@@ -47,12 +48,15 @@ WHAT IS PINNED HERE.
   - No credential file can be read from inside the cell (user-ruled
     2026-09-28). The stub is run by the launcher inside the machine's real
     sandbox -- sandbox-exec on macOS, bwrap on Linux -- and tries to read
-    six canaries in a scratch home: one in `.config/nedschorus/`, one in
-    `gh`'s login directory `.config/gh/` and one in `.ssh/`, none named like
-    a credential, so only the rule for the directory covers them; a `.token`
-    file; a `.env` file; and an ordinary file beside them. The first five
-    come back without their content, the sixth with it. The same stub run
-    directly reads all six, which is what shows the check can fail.
+    canaries in a scratch home and the repository: one in each credential
+    directory, `.config/nedschorus/`, `gh`'s login directory `.config/gh/`,
+    `.ssh/`, `.steam/` and `nedsmessenger/secrets/`, none named like a
+    credential, so only the rule for the directory covers them; `.token` and
+    `.env` files outside them; and an ordinary file. The directory canaries
+    come back without their content everywhere, the `.token` and `.env`
+    files only on macOS, whose sandbox takes a name pattern, and the
+    ordinary file with it. The same stub run directly reads every canary,
+    which is what shows the check can fail.
     Claude's and Codex's login files in the scratch home are kept out too,
     and agy's own is still read, since masking it would log agy out
     (user-ruled 2026-09-29). These cases need the real sandbox program,
@@ -69,7 +73,7 @@ WHAT IS PINNED HERE.
     cell exits 1 and its cause line is logged-out, saying how to log agy in.
 
   - Every case runs the launcher with HOME at that scratch home, so no run
-    of this suite scans or masks the real home's credential files.
+    of this suite masks the real home's credential files.
 
 Each case builds a throwaway git repository holding a copy of the cell
 scripts, as nc-systems/cold-read/tests/cold-read-cell-common-test.py does, and runs the launcher
@@ -321,8 +325,7 @@ def install_stub_agy(stub_directory):
 
 def scratch_home_for(stub_directory):
     """The HOME every launcher run gets: a scratch directory beside the stub
-    directory, so the launcher's credential scan and sandbox see it and not
-    the real home."""
+    directory, so the launcher's sandbox sees it and not the real home."""
     home = stub_directory.parent / "scratch-home"
     home.mkdir(parents=True, exist_ok=True)
     return home
@@ -441,10 +444,11 @@ def credential_files_unreadable_inside_the_real_sandbox_cases(scratch, stubs):
     REAL_SANDBOX_CASES_ONLY_FLAG."""
     # --- No credential file is readable from inside the cell -------------
     # The canaries sit in the scratch home the launcher is given as HOME.
-    # The two in the credential directories carry no credential suffix, so
+    # Those in the credential directories carry no credential suffix, so
     # only the directory rule -- bwrap's --tmpfs, sandbox-exec's subpath --
-    # keeps them out; the .token and .env files are kept out by the file
-    # rule -- the launch-time scan of the home on Linux, the pattern on macOS.
+    # keeps them out. The .token and .env files outside those directories
+    # are kept out by sandbox-exec's name pattern on macOS; bwrap takes no
+    # pattern, so on Linux they stay readable.
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "credential-files")
     scratch_home = scratch_home_for(stubs)
@@ -452,11 +456,11 @@ def credential_files_unreadable_inside_the_real_sandbox_cases(scratch, stubs):
     nedschorus_canary = scratch_home / ".config" / "nedschorus" / "probe-canary"
     gh_canary = scratch_home / ".config" / "gh" / "hosts.yml"
     ssh_canary = scratch_home / ".ssh" / "id_canary"
+    steam_canary = scratch_home / ".steam" / "probe-canary"
+    nedsmessenger_canary = scratch_home / "nedsmessenger" / "secrets" / "probe-canary"
     token_canary = scratch_home / "projects" / "probe.token"
     env_canary = scratch_home / "projects" / ".env"
     ordinary_file = scratch_home / "projects" / "ordinary.txt"
-    # The scratch repository is outside the scratch home, so on Linux only
-    # the repository scan root reaches these two.
     repository_token_canary = repository / "credential-canaries" / "probe.token"
     repository_env_canary = repository / "credential-canaries" / ".env"
     # The other reviewer programs' login files are credentials too; agy's own
@@ -466,9 +470,12 @@ def credential_files_unreadable_inside_the_real_sandbox_cases(scratch, stubs):
     codex_login_canary = scratch_home / ".codex" / "auth.json"
     agy_login_canary = scratch_home / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"
     credential_canaries = (nedschorus_canary, gh_canary, ssh_canary,
+                           steam_canary, nedsmessenger_canary,
                            token_canary, env_canary,
                            repository_token_canary, repository_env_canary,
                            claude_login_canary, codex_login_canary)
+    name_pattern_canaries = (token_canary, env_canary,
+                             repository_token_canary, repository_env_canary)
     for canary in (*credential_canaries, ordinary_file, agy_login_canary):
         canary.parent.mkdir(parents=True, exist_ok=True)
         canary.write_text(canary_text, encoding="utf-8")
@@ -488,7 +495,7 @@ def credential_files_unreadable_inside_the_real_sandbox_cases(scratch, stubs):
                    capture_output=True, text=True, check=False)
     direct_reads = (json.loads(direct_reads_dump.read_text(encoding="utf-8"))
                     if direct_reads_dump.is_file() else {})
-    check("the control: the stub run directly reads all nine credential canaries",
+    check("the control: the stub run directly reads all eleven credential canaries",
           all(direct_reads.get(str(path)) == canary_text
               for path in credential_canaries),
           repr(direct_reads))
@@ -504,12 +511,19 @@ def credential_files_unreadable_inside_the_real_sandbox_cases(scratch, stubs):
     for label, canary in (("a file in .config/nedschorus/", nedschorus_canary),
                           ("a file in gh's login directory .config/gh/", gh_canary),
                           ("a file in .ssh/", ssh_canary),
+                          ("a file in .steam/", steam_canary),
+                          ("a file in nedsmessenger/secrets/", nedsmessenger_canary),
                           ("a .token file", token_canary),
                           ("a .env file", env_canary),
                           ("a .token file in the repository", repository_token_canary),
                           ("a .env file in the repository", repository_env_canary),
                           ("Claude's login file", claude_login_canary),
                           ("Codex's login file", codex_login_canary)):
+        if canary in name_pattern_canaries and sys.platform.startswith("linux"):
+            check(f"inside the cell on Linux, {label} outside the credential directories "
+                  "is read, since bwrap denies no name pattern",
+                  cell_reads.get(str(canary)) == canary_text, repr(cell_reads))
+            continue
         check(f"inside the cell, {label} cannot be read",
               str(canary) in cell_reads
               and "CANARY" not in cell_reads[str(canary)], repr(cell_reads))
@@ -545,7 +559,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a fast-tier cell whose agy writes the report exits 0",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
     stamp = provenance_stamp_of(report)
-    check("the fast tier is pinned to gemini-3.8-flash-medium at medium, stamped as runtime agy",
+    check("the fast tier is pinned to gemini-3.8-flash-medium at medium, stamped runtime=agy",
           stamp.startswith("<!-- provenance: runtime=agy model=gemini-3.8-flash-medium "
                            "effort=medium cell=fast-clarify tier=fast "),
           repr(stamp))
@@ -647,6 +661,15 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the remark itself still reaches stderr, as the model's own account",
           SHORT_CHAT_REMARK.strip() in result.stderr, repr(result.stderr))
 
+    # --- The threshold's boundary: exactly the minimum is a review ---------
+    minimum_words_stdout = " ".join(
+        f"word{index}" for index in range(agy_cell.STDOUT_REVIEW_MINIMUM_WORDS))
+    check("a stdout of exactly the minimum word count is returned as the review",
+          agy_cell.stdout_is_a_review(minimum_words_stdout) == minimum_words_stdout)
+    one_word_short_stdout = minimum_words_stdout.rsplit(" ", 1)[0]
+    check("a stdout one word short of the minimum is not a review",
+          agy_cell.stdout_is_a_review(one_word_short_stdout) == "")
+
     # --- A non-zero exit is a failure whatever stdout holds ---------------
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "chat-then-crash")
@@ -691,7 +714,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and " model=gemini-3.8-flash-high " in stamp and " effort=high " in stamp,
           f"exit {result.returncode}; stamp={stamp!r}; stderr={result.stderr!r}")
 
-    print("SKIP  the credential-file cases: they need the real sandbox program, "
+    print("Not run here: the credential-file cases need the real sandbox program, "
           f"which cannot start in the nc-test-sandbox; {REAL_SANDBOX_CASES_SUITE} runs them")
 
     # --- The Google login, not a Gemini API key -------------------------------
@@ -990,6 +1013,66 @@ with tempfile.TemporaryDirectory() as scratch:
           agy_descriptor_count == "1",
           f"descriptors on the record directory: {agy_descriptor_count}; exit {result.returncode}; "
           f"stderr={result.stderr[-2000:]!r}")
+
+    # --- A pipe holder outside the group does not keep the run waiting -----
+    # The runner is called directly, with its wait for the pipes cut to one
+    # second, so a holder that outlives that wait shows the bound in seconds.
+    holder_pid_file = scratch / "outside-group-pipe-holder-pids"
+
+    def reviewer_leaving_outside_holder(result_line):
+        # Starts a child in a session of its own that holds stdout and stderr
+        # for 60 s, optionally prints a result line, then exits 0.
+        return [sys.executable, "-c", (
+            "import subprocess, sys\n"
+            "holder = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'],"
+            " start_new_session=True)\n"
+            f"open({str(holder_pid_file)!r}, 'a').write('%d\\n' % holder.pid)\n"
+            f"sys.stdout.write({result_line!r}); sys.stdout.flush()\n")]
+
+    def result_line_parser(line):
+        return (0, "the answer") if line.startswith("RESULT") else None
+
+    saved_pipes_close_wait = cell_common.REVIEWER_PIPES_CLOSE_WAIT_SECONDS
+    real_killpg = cell_common.os.killpg
+    failed_killpg_calls = []
+
+    def counting_killpg(process_group, signal_number):
+        try:
+            real_killpg(process_group, signal_number)
+        except (ProcessLookupError, PermissionError):
+            failed_killpg_calls.append(process_group)
+            raise
+
+    saved_sigterm_handler = signal.getsignal(signal.SIGTERM)
+    cell_common.REVIEWER_PIPES_CLOSE_WAIT_SECONDS = 1.0
+    cell_common.os.killpg = counting_killpg
+    try:
+        started = time.monotonic()
+        result = cell_common.run_reviewer_program_in_own_process_group_until_timeout(
+            reviewer_leaving_outside_holder(""), None, None, 2.0, result_line_parser)
+        elapsed = time.monotonic() - started
+        check("a run with no result line whose pipes a process outside its group holds ends "
+              "soon after its deadline, saying the pipes were still held",
+              result.returncode is None and elapsed < 15
+              and cell_common.REVIEWER_PIPES_STILL_OPEN_PHRASE in result.stderr,
+              f"exit {result.returncode}; {elapsed:.1f} s; stderr={result.stderr!r}")
+        failed_killpg_calls.clear()
+        started = time.monotonic()
+        result = cell_common.run_reviewer_program_in_own_process_group_until_timeout(
+            reviewer_leaving_outside_holder("RESULT\n"), None, None, 30.0, result_line_parser)
+        elapsed = time.monotonic() - started
+        check("after the result line, a process outside the group holding the pipes keeps the "
+              "kill loop going only until the wait for the pipes ends",
+              result.returncode == 0 and result.stdout == "the answer" and elapsed < 15
+              and cell_common.REVIEWER_PIPES_STILL_OPEN_PHRASE in result.stderr,
+              f"exit {result.returncode}; {elapsed:.1f} s; stderr={result.stderr!r}")
+        check("once killing the emptied group fails, the group is not killed again",
+              len(failed_killpg_calls) <= 1, repr(failed_killpg_calls))
+    finally:
+        cell_common.REVIEWER_PIPES_CLOSE_WAIT_SECONDS = saved_pipes_close_wait
+        cell_common.os.killpg = real_killpg
+        signal.signal(signal.SIGTERM, saved_sigterm_handler)
+        kill_left_over_processes(pids_written_to(holder_pid_file))
 
     # --- No sandbox program on PATH: refused, agy never started ------------
     repository = build_scratch_repository(scratch)

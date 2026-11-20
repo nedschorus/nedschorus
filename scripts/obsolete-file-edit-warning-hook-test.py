@@ -126,15 +126,10 @@ def silent(result) -> bool:
     return result.returncode == 0 and result.stdout.strip() == ""
 
 
-LOCK_FILE_WAIT_CLAUSE = next_step_lines.lock_file_named_by_git_error_wait_then_rerun_instruction(
-    "the command below this paragraph")
 GIT_FAILURE_RERUN_LINE = (
-    "A later run of this hook checks only the file that run's Edit or Write touched, so check "
-    "{path} by running the command printed on its own line below this paragraph. If git's error above names no lock file, run that "
-    "command now. "
-    + next_step_lines.LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION + ", "
-    + LOCK_FILE_WAIT_CLAUSE.replace("{", "{{").replace("}", "}}")
-    + ". The command "
+    "A later run of this hook checks only the file that run's Edit or Write touched, so "
+    "{path} is checked by the command printed on its own line below this paragraph. Run that "
+    "command now. The command "
     "prints nothing when there is nothing new to tell you about the file. Otherwise it prints JSON "
     "whose hookSpecificOutput.additionalContext field holds one of two texts: this hook's warning, "
     "whose instructions you follow; or, when git fails again, a git-failure message like this one, "
@@ -465,9 +460,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("the pushed advice is word for word, scripts/branch-conflict-check.py's report "
           "for a conflict included",
           "This branch is pushed, so its review may be running: do not rebase or amend "
-          "it. A fix for this topic is a new commit on top. If the branch conflicts with "
-          "main, as python3 scripts/branch-conflict-check.py run in its checkout reports, "
-          "do what that report says. Your next topic starts with "
+          "it. A fix for this topic is a new commit on top. To learn whether the branch "
+          "conflicts with main, run python3 scripts/branch-conflict-check.py in this "
+          "checkout. If it prints `VERDICT: CONFLICT`, do what its report says. If it exits "
+          "2, it has no answer: do what its lines say, then run it again. Your next "
+          "topic starts with "
           "`git checkout -b <name> origin/main`."
           in pushed_warning, pushed_warning)
     check("the pushed warning is also one line",
@@ -631,10 +628,20 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           reported_git_failure(result, "rev-parse", "fatal: shimmed failing-git", edited_file),
           result.stdout + result.stderr)
     rerun_line = (agent_text(result).splitlines() + ["", ""])[1]
-    check("a git failure's rerun line says to run the command now when git names no lock file, "
-          "and gives the lock-file wait otherwise",
-          "names no lock file, run that command now. " + next_step_lines.LOCK_FILE_NAMED_BY_GIT_ERROR_CONDITION
-          + ", " + LOCK_FILE_WAIT_CLAUSE + "." in rerun_line, rerun_line)
+    check("a git failure whose error names no lock file says to run the command now",
+          "below this paragraph. Run that command now. The command prints" in rerun_line, rerun_line)
+    lock_file = tmp / "a {dir}" / ".git" / "index.lock"
+    result = run_hook(hook_payload(checkout, edited_file), path_prefix=git_shimmed_when(
+        "lock-file-git", "true",
+        f"printf '%s\\n' \"fatal: Unable to create '{lock_file}': File exists.\" >&2; exit 128"))
+    rerun_line = (agent_text(result).splitlines() + ["", ""])[1]
+    check("a git failure whose error names a lock file, braces in its path, says to wait for that "
+          "lock file before running the command, instead of running it now",
+          f"Git's error names the lock file {lock_file}: " in rerun_line
+          and next_step_lines.git_error_names_a_lock_file_wait_then_rerun_line_or_none(
+              f"fatal: Unable to create '{lock_file}': File exists.", "the command below this paragraph")
+          in rerun_line
+          and "Run that command now." not in rerun_line, agent_text(result) + result.stderr)
     check("a git failure's rerun line says what the command prints when git fails again "
           "and points to the closing line",
           "or, when git fails again, a git-failure message like this one, and the last line here "
@@ -704,7 +711,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("the command a failed diff's report names reruns the hook on the edited file, "
           "which then warns that origin/main has changed the file",
           rerun.returncode == 0 and agent_text(rerun).startswith(
-              f"obsolete-file-edit-warning: you just changed {edited_file.relative_to(checkout)}, "),
+              f"[rule obsolete-file-edit-on-old-copy-warning] obsolete-file-edit-warning: you just changed {edited_file.relative_to(checkout)}, "),
           rerun.stdout + rerun.stderr)
     if cache_path.exists():
         cache_path.unlink()

@@ -67,7 +67,7 @@ has not occurred.
 AN INLINE COMMENT POSTED WITH A REVIEW THE CALLER WROTE OR READ IS READ AT THAT
 REVIEW'S TIME. GHI "The merge gate refuses a merge when the merge account's own
 review carries inline comments stamped a second later",
-https://github.com/nedschorus/nedschorus/issues/729. On PR 722, "A handoff's
+https://github.com/nedsnodes/nedsnodes/issues/729. On PR 722, "A handoff's
 worktree cleaner stopped at its time bound is counted and leaves no process
 running", ned-review-merge's COMMENTED review read 20:43:02Z and its three
 inline comments 20:43:03Z, so every reviewed-since F2 accepts counted them as
@@ -120,7 +120,10 @@ closed as not planned, 1636 an open pull request, 1724 a merged one, 1639 one
 closed without merging, and 999999 a number GitHub does not find. A link with a
 #fragment or a sub-path is read as the issue or pull request it names. The gate
 refuses a link to the pull request being merged before any lookup, and a
-/pull/<n> link whose lookup shows an issue.
+/pull/<n> link whose lookup shows an issue. On a pass the gate prints, after
+the merge command, each link to an open issue in this repository, for
+merge-lane-2 to send the author; the 1154 capture served at another
+repository's endpoint stands for an open issue there, which is not printed.
 
 Run: python3 scripts/merge-gate-test.py
 """
@@ -140,6 +143,7 @@ DESCRIPTION_DEFECT_LINE_READER = Path(__file__).with_name(
     "pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py")
 NO_SANDBOX_SUITES_PROGRAM = Path(__file__).with_name("no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py")
 GIT_REDIRECTING_ENVIRONMENT_COMMON = Path("nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py")
+GIT_MACHINE_READABLE_OUTPUT_COMMON = Path("nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
 FIXTURES = Path(__file__).with_name("merge-gate-test-captured-github-responses")
 BASH = shutil.which("bash")
 TEST_TOKEN = "merge-gate-test-token-not-a-credential"
@@ -331,8 +335,8 @@ def gate_copy(text):
     shutil.copyfile(DESCRIPTION_DEFECT_LINE_READER, directory / DESCRIPTION_DEFECT_LINE_READER.name)
     shutil.copyfile(NO_SANDBOX_SUITES_PROGRAM, directory / NO_SANDBOX_SUITES_PROGRAM.name)
     (top / GIT_REDIRECTING_ENVIRONMENT_COMMON).parent.mkdir(parents=True)
-    shutil.copyfile(Path(__file__).resolve().parent.parent / GIT_REDIRECTING_ENVIRONMENT_COMMON,
-                    top / GIT_REDIRECTING_ENVIRONMENT_COMMON)
+    for common in (GIT_REDIRECTING_ENVIRONMENT_COMMON, GIT_MACHINE_READABLE_OUTPUT_COMMON):
+        shutil.copyfile(Path(__file__).resolve().parent.parent / common, top / common)
     copy = directory / "merge-gate.sh"
     copy.write_text(text)
     return copy
@@ -472,7 +476,7 @@ def case_a1_pass_control(gate):
     # merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py takes the line after this one as the command, so
     # both lines are asserted whole.
     merge_lines = ("\nMERGE WITH THIS EXACT COMMAND:\n"
-                   f"  gh pr merge {BASE_PR} --repo nedschorus/nedschorus --merge --delete-branch "
+                   f"  gh pr merge {BASE_PR} --repo nedsnodes/nedsnodes --merge --delete-branch "
                    f"--match-head-commit {sha}\n")
     token_line = ("Run that command with GH_TOKEN set to the merge account's token, "
                   f"{run.home}/.config/nedschorus/ned-review-merge.token, so the merge runs as "
@@ -1189,7 +1193,7 @@ def description_refused(gate, body_file):
     return refused_with(run, BASE_PR, *DESCRIPTION_REFUSAL_LINES), run.summary()
 
 
-FOLLOW_UP_LINK = "https://github.com/nedschorus/nedschorus/issues/1154"
+FOLLOW_UP_LINK = "https://github.com/nedsnodes/nedsnodes/issues/1154"
 LINK_STATES = {
     "open issue": "nedschorus-nedschorus-1154-issue-view-open-issue.json",
     "issue closed as completed": "nedschorus-nedschorus-1585-issue-view-issue-closed-completed.json",
@@ -1201,7 +1205,7 @@ LINK_STATES = {
 }
 
 
-def link_route(state, endpoint="repos/nedschorus/nedschorus/issues/1154"):
+def link_route(state, endpoint="repos/nedsnodes/nedsnodes/issues/1154"):
     capture = captured(LINK_STATES[state])
     record = capture_record_entry(capture.name)
     return {f"link {endpoint}": {"stdout_file": str(capture), "exit": record["exit_code"],
@@ -1283,7 +1287,7 @@ def case_follow_up_missing_on_an_outage_hashtag_line(gate):
 
 def case_follow_up_link_to_a_commit(gate):
     line = ("#root_cause_not_fixed the harness drops the variable. #follow_up "
-            "https://github.com/nedschorus/nedschorus/commit/40ad4f50c38e")
+            "https://github.com/nedsnodes/nedsnodes/commit/40ad4f50c38e")
     return follow_up_refused(gate, line, [line])
 
 
@@ -1315,15 +1319,54 @@ def case_follow_up_second_not_fixed_line_without_it(gate):
     return follow_up_refused(gate, line, [NOT_FIXED_WITH_FOLLOW_UP, line], link_route("open issue"))
 
 
+OPEN_FOLLOW_UP_ISSUES_HEADING = "OPEN FOLLOW-UP ISSUES: after the merge, add each issue below"
+
+
+def follow_up_passes_without_open_issues(gate, lines, *links):
+    run = description_with_lines_run(gate, lines, links)
+    return (passed_pinned_to(run, BASE_PR, BASE_APPROVAL["commit_id"])
+            and sum(is_link_lookup(call) for call in run.calls) == len(links)
+            and OPEN_FOLLOW_UP_ISSUES_HEADING not in run.stdout), run.summary()
+
+
 def case_follow_up_link_states_that_pass(gate):
     numbers = {"issue closed as completed": 1585, "open pull request": 1636, "merged pull request": 1724}
     lines, links = [], []
     for state, number in numbers.items():
         kind = "pull" if "pull request" in state else "issues"
         lines.append(f"Root cause not fixed: cause {number} stays. #follow_up "
-                     f"https://github.com/nedschorus/nedschorus/{kind}/{number}")
-        links.append(link_route(state, f"repos/nedschorus/nedschorus/issues/{number}"))
-    return follow_up_passes(gate, lines, *links)
+                     f"https://github.com/nedsnodes/nedsnodes/{kind}/{number}")
+        links.append(link_route(state, f"repos/nedsnodes/nedsnodes/issues/{number}"))
+    return follow_up_passes_without_open_issues(gate, lines, *links)
+
+
+def case_follow_up_open_issue_printed_for_the_author(gate):
+    run = description_with_lines_run(gate, [NOT_FIXED_WITH_FOLLOW_UP], [link_route("open issue")])
+    heading_at = run.stdout.find(OPEN_FOLLOW_UP_ISSUES_HEADING)
+    return (passed_pinned_to(run, BASE_PR, BASE_APPROVAL["commit_id"])
+            and heading_at > run.stdout.find("Run that command with GH_TOKEN") >= 0
+            and run.stdout.endswith(f"\n  {FOLLOW_UP_LINK} from the line `{NOT_FIXED_WITH_FOLLOW_UP}`\n")), run.summary()
+
+
+def case_follow_up_two_open_issues_printed_in_order_owner_in_capitals(gate):
+    first_link = "https://github.com/Nedschorus/nedschorus/issues/1154"
+    second_link = "https://github.com/nedsnodes/nedsnodes/issues/2078"
+    first = f"#root_cause_not_fixed the harness drops the variable. #follow_up {first_link}"
+    second = f"#root_cause_not_fixed a second cause stays. #follow_up {second_link}"
+    run = description_with_lines_run(
+        gate, [first, second],
+        [link_route("open issue", "repos/Nedschorus/nedschorus/issues/1154"),
+         link_route("open issue", "repos/nedsnodes/nedsnodes/issues/2078")])
+    return (passed_pinned_to(run, BASE_PR, BASE_APPROVAL["commit_id"])
+            and run.stdout.endswith(f"\n  {first_link} from the line `{first}`\n"
+                                    f"  {second_link} from the line `{second}`\n")), run.summary()
+
+
+def case_follow_up_open_issue_in_another_repository_not_printed(gate):
+    return follow_up_passes_without_open_issues(
+        gate, ["#root_cause_not_fixed the harness drops the variable. #follow_up "
+               "https://github.com/cli/cli/issues/1154"],
+        link_route("open issue", "repos/cli/cli/issues/1154"))
 
 
 def case_follow_up_issue_closed_as_not_planned(gate):
@@ -1333,21 +1376,21 @@ def case_follow_up_issue_closed_as_not_planned(gate):
 
 
 def case_follow_up_pull_request_closed_unmerged(gate):
-    link = "https://github.com/nedschorus/nedschorus/pull/1639"
+    link = "https://github.com/nedsnodes/nedsnodes/pull/1639"
     return abandoned_link_refused(
         gate, f"#root_cause_not_fixed the harness drops the variable. #follow_up {link}", link,
-        link_route("pull request closed unmerged", "repos/nedschorus/nedschorus/issues/1639"),
+        link_route("pull request closed unmerged", "repos/nedsnodes/nedsnodes/issues/1639"),
         "a pull request closed without merging, so it will not fix the cause the line leaves in place.")
 
 
 def case_follow_up_link_not_found(gate):
     line = ("#root_cause_not_fixed the harness drops the variable. #follow_up "
-            "https://github.com/nedschorus/nedschorus/issues/999999")
+            "https://github.com/nedsnodes/nedsnodes/issues/999999")
     run = description_with_lines_run(
-        gate, [line], [link_route("not found", "repos/nedschorus/nedschorus/issues/999999")])
+        gate, [line], [link_route("not found", "repos/nedsnodes/nedsnodes/issues/999999")])
     return could_not_run_after_gh(
         run, BASE_PR,
-        "GATE COULD NOT RUN: could not read https://github.com/nedschorus/nedschorus/issues/999999, "
+        "GATE COULD NOT RUN: could not read https://github.com/nedsnodes/nedsnodes/issues/999999, "
         f"which the description's line `{line}` names after `#follow_up`; any error gh printed is "
         "just above this line.\n",
         "\nIf gh's error says Not Found, the link names no issue or pull request the merge account "
@@ -1365,8 +1408,8 @@ def case_follow_up_link_with_a_fragment(gate):
 def case_follow_up_link_with_a_sub_path(gate):
     return follow_up_passes(
         gate, ["#root_cause_not_fixed the harness drops the variable. #follow_up "
-               "https://github.com/nedschorus/nedschorus/pull/1636/files"],
-        link_route("open pull request", "repos/nedschorus/nedschorus/issues/1636"))
+               "https://github.com/nedsnodes/nedsnodes/pull/1636/files"],
+        link_route("open pull request", "repos/nedsnodes/nedsnodes/issues/1636"))
 
 
 def self_link_refused(gate, link, normalised_link):
@@ -1388,7 +1431,7 @@ def self_link_refused(gate, link, normalised_link):
 
 
 def case_follow_up_link_to_this_pull_request(gate):
-    link = f"https://github.com/nedschorus/nedschorus/pull/{BASE_PR}"
+    link = f"https://github.com/nedsnodes/nedsnodes/pull/{BASE_PR}"
     return self_link_refused(gate, link + "/files", link)
 
 
@@ -1398,16 +1441,16 @@ def case_follow_up_issue_form_link_to_this_pull_request_in_other_letter_case(gat
 
 
 def case_follow_up_pull_request_link_whose_number_is_an_issue(gate):
-    link = "https://github.com/nedschorus/nedschorus/pull/1154"
+    link = "https://github.com/nedsnodes/nedsnodes/pull/1154"
     line = f"#root_cause_not_fixed the harness drops the variable. #follow_up {link}"
     run = description_with_lines_run(gate, [line], [link_route("open issue")])
     return refused_with(
         run, BASE_PR,
         f"GATE REFUSED (#{BASE_PR}): the description's line `{line}` names after `#follow_up` "
-        f"{link}, a pull-request link, but 1154 in nedschorus/nedschorus is an issue, not a pull "
+        f"{link}, a pull-request link, but 1154 in nedsnodes/nedsnodes is an issue, not a pull "
         "request.\n",
         "\nIf that issue is the follow-up, change the link to "
-        "https://github.com/nedschorus/nedschorus/issues/1154.\n"
+        "https://github.com/nedsnodes/nedsnodes/issues/1154.\n"
         "If you meant a pull request, link it as "
         "https://github.com/<owner>/<repository>/pull/<its number>.\n"
         "Editing the description is enough; no new commit is needed.\n"
@@ -1415,7 +1458,7 @@ def case_follow_up_pull_request_link_whose_number_is_an_issue(gate):
 
 
 def case_follow_up_lookup_unparsable(gate):
-    route = {"link repos/nedschorus/nedschorus/issues/1154": {
+    route = {"link repos/nedsnodes/nedsnodes/issues/1154": {
         "stdout_file": str(captured("nedschorus-nedschorus-665-inline-channel-paginated.json"))}}
     run = description_with_lines_run(gate, [NOT_FIXED_WITH_FOLLOW_UP], [route])
     return could_not_run_after_gh(
@@ -1558,7 +1601,7 @@ def case_description_reader_fails(gate):
         "Either way a rerun fails the same way: do not run the gate again, and do not repair the checkout, "
         "that program or python3 yourself.\n"
         "Tell the user every line the gate printed, the error above included, leave pull request "
-        f"https://github.com/nedschorus/nedschorus/pull/{BASE_PR} unmerged, go on with other pull requests "
+        f"https://github.com/nedsnodes/nedsnodes/pull/{BASE_PR} unmerged, go on with other pull requests "
         "meanwhile, and run the gate on this one again only once the user says the cause is fixed.\n")
             and "not UTF-8" not in run.stderr), run.summary()
 
@@ -1688,6 +1731,12 @@ CASES = [
     ("H1 a #follow_up link that ends a sentence passes", case_follow_up_bare_link_ending_a_sentence),
     ("H1 links to an issue closed as completed, an open pull request and a merged one pass",
      case_follow_up_link_states_that_pass),
+    ("H8 a #follow_up link to an open issue in this repository is printed after the merge command",
+     case_follow_up_open_issue_printed_for_the_author),
+    ("H8 two open issues, one linked with its owner in capitals, are both printed in order",
+     case_follow_up_two_open_issues_printed_in_order_owner_in_capitals),
+    ("H8 a #follow_up link to an open issue in another repository passes and is not printed",
+     case_follow_up_open_issue_in_another_repository_not_printed),
     ("H2 captured PR 1360's not-fixed line without #follow_up refuses",
      case_follow_up_captured_not_fixed_line_without_it),
     ("H2 captured PR 1298's not-fixed line without #follow_up refuses beside its root-cause line",
@@ -1881,8 +1930,27 @@ MUTATIONS = [
      [case_follow_up_link_to_this_pull_request,
       case_follow_up_issue_form_link_to_this_pull_request_in_other_letter_case]),
     ("the link's owner and repository compared in their own letter case",
-     [("\"$(tr '[:upper:]' '[:lower:]' <<<\"$link_repo\")\"", '"$link_repo"')],
+     [("lower=$(tr '[:upper:]' '[:lower:]' <<<\"$link_repo\")", 'lower=$link_repo')],
      [case_follow_up_issue_form_link_to_this_pull_request_in_other_letter_case]),
+    ("an open issue read as live, so it is not printed",
+     [('elif .state == "open" then "open-issue"', 'elif false then "open-issue"')],
+     [case_follow_up_open_issue_printed_for_the_author]),
+    ("an open issue printed whatever its repository",
+     [('! link_is_this_repository || open_follow_up_issues',
+       'false || open_follow_up_issues')],
+     [case_follow_up_open_issue_in_another_repository_not_printed]),
+    ("an open issue's repository compared in its own letter case",
+     [("lower=$(tr '[:upper:]' '[:lower:]' <<<\"$link_repo\")", 'lower=$link_repo')],
+     [case_follow_up_two_open_issues_printed_in_order_owner_in_capitals]),
+    ("each open issue replacing the one before",
+     [('|| open_follow_up_issues+=', '|| open_follow_up_issues=')],
+     [case_follow_up_two_open_issues_printed_in_order_owner_in_capitals]),
+    ("the open follow-up issues never printed",
+     [('[ -z "$open_follow_up_issues" ] || printf', 'true || printf')],
+     [case_follow_up_open_issue_printed_for_the_author]),
+    ("the open follow-up issues' heading printed when there are none",
+     [('[ -z "$open_follow_up_issues" ] || printf', 'false || printf')],
+     [case_follow_up_link_states_that_pass]),
     ("a /pull/ link whose number is an issue read as live",
      [('then "issue-at-a-pull-request-link"', 'then "live"')],
      [case_follow_up_pull_request_link_whose_number_is_an_issue]),

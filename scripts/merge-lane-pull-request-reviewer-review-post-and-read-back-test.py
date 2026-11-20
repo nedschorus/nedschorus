@@ -283,7 +283,8 @@ def merge_lane_cases(scratch):
             ("a finding opening with a hand-written blocking mark",
              [finding(2, "must-fix-now", "**Blocks** b")], "REQUEST_CHANGES",
              "comment on scripts/thing.py:2 whose body already opens with the blocking mark "
-             "**Blocks**"),
+             "**Blocks**; this program writes that mark for each must-fix-now comment, so remove the mark "
+             "from the start of its \"body\""),
             ("a fix-next finding opening, after spaces, with a hand-written mark",
              [finding(3, "fix-next", "  **Blocks:** b")], "APPROVE",
              "already opens with the blocking mark **Blocks:**"),
@@ -305,6 +306,9 @@ def merge_lane_cases(scratch):
              "\"nit\" key"),
             ("a nit whose category is must-fix-now", [nit(2, category="must-fix-now")], "REQUEST_CHANGES",
              "whose \"finding_category\" is 'must-fix-now'; only a fix-in-maintenance finding can be a nit"),
+            ("a nit whose category is file-for-later, which sorts before fix-in-maintenance",
+             [nit(2, category="file-for-later")], "APPROVE",
+             "whose \"finding_category\" is 'file-for-later'; only a fix-in-maintenance finding can be a nit"),
             ("a \"nit\" of false", [nit(2, value=False)], "APPROVE",
              "comment on scripts/thing.py:2 whose \"nit\" is False; give \"nit\" only as the JSON value true, "
              "on a nit, a small fix that names no failure, such as a misspelt name, and omit the \"nit\" key "
@@ -441,9 +445,10 @@ def merge_lane_cases(scratch):
         arguments=MERGE_LANE_ARGUMENTS)
     found = fix_round_blocking_findings(fix_round, [moved.posted])
     check("round trip: a must-fix-now comment moved into the body counts in the posted count, "
-          "so the fix-round program refuses the round instead of missing the finding",
-          isinstance(found, str) and "says **Blocking: 2**, and its body lists 1 blocking finding(s)" in found
-          and "scripts/other.py:1" in found,
+          "and the fix-round program briefs it beside the inline one",
+          isinstance(found, list) and moved.posted["body"].startswith("REQUEST_CHANGES\n\n**Blocking: 2**\n\n")
+          and [(item["path"], item["line"], item["body"]) for item in found]
+          == [("scripts/thing.py", 2, "**Blocks** Finding on line 2."), ("scripts/other.py", 1, "**Blocks** Outside.")],
           f"{found}\n{moved.detail}")
 
     marks = [load_posting_program().review_comment_opening_mark_for_finding_category(category)
@@ -559,7 +564,7 @@ def main():
               len(result.calls) == 4 and all(call["token"] == TOKEN for call in result.calls),
               result.detail)
         check("the review is read back by the id the post returned",
-              result.calls[-1]["arguments"] == ["api", "repos/nedschorus/nedschorus/pulls/7/reviews/42"]
+              result.calls[-1]["arguments"] == ["api", "repos/nedsnodes/nedsnodes/pulls/7/reviews/42"]
               if result.calls else False, result.detail)
         check("success names the review, the event and the commit, and never prints the token",
               "review 42 posted on pull request 7 by mac-claude as APPROVE" in result.stdout
@@ -631,8 +636,11 @@ def main():
                 ("a comment whose line is true", review("APPROVE", comments=[
                     {"path": "p", "line": True, "body": "b"}]), "a number \"line\"")):
             result = run_program(scratch, text)
-            check(f"a review file with {name} exits 2, says why, and calls no gh",
+            check(f"a review file with {name} exits 2, says why, calls no gh, and says not to run the "
+                  "reviewer's run again, since it should have refused the file",
                   result.code == 2 and reason in result.stderr and "review not posted" in result.stderr
+                  and "should have refused this file" in result.stderr
+                  and "fix it and run the same command again" not in result.stderr
                   and not result.calls, result.detail)
 
         result = run_program(scratch, review("APPROVE"), token=None)
@@ -713,7 +721,7 @@ def main():
               and "review may or may not be posted: posting the review failed: gh exited 1: "
               "gh: HTTP 502" in result.stderr
               and "Before running this command again, list mac-claude's reviews" in result.stderr
-              and "gh api --paginate 'repos/nedschorus/nedschorus/pulls/7/reviews'" in result.stderr
+              and "gh api --paginate 'repos/nedsnodes/nedsnodes/pulls/7/reviews'" in result.stderr
               and f'.commit_id == "{HEAD}"' in result.stderr, result.detail)
         result = run_program(scratch, review("APPROVE"), FAKE_GH_FAILS="read-back")
         check("a failed read-back exits 2, says review 42 was posted, and names gh's error",
@@ -747,7 +755,7 @@ def main():
                   result.code == 2 and not result.gh_left_running
                   and "review may or may not be posted: posting the review failed: this command "
                   "was interrupted" in result.stderr
-                  and "gh api --paginate 'repos/nedschorus/nedschorus/pulls/7/reviews'"
+                  and "gh api --paginate 'repos/nedsnodes/nedsnodes/pulls/7/reviews'"
                   in result.stderr and f'.commit_id == "{HEAD}"' in result.stderr, result.detail)
             result = run_program(scratch, review("APPROVE"), interrupt=signal_number,
                                  FAKE_GH_HANGS="read-back")
