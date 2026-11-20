@@ -929,7 +929,7 @@ import importlib.util
 specification = importlib.util.spec_from_file_location("catch_up_module", SCRIPT_PATH)
 catch_up_module = importlib.util.module_from_spec(specification)
 specification.loader.exec_module(catch_up_module)
-import contextlib, io
+import contextlib
 
 # ---------------------------------------------------------------------------
 # PR #87's review: git's prose must be read in a stable locale
@@ -940,7 +940,6 @@ import contextlib, io
 # should abort the merge is skipped, and the seat's tree is left parked
 # mid-merge. A stub git reports the locale it was handed.
 import os as _os
-import shutil as _shutil
 import tempfile as _tempfile
 
 with _tempfile.TemporaryDirectory() as locale_scratch:

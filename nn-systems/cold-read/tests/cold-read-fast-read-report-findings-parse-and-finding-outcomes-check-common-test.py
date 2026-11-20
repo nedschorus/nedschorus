@@ -8,7 +8,6 @@ Prints one line per case and exits non-zero if any case fails.
 """
 import importlib.util
 import json
-import shlex
 import subprocess
 import sys
 import tempfile

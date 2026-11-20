@@ -1475,7 +1475,7 @@ try:
           f"exit {result.returncode}; stdout={result.stdout!r}")
     check("the closing text gives the account limit as why Question 4 was not answered",
           "Question 4, What should be code, was not answered: account-limit — weekly limit · resets "
-          f"Nov 7, 3am (America/Los_Angeles) (log: " in result.stdout
+          "Nov 7, 3am (America/Los_Angeles) (log: " in result.stdout
           and f"{QUESTION_4_REPORT_NAME}.stderr.log). The other reports do not depend on it: "
           "go on without its answer." in result.stdout, repr(result.stdout))
 

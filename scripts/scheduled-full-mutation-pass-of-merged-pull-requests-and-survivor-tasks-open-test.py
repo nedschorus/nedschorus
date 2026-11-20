@@ -379,7 +379,7 @@ def run_untestable_merge_cases():
               and untestable in tasks[0]["description"]
               and failing_suite in tasks[0]["description"]
               and f"--base {start}" in tasks[0]["description"]
-              and f"--head <that commit>" in tasks[0]["description"],
+              and "--head <that commit>" in tasks[0]["description"],
               tasks)
         check("the record names the untestable merge, its failing suite and its task, and "
               "counts it among the merges tested",

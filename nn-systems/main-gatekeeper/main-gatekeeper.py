@@ -1239,7 +1239,7 @@ def check_in(arguments) -> int:
         clone = workspace / "candidate"
 
         if getattr(arguments, "no_wait", False):
-            spawned = subprocess.Popen(
+            subprocess.Popen(
                 [sys.executable, str(Path(__file__).resolve()), "worker", digest],
                 start_new_session=True, stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

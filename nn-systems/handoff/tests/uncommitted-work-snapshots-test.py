@@ -609,7 +609,6 @@ def test_other_repository_is_untouched():
 
 
 def test_names_read_from_git_are_the_files_as_stored():
-    name = "changed files and repository discovery read git's output as stored, in any locale"
     main = new_clone()
     (main / "café notes.md").write_text("new\n")
     git(main, "add", "-A")
@@ -1298,7 +1297,7 @@ def test_restore_step_failures():
     failing_case("whose git worktree add wrote another agent-seat's owner file, saying the hook "
                  "that ran is the clone's own copy",
                  worktree_add_writes_another_seats_owner_file,
-                 f", which is the same as ")
+                 ", which is the same as ")
 
     def an_older_clone_copy_of_the_hook(main):
         undo = worktree_add_writes_another_seats_owner_file(main)
@@ -1308,7 +1307,7 @@ def test_restore_step_failures():
     failing_case("whose git worktree add wrote another agent-seat's owner file through a hook that "
                  "is not the clone's own copy, saying so",
                  an_older_clone_copy_of_the_hook,
-                 f", which is not the same as ")
+                 ", which is not the same as ")
 
     real_run_git = snapshots.run_git
 

@@ -531,7 +531,7 @@ def run_refusal_cases():
                  lambda f: (f.fakes / "active-units.txt").write_text("nc-shared-database-service.service\n"),
                  "nc-shared-database-<today's UTC date>T<time>Z.sqlite3 with no .partial ending")
     refusal_case("a journal's remedy says to move aside one no --apply ran with",
-                 lambda f: f.journal.write_text(""), f"move it aside, for example to ")
+                 lambda f: f.journal.write_text(""), "move it aside, for example to ")
     refusal_case("a failed process list with no error output gives its exit code",
                  failing_process_list, "it printed no error, exit code 1")
     refusal_case("on the Mac, the log-store is not yet renamed",

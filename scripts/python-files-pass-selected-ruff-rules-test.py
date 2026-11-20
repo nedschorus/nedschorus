@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Fail when a Python file in the checkout has an `except` whose body is only `pass`.
+"""Fail when a Python file in the checkout breaks one of the Ruff rules in RULES.
 
-Runs Ruff's rule S110 (try-except-pass), with Ruff's own settings for the rule,
-over every `.py` file git tracks or would add, so a swallowed exception fails
-the author's own test run. Ruff's S110 flags a bare `except`, `except
-Exception` and `except BaseException`; an `except` that names a narrower
-exception is left alone.
+Runs Ruff's rules in RULES, with Ruff's own settings for them, over every `.py`
+file git tracks or would add, so a hit fails the author's own test run. Ruff's
+S110 flags a bare `except`, `except Exception` and `except BaseException` whose
+body is only `pass`; an `except` that names a narrower exception is left alone.
+The F rules find unused imports and variables, an unused name defined again,
+an f-string with no placeholders, and an undefined name, which fails only when
+the line runs. A false F821 hit is marked `# noqa: F821` with its reason.
 
 Ruff is pinned in
 nn-systems/general-tools/python-libraries-pinned-requirements.txt.
@@ -14,7 +16,7 @@ pinned file per user, as the hooks do. When that install fails, the suite
 prints what the install printed and the command that installs it by hand,
 and fails.
 
-Run: python3 scripts/python-files-carry-no-try-except-pass-ruff-s110-test.py
+Run: python3 scripts/python-files-pass-selected-ruff-rules-test.py
 """
 
 import importlib.util
@@ -45,12 +47,29 @@ INSTALL_TIMEOUT_SECONDS = 600
 RUFF_TIMEOUT_SECONDS = 300
 RUFF = [sys.executable, "-m", "ruff"]
 
-FIX_INSTRUCTIONS = (
-    "Each `except` above swallows a failure: its body is only `pass`, so nobody sees the failure.\n"
-    "Where the failure matters to whoever acts on the program's output, report it: print what "
-    "failed and exit nonzero, or raise it to a caller that does.\n"
-    "Where the failure is expected and harmless, narrow the `except` to the exception you expect, "
-    "with a comment giving the reason.")
+# Each rule's fix, printed after the hits when that rule has one.
+FIX_INSTRUCTIONS = {
+    "S110": (
+        "Each S110 `except` above swallows a failure: its body is only `pass`, so nobody sees the "
+        "failure.\n"
+        "Where the failure matters to whoever acts on the program's output, report it: print what "
+        "failed and exit nonzero, or raise it to a caller that does.\n"
+        "Where the failure is expected and harmless, narrow the `except` to the exception you "
+        "expect, with a comment giving the reason."),
+    "F401": ("Remove each F401 import above that nothing uses; first grep for a program that "
+             "loads the file by path and reads the name from it."),
+    "F811": "Remove each F811 import or definition above that repeats an earlier, unused one.",
+    "F841": ("Remove each F841 variable above that is never read; keep the call that assigns it "
+             "when the call has an effect."),
+    "F541": "Drop the `f` prefix from each F541 string above, which has no placeholder.",
+    "F821": (
+        "Define each F821 name above before the line that uses it, or quote an annotation that "
+        "names a class defined later in the file.\n"
+        "Where you have read the code and the name is always bound when the line runs, such as a "
+        "lambda called inside the `except` that binds its name, end the line with "
+        "`# noqa: F821` and the reason."),
+}
+RULES = tuple(FIX_INSTRUCTIONS)
 
 failures = []
 
@@ -85,7 +104,7 @@ def ruff_ready_or_failure(runner, installer, host):
         return None
     where, command = pinned_libraries_install.pinned_requirements_by_hand_install_command(host)
     return (f"Ruff does not run under {sys.executable} after installing the pinned requirements "
-            f"file, so no file was checked for S110.\n"
+            f"file, so no file was checked for the rules {', '.join(RULES)}.\n"
             f"What the install printed: {install_output or '(nothing)'}\n"
             f"What `{' '.join(RUFF)} --version` printed: {printed or '(nothing)'}\n"
             f"To install Ruff by hand, run this command {where}: {command}")
@@ -101,13 +120,13 @@ def python_files(checkout, runner):
                    if name and (checkout / name).is_file()})
 
 
-def s110_report(checkout, files, runner):
-    """Return (exit code, output) of Ruff's S110 check on files; 0 none found, 1 found, else an error."""
+def ruff_report(checkout, files, runner):
+    """Return (exit code, output) of Ruff's check of RULES on files; 0 none found, 1 found, else an error."""
     if not files:
         return 0, ""
-    # --isolated reads no Ruff settings file, so only S110 runs, with Ruff's own settings for it.
+    # --isolated reads no Ruff settings file, so only RULES run, with Ruff's own settings for them.
     # --no-cache keeps Ruff from writing a cache directory into the checkout.
-    completed = runner([*RUFF, "check", "--isolated", "--no-cache", "--select", "S110",
+    completed = runner([*RUFF, "check", "--isolated", "--no-cache", "--select", ",".join(RULES),
                         "--output-format", "concise", "--", *files],
                        cwd=checkout, capture_output=True, text=True,
                        timeout=RUFF_TIMEOUT_SECONDS, stdin=subprocess.DEVNULL)
@@ -143,7 +162,7 @@ def run_failure_cases():
     def ruff_errors(command, **_options):
         return subprocess.CompletedProcess(command, 2, "", "error: Failed to parse")
 
-    status, output = s110_report(REPOSITORY, ["a.py"], ruff_errors)
+    status, output = ruff_report(REPOSITORY, ["a.py"], ruff_errors)
     check("an error exit from Ruff is passed on, not taken as no hits",
           status == 2 and "Failed to parse" in output, repr((status, output)))
 
@@ -151,41 +170,58 @@ def run_failure_cases():
     check("an error exit from Ruff on the checkout fails the suite, naming the exit status",
           verdict[1] is False and "Ruff exited 2: error: Failed to parse" in verdict[2],
           repr(verdict))
-    verdict = repository_verdict(1, "a.py:3:1: S110", 1)
-    check("an S110 hit in the checkout fails the suite, with how to fix it",
+    verdict = repository_verdict(1, "a.py:3:1: S110 `try`-`except`-`pass` detected", 1)
+    check("an S110 hit in the checkout fails the suite, with how to fix it and no other rule's fix",
           verdict[1] is False and "a.py:3:1: S110" in verdict[2]
-          and FIX_INSTRUCTIONS.split("\n")[0] in verdict[2],
+          and FIX_INSTRUCTIONS["S110"].split("\n")[0] in verdict[2]
+          and FIX_INSTRUCTIONS["F401"] not in verdict[2],
           repr(verdict))
 
 
+# Each fixture file, and the one hit Ruff, as this suite runs it, must report in it; None for none.
+FIXTURES = {
+    "swallowed.py": ("try:\n    import json  # noqa: F401\nexcept Exception:\n    pass\n",
+                     "swallowed.py:3:1: S110"),
+    "reported.py": ("import sys\ntry:\n    import json  # noqa: F401\nexcept Exception as error:\n"
+                    "    print(error, file=sys.stderr)\n", None),
+    "narrowed.py": ("try:\n    import json  # noqa: F401\nexcept ImportError:\n"
+                    "    pass  # json is optional\n", None),
+    "unused_import.py": ("import os\n", "unused_import.py:1:8: F401"),
+    "defined_again.py": ("import json\nimport json\nprint(json)\n", "defined_again.py:2:8: F811"),
+    "unused_variable.py": ("def f():\n    value = 1\n", "unused_variable.py:2:5: F841"),
+    "placeholderless.py": ('print(f"text")\n', "placeholderless.py:1:7: F541"),
+    "undefined.py": ("print(missing)\n", "undefined.py:1:7: F821"),
+    "undefined_marked.py": ("print(missing)  # noqa: F821 bound by the program that runs it\n", None),
+}
+
+
 def run_fixture_cases():
-    """Ruff, as this suite runs it, flags a swallowed exception and passes a reported or narrowed one."""
+    """Ruff, as this suite runs it, flags each rule's hit, and passes a reported or narrowed `except` and a noqa line."""
     with tempfile.TemporaryDirectory(
-            prefix="python-files-carry-no-try-except-pass-ruff-s110-test-") as directory:
+            prefix="python-files-pass-selected-ruff-rules-test-") as directory:
         fixture = Path(directory)
-        (fixture / "swallowed.py").write_text(
-            "try:\n    import json\nexcept Exception:\n    pass\n", encoding="utf-8")
-        (fixture / "reported.py").write_text(
-            "import sys\ntry:\n    import json\nexcept Exception as error:\n"
-            "    print(error, file=sys.stderr)\n", encoding="utf-8")
-        (fixture / "narrowed.py").write_text(
-            "try:\n    import json\nexcept ImportError:\n    pass  # json is optional\n",
-            encoding="utf-8")
-        status, output = s110_report(fixture, ["swallowed.py", "reported.py", "narrowed.py"],
-                                     subprocess.run)
-        check("an `except Exception` whose body is only `pass` is flagged, and only it",
-              status == 1 and "swallowed.py:3:1: S110" in output
-              and "reported.py" not in output and "narrowed.py" not in output,
-              repr((status, output)))
+        for name, (text, _hit) in FIXTURES.items():
+            (fixture / name).write_text(text, encoding="utf-8")
+        status, output = ruff_report(fixture, list(FIXTURES), subprocess.run)
+        for name, (_text, hit) in FIXTURES.items():
+            hits = [line for line in output.splitlines() if line.startswith(f"{name}:")]
+            if hit is None:
+                check(f"{name} has no hit", status == 1 and not hits, repr((status, output)))
+            else:
+                check(f"{name} has the hit {hit.split(': ')[1]}, and only it",
+                      status == 1 and len(hits) == 1 and hits[0].startswith(hit),
+                      repr((status, output)))
 
 
 def repository_verdict(status, output, file_count):
     """Return (case name, passed, detail) for Ruff's exit status and output on the checkout."""
+    rules = ", ".join(RULES)
     if status == 0:
-        return f"no `except` swallows a failure in the checkout's {file_count} Python files", True, ""
+        return f"the checkout's {file_count} Python files pass Ruff's rules {rules}", True, ""
     if status == 1:
-        return ("no `except` swallows a failure in the checkout's Python files", False,
-                f"{output}\n{FIX_INSTRUCTIONS}".replace("\n", "\n    "))
+        fixes = "\n".join(fix for rule, fix in FIX_INSTRUCTIONS.items() if f": {rule} " in output)
+        return (f"the checkout's Python files pass Ruff's rules {rules}", False,
+                f"{output}\n{fixes}".replace("\n", "\n    "))
     return ("Ruff checks the checkout's Python files", False,
             f"Ruff exited {status}: {output or '(no output)'}".replace("\n", "\n    "))
 
@@ -193,7 +229,7 @@ def repository_verdict(status, output, file_count):
 def run_repository_check():
     files = python_files(REPOSITORY, subprocess.run)
     check("the checkout has Python files to check", len(files) > 0, repr(files))
-    check(*repository_verdict(*s110_report(REPOSITORY, files, subprocess.run), len(files)))
+    check(*repository_verdict(*ruff_report(REPOSITORY, files, subprocess.run), len(files)))
 
 
 def main():
