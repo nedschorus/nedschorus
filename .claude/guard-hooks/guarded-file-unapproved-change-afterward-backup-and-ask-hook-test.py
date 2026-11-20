@@ -2538,6 +2538,21 @@ def hook_with_slow_store_appends(seconds):
     return hook
 
 
+def hook_with_slow_approved_set_reads(seconds):
+    """The hook loaded in this process, each read of a path's approved set first sleeping
+    seconds: on the Mac's store each such read is an SMB round trip."""
+    hook = load_hook_in_this_process()
+    read = hook.Store.read
+
+    def slow_read(self, path, name):
+        if name == hook.APPROVED_FILE_NAME:
+            time.sleep(seconds)
+        return read(self, path, name)
+
+    hook.Store.read = slow_read
+    return hook
+
+
 def runs_until_done(world, hook, limit):
     """The messages of each run, until a run leaves no file for the next or limit runs."""
     runs = []
@@ -2604,6 +2619,36 @@ def mac_store_backlog_cases(scratch):
           1 < len(runs) < 12 and "reached its time limit" in "".join(runs[0])
           and not any("did not run" in message for message in every_message), every_message)
     check("every merged file is approved as git's own work, and none is asked about",
+          all(world.key(world.repo / name) in world.store_file(world.repo / name, "approved")
+              for name in documents)
+          and not any("A guarded file changed" in message for message in every_message),
+          every_message)
+
+    # -- a merge whose approvals alone take more than a run's budget to read still shrinks
+    # across runs: a run that read every approval before any check would leave every file
+    # deferred, and each next run would read the same approvals again
+    world = mac_world_without_first_run(scratch, "mac-merge-approval-reads-backlog")
+    world.run()
+    world.git("checkout", "-q", "-b", "incoming")
+    for name in documents:
+        (world.repo / name).parent.mkdir()
+        (world.repo / name).write_text(f"{name} merged\n")
+    world.git("add", ".")
+    world.git("commit", "-q", "-m", "forty documents on another branch")
+    world.git("checkout", "-q", "main")
+    world.run()
+    world.git("merge", "-q", "--no-ff", "--no-edit", "incoming")
+    # 40 approvals at 0.1 s a read of the approved set take more than the run's 1.8 s budget.
+    hook = hook_with_slow_approved_set_reads(0.1)
+    runs = runs_until_done(world, hook, 15)
+    left = [int(re.search(r"with (\d+) changed", "".join(messages)).group(1))
+            for messages in runs if "reached its time limit" in "".join(messages)]
+    check("when reading a merge's approvals alone takes more than a run's budget, each cut-off "
+          "run leaves fewer files than the one before, until a run leaves none",
+          1 < len(runs) < 15 and left == sorted(set(left), reverse=True)
+          and "reached its time limit" not in "".join(runs[-1]), (left, len(runs)))
+    every_message = [message for messages in runs for message in messages]
+    check("and every merged file ends approved, none asked about",
           all(world.key(world.repo / name) in world.store_file(world.repo / name, "approved")
               for name in documents)
           and not any("A guarded file changed" in message for message in every_message),

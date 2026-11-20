@@ -1017,17 +1017,39 @@ def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, q
     holds it.
     unsettled_unchanged: [(path, key)] files left unsettled by an earlier run. quiet: a rebase,
     merge, cherry-pick or revert is stopped, so every version is copied and nothing is asked."""
-    for path, key, how, rule in approvals:
-        if out_of_time():
-            return [], [], {}, {check.path for check in checks} | {path for path, *_ in approvals}
-        if key in store.approved(path) or not approval_takes(store, path, key, rule):
-            continue
-        store.approve(path, key)
-        log_line(store, path, "approved", session, owner, key, how)
+    # Each path's approvals and its check are one unit of work, done or deferred together: a
+    # run that read every approval first and then ran out of time would leave every path
+    # deferred, and the next run would read the same approvals again and never get further.
+    approvals_of = {}
+    for approval in approvals:
+        approvals_of.setdefault(approval[0], []).append(approval)
+    unsettled_keys = dict(unsettled_unchanged)
     asks, reminders, settled = [], [], {}
+
+    def approve(path):
+        for _, key, how, rule in approvals_of.pop(path, []):
+            if key in store.approved(path):
+                approved_now = True
+            elif approval_takes(store, path, key, rule):
+                store.approve(path, key)
+                log_line(store, path, "approved", session, owner, key, how)
+                approved_now = True
+            else:
+                approved_now = False
+            if approved_now and unsettled_keys.get(path) == key:
+                # Settled here, so its state entry is saved settled and no later run reads it.
+                settled[path] = True
+                del unsettled_keys[path]
+
+    check_paths = {check.path for check in checks}
+    for path in [path for path in approvals_of if path not in check_paths]:
+        if out_of_time():
+            return asks, reminders, settled, (check_paths | set(approvals_of)) - set(settled)
+        approve(path)
     for index, check in enumerate(checks):
         if out_of_time():
             return asks, reminders, settled, {check.path for check in checks[index:]}
+        approve(check.path)
         bytes_hash = ""
         if check.key != DELETED and not check.in_git:
             store.copy(check.path, check.copy_hash, check.data)
@@ -1062,7 +1084,7 @@ def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, q
         elif not was_reminded(log, check.key, session):
             log_line(store, check.path, "reminded", session, check.key)
             reminders.append((check.path, check.key))
-    for path, key in unsettled_unchanged:
+    for path, key in unsettled_keys.items():
         if out_of_time():
             # Their state entries stay unsettled, so the next run reminds or asks about them.
             break
