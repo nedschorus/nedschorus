@@ -499,8 +499,7 @@ def full_run_history_since_count_start(frozen_paths: set, landed_at, listing: li
     for line in listing:
         path, _, mtime = line.rpartition("\t")
         directory, _, inside = path.partition("/")
-        # An interrupted shipment's staging copy holds the same files as its record.
-        if directory.startswith(record_shipper.STAGING_DIRECTORY_PREFIX):
+        if record_shipper.cold_read_records_entry_name_is_shipment_staging_copy(directory):
             continue
         record = records.setdefault(directory, {"frozen": False, "reported": None, "marked": None,
                                                 "inside_design_to_main": False, "stopped": None})
