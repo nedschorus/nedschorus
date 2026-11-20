@@ -227,7 +227,7 @@ when it is needed. Selecting by transcript age instead mis-selects in both
 directions: an idle seat looks dead and a long-finished one looks alive.
 
 **The mechanism was already built.**
-[`nc-systems/handoff/handoff-supervisor.py`](../../nc-systems/handoff/handoff-supervisor.py) has
+[`nn-systems/handoff/handoff-supervisor.py`](../../nn-systems/handoff/handoff-supervisor.py) has
 `stamp_heartbeat()`, and each supervisor keeps a per-seat file at
 `~/.claude/handoffs/<seat>-supervisor-state.json` carrying `last_poll_at`. The
 stamp is written on its own cadence, `HEARTBEAT_INTERVAL_SECONDS = 10.0`, inside
@@ -528,7 +528,7 @@ have helped: seats run in tmux and do not register in utmp.
    that does not come back is reported and left down, because parking it
    with its reason and asking in a window is issue [recover-crashed-seats.py: the six changes ruled 2026-09-02 — exit record, process-identity liveness, parking marker, verified restart, by-hand resume, window](https://github.com/nedschorus/nedschorus/issues/242) change 3, not
    built. `install-restart-live-seats-at-login-launch-agent.py` writes the
-   LaunchAgent plist (`com.nedschorus.restart-live-seats-at-login`, RunAtLoad,
+   LaunchAgent plist (`com.nedsnodes.restart-live-seats-at-login`, RunAtLoad,
    Aqua sessions only, PATH naming `~/.local/bin` and `/opt/homebrew/bin`,
    output to `~/.claude/handoffs/restart-live-seats-at-login-launchd-output.txt`).
    Writing it does not load it; it loads at the next login. Measured
@@ -543,7 +543,7 @@ have helped: seats run in tmux and do not register in utmp.
    *Measured 2026-09-17, the product LaunchAgent itself:* it had never been
    loaded. The plist was written 2026-09-14 15:53, after the current login
    session began, and a new agent loads at the next login, so
-   `launchctl print gui/501/com.nedschorus.restart-live-seats-at-login`
+   `launchctl print gui/501/com.nedsnodes.restart-live-seats-at-login`
    answered "Could not find service". `launchctl bootstrap gui/501 <plist>`
    loaded it and RunAtLoad ran it: exit 0, and the first content ever written
    to `~/.claude/handoffs/restart-live-seats-at-login-launchd-output.txt`. It

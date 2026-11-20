@@ -58,7 +58,7 @@ def _load_edited_file_path_within_checkout_root_and_git_check_ignore():
     """Return the shared checkout and git-tracking helpers, loaded by path; raises when they will not load."""
     specification = importlib.util.spec_from_file_location(
         "edited_file_path_within_checkout_root_and_git_check_ignore_common",
-        Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+        Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
         / "edited-file-path-within-checkout-root-and-git-check-ignore-common.py")
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)

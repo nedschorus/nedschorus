@@ -80,7 +80,7 @@ os.environ["PATH"] = str(GH_STAND_IN_DIRECTORY) + os.pathsep + os.environ.get("P
 
 # An attended session, as an agent-seat's own is; the headless cases override it.
 HOOK_ENVIRONMENT = {name: value for name, value in os.environ.items()
-                    if name not in ("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
+                    if name not in ("NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER",
                                     GH_STAND_IN_MODE_VARIABLE, GH_STAND_IN_TITLES_VARIABLE)}
 HOOK_ENVIRONMENT["CLAUDE_CODE_SESSION_ATTENDED"] = "1"
 # The hook keeps its record of noted replies under the temporary directory; a
@@ -710,7 +710,7 @@ path = transcript(user("go"), assistant("m1", text_block("See PR 12.")))
 headless = dict(HOOK_ENVIRONMENT, CLAUDE_CODE_SESSION_ATTENDED="0")
 result = run_hook(prompt_payload(path), headless)
 check("UserPromptSubmit: silent in a headless claude -p child", result.stdout == "", result.stdout)
-owned = dict(HOOK_ENVIRONMENT, NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER="1")
+owned = dict(HOOK_ENVIRONMENT, NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER="1")
 result = run_hook(prompt_payload(path), owned)
 check("UserPromptSubmit: silent when a caller owns the session", result.stdout == "", result.stdout)
 

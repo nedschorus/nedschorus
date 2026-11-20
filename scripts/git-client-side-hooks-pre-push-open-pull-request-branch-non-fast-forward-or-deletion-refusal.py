@@ -10,7 +10,7 @@ hook say the push went unchecked and to tell the user.
 Reviews are of a pull request's pushed head, so an update that does not build on that head
 replaces the commits under review, and deleting the head branch closes the pull request.
 Whether an open pull request's head may be rewritten is the rebase-or-replace answer of
-nc-systems/general-tools/pull-request-conflict-with-main-rebase-or-replace-answer-common.py:
+nn-systems/general-tools/pull-request-conflict-with-main-rebase-or-replace-answer-common.py:
 the replace answer refuses the update. That answer is replace for every open pull request until
 the module turns on the rebase answer for a draft never marked ready; only then is GitHub asked
 whether a draft was ever ready, which it was when its timeline holds a ready_for_review event,
@@ -46,7 +46,7 @@ from pathlib import Path
 
 _rebase_or_replace_spec = importlib.util.spec_from_file_location(
     "pull_request_conflict_with_main_rebase_or_replace_answer_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "pull-request-conflict-with-main-rebase-or-replace-answer-common.py")
 rebase_or_replace = importlib.util.module_from_spec(_rebase_or_replace_spec)
 _rebase_or_replace_spec.loader.exec_module(rebase_or_replace)
