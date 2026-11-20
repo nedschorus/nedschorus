@@ -244,7 +244,7 @@ _CODE_OR_MAC_MOUNT_LINK_TARGET_PATTERN = re.compile(
     r"(?P<code>^[ \t]*(?P<fence>`{3,}|~{3,}).*?(?:^[ \t]*(?P=fence)[ \t]*$|\Z)"
     r"|(?P<ticks>`+).+?(?<!`)(?P=ticks)(?!`))"
     r"|(?P<target_start>\]\(<?)" + re.escape(MAC_MOUNT_OF_NED_BOX_HOME_LINK_PREFIX),
-    re.MULTILINE | re.DOTALL)
+    re.MULTILINE | re.DOTALL)  # pragma: no mutate, the two flags share no bit, so ^ and + give the same flags as |
 
 
 def text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths(text: str) -> str:

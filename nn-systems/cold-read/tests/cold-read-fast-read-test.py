@@ -409,9 +409,10 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
                   record_clock=FIXED_RECORD_CLOCK_FOR_TESTS, agent_session_id=None,
                   current_directory=None, claude_plan=None, question_4_plan=None,
                   environment_overrides=None, signal_once_file_exists=None,
-                  stop_signal=signal.SIGTERM):
+                  stop_signal=signal.SIGTERM, options=()):
     """The read as a subprocess, with the stub agy first on PATH, run from
-    `current_directory`, by default `repository`. With
+    `current_directory`, by default `repository`, with `options` after
+    --target. With
     `signal_once_file_exists`, the read is sent `stop_signal` once that
     file exists, or after 60 s if it never does.
 
@@ -454,7 +455,7 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
         environment[AGENT_SESSION_ID_VARIABLE] = agent_session_id
     environment.update(environment_overrides or {})
     command = [sys.executable, str(repository / "nn-systems" / "cold-read" / "cold-read-fast-read.py"),
-               "--target", str(target_argument)]
+               "--target", str(target_argument), *options]
     if signal_once_file_exists is None:
         return subprocess.run(command, capture_output=True, text=True, check=False,
                               env=environment, cwd=current_directory or repository)
@@ -1219,6 +1220,49 @@ with tempfile.TemporaryDirectory() as scratch:
     check("no launcher names a stray write, since neither cell writes in the checkout "
           "while the other runs",
           cell_common.STRAY_WRITE_PHRASE not in result.stderr, repr(result.stderr))
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: questions 1 to 3\n"}},
+        suggestions, walk_draft_relative, counter,
+        options=("--without-question-4",),
+    )
+    report_text = suggestions.read_text(encoding="utf-8") if suggestions.is_file() else ""
+    question_4_part = report_text.partition(question_4_heading)[2]
+    check("with --without-question-4, no Question 4 cell is started, and the read "
+          "delivers Questions 1 to 3, exit 0, its stdout the report's path",
+          result.returncode == 0 and result.stdout.strip() == str(suggestions)
+          and launches_counted(question_4_counter_path(counter)) == 0
+          and "STUB FAST READ: questions 1 to 3" in report_text
+          and "asking Question 4" not in result.stderr,
+          f"exit {result.returncode}; question 4 launches="
+          f"{launches_counted(question_4_counter_path(counter))}; stderr={result.stderr!r}")
+    check("with --without-question-4, the Question 4 section says only that Question 4 "
+          "was not asked because of the option, before the sentence coverage",
+          question_4_part.lstrip("\n").startswith(
+              "Question 4 was not asked: this fast read was run with --without-question-4.\n")
+          and QUESTION_4_STUB_ANSWER.strip() not in report_text
+          and "Question 4 was not answered" not in report_text
+          and coverage_heading in question_4_part,
+          repr(question_4_part[:300]))
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_stderr": "stub agy: the gemini cause\n"}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"fail_stderr": "stub claude: the sonnet cause\n"},
+        options=("--without-question-4",),
+    )
+    check("with --without-question-4, a read whose Gemini cell and Sonnet backup both "
+          "fail prints its FAILED line and exits 1, with no traceback and no Question 4 "
+          "abandoned line",
+          result.returncode == 1 and result.stdout.startswith("FAILED")
+          and "Traceback" not in result.stderr
+          and "Question 4 was abandoned" not in result.stderr,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr[-1500:]!r}")
 
     repository = build_scratch_repository(scratch)
     suggestions = repository / "docs" / "walk" / "a-walk-item-cold-read-fast-read.md"
@@ -2694,7 +2738,7 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
     argv_before = sys.argv
 
     def read_from_mac(target, ssh_mode="", remote_exit=0, remote_stdout=None,
-                      ssh_program=stand_in_ssh, session_id=None,
+                      ssh_program=stand_in_ssh, session_id=None, options=(),
                       timeout_seconds=attributes_before["COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS"]):
         """main() on `target` as the Mac runs it: (exit, stdout, stderr)."""
         for stale in (ssh_arguments_file, remote_record):
@@ -2715,7 +2759,7 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
             os.environ.pop(AGENT_SESSION_ID_VARIABLE, None)
         else:
             os.environ[AGENT_SESSION_ID_VARIABLE] = session_id
-        sys.argv = ["cold-read-fast-read.py", "--target", str(target)]
+        sys.argv = ["cold-read-fast-read.py", "--target", str(target), *options]
         stdout, stderr = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             exit_code = warning_module.main()
@@ -2754,6 +2798,14 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
         check("ned-box paths on stderr are relayed in Mac mount form, a log-store citation as it is",
               f"read {mac_draft}" in stderr and log_store_citation in stderr
               and f"read {ned_box_draft}" not in stderr, repr(stderr))
+
+        exit_code, stdout, stderr = read_from_mac(mac_draft, options=("--without-question-4",))
+        remote = (json.loads(remote_record.read_text(encoding="utf-8"))
+                  if remote_record.exists() else {})
+        check("from the Mac, --without-question-4 is passed on to the read on ned-box",
+              exit_code == 0
+              and remote.get("argv") == ["--target", str(ned_box_draft), "--without-question-4"],
+              repr(remote))
 
         exit_code, stdout, stderr = read_from_mac(mac_draft)
         remote = (json.loads(remote_record.read_text(encoding="utf-8"))

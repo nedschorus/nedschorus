@@ -62,11 +62,13 @@ failures = []
 # Behaves as cold-read-fast-read.py does on the records route: writes a
 # cold-read-record with cold-read-fast-read.md and target/, prints the report's path.
 STAND_IN = r'''
-import os, signal, sys, time
+import json, os, signal, sys, time
 from pathlib import Path
 target = Path(sys.argv[sys.argv.index("--target") + 1])
 with open(os.environ["STAND_IN_CALLS"], "a") as calls:
     calls.write(target.read_text())
+with open(os.environ["STAND_IN_ARGUMENTS"], "a") as arguments:
+    arguments.write(json.dumps({"arguments": sys.argv[1:], "text": target.read_text()}) + "\n")
 mode = os.environ.get("STAND_IN_MODE", "")
 if mode == "slow":
     time.sleep(3)  # A read ahead still running when the item it reads comes up.
@@ -233,6 +235,7 @@ class Case:
         self.counts_log = self.root / "counts.tsv"
         self.calls = self.root / "stand-in-calls.txt"
         self.calls.write_text("")
+        self.fast_read_arguments = self.root / "stand-in-arguments.jsonl"
         self.stand_in = self.root / "cold-read-fast-read-stand-in.py"
         self.stand_in.write_text(STAND_IN)
         self.temporary_directory = self.root / temporary_directory_name
@@ -288,6 +291,7 @@ class Case:
                                                        "--user-reply-as-typed"} & set(flags):
             flags = (*flags, "--user-reply-as-typed", reply)
         environment = dict(environment or os.environ, STAND_IN_MODE=mode, STAND_IN_CALLS=str(self.calls),
+                           STAND_IN_ARGUMENTS=str(self.fast_read_arguments),
                            STAND_IN_RECORDS=str(self.records), TMPDIR=str(self.temporary_directory),
                            GH_STAND_IN_CALLS=str(self.gh_calls))
 
@@ -4118,7 +4122,7 @@ def test_a_git_grep_that_fails_is_reported_and_writes_nothing():
     (stub / "git").chmod(0o755)
     before = case.minutes.read_text()
     environment = dict(os.environ, PATH=f"{stub}:{os.environ['PATH']}", STAND_IN_CALLS=str(case.calls),
-                       STAND_IN_RECORDS=str(case.records))
+                       STAND_IN_ARGUMENTS=str(case.fast_read_arguments), STAND_IN_RECORDS=str(case.records))
     result = subprocess.run([sys.executable, str(PROGRAM), "check", "--not-asked", "3", "--cwd", str(case.checkout),
                              "--cold-read-records", str(case.records), "--fast-read-program", str(case.stand_in),
                              "--counts-log", str(case.counts_log)],
@@ -4677,6 +4681,31 @@ def next_item_waiting(case, answered, waiting):
     """Record answered as decided and waiting as next, as a check and close would."""
     with open(case.minutes, "a") as minutes:
         minutes.write(approved_line(answered) + f"#next_to_present {waiting}\n")
+
+
+def fast_reads_run(case):
+    """[(arguments, text)] of each cold-read-fast-read the stand-in ran, in order."""
+    if not case.fast_read_arguments.exists():
+        return []
+    return [(read["arguments"], read["text"]) for read in
+            map(json.loads, case.fast_read_arguments.read_text().splitlines())]
+
+
+def test_every_fast_read_is_run_without_question_4():
+    case = Case()
+    case.run("check")
+    added = fast_reads_run(case)
+    check("each fast read of a text an answer adds is run with --without-question-4",
+          len(added) == 2 and all("--without-question-4" in arguments for arguments, _ in added), repr(added))
+    case = item_read_case()
+    answered_and_closed(case)
+    case.run(WAITING_ITEM_READ)
+    reads = fast_reads_run(case)
+    read_ahead = [arguments for arguments, text in reads if "## Item 4 of 5: four" in text]
+    waiting = [arguments for arguments, text in reads if "## Item 3 of 5: three" in text]
+    check("the read ahead and the read of a waiting item are each run with --without-question-4",
+          len(read_ahead) == 1 and len(waiting) == 1
+          and all("--without-question-4" in arguments for arguments in read_ahead + waiting), repr(reads))
 
 
 def test_close_reads_the_item_after_the_next_one_ahead_and_the_read_step_uses_it():
