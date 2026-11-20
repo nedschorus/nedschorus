@@ -61,7 +61,7 @@ class ScratchMachine:
 
     def __init__(self, root, hook_directory=HOOK_DIRECTORY):
         self.home = root / "home"
-        self.clone = self.home / "Projects" / "nedschorus"
+        self.clone = self.home / "Projects" / "nedsnodes"
         self.agents = self.home / "agents"
         handoffs = self.home / ".claude" / "handoffs"
         handoffs.mkdir(parents=True)
@@ -69,7 +69,7 @@ class ScratchMachine:
         (handoffs / "bad seat-handoff.md").write_text("handoff\n")
         (self.agents / "bad seat").mkdir(parents=True)
         self.environment = {key: value for key, value in os.environ.items()
-                            if not key.startswith(("GIT_", "CLAUDE_", "NEDSCHORUS_"))}
+                            if not key.startswith(("GIT_", "CLAUDE_", "NEDSNODES_"))}
         self.environment.update(HOME=str(self.home), GIT_CONFIG_NOSYSTEM="1",
                                 GIT_CONFIG_GLOBAL=str(root / "empty-gitconfig"))
         (root / "empty-gitconfig").write_text("")

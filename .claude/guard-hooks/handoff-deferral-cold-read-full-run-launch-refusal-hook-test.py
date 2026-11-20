@@ -37,7 +37,7 @@ def check(case_name, condition, detail=""):
 
 
 SESSION_ID = "grid-refusal-hook-test-session"
-GRID_COMMAND = "python3 nc-systems/cold-read/cold-read-grid.py --target docs/x.md > /tmp/grid.log 2>&1"
+GRID_COMMAND = "python3 nn-systems/cold-read/cold-read-grid.py --target docs/x.md > /tmp/grid.log 2>&1"
 
 
 def run_main(command, handoff_directory, session_id=SESSION_ID, cwd="/work/checkout"):
@@ -64,37 +64,37 @@ def refused(output):
 def command_cases():
     runs = [
         GRID_COMMAND,
-        "nc-systems/cold-read/cold-read-grid.py --target docs/x.md",
-        "cd /work && python3 -u nc-systems/cold-read/cold-read-grid.py --target a.md",
-        "timeout 3600 python3 /home/u/nc-systems/cold-read/cold-read-grid.py --target a.md",
-        "env FOO=1 nohup python3.12 -X dev nc-systems/cold-read/cold-read-grid.py --target a.md &",
-        "bash -c 'python3 nc-systems/cold-read/cold-read-grid.py --target a.md'",
-        "ssh nedlern@ned-box 'cd ~/p && python3 nc-systems/cold-read/cold-read-grid.py --target a.md'",
-        "python3 -W ignore -X dev -B nc-systems/cold-read/cold-read-grid.py --target a.md",
+        "nn-systems/cold-read/cold-read-grid.py --target docs/x.md",
+        "cd /work && python3 -u nn-systems/cold-read/cold-read-grid.py --target a.md",
+        "timeout 3600 python3 /home/u/nn-systems/cold-read/cold-read-grid.py --target a.md",
+        "env FOO=1 nohup python3.12 -X dev nn-systems/cold-read/cold-read-grid.py --target a.md &",
+        "bash -c 'python3 nn-systems/cold-read/cold-read-grid.py --target a.md'",
+        "ssh nedlern@ned-box 'cd ~/p && python3 nn-systems/cold-read/cold-read-grid.py --target a.md'",
+        "python3 -W ignore -X dev -B nn-systems/cold-read/cold-read-grid.py --target a.md",
     ]
     for command in runs:
         check(f"a command that runs the grid is a run: {command}",
               hook.command_runs_cold_read_grid_script(command))
     not_runs = [
-        "sed -n 1,50p nc-systems/cold-read/cold-read-grid.py",
-        "git log -- nc-systems/cold-read/cold-read-grid.py",
-        "grep -n 'python3 nc-systems/cold-read/cold-read-grid.py' docs/*.md",
-        "python3 nc-systems/cold-read/cold-read-grid.py --help",
-        "python3 -m py_compile nc-systems/cold-read/cold-read-grid.py",
-        "python3 -c 'print(1)' nc-systems/cold-read/cold-read-grid.py",
-        "python3 - nc-systems/cold-read/cold-read-grid.py <<'EOF'\nimport ast, sys\nprint(ast.get_docstring(ast.parse(open(sys.argv[1]).read())))\nEOF",
-        "python3 -I - nc-systems/cold-read/cold-read-grid.py < read-docstring.py",
-        "python3 nc-systems/cold-read/cold-read-grid.py --target a.md -h",
-        "nc-systems/cold-read/cold-read-grid.py -h",
+        "sed -n 1,50p nn-systems/cold-read/cold-read-grid.py",
+        "git log -- nn-systems/cold-read/cold-read-grid.py",
+        "grep -n 'python3 nn-systems/cold-read/cold-read-grid.py' docs/*.md",
+        "python3 nn-systems/cold-read/cold-read-grid.py --help",
+        "python3 -m py_compile nn-systems/cold-read/cold-read-grid.py",
+        "python3 -c 'print(1)' nn-systems/cold-read/cold-read-grid.py",
+        "python3 - nn-systems/cold-read/cold-read-grid.py <<'EOF'\nimport ast, sys\nprint(ast.get_docstring(ast.parse(open(sys.argv[1]).read())))\nEOF",
+        "python3 -I - nn-systems/cold-read/cold-read-grid.py < read-docstring.py",
+        "python3 nn-systems/cold-read/cold-read-grid.py --target a.md -h",
+        "nn-systems/cold-read/cold-read-grid.py -h",
         "python3 -u",
-        "python3 -W nc-systems/cold-read/cold-read-grid.py other.py",
+        "python3 -W nn-systems/cold-read/cold-read-grid.py other.py",
         "FOO=1",
         # A wrapper with no program after it runs nothing.
         "env",
         "timeout 3600",
-        "bash -c 'echo nc-systems/cold-read/cold-read-grid.py'",
-        "python3 nc-systems/cold-read/cold-read-fast-read.py --target a.md",
-        "cat <<'EOF'\npython3 nc-systems/cold-read/cold-read-grid.py --target a.md\nEOF",
+        "bash -c 'echo nn-systems/cold-read/cold-read-grid.py'",
+        "python3 nn-systems/cold-read/cold-read-fast-read.py --target a.md",
+        "cat <<'EOF'\npython3 nn-systems/cold-read/cold-read-grid.py --target a.md\nEOF",
     ]
     for command in not_runs:
         check(f"a command that does not run the grid is not a run: {command!r}",
@@ -121,7 +121,7 @@ def hook_cases(workspace):
           and saved[0]["working_directory"] == "/work/checkout" and saved[0].get("refused_at"),
           saved)
 
-    code, output = run_main("sed -n 1,9p nc-systems/cold-read/cold-read-grid.py", handoffs)
+    code, output = run_main("sed -n 1,9p nn-systems/cold-read/cold-read-grid.py", handoffs)
     check("during a handoff-deferral a command that only reads the grid runs",
           code == 0 and output is None, output)
     code, output = run_main("git status", handoffs)

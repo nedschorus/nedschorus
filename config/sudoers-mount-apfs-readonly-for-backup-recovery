@@ -30,6 +30,6 @@
 #
 # REMOVE:  sudo rm /etc/sudoers.d/nedschorus-mount-apfs-readonly
 
-Cmnd_Alias NEDSCHORUS_BACKUP_READONLY_MOUNT = /sbin/mount_apfs -o ro -s * /dev/* /private/tmp/nedschorus-backup-readonly-mount
+Cmnd_Alias NEDSNODES_BACKUP_READONLY_MOUNT = /sbin/mount_apfs -o ro -s * /dev/* /private/tmp/nedschorus-backup-readonly-mount
 
-el ALL=(root) NOPASSWD: NEDSCHORUS_BACKUP_READONLY_MOUNT
+el ALL=(root) NOPASSWD: NEDSNODES_BACKUP_READONLY_MOUNT

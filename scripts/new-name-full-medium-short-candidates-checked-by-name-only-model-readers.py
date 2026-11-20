@@ -18,7 +18,7 @@ in its own empty temporary folder, given the name alone: Claude Sonnet 5.5 and
 Opus 5.5 (`claude -p` behind the shared headless prefix, so no connectors, in
 dontAsk mode, with no tools and no settings files, so no CLAUDE.md), Gemini
 gemini-3.8-flash-low and gemini-4-argon-medium (through
-nc-systems/general-tools/agy-print-prompt-run-in-empty-home-sandbox.py), and
+nn-systems/general-tools/agy-print-prompt-run-in-empty-home-sandbox.py), and
 gpt-6.1-terra and gpt-6.1-sol (`codex exec`, read-only, ephemeral). Each
 reader answers what the thing does, what else the name could mean, and which
 word it was least sure of. A reader that exits nonzero, prints nothing, or
@@ -83,16 +83,16 @@ import time
 
 PROGRAM = "new-name-full-medium-short-candidates-checked-by-name-only-model-readers"
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
-AGY_RUNNER = REPO_ROOT / "nc-systems" / "general-tools" / "agy-print-prompt-run-in-empty-home-sandbox.py"
+AGY_RUNNER = REPO_ROOT / "nn-systems" / "general-tools" / "agy-print-prompt-run-in-empty-home-sandbox.py"
 _command_line_prefix_spec = importlib.util.spec_from_file_location(
     "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
-    REPO_ROOT / "nc-systems" / "general-tools"
+    REPO_ROOT / "nn-systems" / "general-tools"
     / "claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
 command_line_prefix = importlib.util.module_from_spec(_command_line_prefix_spec)
 _command_line_prefix_spec.loader.exec_module(command_line_prefix)
 LOG_STORE_HOSTNAME = "ned-box"
 LOG_STORE_SSH_HOST = "nedlern@ned-box"
-READER_RESULTS_LOG = "/home/nedlern/nedschorus-logs/name-checks/new-name-name-only-model-reader-results.jsonl"
+READER_RESULTS_LOG = "/home/nedlern/nedsnodes-logs/name-checks/new-name-name-only-model-reader-results.jsonl"
 READER_TIMEOUT_SECONDS = 300
 CANDIDATE_LENGTHS = ("full", "medium", "short")
 MAX_FAILED_READERS_FOR_A_PASS = 0

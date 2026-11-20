@@ -1,0 +1,2459 @@
+#!/usr/bin/env python3
+"""Tests for work-snapshots: the hook, the shared module, the cleaner's step,
+and the handoff-supervisor's first-prompt list.
+
+Design: nn-systems/handoff/handoff-uncommitted-work-snapshots-across-crashes-design.md;
+each section below is one bullet of its "How it will be tested".
+
+Every case works in a scratch clone with the programs copied into it, so the
+hook's own clone, and every ref written, is the scratch clone's. Git reads a
+scratch global config and no system config.
+
+The hook finds its owner by walking up its parent processes to one named
+claude. The cases run the hook's main() in this process, with that walk
+reading a fake /proc, so no binary named claude is needed; see
+FakeProcessTreeClaude. A real claude runs the hook once a week on each machine
+in nn-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py.
+No case sends a signal.
+
+Run: python3 nn-systems/handoff/tests/uncommitted-work-snapshots-test.py
+"""
+
+import atexit
+import contextlib
+import importlib.util
+import io
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import types
+import threading
+import time
+from pathlib import Path
+
+SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
+REPOSITORY_ROOT = SYSTEM_DIRECTORY.parent.parent
+
+_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    REPOSITORY_ROOT / "scripts" / "git-redirecting-environment-removal-test-fixture.py")
+_fixture = importlib.util.module_from_spec(_fixture_spec)
+_fixture_spec.loader.exec_module(_fixture)
+_fixture.remove_git_redirecting_environment_variables_from_this_process()
+
+MODULE_RELATIVE = Path("nn-systems/handoff/uncommitted-work-snapshots.py")
+HOOK_RELATIVE = Path("scripts/uncommitted-work-snapshot-hook.py")
+POST_CHECKOUT_HOOK_RELATIVE = Path("scripts/git-client-side-hooks/post-checkout")
+OWNER_FILE_MODULE_RELATIVE = Path("scripts/worktree-owner-file-read-and-write.py")
+CLEANER_RELATIVE = Path("scripts/clean-worktrees.py")
+GIT_OUTPUT_MODULE_RELATIVE = Path(
+    "nn-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
+TASK_WRITE_MODULE_RELATIVE = Path(
+    "nn-systems/general-tools/agent-seat-task-list-new-pending-task-write-common.py")
+TASK_FILE_REWRITE_MODULE_RELATIVE = Path(
+    "nn-systems/general-tools/agent-seat-task-list-task-file-rewrite-common.py")
+NEXT_STEP_LINES_MODULE_RELATIVE = Path(
+    "nn-systems/general-tools/failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
+LOG_STORE_WRITER_MODULE_RELATIVE = Path(
+    "nn-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py")
+NED_BOX_HOME_CONSTANTS_MODULE_RELATIVE = Path(
+    "nn-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+# The cleaner reads the review checkouts directory from the merge-lane helpers' common module,
+# which loads the test runner, which loads the git-redirecting variables module and the attendance check.
+MERGE_LANE_COMMON_MODULE_RELATIVE = Path(
+    "scripts/merge-lane-pull-request-helpers-common-options-paths-and-token.py")
+TEST_RUNNER_RELATIVE = Path("scripts/run-all-test-suites.py")
+GIT_REDIRECTING_REMOVAL_MODULE_RELATIVE = Path(
+    "nn-systems/general-tools/git-redirecting-environment-variables-removal-common.py")
+ATTENDANCE_CHECK_MODULE_RELATIVE = Path(
+    "nn-systems/general-tools/agent-session-unattended-by-user-check-common.py")
+
+# The cleaner's --remove run below would otherwise append to the real log-store's log of removals.
+_removals_log_directory = tempfile.mkdtemp(prefix="uncommitted-work-snapshots-test-removals-log-")
+atexit.register(shutil.rmtree, _removals_log_directory, ignore_errors=True)
+os.environ["CLEAN_WORKTREES_REMOVED_WORKTREES_AND_DELETED_BRANCHES_LOG_FILE_OVERRIDE"] = str(
+    Path(_removals_log_directory) / "log.txt")
+
+
+def load(path, name):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+snapshots = load(REPOSITORY_ROOT / MODULE_RELATIVE, "uncommitted_work_snapshots")
+first_prompt_list = load(
+    SYSTEM_DIRECTORY / "agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py",
+    "agent_seat_worktrees_and_branches_with_no_pull_request_first_prompt_list")
+
+failures = []
+SKIPPED = []
+
+
+def check(condition, name, detail=""):
+    if condition:
+        print(f"ok   {name}")
+    else:
+        print(f"FAIL {name}" + (f": {detail}" if detail else ""))
+        failures.append(name)
+
+
+def skip(name, reason):
+    print(f"SKIP {name}: {reason}")
+    SKIPPED.append(name)
+
+
+def git(directory, *arguments, check_exit=True, input_text=None, environment=None):
+    result = subprocess.run(["git", "-C", str(directory), *arguments], capture_output=True,
+                            text=True, input=input_text, env=environment)
+    if check_exit and result.returncode != 0:
+        raise RuntimeError(f"git {' '.join(arguments)} in {directory}: {result.stderr}")
+    return result.stdout.strip()
+
+
+SCRATCH = Path(tempfile.mkdtemp(prefix="uncommitted-work-snapshots-test-"))
+HOME = SCRATCH / "home"
+HOME.mkdir()
+GLOBAL_EXCLUDES = SCRATCH / "global-excludes"
+GLOBAL_EXCLUDES.write_text("*.globally-ignored\n")
+GLOBAL_CONFIG = SCRATCH / "gitconfig"
+GLOBAL_CONFIG.write_text(
+    "[user]\n\tname = work-snapshot test\n\temail = test@nedschorus.invalid\n"
+    f"[core]\n\texcludesFile = {GLOBAL_EXCLUDES}\n"
+    "[init]\n\tdefaultBranch = main\n[advice]\n\tdetachedHead = false\n")
+os.environ.update(HOME=str(HOME), GIT_CONFIG_GLOBAL=str(GLOBAL_CONFIG), GIT_CONFIG_NOSYSTEM="1")
+os.environ.pop("GIT_AUTHOR_NAME", None)
+
+def dead_process_id():
+    """The id of a process that has exited and been reaped, so no process has it."""
+    gone = subprocess.Popen([sys.executable, "-c", "pass"])
+    gone.wait()
+    try:
+        os.kill(gone.pid, 0)
+    except ProcessLookupError:
+        return gone.pid
+    raise RuntimeError(f"process id {gone.pid} was reused at once; run the suite again")
+
+
+def dead_owner_key(linux_process_id):
+    """An owner key of the running platform's form naming no live process."""
+    if sys.platform.startswith("linux"):
+        # A boot id that is not this boot's.
+        return "0" * 32 + f"-{linux_process_id}-1"
+    return f"{dead_process_id()}-1"
+
+
+clone_count = [0]
+
+
+def new_clone():
+    """A scratch clone holding the programs, with origin/main, and its main checkout."""
+    clone_count[0] += 1
+    base = SCRATCH / f"clone-{clone_count[0]}"
+    origin = base / "origin.git"
+    git(SCRATCH, "init", "-q", "--bare", str(origin))
+    main = base / "main"
+    git(SCRATCH, "clone", "-q", str(origin), str(main))
+    for relative in (MODULE_RELATIVE, HOOK_RELATIVE, CLEANER_RELATIVE, OWNER_FILE_MODULE_RELATIVE,
+                     GIT_OUTPUT_MODULE_RELATIVE, TASK_WRITE_MODULE_RELATIVE, TASK_FILE_REWRITE_MODULE_RELATIVE,
+                     NEXT_STEP_LINES_MODULE_RELATIVE,
+                     LOG_STORE_WRITER_MODULE_RELATIVE, NED_BOX_HOME_CONSTANTS_MODULE_RELATIVE,
+                     MERGE_LANE_COMMON_MODULE_RELATIVE, TEST_RUNNER_RELATIVE,
+                     GIT_REDIRECTING_REMOVAL_MODULE_RELATIVE, ATTENDANCE_CHECK_MODULE_RELATIVE):
+        (main / relative).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPOSITORY_ROOT / relative, main / relative)
+    (main / "tracked.txt").write_text("one\n")
+    (main / "doomed.txt").write_text("to be deleted\n")
+    (main / ".gitignore").write_text("*.ignored\n.claude/worktrees/\n")
+    git(main, "add", "-A")
+    git(main, "commit", "-q", "-m", "base")
+    git(main, "push", "-q", "origin", "main")
+    return main
+
+
+def add_worktree(main, path, branch):
+    git(main, "worktree", "add", "-q", "-b", branch, str(path), "origin/main")
+    return Path(path).resolve()
+
+
+# Above the largest process id Linux or macOS hands out.
+FAKE_HOOK_PARENT_PROCESS_ID = 2_000_000_001
+FAKE_HOOK_PROCESS_ID = 2_000_000_002
+
+
+class FakeProcessTreeClaude:
+    """Runs the clone's hook through its main(), in this process, as a session's claude would.
+
+    The hook finds its owner by walking up from its parent process to one
+    named claude. Here that walk reads a fake /proc in which this process's
+    parent leads, through this process, to a process named claude whose id is
+    a real helper process's, so the owner key and the owner's liveness are the
+    real platform's. The walk is the module's own function, given the fake
+    /proc. A real claude runs the hook once a week in
+    nn-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py.
+    """
+
+    started = 0
+
+    def __init__(self, main, environment=None):
+        FakeProcessTreeClaude.started += 1
+        self.environment = environment or {}
+        self.last_exit = None
+        # Lives until its stdin closes, so ending it sends no signal.
+        self.helper = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()"],
+                                       stdin=subprocess.PIPE)
+        self.proc_root = SCRATCH / f"fake-proc-session-{FakeProcessTreeClaude.started}"
+        # The hook starts its walk at os.getppid(), which is 1 inside a test
+        # sandbox with its own process-ID space, where the walk would stop at
+        # once. So the fake tree stands that parent and this process in with
+        # ids above any real one.
+        fake_proc(self.proc_root, "0" * 32, {
+            FAKE_HOOK_PARENT_PROCESS_ID: ("python3", FAKE_HOOK_PROCESS_ID, 1),
+            FAKE_HOOK_PROCESS_ID: ("bash", self.helper.pid, 1),
+            self.helper.pid: ("claude", 1, 1)})
+        self.hook = load(main / HOOK_RELATIVE, f"hook_of_session_{FakeProcessTreeClaude.started}")
+        module = self.hook.load_snapshots_module()
+        real_walk = module.claude_owner_process_id
+        module.claude_owner_process_id = lambda start: real_walk(
+            FAKE_HOOK_PARENT_PROCESS_ID if start == os.getppid() else start,
+            str(self.proc_root), "linux")
+        self.hook.load_snapshots_module = lambda: module
+        self.owner_key = snapshots.owner_key_of_process(self.helper.pid)
+
+    def run_hook(self, payload):
+        saved = {name: os.environ.get(name) for name in self.environment}
+        os.environ.update(self.environment)
+        output = io.StringIO()
+        real_stdin, real_stdout = sys.stdin, sys.stdout
+        sys.stdin, sys.stdout = io.StringIO(json.dumps(payload)), output
+        try:
+            self.last_exit = self.hook.main()
+        finally:
+            sys.stdin, sys.stdout = real_stdin, real_stdout
+            for name, value in saved.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+        text = output.getvalue().strip()
+        return json.loads(text)["hookSpecificOutput"]["additionalContext"] if text else None
+
+    def end(self):
+        self.helper.stdin.close()
+        self.helper.wait(timeout=30)
+
+
+def refs_of(main, owner_key=None):
+    prefix = snapshots.WORK_SNAPSHOT_REF_PREFIX + (f"{owner_key}/" if owner_key else "")
+    return git(main, "for-each-ref", "--format=%(refname)", prefix).split()
+
+
+def files_in_snapshot(main, ref):
+    return sorted(git(main, "ls-tree", "-r", "--name-only", ref).split())
+
+
+def bash(cwd):
+    return {"tool_name": "Bash", "cwd": str(cwd), "tool_input": {"command": "true"},
+            "transcript_path": str(SCRATCH / "transcript.jsonl")}
+
+
+def edit(path):
+    return {"tool_name": "Edit", "cwd": str(path.parent),
+            "tool_input": {"file_path": str(path)},
+            "transcript_path": str(SCRATCH / "transcript.jsonl")}
+
+
+# ---------------------------------------------------------------- the hook
+
+
+def test_what_a_work_snapshot_holds():
+    name = "a work-snapshot holds modified, deleted and new files, not ignored ones"
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "fork", "fork-branch")
+    (worktree / "tracked.txt").write_text("two\n")
+    (worktree / "doomed.txt").unlink()
+    (worktree / "new.txt").write_text("new\n")
+    (worktree / "a.ignored").write_text("x\n")
+    (worktree / "b.globally-ignored").write_text("x\n")
+    exclude = Path(git(worktree, "rev-parse", "--path-format=absolute", "--git-path",
+                       "info/exclude"))
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    exclude.write_text("c.locally-excluded\n")
+    (worktree / "c.locally-excluded").write_text("x\n")
+    index = Path(git(worktree, "rev-parse", "--path-format=absolute", "--git-path", "index"))
+    index_before = index.read_bytes()
+    head_before = git(worktree, "rev-parse", "HEAD")
+    claude = FakeProcessTreeClaude(main, {"GIT_AUTHOR_NAME": "seat-one"})
+    message = claude.run_hook(edit(worktree / "tracked.txt"))
+    check(message is None, "the hook says nothing when the work-snapshot is written", message)
+    refs = refs_of(main, claude.owner_key)
+    check(len(refs) == 1, "one work-snapshot ref for the worktree", refs)
+    if refs:
+        held = files_in_snapshot(main, refs[0])
+        check("new.txt" in held and "doomed.txt" not in held
+              and git(main, "show", f"{refs[0]}:tracked.txt") == "two",
+              name, held)
+        check(not any(path.endswith(("ignored", "excluded")) for path in held),
+              "ignored, locally excluded and globally excluded files are not held", held)
+        trailers = snapshots.all_work_snapshots(main)[0]
+        check(trailers["agent_seat"] == "seat-one" and trailers["branch"] == "fork-branch"
+              and trailers["worktree"] == str(worktree)
+              and trailers["transcript"] == str(SCRATCH / "transcript.jsonl"),
+              "the trailers name the agent-seat, branch, worktree and transcript", trailers)
+        check(git(main, "rev-parse", f"{refs[0]}^") == head_before,
+              "the work-snapshot's parent is the worktree's HEAD")
+    check(index.read_bytes() == index_before, "the worktree's index is unchanged")
+    check(git(worktree, "rev-parse", "HEAD") == head_before
+          and git(worktree, "symbolic-ref", "--short", "HEAD") == "fork-branch",
+          "the worktree's HEAD and branch are unchanged")
+    claude.end()
+
+
+def test_same_size_edit_in_the_index_second():
+    name = ("a same-size edit made in the second the index was written is held when the "
+            "work-snapshot is built a second later")
+    main = new_clone()
+    for attempt in range(20):
+        worktree = add_worktree(main, main / ".claude" / "worktrees" / f"racy-{attempt}",
+                                f"racy-{attempt}")
+        (worktree / "tracked.txt").write_text("two\n")
+        index = Path(git(worktree, "rev-parse", "--path-format=absolute", "--git-path", "index"))
+        if int(os.stat(worktree / "tracked.txt").st_mtime) == int(os.stat(index).st_mtime):
+            break
+    else:
+        return skip(name, "no edit landed in the index's second in 20 tries")
+    # A copy of the index made in a later second, with a fresh mtime, would make git trust the
+    # entry's stat data, which this same-size, same-second edit leaves unchanged.
+    time.sleep(1.05)
+    snapshots.refresh_work_snapshot(worktree, "3-3", "seat", "")
+    ref = snapshots.work_snapshot_ref("3-3", worktree)
+    check(git(main, "show", f"{ref}:tracked.txt") == "two", name)
+
+
+def test_ref_names():
+    name = "two worktrees with the same directory name get different refs; a space is legal"
+    main = new_clone()
+    first = add_worktree(main, main / ".claude" / "worktrees" / "a" / "same", "a-branch")
+    second = add_worktree(main, main / ".claude" / "worktrees" / "b" / "same", "b-branch")
+    spaced = add_worktree(main, main / ".claude" / "worktrees" / "with space", "spaced")
+    for worktree in (first, second, spaced):
+        (worktree / "tracked.txt").write_text("changed\n")
+    claude = FakeProcessTreeClaude(main)
+    for worktree in (first, second, spaced):
+        message = claude.run_hook(edit(worktree / "tracked.txt"))
+        check(message is None, f"the hook wrote a work-snapshot for {worktree.name!r}", message)
+    refs = refs_of(main, claude.owner_key)
+    check(len(set(refs)) == 3, name, refs)
+    claude.end()
+
+
+def test_bash_commit_deletes_and_other_worktrees_follow():
+    name = "a Bash call that commits everything deletes the ref"
+    main = new_clone()
+    fork = add_worktree(main, main / ".claude" / "worktrees" / "fork", "fork-branch")
+    other = add_worktree(main, main / ".claude" / "worktrees" / "other", "other-branch")
+    claude = FakeProcessTreeClaude(main)
+    (fork / "new.txt").write_text("work\n")
+    claude.run_hook(bash(fork))
+    fork_ref = snapshots.work_snapshot_ref(claude.owner_key, fork)
+    check(fork_ref in refs_of(main), "a Bash call whose cwd is a fork's worktree handles it")
+    (other / "tracked.txt").write_text("first\n")
+    claude.run_hook(edit(other / "tracked.txt"))
+    other_ref = snapshots.work_snapshot_ref(claude.owner_key, other)
+    (other / "tracked.txt").write_text("second\n")
+    claude.run_hook(bash(fork))
+    check(git(main, "show", f"{other_ref}:tracked.txt") == "second",
+          "a Bash call elsewhere refreshes a worktree that already has this owner's "
+          "work-snapshot")
+    git(fork, "add", "-A")
+    git(fork, "commit", "-q", "-m", "work")
+    claude.run_hook(bash(fork))
+    check(fork_ref not in refs_of(main), name, refs_of(main))
+    claude.end()
+
+
+def commit_objects_in(main):
+    return git(main, "cat-file", "--batch-all-objects", "--batch-check=%(objecttype)").split(
+        "\n").count("commit")
+
+
+def test_unchanged_worktree_writes_no_commit():
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "same", "same-branch")
+    claude = FakeProcessTreeClaude(main)
+    ref = snapshots.work_snapshot_ref(claude.owner_key, worktree)
+    (worktree / "tracked.txt").write_text("draft\n")
+    (worktree / "new.txt").write_text("new\n")
+    claude.run_hook(edit(worktree / "tracked.txt"))
+    first = git(main, "rev-parse", ref)
+    commits = commit_objects_in(main)
+    # Each run a second later, as on a real machine, where an unchanged worktree would
+    # otherwise give a commit with a new date and so a new object.
+    for seconds, payload in enumerate((bash(worktree), edit(worktree / "tracked.txt"),
+                                       bash(worktree)), start=1):
+        claude.environment = {"GIT_AUTHOR_DATE": f"@{2_000_000_000 + seconds} +0000",
+                              "GIT_COMMITTER_DATE": f"@{2_000_000_000 + seconds} +0000"}
+        message = claude.run_hook(payload)
+        check(message is None, "a hook run on an unchanged worktree reports nothing", message)
+    check(git(main, "rev-parse", ref) == first and commit_objects_in(main) == commits,
+          "hook runs on an unchanged worktree leave the ref as it was and write no commit",
+          (first, git(main, "rev-parse", ref), commits, commit_objects_in(main)))
+    claude.environment = {}
+    check(snapshots.refresh_work_snapshot(
+        worktree, claude.owner_key,
+        os.environ.get(snapshots.AGENT_SEAT_ENVIRONMENT_VARIABLE, ""),
+        str(SCRATCH / "transcript.jsonl")) == "unchanged",
+          "refresh_work_snapshot says unchanged when it wrote nothing")
+    git(worktree, "add", "new.txt")
+    git(worktree, "commit", "-q", "-m", "part")
+    claude.run_hook(bash(worktree))
+    head = git(worktree, "rev-parse", "HEAD")
+    check(git(main, "rev-parse", f"{ref}^") == head
+          and files_in_snapshot(main, ref) == files_in_snapshot(main, first),
+          "a commit of part of the work, which leaves the tree the same, moves the "
+          "work-snapshot's parent to the new HEAD")
+    after_commit = git(main, "rev-parse", ref)
+    claude.run_hook(dict(bash(worktree), transcript_path=str(SCRATCH / "other.jsonl")))
+    check(git(main, "rev-parse", ref) != after_commit,
+          "the same tree and parent with another transcript writes a new work-snapshot")
+    (worktree / "tracked.txt").write_text("more\n")
+    claude.run_hook(edit(worktree / "tracked.txt"))
+    check(git(main, "show", f"{ref}:tracked.txt") == "more",
+          "an edit after unchanged runs is held")
+    git(worktree, "checkout", "-q", "--", "tracked.txt")
+    claude.run_hook(bash(worktree))
+    check(ref not in refs_of(main), "once nothing is uncommitted the ref is deleted",
+          refs_of(main))
+    claude.end()
+
+
+def test_overlapping_runs_end_on_the_final_state():
+    name = "overlapping runs leave the ref on a work-snapshot of the final state"
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "fork", "fork-branch")
+    (worktree / "tracked.txt").write_text("first\n")
+    owner = "1-1"
+    ref = snapshots.work_snapshot_ref(owner, worktree)
+    real_build = snapshots.build_work_snapshot_commit
+    interleaved = []
+
+    def build_while_another_run_lands(*arguments, **keywords):
+        commit = real_build(*arguments, **keywords)
+        if not interleaved:
+            interleaved.append(True)
+            (worktree / "tracked.txt").write_text("final\n")
+            other = real_build(*arguments)
+            git(main, "update-ref", ref, other)
+        return commit
+
+    snapshots.build_work_snapshot_commit = build_while_another_run_lands
+    try:
+        snapshots.refresh_work_snapshot(worktree, owner, "seat", "")
+    finally:
+        snapshots.build_work_snapshot_commit = real_build
+    check(git(main, "show", f"{ref}:tracked.txt") == "final", name)
+    threads = [threading.Thread(target=snapshots.refresh_work_snapshot,
+                                args=(worktree, owner, "seat", "")) for _ in range(2)]
+    (worktree / "tracked.txt").write_text("last\n")
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    check(git(main, "show", f"{ref}:tracked.txt") == "last",
+          "two concurrent runs end on the worktree's state")
+
+
+def test_unchanged_run_overlapped_by_a_run_that_moves_the_ref_ends_on_the_worktree_state():
+    name = ("a run that finds its state already held, while an overlapping run moves the ref "
+            "to another state, leaves the ref on the worktree's state")
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "fork", "fork-branch")
+    (worktree / "tracked.txt").write_text("state A\n")
+    owner = "3-3"
+    ref = snapshots.work_snapshot_ref(owner, worktree)
+    snapshots.refresh_work_snapshot(worktree, owner, "seat", "")
+    real_build = snapshots.build_work_snapshot_commit
+    interleaved = []
+
+    def build_while_another_run_lands_state_b(*arguments, **keywords):
+        commit = real_build(*arguments, **keywords)
+        if not interleaved:
+            interleaved.append(True)
+            (worktree / "tracked.txt").write_text("state B\n")
+            other = real_build(*arguments)
+            git(main, "update-ref", ref, other)
+            (worktree / "tracked.txt").write_text("state A\n")
+        return commit
+
+    snapshots.build_work_snapshot_commit = build_while_another_run_lands_state_b
+    try:
+        outcome = snapshots.refresh_work_snapshot(worktree, owner, "seat", "")
+    finally:
+        snapshots.build_work_snapshot_commit = real_build
+    check(interleaved and git(main, "show", f"{ref}:tracked.txt") == "state A", name,
+          (outcome, git(main, "show", f"{ref}:tracked.txt")))
+
+
+def test_operation_trailer():
+    name = "during a merge with conflicts the operation trailer is merge"
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "fork", "fork-branch")
+    (worktree / "tracked.txt").write_text("fork side\n")
+    git(worktree, "commit", "-q", "-am", "fork side")
+    git(main, "checkout", "-q", "-b", "other")
+    (main / "tracked.txt").write_text("other side\n")
+    git(main, "commit", "-q", "-am", "other side")
+    git(worktree, "merge", "-q", "other", check_exit=False)
+    snapshots.refresh_work_snapshot(worktree, "2-2", "seat", "")
+    found = [s for s in snapshots.all_work_snapshots(main) if s["owner_key"] == "2-2"]
+    check(found and found[0]["operation"] == "merge", name, found)
+
+
+def test_each_operation_is_read_from_its_own_marker():
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "markers", "markers-branch")
+    git_directory = Path(git(worktree, "rev-parse", "--path-format=absolute", "--git-dir"))
+    check(snapshots.operation_in_progress(worktree) is None, "with no marker no operation is under way")
+    for marker, is_directory, expected in (("MERGE_HEAD", False, "merge"),
+                                           ("CHERRY_PICK_HEAD", False, "cherry-pick"),
+                                           ("REVERT_HEAD", False, "revert"),
+                                           ("rebase-merge", True, "rebase"),
+                                           ("rebase-apply", True, "rebase")):
+        path = git_directory / marker
+        path.mkdir() if is_directory else path.write_text("0" * 40 + "\n")
+        found = snapshots.operation_in_progress(worktree)
+        check(found == expected, f"the {marker} marker reads as {expected}", found)
+        if marker == "rebase-apply":
+            (path / "applying").write_text("")
+            found = snapshots.operation_in_progress(worktree)
+            check(found == "am", "rebase-apply holding applying reads as am", found)
+        shutil.rmtree(path) if is_directory else path.unlink()
+
+def test_git_path_line_count_other_than_five_is_reported():
+    # A path holding a newline, or git printing less than asked, cannot be made for real here,
+    # so git's output gains one line or loses one.
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "newline", "newline-branch")
+    real_run_git = snapshots.run_git
+    for count, change in ((6, lambda text: text.replace("\n", "\nsplit\n", 1)),
+                          (4, lambda text: text.split("\n", 1)[1])):
+        def run_git_with_changed_output(directory, *arguments, **options):
+            result = real_run_git(directory, *arguments, **options)
+            if "--git-path" in arguments:
+                result.stdout = change(result.stdout)
+            return result
+        snapshots.run_git = run_git_with_changed_output
+        name = f"a rev-parse that prints {count} lines for 5 paths raises WorkSnapshotError saying so"
+        try:
+            snapshots.operation_in_progress(worktree)
+            check(False, name, "nothing raised")
+        except snapshots.WorkSnapshotError as error:
+            check(f"printed {count} lines where the 5 paths should give one line each" in str(error), name, str(error))
+        except ValueError as error:
+            check(False, name, f"ValueError: {error}")
+        finally:
+            snapshots.run_git = real_run_git
+
+
+def test_hook_failure_is_reported():
+    name = "a hook that cannot write reports it through additionalContext and exits 0"
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "fork", "fork-branch")
+    (worktree / "tracked.txt").write_text("changed\n")
+    claude = FakeProcessTreeClaude(main)
+    ref = snapshots.work_snapshot_ref(claude.owner_key, worktree)
+    lock = Path(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir")) / (
+        ref + ".lock")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text("")
+    message = claude.run_hook(edit(worktree / "tracked.txt"))
+    check(message is not None and str(worktree) in message and "no work-snapshot" in message,
+          name, message)
+    check(claude.last_exit == 0, "the hook exits 0 when it reports a failure",
+          claude.last_exit)
+    claude.end()
+    hook = load(main / HOOK_RELATIVE, "hook_without_claude")
+    hook.snapshots = hook.load_snapshots_module()
+    hook.snapshots.claude_owner_process_id = lambda start: None
+    messages = hook.run(edit(worktree / "tracked.txt"), os.getpid())
+    check(len(messages) == 1 and "no process named claude" in messages[0]
+          and str(worktree) in messages[0],
+          "with no claude among its parents the hook tells the agent, naming the worktree",
+          messages)
+    (worktree / "tracked.txt").write_text("one\n")
+    check(hook.run(edit(worktree / "tracked.txt"), os.getpid()) == [],
+          "with no claude parent and nothing uncommitted the hook says nothing")
+
+
+def test_other_repository_is_untouched():
+    name = "an edit or a Bash call in another repository writes no work-snapshot there"
+    main = new_clone()
+    other = SCRATCH / f"unrelated-repository-{clone_count[0]}"
+    git(SCRATCH, "init", "-q", str(other))
+    (other / "file.txt").write_text("one\n")
+    git(other, "add", "-A")
+    git(other, "commit", "-q", "-m", "base")
+    (other / "file.txt").write_text("two\n")
+    claude = FakeProcessTreeClaude(main)
+    message = claude.run_hook(edit(other / "file.txt"))
+    claude.run_hook(bash(other))
+    claude.end()
+    other_refs = git(other, "for-each-ref", "--format=%(refname)",
+                     snapshots.WORK_SNAPSHOT_REF_PREFIX).split()
+    check(other_refs == [] and refs_of(main) == [] and message is None, name,
+          (other_refs, refs_of(main), message))
+
+
+def test_names_read_from_git_are_the_files_as_stored():
+    name = "changed files and repository discovery read git's output as stored, in any locale"
+    main = new_clone()
+    (main / "café notes.md").write_text("new\n")
+    git(main, "add", "-A")
+    git(main, "commit", "-q", "-m", "add the notes")
+    files = snapshots.changed_files(main, "HEAD")
+    check(files == [("A", "café notes.md")],
+          "changed_files names a non-ASCII path with a space as stored", files)
+    # A git that translates its messages unless LC_ALL=C, as git does where a
+    # translation is installed; ned-box has none installed.
+    stub_directory = SCRATCH / "translating-git-bin"
+    stub_directory.mkdir(exist_ok=True)
+    stub = stub_directory / "git"
+    stub.write_text("#!/bin/sh\n"
+                    f'if [ "$LC_ALL" = C ]; then exec {shutil.which("git")} "$@"; fi\n'
+                    f'{shutil.which("git")} "$@" 2>"{stub_directory}/stderr"\n'
+                    "code=$?\n"
+                    f"sed 's/not a git repository/kein Git-Repository/' \"{stub_directory}/stderr\" >&2\n"
+                    'exit "$code"\n')
+    stub.chmod(0o755)
+    outside = SCRATCH / "outside-every-repository-translated"
+    outside.mkdir(exist_ok=True)
+    path_before = os.environ["PATH"]
+    os.environ["PATH"] = f"{stub_directory}{os.pathsep}{path_before}"
+    try:
+        try:
+            found = snapshots.worktree_containing(outside)
+        except snapshots.WorkSnapshotError as error:
+            found = error
+        prompt = snapshots.first_prompt_text(outside, "seat-locale", SCRATCH / "handoffs-locale")
+    finally:
+        os.environ["PATH"] = path_before
+    check(found is None, "worktree_containing gives None outside any repository under a translating git",
+          found)
+    check(prompt == "", "first_prompt_text is empty outside any clone under a translating git",
+          prompt)
+
+
+def test_worktree_discovery_failure_is_reported():
+    name = "a worktree that git fails to find, for a reason other than no repository, is reported"
+    main = new_clone()
+    bare = SCRATCH / f"bare-{clone_count[0]}.git"
+    git(SCRATCH, "init", "-q", "--bare", str(bare))
+    try:
+        snapshots.worktree_containing(bare)
+        raised = False
+    except snapshots.WorkSnapshotError:
+        raised = True
+    check(raised, "worktree_containing raises when git fails inside a repository")
+    outside = SCRATCH / "outside-every-repository"
+    outside.mkdir(exist_ok=True)
+    check(snapshots.worktree_containing(outside) is None,
+          "worktree_containing gives None outside any repository")
+    hook = load(main / HOOK_RELATIVE, "hook_discovery_failure")
+    hook.snapshots = hook.load_snapshots_module()
+    worktrees, messages = hook.candidate_worktrees(edit(bare / "config"), None)
+    check(worktrees == [] and len(messages) == 1 and str(bare) in messages[0]
+          and "could not be found" in messages[0], name, (worktrees, messages))
+
+
+def test_module_load_failure_is_reported():
+    name = "a module that cannot be loaded is reported through additionalContext, exit 0"
+    main = new_clone()
+    (main / MODULE_RELATIVE).write_text("this is not python (\n")
+    result = subprocess.run([sys.executable, str(main / HOOK_RELATIVE)],
+                            input=json.dumps(edit(main / "tracked.txt")),
+                            capture_output=True, text=True)
+    try:
+        context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+    except (ValueError, KeyError):
+        context = ""
+    check(result.returncode == 0 and "could not be loaded" in context
+          and "no work-snapshot" in context, name,
+          (result.returncode, result.stdout, result.stderr))
+
+
+class FakePs:
+    def __init__(self, returncode, stdout="", stderr=""):
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+def test_macos_owner_walk_reads_ps():
+    real_run_ps = snapshots.run_ps
+    tree = {300: "  200 /usr/bin/python3\n", 200: "  100 -bash\n",
+            100: "    1 /Users/el/.local/bin/claude\n"}
+    asked = []
+
+    def fake_run_ps(arguments):
+        asked.append(arguments)
+        process_id = int(arguments[-1])
+        return FakePs(0, tree[process_id]) if process_id in tree else FakePs(1)
+
+    try:
+        snapshots.run_ps = fake_run_ps
+        owner = snapshots.claude_owner_process_id(300, platform="darwin")
+        check(owner == 100 and asked[0] == ["-o", "ppid=,comm=", "-p", "300"],
+              "on macOS the owner walk reads each parent and command name from ps",
+              f"{owner} {asked}")
+        tree[200] = "  1 -bash\n"
+        check(snapshots.claude_owner_process_id(300, platform="darwin") is None,
+              "on macOS a walk that reaches process 1 without a claude finds no owner")
+        del tree[200]
+        try:
+            outcome = f"returned {snapshots.claude_owner_process_id(300, platform='darwin')}"
+        except snapshots.WorkSnapshotError:
+            outcome = "raised"
+        check(outcome == "raised", "on macOS a ps that cannot read a process raises", outcome)
+    finally:
+        snapshots.run_ps = real_run_ps
+
+
+def test_macos_ps_failure_is_not_a_dead_owner():
+    real_run_ps, real_process_exists = snapshots.run_ps, snapshots.process_exists_or_raise
+    try:
+        # A gone process is decided before ps runs: macOS ps exits 1 for an id no
+        # process has, sometimes with a message, which must not raise.
+        snapshots.process_exists_or_raise = lambda process_id: False
+        for fake, why in ((FakePs(1, stderr="ps: process id too large: 999999\n"),
+                           "with \"process id too large\""),
+                          (FakePs(1), "with no output")):
+            snapshots.run_ps = lambda arguments, fake=fake: fake
+            try:
+                started = snapshots.macos_start_seconds(100)
+                outcome = f"returned {started}"
+                alive = snapshots.owner_process_is_alive("100-5", platform="darwin")
+            except snapshots.WorkSnapshotError as error:
+                outcome, alive = f"raised {error}", None
+            check(outcome == "returned None" and alive is False,
+                  f"a process id no process has counts as gone, whatever ps says ({why})",
+                  outcome)
+        # The process exits between the check and ps: exit 1 with no output, and
+        # the check now says gone.
+        answers = iter((True, False))
+        snapshots.process_exists_or_raise = lambda process_id: next(answers)
+        snapshots.run_ps = lambda arguments: FakePs(1)
+        check(snapshots.macos_start_seconds(100) is None,
+              "a process that exits just before ps reads it counts as gone")
+        # A process that exists: every ps failure raises.
+        snapshots.process_exists_or_raise = lambda process_id: True
+        for fake, why in ((FakePs(1), "exit 1 with no output"),
+                          (FakePs(-9), "killed by a signal"),
+                          (FakePs(1, stderr="ps: illegal option"), "an error message"),
+                          (FakePs(2), "another exit code")):
+            snapshots.run_ps = lambda arguments, fake=fake: fake
+            try:
+                alive = snapshots.owner_process_is_alive("100-5", platform="darwin")
+                outcome = f"returned {alive}"
+            except snapshots.WorkSnapshotError:
+                outcome = "raised"
+            check(outcome == "raised",
+                  f"a ps failure for a live process ({why}) raises instead of counting "
+                  "the owner dead", outcome)
+    finally:
+        snapshots.run_ps, snapshots.process_exists_or_raise = real_run_ps, real_process_exists
+    dead = dead_process_id()
+    check(not snapshots.process_exists_or_raise(dead) and snapshots.process_exists_or_raise(os.getpid()),
+          "process_exists_or_raise tells a reaped process from this one")
+    # A process of another user refuses the signal: it exists all the same. Only
+    # the module's name for os is replaced, so the real os.kill is never touched.
+    def refuse(process_id, signal_number):
+        raise PermissionError(1, "Operation not permitted")
+    real_os = snapshots.os
+    snapshots.os = types.SimpleNamespace(kill=refuse)
+    try:
+        exists = snapshots.process_exists_or_raise(dead)
+    finally:
+        snapshots.os = real_os
+    check(exists, "a process that refuses the signal exists")
+    if shutil.which("ps") is None:
+        return skip("ps on this machine reads a live and a gone process", "no ps here")
+    check(snapshots.macos_start_seconds(os.getpid()) is not None,
+          "ps on this machine gives a live process's start")
+    check(snapshots.macos_start_seconds(dead) is None,
+          "ps on this machine gives None for a process that is gone")
+
+
+# ---------------------------------------------------------------- owners
+
+
+def fake_proc(root, boot_id, processes, btime="1000"):
+    """processes: pid -> (name, parent, start ticks)."""
+    (root / "sys" / "kernel" / "random").mkdir(parents=True, exist_ok=True)
+    (root / "sys" / "kernel" / "random" / "boot_id").write_text(boot_id + "\n")
+    (root / "stat").write_text(f"cpu 1 2 3\nbtime {btime}\n")
+    for pid, (name, parent, ticks) in processes.items():
+        directory = root / str(pid)
+        directory.mkdir(exist_ok=True)
+        (directory / "comm").write_text(name + "\n")
+        fields = ["S", str(parent)] + ["0"] * 17 + [str(ticks)] + ["0"] * 10
+        (directory / "stat").write_text(f"{pid} ({name} with (spaces)) " + " ".join(fields))
+
+
+def test_owner_liveness():
+    root = SCRATCH / "fake-proc"
+    boot = "1234abcd-0000-0000-0000-000000000000"
+    fake_proc(root, boot, {300: ("python3", 200, 50), 200: ("sh", 100, 40),
+                           100: ("claude", 1, 30)})
+    linux = "linux"
+    check(snapshots.claude_owner_process_id(300, str(root), linux) == 100,
+          "the owner is the nearest ancestor named claude")
+    key = snapshots.owner_key_of_process(100, str(root), linux)
+    check(key == "1234abcd000000000000000000000000-100-30",
+          "a Linux owner key is boot id, process id and start ticks", key)
+    check(snapshots.owner_process_is_alive(key, str(root), linux),
+          "an owner process still running is alive")
+    fake_proc(root, boot, {}, btime="999999")
+    check(snapshots.owner_process_is_alive(key, str(root), linux),
+          "a live owner still counts as alive after the system clock is stepped")
+    fake_proc(root, boot, {100: ("claude", 1, 31)})
+    check(not snapshots.owner_process_is_alive(key, str(root), linux),
+          "a reused process id with a different start counts as dead")
+    fake_proc(root, "ffff" + boot[4:], {100: ("claude", 1, 30)})
+    check(not snapshots.owner_process_is_alive(key, str(root), linux),
+          "an owner from an earlier boot counts as dead")
+    shutil.rmtree(root / "100")
+    check(not snapshots.owner_process_is_alive(key, str(root), linux),
+          "an owner process that is gone counts as dead")
+    root2 = SCRATCH / "fake-proc-no-claude"
+    fake_proc(root2, boot, {300: ("python3", 200, 50), 200: ("bash", 1, 40)})
+    check(snapshots.claude_owner_process_id(300, str(root2), linux) is None,
+          "no claude among the ancestors gives no owner")
+
+
+def test_live_and_dead_owners_listed():
+    name = ("a dead owner's work-snapshot is listed when its worktree is gone or changed, "
+            "not while the worktree still holds its changes")
+    main = new_clone()
+    kept = add_worktree(main, main / ".claude" / "worktrees" / "kept", "kept-branch")
+    removed = add_worktree(main, main / ".claude" / "worktrees" / "removed", "removed-branch")
+    changed = add_worktree(main, main / ".claude" / "worktrees" / "changed", "changed-branch")
+    for worktree in (kept, removed, changed):
+        (worktree / "new.txt").write_text("work\n")
+    claude = FakeProcessTreeClaude(main, {"GIT_AUTHOR_NAME": "seat-two"})
+    for worktree in (kept, removed, changed):
+        claude.run_hook(bash(worktree))
+    handoffs = SCRATCH / "handoffs-listing"
+    handoffs.mkdir()
+    check(snapshots.first_prompt_text(main, "seat-two", handoffs) == "",
+          "a live owner's work-snapshots are not listed")
+    claude.end()
+    check(snapshots.first_prompt_text(main, "seat-two", handoffs) == "",
+          "a dead owner's work-snapshots are not listed while their worktrees still hold "
+          "their changes, as after a session-handoff")
+    git(main, "worktree", "remove", "--force", str(removed))
+    (changed / "new.txt").write_text("changed with no hook to see it\n")
+    text = snapshots.first_prompt_text(main, "seat-two", handoffs)
+    check(str(removed) in text and "(is gone)" in text and str(changed) in text
+          and str(kept) not in text, name, text)
+    check(snapshots.first_prompt_text(main, "another-seat", handoffs) == "",
+          "another agent-seat's leftovers are not listed")
+
+
+# ---------------------------------------------------------------- listing
+
+
+def test_list_caps_and_failure():
+    main = new_clone()
+    for number in range(21):
+        worktree = add_worktree(main, main / ".claude" / "worktrees" / f"many-{number}",
+                                f"many-{number}")
+        for file_number in range(12):
+            (worktree / f"file-{file_number:02d}.txt").write_text("x\n")
+        snapshots.refresh_work_snapshot(worktree, f"{number + 10}-1", "seat-three", "")
+        git(main, "worktree", "remove", "--force", str(worktree))
+    handoffs = SCRATCH / "handoffs-caps"
+    handoffs.mkdir()
+    text = snapshots.first_prompt_text(main, "seat-three", handoffs, now=1000,
+                                       is_alive=lambda key: False)
+    entries = [line for line in text.splitlines() if line.startswith("- refs/")]
+    check(len(entries) == 20, "the list caps at 20 entries", len(entries))
+    check("and 1 more; list them all with:" in text and "list --agent-seat seat-three" in text,
+          "the rest are counted, with the command that lists them all")
+    check(entries and "and 2 more; handle it with" in entries[0], "each entry names ten files and "
+          "counts the rest", entries[:1])
+    recorded = json.loads((handoffs / "seat-three-work-snapshots-first-listed.json").read_text())
+    check(len(recorded) == 21 and set(recorded.values()) == {1000},
+          "every listed work-snapshot's first listing is recorded", recorded)
+    snapshots.first_prompt_text(main, "seat-three", handoffs, now=5000,
+                                is_alive=lambda key: False)
+    recorded = json.loads((handoffs / "seat-three-work-snapshots-first-listed.json").read_text())
+    check(set(recorded.values()) == {1000}, "a later listing keeps the first listing's time")
+    not_a_repository = SCRATCH / "not-a-repository"
+    not_a_repository.mkdir()
+    check(snapshots.first_prompt_text(not_a_repository, "seat-three", handoffs) == "",
+          "a working directory outside any clone has no work-snapshots to list")
+
+    def liveness_that_fails(key):
+        raise snapshots.WorkSnapshotError("ps could not read process 10")
+
+    failed = snapshots.first_prompt_text(main, "seat-three", handoffs,
+                                         is_alive=liveness_that_fails)
+    check("could not be listed" in failed and "list --agent-seat seat-three" in failed,
+          "a failure to build the list is stated, with the list command", failed)
+    blocked = SCRATCH / "handoffs-blocked"
+    blocked.write_text("a file where the handoff directory should be")
+    text = snapshots.first_prompt_text(main, "seat-three", blocked, is_alive=lambda key: False)
+    check("could not be recorded" in text and "never listed" in text,
+          "a failure to record the first listing is said in the prompt", text[-300:])
+
+
+def test_supervisor_appends_the_list():
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "fork", "fork-branch")
+    (worktree / "new.txt").write_text("work\n")
+    snapshots.refresh_work_snapshot(worktree, "1-1", "seat-four", "")
+    git(main, "worktree", "remove", "--force", str(worktree))
+    fixture = load(SYSTEM_DIRECTORY / "tests" / "handoff-supervisor-test-fixture.py",
+                   "handoff_supervisor_test_fixture")
+    supervisor = fixture.supervisor
+    supervisor.uncommitted_work_snapshots.owner_process_is_alive = (
+        lambda key, *rest, **keywords: False)
+    handoffs = SCRATCH / "handoffs-supervisor"
+    handoffs.mkdir()
+    text = supervisor.uncommitted_work_snapshot_text("seat-four", main, handoffs)
+    check(text.startswith("Leftover work-snapshots: 1") and "Handle each of them" in text,
+          "the handoff-supervisor builds the leftover list with the restore steps", text[:200])
+    launched = []
+    supervisor.launch_agent_session = (
+        lambda command, session_id, working_directory, prompt, **keywords:
+        launched.append(prompt) or (_ for _ in ()).throw(StopIteration()))
+    supervisor.launch_time_git_sync = lambda working_directory: "launch-time-git-sync: test"
+    settings = supervisor.SupervisorSettings(
+        agent="seat-four", working_directory=main, handoff_directory=handoffs,
+        agent_command="claude", first_prompt="Founding prompt.",
+        first_prompt_wins_over_crashed_transcript=True, agent_update_timeout_seconds=0)
+    try:
+        supervisor.supervise_sessions(settings)
+    except StopIteration:
+        pass
+    check(launched and launched[0].startswith(supervisor.first_prompt_from_launch_command_marked_not_typed_by_the_user("Founding prompt.")
+        + "\n\n" + supervisor.LEFTOVERS_BEFORE_THE_NEXT_STEP_SENTENCE
+        + "\n\nLeftover work-snapshots: 1"),
+          "a launch's prompt with no next step carries the leftover list after the prompt",
+          launched[:1] and launched[0][:120])
+
+
+# ---------------------------------------------------------------- restore
+
+
+RESTORE_TASK_LIST_ID = "nedsnodes-seat-five-tasks"
+RESTORE_ENVIRONMENT = {"CLAUDE_CODE_TASK_LIST_ID": RESTORE_TASK_LIST_ID, "GIT_AUTHOR_NAME": "seat-five"}
+
+
+def restore_task_list():
+    # Path.home(), not HOME: the handoff-supervisor's test fixture moves HOME when it loads.
+    return Path.home() / ".claude" / "tasks" / RESTORE_TASK_LIST_ID
+
+
+def empty_restore_task_list():
+    shutil.rmtree(restore_task_list(), ignore_errors=True)
+
+
+def run_restore(main, ref, keep, environment=None):
+    """restore, run in this process; returns (exit code, printed lines)."""
+    lines = []
+    code = snapshots.restore_work_snapshot(
+        main, ref, keep, RESTORE_ENVIRONMENT if environment is None else environment,
+        out=lambda text: lines.extend(text.splitlines()))
+    return code, lines
+
+
+def restored_worktree_of(main, ref):
+    clone = Path(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir")).parent
+    return clone / ".claude" / "worktrees" / snapshots.restored_branch_name(ref)
+
+
+def leftover_snapshot(main, label, files, owner_key, remove=True):
+    """A work-snapshot of a fork worktree holding files ({path: text, or None to delete})."""
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / f"fork-{label}", f"fork-{label}")
+    for path, text in files.items():
+        if text is None:
+            (worktree / path).unlink()
+        else:
+            (worktree / path).parent.mkdir(parents=True, exist_ok=True)
+            (worktree / path).write_text(text)
+    snapshots.refresh_work_snapshot(worktree, owner_key, "seat-five", str(SCRATCH / "t.jsonl"))
+    if remove:
+        git(main, "worktree", "remove", "--force", str(worktree))
+    return snapshots.work_snapshot_ref(owner_key, worktree), worktree
+
+
+def restored_branch_tasks():
+    tasks = {}
+    directory = restore_task_list()
+    if directory.is_dir():
+        for path in directory.glob("*.json"):
+            tasks[path.stem] = json.loads(path.read_text())
+    return tasks
+
+
+def test_restore_a_subset():
+    empty_restore_task_list()
+    for worktree_survives in (False, True):
+        where = ("into a new worktree, the changed original left alone" if worktree_survives
+                 else "into a new worktree from <ref>^")
+        main = new_clone()
+        ref, worktree = leftover_snapshot(
+            main, f"subset-{worktree_survives}",
+            {"tracked.txt": "kept change\n", "doomed.txt": None, "new.txt": "kept new\n",
+             "mutant.txt": "a mutant to drop\n"}, "7-7", remove=not worktree_survives)
+        if worktree_survives:
+            (worktree / "new.txt").write_text("changed since\n")
+        tasks_before = set(restored_branch_tasks())
+        code, lines = run_restore(main, ref, ["tracked.txt", "doomed.txt", "new.txt"])
+        target = restored_worktree_of(main, ref)
+        branch = snapshots.restored_branch_name(ref)
+        changed = git(target, "diff-tree", "-r", "--no-commit-id", "--name-status",
+                      "HEAD").splitlines() if target.is_dir() else []
+        check(code == 0 and sorted(changed) == ["A\tnew.txt", "D\tdoomed.txt", "M\ttracked.txt"],
+              f"restore of a chosen subset {where} commits exactly those changes", lines)
+        check(target.is_dir() and git(target, "status", "--porcelain") == ""
+              and git(target, "log", "-1", "--format=%s") == f"Restore work from {ref}"
+              and git(target, "rev-parse", "HEAD^") == git(main, "rev-parse", "origin/main"),
+              f"restore commits on the work-snapshot's parent, leaving nothing behind, {where}")
+        check(snapshots.current_ref_value(main, ref) is None, f"restore deletes the ref {where}")
+        owner = json.loads(owner_file_of(target).read_text()) if target.is_dir() else None
+        check(owner == {"owner_kind": "agent-seat", "agent_seat": "seat-five"},
+              "restore writes the new worktree's owner file naming GIT_AUTHOR_NAME's agent-seat",
+              owner)
+        new_tasks = {key: task for key, task in restored_branch_tasks().items()
+                     if key not in tasks_before}
+        task = next(iter(new_tasks.values()), {})
+        restore_commit = git(target, "rev-parse", "HEAD") if target.is_dir() else "?"
+        check(len(new_tasks) == 1
+              and task.get("subject") == f"Restored branch {branch}: open its pull request or delete it"
+              and task.get("status") == "pending"
+              and f"\nRestore commit: {restore_commit}\n" in task.get("description", "")
+              and ref in task.get("description", "") and str(target) in task.get("description", ""),
+              f"restore opens the restored branch's task, naming its restore commit, {where}", task)
+        holding = first_prompt_list.tasks_holding("seat-five", restore_task_list())
+        check(holding.holders(branch) and holding.holders(target)
+              and not holding.unreadable,
+              f"the first prompt's list reads the task restore opens as holding its branch and "
+              f"worktree, so it does not list them, {where}", task)
+        check((restore_task_list() / ".highwatermark").read_text() == next(iter(new_tasks), ""),
+              "restore raises the task list's .highwatermark to the new task's id")
+        check(f"branch: {branch}" in lines and f"worktree: {target}" in lines
+              and f"task: {next(iter(new_tasks), '?')}" in lines
+              and any(line.startswith(f"summary: restored {ref}: kept tracked.txt, doomed.txt, "
+                                      f"new.txt; dropped mutant.txt; on the branch {branch}")
+                      for line in lines),
+              "restore prints the branch, the worktree, the task and the summary line", lines)
+        if worktree_survives:
+            check((worktree / "new.txt").read_text() == "changed since\n",
+                  "the changed original worktree is left alone")
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "drift", "drift")
+    (worktree / "new.txt").write_text("work\n")
+    snapshots.refresh_work_snapshot(worktree, "8-8", "seat", "")
+    ref = snapshots.work_snapshot_ref("8-8", worktree)
+    snapshot = next(s for s in snapshots.all_work_snapshots(main) if s["ref"] == ref)
+    check(snapshots.snapshot_matches_worktree(main, snapshot),
+          "an unchanged worktree matches its work-snapshot")
+    (worktree / "new.txt").write_text("changed since\n")
+    check(not snapshots.snapshot_matches_worktree(main, snapshot),
+          "a worktree changed since no longer matches")
+    (worktree / "new.txt").write_text("work\n")
+    git(worktree, "add", "-A")
+    git(worktree, "commit", "-q", "-m", "the same changes, committed")
+    check(not snapshots.snapshot_matches_worktree(main, snapshot),
+          "a worktree whose HEAD moved no longer matches, though the tree is the same")
+
+
+def test_restore_reads_a_kept_name_as_a_literal_path():
+    empty_restore_task_list()
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "glob", {"notes*.txt": "kept\n", "notes-old.txt": "dropped\n"},
+                                       "7-8")
+    code, lines = run_restore(main, ref, ["notes*.txt"])
+    target = restored_worktree_of(main, ref)
+    changed = git(target, "diff-tree", "-r", "--no-commit-id", "--name-only",
+                  "HEAD").splitlines() if target.is_dir() else []
+    check(code == 0 and changed == ["notes*.txt"],
+          "restore keeping a file whose name holds a glob character commits that file alone, not "
+          "the files the glob matches", (changed, lines))
+
+
+def unchanged_after_refusal(main, ref, code, lines, name, text):
+    check(code == snapshots.EXIT_REFUSED and lines[:1] and lines[0].startswith("REFUSED: ")
+          and any(text in line for line in lines),
+          f"restore refuses {name}", lines)
+
+
+def test_restore_refusals_change_nothing():
+    empty_restore_task_list()
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "refusals", {"new.txt": "work\n"}, "9-1")
+    branch = snapshots.restored_branch_name(ref)
+    target = restored_worktree_of(main, ref)
+    cases = [
+        ("a ref that does not exist", snapshots.WORK_SNAPSHOT_REF_PREFIX + "1-1/" + "0" * 40,
+         ["new.txt"], None, "does not exist"),
+        ("a ref that is not a work-snapshot", "refs/heads/main", ["new.txt"], None,
+         "is not a work-snapshot"),
+        ("an empty --keep, saying that keeping nothing is discard", ref, [], None,
+         f"discard {ref}"),
+        ("a kept path the work-snapshot did not change", ref, ["new.txt", "tracked.txt"], None,
+         "tracked.txt is not among the files the work-snapshot changed: new.txt"),
+        ("an unset CLAUDE_CODE_TASK_LIST_ID", ref, ["new.txt"],
+         {"GIT_AUTHOR_NAME": "seat-five"}, "CLAUDE_CODE_TASK_LIST_ID is unset"),
+        ("an unset GIT_AUTHOR_NAME", ref, ["new.txt"],
+         {"CLAUDE_CODE_TASK_LIST_ID": RESTORE_TASK_LIST_ID}, "GIT_AUTHOR_NAME is unset"),
+    ]
+    for name, given_ref, keep, environment, text in cases:
+        code, lines = run_restore(main, given_ref, keep, environment)
+        unchanged_after_refusal(main, ref, code, lines, name, text)
+    target.mkdir(parents=True)
+    code, lines = run_restore(main, ref, ["new.txt"])
+    unchanged_after_refusal(main, ref, code, lines, "an existing worktree directory",
+                            f"the directory {target} already exists")
+    target.rmdir()
+    git(main, "branch", branch, "origin/main")
+    code, lines = run_restore(main, ref, ["new.txt"])
+    unchanged_after_refusal(main, ref, code, lines, "an existing branch of the restored name",
+                            f"the branch {branch} already exists")
+    git(main, "branch", "-D", branch)
+    check(snapshots.current_ref_value(main, ref) is not None and not target.exists()
+          and snapshots.current_ref_value(main, f"refs/heads/{branch}") is None
+          and not restored_branch_tasks(),
+          "no refusal changes the ref, the branch, the worktree or the task list")
+    code, lines = run_restore(main, ref, ["new.txt"])
+    check(code == 0, "restore succeeds once nothing stands in its way", lines)
+    git(main, "update-ref", ref, git(target, "rev-parse", "HEAD"))
+    git(main, "worktree", "remove", "--force", str(target))
+    code, lines = run_restore(main, ref, ["new.txt"])
+    unchanged_after_refusal(main, ref, code, lines,
+                            "a branch already holding this restore, printing the ref's deletion",
+                            f"Run: git update-ref -d {ref}")
+    operation_main = new_clone()
+    worktree = add_worktree(operation_main, operation_main / ".claude" / "worktrees" / "merging",
+                            "merging")
+    (worktree / "tracked.txt").write_text("fork side\n")
+    git(worktree, "commit", "-q", "-am", "fork side")
+    git(operation_main, "checkout", "-q", "-b", "other")
+    (operation_main / "tracked.txt").write_text("other side\n")
+    git(operation_main, "commit", "-q", "-am", "other side")
+    git(worktree, "merge", "-q", "other", check_exit=False)
+    snapshots.refresh_work_snapshot(worktree, "9-2", "seat-five", "")
+    operation_ref = snapshots.work_snapshot_ref("9-2", worktree)
+    code, lines = run_restore(operation_main, operation_ref, ["tracked.txt"])
+    unchanged_after_refusal(operation_main, operation_ref, code, lines,
+                            "a work-snapshot taken during a merge, naming the worktree and telling "
+                            "the agent to run discard", f"discard {operation_ref}")
+    check(any(f"taken during a merge in the worktree {worktree}" in line for line in lines)
+          and snapshots.current_ref_value(operation_main, operation_ref) is not None,
+          "the merge refusal names the worktree and the operation, and keeps the ref", lines)
+
+
+def git_client_side_hooks_installed_for_agent_seat(main, agent_seat):
+    """Set up main's clone as a launcher-started agent-seat's clone on ned-box: core.hooksPath
+    names the repository's git-client-side hooks, the clone's config holds the tripwire identity
+    the pre-commit hook asks for, the environment names agent_seat as a launcher does, and HOME
+    holds the session-handoff that makes the post-checkout hook take agent_seat for an
+    agent-seat. Returns the function that undoes the environment and the HOME records."""
+    git(main, "config", "core.hooksPath", str(REPOSITORY_ROOT / "scripts" / "git-client-side-hooks"))
+    git(main, "config", "user.name", "unconfigured-agent")
+    git(main, "config", "user.email", "unconfigured-agent@nedschorus.invalid")
+    home = Path(os.environ["HOME"])
+    (home / "agents" / agent_seat).mkdir(parents=True, exist_ok=True)
+    record = home / ".claude" / "handoffs" / f"{agent_seat}-handoff.md"
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text("# session-handoff\n")
+    identity = {"GIT_AUTHOR_NAME": agent_seat, "GIT_COMMITTER_NAME": agent_seat,
+                "GIT_AUTHOR_EMAIL": f"{agent_seat}@nedschorus.invalid",
+                "GIT_COMMITTER_EMAIL": f"{agent_seat}@nedschorus.invalid",
+                # The Mac's own NEDSNODES_AGENTS_ROOT would point the hook past HOME's agents.
+                "NEDSNODES_AGENTS_ROOT": str(home / "agents")}
+    real = {name: os.environ.get(name) for name in identity}
+    os.environ.update(identity)
+
+    def undo():
+        for name, value in real.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        record.unlink(missing_ok=True)
+        shutil.rmtree(home / "agents" / agent_seat, ignore_errors=True)
+    return undo
+
+
+def test_restore_accepts_the_owner_file_git_worktree_add_wrote_naming_its_agent_seat():
+    empty_restore_task_list()
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "hook-owner", {"new.txt": "work\n"}, "9-6")
+    undo = git_client_side_hooks_installed_for_agent_seat(main, RESTORE_ENVIRONMENT["GIT_AUTHOR_NAME"])
+    try:
+        code, lines = run_restore(main, ref, ["new.txt"])
+    finally:
+        undo()
+    target = restored_worktree_of(main, ref)
+    owner = json.loads(owner_file_of(target).read_text()) if target.is_dir() else None
+    check(code == 0 and owner == {"owner_kind": "agent-seat", "agent_seat": "seat-five"}
+          and snapshots.current_ref_value(main, ref) is None
+          and git(target, "log", "-1", "--format=%s") == f"Restore work from {ref}",
+          "restore accepts the owner file scripts/git-client-side-hooks/post-checkout wrote during "
+          "git worktree add naming restore's agent-seat, and restores", lines)
+
+
+def test_restore_step_failures():
+    def failing_case(name, prepare, expected_text, keep=("new.txt",), files=None):
+        empty_restore_task_list()
+        main = new_clone()
+        ref, _worktree = leftover_snapshot(main, "fails", files or {"new.txt": "work\n"}, "9-3")
+        undo = prepare(main)
+        code, lines = run_restore(main, ref, list(keep))
+        target = restored_worktree_of(main, ref)
+        branch = snapshots.restored_branch_name(ref)
+        check(code == snapshots.EXIT_STEP_FAILED and any(expected_text in line for line in lines)
+              and not target.exists()
+              and snapshots.current_ref_value(main, f"refs/heads/{branch}") is None
+              and snapshots.current_ref_value(main, ref) is not None and not restored_branch_tasks()
+              and not any("could not be" in line for line in lines)
+              and f"Neither the worktree {target} nor the branch {branch} is left, so "
+                  f"restore can be run again once the cause is fixed." in lines,
+              f"restore {name}: removes the worktree and the branch it made and keeps the ref", lines)
+        if undo:
+            undo()
+
+    def apply_refused(main):
+        git(main, "config", "apply.whitespace", "error")
+
+    failing_case("whose apply fails", apply_refused, "git apply --index failed",
+                 files={"new.txt": "trailing space \n"})
+
+    def commit_refused(main):
+        hooks = SCRATCH / f"refusing-hooks-{clone_count[0]}"
+        hooks.mkdir()
+        (hooks / "pre-commit").write_text("#!/bin/sh\necho refused by the test >&2\nexit 1\n")
+        (hooks / "pre-commit").chmod(0o755)
+        git(main, "config", "core.hooksPath", str(hooks))
+
+    failing_case("whose commit fails", commit_refused, "git commit failed")
+
+    real_subprocess_run = subprocess.run
+
+    def diff_fails(main):
+        def run(command, *arguments, **keywords):
+            if "--binary" in command:
+                return subprocess.CompletedProcess(command, 1, b"", b"refused by the test")
+            return real_subprocess_run(command, *arguments, **keywords)
+        snapshots.subprocess.run = run
+        return lambda: setattr(snapshots.subprocess, "run", real_subprocess_run)
+
+    failing_case("whose git diff fails", diff_fails, "refused by the test")
+
+    def worktrees_directory_is_a_file(main):
+        (main / ".claude" / "worktrees").rename(main / ".claude" / "worktrees-moved")
+        (main / ".claude" / "worktrees").write_text("a file where the worktrees directory goes\n")
+
+    failing_case("whose git worktree add fails", worktrees_directory_is_a_file,
+                 "git worktree add -b")
+
+    real_module = snapshots.load_worktree_owner_file_read_and_write_module()
+
+    class OwnerFileWriteFails:
+        OWNER_AGENT_SEAT = real_module.OWNER_AGENT_SEAT
+
+        @staticmethod
+        def worktree_owner_file_write(*arguments):
+            raise real_module.WorktreeOwnerFileError("the disk is full, as the test says")
+
+    def owner_file_write_fails(main):
+        snapshots._worktree_owner_file_read_and_write_module = OwnerFileWriteFails
+        return lambda: setattr(snapshots, "_worktree_owner_file_read_and_write_module", real_module)
+
+    failing_case("whose owner file cannot be written", owner_file_write_fails,
+                 "writing the owner file of")
+
+    def worktree_add_writes_another_seats_owner_file(main):
+        clone_copy = main / POST_CHECKOUT_HOOK_RELATIVE
+        clone_copy.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPOSITORY_ROOT / POST_CHECKOUT_HOOK_RELATIVE, clone_copy)
+        return git_client_side_hooks_installed_for_agent_seat(main, "seat-six")
+
+    failing_case("whose git worktree add wrote an owner file naming another agent-seat",
+                 worktree_add_writes_another_seats_owner_file,
+                 '{"owner_kind": "agent-seat", "agent_seat": "seat-six"}, where '
+                 'uncommitted-work-snapshots.py restore names '
+                 '{"owner_kind": "agent-seat", "agent_seat": "seat-five"}. '
+                 'scripts/git-client-side-hooks/post-checkout writes that file')
+    failing_case("whose git worktree add wrote another agent-seat's owner file, naming the hook "
+                 "that ran, from the core.hooksPath setting",
+                 worktree_add_writes_another_seats_owner_file,
+                 f"the post-checkout hook that ran is {REPOSITORY_ROOT / POST_CHECKOUT_HOOK_RELATIVE}, "
+                 f"because git's core.hooksPath setting for ")
+    failing_case("whose git worktree add wrote another agent-seat's owner file, saying the hook "
+                 "that ran is the clone's own copy",
+                 worktree_add_writes_another_seats_owner_file,
+                 f", which is the same as ")
+
+    def an_older_clone_copy_of_the_hook(main):
+        undo = worktree_add_writes_another_seats_owner_file(main)
+        (main / POST_CHECKOUT_HOOK_RELATIVE).write_text("#!/bin/sh\n# an older copy\n")
+        return undo
+
+    failing_case("whose git worktree add wrote another agent-seat's owner file through a hook that "
+                 "is not the clone's own copy, saying so",
+                 an_older_clone_copy_of_the_hook,
+                 f", which is not the same as ")
+
+    real_run_git = snapshots.run_git
+
+    def undo_fails(main):
+        def run_git(directory, *arguments, **keywords):
+            if arguments[:2] == ("worktree", "remove") or arguments[:2] == ("branch", "-D"):
+                return subprocess.CompletedProcess(arguments, 1, "", "refused by the test")
+            return real_run_git(directory, *arguments, **keywords)
+        snapshots.run_git = run_git
+        git(main, "config", "apply.whitespace", "error")
+        return lambda: setattr(snapshots, "run_git", real_run_git)
+
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "undo", {"new.txt": "trailing space \n"}, "9-4")
+    put_real_run_git_back = undo_fails(main)
+    try:
+        code, lines = run_restore(main, ref, ["new.txt"])
+    finally:
+        put_real_run_git_back()
+    target = restored_worktree_of(main, ref)
+    branch = snapshots.restored_branch_name(ref)
+    check(code == 1 and any(f"remove it with: git worktree remove --force --force {target}" in line
+                            for line in lines)
+          and any(f"delete it with: git branch -D {branch}" in line for line in lines)
+          and snapshots.current_ref_value(main, ref) is not None
+          and not any(line.startswith("Neither the worktree") for line in lines),
+          "a worktree or branch restore cannot remove is named, with the command that removes it",
+          lines)
+
+
+def test_restore_failures_say_what_restore_made():
+    real_run_git = snapshots.run_git
+
+    def run_git_failing(failing):
+        def run_git(directory, *arguments, **keywords):
+            if failing(directory, arguments):
+                return subprocess.CompletedProcess(arguments, 128, "", "refused by the test")
+            return real_run_git(directory, *arguments, **keywords)
+        return run_git
+
+    empty_restore_task_list()
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "head-fails", {"new.txt": "work\n"}, "9-7")
+    target = restored_worktree_of(main, ref)
+    branch = snapshots.restored_branch_name(ref)
+    snapshots.run_git = run_git_failing(
+        lambda directory, arguments: arguments == ("rev-parse", "HEAD") and Path(directory) == target)
+    try:
+        code, lines = run_restore(main, ref, ["new.txt"])
+    finally:
+        snapshots.run_git = real_run_git
+    check(code == snapshots.EXIT_STEP_FAILED and target.is_dir()
+          and snapshots.current_ref_value(main, ref) is not None and not restored_branch_tasks()
+          and git(target, "log", "-1", "--format=%s") == f"Restore work from {ref}"
+          and any(f"the restored work is on the branch {branch}" in line for line in lines),
+          "a restore whose commit cannot be read back says the worktree, the branch and the commit "
+          "are made, no task is opened and the ref is kept", lines)
+
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "files-fail", {"new.txt": "work\n"}, "9-8")
+    real_changed_files = snapshots.changed_files
+    snapshot_commit = git(main, "rev-parse", ref)
+
+    def changed_files(repo, commit):
+        if commit == snapshot_commit:
+            raise snapshots.WorkSnapshotError("git diff-tree refused by the test")
+        return real_changed_files(repo, commit)
+    snapshots.changed_files = changed_files
+    printed = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(printed):
+            code = snapshots.command_exit_code(
+                lambda: snapshots.restore_work_snapshot(main, ref, ["new.txt"], RESTORE_ENVIRONMENT,
+                                                        out=lambda text: None),
+                f"uncommitted-work-snapshots.py restore {ref}")
+    finally:
+        snapshots.changed_files = real_changed_files
+    branch = snapshots.restored_branch_name(ref)
+    check(code == snapshots.EXIT_STEP_FAILED and not restored_worktree_of(main, ref).exists()
+          and snapshots.current_ref_value(main, f"refs/heads/{branch}") is None
+          and printed.getvalue().startswith(
+              f"FAILED: git diff-tree refused by the test. uncommitted-work-snapshots.py restore {ref} "
+              f"changed nothing. Tell the user what failed, and run uncommitted-work-snapshots.py "
+              f"restore {ref} again only after the user says the cause is fixed."),
+          "a git failure that ends restore early comes before restore changes anything, as its "
+          "message says", printed.getvalue())
+
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "branch-check-fails", {"new.txt": "trailing space \n"},
+                                       "9-10")
+    git(main, "config", "apply.whitespace", "error")
+    worktree_added = []
+
+    def branch_check_after_worktree_add(directory, arguments):
+        if arguments[:2] == ("worktree", "add"):
+            worktree_added.append(True)
+        return bool(worktree_added) and arguments[:3] == ("rev-parse", "--verify", "-q")
+    snapshots.run_git = run_git_failing(branch_check_after_worktree_add)
+    try:
+        code, lines = run_restore(main, ref, ["new.txt"])
+    finally:
+        snapshots.run_git = real_run_git
+    branch = snapshots.restored_branch_name(ref)
+    check(code == snapshots.EXIT_STEP_FAILED
+          and snapshots.current_ref_value(main, f"refs/heads/{branch}") is None
+          and not any(line.startswith("Neither the worktree") for line in lines),
+          "when git cannot say whether restore's branch is left, restore deletes it and does not "
+          "say that neither is left", lines)
+
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "hooks-unset", {"new.txt": "work\n"}, "9-11")
+    undo = git_client_side_hooks_installed_for_agent_seat(main, "seat-six")
+    def config_lookup_exits(exit_code):
+        def run_git(directory, *arguments, **keywords):
+            if arguments[:2] == ("config", "--show-origin"):
+                return subprocess.CompletedProcess(arguments, exit_code, "", "refused by the test")
+            return real_run_git(directory, *arguments, **keywords)
+        return run_git
+
+    snapshots.run_git = config_lookup_exits(1)
+    try:
+        code, lines = run_restore(main, ref, ["new.txt"])
+    finally:
+        snapshots.run_git = real_run_git
+        undo()
+    hook = Path(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir")) / "hooks" / "post-checkout"
+    check(code == snapshots.EXIT_STEP_FAILED
+          and any(f"core.hooksPath setting for {main} is not set, so the post-checkout hook that "
+                  f"ran is {hook}; it could not be compared with {main / POST_CHECKOUT_HOOK_RELATIVE}: "
+                  in line for line in lines),
+          "the owner-file failure says which hook ran when core.hooksPath is not set, and that it "
+          "could not compare a hook file that is missing", lines)
+
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "hooks-lookup-fails", {"new.txt": "work\n"}, "9-12")
+    undo = git_client_side_hooks_installed_for_agent_seat(main, "seat-six")
+    snapshots.run_git = config_lookup_exits(128)
+    try:
+        code, lines = run_restore(main, ref, ["new.txt"])
+    finally:
+        snapshots.run_git = real_run_git
+        undo()
+    check(code == snapshots.EXIT_STEP_FAILED
+          and any("which post-checkout hook ran is not known, because git config --show-origin --get "
+                  f"core.hooksPath in {main} exited 128: refused by the test" in line for line in lines)
+          and not any("is not set" in line for line in lines),
+          "the owner-file failure says the core.hooksPath lookup failed when git config exits with an "
+          "error other than 1, not that the setting is unset", lines)
+
+
+def test_restore_task_and_ref_deletion_failures():
+    empty_restore_task_list()
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "task-fails", {"new.txt": "work\n"}, "9-5")
+    restore_task_list().parent.mkdir(parents=True, exist_ok=True)
+    restore_task_list().write_text("a file where the task list directory goes\n")
+    try:
+        code, lines = run_restore(main, ref, ["new.txt"])
+    finally:
+        restore_task_list().unlink()
+    branch = snapshots.restored_branch_name(ref)
+    target = restored_worktree_of(main, ref)
+    check(code == 1 and target.is_dir() and snapshots.current_ref_value(main, ref) is None
+          and any(line.startswith("FAILED: the task could not be opened") for line in lines)
+          and f"subject: Restored branch {branch}: open its pull request or delete it" in lines
+          and any(line.startswith("Restore commit: ") for line in lines)
+          and f"metadata: {json.dumps({'branches': [branch, str(target)]})}" in lines,
+          "a task restore cannot open keeps the branch, still deletes the ref, and prints the "
+          "task's subject, description and metadata for TaskCreate", lines)
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "ref-deletion-fails", {"new.txt": "work\n"}, "9-6")
+    lock = Path(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir")) / f"{ref}.lock"
+    lock.write_text("")
+    try:
+        code, lines = run_restore(main, ref, ["new.txt"])
+    finally:
+        lock.unlink()
+    target = restored_worktree_of(main, ref)
+    check(code == 1 and target.is_dir() and snapshots.current_ref_value(main, ref) is not None
+          and len(restored_branch_tasks()) >= 1 and f"Run: git update-ref -d {ref}" in lines
+          and any(line.endswith("the branch and the task are kept.") for line in lines),
+          "a ref restore cannot delete keeps the branch and the task and prints the command",
+          lines)
+
+
+def test_discard():
+    empty_restore_task_list()
+    main = new_clone()
+    ref, worktree = leftover_snapshot(main, "discard", {"new.txt": "work\n"}, "9-7")
+    tasks_before = restored_branch_tasks()
+    lines = []
+    code = snapshots.discard_work_snapshot(main, ref, out=lines.append)
+    check(code == 0 and snapshots.current_ref_value(main, ref) is None
+          and lines and lines[-1].startswith(f"summary: discarded {ref}: worktree {worktree}")
+          and "A new.txt" in lines[-1] and "handle it with" not in lines[-1],
+          "discard deletes the ref and prints its list entry as the summary line", lines)
+    lines = []
+    code = snapshots.discard_work_snapshot(main, ref, out=lines.append)
+    check(code == snapshots.EXIT_REFUSED and "does not exist" in lines[0],
+          "discard refuses a ref that does not exist", lines)
+    ref, _worktree = leftover_snapshot(main, "discard-locked", {"new.txt": "more\n"}, "9-8")
+    lock = Path(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir")) / f"{ref}.lock"
+    lock.write_text("")
+    lines = []
+    try:
+        code = snapshots.discard_work_snapshot(main, ref, out=lines.append)
+    finally:
+        lock.unlink()
+    check(code == 1 and f"Run: git update-ref -d {ref}" in "\n".join(lines)
+          and snapshots.current_ref_value(main, ref) is not None,
+          "a ref discard cannot delete is reported with the command, and kept", lines)
+    check(restored_branch_tasks() == tasks_before, "discard opens no task")
+
+
+def test_command_line_of_restore_and_discard():
+    module = str(REPOSITORY_ROOT / MODULE_RELATIVE)
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "cli", {"new.txt": "work\n"}, "9-9")
+    run = lambda *arguments: subprocess.run([sys.executable, module, *arguments, "--repo", str(main)],
+                                            capture_output=True, text=True,
+                                            env=dict(os.environ, **RESTORE_ENVIRONMENT))
+    check(run("restore", ref).returncode == 2 and run("discard").returncode == 2
+          and run("restore", ref, "--keep", "new.txt", "--keep", "x").returncode == 2,
+          "a restore without --keep, a discard without a ref, and a second --keep are bad "
+          "invocations")
+    outside = run("restore", ref, "--keep", "new.txt")
+    check(outside.returncode == 0 and "summary: restored" in outside.stdout,
+          "restore runs from the command line", outside.stdout + outside.stderr)
+    not_a_repository = SCRATCH / "cli-not-a-repository"
+    not_a_repository.mkdir()
+    failed = subprocess.run([sys.executable, module, "discard", ref, "--repo", str(not_a_repository)],
+                            capture_output=True, text=True)
+    check(failed.returncode == 1 and failed.stdout.startswith("FAILED: git for-each-ref")
+          and f"uncommitted-work-snapshots.py discard {ref} changed nothing" in failed.stdout,
+          "a git failure outside restore's and discard's own steps is printed, exit 1, naming "
+          "discard", failed.stdout + failed.stderr)
+    failed = subprocess.run([sys.executable, module, "restore", ref, "--keep", "new.txt", "--repo",
+                             str(not_a_repository)], capture_output=True, text=True)
+    check(failed.returncode == 1 and failed.stdout.startswith("FAILED: ")
+          and f"uncommitted-work-snapshots.py restore {ref} changed nothing" in failed.stdout,
+          "a git failure outside restore's own steps is printed, exit 1, naming restore",
+          failed.stdout + failed.stderr)
+
+
+def test_entries_end_with_their_command():
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "commands", {"a file.txt": "work\n", "doomed.txt": None},
+                                       "10-1")
+    operation_main = new_clone()
+    worktree = add_worktree(operation_main, operation_main / ".claude" / "worktrees" / "merge",
+                            "merge-branch")
+    (worktree / "tracked.txt").write_text("fork side\n")
+    git(worktree, "commit", "-q", "-am", "fork side")
+    git(operation_main, "checkout", "-q", "-b", "other")
+    (operation_main / "tracked.txt").write_text("other side\n")
+    git(operation_main, "commit", "-q", "-am", "other side")
+    git(worktree, "merge", "-q", "other", check_exit=False)
+    snapshots.refresh_work_snapshot(worktree, "10-2", "seat-five", "")
+    git(operation_main, "worktree", "remove", "--force", str(worktree))
+    operation_ref = snapshots.work_snapshot_ref("10-2", worktree)
+    program = f"python3 {REPOSITORY_ROOT / MODULE_RELATIVE}"
+    handoffs = SCRATCH / "handoffs-commands"
+    handoffs.mkdir()
+    text = snapshots.first_prompt_text(main, "seat-five", handoffs, is_alive=lambda key: False)
+    entries = [line for line in text.splitlines() if line.startswith("- refs/")]
+    check(len(entries) == 1 and entries[0].endswith(
+        f"; handle it with: `{program} restore {ref} --keep 'a file.txt' doomed.txt`"),
+          "an entry ends with restore keeping every changed file, each quoted for the shell",
+          entries)
+    text = snapshots.first_prompt_text(operation_main, "seat-five", handoffs,
+                                       is_alive=lambda key: False)
+    entries = [line for line in text.splitlines() if line.startswith("- refs/")]
+    check(len(entries) == 1 and entries[0].endswith(f"; handle it with: `{program} discard {operation_ref}`"),
+          "the entry of a work-snapshot taken during an operation ends with discard", entries)
+    check(not any(step in snapshots.RESTORE_STEPS for step in
+                  ("git worktree add", "git apply", "git update-ref", "git commit")),
+          "the restore steps leave every git step to the commands")
+
+
+# ---------------------------------------------------------------- the restored branch's task
+
+
+cleaner = load(REPOSITORY_ROOT / CLEANER_RELATIVE, "clean_worktrees")
+
+
+def close_tasks(main, remove, only_done=False):
+    lines = []
+    failures_seen = cleaner.close_restored_branch_tasks(
+        main, remove, only_done, task_lists_directory=restore_task_list().parent,
+        out=lambda text: lines.append(text))
+    return failures_seen, lines
+
+
+def restored_task_of(main, ref):
+    branch = snapshots.restored_branch_name(ref)
+    for key, task in restored_branch_tasks().items():
+        if task["subject"].startswith(f"Restored branch {branch}:"):
+            return key, task
+    return None, None
+
+
+def test_the_cleaner_closes_a_restored_branch_task_by_its_commit():
+    empty_restore_task_list()
+    main = new_clone()
+    refs = {}
+    for label in ("merged", "deleted", "pushed", "open"):
+        refs[label], _worktree = leftover_snapshot(main, f"close-{label}", {f"{label}.txt": "work\n"},
+                                                   f"11-{len(refs) + 1}")
+        code, lines = run_restore(main, refs[label], [f"{label}.txt"])
+        check(code == 0, f"the {label} branch is restored", lines)
+    branch = {label: snapshots.restored_branch_name(ref) for label, ref in refs.items()}
+    git(main, "merge", "-q", "--no-ff", "-m", "merge the restored branch", branch["merged"])
+    git(main, "push", "-q", "origin", "main")
+    git(main, "reset", "-q", "--hard", "HEAD^")
+    git(main, "worktree", "remove", "--force", str(restored_worktree_of(main, refs["deleted"])))
+    git(main, "branch", "-D", branch["deleted"])
+    git(main, "push", "-q", "origin", branch["pushed"])
+    git(main, "worktree", "remove", "--force", str(restored_worktree_of(main, refs["pushed"])))
+    git(main, "branch", "-D", branch["pushed"])
+    renamed = branch["open"] + "-renamed"
+    git(main, "branch", "-m", branch["open"], renamed)
+    failures_seen, lines = close_tasks(main, remove=False)
+    check(failures_seen == 0 and all(task["status"] == "pending"
+                                     for task in restored_branch_tasks().values())
+          and sum("would be marked completed" in line for line in lines) == 2,
+          "run without --remove, the cleaner names the tasks it would close and changes none",
+          lines)
+    failures_seen, lines = close_tasks(main, remove=True)
+    states = {label: restored_task_of(main, ref)[1] for label, ref in refs.items()}
+    check(failures_seen == 0 and states["merged"]["status"] == "completed"
+          and "is reachable from origin/main." in states["merged"]["description"].splitlines()[-1],
+          "after a fetch, the task of a branch whose restore commit reached origin/main is "
+          "marked completed, with a line saying why", lines)
+    check(states["deleted"]["status"] == "completed"
+          and "no ref holds the restore commit" in states["deleted"]["description"],
+          "the task of a branch deleted with git branch -D is marked completed", lines)
+    check(states["pushed"]["status"] == "pending" and states["open"]["status"] == "pending",
+          "a branch deleted locally but still on origin, and a renamed branch, keep their "
+          "tasks open", lines)
+    git(main, "push", "-q", "origin", "--delete", branch["pushed"])
+    failures_seen, lines = close_tasks(main, remove=True)
+    check(restored_task_of(main, refs["pushed"])[1]["status"] == "completed",
+          "the pushed branch's task closes once origin no longer has the branch, after "
+          "git fetch --prune origin", lines)
+    failures_seen, lines = close_tasks(main, remove=True, only_done=True)
+    check(failures_seen == 0 and lines == [],
+          "a completed task is not judged again, and --only-done names no open one", lines)
+
+
+def test_the_cleaner_reports_each_task_it_cannot_judge():
+    empty_restore_task_list()
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "judge", {"new.txt": "work\n"}, "12-1")
+    code, lines = run_restore(main, ref, ["new.txt"])
+    key, task = restored_task_of(main, ref)
+    task_file = restore_task_list() / f"{key}.json"
+    origin = git(main, "remote", "get-url", "origin")
+    git(main, "remote", "set-url", "origin", str(SCRATCH / "no-such-origin.git"))
+    failures_seen, lines = close_tasks(main, remove=True)
+    git(main, "remote", "set-url", "origin", origin)
+    check(failures_seen == 1 and lines and lines[0].startswith("FAILED: git fetch --prune origin")
+          and "no-such-origin" in lines[0]
+          and json.loads(task_file.read_text())["status"] == "pending",
+          "a failed fetch leaves every task as it was and is reported", lines)
+    original = task_file.read_text()
+    for name, description, expected in (
+            ("a task with no Restore commit line", "no commit here", "has no line opening"),
+            ("a task whose restore commit git cannot judge", "Restore commit: " + "f" * 40,
+             "could not be judged (git merge-base --is-ancestor")):
+        task_file.write_text(json.dumps(dict(task, description=description)))
+        failures_seen, lines = close_tasks(main, remove=True)
+        check(failures_seen == 1 and any(line.startswith("FAILED: ") and expected in line
+                                         for line in lines)
+              and json.loads(task_file.read_text())["description"] == description,
+              f"{name} is left as it was and reported", lines)
+    task_file.write_text("{ not json")
+    unreferenced = git(main, "commit-tree", "HEAD^{tree}", "-m", "held by no ref")
+    later_task = restore_task_list() / "9.json"
+    later_task.write_text(json.dumps({
+        "id": "9", "subject": "Restored branch restored-y: open its pull request or delete it",
+        "status": "pending", "description": f"Restore commit: {unreferenced}"}))
+    failures_seen, lines = close_tasks(main, remove=True)
+    check(failures_seen == 1 and lines and lines[0].startswith(f"FAILED: the task file {task_file}")
+          and json.loads(later_task.read_text())["status"] == "completed",
+          "a task file that cannot be read is reported, and the next task is still judged", lines)
+    later_task.unlink()
+    real_timeout = cleaner.RESTORED_BRANCH_TASKS_CLOSE_GIT_FETCH_TIMEOUT_SECONDS
+    cleaner.RESTORED_BRANCH_TASKS_CLOSE_GIT_FETCH_TIMEOUT_SECONDS = 0.0001
+    task_file.write_text(original)
+    try:
+        failures_seen, lines = close_tasks(main, remove=True)
+    finally:
+        cleaner.RESTORED_BRANCH_TASKS_CLOSE_GIT_FETCH_TIMEOUT_SECONDS = real_timeout
+    check(failures_seen == 1 and lines and lines[0].startswith(
+        "FAILED: git fetch --prune origin ran past 0.0001 seconds")
+          and json.loads(task_file.read_text())["status"] == "pending",
+          "a fetch that runs past its time limit leaves every task as it was and is reported", lines)
+    task_file.write_text(original)
+    git(main, "worktree", "remove", "--force", str(restored_worktree_of(main, ref)))
+    git(main, "branch", "-D", snapshots.restored_branch_name(ref))
+    restore_task_list().chmod(0o555)
+    try:
+        failures_seen, lines = close_tasks(main, remove=True)
+    finally:
+        restore_task_list().chmod(0o755)
+    check(failures_seen == 1 and any("could not be rewritten as completed" in line for line in lines)
+          and json.loads(task_file.read_text())["status"] == "pending",
+          "a task file that cannot be rewritten is left as it was and reported", lines)
+    # The partial file is written, then the replace fails: only removing the partial cleans up.
+    real_replace = cleaner.os.replace
+
+    def failing_replace(source, target):
+        raise OSError(28, "No space left on device")
+    cleaner.os.replace = failing_replace
+    try:
+        failures_seen, lines = close_tasks(main, remove=True)
+    finally:
+        cleaner.os.replace = real_replace
+    check(failures_seen == 1 and any("could not be rewritten as completed" in line for line in lines)
+          and json.loads(task_file.read_text())["status"] == "pending"
+          and not list(restore_task_list().glob("*.partial")),
+          "a task file whose rewrite fails after its partial file is written leaves no partial file",
+          lines + [str(path) for path in restore_task_list().iterdir()])
+    later_list =restore_task_list().with_name("nedsnodes-seat-six-tasks")
+    later_list.mkdir()
+    unreferenced = git(main, "commit-tree", "HEAD^{tree}", "-m", "held by no ref")
+    (later_list / "1.json").write_text(json.dumps({
+        "id": "1", "subject": "Restored branch restored-x: open its pull request or delete it",
+        "status": "pending", "description": f"Restore commit: {unreferenced}"}))
+    restore_task_list().chmod(0o000)
+    try:
+        failures_seen, lines = close_tasks(main, remove=True)
+    finally:
+        restore_task_list().chmod(0o755)
+    check(failures_seen == 1 and lines and lines[0].startswith(
+        f"FAILED: the task list {restore_task_list()} could not be read")
+          and json.loads((later_list / "1.json").read_text())["status"] == "completed",
+          "a task list that cannot be read is reported, and the next list is still judged", lines)
+    shutil.rmtree(later_list)
+    unrelated = restore_task_list() / "999.json"
+    unrelated.write_text(json.dumps({"id": "999", "subject": "Another task", "status": "pending",
+                                     "description": ""}))
+    failures_seen, lines = close_tasks(main, remove=True)
+    check(failures_seen == 0 and json.loads(unrelated.read_text())["status"] == "pending"
+          and json.loads(task_file.read_text())["status"] == "completed",
+          "only a restored branch's task is closed", lines)
+
+
+def test_two_cleaners_rewriting_one_task_each_publish_their_own_text():
+    empty_restore_task_list()
+    main = new_clone()
+    ref, _worktree = leftover_snapshot(main, "race", {"new.txt": "work\n"}, "12-2")
+    code, lines = run_restore(main, ref, ["new.txt"])
+    git(main, "worktree", "remove", "--force", str(restored_worktree_of(main, ref)))
+    git(main, "branch", "-D", snapshots.restored_branch_name(ref))
+    key, _task = restored_task_of(main, ref)
+    task_file = restore_task_list() / f"{key}.json"
+    original = task_file.read_text()
+    real_replace = cleaner.os.replace
+    second_writer = {}
+
+    def replace_after_a_second_cleaner_wrote(source, target):
+        if not second_writer:
+            # A second cleaner, started by another session-handoff, rewrites the same task between
+            # this one's write and its rename.
+            second_writer["run"] = True
+            task_file.write_text(original)
+            second_writer["result"] = close_tasks(main, remove=True)
+        return real_replace(source, target)
+
+    cleaner.os.replace = replace_after_a_second_cleaner_wrote
+    try:
+        failures_seen, lines = close_tasks(main, remove=True)
+    finally:
+        cleaner.os.replace = real_replace
+    second_failures, second_lines = second_writer.get("result", (None, []))
+    written = json.loads(task_file.read_text())
+    leftovers = [path.name for path in restore_task_list().iterdir() if path.name.endswith(".partial")]
+    check(failures_seen == 0 and second_failures == 0 and written["status"] == "completed"
+          and written["description"].count("Marked completed by scripts/clean-worktrees.py") == 1
+          and leftovers == [],
+          "two cleaners rewriting one task at once each publish whole text of their own and fail "
+          "nothing", (lines, second_lines, leftovers))
+
+
+# ---------------------------------------------------------------- cleaner
+
+
+def test_cleaner():
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "fork", "fork-branch")
+    owners = {"old": "11-1", "recent": "12-1", "never": "13-1", "alive": "14-1"}
+    refs = {}
+    for label, owner in owners.items():
+        # Different content each time, so none duplicates another.
+        (worktree / "new.txt").write_text(f"work, version {label}\n")
+        refs[label] = snapshot_at(worktree, owner, 1000, "seat-six")
+    git(main, "worktree", "remove", "--force", str(worktree))
+    now = 100 * 86400
+    handoffs = SCRATCH / "handoffs-cleaner"
+    handoffs.mkdir()
+    (handoffs / "seat-six-work-snapshots-first-listed.json").write_text(json.dumps({
+        refs["old"]: now - 11 * 86400, refs["recent"]: now - 5 * 86400,
+        refs["alive"]: now - 30 * 86400}))
+    alive = lambda key: key == owners["alive"]
+    report = []
+    failures_seen = snapshots.clean_leftover_work_snapshots(
+        main, remove=False, only_due=False, handoff_directory=handoffs, now=now,
+        is_alive=alive, out=report.append)
+    check(failures_seen == 0 and set(refs_of(main)) == set(refs.values()),
+          "run without --remove it deletes nothing", report)
+    check(any(refs["old"] in line and "due for deletion" in line for line in report)
+          and any(refs["never"] in line and "never listed" in line for line in report),
+          "it reports leftovers with whether and when they were listed", report)
+    check(not any(refs["alive"] in line for line in report),
+          "a live owner's work-snapshot is not reported", report)
+    report = []
+    snapshots.clean_leftover_work_snapshots(
+        main, remove=True, only_due=False, handoff_directory=handoffs, now=now,
+        is_alive=alive, out=report.append)
+    left = set(refs_of(main))
+    check(refs["old"] not in left and any(refs["old"] in line and "deleted" in line
+                                         and "new.txt" in line for line in report),
+          "the cleaner deletes a dead owner's work-snapshot first listed more than 10 days "
+          "ago, naming it and its files", report)
+    check({refs["recent"], refs["never"], refs["alive"]} <= left,
+          "it keeps one listed more recently, one never listed, and a live owner's one", left)
+    report = []
+    count = snapshots.clean_leftover_work_snapshots(
+        SCRATCH / "not-a-repository", remove=True, only_due=False,
+        handoff_directory=handoffs, now=now, is_alive=alive, out=report.append)
+    check(count == 1 and "could not be listed" in report[0],
+          "a failure to list work-snapshots is said and counted", report)
+
+
+def snapshot_at(worktree, owner_key, seconds, agent_seat):
+    """refresh_work_snapshot with its author date set, so later ones sort later."""
+    os.environ["GIT_AUTHOR_DATE"] = f"@{seconds} +0000"
+    try:
+        snapshots.refresh_work_snapshot(worktree, owner_key, agent_seat, "")
+    finally:
+        del os.environ["GIT_AUTHOR_DATE"]
+    return snapshots.work_snapshot_ref(owner_key, worktree)
+
+
+def test_in_place_and_duplicate_leftovers():
+    main = new_clone()
+    handoffs = SCRATCH / "handoffs-in-place"
+    handoffs.mkdir()
+    dead = lambda key: False
+    home = add_worktree(main, main / ".claude" / "worktrees" / "home", "home-branch")
+    (home / "draft.md").write_text("a draft kept uncommitted on purpose\n")
+    first = snapshot_at(home, "21-1", 1000, "seat-eight")
+    report = []
+    snapshots.clean_leftover_work_snapshots(main, remove=True, only_due=False,
+                                            handoff_directory=handoffs, now=2000,
+                                            is_alive=dead, out=report.append)
+    check(snapshots.first_prompt_text(main, "seat-eight", handoffs, is_alive=dead) == ""
+          and first in refs_of(main)
+          and any(first in line and "still in its worktree" in line for line in report),
+          "after a session-handoff the dead owner's work-snapshot is kept, unlisted, while its "
+          "worktree still holds its changes", report)
+    second = snapshot_at(home, "22-1", 1500, "seat-eight")
+    report = []
+    snapshots.clean_leftover_work_snapshots(main, remove=False, only_due=True,
+                                            handoff_directory=handoffs, now=2000,
+                                            is_alive=dead, out=report.append)
+    check(any(first in line and "a duplicate of the newer leftover " + second in line
+              for line in report) and not any(second in line.split(":")[0] for line in report),
+          "--only-done shows the older of two leftovers with the same parent and tree as due",
+          report)
+    report = []
+    snapshots.clean_leftover_work_snapshots(main, remove=True, only_due=False,
+                                            handoff_directory=handoffs, now=2000,
+                                            is_alive=dead, out=report.append)
+    check(first not in refs_of(main) and second in refs_of(main)
+          and any(first in line and "deleted, a duplicate" in line for line in report),
+          "the cleaner deletes the older duplicate and keeps the newer one", report)
+    (home / "notes.md").write_text("notes the next agent-session added\n")
+    third = snapshot_at(home, "26-1", 1700, "seat-eight")
+    snapshots.clean_leftover_work_snapshots(main, remove=True, only_due=False,
+                                            handoff_directory=handoffs, now=2000,
+                                            is_alive=dead, out=lambda line: None)
+    check({second, third} <= set(refs_of(main)),
+          "leftovers whose trees differ are both kept")
+    git(home, "add", "-A")
+    git(home, "commit", "-q", "-m", "the draft, committed")
+    text = snapshots.first_prompt_text(main, "seat-eight", handoffs, is_alive=dead)
+    report = []
+    snapshots.clean_leftover_work_snapshots(main, remove=True, only_due=False,
+                                            handoff_directory=handoffs, now=2000,
+                                            is_alive=dead, out=report.append)
+    check(third in text and third in refs_of(main),
+          "a leftover whose changes were committed is listed and kept, an accepted cost: "
+          "the restore diff shows the agent the work is committed", (text[:300], report))
+    gone = add_worktree(main, main / ".claude" / "worktrees" / "gone", "gone-branch")
+    (gone / "work.txt").write_text("work\n")
+    older = snapshot_at(gone, "23-1", 1000, "seat-eight")
+    newer = snapshot_at(gone, "24-1", 1500, "seat-eight")
+    git(main, "worktree", "remove", "--force", str(gone))
+    text = snapshots.first_prompt_text(main, "seat-eight", handoffs, is_alive=dead)
+    check(newer in text and older not in text,
+          "of two duplicate leftovers of a gone worktree, only the newer is listed", text[:400])
+    unreadable = add_worktree(main, main / ".claude" / "worktrees" / "unreadable",
+                              "unreadable-branch")
+    (unreadable / "work.txt").write_text("work\n")
+    broken = snapshot_at(unreadable, "25-1", 1000, "seat-nine")
+    (unreadable / ".git").write_text("gitdir: /nonexistent/work-snapshot-test\n")
+    text = snapshots.first_prompt_text(main, "seat-nine", handoffs, is_alive=dead)
+    check(broken in text and "could not be compared" in text,
+          "a leftover whose worktree cannot be read is listed, saying why", text[:400])
+    report = []
+    failures_seen = snapshots.clean_leftover_work_snapshots(
+        main, remove=True, only_due=False, handoff_directory=handoffs, now=2000,
+        is_alive=lambda key: key != "25-1", out=report.append)
+    check(failures_seen == 1 and broken in refs_of(main)
+          and any(broken in line and "could not be checked, kept" in line for line in report),
+          "the cleaner keeps a leftover whose worktree cannot be read and counts a failure",
+          report)
+
+
+def test_same_tree_on_another_head_is_not_a_duplicate():
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "moved", "moved-branch")
+    (worktree / "draft.md").write_text("draft\n")
+    older = snapshot_at(worktree, "41-1", 1000, "seat-eleven")
+    git(worktree, "commit", "-q", "--allow-empty", "-m", "HEAD moves, the tree does not")
+    newer = snapshot_at(worktree, "42-1", 1500, "seat-eleven")
+    tree = lambda ref: git(main, "rev-parse", f"{ref}^{{tree}}")
+    handoffs = SCRATCH / "handoffs-moved"
+    handoffs.mkdir()
+    report = []
+    snapshots.clean_leftover_work_snapshots(main, remove=True, only_due=False,
+                                            handoff_directory=handoffs, now=2000,
+                                            is_alive=lambda key: False, out=report.append)
+    check(tree(older) == tree(newer) and {older, newer} <= set(refs_of(main)),
+          "two leftovers with the same tree but different parents are both kept", report)
+
+
+def test_unreadable_head_is_reported():
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "bad-head", "bad-head")
+    (worktree / "work.txt").write_text("work\n")
+    dead_key = dead_owner_key(43)
+    ref = snapshot_at(worktree, dead_key, 1000, "seat-eleven")
+    head_file = Path(git(worktree, "rev-parse", "--path-format=absolute", "--git-path", "HEAD"))
+    head_file.write_text("1234567890123456789012345678901234567890\n")
+    handoffs = SCRATCH / "handoffs-bad-head"
+    handoffs.mkdir()
+    text = snapshots.first_prompt_text(main, "seat-eleven", handoffs, is_alive=lambda key: False)
+    check(ref in text and "could not be compared" in text,
+          "a HEAD that cannot be resolved is reported with the listing, not taken for a "
+          "mismatch", text[:400])
+    report = []
+    failures_seen = snapshots.clean_leftover_work_snapshots(
+        main, remove=True, only_due=False, handoff_directory=handoffs, now=2000,
+        is_alive=lambda key: False, out=report.append)
+    check(failures_seen == 1 and ref in refs_of(main),
+          "the cleaner counts an unresolvable HEAD as a failure and keeps the work-snapshot",
+          report)
+    result = subprocess.run(
+        [sys.executable, str(REPOSITORY_ROOT / MODULE_RELATIVE), "list", "--repo", str(main)],
+        capture_output=True, text=True, check=False)
+    check(result.returncode == 1 and ref in result.stdout,
+          "list exits 1 after an unresolvable HEAD", (result.returncode, result.stdout[-300:]))
+    unborn = new_clone()
+    orphan = add_worktree(unborn, unborn / ".claude" / "worktrees" / "orphan", "orphan-base")
+    git(orphan, "checkout", "-q", "--orphan", "orphan-branch")
+    git(orphan, "rm", "-rq", "--cached", ".")
+    check(snapshots.head_commit_or_raise(orphan) is None,
+          "an unborn HEAD is no commit, not a failure")
+
+
+def test_git_failures_are_not_read_as_answers():
+    """A git call whose exit 1 is an answer (unborn, detached, absent), failing
+    with 128 instead, raises with git's error."""
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "failing-git", "failing-git")
+    (worktree / "work.txt").write_text("work\n")
+    stub_directory = SCRATCH / "git-failing-on-one-call-bin"
+    stub_directory.mkdir(exist_ok=True)
+    stub = stub_directory / "git"
+    stub.write_text("#!/bin/sh\n"
+                    'case "$*" in\n'
+                    '  *"$FAIL_GIT_CALL_CONTAINING"*)\n'
+                    "    echo 'fatal: stub failure' >&2; exit 128 ;;\n"
+                    "esac\n"
+                    f'exec {shutil.which("git")} "$@"\n')
+    stub.chmod(0o755)
+    ref = snapshots.work_snapshot_ref("46-1", worktree)
+    check(snapshots.current_ref_value(worktree, ref) is None,
+          "a work-snapshot ref that does not exist reads as absent")
+
+    def raised_with(call, action):
+        path_before = os.environ["PATH"]
+        os.environ["PATH"] = f"{stub_directory}{os.pathsep}{path_before}"
+        os.environ["FAIL_GIT_CALL_CONTAINING"] = call
+        try:
+            action()
+        except snapshots.WorkSnapshotError as error:
+            return str(error)
+        finally:
+            os.environ["PATH"] = path_before
+            del os.environ["FAIL_GIT_CALL_CONTAINING"]
+        return None
+
+    for call, action in (
+            ("rev-parse --verify -q HEAD",
+             lambda: snapshots.build_work_snapshot_commit(worktree, "seat-x", "")),
+            ("symbolic-ref -q --short HEAD",
+             lambda: snapshots.build_work_snapshot_commit(worktree, "seat-x", "")),
+            (f"rev-parse --verify -q {ref}",
+             lambda: snapshots.current_ref_value(worktree, ref))):
+        raised = raised_with(call, action)
+        check(raised is not None and "fatal: stub failure" in raised,
+              f"a failed `git {call}` raises with git's error, not an answer", raised)
+    check(refs_of(main) == [], "no work-snapshot was written from a failed git call",
+          refs_of(main))
+
+
+def test_branch_ref_naming_a_missing_object_is_reported():
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "bad-branch", "bad-branch")
+    (worktree / "work.txt").write_text("work\n")
+    dead_key = dead_owner_key(44)
+    ref = snapshot_at(worktree, dead_key, 1000, "seat-twelve")
+    branch_file = Path(git(worktree, "rev-parse", "--path-format=absolute", "--git-path",
+                           "refs/heads/bad-branch"))
+    branch_file.parent.mkdir(parents=True, exist_ok=True)
+    branch_file.write_text("1234567890123456789012345678901234567890\n")
+    raised = None
+    try:
+        snapshots.head_commit_or_raise(worktree)
+    except snapshots.WorkSnapshotError as error:
+        raised = str(error)
+    check(raised is not None and "show-ref" in raised,
+          "a branch whose ref names a missing object is a failure, not an unborn HEAD", raised)
+    handoffs = SCRATCH / "handoffs-bad-branch"
+    handoffs.mkdir()
+    text = snapshots.first_prompt_text(main, "seat-twelve", handoffs, is_alive=lambda key: False)
+    check(ref in text and "could not be compared" in text,
+          "the listing names the failure for a branch ref naming a missing object", text[:400])
+    result = subprocess.run(
+        [sys.executable, str(REPOSITORY_ROOT / MODULE_RELATIVE), "list", "--repo", str(main)],
+        capture_output=True, text=True, check=False)
+    check(result.returncode == 1 and ref in result.stdout,
+          "list exits 1 when a branch ref names a missing object",
+          (result.returncode, result.stdout[-300:]))
+
+
+def test_unborn_head_snapshot_stays_in_place():
+    main = new_clone()
+    orphan = add_worktree(main, main / ".claude" / "worktrees" / "unborn", "unborn-base")
+    git(orphan, "checkout", "-q", "--orphan", "unborn-branch")
+    git(orphan, "rm", "-rq", "--cached", ".")
+    (orphan / "draft.md").write_text("a draft on a branch with no commit yet\n")
+    ref = snapshot_at(orphan, "45-1", 1000, "seat-twelve")
+    snapshot = next(item for item in snapshots.all_work_snapshots(main) if item["ref"] == ref)
+    check(snapshots.leftover_state(main, snapshot) == snapshots.IN_PLACE,
+          "a work-snapshot taken on an unborn HEAD is in place while that HEAD is still unborn",
+          snapshots.leftover_state(main, snapshot))
+
+
+def test_duplicates_count_only_within_one_agent_seat():
+    for label, newer_seat in (("other-seat", "seat-fourteen"), ("unknown", "unknown")):
+        main = new_clone()
+        worktree = add_worktree(main, main / ".claude" / "worktrees" / label, f"{label}-branch")
+        (worktree / "draft.md").write_text("a draft\n")
+        older = snapshot_at(worktree, "46-1", 1000, "seat-thirteen")
+        newer = snapshot_at(worktree, "47-1", 1500, newer_seat)
+        git(main, "worktree", "remove", "--force", str(worktree))
+        handoffs = SCRATCH / f"handoffs-seat-{label}"
+        handoffs.mkdir()
+        dead = lambda key: False
+        text = snapshots.first_prompt_text(main, "seat-thirteen", handoffs, is_alive=dead)
+        report = []
+        snapshots.clean_leftover_work_snapshots(main, remove=True, only_due=False,
+                                                handoff_directory=handoffs, now=2000,
+                                                is_alive=dead, out=report.append)
+        check(older in text and {older, newer} <= set(refs_of(main))
+              and not any("duplicate" in line for line in report),
+              f"an identical newer leftover under {newer_seat} does not make the older one a "
+              "duplicate: it is listed to its own agent-seat and kept", (text[:300], report))
+
+
+def leftover_with_worktree_then(label, change_after):
+    """A dead owner's work-snapshot of new.txt added and tracked.txt edited, then change_after(worktree)."""
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / label, f"{label}-branch")
+    (worktree / "tracked.txt").write_text("edited by the dead agent\n")
+    (worktree / "new.txt").write_text("a new file from the dead agent\n")
+    ref = snapshot_at(worktree, "31-1", 1000, "seat-ten")
+    change_after(worktree)
+    return main, worktree, ref
+
+
+def test_discarded_work_is_listed_and_kept():
+    dead = lambda key: False
+    def discard_by_checkout(worktree):
+        git(worktree, "checkout", "--", "tracked.txt")
+        (worktree / "new.txt").unlink()
+    def discard_by_reset(worktree):
+        git(worktree, "add", "-A")
+        git(worktree, "reset", "-q", "--hard")
+    def discard_part_then_edit(worktree):
+        git(worktree, "checkout", "--", "tracked.txt")
+        (worktree / "other.txt").write_text("the next agent's own edit\n")
+        snapshot_at(worktree, "32-1", 1500, "seat-ten")
+    for label, change in (("checkout", discard_by_checkout), ("reset", discard_by_reset),
+                          ("part", discard_part_then_edit)):
+        main, worktree, ref = leftover_with_worktree_then(f"discard-{label}", change)
+        handoffs = SCRATCH / f"handoffs-discard-{label}"
+        handoffs.mkdir()
+        text = snapshots.first_prompt_text(main, "seat-ten", handoffs, is_alive=dead)
+        report = []
+        snapshots.clean_leftover_work_snapshots(main, remove=True, only_due=False,
+                                                handoff_directory=handoffs, now=2000,
+                                                is_alive=dead, out=report.append)
+        check(ref in text and ref in refs_of(main)
+              and not any(ref in line and "deleted" in line for line in report),
+              f"work a later agent discarded ({label}) is listed and kept",
+              (text[:300], report))
+
+
+def test_live_owner_duplicate_does_not_count():
+    main, worktree, ref = leftover_with_worktree_then(
+        "live-copy", lambda worktree: snapshot_at(worktree, "33-1", 1500, "seat-ten"))
+    handoffs = SCRATCH / "handoffs-live-copy"
+    handoffs.mkdir()
+    report = []
+    snapshots.clean_leftover_work_snapshots(main, remove=True, only_due=False,
+                                            handoff_directory=handoffs, now=2000,
+                                            is_alive=lambda key: key == "33-1",
+                                            out=report.append)
+    check(ref in refs_of(main),
+          "a live owner's identical later work-snapshot does not make a dead owner's one a "
+          "duplicate, since the live owner's hook may delete it", report)
+
+
+def test_edited_draft_older_version_is_listed():
+    main, worktree, ref = leftover_with_worktree_then(
+        "edited", lambda worktree: ((worktree / "new.txt").write_text("rewritten\n"),
+                                    snapshot_at(worktree, "34-1", 1500, "seat-ten")))
+    handoffs = SCRATCH / "handoffs-edited"
+    handoffs.mkdir()
+    text = snapshots.first_prompt_text(main, "seat-ten", handoffs, is_alive=lambda key: False)
+    check(ref in text,
+          "an older version whose tree differs from the later leftover's is listed",
+          text[:300])
+
+
+def test_empty_leftover_directory_is_not_the_worktree():
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "emptied", "emptied-branch")
+    (worktree / "work.txt").write_text("work\n")
+    ref = snapshot_at(worktree, "35-1", 1000, "seat-ten")
+    git(main, "worktree", "remove", "--force", str(worktree))
+    worktree.mkdir(parents=True)
+    handoffs = SCRATCH / "handoffs-emptied"
+    handoffs.mkdir()
+    dead = lambda key: False
+    text = snapshots.first_prompt_text(main, "seat-ten", handoffs, is_alive=dead)
+    report = []
+    snapshots.clean_leftover_work_snapshots(main, remove=True, only_due=False,
+                                            handoff_directory=handoffs, now=2000,
+                                            is_alive=dead, out=report.append)
+    check(ref in text and ref in refs_of(main),
+          "an empty directory left where the worktree was is not taken for the clean checkout "
+          "around it: the work-snapshot is listed and kept", (text[:300], report))
+    (main / "work.txt").write_text("work\n")
+    text = snapshots.first_prompt_text(main, "seat-ten", handoffs, is_alive=dead)
+    check(ref in text,
+          "nor for the checkout around it when that checkout holds the same uncommitted "
+          "change: the work-snapshot is still listed", text[:300])
+    git(main, "add", "work.txt")
+    git(main, "commit", "-q", "-m", "the same file, committed in the checkout around it")
+    text = snapshots.first_prompt_text(main, "seat-ten", handoffs, is_alive=dead)
+    check(ref in text,
+          "nor when the checkout around it has committed the same file: only the worktree's "
+          "own HEAD counts", text[:300])
+    (worktree / ".git").mkdir()
+    text = snapshots.first_prompt_text(main, "seat-ten", handoffs, is_alive=dead)
+    report = []
+    failures_seen = snapshots.clean_leftover_work_snapshots(
+        main, remove=True, only_due=False, handoff_directory=handoffs, now=2000,
+        is_alive=dead, out=report.append)
+    check(ref in text and "could not be compared" in text and failures_seen == 1
+          and ref in refs_of(main),
+          "an empty .git directory, which git skips to answer for the checkout around it, is "
+          "reported as a .git entry git cannot use, and the work-snapshot kept",
+          (text[:400], report))
+
+
+def test_in_place_leftover_is_not_expired():
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "kept", "kept-branch")
+    (worktree / "draft.md").write_text("a draft kept uncommitted\n")
+    ref = snapshot_at(worktree, "36-1", 1000, "seat-ten")
+    handoffs = SCRATCH / "handoffs-in-place-expiry"
+    handoffs.mkdir()
+    now = 100 * 86400
+    (handoffs / "seat-ten-work-snapshots-first-listed.json").write_text(
+        json.dumps({ref: now - 30 * 86400}))
+    report = []
+    snapshots.clean_leftover_work_snapshots(main, remove=True, only_due=False,
+                                            handoff_directory=handoffs, now=now,
+                                            is_alive=lambda key: False, out=report.append)
+    check(ref in refs_of(main),
+          "a work-snapshot first listed long ago but now in place in its worktree is kept",
+          report)
+
+
+def test_list_exits_nonzero_after_a_comparison_failure():
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "broken", "broken-branch")
+    (worktree / "work.txt").write_text("work\n")
+    dead_key = dead_owner_key(37)
+    ref = snapshot_at(worktree, dead_key, 1000, "seat-ten")
+    (worktree / ".git").write_text("gitdir: /nonexistent/work-snapshot-test\n")
+    result = subprocess.run(
+        [sys.executable, str(REPOSITORY_ROOT / MODULE_RELATIVE), "list", "--repo", str(main)],
+        capture_output=True, text=True, check=False)
+    check(result.returncode == 1 and ref in result.stdout,
+          "list prints a work-snapshot it could not compare and exits 1",
+          (result.returncode, result.stdout[-300:], result.stderr[-300:]))
+
+
+# ---------------------------------------------------------------- replay
+
+
+def claude_code_subagent_lock(main, worktree, process_id):
+    """Lock the worktree as Claude Code locks a subagent's worktree while the subagent runs."""
+    git(main, "worktree", "lock", "--reason",
+        f"claude agent agent-a0123456789abcdef (pid {process_id} start 1)", str(worktree))
+
+
+def owner_file_of(worktree):
+    return Path(git(worktree, "rev-parse", "--absolute-git-dir")) / "worktree-owner.json"
+
+
+def fake_gh_listing_no_pull_requests():
+    """A directory holding a gh that lists no pull request, for the cleaner's PATH."""
+    directory = SCRATCH / "fake-gh-no-pull-requests"
+    if not directory.is_dir():
+        directory.mkdir()
+        (directory / "gh").write_text("#!/bin/sh\necho '[]'\n")
+        (directory / "gh").chmod(0o755)
+    return directory
+
+
+def test_hook_writes_the_owner_file_of_a_subagent_worktree():
+    main = new_clone()
+    claude = FakeProcessTreeClaude(main, {"GIT_AUTHOR_NAME": "seat-eight"})
+    mine = add_worktree(main, main / ".claude" / "worktrees" / "agent-mine", "agent-mine-branch")
+    claude_code_subagent_lock(main, mine, claude.helper.pid)
+    others = add_worktree(main, main / ".claude" / "worktrees" / "agent-other", "agent-other-branch")
+    claude_code_subagent_lock(main, others, dead_process_id())
+    unlocked = add_worktree(main, main / ".claude" / "worktrees" / "by-hand", "by-hand-branch")
+    for worktree in (mine, others, unlocked):
+        message = claude.run_hook(bash(worktree))
+        check(message is None, f"the hook says nothing after a Bash call in {worktree.name}", message)
+    written = json.loads(owner_file_of(mine).read_text()) if owner_file_of(mine).exists() else None
+    check(written == {"owner_kind": "agent-session", "agent_seat": "seat-eight",
+                      "owner_key": claude.owner_key},
+          "the hook names its own agent-session as the owner of the subagent worktree Claude "
+          "Code's lock names its process in", written)
+    check(not owner_file_of(others).exists() and not owner_file_of(unlocked).exists(),
+          "it writes no owner file where the lock names another process, or where there is no lock")
+    check(git(mine, "status", "--porcelain", "--untracked-files=all") == "",
+          "the owner file is not in the worktree's files, so git status lists nothing")
+    owner_file_of(mine).write_text('{"owner_kind": "agent-seat", "agent_seat": "kept"}\n')
+    claude.run_hook(bash(mine))
+    check("kept" in owner_file_of(mine).read_text(), "it never replaces an owner file")
+    # Another hook run of the same agent-session writes the file between this run's read and write.
+    real_loader = claude.hook.load_worktree_owner_file_read_and_write_module
+
+    def loader_that_reads_no_owner_file():
+        module = real_loader()
+        module.worktree_owner_file_read = lambda worktree: None
+        return module
+
+    claude.hook.load_worktree_owner_file_read_and_write_module = loader_that_reads_no_owner_file
+    message = claude.run_hook(bash(mine))
+    check(message is None and "kept" in owner_file_of(mine).read_text(),
+          "an owner file another hook run wrote first is left as it is, and the hook says nothing",
+          message)
+    claude.end()
+
+
+def test_hook_reports_an_owner_file_it_cannot_write():
+    main = new_clone()
+    claude = FakeProcessTreeClaude(main, {"GIT_AUTHOR_NAME": "seat-ten"})
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "agent-x", "agent-x-branch")
+    claude_code_subagent_lock(main, worktree, claude.helper.pid)
+    # The worktree's git directory cannot take a new file.
+    git_directory = owner_file_of(worktree).parent
+    git_directory.chmod(0o500)
+    try:
+        message = claude.run_hook(bash(worktree))
+    finally:
+        git_directory.chmod(0o755)
+    check(message is not None and "owner file of your worktree" in message
+          and "could not be written" in message and claude.last_exit == 0,
+          "an owner file the hook cannot write is reported to the agent, and the hook exits 0",
+          message)
+    claude.end()
+    unnamed_main = new_clone()
+    # No GIT_AUTHOR_NAME, as in a claude started by hand rather than by a launcher.
+    unnamed = FakeProcessTreeClaude(unnamed_main)
+    unnamed_worktree = add_worktree(unnamed_main, unnamed_main / ".claude" / "worktrees" / "agent-y",
+                                    "agent-y-branch")
+    claude_code_subagent_lock(unnamed_main, unnamed_worktree, unnamed.helper.pid)
+    message = unnamed.run_hook(bash(unnamed_worktree))
+    written = (json.loads(owner_file_of(unnamed_worktree).read_text())
+               if owner_file_of(unnamed_worktree).exists() else None)
+    check(message is None and written is not None and written["agent_seat"] == "unknown",
+          "with no agent-seat named, the hook still names the agent-session, under the agent-seat "
+          "unknown, as the work-snapshot does", (message, written))
+    unnamed.end()
+
+
+def test_the_2026_10_05_loss_replayed():
+    empty_restore_task_list()
+    name = "the 2026-10-05 loss replayed: the restore brings both files back as a commit"
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "concurrency-step-1",
+                            "concurrency-step-1")
+    (worktree / "tracked.txt").write_text("edited by the fork\n")
+    (worktree / "new-test.py").write_text("print('a new test')\n")
+    claude = FakeProcessTreeClaude(main, {"GIT_AUTHOR_NAME": "seat-seven"})
+    claude_code_subagent_lock(main, worktree, claude.helper.pid)
+    claude.run_hook(edit(worktree / "tracked.txt"))
+    claude.run_hook(edit(worktree / "new-test.py"))
+    # Claude Code unlocks the worktree when the subagent finishes; the crash ends its claude process.
+    git(main, "worktree", "unlock", str(worktree))
+    claude.end()
+    environment = dict(os.environ, PATH=f"{fake_gh_listing_no_pull_requests()}:{os.environ['PATH']}")
+    cleaner = subprocess.run([sys.executable, str(main / CLEANER_RELATIVE), "--remove"],
+                             capture_output=True, text=True, cwd=main, env=environment)
+    check(not worktree.exists(), "the cleaner removes the dead fork's worktree, whose owner has "
+          "stopped and whose branch has no pull request", cleaner.stdout + cleaner.stderr)
+    check("work-snapshot refs/work-snapshots/" in cleaner.stdout
+          and "never listed in a first prompt" in cleaner.stdout,
+          "the cleaner reports the work-snapshot it keeps", cleaner.stdout)
+    check(f"kept in the work-snapshot {snapshots.WORK_SNAPSHOT_REF_PREFIX}{claude.owner_key}/"
+          in cleaner.stdout,
+          "the cleaner writes no second work-snapshot when the hook's last one holds the files",
+          cleaner.stdout)
+    handoffs = HOME / ".claude" / "handoffs"
+    handoffs.mkdir(parents=True, exist_ok=True)
+    text = snapshots.first_prompt_text(main, "seat-seven", handoffs)
+    refs = [line.split(":")[0][2:] for line in text.splitlines() if line.startswith("- refs/")]
+    check(len(refs) == 1 and "(is gone)" in text,
+          "the next agent-session's first prompt lists the work-snapshot", text[:300])
+    if refs:
+        code, lines = run_restore(main, refs[0], ["tracked.txt", "new-test.py"])
+        target = restored_worktree_of(main, refs[0])
+        check(code == 0 and git(target, "show", "HEAD:tracked.txt") == "edited by the fork"
+              and git(target, "show", "HEAD:new-test.py") == "print('a new test')",
+              name, lines)
+        check(refs_of(main) == [], "restore deletes the ref")
+        git(main, "worktree", "remove", "--force", str(target))
+        git(main, "branch", "-D", snapshots.restored_branch_name(refs[0]))
+        cleaner_run = subprocess.run([sys.executable, str(main / CLEANER_RELATIVE), "--remove"],
+                                     capture_output=True, text=True, cwd=main, env=environment)
+        check(restored_task_of(main, refs[0])[1]["status"] == "completed",
+              "the cleaner's --remove run marks the deleted restored branch's task completed",
+              cleaner_run.stdout + cleaner_run.stderr)
+
+
+def test_cleaner_writes_a_work_snapshot_the_hook_never_wrote():
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "agent-y", "agent-y-branch")
+    (worktree / "made-by-bash.txt").write_text("written outside any hook's sight\n")
+    owner_file_of(worktree).write_text(json.dumps({
+        "owner_kind": "agent-session", "agent_seat": "seat-nine",
+        "owner_key": dead_owner_key(dead_process_id())}) + "\n")
+    environment = dict(os.environ, PATH=f"{fake_gh_listing_no_pull_requests()}:{os.environ['PATH']}")
+    cleaner = subprocess.run([sys.executable, str(main / CLEANER_RELATIVE), "--remove"],
+                             capture_output=True, text=True, cwd=main, env=environment)
+    handoffs = HOME / ".claude" / "handoffs"
+    handoffs.mkdir(parents=True, exist_ok=True)
+    text = snapshots.first_prompt_text(main, "seat-nine", handoffs)
+    check(not worktree.exists() and "made-by-bash.txt" in text,
+          "the cleaner copies a stopped owner's untracked file to a work-snapshot of its own, "
+          "which the agent-seat's next first prompt lists", cleaner.stdout + text[:300])
+
+
+def main():
+    try:
+        for case in (test_what_a_work_snapshot_holds, test_same_size_edit_in_the_index_second,
+                     test_ref_names,
+                     test_bash_commit_deletes_and_other_worktrees_follow,
+                     test_overlapping_runs_end_on_the_final_state,
+                     test_unchanged_run_overlapped_by_a_run_that_moves_the_ref_ends_on_the_worktree_state,
+                     test_operation_trailer,
+                     test_each_operation_is_read_from_its_own_marker,
+                     test_git_path_line_count_other_than_five_is_reported,
+                     test_unchanged_worktree_writes_no_commit,
+                     test_hook_failure_is_reported, test_other_repository_is_untouched,
+                     test_worktree_discovery_failure_is_reported,
+                     test_names_read_from_git_are_the_files_as_stored,
+                     test_module_load_failure_is_reported, test_owner_liveness,
+                     test_macos_owner_walk_reads_ps,
+                     test_macos_ps_failure_is_not_a_dead_owner,
+                     test_live_and_dead_owners_listed, test_list_caps_and_failure,
+                     test_supervisor_appends_the_list, test_restore_a_subset,
+                     test_restore_reads_a_kept_name_as_a_literal_path,
+                     test_restore_refusals_change_nothing, test_restore_step_failures,
+                     test_restore_accepts_the_owner_file_git_worktree_add_wrote_naming_its_agent_seat,
+                     test_restore_failures_say_what_restore_made,
+                     test_restore_task_and_ref_deletion_failures, test_discard,
+                     test_command_line_of_restore_and_discard, test_entries_end_with_their_command,
+                     test_the_cleaner_closes_a_restored_branch_task_by_its_commit,
+                     test_the_cleaner_reports_each_task_it_cannot_judge,
+                     test_two_cleaners_rewriting_one_task_each_publish_their_own_text, test_cleaner,
+                     test_in_place_and_duplicate_leftovers,
+                     test_same_tree_on_another_head_is_not_a_duplicate,
+                     test_unreadable_head_is_reported,
+                     test_git_failures_are_not_read_as_answers,
+                     test_branch_ref_naming_a_missing_object_is_reported,
+                     test_unborn_head_snapshot_stays_in_place,
+                     test_duplicates_count_only_within_one_agent_seat,
+                     test_discarded_work_is_listed_and_kept,
+                     test_live_owner_duplicate_does_not_count,
+                     test_edited_draft_older_version_is_listed,
+                     test_empty_leftover_directory_is_not_the_worktree,
+                     test_in_place_leftover_is_not_expired,
+                     test_list_exits_nonzero_after_a_comparison_failure,
+                     test_hook_writes_the_owner_file_of_a_subagent_worktree,
+                     test_hook_reports_an_owner_file_it_cannot_write,
+                     test_the_2026_10_05_loss_replayed,
+                     test_cleaner_writes_a_work_snapshot_the_hook_never_wrote):
+            try:
+                case()
+            except Exception as error:
+                check(False, f"{case.__name__} raised", f"{type(error).__name__}: {error}")
+    finally:
+        shutil.rmtree(SCRATCH, ignore_errors=True)
+    if failures:
+        print(f"{len(failures)} case(s) failed")
+        return 1
+    print("all cases passed")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

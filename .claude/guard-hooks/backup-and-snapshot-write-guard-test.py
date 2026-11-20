@@ -76,7 +76,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("the Time Machine automount tree is blocked", result.returncode == 2)
 
     # Paths that merely look adjacent must stay writable.
-    result = run_hook(workspace, "/Volumes/nedhome/Projects/nedschorus/docs/x.md")
+    result = run_hook(workspace, "/Volumes/nedhome/Projects/nedsnodes/docs/x.md")
     check("the Mac's mount of the box's home is NOT blocked", result.returncode == 0,
           f"rc={result.returncode} {result.stderr}")
 

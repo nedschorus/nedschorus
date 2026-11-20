@@ -69,7 +69,7 @@ def load(name, path):
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 FOLDER_NAMING_CALLERS = [
     ("handoff_supervisor_for_folder_name_test",
-     REPOSITORY_ROOT / "nc-systems" / "handoff" / "handoff-supervisor.py"),
+     REPOSITORY_ROOT / "nn-systems" / "handoff" / "handoff-supervisor.py"),
     ("handoff_extract_conversation_for_folder_name_test",
      REPOSITORY_ROOT / "scripts" / "handoff-extract-conversation.py"),
 ]

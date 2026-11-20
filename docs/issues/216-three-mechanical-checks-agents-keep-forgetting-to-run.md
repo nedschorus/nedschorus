@@ -14,7 +14,7 @@ Before starting a task, does an open pull request already touch the files it wil
 
 Evidence: the six routed fix rounds of 2026-08-28 were dispatched only after this seat checked overlap **by hand** ("all four disjoint from each other and from PR [CLAUDE.md: six rules leave for the skills that own them](https://github.com/nedschorus/nedschorus/pull/184)"). Nothing enforces that check; it happened because one agent remembered.
 
-Distinct from the git-gatekeeper's same-path overlap refusal (GHI [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)), which fires at check-in between competing landings — a landing-race guard, not a work-assignment guard, and far too late to prevent duplicated work.
+Distinct from the git-gatekeeper's same-path overlap refusal (GHI [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)), which fires at check-in between competing landings — a landing-race guard, not a work-assignment guard, and far too late to prevent duplicated work.
 
 ## 2. Exit status read through a pipe
 
