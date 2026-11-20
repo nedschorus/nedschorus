@@ -8,7 +8,7 @@ Usage:
       [--include-own-session]
 
 WHAT IT SEARCHES. Five kinds of record in the log-store,
-/home/nedlern/nedschorus-logs/ on ned-box:
+/home/nedlern/nedsnodes-logs/ on ned-box:
 
   walk               walk/: walk-documents, drafts, suggestions and walk-minutes
   cold-read-records  cold-read-records/
@@ -115,14 +115,14 @@ says older transcripts were not read, in place of the count of all hits.
 FROM THE MAC. The whole log-store, the Mac's mirrored transcripts and session
 dialogs included, is on ned-box. When the log-store is not on this machine
 and this machine is not ned-box, the program runs ned-box's copy,
-/home/nedlern/Projects/nedschorus/scripts/<this program>, over
+/home/nedlern/Projects/nedsnodes/scripts/<this program>, over
 `ssh nedlern@ned-box` with the same arguments, and passes the running
 agent-session's identity and its last compaction, read from the Mac's live
 transcript, which ned-box's copy cannot see. When the Mac has no live
 transcript of the session, ned-box's copy reads the log-store's copy; when
 the Mac's copy finds one but cannot read it, it prints a FAILED line after
 ned-box's output and exits 2. Reading eleven gigabytes of
-transcripts through the Mac's mount /Volumes/nedhome/nedschorus-logs would
+transcripts through the Mac's mount /Volumes/nedhome/nedsnodes-logs would
 be slow, and ripgrep is not reliably on the Mac's PATH.
 
 FAILURES. A record that could not be searched prints a line opening FAILED,
@@ -186,10 +186,10 @@ refresh_common = load_sibling_module("log_store_session_dialogs_refresh_common",
 SESSION_DIALOG_FILE_NAME_SUFFIX = refresh_common.SESSION_DIALOG_FILE_NAME_SUFFIX
 
 PROGRAM_FILE_NAME = "log-store-past-discussions-regex-search-newest-first.py"
-DEFAULT_LOG_STORE_ROOT = Path("/home/nedlern/nedschorus-logs")
+DEFAULT_LOG_STORE_ROOT = Path("/home/nedlern/nedsnodes-logs")
 NED_BOX_HOSTNAME = "ned-box"
 NED_BOX_SSH_TARGET = "nedlern@ned-box"
-NED_BOX_PROGRAM_PATH = f"/home/nedlern/Projects/nedschorus/scripts/{PROGRAM_FILE_NAME}"
+NED_BOX_PROGRAM_PATH = f"/home/nedlern/Projects/nedsnodes/scripts/{PROGRAM_FILE_NAME}"
 SSH_OPTIONS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
 SSH_EXIT_CONNECTION_FAILED = 255
 

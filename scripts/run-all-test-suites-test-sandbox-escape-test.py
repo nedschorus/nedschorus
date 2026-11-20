@@ -80,7 +80,7 @@ CREDENTIAL_VARIABLES_THAT_MUST_BE_UNSET = (
     "DATABASE_PASSWORD")
 # Relative to the home directory, each matched in its own directory.
 CREDENTIAL_FILE_PATTERNS_THAT_MUST_BE_HIDDEN = (
-    ".config/nedschorus/*.token", ".claude/.credentials.json", ".codex/auth.json*",
+    ".config/nedsnodes/*.token", ".claude/.credentials.json", ".codex/auth.json*",
     ".config/gh/hosts.yml", ".ssh/id_*", ".git-credentials", ".netrc",
     ".gnupg/private-keys-v1.d/*", ".local/share/keyrings/*", ".steam/*.token",
     ".aws/credentials", ".docker/config.json", "nedsmessenger/secrets/*",

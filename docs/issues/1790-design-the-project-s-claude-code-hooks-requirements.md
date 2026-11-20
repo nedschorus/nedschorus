@@ -21,10 +21,10 @@ Deferred by the user on 2026-10-21. Work starts after the repeated and failing r
 ## Inputs
 
 - `.claude/settings.json`, and each hook program it registers.
-- `docs/nedschorus-wiki/nedschorus-enforcement-ladder.md`, which orders the ways to enforce a rule: impossible, default, block, remind, detect-and-reverse, text.
+- `docs/nedsnodes-wiki/nedsnodes-enforcement-ladder.md`, which orders the ways to enforce a rule: impossible, default, block, remind, detect-and-reverse, text.
 - GHI [Trigger-first instruction delivery (moved from nedlern#1972): delivery timing as a property of every instruction — step-2 CLAUDE.md design input + carried design and scan](https://github.com/nedschorus/nedschorus/issues/30) and its design, `docs/issues/30-trigger-first-instruction-delivery-design.md`.
-- The firing survey: `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/ned-box-helper/hook-overuse-and-design-check-survey-2026-10-20.md`. It counts each hook's reminders, refusals and stop blocks, and samples what agents did next.
-- Codex's hook review: `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/ned-box-helper/hook-overuse-review-codex-2026-10-20.md`. It lists every handler and what it tells the agent, gathers published guidance, and recommends a change per hook, such as running the push citation checks instead of reminding the agent to run them.
+- The firing survey: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/ned-box-helper/hook-overuse-and-design-check-survey-2026-10-20.md`. It counts each hook's reminders, refusals and stop blocks, and samples what agents did next.
+- Codex's hook review: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/ned-box-helper/hook-overuse-review-codex-2026-10-20.md`. It lists every handler and what it tells the agent, gathers published guidance, and recommends a change per hook, such as running the push citation checks instead of reminding the agent to run them.
 - Related open GHIs: [One Claude Code hook starts slow work early and a later hook adds the result, and a wiki page on hook techniques for controlling and instructing agents](https://github.com/nedschorus/nedschorus/issues/1515), and [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956).
 
 ## Method

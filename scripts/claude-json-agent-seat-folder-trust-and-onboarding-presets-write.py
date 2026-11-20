@@ -17,7 +17,7 @@ purpose.
 
 Used by scripts/launch-claude-mac, by scripts/launch-claude-ubuntu on the box,
 and by scripts/recover-crashed-seats.py before it starts a supervisor itself.
-nc-systems/handoff/handoff-supervisor.py calls
+nn-systems/handoff/handoff-supervisor.py calls
 claude_json_onboarding_presets_write, which writes the onboarding and theme
 presets without the trust preset, before every agent-session it launches,
 relaunches included: a /logout can clear hasCompletedOnboarding while a
