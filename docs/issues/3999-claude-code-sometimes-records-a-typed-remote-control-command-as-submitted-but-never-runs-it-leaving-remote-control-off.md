@@ -1,0 +1,29 @@
+---
+issue: "[Claude Code sometimes records a typed `/remote-control` command as submitted but never runs it, leaving Remote Control off](https://github.com/nedsnodes/nedsnodes/issues/3999)"
+---
+
+# Claude Code sometimes records a typed `/remote-control` command as submitted but never runs it, leaving Remote Control off
+
+## The defect
+
+When a `claude` login changes the signed-in claude.ai account, Claude Code turns Remote Control off in every running agent-session. The Remote Control reconnect watcher, `nn-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py`, then types `/remote-control <agent-seat name>` into each idle agent-seat's tmux pane to turn it back on.
+
+On 2026-11-20 one such typing was taken by Claude Code but never run. At 18:10:01.857 UTC the watcher typed `/remote-control cold-read-research` into the idle Mac agent-seat cold-read-research. The Mac's `~/.claude/history.jsonl` records that line as submitted at that moment, for the project `/Users/el/agents/cold-read-research`. The agent-session's transcript, `/Users/el/.claude/projects/-Users-el-agents-cold-read-research/a860cb1d-a045-43b9-802f-72184099c846.jsonl` on the Mac, has no line whose `subtype` is `local_command` (the line Claude Code writes when it runs a slash command) and none whose `subtype` is `bridge_status` (the line it writes when Remote Control connects) for it: after the `informational` line "Remote Control disconnected — signed-in claude.ai account or organization changed on this machine" at 18:09:52.219 UTC, the next `local_command` and `bridge_status` lines are at 23:26:42 and 23:26:43 UTC, when the user typed `/remote-control` himself.
+
+Why it matters: Remote Control stayed off in cold-read-research for about five hours and a quarter, and SendMessage, Claude Code's tool for sending a message to another agent-session, from other agent-seats to it failed meanwhile (unverified here; reported by the author of the pull request below), so work routed to it through messages stopped without anyone being told.
+
+## What was ruled out
+
+- The agent-seat was idle and the prompt was empty: the watcher types only after finding no dialog open and an empty prompt line, and the user's own message at 18:10:48 UTC, 47 seconds later, ran at once.
+- The same typing worked elsewhere: `history.jsonl` shows `/remote-control helper2` typed into the Mac agent-seat helper2 at 18:10:02.448 UTC, and helper2's transcript has a `bridge_status` line at 18:10:02.993 UTC; eight ned-box agent-seats typed into at 18:13 UTC each reconnected within a second (unverified here; reported by the author of the pull request below from the watcher's logs).
+- Neither the weekly limit nor `/login` explains it: seven of those eight ned-box agent-seats had hit the weekly limit and seven had not run `/login` themselves, and they reconnected all the same (unverified here; same source).
+- Claude Code kept no debug log for this agent-session (searched: no file name under `~/.claude/debug/` on the Mac contains the agent-session's ID `a860cb1d`), so what Claude Code did with the line after recording it is unknown. The Claude Code version on the Mac on 2026-11-20 was 2.1.330.
+
+The cause is inside Claude Code, outside this repository. Pull request [Remote Control reconnect watcher types again when a typing leaves Remote Control off, and reports after the third](https://github.com/nedsnodes/nedsnodes/pull/3995) adds the workaround meanwhile; it was still open, not merged, when this was written: the watcher checks for the `bridge_status` line after each typing, types again when it is missing, and reports after the third failed typing.
+
+## What to do next
+
+1. Report the defect upstream now at https://github.com/anthropics/claude-code/issues, after searching there for an existing report, with the evidence above and without the user's account details; a debug log is not needed to file it. Link the upstream issue in this GHI-MD with edit-GHI.
+2. So that the next occurrence leaves more evidence, find out whether an agent-seat can be started with Claude Code's debug logging on (for example `claude --debug`) without harm, and how the agent-seat launcher would pass it; if so, turn it on for the agent-seats the watcher types into. It is unverified that a debug log records how Claude Code handles a typed slash command; if it does not, have the watcher save the pane's text with `tmux capture-pane` after a typing that left no `bridge_status` line, so the screen at that moment is kept.
+3. Once the pull request above is merged, the watcher writes an entry whose `decision` is `typed` for each typing into its decisions file, `handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher-decisions.jsonl` (on ned-box under `nedlern@ned-box:/home/nedlern/nedsnodes-logs/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher/`, and for the Mac under `nedlern@ned-box:/home/nedlern/nedsnodes-logs/agent-session-files-by-machine/mac/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher/`), and reports after the third failed typing; a retyping shows there as a second `typed` entry for the same agent-seat after one loss of Remote Control. For each retyping, note the agent-seat, the time and the Claude Code version, confirm in that agent-session's transcript and `history.jsonl` that it is the same defect (the line recorded as submitted, with no `local_command` line after it), and add the occurrence, with any debug log or pane text from step 2, to the upstream report.
+4. Close this issue as completed once a Claude Code release fixes the defect and the watcher's decisions file shows no retyping under that release for two weeks. Close it as not planned if the upstream report is closed without a fix and the watcher's retrying keeps Remote Control on.
