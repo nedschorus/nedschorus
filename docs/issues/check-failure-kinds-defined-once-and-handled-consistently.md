@@ -86,7 +86,7 @@ The steps that need judgment are: a reviewer finding a problem or raising a ques
 
 ## Next action
 
-The user rules on the open questions. Then the work is built in this order: the wiki page and the data file with its nc-test-suite; the reviewer instructions, the review-write skill, the review-post program and the two programs that read its marks; the head test run program and merge-lane-2's merge program; the merge gate; the owner check; the guard hooks that fail open silently, with their nc-test-suite; the consistency check.
+The user rules on the open questions. Then the work is built in this order: the wiki page and the data file with its nc-test-suite; `docs/agents/pr-reviewer-instructions.md`, `.claude/skills/pull-request-review-write/SKILL.md`, `scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py` and the two programs that read its marks; the head test run program and merge-lane-2's merge program; the merge gate; the owner check; the guard hooks that fail open silently, with their nc-test-suite; the consistency check.
 
 ## Open questions for the user
 
