@@ -629,7 +629,7 @@ try:
                      at=at, tool_result={"backgroundTaskId": task_id})]
 
 
-    LONG_COMMAND = "cd /home/nedlern/Projects/nedschorus && " + "python3 scripts/x-test.py && " * 6
+    LONG_COMMAND = "cd /home/nedlern/Projects/nedsnodes && " + "python3 scripts/x-test.py && " * 6
     machine = Machine()
     machine.seat("alpha", [
         user("go"),
