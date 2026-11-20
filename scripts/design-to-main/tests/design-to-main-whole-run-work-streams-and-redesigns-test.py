@@ -112,7 +112,7 @@ class TheCoverageTypesOfASetOfTests(unittest.TestCase):
     6.4): test-writing's `emitted` carries every coverage-type present in
     the set — `script, prompt` for nine scripts and one prompt-based-test
     — as a tuple on the state-exit record and a comma-separated string
-    in state-exit.json; the machine records the set, and the tests go to
+    in design-to-main-state-exit-verdict-and-destination.json; the machine records the set, and the tests go to
     test-acceptance-by-user when prompt or script-and-prompt is among
     them. An implementation's coverage-type is one thing (section 2)."""
 
@@ -185,7 +185,10 @@ class TheTestWritersSetAgainstTheTestDesign(unittest.TestCase):
     nothing backs. A `no-tests` requirement runs nothing and counts as
     neither pass nor fail (section 6.4), so it is disregarded here;
     `no-tests` alone is what an empty set carries, never beside a type that
-    is present (section 2; the tenth walk, item 6)."""
+    is present (section 2; the tenth walk, item 6). A `user` requirement is
+    tested by a person by hand and the machine runs nothing for it
+    (sections 2 and 6.4), so the test writer writes no test for it and it
+    is disregarded as `no-tests` is."""
 
     def drive_a_test_write(self, test_design_coverage_types, emitted_coverage_types,
                            and_then=()):
@@ -252,6 +255,35 @@ class TheTestWritersSetAgainstTheTestDesign(unittest.TestCase):
                                                (T.COVERAGE_TYPE_NO_TESTS, "script"))
         self.assertEqual(len(machine.machine_errors), 1)
         self.assertEqual(run.paused_state, T.TEST_WRITING)
+
+    def test_a_user_requirement_is_left_out_of_the_set_the_test_writer_emits(self):
+        self.assertEqual(
+            M.the_set_of_coverage_types_the_test_design_asks_for(("script", "user")),
+            ("script",))
+        self.assertEqual(
+            M.the_set_of_coverage_types_the_test_design_asks_for(("user", "no-tests")),
+            (T.COVERAGE_TYPE_NO_TESTS,))
+        machine, run = self.drive_a_test_write(
+            ("script", "user"), ("script",),
+            and_then=[(T.TEST_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {})])
+        self.assertEqual(machine.machine_errors, [])
+        self.assertEqual(run.tests_coverage_types, ("script",))
+        # A `user` requirement is not agent-instructions: the user's check
+        # of standing-agent-instructions does not run for it.
+        self.assertNotEqual(run.current_state, T.TEST_ACCEPTANCE_BY_USER)
+        machine, run = self.drive_a_test_write(("user",), (T.COVERAGE_TYPE_NO_TESTS,))
+        self.assertEqual(machine.machine_errors, [])
+        self.assertEqual(run.tests_coverage_types, (T.COVERAGE_TYPE_NO_TESTS,))
+
+    def test_a_test_writer_that_emits_user_pauses_the_run_in_investigate_workflow(self):
+        # The writer claims a test for the `user` requirement, which the
+        # person tests by hand from the test-design.
+        machine, run = self.drive_a_test_write(("script", "user"), ("script", "user"))
+        self.assertEqual(len(machine.machine_errors), 1)
+        self.assertIn("test-design", run.machine_error)
+        self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+        self.assertEqual(run.paused_state, T.TEST_WRITING)
+        self.assertEqual(run.tests_coverage_types, ())
 
     def test_a_test_design_the_machine_cannot_read_is_not_checked_against(self):
         # Nothing is checked when the file names no requirement the
@@ -391,7 +423,7 @@ class TheInvestigationReportInTheStatePackage(unittest.TestCase):
     """Sections 2 and 9 (user-ruled 2026-09-14, the tenth walk, item 17;
     built as ruled, 2026-09-16, walk design-tables-checker-findings-from-pr-409,
     item 1): the state-package names the investigation report's path as
-    `investigation-report`, `reports/investigation-<n>.md` in the record,
+    `investigation-report`, `reports/design-to-main-investigation-report-<n>.md` in the record,
     `<n>` the count of the investigate-workflow instance — counted as the
     evidence directory counts a state's instances, since only the machine
     knows it. It rides in investigate-workflow's package, for the report
@@ -412,7 +444,7 @@ class TheInvestigationReportInTheStatePackage(unittest.TestCase):
         return [p for p in machine.launcher.launched if p["state"] == state]
 
     def report_path(self, record, instance_number):
-        return str(record.record_directory / "reports" / ("investigation-%d.md" % instance_number))
+        return str(record.record_directory / "reports" / ("design-to-main-investigation-report-%d.md" % instance_number))
 
     def test_the_first_investigations_package_names_investigation_1(self):
         script = fixture.prefix_to_tests_begun() + [
@@ -424,7 +456,7 @@ class TheInvestigationReportInTheStatePackage(unittest.TestCase):
         investigations = self.packages_for(machine, T.INVESTIGATE_WORKFLOW)
         self.assertEqual(len(investigations), 1)
         self.assertTrue(str(investigations[0]["investigation-report"]).endswith(
-            "design-to-main-record/reports/investigation-1.md"))
+            "design-to-main-record/reports/design-to-main-investigation-report-1.md"))
         self.assertEqual(str(investigations[0]["investigation-report"]), self.report_path(record, 1))
 
     def test_a_second_investigation_in_the_same_run_names_investigation_2(self):

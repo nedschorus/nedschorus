@@ -44,7 +44,7 @@ PROGRAM = "post-compaction-session-continues-hook"
 COMPACTION_SOURCE = "compact"
 
 CONTINUE_INSTRUCTION_LINES = (
-    "This session was just compacted. Continue the work that was underway;"
+    "[rule post-compaction-session-continue-work] This session was just compacted. Continue the work that was underway;"
     " do not wait to be prompted.",
     "Re-verify any in-flight state before trusting it: the tail below is what"
     " the transcript held, not a guarantee that the work is still where it"

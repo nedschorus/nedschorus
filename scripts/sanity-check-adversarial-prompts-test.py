@@ -1312,7 +1312,7 @@ def main():
     check("and prints the shipper's line as `record:`",
           said.splitlines()[0] == "record: shipped: fine", said.splitlines()[:1])
     check("the closing line names the shipper for the dispositions round",
-          "scripts/sanity-check-record-ship.py" in said and "finding-dispositions.md" in said,
+          "scripts/sanity-check-record-ship.py" in said and "sanity-check-finding-dispositions.md" in said,
           said)
     check("and says the record is kept, not deleted",
           "not deleted" in said and "Delete the record directory" not in said, said)
@@ -1909,7 +1909,7 @@ def main():
         return (f"When a run of this sanity-check saved cut-adversarial-prompt-{other}'s report, "
                 f"triage the cut-adversarial-prompt from that report.\n"
                 f"When no run of this sanity-check saved a report of the "
-                f"cut-adversarial-prompt, write in finding-dispositions.md that the "
+                f"cut-adversarial-prompt, write in sanity-check-finding-dispositions.md that the "
                 f"cut-adversarial-prompt is unreviewed.\n")
 
     runner_relaunch = load_runner()
@@ -2542,6 +2542,14 @@ if os.environ.get("DRIVER_SIGTERM_AT_MAIN_THREAD_LOCK_REACQUIRE_IN_SECOND_SUBMIT
         submits.append(1)
         return submit(pool, *arguments, **keywords)
     module.concurrent.futures.ThreadPoolExecutor.submit = submit_counted
+if os.environ.get("DRIVER_SIGTERM_IN_CELLS_POOL_SHUTDOWN"):
+    import signal, threading
+    shutdown = module.concurrent.futures.ThreadPoolExecutor.shutdown
+    def sigterm_then_shutdown(pool, *arguments, **keywords):
+        if threading.current_thread() is threading.main_thread():
+            signal.raise_signal(signal.SIGTERM)
+        return shutdown(pool, *arguments, **keywords)
+    module.concurrent.futures.ThreadPoolExecutor.shutdown = sigterm_then_shutdown
 ship_hold = os.environ.get("DRIVER_HOLD_FIRST_SHIP")
 if ship_hold:
     ship = module.ship_record
@@ -2771,6 +2779,47 @@ sys.exit(module.main())
                   and left_in_copies_root(base) == [],
                   f"exit {process.returncode}, copies root {left_in_copies_root(base)}, "
                   f"stdout {out!r}, stderr {err!r}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            end_stand_ins(recorded)
+
+    # Case 65: a SIGTERM the main thread takes inside the cells' pool's
+    # shutdown, as `with` exits once every cell has ended. The handler only
+    # records it there, so the raise after the pool is what makes the run end
+    # by the signal: without it the run ended with exit 0.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        target = "docs/stopped-in-the-cells-pool-shutdown.md"
+        repo = scratch_repository_with_design(base, target)
+        programs, recorded = stand_in_agent_binaries(base)
+        environment = runner_process_environment(
+            programs, recorded, codex="report", claude="report")
+        environment["DRIVER_SIGTERM_IN_CELLS_POOL_SHUTDOWN"] = "1"
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(runner_driver(base, repo)),
+             "--target", target, "--adversarial-prompt", "cut"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            try:
+                out, err = process.communicate(timeout=60)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                out, err = process.communicate()
+            records = sorted((repo / "sanity-check-records").glob("*"))
+            record = records[0] if len(records) == 1 else None
+            check("a SIGTERM the main thread takes in the cells' pool's shutdown, once every "
+                  "cell has ended, prints what a finished run prints and ends the run by the "
+                  "signal, its copy removed",
+                  record is not None
+                  and process.returncode == -signal.SIGTERM
+                  and "Traceback" not in err
+                  and "STOPPED:" not in out
+                  and f"sanity-check complete: reports in {record}." in out
+                  and left_in_copies_root(base) == [],
+                  f"record {record}, exit {process.returncode}, "
+                  f"copies root {left_in_copies_root(base)}, stdout {out!r}, stderr {err!r}")
         finally:
             if process.poll() is None:
                 process.kill()
@@ -3814,10 +3863,19 @@ sys.exit(module.main())
           exit_code == 2 and "a git failure this case made" in errors.getvalue()
           and runner_git_main.git_failure_next_step_lines(shlex.join(
               [str(RUNNER_SCRIPT.resolve()), *sys_argv_of_the_baseline_case[1:]]),
-              runner_git_main.STOPPED_BEFORE_LAUNCH_AGAIN)
+              runner_git_main.STOPPED_BEFORE_LAUNCH_AGAIN, "a git failure this case made")
           in errors.getvalue()
           and claimed == [],
           f"exit {exit_code}, stderr {errors.getvalue()!r}, records {claimed}")
+    lock_steps = runner_git_main.git_failure_next_step_lines(
+        "`rerun`", runner_git_main.STOPPED_BEFORE_LAUNCH_AGAIN,
+        runner_git_main.git_output.GitCommandFailed(
+            ["status"], "/review-copy", 128,
+            "fatal: Unable to create '/review-copy/.git/index.lock': File exists.\n"))
+    check("the runner's next steps for a git error naming a lock file wait for that lock file "
+          "instead of offering the misspelt-name step",
+          "Git's error names the lock file /review-copy/.git/index.lock: " in lock_steps
+          and "is misspelt" not in lock_steps, lock_steps)
 
     # A git failure in a cell's thread, once its agent has finished: the report
     # is saved, the failure is printed, the provenance line says the commit was
@@ -3861,7 +3919,8 @@ sys.exit(module.main())
               and runner_cell_git.git_failure_next_step_lines(
                   runner_cell_git.rerun_command_for_cell(
                       "cut", "claude", "docs/agents/sanity-checker-cut-adversarial-prompt.md",
-                      [], None), runner_cell_git.CELL_GIT_CHECK_FAILED_AGAIN) in printed.getvalue()
+                      [], None), runner_cell_git.CELL_GIT_CHECK_FAILED_AGAIN,
+                  "a git failure this case made") in printed.getvalue()
               and "a git failure this case made" in printed.getvalue(),
               f"exit {exit_code}, report {report_text[:200]!r}, output {printed.getvalue()!r}")
 

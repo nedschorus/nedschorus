@@ -32,7 +32,7 @@ BLOCK = (f"#follow_up_request pull request {NUMBER}\n"
          "1. Codex P2 (:519-520): keep the padding when rebuilding code spans.\n"
          "2. mac-claude (inline at :713): send every R through repeat_line.\n")
 COMMAND = f"python3 scripts/{BRIEF_PROGRAM_NAME} {NUMBER}"
-EXPECTED_BRIEF = f"""merge-lane-2 merged pull request {NUMBER} and sent 2 non-blocking findings to follow up now:
+EXPECTED_BRIEF = f"""[rule pull-request-follow-up-request-brief-handed-to-author] merge-lane-2 merged pull request {NUMBER} and sent 2 non-blocking findings to follow up now:
 
 {BLOCK}
 Each "Program:" below means: run {COMMAND} followed by the words after it.

@@ -129,7 +129,7 @@ STATE_ENVIRONMENT_VARIABLE = "NEDSCHORUS_ABSENCE_CLAIM_REMINDER_STATE_DIRECTORY"
 REPLY_TEXT_LOGGED_CHARACTERS = 4000
 
 REMINDER_HEAD = (
-    "absence-claim reminder: your reply says a file or record is gone, missing "
+    "[rule absence-claim-run-locator-before-saying-missing] absence-claim reminder: your reply says a file or record is gone, missing "
     "or cannot be found ({matched}), and you have not run the locator this "
     "turn. Files agents call missing are often in another checkout, the "
     "log-store, a transcript or a backup.\n"

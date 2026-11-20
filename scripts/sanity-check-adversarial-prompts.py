@@ -81,7 +81,7 @@ Operating rules:
   `scripts/sanity-check-record-ship.py`, which this runner calls when the run
   ends. They are logs, kept and citable, not deleted when the work they served
   lands (user-ruled 2026-08-25, and 2026-09-15 for this kind). Ship again
-  after writing `finding-dispositions.md` and the add-only copy sends only
+  after writing `sanity-check-finding-dispositions.md` and the add-only copy sends only
   that file; a file already in the store whose content differs is refused, so
   finish the triage before shipping it rather than editing it afterwards.
 - Each review agent is given a scratch directory of its own, made by the
@@ -160,7 +160,7 @@ Running a sanity-check, and reading its output:
   the user what the line says, and after the user has cleared the cause run
   the command printed there, which runs that one agent again into a new
   record directory. For every other failure: triage that audit from the other
-  agent-binary's report when a run saved one, and write in finding-dispositions.md
+  agent-binary's report when a run saved one, and write in sanity-check-finding-dispositions.md
   that the audit is unreviewed when none did. A report saved by an agent's
   second launch carries `relaunched_after=<cause class>` in its provenance
   line.
@@ -377,8 +377,9 @@ MAIN_THREAD_WAIT_STEP_SECONDS = 0.25
 # leaves the lock released, `with` releases it again, and RuntimeError
 # replaces the stop. It records the signal in
 # STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL instead, and run_cells_in_review_copy
-# raises it after each submit, after each wait step and after the pool has
-# shut down, where the main thread holds no such lock.
+# raises it after each wait step and after the pool has shut down, where the
+# main thread holds no such lock. A stop taken while a cell is submitted waits
+# for the next wait step: a cell submitted after the stop launches nothing.
 MAIN_THREAD_RUNS_THE_CELLS_POOL = False
 STOP_SIGNAL_TAKEN_IN_THE_CELLS_POOL = None
 # Set by the first stop signal, and read by every thread before it launches an
@@ -420,14 +421,15 @@ CELL_GIT_CHECK_FAILED_AGAIN = "WARNING: the runner could not check"
 STOPPED_BEFORE_LAUNCH_AGAIN = "sanity-check stopped before any agent launched"
 
 
-def git_failure_next_step_lines(rerun: str, text_the_failure_line_contains: str) -> str:
+def git_failure_next_step_lines(rerun: str, text_the_failure_line_contains: str, failure) -> str:
     """What to do after a git command the runner ran has failed, each line ending its line.
 
     Printed after the line that names the command and quotes git's error.
     """
     program = str(pathlib.Path(__file__).resolve())
     return next_step_lines.git_failure_next_step_lines(
-        rerun, program, text_the_failure_line_contains=text_the_failure_line_contains) + "\n"
+        rerun, program, git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=str(failure),
+        text_the_failure_line_contains=text_the_failure_line_contains) + "\n"
 
 
 # The line a cell prints when its first launch produced no report and the
@@ -1642,8 +1644,8 @@ def git_check_failed_after_a_cell(cell: str, what: str, failure, rerun: str) -> 
     sys.stdout.write(f"WARNING: the runner could not check {what}, because "
                      f"{failure}. {cell}'s report is saved without that check. Follow the "
                      f"steps below; the rerun command in them runs {cell} alone again, "
-                     f"in a new record whose report has the check.\n"
-                     + git_failure_next_step_lines(rerun, CELL_GIT_CHECK_FAILED_AGAIN))
+                     f"in a new record.\n"
+                     + git_failure_next_step_lines(rerun, CELL_GIT_CHECK_FAILED_AGAIN, failure))
     sys.stdout.flush()
 
 
@@ -1707,7 +1709,7 @@ def failed_cell_lines(adversarial_prompt: str, runtime: str, failure: FailedLaun
         f"When a run of this sanity-check saved {other_cell}'s report, triage "
         f"the {adversarial_prompt}-adversarial-prompt from that report.",
         f"When no run of this sanity-check saved a report of the "
-        f"{adversarial_prompt}-adversarial-prompt, write in finding-dispositions.md "
+        f"{adversarial_prompt}-adversarial-prompt, write in sanity-check-finding-dispositions.md "
         f"that the {adversarial_prompt}-adversarial-prompt is unreviewed.",
     ]
 
@@ -1909,7 +1911,7 @@ def main() -> int:
     except git_output.GitCommandFailed as failure:
         rerun = shlex.join([str(pathlib.Path(__file__).resolve()), *sys.argv[1:]])
         sys.stderr.write(f"sanity-check stopped before any agent launched: {failure}.\n"
-                         + git_failure_next_step_lines(rerun, STOPPED_BEFORE_LAUNCH_AGAIN))
+                         + git_failure_next_step_lines(rerun, STOPPED_BEFORE_LAUNCH_AGAIN, failure))
         return 2
     except RunStoppedBySignal as stopped:
         stopped_by = stopped.signal_number
@@ -2058,7 +2060,6 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
                             run_cell, adversarial_prompt, runtime, args.target, args.context,
                             args.problem_statement, out_dir, baseline_status, corpus,
                             checkout, copy_record_dir))
-                        raise_stop_taken_in_the_cells_pool()
                     # Waited for in short steps, not with as_completed: Python
                     # runs stop_run_on_signal only in the main thread, and when
                     # Linux hands a stop signal to a cell's thread, a main
@@ -2156,7 +2157,7 @@ def print_run_completion(out_dir: pathlib.Path, ship=None) -> bool:
             "time for his ruling (the walk-me-through skill). "
             "The record was shipped to the log-store when this run ended (the "
             "`record:` line above says whether it arrived); once "
-            "finding-dispositions.md is written, run "
+            "sanity-check-finding-dispositions.md is written, run "
             f"`scripts/sanity-check-record-ship.py {out_dir}` so it joins the "
             "reports there. Leave the record directory in place: these are logs, "
             "kept, not deleted when the work they served lands. A file already in "
