@@ -157,6 +157,7 @@ CONSTANTS_THAT_OPEN_NO_RULE_MESSAGE = {
     ("nn-systems/skills/walk-me-through/walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-user-prompt-submit-hook.py", "USER_REPLY_LINE"): LATER_PART,
     ("scripts/agent-seat-due-task-prerequisites-recording-reminder-after-task-create-hook.py", "FAULT_LINE_TEMPLATE"): HOOK_FAILED,
     ("scripts/agent-seat-due-task-prerequisites-recording-reminder-after-task-create-hook.py", "TASK_ID_CLAUSE_TEMPLATE"): LATER_PART,
+    ("scripts/agent-seat-due-task-raise-hook.py", "CLOSED_WITHOUT_MERGING_INSTRUCTIONS"): LATER_PART,
     ("scripts/agent-seat-due-task-raise-hook.py", "DEFER_INSTRUCTION"): LATER_PART,
     ("scripts/agent-seat-due-task-raise-hook.py", "NEXT_ACTION_HELD_TASKS_LINE"): LATER_PART,
     ("scripts/agent-seat-due-task-raise-hook.py", "NEXT_ACTION_MORE_LINE"): LATER_PART,

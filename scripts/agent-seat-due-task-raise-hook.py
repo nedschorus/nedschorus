@@ -270,7 +270,7 @@ DEFER_INSTRUCTION = (
     "metadata.prerequisites, or a task with addBlockedBy."
 )
 CLOSED_WITHOUT_MERGING_LINE_TEMPLATE = (
-    'Task {task_id} "{subject}" waits on a pull request that was closed without merging: '
+    '[rule due-task-pull-request-closed-without-merging-replace-or-delete] Task {task_id} "{subject}" waits on a pull request that was closed without merging: '
     "{citations}.")
 CLOSED_WITHOUT_MERGING_INSTRUCTIONS = (
     "If a task named above as waiting on a pull request closed without merging is still wanted, "
