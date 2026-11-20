@@ -135,8 +135,8 @@ class Scratch:
         self.directory = root / name
         self.directory.mkdir()
         self.home = self.directory / "home"
-        (self.home / ".config" / "nedschorus").mkdir(parents=True)
-        (self.home / ".config" / "nedschorus" / "ned-review-merge.token").write_text(TOKEN + "\n")
+        (self.home / ".config" / "nedsnodes").mkdir(parents=True)
+        (self.home / ".config" / "nedsnodes" / "ned-review-merge.token").write_text(TOKEN + "\n")
         self.bin = self.directory / "bin"
         self.bin.mkdir()
         (self.bin / "gh").write_text(FAKE_GH)
@@ -670,7 +670,7 @@ def main():
               and "could not run" in output, f"exit {code}\n{output}")
 
         scratch = Scratch(root, "no-token")
-        (scratch.home / ".config" / "nedschorus" / "ned-review-merge.token").unlink()
+        (scratch.home / ".config" / "nedsnodes" / "ned-review-merge.token").unlink()
         scratch.routes(routes_for())
         code, output = scratch.run()
         check("a missing token stops the invocation before any gh call, exit 2",
