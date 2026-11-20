@@ -10,14 +10,14 @@ from pathlib import Path, PurePath
 
 _git_machine_readable_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_machine_readable_output = importlib.util.module_from_spec(_git_machine_readable_output_spec)
 _git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
     "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
@@ -126,7 +126,7 @@ COLLISION_WARNING_TEMPLATE = (
     "wrote so its name ends -draft before the extension, or at the end of a name that has "
     "none; tell whoever expects the old path the new one; and leave {draft_of} as it is.\n"
     "If both files are meant to exist and the file you wrote is not a draft, rename the file "
-    "you wrote following the rules in docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-"
+    "you wrote following the rules in docs/nedsnodes-wiki/nedsnodes-how-to-choose-a-name-for-files-code-and-"
     "glossary-terms.md, and update what you have already written to point at the new name.\n"
     "If you wrote the file by mistake, delete the file you wrote."
 )

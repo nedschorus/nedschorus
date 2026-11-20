@@ -1,0 +1,1092 @@
+#!/usr/bin/env python3
+"""Shared cold-read-cell execution; launchers supply agent-binary-specific invocations."""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+import pathlib
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import typing
+
+import importlib.util
+
+_record_names_spec = importlib.util.spec_from_file_location(
+    "cold_read_record_names",
+    pathlib.Path(__file__).with_name("cold-read-record-names-common.py"))
+record_names = importlib.util.module_from_spec(_record_names_spec)
+_record_names_spec.loader.exec_module(record_names)
+
+_git_machine_readable_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    pathlib.Path(__file__).resolve().parents[1] / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_machine_readable_output = importlib.util.module_from_spec(_git_machine_readable_output_spec)
+_git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
+
+
+# Built from the prompt files, so deleting a prompt also removes its --cell choice.
+CELL_CHOICES = sorted(path.name[:-len("-prompt.md")] for path in PROMPTS_DIR.glob("*-prompt.md"))
+# The judge reads four files per case and needs its own prompt and fixed tier.
+TIER_CHOICES = ["deep", "second-strongest-model", "fast"]
+
+# Draft prompts need free labels; labels become report filename tokens.
+PROMPT_FILE_CELL_LABEL_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
+# EX_USAGE distinguishes launcher refusals from agent-binary command-line errors (Codex exits 2).
+EXIT_BAD_INVOCATION = 64
+
+
+class CellRefusal(Exception):
+    """A refusal carrying its remedy and exit code."""
+
+    def __init__(self, message: str, exit_code: int = EXIT_BAD_INVOCATION):
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
+# The keychain remains accessible because masking it logs the agent-binaries out.
+CREDENTIAL_DIRECTORIES = (
+    pathlib.Path.home() / ".config" / "nedsnodes",
+    pathlib.Path.home() / ".config" / "gh",
+    pathlib.Path.home() / ".ssh",
+    pathlib.Path.home() / ".steam",
+    # Denied whole: secrets/ holds credential files no name pattern matches.
+    pathlib.Path.home() / "nedsmessenger",
+)
+CREDENTIAL_FILE_NAME_PATTERNS = ("*.token", ".env")
+
+# agy reads its login inside its sandbox; Claude and Codex authenticate outside model tools.
+REVIEWER_PROGRAM_LOGIN_FILES = {
+    "claude": (pathlib.Path.home() / ".claude" / ".credentials.json",),
+    "codex": (pathlib.Path.home() / ".codex" / "auth.json",),
+    "agy": (pathlib.Path.home() / ".gemini" / "jetski-standalone-oauth-token",
+            pathlib.Path.home() / ".gemini" / "oauth_creds.json",
+            pathlib.Path.home() / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"),
+}
+
+
+def reviewer_program_login_files(except_program: str = None,
+                                 only_present: bool = False) -> list:
+    """Return login paths, optionally excluding one program and absent files."""
+    # Masking a missing path on Linux can create a mount point on the real disk.
+    return [str(path) for program, paths in REVIEWER_PROGRAM_LOGIN_FILES.items()
+            if program != except_program
+            for path in paths if not only_present or path.is_file()]
+
+
+def credential_directories_present() -> list:
+    return [str(directory) for directory in CREDENTIAL_DIRECTORIES
+            if directory.is_dir()]
+
+
+def codex_credential_denying_permission_profile_arguments(
+        profile_name: str, extends: str, platform: str = sys.platform,
+        network: bool = False) -> list:
+    """Return Codex permission-profile overrides denying credential paths."""
+    # JSON string escaping also works for TOML basic strings used as path keys.
+    entries = ({":slash_tmp": "read", ":tmpdir": "read"}
+               if platform.startswith("linux") and extends == ":workspace" else {})
+    denied = credential_directories_present()
+    denied += reviewer_program_login_files(only_present=True)
+    if not platform.startswith("linux"):
+        denied += [f"/**/{pattern}" for pattern in CREDENTIAL_FILE_NAME_PATTERNS]
+    entries.update((path, "deny") for path in denied)
+    table = "{" + ",".join(f"{json.dumps(path)}={json.dumps(access)}"
+                           for path, access in entries.items()) + "}"
+    arguments = [
+        "-c", f'default_permissions="{profile_name}"',
+        "-c", f'permissions.{profile_name}.extends="{extends}"',
+    ]
+    if network:
+        arguments += ["-c", f"permissions.{profile_name}.network.enabled=true"]
+    return arguments + ["-c", f"permissions.{profile_name}.filesystem={table}"]
+
+
+class BadInvocationArgumentParser(argparse.ArgumentParser):
+    """Use the launcher refusal code to distinguish argparse errors from agent-binary errors."""
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(EXIT_BAD_INVOCATION, f"{self.prog}: error: {message}\n")
+
+
+def build_argument_parser(
+    description: str, model_help: str, tier_choices=tuple(TIER_CHOICES),
+    cold_read_cell_launcher_own_command_line_options_adder=None,
+) -> argparse.ArgumentParser:
+    parser = BadInvocationArgumentParser(
+        description=description, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    # Validation depends on --prompt-file, which argparse cannot see in choices=.
+    parser.add_argument(
+        "--cell", required=True,
+        help=f"the pass to run, one of {', '.join(CELL_CHOICES)}; with "
+             "--prompt-file, any label of lowercase letters and digits joined "
+             "by single hyphens, which names the report",
+    )
+    parser.add_argument("--tier", required=True, choices=list(tier_choices))
+    parser.add_argument(
+        "--target", required=True,
+        help="document path, relative to the current directory or absolute",
+    )
+    parser.add_argument(
+        "--target-origin", metavar="PATH",
+        help="the file --target was copied from, when --target is a frozen "
+             "copy; the prompt then tells the reviewer to resolve the "
+             "document's relative references from this file's directory, "
+             "since nothing else was copied beside the target. Relative to "
+             "the current directory or absolute; not required to exist, so a retry "
+             "still runs after the original moved.",
+    )
+    parser.add_argument(
+        "--report", required=True,
+        help="file the reviewer writes its findings to; the caller names it, "
+             "and a run that leaves it absent or empty fails",
+    )
+    parser.add_argument("--model", help=model_help)
+    parser.add_argument(
+        "--effort", choices=["low", "medium", "high", "xhigh", "max"],
+        help="reasoning effort, overriding the tier mapping. Honored exactly, "
+             "with no fallback, the way --model is: a caller who names an "
+             "effort is answering the question the tier map exists to answer, "
+             "and quietly running the mapped level instead would defeat the "
+             "request. The fast tier's own launcher "
+             "(nn-systems/cold-read/cold-read-agy-cell.py) pins medium; on the Claude and "
+             "Codex launchers a low-effort run goes through this flag.",
+    )
+    parser.add_argument(
+        "--prompt-file", metavar="PATH",
+        help="read the prompt template from this file instead of the "
+             "cell's own, .claude/skills/cold-read/prompts/<cell>-prompt.md, "
+             "with the same "
+             "{TARGET_PATH} and {REPORT_PATH} substitution; relative to the "
+             "current directory unless absolute. --cell is still required and "
+             "still names the report. This is how a draft prompt is trialled "
+             "through the ordinary launcher: on 2026-09-04, 24 trial cells "
+             "exited 64 because the only template a cell would read was the "
+             "one under prompts/. The stamp records the file's path.",
+    )
+    if cold_read_cell_launcher_own_command_line_options_adder:
+        cold_read_cell_launcher_own_command_line_options_adder(parser)
+    return parser
+
+
+def validate_cell(cell: str, prompt_file_argument) -> None:
+    if not prompt_file_argument:
+        if not CELL_CHOICES:
+            raise CellRefusal(
+                f"no cold-read-cell to run: each --cell choice is the name of "
+                f"a *-prompt.md file in {PROMPTS_DIR} without -prompt.md, as "
+                "defect-hunt is the choice for defect-hunt-prompt.md, and that "
+                "directory holds no *-prompt.md file.\n"
+                "To get the *-prompt.md files back from main, run "
+                f"`git -C {REPO_ROOT} restore --source=origin/main --staged "
+                "--worktree .claude/skills/cold-read/prompts`, then rerun this "
+                "command.\n"
+                "To run a prompt template of your own instead, rerun this "
+                "command with --prompt-file <path to the template, relative to "
+                "the current directory unless absolute>; the template names the "
+                "target as {TARGET_PATH} and the report as {REPORT_PATH}, as "
+                "the *-prompt.md files do. --cell is still required then, as a "
+                "label of lowercase letters and digits joined by single "
+                "hyphens, such as terminology-v9; a --cell you already passed "
+                "in that form can stay.")
+        if cell not in CELL_CHOICES:
+            raise CellRefusal(
+                f"--cell must be one of {', '.join(CELL_CHOICES)} (got {cell!r}); "
+                "a cell name outside that list runs only with --prompt-file, "
+                "which names the draft template it reads")
+        return
+    if not PROMPT_FILE_CELL_LABEL_PATTERN.match(cell):
+        raise CellRefusal(
+            f"--cell {cell!r} cannot name a report: with --prompt-file the cell "
+            "name is a free label that becomes a token of the report's file "
+            "name, and must be lowercase letters and digits joined by single "
+            "hyphens, like terminology-v9")
+
+
+def absolute_path_from_command_line_argument(path_argument: str) -> pathlib.Path:
+    """The argument as an absolute path, a relative one taken from the current directory."""
+    return pathlib.Path(path_argument).resolve()
+
+
+def resolve_target(target_argument: str) -> pathlib.Path:
+    target = absolute_path_from_command_line_argument(target_argument)
+    if not target.is_file():
+        raise CellRefusal(f"target not found: {target}")
+    return target
+
+
+def resolve_report_path(report_argument: str) -> pathlib.Path:
+    """Return an absolute report path with any previous report removed."""
+    # A stale report would make a run that wrote nothing appear successful.
+    report = absolute_path_from_command_line_argument(report_argument)
+    if report.exists() and not report.is_file():
+        raise CellRefusal(f"report path is not a file: {report}")
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.unlink(missing_ok=True)
+    return report
+
+
+def resolve_prompt_file(prompt_file_argument: str) -> pathlib.Path:
+    prompt_file = absolute_path_from_command_line_argument(prompt_file_argument)
+    if not prompt_file.is_file():
+        raise CellRefusal(f"prompt file not found: {prompt_file}")
+    return prompt_file
+
+
+def resolve_target_origin(target_origin_argument) -> typing.Optional[pathlib.Path]:
+    """Return the absolute reference origin, or None."""
+    # The origin only resolves references; moving the original must not prevent a retry.
+    if not target_origin_argument:
+        return None
+    return absolute_path_from_command_line_argument(target_origin_argument)
+
+
+def target_origin_paragraph(target: pathlib.Path, target_origin: pathlib.Path) -> str:
+    """Return reference-resolution instructions for a frozen target."""
+    # Append outside the template so draft prompts also receive the same resolution order.
+    return (
+        f"\n\n{target} is a frozen copy of {target_origin}. Read the copy for "
+        f"the document's text. Resolve each relative path the document "
+        f"references from the repository root, {REPO_ROOT}, and when it does "
+        f"not exist there, from {target_origin.parent}, the original's "
+        f"directory. Never resolve one from the copy's directory.\n"
+    )
+
+
+def prompt_template_path(cell: str, prompt_file=None) -> pathlib.Path:
+    template_path = (prompt_file if prompt_file is not None
+                     else PROMPTS_DIR / f"{cell}-prompt.md")
+    if not template_path.is_file():
+        raise CellRefusal(f"prompt template missing: {template_path}")
+    return template_path
+
+
+def compose_prompt(
+    template_path: pathlib.Path, target: pathlib.Path, report: pathlib.Path,
+    target_origin=None,
+) -> str:
+    prompt = (
+        template_path.read_text(encoding="utf-8")
+        .replace("{TARGET_PATH}", str(target))
+        .replace("{REPORT_PATH}", str(report))
+    )
+    if target_origin is not None:
+        prompt += target_origin_paragraph(target, target_origin)
+    return prompt
+
+
+class WriteDetectorUnavailable(Exception):
+    """The write detector could not check; this is distinct from finding no writes."""
+
+
+# The grid parses these phrases only after the program prefix, avoiding quoted model text.
+# Failure causes explain results; only report presence determines retry decisions.
+CAUSE_PHRASE = "cause:"
+CAUSE_SEPARATOR = " — "
+# Match line starts to avoid quoted document text, allowing the Codex tracing timestamp.
+AGENT_BINARY_WIDE_CAUSE_CLASSES = frozenset(
+    {"account-limit", "logged-out", "agent-binary-missing"})
+USER_CLEARABLE_CAUSE_CLASSES = frozenset(
+    {"logged-out", "agent-binary-missing", "account-limit", "model-limit"})
+CAUSE_DETAIL_MAX_CHARACTERS = 120
+# Drop per-attempt timestamps from details that the grid reports for an entire agent-binary.
+DETAIL_IS_REST_OF_LINE = "rest-of-line"
+DETAIL_IS_WHOLE_LINE = "whole-line"
+LEADING_TRACING_LOGGER_TIMESTAMP = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?\s+")
+
+
+class RecognisedFailureText(typing.NamedTuple):
+    """An agent-binary failure prefix, cause class, rule for extracting the detail, and an
+    optional pattern the rest of the line after the prefix must start with."""
+
+    cause_class: str
+    line_prefix: str
+    detail: str
+    rest_of_line_pattern: typing.Optional[re.Pattern] = None
+
+
+def classify_failed_attempt(
+    *, stdout: str, stderr: str, exit_code, recognised_texts, start_error: str = "",
+) -> tuple:
+    """Return (cause class, detail) for an attempt that produced no report."""
+    for line in f"{stdout}\n{stderr}".splitlines():
+        stripped = line.strip()
+        timestamp = LEADING_TRACING_LOGGER_TIMESTAMP.match(stripped)
+        untimestamped = stripped[timestamp.end():] if timestamp else stripped
+        for text in recognised_texts or ():
+            if untimestamped.startswith(text.line_prefix) and (
+                    text.rest_of_line_pattern is None
+                    or text.rest_of_line_pattern.match(untimestamped[len(text.line_prefix):])):
+                if text.detail == DETAIL_IS_REST_OF_LINE:
+                    detail = untimestamped[len(text.line_prefix):].lstrip(" \t·")
+                elif text.detail == DETAIL_IS_WHOLE_LINE:
+                    detail = untimestamped
+                else:
+                    detail = text.detail
+                return text.cause_class, detail
+    if start_error:
+        return "agent-binary-missing", start_error
+    if exit_code == 0:
+        # The reviewer's closing words usually say why it wrote nothing, such as a refused write.
+        closing = [line.strip() for line in stdout.splitlines() if line.strip()]
+        if not closing:
+            return "no-report", "no report written"
+        return ("no-report", "no report written; the reviewer's last line: "
+                + closing[-1][:CAUSE_DETAIL_MAX_CHARACTERS])
+    last_lines = [line.strip() for line in (stderr if stderr.strip() else stdout).splitlines()
+                  if line.strip()]
+    detail = last_lines[-1][:CAUSE_DETAIL_MAX_CHARACTERS] if last_lines else "no output"
+    return f"exit-{exit_code}", detail
+
+
+def cause_line(program: str, cause_class: str, detail: str) -> str:
+    """Format a failure cause for the cold-read-grid status parser."""
+    return f"{program}: {CAUSE_PHRASE} {cause_class}{CAUSE_SEPARATOR}{detail}"
+
+
+STRAY_WRITE_CHECK_SKIPPED_PHRASE = "stray writes were not checked for this run"
+COLD_READ_CELL_STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE = "a failure to look, not a clean result"
+STRAY_WRITE_PHRASE = "files outside its report changed while it ran"
+FELL_BACK_PHRASE = "fell back to"
+
+
+def path_content_fingerprint(path: pathlib.Path) -> str:
+    """Return a content fingerprint or a marker for a missing, unreadable, or directory path."""
+    # Content comparison ignores writes that restore the original text, unlike mtime comparison.
+    if path.is_dir():
+        return "directory"
+    fingerprint = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1 << 16), b""):
+                fingerprint.update(block)
+    except FileNotFoundError:
+        return "absent"
+    except OSError as error:
+        return f"unreadable:{type(error).__name__}"
+    return fingerprint.hexdigest()
+
+
+def working_tree_state() -> set:
+    """Return changed paths and content fingerprints, including untracked files."""
+    # Fingerprints detect edits to already-dirty files; --untracked-files=all exposes files
+    # inside already-untracked directories.
+    # A rename contributes both names, so a renamed tracked file is caught under either.
+    try:
+        output = git_machine_readable_output.run_git(
+            REPO_ROOT, ["status", "--porcelain", "-z", "--untracked-files=all"])
+    except git_machine_readable_output.GitCommandFailed as failure:
+        raise WriteDetectorUnavailable(failure.stderr.strip() or "no detail") from None
+    names = set()
+    for entry in git_machine_readable_output.status_entries(output):
+        names.add(entry.path)
+        if entry.origin_path:
+            names.add(entry.origin_path)
+    return {(name, path_content_fingerprint(REPO_ROOT / name)) for name in names}
+
+
+def repo_relative_name(path) -> str:
+    """Return the repository-relative name, or an empty string for paths outside the repository."""
+    if path is None:
+        return ""
+    try:
+        return str(pathlib.Path(path).resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return ""
+
+
+def stray_writes_since(baseline: set, own_report_path=None) -> list[str]:
+    """Return paths changed since the baseline, excluding the requested report."""
+    changed = {name for name, _fingerprint in working_tree_state() - baseline}
+    changed.discard(repo_relative_name(own_report_path))
+    return sorted(changed)
+
+
+# The grid parses this phrase before deleting successful runs' logs.
+NEAR_MISS_RECOVERY_PHRASE = "recovered a near-miss report"
+
+# Only launchers that can recognize a complete review in stdout may opt into recovery.
+STDOUT_RECOVERY_PHRASE = "recovered the report from the model's chat output"
+
+
+def recover_report_from_agent_binary_stdout(
+    program: str, report: pathlib.Path, agent_binary_stdout: str, decide_body,
+) -> bool:
+    """Write and announce a report recovered from stdout under the launcher's rule."""
+    body = decide_body(agent_binary_stdout or "")
+    if not body:
+        return False
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text(body.strip() + "\n", encoding="utf-8")
+    print(
+        f"{program}: {STDOUT_RECOVERY_PHRASE} — the model exited 0 without "
+        f"writing {report}, and its stdout is a review by this launcher's "
+        f"rule; that text is now the report and is stamped like any other.",
+        file=sys.stderr,
+    )
+    return True
+
+
+def instrument_built_record_directory(directory: pathlib.Path) -> bool:
+    """Return whether target/ or the reference-check file, under either of its names, marks an instrument-built record directory."""
+    return ((directory / record_names.FROZEN_TARGET_DIRECTORY_NAME).is_dir()
+            or record_names.cold_read_record_file_path_prefixed_name_else_name_before_prefix(
+                directory, record_names.COLD_READ_REFERENCE_CHECK_REPORT_FILE_NAME).is_file())
+
+
+def recover_near_miss_report(
+    program: str, report: pathlib.Path, attempt_started_at: float,
+) -> bool:
+    """Recover one unambiguous misplaced report from this attempt."""
+    # Other runs use the same report filename; exclude instrument-built directories.
+    # Only this attempt's files qualify, so a failed model cannot be credited to its successor.
+    record_dir = report.parent
+    records_root = record_dir.parent
+    cutoff_text = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(attempt_started_at))
+    candidates = []
+    for directory, _subdirectories, file_names in os.walk(records_root):
+        for file_name in file_names:
+            if file_name != report.name:
+                continue
+            candidate = pathlib.Path(directory) / file_name
+            if candidate == report or not candidate.is_file():
+                continue
+            if instrument_built_record_directory(pathlib.Path(directory)):
+                continue
+            if candidate.stat().st_mtime < attempt_started_at:
+                continue
+            if not candidate.read_text(encoding="utf-8").strip():
+                continue
+            candidates.append(candidate)
+    candidates.sort()
+
+    if len(candidates) == 1:
+        found = candidates[0]
+        # Move rather than copy to avoid leaving two names for one review.
+        shutil.move(str(found), str(report))
+        print(
+            f"{program}: {NEAR_MISS_RECOVERY_PHRASE} — the model wrote "
+            f"{found} instead of {report}, elsewhere under {records_root}. "
+            f"The file has been moved into place and stamped; the review "
+            f"itself is intact.",
+            file=sys.stderr,
+        )
+        return True
+
+    found_text = (
+        "nothing" if not candidates
+        else "more than one, which is ambiguous and so refused: "
+             + ", ".join(str(candidate) for candidate in candidates)
+    )
+    print(
+        f"{program}: no near-miss report to recover — looked for a file named "
+        f"{report.name}, modified at or after {cutoff_text}, anywhere under "
+        f"{records_root} outside the record directories the instrument built, "
+        f"and found {found_text}.",
+        file=sys.stderr,
+    )
+    return False
+
+
+def verify_report(program: str, report: pathlib.Path) -> None:
+    """Reject absent or blank reports and remove blank stubs."""
+    # A stub must not be mistaken for a completed review by callers checking only existence.
+    if not report.is_file():
+        raise CellRefusal(
+            f"{program}: the model exited without writing {report}. "
+            "A run that produced no report is not a review that found "
+            "nothing; treat it as failed and re-run.",
+            exit_code=1,
+        )
+    if not report.read_text(encoding="utf-8").strip():
+        report.unlink(missing_ok=True)
+        report_name = report.name
+        raise CellRefusal(
+            f"{program}: the model wrote {report_name} but left it empty. "
+            "The empty file has been removed so it cannot read as a clean "
+            "review; treat this as failed and re-run.",
+            exit_code=1,
+        )
+
+
+TOKENS_USED_PATTERN = re.compile(r"tokens used[:\s]+([\d,]+)", re.IGNORECASE)
+
+
+def parse_tokens_used(agent_binary_output: str) -> str:
+    """Return the last reported token total, or an empty string if none was reported."""
+    # The last count is the total; absence must not be recorded as a zero cost.
+    matches = TOKENS_USED_PATTERN.findall(agent_binary_output or "")
+    return matches[-1].replace(",", "") if matches else ""
+
+
+# A stalled git query must not prevent a finished review from being saved.
+CHECKOUT_COMMIT_GIT_TIMEOUT_SECONDS = 10
+
+
+def checkout_commit_for_provenance_stamp(checkout: pathlib.Path) -> str:
+    """Return the checkout commit, with -dirty for tracked changes; an empty
+    string when the checkout is in no git repository; `no-commits-yet` when
+    HEAD names a branch with no commits; and `unknown-git-exited-<code>`, or
+    `unknown-git-did-not-answer` when git timed out or did not start, when
+    git failed."""
+    # Untracked drafts are routine and do not make the provenance stamp dirty.
+    # Do not print failures: the grid parses stderr as cell status. The stamp
+    # is split on whitespace, so the failure value carries no space.
+    try:
+        # With -q --verify, git exits 1 with no output when HEAD has no commit
+        # yet, and 128 for a real failure.
+        commit = git_machine_readable_output.run_git_unless_outside_a_repository(
+            checkout, ["rev-parse", "-q", "--verify", "--short", "HEAD"],
+            accepted_exit_codes=(0, 1),
+            timeout_seconds=CHECKOUT_COMMIT_GIT_TIMEOUT_SECONDS)
+        if commit is None:
+            return ""
+        if not commit.strip():
+            return "no-commits-yet"
+        tracked_changes = git_machine_readable_output.run_git(
+            checkout, ["status", "--porcelain", "--untracked-files=no"],
+            timeout_seconds=CHECKOUT_COMMIT_GIT_TIMEOUT_SECONDS)
+    except git_machine_readable_output.GitCommandFailed as failure:
+        if failure.returncode is None:
+            return "unknown-git-did-not-answer"
+        return f"unknown-git-exited-{failure.returncode}"
+    return os.fsdecode(commit).strip() + ("-dirty" if tracked_changes.strip() else "")
+
+
+def stamp_provenance(
+    report: pathlib.Path, *, runtime: str, model: str, effort: str,
+    cell: str, tier: str, target_argument: str, duration_s: int,
+    fallback_from: str = "", checkout: str = "", tokens: str = "",
+    prompt_file_argument: str = "",
+) -> None:
+    """Prepend the report's provenance stamp."""
+    # Keep target last: paths with spaces would swallow subsequent whitespace-delimited fields.
+    # The checkout is sampled at stamp time and may have changed since the reviewer started.
+    fallback_note = f"fallback_from={fallback_from} " if fallback_from else ""
+    checkout_note = f"checkout={checkout} " if checkout else ""
+    tokens_note = f"tokens={tokens} " if tokens else ""
+    prompt_file_note = (
+        f"prompt_file={prompt_file_argument} " if prompt_file_argument else "")
+    # The hash names the exact bytes reviewed, which outlives an edit to the original.
+    try:
+        target_sha256 = hashlib.sha256(absolute_path_from_command_line_argument(target_argument).read_bytes()).hexdigest()
+    except OSError:
+        target_sha256 = "unreadable"
+    stamp = (
+        f"<!-- provenance: runtime={runtime} model={model} {fallback_note}"
+        f"effort={effort} cell={cell} tier={tier} duration_s={duration_s} "
+        f"{checkout_note}{tokens_note}{prompt_file_note}"
+        f"target_sha256={target_sha256} target={target_argument} -->\n\n"
+    )
+    report.write_text(stamp + report.read_text(encoding="utf-8"), encoding="utf-8")
+
+
+TIMED_OUT_CAUSE_CLASS = "timed-out"
+# The grid sends SIGKILL to a launcher 5 seconds after SIGTERM; the reviewer's
+# process group must be killed before that, or it outlives the launcher.
+REVIEWER_PROCESS_GROUP_STOP_GRACE_SECONDS = 1.0
+
+
+def stop_process_tree(process: subprocess.Popen, grace_seconds: float = 5.0) -> None:
+    """Stop the process group led by `process`, started with
+    start_new_session=True, and reap `process`."""
+    # macOS answers EPERM, not ESRCH, for a group whose members have all exited.
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
+    try:
+        process.wait(timeout=grace_seconds)
+    except subprocess.TimeoutExpired:
+        pass
+    # Children may remain in the group after the leader exits.
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    process.wait()
+
+
+def exit_on_sigterm(signal_number, _frame):
+    raise SystemExit(128 + signal_number)
+
+
+class ReviewerRunEndedByResultLine(subprocess.CompletedProcess):
+    """A run the cell ended after the reviewer program's result line by
+    killing its process group, because the program had not exited."""
+
+
+REPORT_WAIT_POLL_SECONDS = 0.1
+AGENT_BINARY_KILLED_AFTER_FINAL_RESULT_LINE_PHRASE = "printed its result line but had not exited"
+AGENT_BINARY_EXITED_WITHOUT_FINAL_RESULT_LINE_PHRASE = "exited 0 without printing its result line"
+# A process outside the reviewer's group can hold its pipes open for as long as it lives, and
+# killing the group cannot reach it, so the run stops waiting for the pipes to close after this.
+REVIEWER_PIPES_CLOSE_WAIT_SECONDS = 30.0
+REVIEWER_PIPES_STILL_OPEN_PHRASE = "were still held open by a process outside its process group"
+
+
+def report_is_written(report) -> bool:
+    try:
+        return report is not None and report.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def run_reviewer_program_in_own_process_group_until_timeout(
+    command: list, stdin_text, child_environment, timeout_seconds: float,
+    parse_agent_binary_final_result_from_stdout_line=None, report=None,
+    report_wait_after_result_line_seconds: float = 0.0, pass_fds: tuple = (),
+) -> subprocess.CompletedProcess:
+    """Run `command` in a session of its own and return its result; when it
+    runs past `timeout_seconds`, kill its whole process group and return a
+    result whose returncode is None. The group is also killed when this
+    process is interrupted or sent SIGTERM while waiting.
+
+    With `parse_agent_binary_final_result_from_stdout_line`, a function given each
+    stdout line that returns None or (exit code, response text), the first
+    line it answers for ends the run: the runner waits up to
+    `report_wait_after_result_line_seconds` for `report` to be non-empty or
+    the program to exit, then sends SIGKILL to its process group. The result
+    then carries the response text as its stdout, and the program's own exit
+    code when it exited by itself, else the line's; it is a
+    ReviewerRunEndedByResultLine when the program had to be killed. The
+    group is sent SIGKILL whether or not the report was written, and whether
+    or not the program had exited, so no process it started outlives the run.
+    A run with no such line that exits 0 returns empty stdout, with what the
+    program printed moved to stderr, because that stdout is raw stream events
+    and not an answer a caller could take for a review. In this mode the
+    runner waits at most REVIEWER_PIPES_CLOSE_WAIT_SECONDS for the program's
+    pipes to close once the run has ended; a process outside the group that
+    holds them past that loses what it printed after, and stderr says so."""
+    # The reviewer's own session puts it outside the group the grid stops, so
+    # SIGTERM must reach the except BaseException handler below that stops
+    # the reviewer's group.
+    signal.signal(signal.SIGTERM, exit_on_sigterm)
+    process = subprocess.Popen(
+        command,
+        # communicate closes stdin after writing stdin_text, or at once when it is None.
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        cwd=REPO_ROOT, env=child_environment, text=True, start_new_session=True, pass_fds=pass_fds)
+    try:
+        if parse_agent_binary_final_result_from_stdout_line is not None:
+            return run_reviewer_program_until_its_result_line(
+                process, command, stdin_text, timeout_seconds,
+                parse_agent_binary_final_result_from_stdout_line, report,
+                report_wait_after_result_line_seconds)
+        try:
+            stdout, stderr = process.communicate(stdin_text, timeout=timeout_seconds)
+            return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+        except subprocess.TimeoutExpired:
+            stop_process_tree(process, REVIEWER_PROCESS_GROUP_STOP_GRACE_SECONDS)
+            stdout, stderr = process.communicate()
+            return subprocess.CompletedProcess(command, None, stdout, stderr)
+    except BaseException:
+        # Not gated on the leader running: it may have exited while a
+        # descendant still holds its pipes, which keeps communicate waiting.
+        stop_process_tree(process, REVIEWER_PROCESS_GROUP_STOP_GRACE_SECONDS)
+        raise
+
+
+def run_reviewer_program_until_its_result_line(
+    process: subprocess.Popen, command: list, stdin_text, timeout_seconds: float,
+    parse_agent_binary_final_result_from_stdout_line, report, report_wait_after_result_line_seconds: float,
+) -> subprocess.CompletedProcess:
+    """The line-by-line half of run_reviewer_program_in_own_process_group_until_timeout."""
+    deadline = time.monotonic() + timeout_seconds
+    stdout_lines, stderr_parts, run_ends = [], [], []
+    result_line_or_stdout_closed = threading.Event()
+
+    def read_stdout():
+        for line in process.stdout:
+            stdout_lines.append(line)
+            if not run_ends:
+                ending = parse_agent_binary_final_result_from_stdout_line(line)
+                if ending is not None:
+                    run_ends.append(ending)
+                    result_line_or_stdout_closed.set()
+        result_line_or_stdout_closed.set()
+
+    readers = [threading.Thread(target=read_stdout, daemon=True),
+               threading.Thread(target=lambda: stderr_parts.append(process.stderr.read()),
+                                daemon=True)]
+    for reader in readers:
+        reader.start()
+    if stdin_text:
+        process.stdin.write(stdin_text)
+    process.stdin.close()
+
+    def completed(result_class, returncode, stdout, pipes_close_by=None):
+        # stderr carries agy's AGY_ERROR and login lines, which callers parse,
+        # so it is read to its end before the result is built, unless a
+        # process outside the group still holds it at pipes_close_by.
+        if pipes_close_by is None:
+            pipes_close_by = time.monotonic() + REVIEWER_PIPES_CLOSE_WAIT_SECONDS
+        for reader in readers:
+            reader.join(max(0.0, pipes_close_by - time.monotonic()))
+        stderr_text = "".join(stderr_parts)
+        if any(reader.is_alive() for reader in readers):
+            stderr_text += (
+                f"The reviewer program's stdout and stderr {REVIEWER_PIPES_STILL_OPEN_PHRASE} "
+                f"{REVIEWER_PIPES_CLOSE_WAIT_SECONDS:g} seconds after its run ended, so the cell "
+                "stopped waiting for them; anything printed after that, and its stderr if the "
+                "stderr pipe was the one held, is missing here.\n")
+        return result_class(command, returncode, stdout, stderr_text)
+
+    result_line_or_stdout_closed.wait(max(0.0, deadline - time.monotonic()))
+    if run_ends:
+        exit_code, response_text = run_ends[0]
+        report_wait_ends = time.monotonic() + report_wait_after_result_line_seconds
+        while (process.poll() is None and not report_is_written(report)
+               and time.monotonic() < report_wait_ends):
+            time.sleep(REPORT_WAIT_POLL_SECONDS)
+        exited_by_itself = process.poll() is not None
+        # SIGKILL, because agy ignores SIGTERM; also ends children left behind by an exited leader.
+        # Repeated while the pipes stay open: a child whose fork was under way
+        # when the first SIGKILL landed survives it on macOS and holds them.
+        # killpg fails once the group is empty, and is not sent again then,
+        # because a new group could take the same id.
+        pipes_close_by = time.monotonic() + REVIEWER_PIPES_CLOSE_WAIT_SECONDS
+        group_may_have_members = True
+        while True:
+            if group_may_have_members:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    group_may_have_members = False
+            process.wait()
+            for reader in readers:
+                reader.join(REPORT_WAIT_POLL_SECONDS)
+            if (not any(reader.is_alive() for reader in readers)
+                    or time.monotonic() >= pipes_close_by):
+                break
+        if exited_by_itself:
+            return completed(subprocess.CompletedProcess, process.returncode, response_text,
+                             pipes_close_by)
+        return completed(ReviewerRunEndedByResultLine, exit_code, response_text, pipes_close_by)
+    try:
+        if not result_line_or_stdout_closed.is_set():
+            raise subprocess.TimeoutExpired(command, timeout_seconds)
+        process.wait(timeout=max(0.0, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        stop_process_tree(process, REVIEWER_PROCESS_GROUP_STOP_GRACE_SECONDS)
+        return completed(subprocess.CompletedProcess, None, "".join(stdout_lines))
+    if process.returncode == 0:
+        # stdout holds raw stream events, not the reviewer's answer, so
+        # report recovery must not see it: a long event stream would pass
+        # for a review.
+        stderr_parts.append(
+            f"The reviewer program {AGENT_BINARY_EXITED_WITHOUT_FINAL_RESULT_LINE_PHRASE}, "
+            "so there is no answer from the reviewer to recover a report from: unless it "
+            "wrote its report file, this attempt fails as no-report and the cell goes on to "
+            f"the next model in its chain, if any. Its stdout was:\n{''.join(stdout_lines)}\n")
+        return completed(subprocess.CompletedProcess, 0, "")
+    return completed(subprocess.CompletedProcess, process.returncode, "".join(stdout_lines))
+
+
+def run_model_chain(
+    *, program: str, runtime: str, chain, effort: str, build_invocation,
+    prompt: str, report: pathlib.Path, cell: str, tier: str, target_argument: str,
+    baseline, cell_started_at: float, prompt_file_argument: str = "",
+    recover_report_from_stdout=None, model_to_effort=None,
+    recognised_failure_texts_for_model=None, child_environment=None,
+    per_model_run_timeout_seconds=None, parse_agent_binary_final_result_from_stdout_line=None,
+    report_wait_after_result_line_seconds: float = 0.0,
+) -> int:
+    """Try models until one produces a report, then stamp the report."""
+    # parse_agent_binary_final_result_from_stdout_line takes effect only with per_model_run_timeout_seconds.
+    # build_invocation must apply the same per-model effort mapping used by the stamp.
+    failed_attempts: list[str] = []
+    produced_by = ""
+    produced_tokens = ""
+    for model in chain:
+        # Clear failed attempts' reports so the next model cannot receive credit for their text.
+        report.unlink(missing_ok=True)
+        # A per-attempt clock prevents recovery from crediting a failed model's stray report to its successor.
+        attempt_started_at = time.time()
+        command, stdin_text = build_invocation(model, prompt)
+        # codex exec reads piped stdin to EOF before starting; input=None would inherit a possibly open pipe.
+        stdin_arguments = (
+            {"input": stdin_text} if stdin_text is not None
+            else {"stdin": subprocess.DEVNULL}
+        )
+        # The reviewer program holds the record's being-written lock too, so a cell killed while its
+        # reviewer still writes the report leaves the record unshipped until the reviewer exits.
+        pass_fds = record_names.record_directory_being_written_lock_pass_fds_for_child_writers(report.parent)
+        # Both streams carry failure diagnostics; stderr also carries the agent-binary's token total.
+        try:
+            if per_model_run_timeout_seconds is None:
+                completed = subprocess.run(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=REPO_ROOT,
+                    env=child_environment,
+                    text=True,
+                    check=False,
+                    pass_fds=pass_fds,
+                    **stdin_arguments,
+                )
+            else:
+                completed = run_reviewer_program_in_own_process_group_until_timeout(
+                    command, stdin_text, child_environment, per_model_run_timeout_seconds,
+                    parse_agent_binary_final_result_from_stdout_line, report,
+                    report_wait_after_result_line_seconds, pass_fds)
+        except OSError as error:
+            failed_attempts.append(f"{model}({type(error).__name__})")
+            print(f"{program}: {model} could not be run: {error}", file=sys.stderr)
+            print(cause_line(program, *classify_failed_attempt(
+                stdout="", stderr="", exit_code=None, recognised_texts=(),
+                start_error=str(error))), file=sys.stderr)
+            continue
+        recognised_texts = (recognised_failure_texts_for_model(model)
+                            if recognised_failure_texts_for_model else ())
+        if completed.stderr:
+            print(completed.stderr, file=sys.stderr, end="")
+        if isinstance(completed, ReviewerRunEndedByResultLine):
+            print(f"{program}: {model} {AGENT_BINARY_KILLED_AFTER_FINAL_RESULT_LINE_PHRASE}, so "
+                  "the cell took that line as the end of the run and killed it and every "
+                  "process it started with SIGKILL.", file=sys.stderr)
+        if completed.returncode is None:
+            failed_attempts.append(f"{model}(timed-out)")
+            if completed.stdout:
+                print(completed.stdout, file=sys.stderr)
+            print(f"{program}: {model} did not finish within "
+                  f"{per_model_run_timeout_seconds:g} seconds, so the cell stopped it "
+                  "and every process it started.", file=sys.stderr)
+            print(cause_line(program, TIMED_OUT_CAUSE_CLASS,
+                             f"no result within {per_model_run_timeout_seconds:g} seconds"),
+                  file=sys.stderr)
+            continue
+        if completed.returncode != 0:
+            failed_attempts.append(f"{model}(exit{completed.returncode})")
+            if completed.stdout:
+                print(completed.stdout, file=sys.stderr)
+            print(f"{program}: {model} failed (exit {completed.returncode})", file=sys.stderr)
+            print(cause_line(program, *classify_failed_attempt(
+                stdout=completed.stdout or "", stderr=completed.stderr or "",
+                exit_code=completed.returncode, recognised_texts=recognised_texts)),
+                file=sys.stderr)
+            continue
+        # Recover only after exit 0; a failed model's leftover file is not an accepted review.
+        if not report.is_file():
+            recover_near_miss_report(program, report, attempt_started_at)
+        # Prefer the report file over stdout, including a file recovered from the wrong directory.
+        if not report.is_file() and recover_report_from_stdout is not None:
+            recover_report_from_agent_binary_stdout(
+                program, report, completed.stdout, recover_report_from_stdout)
+        try:
+            verify_report(program, report)
+        except CellRefusal as refusal:
+            # stdout may explain why a successful exit produced no report.
+            failed_attempts.append(f"{model}(no-report)")
+            if completed.stdout:
+                print(completed.stdout, file=sys.stderr)
+            print(str(refusal), file=sys.stderr)
+            print(cause_line(program, *classify_failed_attempt(
+                stdout=completed.stdout or "", stderr=completed.stderr or "",
+                exit_code=0, recognised_texts=recognised_texts)), file=sys.stderr)
+            continue
+        produced_by = model
+        # Use only this attempt's stderr: stdout may quote token counts, and earlier attempts cost other models.
+        produced_tokens = parse_tokens_used(completed.stderr or "")
+        break
+
+    if not produced_by:
+        # Remove the final failed attempt's report so readers cannot mistake the orphan for a completed review.
+        report.unlink(missing_ok=True)
+        print(
+            f"{program}: every model for this cell failed — "
+            + ", ".join(failed_attempts)
+            + ". No report was produced; the cell failed rather than leaving a "
+              "stub that would read as a completed review.",
+            file=sys.stderr,
+        )
+        report_stray_writes(program, baseline, report)
+        return 1
+
+    if failed_attempts:
+        print(
+            f"{program}: {FELL_BACK_PHRASE} {produced_by} after "
+            + ", ".join(failed_attempts)
+            + ". The report's provenance stamp records this.",
+            file=sys.stderr,
+        )
+
+    stamp_provenance(
+        report, runtime=runtime, model=produced_by,
+        effort=(model_to_effort or {}).get(produced_by, effort), cell=cell,
+        tier=tier, target_argument=target_argument,
+        duration_s=int(time.time() - cell_started_at),
+        # Use the checkout the reviewer ran in, which may differ from the launcher's working directory.
+        checkout=checkout_commit_for_provenance_stamp(REPO_ROOT),
+        fallback_from="+".join(failed_attempts),
+        tokens=produced_tokens,
+        prompt_file_argument=prompt_file_argument,
+    )
+    report_stray_writes(program, baseline, report)
+    print(f"{program}: report written to {report}", file=sys.stderr)
+    return 0
+
+
+def record_directory_being_written_lock_hold_shared_until_exit_unless_parent_passed_descriptor(record_dir: pathlib.Path) -> None:
+    """Hold record_dir's being-written lock, shared, until this process exits, so the record is not
+    shipped, by the pre-remove hook or anyone, while this cell's reviewer still writes the report; the
+    reviewer is passed the descriptor in run_model_chain. Every writer, the cold-read-grid and other
+    cells included, holds the lock shared, so the record stays held until the last of them exits.
+    Holds nothing more when the writer that started this cell passed it a descriptor on record_dir,
+    which already holds the lock."""
+    if record_names.record_directory_being_written_lock_pass_fds_for_child_writers(record_dir):
+        return
+    # Left open on purpose: the kernel releases the lock when this process exits, however it ends.
+    descriptor = os.open(record_dir, os.O_RDONLY)
+    # Blocking: only the shipper's probe takes the lock exclusively, and only for an instant.
+    fcntl.flock(descriptor, fcntl.LOCK_SH)
+
+
+def run_cell(
+    *, program: str, runtime: str, description: str, model_help: str,
+    tier_to_model_chain: dict, tier_to_effort: dict, invocation_builder,
+    recover_report_from_stdout=None, recognised_failure_texts_for_model=None,
+    stage_report_outside_checkout: bool = False, child_environment=None,
+    per_model_run_timeout_seconds=None, parse_agent_binary_final_result_from_stdout_line=None,
+    report_wait_after_result_line_seconds: float = 0.0,
+    cold_read_cell_launcher_own_command_line_options_adder=None,
+) -> int:
+    """cold_read_cell_launcher_own_command_line_options_adder, when given, adds
+    one launcher's own options to the parser, and invocation_builder then also
+    gets the parsed arguments as parsed_arguments=."""
+    # Include failed attempts in the cell's total cost.
+    cell_started_at = time.time()
+    parser = build_argument_parser(
+        description, model_help, tier_choices=tuple(tier_to_model_chain),
+        cold_read_cell_launcher_own_command_line_options_adder=cold_read_cell_launcher_own_command_line_options_adder)
+    args = parser.parse_args()
+
+    # Snapshot before execution so pre-existing edits are not reported as changes from this run.
+    try:
+        baseline = working_tree_state()
+    except WriteDetectorUnavailable as error:
+        baseline = None
+        print(f"{program}: could not snapshot the working tree ({error}); "
+              "stray writes will not be checked for this run.", file=sys.stderr)
+
+    report = None
+    try:
+        validate_cell(args.cell, args.prompt_file)
+        target = resolve_target(args.target)
+        report = resolve_report_path(args.report)
+        prompt_file = (
+            resolve_prompt_file(args.prompt_file) if args.prompt_file else None)
+        target_origin = resolve_target_origin(args.target_origin)
+        template_path = prompt_template_path(args.cell, prompt_file)
+    except CellRefusal as refusal:
+        print(f"{program}: {refusal}", file=sys.stderr)
+        report_stray_writes(program, baseline, report)
+        return refusal.exit_code
+    record_directory_being_written_lock_hold_shared_until_exit_unless_parent_passed_descriptor(report.parent)
+
+    # The staging directory is made after every refusal, so no refusal leaves one behind.
+    # The Codex reviewer can write only inside the checkout, the temporary directories on
+    # macOS, and a directory added with --add-dir, which stays writable under the profile's
+    # read-only /tmp on Linux; granting a report's own directory elsewhere would also make
+    # the documents beside it writable, where git status does not look.
+    # The near-miss recovery searches the report directory's parent, so the
+    # report directory sits inside a fresh root rather than in the temporary
+    # directory itself.
+    staging_root = staging_directory = None
+    if stage_report_outside_checkout and REPO_ROOT not in report.resolve().parents:
+        staging_root = pathlib.Path(tempfile.mkdtemp(prefix="cold-read-report-"))
+        staging_directory = staging_root / "report"
+        staging_directory.mkdir()
+    reviewer_report = (
+        staging_directory / report.name if staging_directory else report)
+    prompt = compose_prompt(template_path, target, reviewer_report, target_origin)
+
+    # An explicit model must not silently fall back to a different model.
+    chain = (args.model,) if args.model else tier_to_model_chain[args.tier]
+    effort = args.effort or tier_to_effort[args.tier]
+    launcher_own_option_arguments = (
+        {"parsed_arguments": args}
+        if cold_read_cell_launcher_own_command_line_options_adder else {})
+    build_invocation = (invocation_builder(effort, staging_directory, **launcher_own_option_arguments)
+                        if stage_report_outside_checkout
+                        else invocation_builder(effort, **launcher_own_option_arguments))
+
+    try:
+        exit_code = run_model_chain(
+            program=program, runtime=runtime, chain=chain, effort=effort,
+            build_invocation=build_invocation, prompt=prompt,
+            report=reviewer_report, cell=args.cell, tier=args.tier,
+            target_argument=args.target, baseline=baseline,
+            cell_started_at=cell_started_at,
+            prompt_file_argument=args.prompt_file or "",
+            recover_report_from_stdout=recover_report_from_stdout,
+            recognised_failure_texts_for_model=recognised_failure_texts_for_model,
+            child_environment=child_environment,
+            per_model_run_timeout_seconds=per_model_run_timeout_seconds,
+            parse_agent_binary_final_result_from_stdout_line=parse_agent_binary_final_result_from_stdout_line,
+            report_wait_after_result_line_seconds=report_wait_after_result_line_seconds,
+        )
+        if exit_code == 0 and staging_directory is not None:
+            exit_code = move_staged_report(program, reviewer_report, report)
+        return exit_code
+    finally:
+        # A report that could not be moved stays where the failure message says it is.
+        if staging_root is not None and not reviewer_report.exists():
+            shutil.rmtree(staging_root, ignore_errors=True)
+
+
+def move_staged_report(program: str, staged: pathlib.Path, report: pathlib.Path) -> int:
+    """Move a report written in a staging directory to its destination; 1 if it cannot be moved."""
+    try:
+        shutil.move(str(staged), str(report))
+    except OSError as error:
+        print(f"{program}: the report could not be moved from {staged} to {report} "
+              f"({error}); it is left at {staged}.", file=sys.stderr)
+        return 1
+    print(f"{program}: report moved to {report}", file=sys.stderr)
+    return 0
+
+
+def report_stray_writes(program: str, baseline, own_report_path=None) -> None:
+    """Report changes outside the requested report without raising."""
+    # Check every agent-binary and every exit path: a failed reviewer may still have edited the target.
+    if baseline is None:
+        print(f"{program}: {STRAY_WRITE_CHECK_SKIPPED_PHRASE} — no pre-run "
+              f"snapshot of the working tree was taken. This is "
+              f"{COLD_READ_CELL_STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE}.", file=sys.stderr)
+        return
+    try:
+        stray = stray_writes_since(baseline, own_report_path)
+    except WriteDetectorUnavailable as error:
+        print(f"{program}: {STRAY_WRITE_CHECK_SKIPPED_PHRASE} — git status "
+              f"failed ({error}). This is {COLD_READ_CELL_STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE}.",
+              file=sys.stderr)
+        return
+    if stray:
+        # Snapshots detect changed content, not authorship; another worker may have made the edit.
+        print(
+            f"{program}: {STRAY_WRITE_PHRASE} — {', '.join(stray)}. This cell "
+            "cannot tell whether the reviewer wrote them or someone else working "
+            "in the checkout did. Inspect before triage and revert only what is "
+            "the reviewer's; any report still stands on its own.",
+            file=sys.stderr,
+        )

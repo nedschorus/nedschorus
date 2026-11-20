@@ -14,7 +14,7 @@ ANSWER: rebase -- branch pr-branch-fix has no open pull request and origin does 
 Run git rebase origin/main, resolving each conflict so that both changes work.
 ```
 
-The command and its output are lines 181 and 186 of the reviewer's transcript, `nedlern@ned-box:/home/nedlern/nedschorus-logs/agent-session-files-by-machine/ned-box/projects/-home-nedlern--cache-merge-lane-review-worktrees-pr2971-head/859944f4-3c72-479d-a231-d93b254a253a.jsonl`.
+The command and its output are lines 181 and 186 of the reviewer's transcript, `nedlern@ned-box:/home/nedlern/nedsnodes-logs/agent-session-files-by-machine/ned-box/projects/-home-nedlern--cache-merge-lane-review-worktrees-pr2971-head/859944f4-3c72-479d-a231-d93b254a253a.jsonl`.
 
 ## What is wrong
 

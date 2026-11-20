@@ -12,6 +12,6 @@ Captured per the three-state artifact rule (pending state -> GHI, lean -> issue-
 
 ## Evidence of record
 
-- Six-agent source read: `nc-queue/archived/2026-07-22-candidate-skill-source-evidence.md` (this skill's section)
-- cops delta packet: `nc-queue/archived/2026-07-23-cops-candidate-skill-delta-packet.md` (this skill's section)
+- Six-agent source read: `nn-queue/archived/2026-07-22-candidate-skill-source-evidence.md` (this skill's section)
+- cops delta packet: `nn-queue/archived/2026-07-23-cops-candidate-skill-delta-packet.md` (this skill's section)
 - Shortlist origin: `docs/issues/9-neds-notes.md` § Working skill shortlist

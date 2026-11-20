@@ -38,9 +38,9 @@ healthy_timeshift_snapshot_directory = isolation_root / "timeshift-snapshots"
     json.dumps({"created": str(int(time.time())), "tags": "hourly"}), encoding="utf-8")
 HEALTHY_BACKUP_ENVIRONMENT = {
     # The checker needs a mount point; "/" is one on both machines, and a scratch directory never is.
-    "NEDSCHORUS_BACKUP_MOUNT": "/",
-    "NEDSCHORUS_TIMESHIFT_LOG_DIRECTORY": str(healthy_timeshift_log_directory),
-    "NEDSCHORUS_TIMESHIFT_SNAPSHOT_DIRECTORY": str(healthy_timeshift_snapshot_directory),
+    "NEDSNODES_BACKUP_MOUNT": "/",
+    "NEDSNODES_TIMESHIFT_LOG_DIRECTORY": str(healthy_timeshift_log_directory),
+    "NEDSNODES_TIMESHIFT_SNAPSHOT_DIRECTORY": str(healthy_timeshift_snapshot_directory),
 }
 os.environ.update(HEALTHY_BACKUP_ENVIRONMENT)
 empty_session_registry_directory = isolation_root / "session-registry"
@@ -199,8 +199,8 @@ check("an empty payload adds no stray separators", statusline.SEPARATOR not in e
 
 # The backup warning leads the line, in red, when the checker reports a failure.
 try:
-    os.environ["NEDSCHORUS_BACKUP_MOUNT"] = str(isolation_root / "absent-backup-drive")
-    os.environ["NEDSCHORUS_TIMESHIFT_SNAPSHOT_DIRECTORY"] = str(isolation_root / "no-snapshots")
+    os.environ["NEDSNODES_BACKUP_MOUNT"] = str(isolation_root / "absent-backup-drive")
+    os.environ["NEDSNODES_TIMESHIFT_SNAPSHOT_DIRECTORY"] = str(isolation_root / "no-snapshots")
     failing_backup_line = statusline.status_line_text(payload)
     check("a failing backup leads the line as a red warning",
           failing_backup_line.startswith(

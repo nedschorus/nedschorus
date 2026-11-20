@@ -4,23 +4,23 @@ issue: "[Check every prerequisite of the fleet's programs before an agent-sessio
 
 # Check every prerequisite of the fleet's programs before an agent-session starts
 
-The fleet's programs depend on tools and settings on each machine, and almost none of those dependencies is checked before an agent-session starts. A missing one shows up late, in the middle of an agent's work, as an error from whichever program first needs it, and each such program has to carry its own message for the case. The proposal is one prerequisites program that `scripts/launch-claude-mac`, `scripts/launch-claude-ubuntu` and `nc-systems/handoff/handoff-supervisor.py` all run before they start an agent-session, and that refuses to start the agent-session, naming the fix, when a required prerequisite is missing.
+The fleet's programs depend on tools and settings on each machine, and almost none of those dependencies is checked before an agent-session starts. A missing one shows up late, in the middle of an agent's work, as an error from whichever program first needs it, and each such program has to carry its own message for the case. The proposal is one prerequisites program that `scripts/launch-claude-mac`, `scripts/launch-claude-ubuntu` and `nn-systems/handoff/handoff-supervisor.py` all run before they start an agent-session, and that refuses to start the agent-session, naming the fix, when a required prerequisite is missing.
 
 ## What is checked today
 
 Read on main:
 
 - `scripts/launch-claude-mac` checks three things before it starts an agent-session: that `tmux` is on PATH, that `claude` is on PATH, and that the handoff-supervisor file exists. Each refusal names its fix.
-- `scripts/launch-claude-ubuntu` lists what it needs on ned-box in a comment, "Requires on the box: tmux, claude on ~/.local/bin, ~/Projects/nedschorus.", and checks none of the three before it starts.
-- `nc-systems/handoff/handoff-supervisor.py` refuses to start when the agent command, `claude`, is not on PATH or its working directory does not exist. When its appended-system-prompt file is missing, it warns and starts the agent-session without that file.
+- `scripts/launch-claude-ubuntu` lists what it needs on ned-box in a comment, "Requires on the box: tmux, claude on ~/.local/bin, ~/Projects/nedsnodes.", and checks none of the three before it starts.
+- `nn-systems/handoff/handoff-supervisor.py` refuses to start when the agent command, `claude`, is not on PATH or its working directory does not exist. When its appended-system-prompt file is missing, it warns and starts the agent-session without that file.
 
 Nothing checks, before an agent-session starts, any of these, each of which a program on main depends on:
 
 - `python3`, which the git hooks, the handoff-supervisor and most of `scripts/` run under. `scripts/git-client-side-hooks/pre-push` checks for `python3` itself and, when it is missing, prints its own message and lets the push go ahead unchecked.
-- `gh`, installed and able to authenticate, which every program that reads or writes pull requests and GitHub issues calls. An agent-session authenticates with its agent-seat's token when the launcher finds one, and otherwise with the machine's own `gh` login. No program on main runs `gh auth status` (searched: `git grep 'gh auth status' origin/main -- scripts nc-systems`).
+- `gh`, installed and able to authenticate, which every program that reads or writes pull requests and GitHub issues calls. An agent-session authenticates with its agent-seat's token when the launcher finds one, and otherwise with the machine's own `gh` login. No program on main runs `gh auth status` (searched: `git grep 'gh auth status' origin/main -- scripts nn-systems`).
 - `jq`, which `scripts/merge-gate.sh` needs; that script checks for `jq` itself and refuses to run without it.
 - ssh from the Mac to ned-box, which `scripts/launch-claude-ubuntu` and other Mac-side programs use.
-- Each clone's `core.hooksPath` setting, which installs the git hooks in `scripts/git-client-side-hooks/`. The hooks' own comments say how to set it; no program checks that it is set (searched: `git grep -l hooksPath origin/main -- scripts nc-systems`, which finds three of the hooks and six test files, and no check).
+- Each clone's `core.hooksPath` setting, which installs the git hooks in `scripts/git-client-side-hooks/`. The hooks' own comments say how to set it; no program checks that it is set (searched: `git grep -l hooksPath origin/main -- scripts nn-systems`, which finds three of the hooks and six test files, and no check).
 
 ## Why
 
