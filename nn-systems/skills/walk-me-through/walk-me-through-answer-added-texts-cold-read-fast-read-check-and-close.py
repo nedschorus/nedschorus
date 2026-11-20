@@ -243,7 +243,9 @@ for answers to parts, a single line for the item naming each part's outcome,
 or, for --moved-on-no-decision, that the user moved on from an item asking
 no decision, or, for a deferral, that the item moves to just before the summary item, the item
 whose heading's point opens with "summary"; an item deferred a second time
-leaves the walk and stays open; for --already-decided or --moved-on, that the
+leaves the walk and stays open, and so does an item deferred for the first
+time when the next item the minutes do not record after it in the walk is the
+summary item and no unshown item is still to come; for --already-decided or --moved-on, that the
 walk does not come back to the item, with the ruling or the reason. For a
 deferral it also puts `(deferred: moved to just before the summary item)` right
 after the running count of the item's walk-document heading, before it writes
@@ -316,7 +318,9 @@ when such items wait on each other in a circle. Only a line CLOSE
 writes records anything: a line for an answer that took effect, for answers to
 parts, for --moved-on-no-decision, for --already-decided or for --moved-on
 decides its items; a line for a
-deferral defers its items once. Every other line records nothing, whatever it
+deferral defers its items once, and a line for a deferral that takes an item
+out of the walk because it stood just before the summary item defers its
+items twice. Every other line records nothing, whatever it
 says, an agent's note included, so that a note such as `Items 3 to 5 revised
 (item 3 is the change he approved today)` leaves items 3 to 5 waiting; CHECK's
 answer lines and CLOSE's held-answer lines record nothing either.
@@ -626,6 +630,8 @@ CLOSE_MOVED_ON_MINUTES = ("{item}: moved on, no decision: {reason}; the walk doe
                           "<moved on, no decision>")
 CLOSE_MOVED_ON_NO_DECISION_MINUTES = "{item}: moved on; the item asked for no decision. <moved on, no decision>"
 CLOSE_DEFERRED_AGAIN_MINUTES = "{item}: deferred a second time, so it leaves the walk and stays open. <open>"
+CLOSE_DEFERRED_JUST_BEFORE_SUMMARY_MINUTES = ("{item}: deferred while it stood just before the summary item, so it "
+                                              "leaves the walk and stays open. <open>")
 MORE_THAN_ONE_UNCLOSED_APPROVAL_WALK = (
     "nothing written: more than one approval-walk is open or paused in {directory}, so this program cannot tell "
     "which approval-walk the user's answer belongs to, and records it in none. A paused approval-walk is one "
@@ -671,13 +677,19 @@ CLOSE_DEFERRED_LINES = (
 CLOSE_MOVED_ON_LINES = (
     "{item} asked for no decision, and the minutes record that the user moved on from it.",
 )
-CLOSE_DEFERRED_AGAIN_LINES = (
-    "{item} is deferred a second time, so the minutes record it as open and it leaves the walk.",
+CLOSE_DEFERRED_OUT_OF_THE_WALK_LINES = (
     "Add it to your task list if it is not already a task.",
     "If a commit on your branch already makes the change this item asks about, undo that change in a new commit "
     "before the pull request, and say in the task that it was undone.",
     "Your next message must include these lines, as they are:",
 )
+CLOSE_DEFERRED_AGAIN_LINES = (
+    "{item} is deferred a second time, so the minutes record it as open and it leaves the walk.",
+) + CLOSE_DEFERRED_OUT_OF_THE_WALK_LINES
+CLOSE_DEFERRED_JUST_BEFORE_SUMMARY_LINES = (
+    "{item} is deferred while it stands just before the summary item, so the minutes record it as open and it "
+    "leaves the walk.",
+) + CLOSE_DEFERRED_OUT_OF_THE_WALK_LINES
 CLOSE_HELD_LINES = (
     "{item}'s answer does not take effect yet: {new_item}, which a fast-read finding raised, waits for the "
     "user's answer, and the minutes record {item}'s answer as held until he answers {new_item}.",
@@ -734,6 +746,8 @@ DECIDING_LINES = tuple(after_the_items_pattern(template) for template in (
 DECIDING_LINE_WORDS = (None, "part_answers", None, "moved_on", "moved_on")
 DEFERRING_LINES = tuple(after_the_items_pattern(template)
                         for template in (CLOSE_DEFERRED_MINUTES, CLOSE_DEFERRED_AGAIN_MINUTES))
+# One such line takes its items out of the walk, as two deferral lines do.
+DEFERRING_OUT_OF_THE_WALK_LINE = after_the_items_pattern(CLOSE_DEFERRED_JUST_BEFORE_SUMMARY_MINUTES)
 # A one-item count as it stands in the heading's own line, after its heading or bold marks.
 HEADING_COUNT_IN_LINE = re.compile(r"items?\s+\d+(?:\.\d+)*\s+of\s+\d+\b", re.I)
 CLOSE_DEFERRED_HEADING_NOT_NOTED = ("Its heading in {document} names other items too, so it is not given the "
@@ -2373,7 +2387,7 @@ def rated_none_item_not_to_be_shown(walk_finder, top, minutes, value, numbers, t
     without showing it, as the step's docstring says, or None. named is the item as check names it."""
     if numbers[1:]:
         return None
-    document, lines = item_lines(walk_finder, minutes, value, numbers, total, parser)
+    document, lines, _, _, _ = item_lines(walk_finder, minutes, value, numbers, total, parser)
     ratings = [CASE_AGAINST_RATING.match(match[1]) for match in map(CASE_AGAINST_LINE.match, lines) if match]
     if not (ratings and ratings[0] and ratings[0][1].lower() == NOT_ASKED_RATED_NONE
             and any(FACT_LABELS[0] in line for line in lines)):
@@ -2848,7 +2862,8 @@ def deferred_item_heading_noted(walk_finder, minutes, numbers, total, parser, no
 
 def minutes_record(walk_finder, minutes_text, parser):
     """Return (the item numbers a line this program wrote decides, a Counter of how many lines this program
-    wrote defer each item); every other line, an agent's note included, records nothing."""
+    wrote defer each item, a line for a deferral just before the summary item counting twice); every other
+    line, an agent's note included, records nothing."""
     words, deferrals = minutes_ruling_words(walk_finder, minutes_text, parser)
     return set(words), deferrals
 
@@ -2863,7 +2878,8 @@ def minutes_ruling_words(walk_finder, minutes_text, parser):
             continue
         rest = line[match.end():]
         decides = [index for index, pattern in enumerate(DECIDING_LINES) if pattern.match(rest)]
-        if not decides and not any(pattern.match(rest) for pattern in DEFERRING_LINES):
+        out_of_the_walk = DEFERRING_OUT_OF_THE_WALK_LINE.match(rest)
+        if not decides and not out_of_the_walk and not any(pattern.match(rest) for pattern in DEFERRING_LINES):
             continue
         try:
             items, _ = walk_finder.parse_items(match[1])
@@ -2873,7 +2889,7 @@ def minutes_ruling_words(walk_finder, minutes_text, parser):
             word = DECIDING_LINE_WORDS[decides[0]] or RULING_GIVEN_WORDS[rest.rsplit(" ", 1)[-1]]
             words.update(dict.fromkeys(items, word))
         else:
-            deferrals.update(items)
+            deferrals.update({item: 2 if out_of_the_walk else 1 for item in items})
     return words, deferrals
 
 
@@ -3035,6 +3051,28 @@ def approval_walk_minutes_read_returning_decided_item_numbers(walk_finder, minut
         held_answers_unresolved(walk_finder, minutes_text, parser)))
 
 
+def walk_with_deferred_items_moved(order, summary, decided, deferrals):
+    """Return (the walk-document's items in walk order, each item deferred once and not decided moved to just
+    before the summary item, or to the end when there is none; the items the minutes record; the items so moved;
+    the items left in place)."""
+    recorded = {item for item in order if item in decided or deferrals[item] > 1}
+    waiting_deferred = [item for item in order if item not in recorded and item in deferrals]
+    in_place = [item for item in order if item not in waiting_deferred]
+    cut = in_place.index(summary) if summary in in_place else len(in_place)
+    return in_place[:cut] + waiting_deferred + in_place[cut:], recorded, waiting_deferred, in_place
+
+
+def just_before_summary_item(order, summary, answered_numbers, decided, deferrals, placing):
+    """Whether, in the walk, the next item after the answered items that the minutes do not record is the
+    summary item, with no unshown item still to come."""
+    walk, recorded, _, _ = walk_with_deferred_items_moved(order, summary, decided, deferrals)
+    to_come = [item for item in walk if item not in recorded]
+    answered = [index for index, item in enumerate(to_come) if item in answered_numbers]
+    return (summary is not None and summary not in answered_numbers and bool(answered)
+            and to_come[answered[-1] + 1:answered[-1] + 2] == [summary]
+            and not any(item in placing for item in to_come))
+
+
 def next_item(walk_finder, minutes, parser, order, summary, answered_numbers, waiting_numbers, placing=None,
               decided_now=()):
     """Return the item numbers the `#next_to_present` line must name next, or [] when the minutes record
@@ -3055,14 +3093,10 @@ def next_item(walk_finder, minutes, parser, order, summary, answered_numbers, wa
     placing = placing or {}
     decided = approval_walk_minutes_read_returning_decided_item_numbers(walk_finder, minutes, parser, decided_now)
     deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)[1]
-    recorded = {item for item in order if item in decided or deferrals[item] > 1}
+    walk, recorded, waiting_deferred, in_place = walk_with_deferred_items_moved(order, summary, decided, deferrals)
     still_waiting = [item for item in waiting_numbers if item not in recorded and item not in answered_numbers]
     if still_waiting:
         return still_waiting
-    waiting_deferred = [item for item in order if item not in recorded and item in deferrals]
-    in_place = [item for item in order if item not in waiting_deferred]
-    cut = in_place.index(summary) if summary in in_place else len(in_place)
-    walk = in_place[:cut] + waiting_deferred + in_place[cut:]
     answered = [index for index, item in enumerate(order) if item in answered_numbers]
     anchors = [item for item in order[answered[-1]:] if item in in_place] if answered else []
     start = walk.index(anchors[0]) if anchors else 0
@@ -3243,13 +3277,18 @@ def close(arguments):
         output = [line.format(item=item) for line in CLOSE_MOVED_ON_LINES]
     elif answered == DEFERRED:
         _, deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
-        again = any(deferrals[number] for number in answered_numbers)
-        recorded = (CLOSE_DEFERRED_AGAIN_MINUTES if again else CLOSE_DEFERRED_MINUTES).format(item=item)
-        lines = CLOSE_DEFERRED_AGAIN_LINES if again else CLOSE_DEFERRED_LINES
+        decided = approval_walk_minutes_read_returning_decided_item_numbers(walk_finder, minutes, parser)
+        if any(deferrals[number] for number in answered_numbers):
+            recorded, lines = CLOSE_DEFERRED_AGAIN_MINUTES, CLOSE_DEFERRED_AGAIN_LINES
+        elif just_before_summary_item(order, summary, answered_numbers, decided, deferrals, placing):
+            recorded, lines = CLOSE_DEFERRED_JUST_BEFORE_SUMMARY_MINUTES, CLOSE_DEFERRED_JUST_BEFORE_SUMMARY_LINES
+        else:
+            recorded, lines = CLOSE_DEFERRED_MINUTES, CLOSE_DEFERRED_LINES
+        recorded = recorded.format(item=item)
         word = RULING_GIVEN_DEFERRED
-        # A walk with no summary item puts a deferred item last, where it needs no note; an item deferred again
-        # leaves the walk, so the note that says where it went is taken out.
-        noted = not again and summary is not None
+        # A walk with no summary item puts a deferred item last, where it needs no note; an item that leaves the
+        # walk takes out the note that says where it went.
+        noted = lines is CLOSE_DEFERRED_LINES and summary is not None
         output = ([line.format(item=item) for line in lines]
                   + deferred_item_heading_noted(walk_finder, minutes, answered_numbers, total, parser, noted)
                   + statuses)

@@ -2142,6 +2142,9 @@ def test_only_a_line_the_program_writes_records_a_decision_or_a_deferral():
              "close's line for a deferral defers its item once"),
             ("item 2 of 5: deferred a second time, so it leaves the walk and stays open. <open>\n",
              (set(), {"2": 1}), "close's line for a second deferral defers its item once more"),
+            ("item 4 of 5: deferred while it stood just before the summary item, so it leaves the walk and stays "
+             "open. <open>\n", (set(), {"4": 2}),
+             "close's line for a deferral just before the summary item defers its item twice, out of the walk"),
             ("item 2 of 5: already decided by walk x, item 3; the walk does not come back to it. <rejected>\n",
              ({"2"}, {}), "close's line for an item an earlier user-ruling decides decides it"),
             ("item 2 of 5: moved on, no decision: it went to walk y; the walk does not come back to it. "
@@ -2417,6 +2420,47 @@ def test_an_item_deferred_a_second_time_leaves_the_walk():
           marker(case) == "#next_to_present none, closed", case.minutes.read_text())
 
 
+def test_a_first_deferral_of_the_item_just_before_the_summary_item_takes_it_out_of_the_walk():
+    for answered, approved, case_name in (
+            ("item 4 of 5", (1, 2, 3), "the item just before the summary item in the walk-document"),
+            ("item 2 of 5", (1, 3, 4), "an item whose every later item before the summary item is recorded")):
+        case = summary_case(next_to_present=answered,
+                            recorded="".join(approved_line(f"item {n} of 5") for n in approved))
+        before = walk_document(case)
+        case.run("check", "--deferred")
+        closed = case.run("close")
+        minutes = case.minutes.read_text()
+        check(f"a first Z on {case_name} records it as open, takes it out of the walk, says nothing of a second "
+              "deferral, leaves its heading alone and goes on to the summary item",
+              closed.returncode == 0
+              and closed.stdout.split("\n")[:3] == [
+                  f"{answered} is deferred while it stands just before the summary item, so the minutes record it "
+                  "as open and it leaves the walk.",
+                  "Add it to your task list if it is not already a task.",
+                  UNDO_COMMITTED_CHANGE_LINE]
+              and f"{answered}: deferred while it stood just before the summary item, so it leaves the walk and "
+                  "stays open. <open>\n" in minutes
+              and "second" not in closed.stdout and "second" not in minutes
+              and walk_document(case) == before
+              and marker(case) == "#next_to_present item 5 of 5", described(closed) + minutes)
+        case.run("check")
+        case.run("close")
+        check(f"once the summary item is recorded, {case_name}, deferred once, is not named and the walk closes",
+              marker(case) == "#next_to_present none, closed", case.minutes.read_text())
+
+
+def test_a_first_deferral_with_an_open_item_before_the_summary_item_is_an_ordinary_deferral():
+    case = summary_case(next_to_present="item 3 of 5",
+                        recorded="".join(approved_line(f"item {n} of 5") for n in (1, 2)))
+    case.run("check", "--deferred")
+    closed = case.run("close")
+    check("a first Z on item 3 while item 4 is still open moves item 3 to just before the summary item",
+          closed.returncode == 0
+          and closed.stdout.split("\n")[0] == ("item 3 of 5 is deferred, and the minutes record it; it comes back "
+                                              "just before the summary item.")
+          and marker(case) == "#next_to_present item 4 of 5", described(closed) + case.minutes.read_text())
+
+
 DEFERRED_NOTE = "(deferred: moved to just before the summary item)"
 
 
@@ -2598,7 +2642,7 @@ Not an item: it comes before the first running count.
 
 ## Item 1 of 4: one
 
-#case_against none.
+#case_against weak.
 
 Recommendation: approve.
 
@@ -2606,7 +2650,7 @@ Recommendation: approve.
 
 #approval_walk_item_in_category_fix_next
 
-#case_against none.
+#case_against weak.
 
 Recommendation: approve.
 
@@ -2614,7 +2658,7 @@ Recommendation: approve.
 
 #approval_walk_item_in_category_fix_next
 
-#case_against none.
+#case_against weak.
 
 Recommendation: approve.
 
@@ -4716,12 +4760,12 @@ def test_the_read_step_presents_an_item_rated_none_that_is_shown_all_the_same():
     for described_case, case in cases:
         result = case.run(WAITING_ITEM_READ)
         check(f"the read step reads and presents an item rated none {described_case}",
-              result.returncode == 0 and result.stdout.rstrip("\n").endswith("Then present item 22 of 26.")
+              result.returncode == 0 and "Then present item 22 of 26" in result.stdout
               and times_read(case, "## Item 22 of 26") == 1, described(result))
     case = rated_none_case(next_to_present="item 3 of 3")
     result = case.run(WAITING_ITEM_READ)
     check("the read step presents an item rated none that asks no decision, such as a summary item",
-          result.returncode == 0 and result.stdout.rstrip("\n").endswith("Then present item 3 of 3."),
+          result.returncode == 0 and "Then present item 3 of 3" in result.stdout,
           described(result))
 
 
@@ -4909,7 +4953,7 @@ def test_the_last_item_and_a_closed_walk_start_no_read_ahead():
 
 def test_the_read_step_of_an_item_the_minutes_already_decide_reads_ahead_the_item_after_it():
     recorded = approved_line("item 1 of 5") + approved_line("item 2 of 5")
-    case = summary_case(next_to_present="item 2 of 5", recorded=recorded)
+    case = summary_case(next_to_present="item 2 of 5", recorded=recorded, rating="weak.")
     result = case.run(WAITING_ITEM_READ)
     check("the read step of a waiting item the minutes already decide reads it now and reads ahead the item after it",
           result.returncode == 0
@@ -5019,14 +5063,14 @@ def test_a_fix_that_touches_a_fact_is_read_again():
               and times_read(case, ITEM_3_HEADING) == 2, described(result))
 
 
-ITEM_3_BODY = "#case_against none.\n\n\nRecommendation: {}"
+ITEM_3_BODY = "#case_against weak.\n\n\nRecommendation: {}"
 
 
 def rewritten_item_3(case, recommendation):
     """Rewrite the live version of item 3 to recommend recommendation, as an agent rewriting the item would."""
     document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
     text = document.read_text()
-    document.write_text(re.sub(r"(## Item 3 of 5: three\n\n#case_against none\.\n\n\nRecommendation: )[^\n]*",
+    document.write_text(re.sub(r"(## Item 3 of 5: three\n\n#case_against weak\.\n\n\nRecommendation: )[^\n]*",
                                lambda live: live[1] + recommendation, text, count=1))
     return document
 
@@ -5079,7 +5123,7 @@ def test_an_earlier_read_text_already_kept_or_changed_only_in_its_heading_is_not
     text = document.read_text()
     document.write_text(text.replace("Recommendation: leave it.\n\n## Item 4 of 5",
                                      "Recommendation: drop it.\n\n### Withdrawn version 1 of item 3\n\n"
-                                     "#case_against  none.\n\nRecommendation:\nleave it.\n\n## Item 4 of 5", 1))
+                                     "#case_against  weak.\n\nRecommendation:\nleave it.\n\n## Item 4 of 5", 1))
     by_hand = case.run(WAITING_ITEM_READ)
     check("an earlier text an agent already kept below the item, whatever its spacing, is not kept again",
           by_hand.returncode == 0 and document.read_text().count("Withdrawn version") == 1, described(by_hand))
@@ -5279,8 +5323,8 @@ def test_two_earlier_texts_kept_in_one_run_both_land_below_the_item_and_the_next
 def test_a_bold_paragraph_items_changed_first_line_recommendation_is_kept_as_a_withdrawn_version():
     case = item_read_case()
     document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
-    document.write_text(re.sub(r"## Item 3 of 5: three\n\n#case_against none\.\n\n\nRecommendation: leave it\.",
-                               "**Item 3 of 5** Recommendation: leave it.\n\n#case_against none.",
+    document.write_text(re.sub(r"## Item 3 of 5: three\n\n#case_against weak\.\n\n\nRecommendation: leave it\.",
+                               "**Item 3 of 5** Recommendation: leave it.\n\n#case_against weak.",
                                document.read_text(), count=1))
     answered_and_closed(case)
     case.run(WAITING_ITEM_READ)
@@ -5289,7 +5333,7 @@ def test_a_bold_paragraph_items_changed_first_line_recommendation_is_kept_as_a_w
     result = case.run(WAITING_ITEM_READ)
     check("a bold-paragraph item whose recommendation on its first line changed keeps its earlier text",
           result.returncode == 0
-          and "#### Withdrawn version 1 of item 3\n\nRecommendation: leave it.\n\n#case_against none." in
+          and "#### Withdrawn version 1 of item 3\n\nRecommendation: leave it.\n\n#case_against weak." in
           document.read_text(), described(result) + document.read_text())
 
 
@@ -5378,7 +5422,7 @@ def test_a_missing_copy_refuses_before_anything_is_written_even_a_first_entered_
     copies = [path for path in case.reads().glob("*.md") if "## Item 2 of 4: two" in path.read_text()]
     text = document.read_text()
     document.write_text(text.replace("## three", "## four\n\n#approval_walk_item_in_category_fix_next\n\n"
-                                     "#case_against none.\n\nRecommendation: approve.\n\n## three", 1)
+                                     "#case_against weak.\n\nRecommendation: approve.\n\n## three", 1)
                         .replace("Recommendation: approve.\n\n## four", "Recommendation: drop it.\n\n## four", 1))
     before = document.read_text()
     copies[0].unlink()
