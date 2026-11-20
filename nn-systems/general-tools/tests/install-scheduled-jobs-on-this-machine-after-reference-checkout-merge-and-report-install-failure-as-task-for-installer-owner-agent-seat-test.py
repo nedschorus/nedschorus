@@ -165,9 +165,9 @@ with tempfile.TemporaryDirectory() as scratch:
           and "the --install step failed: it exited 1, so ned-box may not run every job"
               in written[0]["description"]
           and "FAILED: the crontab write did not hold" in written[0]["description"]
-          and f"then run `python3 {repository}/nc-systems/general-tools/"
+          and f"then run `python3 {repository}/nn-systems/general-tools/"
               "install-scheduled-jobs-on-this-machine.py --install && python3 "
-              f"{repository}/nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py "
+              f"{repository}/nn-systems/general-tools/install-scheduled-jobs-on-this-machine.py "
               "--remove-not-in-table` on ned-box" in written[0]["description"]
           and "once both exit 0 it marks this task completed" in written[0]["description"]
           and "KEPT line" not in written[0]["description"],

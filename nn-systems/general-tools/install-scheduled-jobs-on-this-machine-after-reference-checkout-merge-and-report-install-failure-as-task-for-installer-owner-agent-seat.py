@@ -115,12 +115,12 @@ REFERENCE_CHECKOUT_PATH_BY_MACHINE_NAME = {
     MAC: str(Path(mac_reference_checkout.MAC_REFERENCE_CHECKOUT_LAUNCHER_SCRIPTS_DIRECTORY_PATH).parent),
 }
 SCHEDULED_JOBS_INSTALLER_FAILURE_TASK_SUBJECT_FOR_OWNING_AGENT_SEAT_TASK_LIST = (
-    "Scheduled jobs: nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py "
+    "Scheduled jobs: nn-systems/general-tools/install-scheduled-jobs-on-this-machine.py "
     "--install or --remove-not-in-table failed after a pull into ned-box's reference-checkout")
 INSTALL = "--install"
 REMOVE_NOT_IN_TABLE = "--remove-not-in-table"
 INSTALLER_STEPS = (INSTALL, REMOVE_NOT_IN_TABLE)
-SCHEDULED_JOBS_TABLE = "nc-systems/general-tools/scheduled-jobs-on-each-machine.json"
+SCHEDULED_JOBS_TABLE = "nn-systems/general-tools/scheduled-jobs-on-each-machine.json"
 WHAT_A_FAILED_STEP_MAY_LEAVE_ON_THE_MACHINE = {
     INSTALL: f"may not run every job that {SCHEDULED_JOBS_TABLE} gives it",
     REMOVE_NOT_IN_TABLE: f"may still run a job that {SCHEDULED_JOBS_TABLE} does not give it",
