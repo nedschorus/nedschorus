@@ -20,12 +20,20 @@ import sys
 import time
 from pathlib import Path
 
-_shell_reader_spec = importlib.util.spec_from_file_location(
-    "shell_command_tree_sitter_bash_reader_common",
-    Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
-    / "shell-command-tree-sitter-bash-reader-common.py")
-shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
-_shell_reader_spec.loader.exec_module(shell_reader)
+_crash_notice_spec = importlib.util.spec_from_file_location(
+    "guard_hook_crash_fail_open_with_notice_common",
+    Path(__file__).resolve().parent / "guard-hook-crash-fail-open-with-notice-common.py")
+_crash_notice = importlib.util.module_from_spec(_crash_notice_spec)
+_crash_notice_spec.loader.exec_module(_crash_notice)
+
+with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(
+        __file__, __name__ == "__main__"):
+    _shell_reader_spec = importlib.util.spec_from_file_location(
+        "shell_command_tree_sitter_bash_reader_common",
+        Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
+        / "shell-command-tree-sitter-bash-reader-common.py")
+    shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
+    _shell_reader_spec.loader.exec_module(shell_reader)
 is_program = shell_reader.is_program
 
 SEARCH_PROGRAMS = ("grep", "egrep", "fgrep", "rg", "ugrep")
@@ -68,14 +76,15 @@ SEARCH_PROGRAM_OPTIONS_TAKING_A_VALUE = {
 SAFE_UNQUOTED_CHARACTERS = re.compile(r"^[A-Za-z0-9_./~@%+=:,-]+$")
 
 REFUSAL_WITH_COMMAND_TEMPLATE = (
-    "Refused: {glob_word} expands to names beginning with -, such as {name}, "
+    "[rule bash-guard-search-file-name-read-as-option] Refused: {glob_word} expands to names beginning with -, such as {name}, "
     "which {program} reads as options, not as files. Put -- before the file "
     "names and run: {accepted_command}"
 )
 REFUSAL_OF_OPTION_VALUE_TEMPLATE = (
-    "Refused: {glob_word}, the value of {option}, expands to two or more names. The shell "
-    "passes only the first of them as {option}'s value, and {program} reads each of the "
-    "others as one more word, and a name beginning with - as an option, such as {name}. "
+    "[rule bash-guard-search-file-name-read-as-option] Refused: {glob_word}, the value of "
+    "{option}, expands to two or more names, among them {names}. The shell passes only the "
+    "first of the names, in its sort order, as {option}'s value, and {program} reads each of "
+    "the others as one more word, and any of them that begins with - as an option. "
     "-- cannot fix this.\n"
     "If you meant one of the names, write that name in place of {glob_word}.\n"
     "If you meant every name {glob_word} matches, give {option} once before each name.\n"
@@ -83,7 +92,7 @@ REFUSAL_OF_OPTION_VALUE_TEMPLATE = (
     "Then run the command again."
 )
 REFUSAL_WITHOUT_COMMAND_TEMPLATE = (
-    "Refused: {glob_word} expands to names beginning with -, such as {name}, "
+    "[rule bash-guard-search-file-name-read-as-option] Refused: {glob_word} expands to names beginning with -, such as {name}, "
     "which {program} reads as options, not as files.\n"
     "Write ./ in front of {glob_word}, as in ./{glob_word}, so that every name begins "
     "with ./ instead of -.\n"
@@ -168,22 +177,28 @@ def first_expansion_beginning_with_dash(word, directory, deadline, clock):
     return None
 
 
-def dash_name_among_two_or_more_expansions(word, directory, deadline, clock):
-    """Return a name beginning with - that the program may read as an option, else None.
+def option_value_names_when_two_or_more_and_one_begins_with_dash(word, directory, deadline,
+                                                                 clock):
+    """Return the names word expands to when two or more do and one begins with -, else None.
 
-    None when word expands to fewer than two names or to no name beginning with -. The name
-    returned is one the shell does not put first in byte order, when there is one.
+    Raise when the budget expires.
     """
     names = list(expansions_that_can_begin_with_dash(word, directory, deadline, clock))
-    dash_names = sorted(name for name in names if name.startswith("-"))
-    if len(names) < 2 or not dash_names:
+    if len(names) < 2 or not any(name.startswith("-") for name in names):
         return None
-    # The shell sorts the names by the locale's collation, which can differ from byte order,
-    # so any dash name may come after the first; one that is not first in byte order comes
-    # after it in the common orders too. Sorting makes the name independent of listing order.
-    first_in_byte_order = min(names)
-    later_dash_names = [name for name in dash_names if name != first_in_byte_order]
-    return (later_dash_names or dash_names)[0]
+    return names
+
+
+# A glob such as * can match thousands of names; the refusal lists only this many.
+LISTED_NAMES_LIMIT = 10
+
+
+def names_listed_for_refusal(names):
+    """Return up to LISTED_NAMES_LIMIT names, those beginning with - first, comma-joined."""
+    # Which name the shell puts first depends on the locale's collation, so no name is singled
+    # out; sorting makes the list independent of the order the directory lists its entries in.
+    ordered = sorted(names, key=lambda name: (not name.startswith("-"), name))
+    return ", ".join(ordered[:LISTED_NAMES_LIMIT])
 
 
 def option_takes_the_next_word_as_its_value(program, word):
@@ -248,10 +263,11 @@ def refused_search(command, commands, command_index, program_index,
         if option_takes_the_next_word_as_its_value(program, plain_word(word)):
             value = arguments[index + 1] if index + 1 < len(arguments) else None
             if value is not None and word_holds_unquoted_glob(value):
-                name = dash_name_among_two_or_more_expansions(value, directory,
-                                                              deadline, clock)
-                if name is not None:
-                    return ({"glob_word": plain_word(value), "name": name,
+                names = option_value_names_when_two_or_more_and_one_begins_with_dash(
+                    value, directory, deadline, clock)
+                if names is not None:
+                    return ({"glob_word": plain_word(value),
+                             "names": names_listed_for_refusal(names),
                              "program": program, "option": plain_word(word)},
                             None, None)
             index += 2
@@ -420,10 +436,7 @@ PARSER_UNAVAILABLE_NEXT_STEP_LINES = (
 
 
 def main(stdin=sys.stdin, clock=time.monotonic):
-    try:
-        payload = json.load(stdin)
-    except (json.JSONDecodeError, ValueError):
-        return 0
+    payload = json.load(stdin)
     if not isinstance(payload, dict) or payload.get("tool_name") != "Bash":
         return 0
     command = (payload.get("tool_input") or {}).get("command") or ""
@@ -455,4 +468,5 @@ def main(stdin=sys.stdin, clock=time.monotonic):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(__file__, True):
+        sys.exit(main())

@@ -218,8 +218,8 @@ ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![\w/.:~-])(/(?:home|Volumes)/" + PATH_E
 RELATIVE_PATH_PATTERN = re.compile(
     r"(?<![\w/.:~-])((?:docs|nc-systems|\.claude)/" + PATH_END + ")")
 
-REMINDER_OPENING = (
-    "cold-read-fast-read due: your last reply linked these documents for the "
+REMINDER_OPENING_LINE = (
+    "[rule cold-read-fast-read-due-for-linked-document] cold-read-fast-read due: your last reply linked these documents for the "
     "user, this agent-session wrote or changed each with the Write or Edit tool, and "
     "none of them has had a cold-read-fast-read since the document's "
     "last change. Each is either outside any git checkout, or new or changed in "
@@ -606,7 +606,7 @@ def run(stdin_text, environment):
         lines += [line.format(cwd=cwd, reason=session_top_reason)
                   for line in SESSION_CHECKOUT_UNKNOWN_LINES]
     if due:
-        lines += [REMINDER_OPENING] + [f"  {document}" for document in due]
+        lines += [REMINDER_OPENING_LINE] + [f"  {document}" for document in due]
     if unchecked:
         lines += [UNCHECKED_OPENING]
         lines += [f"- {document}: {reason}" + ("" if is_due else UNCHECKED_ALREADY_READ_NOTICE)

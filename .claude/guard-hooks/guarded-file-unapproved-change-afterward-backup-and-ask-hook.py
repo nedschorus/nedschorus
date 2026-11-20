@@ -131,7 +131,8 @@ EXIT_DONE = 0
 EXIT_REFUSED = 1
 EXIT_BAD_INVOCATION = 64
 
-ASK_HEADER = (
+ASK_HEADER_LINE = (
+    "[rule guarded-file-changed-without-approval-ask-user-afterward] "
     "A guarded file changed, and the user has not approved the new version. The change stays in "
     "place while you ask him; this hook has kept a copy of the version.")
 ASK_FILE = "{path}, version {key}.{reason} Its change against the newest approved version:\n{diff}"
@@ -161,7 +162,8 @@ ASK_INSTRUCTIONS = (
     "If he declines, run: python3 {program} --restore {pairs}\n"
     "If he declines a version that is in a commit, also run, for each such file: "
     "git commit --only -m \"Put back the approved <file name>\" -- <path>")
-REMINDER = (
+UNAPPROVED_VERSION_REMINDER_MESSAGE = (
+    "[rule guarded-file-changed-without-approval-ask-user-afterward] "
     "Reminder: {path} still holds version {key}, which the user has not approved.\n"
     "If you are a subagent, and you wrote an obvious-fix marker and then made the change with a "
     "command other than Edit or Write, run once: python3 {program} --approve {path} {key}, then "
@@ -181,6 +183,7 @@ STORE_FAILED = (
     "Tell the user what failed, with this remedy: {remedy}\n"
     "Once the store can be reached, the next tool call checks the files again.")
 FIRST_RUN_VERSION_LOST = (
+    "[rule guarded-file-changed-without-approval-ask-user-afterward] "
     "The guarded-file backup could not approve version {blob} of {path}, the version this "
     "checkout held when the backup first ran here: git no longer holds it, most likely pruned "
     "after a reset or a rebase. {path} has no other approved version, so python3 {program} "
@@ -199,15 +202,27 @@ REMEDY_MAC = ("check that ned-box is up and that the Mac has mounted ned-box's h
 REFUSED = "{program_name} {mode}: refused, nothing was changed: {reason}"
 COMMAND_FAILED = ("{program_name} {mode} failed: {reason}. Tell the user, with this message; run "
                   "the command again once the cause is fixed.")
-RESTORE_INCOMPLETE = ("{program_name} --restore: not every file was put back; the lines above "
-                      "say what was done to each. Tell the user which files failed and why.")
+RESTORE_INCOMPLETE = ("{program_name} --restore: not every file was put back; the lines this "
+                      "command printed to standard output say what was done to each. A file that "
+                      "failed is in one of two states. Either it is unchanged, still holding the "
+                      "version the user declined; or it was put back, or deleted when it has no "
+                      "approved version, but no line in the store's log records that it was. A "
+                      "failed write may also leave, in the same directory, a file whose name "
+                      "begins with the file's name and ends in .restore. Tell the user which "
+                      "files failed and why, giving the error on each file's Failed on line.\n"
+                      "For a file that failed, do not run git commit --only -m \"Put back the "
+                      "approved <file name>\" -- <path>, the command this hook's message asking "
+                      "about the change gave for a declined version in a commit: the file may "
+                      "still hold the declined version, and the command would commit it.")
 MARKER_SURVIVED = (
     "{program_name} --approve: the approval above is recorded, but its marker {marker} could not "
-    "be deleted: {reason}. While the marker exists, a later --approve would spend the user's "
-    "words a second time.\n"
+    "be deleted: {reason}. While the marker exists, the next --approve, for any later change, "
+    "would read the same approval from it again and record that later change as approved "
+    "although no one approved it.\n"
     "Run: rm -f {quoted_marker}\n"
     "Do not ask the user again and do not run --approve again: the approval is already recorded.\n"
-    "If rm fails too, tell the user, with this message.")
+    "If rm fails too, tell the user, with this message, that he must delete {marker} himself, "
+    "on the machine that holds this checkout, before --approve runs in this checkout again.")
 
 
 class ApprovalRecordedButApprovalMarkerNotDeleted(Exception):
@@ -467,8 +482,9 @@ class Store:
     def copy(self, path: str, copy_hash: str, data: bytes):
         """Keep one copy of a version, named by its copy hash, git's blob id of the version. A
         copy that matches its name or data's own hash is never replaced, even by an identical
-        one; any other counts as missing and is replaced once. Raises StoreUnreachable when the
-        replacement does not match either."""
+        one; any other counts as missing and is replaced once. Raises StoreUnreachable when
+        another run writes the copy again, matching neither, while this run replaces it; the
+        bytes this run writes are not read back."""
         bytes_hash = blob_hash(data)
         fd = self.path_directory(path, create=True)
         try:
@@ -483,8 +499,8 @@ class Store:
                         # Another run made the copy again after this one removed it, and has
                         # not finished or died part way; the version is not known to be kept.
                         raise StoreUnreachable(
-                            f"the copy {copy_hash} of {path} does not match its hash, and another "
-                            "run wrote it again while this run was replacing it")
+                            f"the copy {copy_hash} of {path} does not match its hash; this run was "
+                            "replacing the copy when another run wrote the copy again")
                     os.unlink(copy_hash, dir_fd=fd)
                     continue
                 try:
@@ -851,37 +867,37 @@ def reflog_entries(git_directory: Path):
 
 def reflog_position(entries):
     """The position stored after a run: [commit, time, index, whole line] of the newest entry.
-    The first two are what an earlier version of this hook stored and reads, so a checkout
-    whose sessions run hooks of both versions keeps working."""
+    Earlier versions of this hook read the first two, or the index, so a checkout whose
+    sessions run hooks of several versions keeps working; this version reads only the line."""
     if not entries:
         return None
     return entries[-1][:2] + [len(entries) - 1, entries[-1][3]]
 
 
 def entries_after(entries, position):
-    """The reflog entries newer than the stored position, or None when the position matches
-    more than one entry, so the entries since the previous run are not known.
+    """The reflog entries newer than the stored position, or None when they are not known:
+    when no entry, or more than one, holds the stored line.
 
-    The position is found by the entry's whole line: old and new commit, time and subject, not
-    by the reflog's length, which expiry can keep constant. A commit and a time alone can repeat
-    within one second, as after a commit, a switch back and a fast-forward merge, and a match on
-    the repeat would leave the agent's own commit out of the window. The stored index tells
-    apart two equal lines; when expiry has moved it, the line must be the only one equal to it.
-    A position an earlier version of this hook stored is [commit, time] alone."""
+    The position is found by the entry's whole line: old and new commit, time and subject. A
+    commit and a time alone can repeat within one second, as after a commit, a switch back and
+    a fast-forward merge, and a match on the repeat would leave the agent's own commit out of
+    the window. Neither the reflog's length nor a stored index tells two equal lines apart,
+    because expiry can drop older entries and move a later equal line to the stored index; and
+    when the line is gone, a guess from times can leave out a commit made in its second. A
+    position an earlier version of this hook stored is [commit, time] alone; when no entry, or
+    more than one, holds that pair, the window is unknown too, so nothing is approved as git's
+    own work. A version origin/main holds, or one the agent's own successful Edit wrote, is
+    still approved without asking, unless store_phase finds the Edit was made on a recorded
+    version that is not approved."""
     if not position:
         return []
     if len(position) < 4:
         matches = [index for index, entry in enumerate(entries) if entry[:2] == position[:2]]
     else:
-        index, line = position[2], position[3]
-        if 0 <= index < len(entries) and entries[index][3] == line:
-            return entries[index + 1:]
-        matches = [index for index, entry in enumerate(entries) if entry[3] == line]
-    if len(matches) > 1:
+        matches = [index for index, entry in enumerate(entries) if entry[3] == position[3]]
+    if len(matches) != 1:
         return None
-    if matches:
-        return entries[matches[0] + 1:]
-    return [entry for entry in entries if int(entry[1]) > int(position[1])]
+    return entries[matches[0] + 1:]
 
 
 def git_operation_in_progress(checkout: Path):
@@ -1199,7 +1215,7 @@ def run_hook(payload):
             present = False
             if old_base:
                 lookup = subprocess.run(["git", "-C", str(checkout), "cat-file", "-e", old_base],
-                                        capture_output=True, timeout=60, check=False)
+                                        capture_output=True, timeout=60, check=False)  # pragma: no mutate, a limit a second longer or shorter behaves the same
                 # git cat-file -e exits 1, silently, for an object the repository does not hold;
                 # any other failure leaves the state file as it is, since the run stops here.
                 if lookup.returncode != 0 and (lookup.returncode != 1 or lookup.stderr):
@@ -1207,11 +1223,12 @@ def run_hook(payload):
                         f"git cat-file -e {old_base} in {checkout} exited {lookup.returncode}: "
                         f"{lookup.stderr.decode(errors='replace').strip()}; the first run's "
                         f"deferred approvals in {checkout_path} were left unconverted")
-                present = lookup.returncode == 0
+                present = lookup.returncode == 0  # pragma: no mutate, the exit is 0 or 1 here, since any other raised above, so `<=` says the same
             checkout_state[FIRST_RUN_VERSIONS_KEY] = {
                 path: blob for path, blob in (blobs_at_commit(checkout, old_base, list(files_then))
                                               if present else {}).items()
-                if files_then[path][4] == blob}
+                if files_then[path][4]  # pragma: no mutate, a checkout's file has one string as key and copy hash, so [5] reads the same
+                == blob}
         decisions = checkout_state.setdefault("guarded", {})
         decisions_before = dict(decisions)
         groups.append(("checkout", checkout_path, checkout_state, checkout_files(checkout, decisions),
@@ -1249,7 +1266,9 @@ def run_hook(payload):
                     blob = first_run.get(path)
                     if blob is None:
                         continue
-                    if path not in state["files"] and value[2] == value[3] == blob:
+                    if (path not in state["files"]
+                            and value[2] == value[3]  # pragma: no mutate, a checkout's file has one string as key and copy hash, so `is`, `<=`, `>=` and either index for the other say the same
+                            == blob):
                         # Forgotten while git did not list it, and back unchanged.
                         at_base.add(path)
                     else:
@@ -1259,7 +1278,7 @@ def run_hook(payload):
             window = [] if stocking else entries_after(entries, state.get("reflog"))
             # Loading the in-progress check costs more than a whole quiet run, so it is asked
             # only when there is something it could change. An unknown window (None) approves
-            # nothing as git's own work, so every changed version is asked about.
+            # nothing as git's own work.
             if changed or unsettled or window or state.get("stopped"):
                 quiet = git_operation_in_progress(checkout)
             if quiet:
@@ -1379,10 +1398,11 @@ def run_hook(payload):
         if plan[13] is not None:
             first_run = state[FIRST_RUN_VERSIONS_KEY]
             # A version git no longer holds stays recorded, so each later change reports it.
-            for path in set(plan[15]) - {path for path, _ in unreadable}:
+            for path in (set(plan[15])
+                         - {path for path, _ in unreadable}):  # pragma: no mutate, every unreadable path is one of plan[15], so `^` gives the same set
                 del first_run[path]
             lost += unreadable
-            first_run.update({path: changed[path][2] for path in skipped})
+            first_run.update({path: changed[path][2] for path in skipped})  # pragma: no mutate, a checkout's file has one string as key and copy hash, so [3] reads the same
         for path, (now, _, key, copy_hash) in changed.items():
             if now is None:
                 state["files"][path] = [0, 0, 0, 0, DELETED, DELETED, settled.get(path, False)]
@@ -1463,10 +1483,10 @@ def messages(asks, reminders):
         pairs = " ".join(f"{path} {key}" for path, key, _, _ in asks)
         files = "\n\n".join(ASK_FILE.format(path=path, key=key, reason=reason, diff=diff)
                             for path, key, diff, reason in asks)
-        out.append("\n\n".join([ASK_HEADER, files, ASK_INSTRUCTIONS.format(
+        out.append("\n\n".join([ASK_HEADER_LINE, files, ASK_INSTRUCTIONS.format(
             marker=APPROVAL_MARKER_NAME, program=program, pairs=pairs)]))
     for path, key in reminders:
-        out.append(REMINDER.format(path=path, key=key, marker=APPROVAL_MARKER_NAME,
+        out.append(UNAPPROVED_VERSION_REMINDER_MESSAGE.format(path=path, key=key, marker=APPROVAL_MARKER_NAME,
                                    program=HOOK_PATH))
     return out
 
@@ -1596,6 +1616,11 @@ def restore(pairs):
             _, copy_hash, data = current[path]
             if key != DELETED and path not in held:
                 store.copy(path, copy_hash, data)
+                bytes_hash = blob_hash(data)
+                if bytes_hash != copy_hash:
+                    # The run that saw this version may have kept no copy of it, and so logged
+                    # no hash to check this copy by; without one the copy reads as damaged.
+                    log_seen(store, path, "command-line", "", key, copy_hash, "", bytes_hash)
             log = store.log(path)
             newest = newest_approved(store, path, log, key)
             content = None
@@ -1626,7 +1651,7 @@ def restore(pairs):
                 log_line(store, path, "restored", "command-line", "", key, restored)
             except OSError as error:
                 failed.append(path)
-                lines.append(f"Failed on {path}, which may be only part way restored: {error}")
+                lines.append(f"Failed on {path}: {error}")
                 continue
             lines.append(message)
         return lines, failed

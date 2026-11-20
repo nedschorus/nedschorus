@@ -10,7 +10,7 @@ moment it is committed:
 It leaves out the files no person or agent runs by hand, by kind:
 
   - nc-test-suites, `*-test.py` and `*-test.sh`, which run-all-test-suites.py runs;
-  - Claude Code hooks, `*-hook.py` or `*-hook-nbd.py` and everything under `.claude/guard-hooks/`,
+  - Claude Code hooks, `*-hook.py` or `*-hook-hack.py` and everything under `.claude/guard-hooks/`,
     which Claude Code runs with a JSON payload on stdin;
   - git hooks, everything under `scripts/git-client-side-hooks/`, which git runs;
 
@@ -55,10 +55,10 @@ STUB_CALLS_FILE_NAME = "stubbed-command-calls.log"
 
 
 def path_without_nice_but_dirty_suffix(path):
-    """The path with an -nbd suffix just before its extension dropped, so that the name an -nbd
+    """The path with an -hack suffix just before its extension dropped, so that the name an -hack
     file keeps still says its kind."""
     stem, dot, extension = path.rpartition(".")
-    return f"{stem[:-len('-nbd')]}{dot}{extension}" if dot and stem.endswith("-nbd") else path
+    return f"{stem[:-len('-hack')]}{dot}{extension}" if dot and stem.endswith("-hack") else path
 
 
 EXCLUDED_KINDS = (
@@ -81,6 +81,9 @@ EXEMPT_PROGRAMS = {
     "scripts/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal.py":
         "run only by the git pre-push hook scripts/git-client-side-hooks/pre-push, "
         "which hands it git's arguments and the refs being pushed on stdin",
+    "scripts/run-all-test-suites-one-suite-child-subreaper-launcher.py":
+        "run only by scripts/run-all-test-suites.py, which hands it a suite's command line "
+        "as its arguments, so a first argument --help is a command for it to start",
 }
 
 failures = []
@@ -205,12 +208,12 @@ def check_the_checker_reports_each_failure():
 
 def main():
     check_the_checker_reports_each_failure()
-    check("a hook renamed with the -nbd suffix is still left out as a hook",
-          excluded_kind("scripts/x-reminder-hook-nbd.py") == EXCLUDED_KINDS[1][0]
-          and excluded_kind("scripts/x-reminder-nbd.py") is None
-          and excluded_kind("scripts/x-nbd-hook.sh") is None,
-          [excluded_kind(path) for path in ("scripts/x-reminder-hook-nbd.py",
-                                            "scripts/x-reminder-nbd.py", "scripts/x-nbd-hook.sh")])
+    check("a hook renamed with the -hack suffix is still left out as a hook",
+          excluded_kind("scripts/x-reminder-hook-hack.py") == EXCLUDED_KINDS[1][0]
+          and excluded_kind("scripts/x-reminder-hack.py") is None
+          and excluded_kind("scripts/x-hack-hook.sh") is None,
+          [excluded_kind(path) for path in ("scripts/x-reminder-hook-hack.py",
+                                            "scripts/x-reminder-hack.py", "scripts/x-hack-hook.sh")])
 
     programs = all_programs()
     check("the search finds programs", len(programs) > 0, "no program found")

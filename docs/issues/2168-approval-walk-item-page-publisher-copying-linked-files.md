@@ -4,7 +4,15 @@ issue: "[Approval-walk item page publisher copying linked files into the page as
 
 # Approval-walk item page publisher copying linked files into the page as timestamped copies, so short repository and log-store paths open on the iPad
 
-The user approved filing this GHI on 2026-10-28 as item 5.2.1.1 of ned-box-helper's approval-walk `ned-box-helper-open-items-2026-10-27`. Nothing is built yet. The next action is to answer the open questions at the end with the user, then write the program.
+The user approved filing this GHI on 2026-10-28 as item 5.2.1.1 of ned-box-helper's approval-walk `ned-box-helper-open-items-2026-10-27`.
+
+## Build order
+
+The user decided on 2026-11-03 to build the program's page builder first, without the copies, then GHI [Approval-walk items keep agent detail on marked lines that the user's view leaves out](https://github.com/nedschorus/nedschorus/issues/2390), whose part 2 needs the builder; the builder's own questions come to him with its design, and the questions about the copies once the builder works. He answered "A" to item 3 of ned-box-helper's approval-walk `ned-box-helper-speed-and-open-questions-2026-11-02` (walk-minutes `nedlern@ned-box:/home/nedlern/agents/ned-box-helper/docs/walk/ned-box-helper-speed-and-open-questions-2026-11-02-minutes.md`, line 94).
+
+The builder without the copies is [PR 3131, Approval-walk item page builder, without copies of linked files](https://github.com/nedschorus/nedschorus/pull/3131): it renders one item of a walk-document as the page an agent publishes, and leaves each link as the walk-document writes it. The section "What the program does" below describes the whole program; of it, the short form, the refusal of a missing file, the copies and their timestamps are not yet built.
+
+The next action: once PR 3131 merges, ned-box-helper puts the builder's questions to the user, from `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/ned-box-helper/ghi-2168-item-page-builder-walk-items-2026-11-11.md`. Those items answer open questions 7 and the hook part of 8 below; question 3 is settled by the build, in which the program writes the page file and the agent publishes it with the Artifact tool. The other open questions are about the copies, and come to the user once the builder works.
 
 Sources: the walk-document, `nedlern@ned-box:/home/nedlern/agents/ned-box-helper/docs/walk/ned-box-helper-open-items-2026-10-27.md`, section "Item 5.2.1.1", and its walk-minutes beside it, `nedlern@ned-box:/home/nedlern/agents/ned-box-helper/docs/walk/ned-box-helper-open-items-2026-10-27-minutes.md`, lines 122 to 142. Neither file is on main yet; both reach the log-store when the approval-walk closes.
 
@@ -28,7 +36,7 @@ As item 5.2.1.1 (version 2) proposed and the user approved:
 - It copies each file into the item page's artifact as a page of its own, and turns the short form into a link to that copy.
 - The walk-document and the walk-minutes keep the short form.
 
-The walk-minutes add that the program is a step the walk-runner could later run.
+The walk-minutes add that the program is a step the walk check program could later run.
 
 The case against, from the item: a copy is frozen when published. The user, on that: "So if the links from the walks are read-only, that's a simple solution".
 
@@ -56,7 +64,7 @@ Everything in this section is an agent's, not the user's; the items and the user
 4. **How the program recognises a short form.** The item gives a repository example only. How is a log-store path written in short form, and how does the program tell a file path from other text in backticks, such as a branch name or a command, so that it does not refuse on them?
 5. **Files that are not Markdown.** How is a copied Python script, JSON Lines transcript or other non-Markdown file shown as a page that reads well on an iPad?
 6. **Republishing.** When an item changes and its page is republished as version 2, 3 and so on, does the program take new copies with new times?
-7. **The walk-runner.** The walk-minutes say the program is a step the walk-runner could later run. Should the walk-runner run it at every publish and republish, so no agent has to remember to?
+7. **The walk check program.** The walk-minutes say the program is a step the walk check program could later run. Should the walk check program run it at every publish and republish, so no agent has to remember to?
 8. **Other questions for the build.** How does the program get the item's text: from the walk-document's path and the item number? Where does it run, and where does it put the page and copies before they are published? How does the header look, so that it does not break the copied file? What happens when two linked files share a file name in different directories? What does the agent do when publishing to claude.ai fails? Should the header also name the branch and commit a repository file was copied from, and say when the file differs from main? Should a hook on the Artifact tool refuse an item page the program did not build?
 9. **A neighbouring design, not yet filed.** On 2026-10-29 another agent-session on ned-box was writing the GHI-MD `docs/issues/markdown-files-served-as-web-pages-from-ned-box-to-the-lan.md`, on the branch `ghi-markdown-files-served-as-web-pages-from-ned-box-to-the-lan-topic-branch` in the worktree `/home/nedlern/Projects/nedschorus/.claude/worktrees/agent-aa70bcd8200280656`. Its title: "A read-only web server on ned-box renders Markdown files as web pages on the LAN, for approval-walk item pages and other pages agents now publish to claude.ai". That branch had no pull request (`gh pr list --head` found none) and was not on origin (`git ls-remote --heads origin` found nothing); once filed, it can be found by searching the GHIs for that title. If that server is built, does it replace this program, or does this program stay for pages the server cannot reach, such as on an iPad away from home or from an agent-seat on the Mac?
 10. **A file the user edits: copied, linked, or something else.** Given his preference above and his words "there may be reasons to edit elsewhere", should the program copy a file he edits, link it at its canonical location, or do something else? If a copy, he said "Though I guess we could rig something up in case I edited a copy": should anything carry an edit he makes to a copy back to the file, and if so, what?

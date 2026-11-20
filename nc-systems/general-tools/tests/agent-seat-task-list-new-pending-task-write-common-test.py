@@ -57,6 +57,16 @@ with tempfile.TemporaryDirectory() as scratch:
           and sorted(path.name for path in empty.iterdir()) == [".highwatermark", "1.json"],
           sorted(path.name for path in empty.iterdir()))
 
+    with_metadata = root / "with-metadata"
+    with_metadata.mkdir()
+    write(with_metadata, "s", "d", {"branches": ["a-branch", "/a/worktree"]})
+    write(with_metadata, "s", "d", {})
+    first = json.loads((with_metadata / "1.json").read_text(encoding="utf-8"))
+    second = json.loads((with_metadata / "2.json").read_text(encoding="utf-8"))
+    check("metadata given is written as the task's metadata, an empty one included",
+          first.get("metadata") == {"branches": ["a-branch", "/a/worktree"]}
+          and first["status"] == "pending" and second.get("metadata", None) == {}, (first, second))
+
     numbered = root / "numbered"
     numbered.mkdir()
     for name in ("2.json", "9.json", "0.json", "10.json.bak", "notes.json", ".lock"):

@@ -327,6 +327,13 @@ with tempfile.TemporaryDirectory() as workspace:
     findings = problems_for("see `docs/ghost-design.md:40`", root)
     check("a line-numbered citation of a missing file is reported as written",
           findings == ["path does not exist: docs/ghost-design.md:40"], str(findings))
+    for dash in ("-", "–"):
+        check(f"a line-range citation written with {dash!r} of an existing file passes",
+              problems_for(f"see `docs/real-doc.md:2{dash}3`", root) == [])
+        findings = problems_for(f"see `docs/ghost-design.md:40{dash}44`", root)
+        check(f"a line-range citation written with {dash!r} of a missing file is reported",
+              findings == [f"path does not exist: docs/ghost-design.md:40{dash}44"],
+              str(findings))
     # A MISSING file, so the case fails if anything but a trailing number is
     # ever stripped: an existing file would resolve and pass either way.
     findings = problems_for("the `docs/ghost-design.md:section` form", root)
@@ -349,7 +356,7 @@ with tempfile.TemporaryDirectory() as workspace:
     # findings on main were this. The first case is the repository's own text,
     # from docs/design-to-main/design-to-main-state-machine-design.md:521.
     findings = problems_for(
-        "| `<component's directory>/design-to-main-record/user-rulings.md` | every ruling |",
+        "| `<component's directory>/design-to-main-record/design-to-main-component-user-rulings-log.md` | every ruling |",
         root)
     check("a placeholder containing a space is not checked as a path",
           findings == [], str(findings))
@@ -446,6 +453,17 @@ with tempfile.TemporaryDirectory() as workspace:
         "The script is new. Its floor is `9999` in `scripts/real-script.py`. It runs daily.",
         root)
     check("a number and a code file in one sentence of a longer line are still checked",
+          findings == ["number 9999 not found in real-script.py"], str(findings))
+    # A table row's cells are separate claims. The shape is row 44 of
+    # docs/issues/1518-*.md: the failure text `401` in one cell, and a
+    # citation of cold-read-fast-read.py in another.
+    findings = problems_for(
+        "| 44 | the text `9999` | `agy` | `scripts/real-script.py:1-2` |", root)
+    check("a number in another table cell is not paired with the code file",
+          findings == [], str(findings))
+    findings = problems_for(
+        "| 44 | the floor `9999` in `scripts/real-script.py` | `agy` |", root)
+    check("a number and a code file in one table cell are still checked",
           findings == ["number 9999 not found in real-script.py"], str(findings))
     # A sentence end inside a command span does not split it: a split there
     # leaves the span's backticks unpaired, so the number goes unchecked.
@@ -713,7 +731,7 @@ with tempfile.TemporaryDirectory() as overview_workspace:
 
     lint.github_issue_states_and_titles = answering_query
     try:
-        url = "https://github.com/nedschorus/nedschorus/issues/"
+        url = "https://github.com/nedsnodes/nedsnodes/issues/"
         findings = problems_for(
             "# Demo\n\n## Planned work\n\n"
             f"- GHI [Open one]({url}1)\n"
@@ -790,7 +808,7 @@ def run_lint_with_fake_gh(gh_source):
         (root / "nc-systems" / "demo" / "unnamed-program.py").write_text("", encoding="utf-8")
         (root / OVERVIEW_NAME).write_text(
             "## Planned work\n\n"
-            "- GHI [Open one](https://github.com/nedschorus/nedschorus/issues/1)\n",
+            "- GHI [Open one](https://github.com/nedsnodes/nedsnodes/issues/1)\n",
             encoding="utf-8")
         fake_bin = root / "fake-bin"
         fake_bin.mkdir()
@@ -842,6 +860,11 @@ check("a GHI GitHub reports NOT_FOUND is a finding, not a stopped check",
       returncode == 1 and f"{OVERVIEW_NAME}:3: GHI 1 does not exist on GitHub" in stdout,
       f"{returncode} {stdout!r} {stderr!r}")
 
+
+old_name_line = lint.PLANNED_WORK_GHI_LINE.fullmatch(
+    f"- GHI [A title](https://github.com/{lint.OLD_REPOSITORY}/issues/12)")
+check("a Planned work line linking with the repository's old name, which GitHub redirects, is read",
+      old_name_line is not None and old_name_line.group("number") == "12", repr(old_name_line))
 
 print()
 if failures:

@@ -132,7 +132,10 @@ def run_tmp_place_cases():
     s.process(501, fds=[by_fd / "checkout-1" / "deep" / "file"])
     s.process(502, maps=[by_map / "checkout-1" / "deep" / "file"])
     by_unnormalized_socket = s.folder("tmux-1001")
-    s.sockets(by_socket / "merge-lane-2", f"{s.tmp}//tmux-1001/./default")
+    by_socket_through_link = s.folder("tmux-1002")
+    by_double_slash_socket = s.folder("tmux-1003")
+    s.sockets(by_socket / "merge-lane-2", f"{s.tmp}//tmux-1001/./default",
+              f"{s.tmp}/tmux-1002/link/../../default", f"/{s.tmp}/tmux-1003/default")
     # A process whose open files cannot be read is passed over, not a failure.
     s.process(503)
     (s.proc / "503" / "fd").chmod(0)
@@ -165,12 +168,32 @@ def run_tmp_place_cases():
     check("a folder holding a bound unix socket, such as tmux's, is kept", by_socket.is_dir())
     check("a folder holding a unix socket bound under a path with // or /./ in it is kept",
           by_unnormalized_socket.is_dir())
+    check("a folder holding a unix socket bound through a symbolic link followed by .. is kept",
+          by_socket_through_link.is_dir())
+    check("a folder holding a unix socket bound under a path starting with exactly two slashes is kept",
+          by_double_slash_socket.is_dir())
     check("the summary counts the deleted and the in-use folders",
-          "throwaway folders deleted: 3;" in result.stdout and "kept because a process uses them: 5;" in result.stdout,
+          "throwaway folders deleted: 3;" in result.stdout and "kept because a process uses them: 7;" in result.stdout,
           result.stdout)
     check("a symbolic link is not followed and not deleted", (s.tmp / "linked").is_symlink() and target.is_dir())
     check("a file is not deleted", a_file.is_file())
     check("the claude-<uid> folder the first step looks after is kept", claude_code.is_dir())
+
+    s = Scene()
+    folder = s.folder("pymp-a1b2c3d4")
+    s.sockets(folder / "checkout-1" / "socket with spaces")
+    result = s.run()
+    check("a folder holding a unix socket bound under a path with a space in it is kept",
+          folder.is_dir() and result.returncode == 0, result.stdout + result.stderr)
+
+    s = Scene()
+    socket = f"{s.tmp}/tmux-1000/default"
+    # The header's eighth word is "Path", so reading the header as a row would add "Path" as a used path.
+    (s.proc / "net" / "unix").write_text(
+        UNIX_SOCKET_TABLE_HEADER + f"0000000000000000: 00000002 00000000 00010000 0001 01 14830 {socket}\n")
+    used = program.paths_processes_use(s.proc)
+    check("the unix socket table's header is skipped and the socket on its first row is read",
+          used == [socket, socket], str(used))
 
     s = Scene()
     folder = s.folder("pymp-a1b2c3d4")
@@ -419,7 +442,7 @@ def run_unreadable_cases():
           and not s.log.exists() and result.returncode == 1, result.stderr)
 
 
-WORKSPACE = scratch_common.scratch_directory_after_removing_ones_killed_runs_left(
+WORKSPACE = scratch_common.make_test_scratch_directory_after_removing_killed_runs_leftovers(
     "tmp-and-reviewer-scratch-delete-test-workspace-")
 try:
     run_tmp_place_cases()
