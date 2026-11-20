@@ -4,7 +4,7 @@ issue: "[Open research thread: usage-vs-expectation observation — obsolescence
 
 # Open research thread: usage-vs-expectation observation — obsolescence is a design problem, not an age problem
 
-Open research thread from the 2026-07-29 boss walk of the SDLC skills note (`nc-queue/2026-07-28-sdlc-skill-set-coverage-and-app-skill-pile.md` § 2 processed marks; walked by new-vp, nedlern session b6241858, in parallel with the boss's Mac-app agent thread — both converged). Status: **direction ruled, not yet a plan.** This issue is the durable home; the queue note archives per the standing pattern.
+Open research thread from the 2026-07-29 boss walk of the SDLC skills note (`nn-queue/2026-07-28-sdlc-skill-set-coverage-and-app-skill-pile.md` § 2 processed marks; walked by new-vp, nedlern session b6241858, in parallel with the boss's Mac-app agent thread — both converged). Status: **direction ruled, not yet a plan.** This issue is the durable home; the queue note archives per the standing pattern.
 
 ## The thesis (boss, near-verbatim)
 

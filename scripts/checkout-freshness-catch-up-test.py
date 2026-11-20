@@ -1326,26 +1326,26 @@ with tempfile.TemporaryDirectory() as naming_scratch:
     check("an uncategorised path is still surfaced rather than hidden",
           "other files (1): Makefile" in named(("Makefile", "a makefile")), named())
 
-    # nc-systems/ holds a system kept whole — its code, its tests and its
+    # nn-systems/ holds a system kept whole — its code, its tests and its
     # design of record in one directory — so a change there is named as what
     # it is. Until 2026-09-22 the directory matched no category and fell to
     # the catch-all: observed live that day, when
-    # nc-systems/handoff/handoff-design.md moved on main and this hook
+    # nn-systems/handoff/handoff-design.md moved on main and this hook
     # reported it as "other files". The pair is a design AND a program, so the
     # case proves the category is decided by the path's prefix, not by the
     # extension; the catch-all still holds this scratch repository's Makefile
-    # from the case above, so what is asserted is that nc-systems/ is not on
+    # from the case above, so what is asserted is that nn-systems/ is not on
     # that line.
-    systems_listing = named(("nc-systems/handoff/handoff-design.md", "a design of record"),
-                            ("nc-systems/handoff/handoff-supervisor.py", "the system's code"))
+    systems_listing = named(("nn-systems/handoff/handoff-design.md", "a design of record"),
+                            ("nn-systems/handoff/handoff-supervisor.py", "the system's code"))
     check("a system kept whole is named as one, its design of record and its code together",
           "systems you build on, code and design of record (2): "
-          "nc-systems/handoff/handoff-design.md, nc-systems/handoff/handoff-supervisor.py"
+          "nn-systems/handoff/handoff-design.md, nn-systems/handoff/handoff-supervisor.py"
           in systems_listing, systems_listing)
     catch_all_line = next((line for line in systems_listing.splitlines()
                            if line.lstrip().startswith("other files")), "")
     check("and never under the catch-all, the least informative label available",
-          "nc-systems/" not in catch_all_line, catch_all_line or systems_listing)
+          "nn-systems/" not in catch_all_line, catch_all_line or systems_listing)
 
     # A wide gap is capped, or the agent reads a wall and skims it. Its own
     # repository, so the count is exactly what this case put there.
@@ -1685,8 +1685,8 @@ with tempfile.TemporaryDirectory() as exception_scratch:
     rename_origin, rename_seat = seat_on_main("renamed-under-the-branch")
     commit_file(rename_seat, "scripts/main-will-move-this.py", "the seat's edit\n",
                 "the seat edits the script at its old path")
-    (rename_origin / "nc-systems").mkdir()
-    git(["mv", "scripts/main-will-move-this.py", "nc-systems/main-moved-it-here.py"],
+    (rename_origin / "nn-systems").mkdir()
+    git(["mv", "scripts/main-will-move-this.py", "nn-systems/main-moved-it-here.py"],
         rename_origin)
     git(["commit", "-q", "-m", "main moves the script out of scripts/"], rename_origin)
     merge_main_into(rename_seat)
@@ -2029,7 +2029,7 @@ with tempfile.TemporaryDirectory() as notes_scratch:
     origin_repo, notes_seat = notes_fixture()
     commit_file(origin_repo, ".claude/skills/walk-me-through/SKILL.md", "steps\n", "a skill changes")
     commit_file(origin_repo, "docs/agents/pr-reviewer-instructions.md", "rules\n", "instructions change")
-    commit_file(origin_repo, "nc-systems/cold-read/cold-read-fast-clarify-prompt.md", "p\n", "a prompt")
+    commit_file(origin_repo, "nn-systems/cold-read/cold-read-fast-clarify-prompt.md", "p\n", "a prompt")
     commit_file(origin_repo, ".claude/skills/walk-me-through/reference.md", "r\n", "not a SKILL.md")
     commit_file(origin_repo, "scripts/tool.py", "t\n", "a script")
     stop_only(notes_seat)
@@ -2040,7 +2040,7 @@ with tempfile.TemporaryDirectory() as notes_scratch:
           "its new text loads." in told, told)
     check("a changed -instructions.md and -prompt.md are told as standing instructions",
           "main changed docs/agents/pr-reviewer-instructions.md, a file of standing instructions."
-          in told and "main changed nc-systems/cold-read/cold-read-fast-clarify-prompt.md, a file"
+          in told and "main changed nn-systems/cold-read/cold-read-fast-clarify-prompt.md, a file"
           in told, told)
     check("a skill's other files and scripts are not told",
           "reference.md" not in told and "scripts/tool.py" not in told, told)
