@@ -17,7 +17,7 @@ running while its handoff-supervisor runs: the process whose id is in
 --agent <name>. A session-handoff keeps the supervisor, so a handoff changes
 nothing. An agent-session owns the worktree of a subagent it dispatched, and
 counts as running while its `claude` process runs; owner_key names that
-process as nc-systems/handoff/uncommitted-work-snapshots.py names a
+process as nn-systems/handoff/uncommitted-work-snapshots.py names a
 work-snapshot's owner (boot id, process id and start time on Linux; process id
 and start time on macOS). agent_seat is the agent-seat whose agent-sessions
 are told about the worktree; the launchers set GIT_AUTHOR_NAME to it.
@@ -142,7 +142,7 @@ def load_uncommitted_work_snapshots_module_once():
     if _work_snapshots is None:
         _work_snapshots = load_module(
             "uncommitted_work_snapshots",
-            REPO_ROOT / "nc-systems" / "handoff" / "uncommitted-work-snapshots.py")
+            REPO_ROOT / "nn-systems" / "handoff" / "uncommitted-work-snapshots.py")
     return _work_snapshots
 
 
@@ -151,7 +151,7 @@ def handoff_supervisor_module():
     global _handoff_supervisor
     if _handoff_supervisor is None:
         _handoff_supervisor = load_module(
-            "handoff_supervisor", REPO_ROOT / "nc-systems" / "handoff" / "handoff-supervisor.py")
+            "handoff_supervisor", REPO_ROOT / "nn-systems" / "handoff" / "handoff-supervisor.py")
     return _handoff_supervisor
 
 
@@ -306,7 +306,7 @@ def claude_code_subagent_worktree_lock_reason_parse(lock_reason):
 
 def claude_code_subagent_worktree_lock_macos_start_seconds(lock):
     """The macOS lock's start as whole seconds since 1970, the form
-    nc-systems/handoff/uncommitted-work-snapshots.py's macos_start_seconds gives; raises ValueError
+    nn-systems/handoff/uncommitted-work-snapshots.py's macos_start_seconds gives; raises ValueError
     when the start is not the date `ps -o lstart=` prints."""
     started = time.strptime(" ".join(lock.start_ticks.split()), MACOS_LOCK_START_FORMAT)
     return str(int(time.mktime(started)))
@@ -357,7 +357,7 @@ def claude_code_subagent_worktree_lock_dispatching_process_running_state(lock, p
 def claude_code_subagent_worktree_lock_ended_agent_session_owner_key(lock, proc_root="/proc",
                                                                    platform=sys.platform):
     """The owner key of the ended agent-session a lock names, in the form
-    nc-systems/handoff/uncommitted-work-snapshots.py writes for the platform; after a reboot the
+    nn-systems/handoff/uncommitted-work-snapshots.py writes for the platform; after a reboot the
     Linux boot id differs from the process's, and the key still reads as stopped. On macOS the
     key holds the lock's start in seconds, which no later process with that id matches, so it
     reads as stopped too; raises ValueError when that start cannot be read."""

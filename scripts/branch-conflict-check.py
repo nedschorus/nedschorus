@@ -13,7 +13,7 @@ A CONFLICT report names, for each conflicting file, each commit on the base
 that changed it since the branch forked, the commit's author, which the
 launchers set to the agent-seat that wrote it, and the pull request whose merge
 brought the commit in. It then says how the conflict is cleared, by the answer
-of nc-systems/general-tools/pull-request-conflict-with-main-rebase-or-replace-answer-common.py
+of nn-systems/general-tools/pull-request-conflict-with-main-rebase-or-replace-answer-common.py
 for the branch's open pull request: --pull-request names one; otherwise `gh pr
 list` is asked about --branch, or, with neither --head nor --branch, about the
 current branch. A branch with no open pull request is rebased onto the base
@@ -44,14 +44,14 @@ from pathlib import Path, PurePosixPath
 
 _git_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
 _rebase_or_replace_spec = importlib.util.spec_from_file_location(
     "pull_request_conflict_with_main_rebase_or_replace_answer_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "pull-request-conflict-with-main-rebase-or-replace-answer-common.py")
 rebase_or_replace = importlib.util.module_from_spec(_rebase_or_replace_spec)
 _rebase_or_replace_spec.loader.exec_module(rebase_or_replace)

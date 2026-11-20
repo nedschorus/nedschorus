@@ -4,9 +4,9 @@
 Usage, on ned-box: scripts/open-html-page-in-mac-browser-from-ned-box.py <path>
 
 for example `scripts/open-html-page-in-mac-browser-from-ned-box.py
-/home/nedlern/nedschorus-logs/handoff-agent-seat-died-without-session-handoff-restart-watcher/notices/x.html`.
+/home/nedlern/nedsnodes-logs/handoff-agent-seat-died-without-session-handoff-restart-watcher/notices/x.html`.
 The path may be relative to the current directory. It must name a .html file
-under /home/nedlern/nedschorus-logs, the log-store, which the Mac reads
+under /home/nedlern/nedsnodes-logs, the log-store, which the Mac reads
 through its mount /Volumes/nedhome.
 
 The path is resolved here, symlinks included, and the request
@@ -23,7 +23,7 @@ be reached, ssh timed out, or `open` failed on the Mac); 2 refused, here or by
 the Mac, or a usage error.
 
 The environment overrides open-mac-window-from-ned-box.py reads apply here too,
-and NEDSCHORUS_NED_BOX_HOME overrides ned-box's home: the seams the nc-test-suite
+and NEDSNODES_NED_BOX_HOME overrides ned-box's home: the seams the nc-test-suite
 uses.
 """
 
@@ -49,7 +49,7 @@ def main(arguments):
         return 0
     window_sender = load_window_sender_module()
     forced_command = window_sender.load_forced_command_module()
-    ned_box_home = os.environ.get("NEDSCHORUS_NED_BOX_HOME") or forced_command.NED_BOX_HOME
+    ned_box_home = os.environ.get("NEDSNODES_NED_BOX_HOME") or forced_command.NED_BOX_HOME
     pages_directory = f"{ned_box_home.rstrip('/')}/{forced_command.LOG_STORE_DIRECTORY_NAME}"
     if len(arguments) != 1:
         print(f"usage: {PROGRAM} <path>", file=sys.stderr)

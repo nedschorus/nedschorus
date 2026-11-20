@@ -153,7 +153,7 @@ from pathlib import Path
 
 _git_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
@@ -299,7 +299,7 @@ ADVISOR_FIX_ROUND_INSTRUCTION = (
     "before you change anything, call the advisor with the blocking findings and the fix you plan.")
 
 
-# Messages to agents follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
+# Messages to agents follow docs/nedsnodes-wiki/nedsnodes-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 class Refused(Exception):
     """The review or the round breaks a rule; the text says which and what to do."""
 
@@ -1195,7 +1195,7 @@ def refuse_fix_round_commit_whose_architecture_overviews_the_review_plan_would_r
     except review_plan.ReviewPlanRefusal as refusal:
         raise StepFailed(f"scripts/pull-request-review-plan.py's nc-architecture-overview check could not read the "
                          f"round's commit {commit[:12]}: {refusal}") from None
-    claim_check = "python3 nc-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py"
+    claim_check = "python3 nn-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py"
     if problems:
         paths = [problem["path"] for problem in problems]
         raise Refused("\n".join([
@@ -1210,7 +1210,7 @@ def refuse_fix_round_commit_whose_architecture_overviews_the_review_plan_would_r
             "git reset --mixed HEAD~1, which keeps the overview edit uncommitted.",
             "  2. Make one more commit, on top of the fix commit, that changes only the overview(s) listed: set each "
             "one's **Checked against:** line to name the fix commit's full id, as the section \"Keeping an overview "
-            "true\" of docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md says. An overview "
+            "true\" of docs/nedsnodes-wiki/nedsnodes-how-to-write-an-architecture-overview.md says. An overview "
             "cannot name the commit it is in, so this is the one second commit a round may have; it holds only "
             "nc-architecture-overview pages.",
             *(f"  3. Run the claim check: {claim_check} --overview {shlex.quote(path)}" for path in paths),

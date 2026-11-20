@@ -387,9 +387,9 @@ def run_case(scratch, name, gate_answers, routes, token=TOKEN, review_tools_stat
         (directory / "runner.out").write_text(runner_answer[0])
         (directory / "runner.exit").write_text(str(runner_answer[1]))
     home = directory / "home"
-    (home / ".config" / "nedschorus").mkdir(parents=True)
+    (home / ".config" / "nedsnodes").mkdir(parents=True)
     if token is not None:
-        (home / ".config" / "nedschorus" / "ned-review-merge.token").write_text(token + "\n")
+        (home / ".config" / "nedsnodes" / "ned-review-merge.token").write_text(token + "\n")
 
     waits = []
     saved_path, saved_home = os.environ["PATH"], os.environ.get("HOME")
@@ -470,7 +470,7 @@ def printed_in_order(output, *lines):
 
 def default_recorded_inputs_directory(directory):
     """The runner's default recorded-inputs directory while run_case runs a case in directory."""
-    return directory / "home" / ".cache" / "nedschorus-test-suite-recorded-inputs"
+    return directory / "home" / ".cache" / "nedsnodes-test-suite-recorded-inputs"
 
 
 def index_of(calls, prefix):

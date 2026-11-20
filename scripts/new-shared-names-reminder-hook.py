@@ -32,18 +32,18 @@ LISTER_PATH = Path(__file__).resolve().parent / "new-shared-names-in-changed-fil
 
 _git_machine_readable_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_machine_readable_output = importlib.util.module_from_spec(_git_machine_readable_output_spec)
 _git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
     "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
-NAMING_PAGE_PATH = "docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md"
+NAMING_PAGE_PATH = "docs/nedsnodes-wiki/nedsnodes-how-to-choose-a-name-for-files-code-and-glossary-terms.md"
 NAMING_FRESH_AGENT_NAME = "new-name-propose-and-check-fresh-agent"
 REPORTED_NAMES_FILE_NAME = "new-shared-names-reported.json"
 
