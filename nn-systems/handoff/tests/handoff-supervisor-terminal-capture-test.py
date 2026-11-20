@@ -9,7 +9,7 @@ so no agent-seat's tmux server is reachable; the agent it launches is a stub tha
 and exits 0, which stops the supervisor. The captures directory is a scratch one, named by
 AGENT_SEAT_TERMINAL_CAPTURES_DESTINATION.
 
-Run: python3 nc-systems/handoff/tests/handoff-supervisor-terminal-capture-test.py
+Run: python3 nn-systems/handoff/tests/handoff-supervisor-terminal-capture-test.py
 (exit 0 = all passed)
 """
 

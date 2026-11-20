@@ -13,10 +13,10 @@ the next supervisor start in the same pane opens the next one.
 
 The captures directory, agent_seat_terminal_captures_directory_on_this_machine_find:
 - on ned-box, the log-store itself:
-  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/ned-box/agent-seat-terminal-captures
+  /home/nedlern/nedsnodes-logs/agent-session-files-by-machine/ned-box/agent-seat-terminal-captures
 - elsewhere, which is the Mac, ~/.claude/agent-seat-terminal-captures, which
   scripts/transcript-mirror-to-log-store.py copies every minute to
-  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/agent-seat-terminal-captures
+  /home/nedlern/nedsnodes-logs/agent-session-files-by-machine/mac/agent-seat-terminal-captures
 - wherever AGENT_SEAT_TERMINAL_CAPTURES_DESTINATION names, when it is set, for tests.
 
 agent-seat-terminal-captures-older-than-seven-days-delete.py, beside this file, deletes each
@@ -38,12 +38,12 @@ AGENT_SEAT_TERMINAL_CAPTURES_DIRECTORY_NAME = "agent-seat-terminal-captures"
 AGENT_SEAT_TERMINAL_CAPTURES_DESTINATION_ENVIRONMENT_VARIABLE = "AGENT_SEAT_TERMINAL_CAPTURES_DESTINATION"
 LOG_STORE_HOSTNAME = "ned-box"
 LOG_STORE_AGENT_SESSION_FILES_BY_MACHINE_DIRECTORY = Path(
-    "/home/nedlern/nedschorus-logs/agent-session-files-by-machine")
+    "/home/nedlern/nedsnodes-logs/agent-session-files-by-machine")
 # The transcript mirror copies the Mac's ~/.claude/<name> to the store's mac/<name>.
 AGENT_SEAT_TERMINAL_CAPTURES_DIRECTORY_UNDER_HOME_ON_A_MACHINE_WITHOUT_THE_LOG_STORE = Path(".claude") / AGENT_SEAT_TERMINAL_CAPTURES_DIRECTORY_NAME
 AGENT_SEAT_TERMINAL_CAPTURES_KEPT_DAYS = 7
 TMUX_PIPE_PANE_TIMEOUT_SECONDS = 30
-# Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+# Messages follow docs/nedsnodes-wiki/nedsnodes-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
 NOT_CAPTURED_OPENING_LINE = "this agent-seat's terminal output is not being captured to a file"
 AGENT_SEAT_TERMINAL_CAPTURE_NOT_STARTED_AGENT_SEAT_RUNS_UNCAPTURED_MESSAGE_LINE = (
     "The agent-seat runs as usual, uncaptured until its handoff-supervisor next starts, as it does "

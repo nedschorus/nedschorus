@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Tests for nc-systems/handoff/agent-seat-terminal-captures-older-than-seven-days-delete.py: what
+"""Tests for nn-systems/handoff/agent-seat-terminal-captures-older-than-seven-days-delete.py: what
 is deleted and what is kept, --dry-run, which directories each machine deletes from, and each
 failure that is reported while the run goes on. Every directory here is a scratch one.
 
-Run: python3 nc-systems/handoff/tests/agent-seat-terminal-captures-older-than-seven-days-delete-test.py
+Run: python3 nn-systems/handoff/tests/agent-seat-terminal-captures-older-than-seven-days-delete-test.py
 (exit 0 = all passed)
 """
 

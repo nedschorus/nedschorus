@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Tests for nc-systems/handoff/agent-seat-terminal-captures-common.py: which directory each
+"""Tests for nn-systems/handoff/agent-seat-terminal-captures-common.py: which directory each
 machine captures into, how a terminal capture is named, and every way its start can fail
 without stopping the agent-seat. tmux is a stub first on PATH here; the real tmux, with the real
 handoff-supervisor in its pane, is in handoff-supervisor-terminal-capture-test.py.
 
-Run: python3 nc-systems/handoff/tests/agent-seat-terminal-captures-common-test.py   (exit 0 = all passed)
+Run: python3 nn-systems/handoff/tests/agent-seat-terminal-captures-common-test.py   (exit 0 = all passed)
 """
 
 import importlib.util
@@ -63,7 +63,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
         on_ned_box = captures.agent_seat_terminal_captures_directory_on_this_machine_find("ned-box.local")
         on_the_mac = captures.agent_seat_terminal_captures_directory_on_this_machine_find("els-MacBook-Pro")
     check("on ned-box the terminal captures go straight into the log-store, beside the mirrored transcripts",
-          on_ned_box == Path("/home/nedlern/nedschorus-logs/agent-session-files-by-machine/ned-box/"
+          on_ned_box == Path("/home/nedlern/nedsnodes-logs/agent-session-files-by-machine/ned-box/"
                              "agent-seat-terminal-captures"), str(on_ned_box))
     check("on the Mac the terminal captures go under ~/.claude, where the transcript mirror copies them from",
           on_the_mac == Path.home() / ".claude" / "agent-seat-terminal-captures", str(on_the_mac))
