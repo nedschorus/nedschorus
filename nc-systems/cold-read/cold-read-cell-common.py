@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Shared cold-read-cell execution; launchers supply runtime-specific invocations."""
+"""Shared cold-read-cell execution; launchers supply agent-binary-specific invocations."""
 
 from __future__ import annotations
 
 import argparse
-import concurrent.futures
 import fcntl
 import hashlib
 import json
@@ -48,7 +47,7 @@ TIER_CHOICES = ["deep", "second-strongest-model", "fast"]
 PROMPT_FILE_CELL_LABEL_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
-# EX_USAGE distinguishes launcher refusals from runtime command-line errors (Codex exits 2).
+# EX_USAGE distinguishes launcher refusals from agent-binary command-line errors (Codex exits 2).
 EXIT_BAD_INVOCATION = 64
 
 
@@ -65,6 +64,9 @@ CREDENTIAL_DIRECTORIES = (
     pathlib.Path.home() / ".config" / "nedschorus",
     pathlib.Path.home() / ".config" / "gh",
     pathlib.Path.home() / ".ssh",
+    pathlib.Path.home() / ".steam",
+    # Denied whole: secrets/ holds credential files no name pattern matches.
+    pathlib.Path.home() / "nedsmessenger",
 )
 CREDENTIAL_FILE_NAME_PATTERNS = ("*.token", ".env")
 
@@ -91,84 +93,6 @@ def credential_directories_present() -> list:
     return [str(directory) for directory in CREDENTIAL_DIRECTORIES
             if directory.is_dir()]
 
-# Exclude /tmp: disappearing test fixtures can be recreated as sandbox mount points
-# or prevent the sandbox from starting.
-CREDENTIAL_FILE_SCAN_ROOTS = (pathlib.Path.home(), REPO_ROOT)
-
-
-# One find over ned-box's home took 6-8 s per cell launch, most of it in the
-# log-store's 900,000 entries; several finds over parts of the tree at once
-# take a third of that.
-CREDENTIAL_FILE_SCAN_SPLIT_DEPTH = 3
-CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT = 64
-CREDENTIAL_FILE_SCAN_PARALLEL_FINDS = 16
-
-
-def credential_file_scan_parts(root: pathlib.Path) -> tuple:
-    """Split root into directories to list one level deep and subtrees to walk whole.
-
-    The two together reach every directory find -xdev would reach from root:
-    the first CREDENTIAL_FILE_SCAN_SPLIT_DEPTH levels are listed here, and
-    each directory below them is a subtree root. A symlink is never entered,
-    and a directory on another filesystem than root is left out, as -xdev does.
-    """
-    device = root.stat().st_dev
-    shallow, frontier = [], [str(root)]
-    for _level in range(CREDENTIAL_FILE_SCAN_SPLIT_DEPTH):
-        shallow += frontier
-        below = []
-        for directory in frontier:
-            try:
-                with os.scandir(directory) as entries:
-                    for entry in entries:
-                        try:
-                            if (entry.is_dir(follow_symlinks=False)
-                                    and entry.stat(follow_symlinks=False).st_dev == device):
-                                below.append(entry.path)
-                        except OSError:
-                            pass
-            except OSError:
-                pass
-        frontier = below
-    return shallow, frontier
-
-
-def credential_files_found_now() -> list:
-    """Return credential-named files outside directories already withheld whole.
-
-    Finds the same files one `find <roots> -xdev` would, by running several
-    finds at once over parts of each root's tree, which credential_file_scan_parts
-    splits off. Unreadable directories are skipped, as find skips them.
-    """
-    # find is faster over large homes; unreadable directories are expected, so errors are ignored.
-    name_tests = []
-    for pattern in CREDENTIAL_FILE_NAME_PATTERNS:
-        name_tests += (["-o"] if name_tests else []) + ["-name", pattern]
-    roots = []
-    for root in CREDENTIAL_FILE_SCAN_ROOTS:
-        if root.is_dir() and not any(root == kept or kept in root.parents
-                                     for kept in roots):
-            roots.append(root)
-    match = ["(", *name_tests, ")", "-type", "f"]
-    commands = []
-    for root in roots:
-        shallow, subtrees = credential_file_scan_parts(root)
-        commands.append(["find", *shallow, "-maxdepth", "1", *match])
-        commands += [["find", *subtrees[start::CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT], "-xdev", *match]
-                     for start in range(min(len(subtrees), CREDENTIAL_FILE_SCAN_MAX_SUBTREE_FIND_COMMANDS_PER_ROOT))]
-
-    def run(command):
-        return subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                              text=True, check=False).stdout.splitlines()
-
-    with concurrent.futures.ThreadPoolExecutor(CREDENTIAL_FILE_SCAN_PARALLEL_FINDS) as pool:
-        found = {path for lines in pool.map(run, commands) for path in lines}
-    return sorted(
-        path for path in found
-        if path and not any(directory == pathlib.Path(path)
-                            or directory in pathlib.Path(path).parents
-                            for directory in CREDENTIAL_DIRECTORIES))
-
 
 def codex_credential_denying_permission_profile_arguments(
         profile_name: str, extends: str, platform: str = sys.platform,
@@ -179,9 +103,7 @@ def codex_credential_denying_permission_profile_arguments(
                if platform.startswith("linux") and extends == ":workspace" else {})
     denied = credential_directories_present()
     denied += reviewer_program_login_files(only_present=True)
-    if platform.startswith("linux"):
-        denied += credential_files_found_now()
-    else:
+    if not platform.startswith("linux"):
         denied += [f"/**/{pattern}" for pattern in CREDENTIAL_FILE_NAME_PATTERNS]
     entries.update((path, "deny") for path in denied)
     table = "{" + ",".join(f"{json.dumps(path)}={json.dumps(access)}"
@@ -196,7 +118,7 @@ def codex_credential_denying_permission_profile_arguments(
 
 
 class BadInvocationArgumentParser(argparse.ArgumentParser):
-    """Use the launcher refusal code to distinguish argparse errors from runtime errors."""
+    """Use the launcher refusal code to distinguish argparse errors from agent-binary errors."""
 
     def error(self, message):
         self.print_usage(sys.stderr)
@@ -205,6 +127,7 @@ class BadInvocationArgumentParser(argparse.ArgumentParser):
 
 def build_argument_parser(
     description: str, model_help: str, tier_choices=tuple(TIER_CHOICES),
+    cold_read_cell_launcher_own_command_line_options_adder=None,
 ) -> argparse.ArgumentParser:
     parser = BadInvocationArgumentParser(
         description=description, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -258,6 +181,8 @@ def build_argument_parser(
              "exited 64 because the only template a cell would read was the "
              "one under prompts/. The stamp records the file's path.",
     )
+    if cold_read_cell_launcher_own_command_line_options_adder:
+        cold_read_cell_launcher_own_command_line_options_adder(parser)
     return parser
 
 
@@ -389,7 +314,7 @@ LEADING_TRACING_LOGGER_TIMESTAMP = re.compile(
 
 
 class RecognisedFailureText(typing.NamedTuple):
-    """A runtime failure prefix, cause class, rule for extracting the detail, and an
+    """An agent-binary failure prefix, cause class, rule for extracting the detail, and an
     optional pattern the rest of the line after the prefix must start with."""
 
     cause_class: str
@@ -438,7 +363,7 @@ def cause_line(program: str, cause_class: str, detail: str) -> str:
 
 
 STRAY_WRITE_CHECK_SKIPPED_PHRASE = "stray writes were not checked for this run"
-STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE = "a failure to look, not a clean result"
+COLD_READ_CELL_STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE = "a failure to look, not a clean result"
 STRAY_WRITE_PHRASE = "files outside its report changed while it ran"
 FELL_BACK_PHRASE = "fell back to"
 
@@ -502,11 +427,11 @@ NEAR_MISS_RECOVERY_PHRASE = "recovered a near-miss report"
 STDOUT_RECOVERY_PHRASE = "recovered the report from the model's chat output"
 
 
-def recover_report_from_runtime_stdout(
-    program: str, report: pathlib.Path, runtime_stdout: str, decide_body,
+def recover_report_from_agent_binary_stdout(
+    program: str, report: pathlib.Path, agent_binary_stdout: str, decide_body,
 ) -> bool:
     """Write and announce a report recovered from stdout under the launcher's rule."""
-    body = decide_body(runtime_stdout or "")
+    body = decide_body(agent_binary_stdout or "")
     if not body:
         return False
     report.parent.mkdir(parents=True, exist_ok=True)
@@ -605,10 +530,10 @@ def verify_report(program: str, report: pathlib.Path) -> None:
 TOKENS_USED_PATTERN = re.compile(r"tokens used[:\s]+([\d,]+)", re.IGNORECASE)
 
 
-def parse_tokens_used(runtime_output: str) -> str:
+def parse_tokens_used(agent_binary_output: str) -> str:
     """Return the last reported token total, or an empty string if none was reported."""
     # The last count is the total; absence must not be recorded as a zero cost.
-    matches = TOKENS_USED_PATTERN.findall(runtime_output or "")
+    matches = TOKENS_USED_PATTERN.findall(agent_binary_output or "")
     return matches[-1].replace(",", "") if matches else ""
 
 
@@ -712,6 +637,10 @@ class ReviewerRunEndedByResultLine(subprocess.CompletedProcess):
 REPORT_WAIT_POLL_SECONDS = 0.1
 AGENT_BINARY_KILLED_AFTER_FINAL_RESULT_LINE_PHRASE = "printed its result line but had not exited"
 AGENT_BINARY_EXITED_WITHOUT_FINAL_RESULT_LINE_PHRASE = "exited 0 without printing its result line"
+# A process outside the reviewer's group can hold its pipes open for as long as it lives, and
+# killing the group cannot reach it, so the run stops waiting for the pipes to close after this.
+REVIEWER_PIPES_CLOSE_WAIT_SECONDS = 30.0
+REVIEWER_PIPES_STILL_OPEN_PHRASE = "were still held open by a process outside its process group"
 
 
 def report_is_written(report) -> bool:
@@ -738,7 +667,15 @@ def run_reviewer_program_in_own_process_group_until_timeout(
     the program to exit, then sends SIGKILL to its process group. The result
     then carries the response text as its stdout, and the program's own exit
     code when it exited by itself, else the line's; it is a
-    ReviewerRunEndedByResultLine when the program had to be killed."""
+    ReviewerRunEndedByResultLine when the program had to be killed. The
+    group is sent SIGKILL whether or not the report was written, and whether
+    or not the program had exited, so no process it started outlives the run.
+    A run with no such line that exits 0 returns empty stdout, with what the
+    program printed moved to stderr, because that stdout is raw stream events
+    and not an answer a caller could take for a review. In this mode the
+    runner waits at most REVIEWER_PIPES_CLOSE_WAIT_SECONDS for the program's
+    pipes to close once the run has ended; a process outside the group that
+    holds them past that loses what it printed after, and stderr says so."""
     # The reviewer's own session puts it outside the group the grid stops, so
     # SIGTERM must reach the except BaseException handler below that stops
     # the reviewer's group.
@@ -796,12 +733,22 @@ def run_reviewer_program_until_its_result_line(
         process.stdin.write(stdin_text)
     process.stdin.close()
 
-    def completed(result_class, returncode, stdout):
+    def completed(result_class, returncode, stdout, pipes_close_by=None):
         # stderr carries agy's AGY_ERROR and login lines, which callers parse,
-        # so it is read to its end before the result is built.
+        # so it is read to its end before the result is built, unless a
+        # process outside the group still holds it at pipes_close_by.
+        if pipes_close_by is None:
+            pipes_close_by = time.monotonic() + REVIEWER_PIPES_CLOSE_WAIT_SECONDS
         for reader in readers:
-            reader.join()
-        return result_class(command, returncode, stdout, "".join(stderr_parts))
+            reader.join(max(0.0, pipes_close_by - time.monotonic()))
+        stderr_text = "".join(stderr_parts)
+        if any(reader.is_alive() for reader in readers):
+            stderr_text += (
+                f"The reviewer program's stdout and stderr {REVIEWER_PIPES_STILL_OPEN_PHRASE} "
+                f"{REVIEWER_PIPES_CLOSE_WAIT_SECONDS:g} seconds after its run ended, so the cell "
+                "stopped waiting for them; anything printed after that, and its stderr if the "
+                "stderr pipe was the one held, is missing here.\n")
+        return result_class(command, returncode, stdout, stderr_text)
 
     result_line_or_stdout_closed.wait(max(0.0, deadline - time.monotonic()))
     if run_ends:
@@ -812,22 +759,28 @@ def run_reviewer_program_until_its_result_line(
             time.sleep(REPORT_WAIT_POLL_SECONDS)
         exited_by_itself = process.poll() is not None
         # SIGKILL, because agy ignores SIGTERM; also ends children left behind by an exited leader.
-        # Repeated until the pipes close: a child whose fork was under way
+        # Repeated while the pipes stay open: a child whose fork was under way
         # when the first SIGKILL landed survives it on macOS and holds them.
-        # Once the group is empty, a holder outside it makes killpg fail.
+        # killpg fails once the group is empty, and is not sent again then,
+        # because a new group could take the same id.
+        pipes_close_by = time.monotonic() + REVIEWER_PIPES_CLOSE_WAIT_SECONDS
+        group_may_have_members = True
         while True:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
+            if group_may_have_members:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    group_may_have_members = False
             process.wait()
             for reader in readers:
                 reader.join(REPORT_WAIT_POLL_SECONDS)
-            if not any(reader.is_alive() for reader in readers):
+            if (not any(reader.is_alive() for reader in readers)
+                    or time.monotonic() >= pipes_close_by):
                 break
         if exited_by_itself:
-            return completed(subprocess.CompletedProcess, process.returncode, response_text)
-        return completed(ReviewerRunEndedByResultLine, exit_code, response_text)
+            return completed(subprocess.CompletedProcess, process.returncode, response_text,
+                             pipes_close_by)
+        return completed(ReviewerRunEndedByResultLine, exit_code, response_text, pipes_close_by)
     try:
         if not result_line_or_stdout_closed.is_set():
             raise subprocess.TimeoutExpired(command, timeout_seconds)
@@ -841,8 +794,9 @@ def run_reviewer_program_until_its_result_line(
         # for a review.
         stderr_parts.append(
             f"The reviewer program {AGENT_BINARY_EXITED_WITHOUT_FINAL_RESULT_LINE_PHRASE}, "
-            "so the cell has no answer of its own to recover a report from; "
-            f"its stdout was:\n{''.join(stdout_lines)}\n")
+            "so there is no answer from the reviewer to recover a report from: unless it "
+            "wrote its report file, this attempt fails as no-report and the cell goes on to "
+            f"the next model in its chain, if any. Its stdout was:\n{''.join(stdout_lines)}\n")
         return completed(subprocess.CompletedProcess, 0, "")
     return completed(subprocess.CompletedProcess, process.returncode, "".join(stdout_lines))
 
@@ -876,7 +830,7 @@ def run_model_chain(
         # The reviewer program holds the record's being-written lock too, so a cell killed while its
         # reviewer still writes the report leaves the record unshipped until the reviewer exits.
         pass_fds = record_names.record_directory_being_written_lock_pass_fds_for_child_writers(report.parent)
-        # Both streams carry failure diagnostics; stderr also carries the runtime's token total.
+        # Both streams carry failure diagnostics; stderr also carries the agent-binary's token total.
         try:
             if per_model_run_timeout_seconds is None:
                 completed = subprocess.run(
@@ -936,7 +890,7 @@ def run_model_chain(
             recover_near_miss_report(program, report, attempt_started_at)
         # Prefer the report file over stdout, including a file recovered from the wrong directory.
         if not report.is_file() and recover_report_from_stdout is not None:
-            recover_report_from_runtime_stdout(
+            recover_report_from_agent_binary_stdout(
                 program, report, completed.stdout, recover_report_from_stdout)
         try:
             verify_report(program, report)
@@ -1014,11 +968,16 @@ def run_cell(
     stage_report_outside_checkout: bool = False, child_environment=None,
     per_model_run_timeout_seconds=None, parse_agent_binary_final_result_from_stdout_line=None,
     report_wait_after_result_line_seconds: float = 0.0,
+    cold_read_cell_launcher_own_command_line_options_adder=None,
 ) -> int:
+    """cold_read_cell_launcher_own_command_line_options_adder, when given, adds
+    one launcher's own options to the parser, and invocation_builder then also
+    gets the parsed arguments as parsed_arguments=."""
     # Include failed attempts in the cell's total cost.
     cell_started_at = time.time()
     parser = build_argument_parser(
-        description, model_help, tier_choices=tuple(tier_to_model_chain))
+        description, model_help, tier_choices=tuple(tier_to_model_chain),
+        cold_read_cell_launcher_own_command_line_options_adder=cold_read_cell_launcher_own_command_line_options_adder)
     args = parser.parse_args()
 
     # Snapshot before execution so pre-existing edits are not reported as changes from this run.
@@ -1064,8 +1023,12 @@ def run_cell(
     # An explicit model must not silently fall back to a different model.
     chain = (args.model,) if args.model else tier_to_model_chain[args.tier]
     effort = args.effort or tier_to_effort[args.tier]
-    build_invocation = (invocation_builder(effort, staging_directory)
-                        if stage_report_outside_checkout else invocation_builder(effort))
+    launcher_own_option_arguments = (
+        {"parsed_arguments": args}
+        if cold_read_cell_launcher_own_command_line_options_adder else {})
+    build_invocation = (invocation_builder(effort, staging_directory, **launcher_own_option_arguments)
+                        if stage_report_outside_checkout
+                        else invocation_builder(effort, **launcher_own_option_arguments))
 
     try:
         exit_code = run_model_chain(
@@ -1105,17 +1068,17 @@ def move_staged_report(program: str, staged: pathlib.Path, report: pathlib.Path)
 
 def report_stray_writes(program: str, baseline, own_report_path=None) -> None:
     """Report changes outside the requested report without raising."""
-    # Check every runtime and every exit path: a failed reviewer may still have edited the target.
+    # Check every agent-binary and every exit path: a failed reviewer may still have edited the target.
     if baseline is None:
         print(f"{program}: {STRAY_WRITE_CHECK_SKIPPED_PHRASE} — no pre-run "
               f"snapshot of the working tree was taken. This is "
-              f"{STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE}.", file=sys.stderr)
+              f"{COLD_READ_CELL_STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE}.", file=sys.stderr)
         return
     try:
         stray = stray_writes_since(baseline, own_report_path)
     except WriteDetectorUnavailable as error:
         print(f"{program}: {STRAY_WRITE_CHECK_SKIPPED_PHRASE} — git status "
-              f"failed ({error}). This is {STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE}.",
+              f"failed ({error}). This is {COLD_READ_CELL_STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE}.",
               file=sys.stderr)
         return
     if stray:

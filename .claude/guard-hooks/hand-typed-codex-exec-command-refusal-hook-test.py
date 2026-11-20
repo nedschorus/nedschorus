@@ -194,7 +194,7 @@ for table_name, cases in (("REFUSED", REFUSED), ("ALLOWED", ALLOWED)):
 
 for name, command in REFUSED:
     got = refusal(command)
-    check(f"refused: {name}", got == hook.REFUSAL, f"got {got!r}")
+    check(f"refused: {name}", got == hook.CODEX_EXEC_REFUSAL, f"got {got!r}")
 
 for name, command in ALLOWED:
     got = refusal(command)
@@ -204,19 +204,19 @@ check("a tool other than Bash is ignored",
       refusal('codex exec "task"', tool_name="Read") is None)
 
 check("the refusal gives the program's usage line",
-      hook.USAGE_LINE in hook.REFUSAL)
+      hook.USAGE_LINE in hook.CODEX_EXEC_REFUSAL)
 
 check("the refusal names the program by an absolute path that exists, so it runs from any folder",
       hook.RUNNER_PATH.is_absolute() and hook.RUNNER_PATH.is_file()
       and f"python3 {hook.RUNNER_PATH} " in hook.USAGE_LINE, hook.USAGE_LINE)
 
 check("the refusal writes Codex's configuration keys with their -c",
-      all(f"-c {key}" in hook.REFUSAL for key in (
+      all(f"-c {key}" in hook.CODEX_EXEC_REFUSAL for key in (
           "sandbox_workspace_write.network_access", "sandbox_workspace_write.writable_roots",
-          "web_search", "model_reasoning_effort")), hook.REFUSAL)
+          "web_search", "model_reasoning_effort")), hook.CODEX_EXEC_REFUSAL)
 
 check("the refusal maps Codex's own widening options to the program's",
-      all(option in hook.REFUSAL for option in ("--network", "--writable-root",
+      all(option in hook.CODEX_EXEC_REFUSAL for option in ("--network", "--writable-root",
                                                 "--outside-git-checkout", "--web-search")))
 
 saved_simple_commands = hook.shell_reader.simple_commands

@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-"""Cases for the program that adds claimed user alerts to the open approval-walk right after its waiting item.
+"""Cases for the program that adds claimed user alerts to the open approval-walk after the whole of its
+waiting item.
 
 Each case runs the program as a subprocess, with HOME pointed at a scratch directory holding the claimed alerts,
-in a scratch checkout holding one approval-walk. Prints one line per case and exits non-zero if any case fails.
+in a scratch checkout holding one approval-walk, except the heading_title case, which calls that function
+in-process because a title it would prefix differently ends in the same refusal either way. Prints one line per case and exits non-zero if any case fails.
 """
 import importlib.util
 import json
 import os
+import site
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 _git_environment_fixture_spec = importlib.util.spec_from_file_location(
@@ -87,8 +91,10 @@ def claimed_alert(home, alert_id, title):
 
 
 def run(checkout, home, *alert_ids):
+    # Python finds the user's site-packages from HOME, and on the Mac markdown-it-py is installed there.
+    environment = {**os.environ, "HOME": str(home), "PYTHONUSERBASE": site.getuserbase()}
     return subprocess.run([sys.executable, str(PROGRAM), "--cwd", str(checkout), *alert_ids],
-                          capture_output=True, text=True, env={**os.environ, "HOME": str(home)}, check=False)
+                          capture_output=True, text=True, env=environment, check=False)
 
 
 def files(checkout):
@@ -118,7 +124,7 @@ def run_one_alert_cases(root):
           and "of 10" not in document, document)
     check("the walk-minutes get the re-planning line and the `#user_alert` line, and no new `#next_to_present` line",
           minutes.startswith(minutes_before) and "#user_alert alert-a\n" in minutes
-          and "added 1 unnumbered item(s) right after item 4" in minutes
+          and "added 1 unnumbered item(s) after the whole of item 4," in minutes
           and minutes.count("#next_to_present") == 1, minutes)
     check("the output says what was added and tells the agent to write the case against and recommendation",
           "Added the unnumbered item `## merge-lane-2 is down, and recovery refuses it`" in result.stdout
@@ -153,7 +159,7 @@ def run_several_alert_cases(root):
     check("each alert gets its own `#user_alert` line",
           "#user_alert alert-a\n#user_alert alert-b\n" in minutes, minutes)
 
-    for name, title in (("numbered-title", "Item 3 of 9: reboot"), ("label-title", "Item 3 reboot"),
+    for name, title in (("numbered-title", "Item 3 of 9: reboot"), ("label-title", "Item 3: reboot"),
                         ("withdrawn-title", "Withdrawn backups on the Mac")):
         checkout, home = walk_checkout(root, name)
         claimed_alert(home, "alert-c", title)
@@ -163,8 +169,14 @@ def run_several_alert_cases(root):
         check(f"an alert titled {title!r} becomes the unnumbered item `## User alert: {title}`, not a refusal",
               result.returncode == 0 and f"\n## User alert: {title}\n" in document
               and sum(map(walk_finder.approval_walk_unit_is_unnumbered_item, units)) == 1
-              and f"`## User alert: {title}`" in result.stdout and f"User alert: {title}." in minutes,
+              and f"`## User alert: {title}`" in result.stdout and f"`User alert: {title}`." in minutes,
               result.stderr + document)
+    checkout, home = walk_checkout(root, "number-title")
+    claimed_alert(home, "alert-c", "Item 3's reboot")
+    result = run(checkout, home, "alert-c")
+    document, _ = files(checkout)
+    check("an alert titled \"Item 3's reboot\", which opens with an item's number but no label, keeps its title",
+          result.returncode == 0 and "\n## Item 3's reboot\n" in document, result.stderr + document)
 
     sub_item = WALK_DOCUMENT.replace("## Items 5 and 6", "### Item 4.1 of 9: a part\n\n## Items 5 and 6")
     checkout, home = walk_checkout(root, "sub-item", waiting="item 4.1 of 9", document=sub_item)
@@ -176,6 +188,184 @@ def run_several_alert_cases(root):
           and document.index("### Item 4.1 of 9: a part") < document.index("## fourth")
           < document.index("## Items 5 and 6 of 9"), result.stderr + document)
 
+    sub_steps = WALK_DOCUMENT.replace("## Items 5 and 6", "### Item 4.1 of 9: a part\n\nRecommendation: go.\n\n"
+                                      "#### Withdrawn version 1 of item 4.1\n\nAn older part.\n\n"
+                                      "### Item 4.2 of 9: another part\n\nRecommendation: go.\n\n"
+                                      "## Items 5 and 6", 1)
+    checkout, home = walk_checkout(root, "sub-steps", waiting="item 4.1 of 9", document=sub_steps)
+    claimed_alert(home, "alert-s", "sixth")
+    result = run(checkout, home, "alert-s")
+    document, minutes = files(checkout)
+    parser = walk_finder.markdown_parser()
+    units = walk_finder.item_unit_spans(document, parser)
+    item_4 = next(unit for unit in units if unit[0] == ["4"])
+    check("while sub-step 4.1 waits, with a withdrawn version of it and sub-step 4.2 below it, the alert goes after "
+          "the whole of item 4, so 4.2 stays a sub-step of item 4",
+          result.returncode == 0
+          and document.index("An older part.") < document.index("### Item 4.2 of 9: another part")
+          < document.index("## sixth") < document.index("## Items 5 and 6 of 9")
+          and [unit[0] for unit in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(units, item_4)]
+          == [["4.1"], ["4.2"]], result.stderr + document)
+    check("the walk-minutes and the output name the whole item the alert follows",
+          "added 1 unnumbered item(s) after the whole of item 4," in minutes
+          and "after the whole of item 4." in result.stdout, minutes + result.stdout)
+
+    split = sub_steps.replace("### Item 4.2", "## an earlier alert\n\nRecommendation: wait.\n\n### Item 4.2", 1)
+    checkout, home = walk_checkout(root, "split-sub-steps", waiting="item 4.1 of 9", document=split)
+    claimed_alert(home, "alert-p", "ninth")
+    result = run(checkout, home, "alert-p")
+    document, _ = files(checkout)
+    check("while sub-step 4.1 waits and an unnumbered item already stands between 4.1 and 4.2, the alert goes "
+          "after 4.2, as the close step's walk order moves that unnumbered item there",
+          result.returncode == 0
+          and document.index("## an earlier alert") < document.index("### Item 4.2 of 9: another part")
+          < document.index("## ninth") < document.index("## Items 5 and 6 of 9"), result.stderr + document)
+
+    held = ("# A walk\n\n## Item 1 of 3: one\n\nRecommendation: go.\n\n## Item 2 of 3: two\n\n"
+            "### Item 2.1 of 3: a part\n\nRecommendation: go.\n\n## Item 3 of 3: a held new item\n\n"
+            "Recommendation: wait.\n\n### Item 2.2 of 3: another part\n\nRecommendation: stop.\n\n"
+            "## Item 4 of 4: four\n\nRecommendation: go.\n")
+    checkout, home = walk_checkout(root, "held-numbered-item", waiting="item 2.1 of 3", document=held)
+    claimed_alert(home, "alert-h", "tenth")
+    result = run(checkout, home, "alert-h")
+    document, _ = files(checkout)
+    check("while sub-step 2.1 waits and a numbered item the close step held stands between 2.1 and 2.2, the alert "
+          "goes after 2.2, after the whole of item 2, as the stop hook's instruction says",
+          result.returncode == 0
+          and document.index("## Item 3 of 3: a held new item") < document.index("### Item 2.2 of 3: another part")
+          < document.index("## tenth") < document.index("## Item 4 of 4: four"), result.stderr + document)
+
+    shared = ("# A walk\n\n## Items 4 and 5 of 9: four and five\n\n### Item 4.1 of 9: a part of four\n\n"
+              "Recommendation: go.\n\n### Item 5.1 of 9: a part of five\n\nRecommendation: go.\n\n"
+              "## Item 6 of 9: six\n\nRecommendation: go.\n")
+    checkout, home = walk_checkout(root, "shared-heading-sub-steps", waiting="item 4.1 of 9", document=shared)
+    claimed_alert(home, "alert-k", "shared")
+    result = run(checkout, home, "alert-k")
+    document, _ = files(checkout)
+    check("while sub-step 4.1 of a heading naming items 4 and 5 waits, the alert goes before 5.1, which belongs to "
+          "item 5, not after it",
+          result.returncode == 0
+          and document.index("### Item 4.1 of 9: a part of four") < document.index("## shared")
+          < document.index("### Item 5.1 of 9: a part of five"), result.stderr + document)
+
+    shared_sub_step = ("# A walk\n\n## Items 4 and 5 of 9: four and five\n\n### Item 4.1 of 9: a part of four\n\n"
+                       "Recommendation: go.\n\n### Items 4.2 and 5.1 of 9: parts of four and five\n\n"
+                       "Recommendation: go.\n\n## Item 6 of 9: six\n\nRecommendation: go.\n")
+    checkout, home = walk_checkout(root, "shared-sub-step-heading", waiting="item 4.1 of 9", document=shared_sub_step)
+    claimed_alert(home, "alert-s", "shared sub-step")
+    result = run(checkout, home, "alert-s")
+    document, _ = files(checkout)
+    check("while sub-step 4.1 waits, the alert goes after `Items 4.2 and 5.1 of 9`, which holds item 4's 4.2, so "
+          "item 4 is not split",
+          result.returncode == 0
+          and document.index("### Items 4.2 and 5.1 of 9: parts of four and five") < document.index("## shared sub-step")
+          < document.index("## Item 6 of 9: six"), result.stderr + document)
+
+    reused_four = ("# A walk\n\n## Items 4 and 5 of 9: four and five\n\n### Item 4.1 of 9: a part of four\n\n"
+                   "Recommendation: go.\n\n## Item 4 of 12: four, reused\n\nRecommendation: go.\n\n"
+                   "### Items 4.2 and 5.1 of 9: parts of four and five\n\nRecommendation: go.\n\n"
+                   "## Item 6 of 9: six\n\nRecommendation: go.\n")
+    checkout, home = walk_checkout(root, "reused-four", waiting="item 4.1 of 9", document=reused_four)
+    claimed_alert(home, "alert-r", "reused four")
+    result = run(checkout, home, "alert-r")
+    document, _ = files(checkout)
+    check("while sub-step 4.1 waits and a reused `Item 4 of 12` ends item 4's search, the alert goes before the "
+          "reused item 4, not past the `Items 4.2 and 5.1 of 9` that only item 5's search reaches",
+          result.returncode == 0
+          and document.index("### Item 4.1 of 9: a part of four") < document.index("## reused four")
+          < document.index("## Item 4 of 12: four, reused"), result.stderr + document)
+
+    two_versions = ("# A walk\n\n## Item 4 of 9: four\n\n### Item 4.1 of 9: a part\n\nRecommendation: go.\n\n"
+                    "## Item 4 of 8: four, as first shown\n\n### Item 4.1 of 8: the part, as first shown\n\n"
+                    "Recommendation: go.\n\n## Item 5 of 9: five\n\nRecommendation: go.\n")
+    checkout, home = walk_checkout(root, "two-versions", waiting="item 4.1 of 9", document=two_versions)
+    claimed_alert(home, "alert-v", "eleventh")
+    result = run(checkout, home, "alert-v")
+    document, _ = files(checkout)
+    check("while sub-step 4.1 of 9 waits and an older version, item 4 of 8 with its 4.1 of 8, follows it, the "
+          "alert goes right after 4.1 of 9, before the older version, which is no sub-step of the item",
+          result.returncode == 0
+          and document.index("### Item 4.1 of 9: a part") < document.index("## eleventh")
+          < document.index("## Item 4 of 8: four, as first shown"), result.stderr + document)
+
+    other_m_first = ("# A walk\n\n## Item 3 of 10: three\n\nRecommendation: go.\n\n## Item 5 of 11: five\n\n"
+                     "Recommendation: go.\n\n### Item 3.1 of 11: a part\n\nRecommendation: go.\n\n"
+                     "### Item 3.2 of 10: another part\n\nRecommendation: stop.\n")
+    checkout, home = walk_checkout(root, "sub-step-of-other-m-before-sub-step", waiting="item 3 of 10",
+                                   document=other_m_first)
+    claimed_alert(home, "alert-m", "twelfth")
+    result = run(checkout, home, "alert-m")
+    document, _ = files(checkout)
+    check("while item 3 of 10 waits, with item 5, 3.1 of 11 and then 3.2 of 10 below it, the alert goes after 3.2, "
+          "which the finder takes as item 3's sub-step, and not at item 5's line",
+          result.returncode == 0
+          and document.index("### Item 3.2 of 10: another part") < document.index("## twelfth"),
+          result.stderr + document)
+
+    other_m_between = ("# A walk\n\n## Item 3 of 10: three\n\n### Item 3.1 of 10: a part\n\nRecommendation: go.\n\n"
+                       "## Item 5 of 11: five\n\nRecommendation: go.\n\n### Item 3.2 of 11: another part\n\n"
+                       "Recommendation: go.\n\n### Item 3.3 of 10: a third part\n\nRecommendation: stop.\n")
+    checkout, home = walk_checkout(root, "sub-step-of-other-m-between-sub-steps", waiting="item 3.1 of 10",
+                                   document=other_m_between)
+    claimed_alert(home, "alert-n", "thirteenth")
+    result = run(checkout, home, "alert-n")
+    document, _ = files(checkout)
+    check("while sub-step 3.1 of 10 waits, with item 5, 3.2 of 11 and then 3.3 of 10 below it, the alert goes after "
+          "3.3, which the finder takes as item 3's sub-step, and not at item 5's line",
+          result.returncode == 0
+          and document.index("### Item 3.3 of 10: a third part") < document.index("## thirteenth"),
+          result.stderr + document)
+
+    left_out_waiting = ("# A walk\n\n## Item 5 of 9: five\n\nRecommendation: go.\n\n## Item 7 of 9: seven\n\n"
+                        "Recommendation: go.\n\n### Item 5.2 of 10: a part\n\nRecommendation: go.\n\n"
+                        "### Item 5.3 of 10: another part\n\nRecommendation: stop.\n\n## Item 8 of 10: eight\n\n"
+                        "Recommendation: go.\n")
+    checkout, home = walk_checkout(root, "waiting-sub-step-the-finder-leaves-out", waiting="item 5.2 of 10",
+                                   document=left_out_waiting)
+    claimed_alert(home, "alert-o", "fourteenth")
+    result = run(checkout, home, "alert-o")
+    document, _ = files(checkout)
+    check("while sub-step 5.2 of 10 waits below item 7, which the finder leaves out of item 5 of 9, the alert still "
+          "goes after 5.3 of 10, right after it, and not between them",
+          result.returncode == 0
+          and document.index("### Item 5.3 of 10: another part") < document.index("## fourteenth")
+          < document.index("## Item 8 of 10: eight"), result.stderr + document)
+
+    item_reaches_further = ("# A walk\n\n## Item 3 of 10: three\n\nRecommendation: go.\n\n## Item 5 of 11: five\n\n"
+                            "### Item 3.1 of 11: a part\n\nRecommendation: go.\n\n## Item 6 of 11: six\n\n"
+                            "Recommendation: go.\n\n### Item 3.2 of 10: another part\n\nRecommendation: stop.\n")
+    checkout, home = walk_checkout(root, "item-sub-step-past-the-waiting-one", waiting="item 3.1 of 11",
+                                   document=item_reaches_further)
+    claimed_alert(home, "alert-f", "fifteenth")
+    result = run(checkout, home, "alert-f")
+    document, _ = files(checkout)
+    check("while sub-step 3.1 of 11 waits, with item 6 and then 3.2 of 10 below it, the alert goes after 3.2, which "
+          "the finder takes as item 3 of 10's sub-step",
+          result.returncode == 0
+          and document.index("### Item 3.2 of 10: another part") < document.index("## fifteenth"),
+          result.stderr + document)
+
+    withdrawn = WALK_DOCUMENT.replace("## Items 5 and 6", "#### Withdrawn version 1 of item 4\n\nAn older filter.\n\n"
+                                      "## Items 5 and 6", 1)
+    checkout, home = walk_checkout(root, "withdrawn-version", document=withdrawn)
+    claimed_alert(home, "alert-w", "seventh")
+    result = run(checkout, home, "alert-w")
+    document, _ = files(checkout)
+    check("while item 4 waits with a withdrawn version below it, the alert goes after the withdrawn version",
+          result.returncode == 0 and document.index("An older filter.") < document.index("## seventh")
+          < document.index("## Items 5 and 6 of 9"), result.stderr + document)
+
+    last = ("# A walk\n\n## Item 1 of 2: one\n\nRecommendation: go.\n\n## Item 2 of 2: two\n\n"
+            "### Item 2.1 of 2: a part\n\nRecommendation: go.\n\n### Item 2.2 of 2: another part\n\n"
+            "Recommendation: stop.\n")
+    checkout, home = walk_checkout(root, "last-item", waiting="item 2.1 of 2", document=last)
+    claimed_alert(home, "alert-l", "eighth")
+    result = run(checkout, home, "alert-l")
+    document, _ = files(checkout)
+    check("while a sub-step of the walk-document's last item waits, the alert goes at the end of the file",
+          result.returncode == 0 and document.index("Recommendation: stop.") < document.index("## eighth"),
+          result.stderr + document)
+
     parts = ("# A walk\n\n## Part 1\n\n### Item 1 of 2: one\n\nRecommendation: go.\n\n"
              "### Item 2 of 2: two\n\nRecommendation: stop.\n")
     checkout, home = walk_checkout(root, "parts", waiting="item 1 of 2", document=parts)
@@ -186,6 +376,48 @@ def run_several_alert_cases(root):
           "alert by hand, and change nothing",
           result.returncode == 1 and "`##` part headings" in result.stderr and "alert-e" in result.stderr
           and "Traceback" not in result.stderr and files(checkout) == before, result.stderr)
+
+
+def run_unnumbered_item_count_cases(root):
+    # 257 existing items: past the integers Python caches, so the counts are equal but distinct objects.
+    existing = "".join(f"## waiting point {number}\n\nRecommendation: go.\n\n" for number in range(257))
+    checkout, home = walk_checkout(root, "existing-unnumbered",
+                                   document=WALK_DOCUMENT + "\n" + existing)
+    claimed_alert(home, "alert-a", "first")
+    result = run(checkout, home, "alert-a")
+    document, _ = files(checkout)
+    units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+    check("with 257 unnumbered items already in the walk-document, the alert is added as the 258th",
+          result.returncode == 0 and "\n## first\n" in document
+          and sum(map(walk_finder.approval_walk_unit_is_unnumbered_item, units)) == 258,
+          result.stderr)
+
+    checkout, home = walk_checkout(root, "heading-in-action")
+    claimed_alert(home, "alert-a", "first")
+    path = home / ".local/state/nedschorus/user-alerts/claimed" / "alert-a.json"
+    alert = json.loads(path.read_text(encoding="utf-8"))
+    path.write_text(json.dumps({**alert, "action": "Restart it.\n\n## a second heading"}), encoding="utf-8")
+    before = files(checkout)
+    result = run(checkout, home, "alert-a")
+    check("an alert whose text outside the fence adds a second unnumbered item makes the program exit 1 and "
+          "change nothing", result.returncode == 1 and "Traceback" not in result.stderr
+          and files(checkout) == before, result.stderr)
+
+
+def run_marker_in_title_cases(root):
+    for number, title in enumerate(("pause it with #approval_walk_paused", "close it: #next_to_present none",
+                                    "quote `#next_to_present none` first", "two lines,\n#next_to_present none")):
+        checkout, home = walk_checkout(root, f"marker-{number}")
+        claimed_alert(home, "alert-m", title)
+        result = run(checkout, home, "alert-m")
+        _, minutes = files(checkout)
+        parser = walk_finder.markdown_parser()
+        found = walk_finder.open_walk(checkout / "docs" / "walk", parser)
+        check(f"a marker in the alert title {title!r} is written to the walk-minutes as a quotation, so the walk "
+              "stays open on its waiting item",
+              result.returncode == 0 and found is not None and found[1] == "item 4 of 9"
+              and walk_finder.text_wrapped_as_markdown_code_span(title) in minutes,
+              f"{result.stderr} {found!r} {minutes}")
 
 
 def run_refusal_cases(root):
@@ -262,11 +494,70 @@ def run_refusal_cases(root):
           and f"Then run again: python3 {PROGRAM.resolve()} --cwd {checkout} alert-a" in result.stderr
           and after == before, result.stderr)
 
+
+def run_repeated_id_and_title_spanning_two_headings_cases(root):
+    checkout, home = walk_checkout(root, "unreadable-given-twice")
+    claimed_alert(home, "alert-a", "first")
+    result = run(checkout, home, "alert-gone", "alert-a", "alert-gone")
+    check("an unreadable alert id given twice is left out both times from the command to run again",
+          result.returncode == 1
+          and f"leaving out alert-gone: python3 {PROGRAM.resolve()} --cwd {checkout} alert-a\n" in result.stderr,
+          result.stderr)
+
+    program_spec = importlib.util.spec_from_file_location("user_alert_insert", PROGRAM)
+    program = importlib.util.module_from_spec(program_spec)
+    program_spec.loader.exec_module(program)
+    title = program.heading_title("first\n## second", walk_finder, walk_finder.markdown_parser())
+    check("a title whose `##` heading would be two unnumbered items, not one, gets the prefix",
+          title == "User alert: first\n## second", repr(title))
+
+def run_walk_order_cases(root):
+    close_spec = importlib.util.spec_from_file_location(
+        "check_and_close", HERE / "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py")
+    close = importlib.util.module_from_spec(close_spec)
+    close_spec.loader.exec_module(close)
+    checkout, home = walk_checkout(root, "walk-order")
+    claimed_alert(home, "alert-a", "merge-lane-2 is down")
+    result = run(checkout, home, "alert-a")
+    document, _ = files(checkout)
+    day = datetime.fromisoformat("2026-10-27T12:00:00+00:00").astimezone().date().isoformat()
+    check("the added item holds the first-entered line with the day the alert was written, right under its heading",
+          f"## merge-lane-2 is down\n\n{close.WALK_FIRST_ENTERED_TAG} {day}\n" in document, document)
+    tags = [close.WALK_CATEGORY_TAG + category for category in close.WALK_CATEGORIES]
+    check("the output tells the agent to write a category line, naming every category tag the close step reads",
+          all(f"`{tag}`" in result.stdout for tag in tags) and close.WALK_WAITS_ON_TAG in result.stdout,
+          result.stdout)
+    tagged = document.replace("## merge-lane-2 is down\n", f"## merge-lane-2 is down\n\n{tags[0]}\n", 1)
+    parser = walk_finder.markdown_parser()
+    units = walk_finder.item_unit_spans(tagged, parser)
+    try:
+        placing = close.unshown_items_placing(walk_finder, tagged, units, parser, "walk.md", "2026-11-11")
+    except close.WalkOrderUnusable as problem:
+        placing = problem
+    check("once the agent adds the category line, the close step places the item by that category and the "
+          "alert's day", isinstance(placing, dict) and [key[:2] for key, _ in placing.values()] == [(0, day)],
+          placing)
+
+    checkout, home = walk_checkout(root, "unreadable-written-at")
+    (home / ".local/state/nedschorus/user-alerts/claimed" / "alert-t.json").write_text(
+        json.dumps({"id": "alert-t", "written_at": "yesterday", "title": "t", "alert_text": "x", "action": "y"}),
+        encoding="utf-8")
+    before = files(checkout)
+    result = run(checkout, home, "alert-t")
+    check("an alert whose written_at is no ISO 8601 time makes the program exit 1, naming it, and change nothing",
+          result.returncode == 1 and "the alert alert-t cannot be read from" in result.stderr
+          and "Traceback" not in result.stderr and files(checkout) == before, result.stderr)
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     scratch = Path(temporary_directory)
     run_one_alert_cases(scratch)
     run_several_alert_cases(scratch)
+    run_unnumbered_item_count_cases(scratch)
+    run_marker_in_title_cases(scratch)
     run_refusal_cases(scratch)
+    run_repeated_id_and_title_spanning_two_headings_cases(scratch)
+    run_walk_order_cases(scratch)
 
 if failures:
     print(f"\n{len(failures)} case(s) failed")

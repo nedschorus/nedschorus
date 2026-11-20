@@ -35,7 +35,7 @@ A git hook's message is what the hook prints to stderr. An agent that runs `git 
 
 Seven of the messages below end "the push goes ahead unchecked". From that the agent cannot tell which branches went unchecked, whether to do anything, or whether to tell anyone. Three facts decide what each message should say:
 
-- A branch that was not checked may still conflict with main, and the agent can check the branch by running, from the agent's own worktree, `python3 scripts/branch-conflict-check.py --head <commit>`. That program prints a VERDICT line and says what to do: for a conflict, CLAUDE.md's procedure applies, which starts by seeing what the conflict is with.
+- A branch that was not checked may still conflict with main, and the agent can check the branch by running, from the agent's own worktree, `python3 scripts/branch-conflict-check.py --head <commit> --branch <branch>`. That program prints a VERDICT line and says what to do: for a conflict, CLAUDE.md's procedure applies, which starts by seeing what the conflict is with.
 - In a push of several branches, one branch's check can go unrun while another branch conflicts. The conflict then refuses the whole push. So a message must say which branches were not checked, not that the push went ahead. When no branch conflicts, git goes on with the push, and git's own output says whether the push reached origin.
 - When the hook's own machinery fails, rather than a check merely running out of time, the next push on the same machine may fail the same way. The user is the one who can repair the machine or have the hook fixed, so the agent tells the user what the message says.
 
@@ -54,7 +54,7 @@ The texts below name each unchecked branch and its commit. The programs that pri
 In the proposed texts, `{branches}` is the unchecked branches, each with its commit, separated by commas, such as `fix-layout (1a23e5ef), docs-move (9c0d2b11)`; `{unchecked_lines}` is one line for each of those branches:
 
 ```
-Check {branch} by hand from your worktree: python3 scripts/branch-conflict-check.py --head {commit}
+Check {branch} by hand from your worktree: python3 scripts/branch-conflict-check.py --head {commit} --branch {branch}
 ```
 
 and `{tell_user_line}` is:
@@ -143,7 +143,7 @@ pre-push: the conflict check did not run for branch fix-layout (the 60-second bu
 
 ```
 pre-push: branch {branch} was not checked for conflicts with origin/main, because the earlier branches in this push used up the {budget}-second time budget.
-Check {branch} by hand from your worktree: python3 scripts/branch-conflict-check.py --head {commit}
+Check {branch} by hand from your worktree: python3 scripts/branch-conflict-check.py --head {commit} --branch {branch}
 ```
 
 ### 6. The check gave no verdict
@@ -162,7 +162,7 @@ pre-push: the conflict check gave no verdict for branch fix-layout (it had not f
 
 ```
 pre-push: branch {branch} was not checked for conflicts with origin/main, because scripts/branch-conflict-check.py had not finished when the {budget}-second time budget ran out, and was stopped.
-Check {branch} by hand from your worktree: python3 scripts/branch-conflict-check.py --head {commit}
+Check {branch} by hand from your worktree: python3 scripts/branch-conflict-check.py --head {commit} --branch {branch}
 If that run also prints no VERDICT line, tell the user this whole message and what that run printed.
 ```
 
@@ -170,7 +170,7 @@ If that run also prints no VERDICT line, tell the user this whole message and wh
 
 ```
 pre-push: branch {branch} was not checked for conflicts with origin/main, because scripts/branch-conflict-check.py gave no verdict: {reason}.
-Check {branch} by hand from your worktree: python3 scripts/branch-conflict-check.py --head {commit}
+Check {branch} by hand from your worktree: python3 scripts/branch-conflict-check.py --head {commit} --branch {branch}
 {tell_user_line}
 ```
 
@@ -198,7 +198,7 @@ pre-push: the pre-push conflict check failed with {error}, so this push goes ahe
 
 ```
 pre-push: the pre-push conflict check failed with {error} before reading which branches this push sends, so this push goes ahead with none of its branches checked for conflicts with origin/main.
-For each branch this push sends to origin, other than main, run from your worktree: python3 scripts/branch-conflict-check.py --head <branch name>
+For each branch this push sends to origin, other than main, run from your worktree: python3 scripts/branch-conflict-check.py --head <branch name> --branch <branch name>
 {tell_user_line}
 ```
 
@@ -242,7 +242,7 @@ To get an answer, run scripts/branch-conflict-check.py --head <commit> from this
 ```
 pre-push: branch {branch} was not checked for conflicts with origin/main, because scripts/branch-conflict-check.py could not decide; its report follows.
 <the report's lines>
-Follow the report, then check {branch} again by hand from your worktree: python3 scripts/branch-conflict-check.py --head {commit}
+Follow the report, then check {branch} again by hand from your worktree: python3 scripts/branch-conflict-check.py --head {commit} --branch {branch}
 If that run also prints no VERDICT line, tell the user this whole message and what that run printed.
 ```
 

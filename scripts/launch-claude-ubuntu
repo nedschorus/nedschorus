@@ -102,15 +102,28 @@ usage() {
     # every socket in the box's tmux socket directory — per-seat servers and
     # the default server (where seats from before per-seat servers may live) alike.
     # Single-quoted so the loop expands on the box, not on this Mac.
+    # ssh's own stderr is left on the terminal: it says why a failed listing
+    # failed, such as a host name this machine cannot resolve.
+    listing_exit_status=0
     running=$(ssh -o ConnectTimeout=5 "$AGENT_BOX" \
         'for seat_socket_path in "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"/*; do
              [ -S "$seat_socket_path" ] || continue
              tmux -S "$seat_socket_path" list-sessions -F "#{session_name}@$(basename "$seat_socket_path")" 2>/dev/null || true
-         done | sort -u' 2>/dev/null | tr '\n' ' ')
-    if [ -n "$running" ]; then
-        echo "Agent tmux sessions on the box now (live seats or after-exit shells): $running" >&2
+         done | sort -u') || listing_exit_status=$?
+    if [ "$listing_exit_status" -ne 0 ]; then
+        echo "launch-claude-ubuntu: could not list the agent tmux sessions on $AGENT_BOX: ssh exited $listing_exit_status (ssh's own message, if any, is above). This says nothing about which agents are running there." >&2
+        # ssh exits 255 for its own failure to connect, and with the remote
+        # command's status when the box answered.
+        if [ "$listing_exit_status" -eq 255 ]; then
+            echo "If you ran this on ned-box itself, run it from the Mac instead: it reaches the box over ssh." >&2
+            echo "Otherwise check that the box is up and that ssh $AGENT_BOX works from this machine, then run it again." >&2
+        else
+            echo "$AGENT_BOX answered, so the connection works; the listing command failed there. Run this again; if it fails again, log in to $AGENT_BOX with ssh and look at why its tmux listing fails." >&2
+        fi
+    elif [ -n "$running" ]; then
+        echo "Agent tmux sessions on the box now (running agent-seats or leftover-shells): $(printf '%s\n' "$running" | tr '\n' ' ')" >&2
     else
-        echo "No agent tmux sessions on the box now (or it could not be reached)." >&2
+        echo "No agent tmux sessions on the box now." >&2
     fi
     echo "(Agents on this Mac are separate: launch-claude-mac.)" >&2
     echo >&2

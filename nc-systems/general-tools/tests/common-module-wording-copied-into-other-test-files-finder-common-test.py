@@ -86,11 +86,11 @@ def scratch_checkout(files, untracked=None):
 
 def copies_in(files, untracked=None):
     root = scratch_checkout(files, untracked)
-    return finder.common_module_wording_copies_in_other_test_files(root / "tools" / "stand-in-wording-common.py", root)
+    return finder.common_module_wording_copies_in_other_test_files_find(root / "tools" / "stand-in-wording-common.py", root)
 
 
 root = scratch_checkout({})
-pieces = finder.common_module_wording_pieces(root / "tools" / "stand-in-wording-common.py")
+pieces = finder.common_module_wording_pieces_searched_for_in_other_test_files_extract(root / "tools" / "stand-in-wording-common.py")
 check("the module's wording is its constants and its functions' literal pieces of seven words or more, "
       "whitespace made single, without docstrings or raise messages",
       pieces == {
@@ -178,13 +178,13 @@ other_checkout = scratch_checkout({})
 root = scratch_checkout({"scripts/caller-test.py": 'X = "stop now and tell the user what both runs printed"\n'})
 os.environ["GIT_DIR"] = str(other_checkout / ".git")
 try:
-    found = finder.common_module_wording_copies_in_other_test_files(root / "tools" / "stand-in-wording-common.py", root)
+    found = finder.common_module_wording_copies_in_other_test_files_find(root / "tools" / "stand-in-wording-common.py", root)
 finally:
     del os.environ["GIT_DIR"]
 check("with GIT_DIR naming another checkout, the checkout given is still the one searched",
       [copy[0] for copy in found] == ["scripts/caller-test.py"], found)
 
-line = finder.copied_wording_report_line(
+line = finder.common_module_wording_copy_in_other_test_file_report_line_build(
     ("scripts/caller-test.py", 12, "stop now and tell the user what both runs printed", ["STOP_LINE"]))
 check("the report line names the file and line, the wording, and the constant to call",
       line == ('scripts/caller-test.py:12 keeps its own copy of wording that STOP_LINE holds: '
@@ -194,7 +194,7 @@ check("the report line names the file and line, the wording, and the constant to
 not_a_checkout = Path(tempfile.mkdtemp(dir=SCRATCH))
 (not_a_checkout / "stand-in-wording-common.py").write_text(STAND_IN_MODULE, encoding="utf-8")
 try:
-    outcome = finder.common_module_wording_copies_in_other_test_files(
+    outcome = finder.common_module_wording_copies_in_other_test_files_find(
         not_a_checkout / "stand-in-wording-common.py", not_a_checkout)
 except subprocess.CalledProcessError as error:
     outcome = f"raised CalledProcessError, exit {error.returncode}"

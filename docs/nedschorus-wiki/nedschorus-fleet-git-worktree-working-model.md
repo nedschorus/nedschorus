@@ -34,10 +34,10 @@ passing review.
   operator.
 - **The two machines** — the user's Mac (user `el`) and `ned-box` (Ubuntu,
   user `nedlern`), each with its own clone. Path map:
-  `docs/nedschorus-wiki/nedschorus-fleet-machine-paths-and-checkouts.md` (flagged stale
+  `docs/nedschorus-wiki/nedschorus-mac-and-ned-box-machine-setup.md` (flagged stale
   2026-08-17; verify before relying on specifics).
-- **Agent-seat** — a named, long-lived agent identity: home directory, own
-  branch, brief. **Session** — one running conversation occupying an
+- **Agent-seat** — a named, long-lived agent identity: home directory,
+  brief. **Session** — one running conversation occupying an
   agent-seat; sessions end and are replaced, the agent-seat persists.
   **Reincarnate-seat** — the handoff-supervisor replacing a session with a
   fresh one, carrying the handoff forward. Definitions of record:
@@ -430,8 +430,8 @@ the prune command — report only; the prune stays deliberate.
 
 **R26. New MDs land in canonical locations — ruled-unbuilt (issue [MD-placement guidance as symmetric pre-tool remind hooks on both runtimes (boss-directed design, build deferred)](https://github.com/nedschorus/nedschorus/issues/11)).** A
 PreToolUse *remind* hook on MD writes outside the canonical locations, symmetric
-across both agent runtimes, one shared config — the repository root
-`README.md` § "Where things live" becomes the single-source path list at
+across both agent runtimes, one shared config — the page
+`docs/nedschorus-wiki/nedschorus-founding-principles-actors-and-repository-layout.md` § "Where things live" becomes the single-source path list at
 build time (known gap: it lacks `docs/agents/`). Remind, not block: MD
 creation is overwhelmingly legitimate. Build trigger: a note landing
 astray despite the queue rule. The hook-plus-config pair serves R23 and

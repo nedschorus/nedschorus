@@ -178,6 +178,8 @@ try:
         "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
     ned_box_home_path_constants = _load_general_tools_module(
         "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+    agent_session_unattended_by_user_check_common = _load_general_tools_module(
+        "agent-session-unattended-by-user-check-common.py")
     git_runner = _load_general_tools_module(
         "git-machine-readable-output-runner-and-parser-common.py")
 except Exception as error:
@@ -216,8 +218,8 @@ ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![\w/.:~-])(/(?:home|Volumes)/" + PATH_E
 RELATIVE_PATH_PATTERN = re.compile(
     r"(?<![\w/.:~-])((?:docs|nc-systems|\.claude)/" + PATH_END + ")")
 
-REMINDER_OPENING = (
-    "cold-read-fast-read due: your last reply linked these documents for the "
+REMINDER_OPENING_LINE = (
+    "[rule cold-read-fast-read-due-for-linked-document] cold-read-fast-read due: your last reply linked these documents for the "
     "user, this agent-session wrote or changed each with the Write or Edit tool, and "
     "none of them has had a cold-read-fast-read since the document's "
     "last change. Each is either outside any git checkout, or new or changed in "
@@ -527,8 +529,7 @@ def run(stdin_text, environment):
     payload = json.loads(stdin_text)
     if stop_hooks_stay_silent_rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
         return None
-    if (environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
-            or environment.get("CLAUDE_CODE_SESSION_ATTENDED") == "0"):
+    if agent_session_unattended_by_user_check_common.agent_session_unattended_by_user(environment):
         return None
     transcript_path = payload.get("transcript_path")
     if not transcript_path or not Path(transcript_path).expanduser().is_file():
@@ -605,7 +606,7 @@ def run(stdin_text, environment):
         lines += [line.format(cwd=cwd, reason=session_top_reason)
                   for line in SESSION_CHECKOUT_UNKNOWN_LINES]
     if due:
-        lines += [REMINDER_OPENING] + [f"  {document}" for document in due]
+        lines += [REMINDER_OPENING_LINE] + [f"  {document}" for document in due]
     if unchecked:
         lines += [UNCHECKED_OPENING]
         lines += [f"- {document}: {reason}" + ("" if is_due else UNCHECKED_ALREADY_READ_NOTICE)
