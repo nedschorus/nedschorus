@@ -1,6 +1,6 @@
 # The handoff-system: nc-architecture-overview
 
-This document has proposed improvements or changes: read every file in this folder whose name starts with `nedsnodes-handoff-architecture-overview-proposed-improvements-or-changes-`.
+This document has proposed improvements or changes: read `handoff-architecture-overview-proposed-improvements-or-changes-entries.md` in `nn-systems/handoff/docs/`.
 
 ## Purpose
 
