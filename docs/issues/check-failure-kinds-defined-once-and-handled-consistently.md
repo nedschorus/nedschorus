@@ -18,8 +18,8 @@ The evidence is in four reports, two by Codex and two by Claude subagents, which
 **The same kind called by different words.**
 - A finding that need not be fixed before the merge is called "advice", "does not block", "non-blocking finding", "follow-up" and "findings that do not block".
 - `scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py` treats a review comment as blocking only when it begins with `**Blocks.**` (its constant `BLOCKING_MARKER`). No file on main tells a reviewer to write that marker: `git grep '\*\*Blocks\.\*\*' origin/main` finds it only in that script and its test.
-- "Could not run" and "failed" are kept apart by `scripts/run-all-test-suites.py` (exit 2 against exit 1) and by the cold-read grid ("a run that produced no report is not a review that found nothing"), but `nn-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py` reports a lapsed login or a network outage as `VERDICT: FAILED`.
-- `docs/nedsnodes-wiki/nedsnodes-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md` requires a program that fails open to say the act was not checked; several guard hooks fail open silently on bad input.
+- "Could not run" and "failed" are kept apart by `scripts/run-all-test-suites.py` (exit 2 against exit 1) and by the cold-read grid ("a run that produced no report is not a review that found nothing"), but `nn-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py` reports a lapsed login or a network outage as `VERDICT: FAILED`.
+- `docs/nedsnodes-wiki/nedsnodes-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md` requires a program that fails open to say the act was not checked; several guard hooks fail open silently on bad input.
 - One test suite prints `SKIP:`, which the test runner's pattern `^SKIP\s` does not count.
 
 **Why it matters.** When the kinds are not defined, an agent decides each case alone, from its own reading. A real defect labelled "flaky" stays unfixed and holds other pull requests; a "could not run" read as a pass merges unchecked work; a non-blocking finding with no follow-up is lost. The user cannot see from the records which of these happened.
@@ -49,10 +49,10 @@ One wiki page holds the table above with one real example of each kind. Its prop
 
 ## Which files must use them
 
-- `docs/agents/pr-reviewer-instructions.md` and CLAUDE.md's review bullet, kept word for word alike by `scripts/pr-reviewer-instructions-copies-test.py`: a reviewer labels each finding with its kind.
+- `docs/agents/pr-reviewer-instructions.md`, to which CLAUDE.md's review bullet points: a reviewer labels each finding with its kind.
 - `.claude/skills/pull-request-review-write/SKILL.md`: how the label is written in a review comment, so that a program can read it.
 - `scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py`, which today reads only the `**Blocks.**` marker (open question 4).
-- `scripts/run-all-test-suites.py`, `scripts/daily-full-test-run-of-main.py` and `nn-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py`: their exit codes and summary lines map to kinds 1, 4 and 6, and the weekly check reports a lapsed login as kind 4, not as a failure. Kind 3 cannot be seen in one run; the consistency check finds it across runs.
+- `scripts/run-all-test-suites.py`, `scripts/scheduled-full-test-run-of-main.py` and `nn-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py`: their exit codes and summary lines map to kinds 1, 4 and 6, and the owner check reports a lapsed login as kind 4, not as a failure. Kind 3 cannot be seen in one run; the consistency check finds it across runs.
 - The guard hooks that fail open silently: they say so (kind 5). GHI [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956) covers the wording; this GHI covers only which kind each outcome is.
 - merge-lane-2's seat-brief, which is outside the repository: merge-lane-2 is told of the list and updates it itself.
 
