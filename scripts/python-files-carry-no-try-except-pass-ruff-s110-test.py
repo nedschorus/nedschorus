@@ -8,7 +8,7 @@ Exception` and `except BaseException`; an `except` that names a narrower
 exception is left alone.
 
 Ruff is pinned in
-nc-systems/general-tools/python-libraries-pinned-requirements.txt.
+nn-systems/general-tools/python-libraries-pinned-requirements.txt.
 When the python3 running this suite cannot run Ruff, the suite installs the
 pinned file per user, as the hooks do. When that install fails, the suite
 prints what the install printed and the command that installs it by hand,
@@ -35,7 +35,7 @@ REPOSITORY = Path(__file__).resolve().parent.parent
 
 _pinned_libraries_install_spec = importlib.util.spec_from_file_location(
     "python_libraries_pinned_requirements_install_if_missing_then_import_common",
-    REPOSITORY / "nc-systems" / "general-tools"
+    REPOSITORY / "nn-systems" / "general-tools"
     / "python-libraries-pinned-requirements-install-if-missing-then-import-common.py")
 pinned_libraries_install = importlib.util.module_from_spec(_pinned_libraries_install_spec)
 _pinned_libraries_install_spec.loader.exec_module(pinned_libraries_install)

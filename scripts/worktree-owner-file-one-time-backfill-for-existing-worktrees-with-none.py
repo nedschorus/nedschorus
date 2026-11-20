@@ -12,7 +12,7 @@ holds this program.
 
 WHICH WORKTREES. The owner file is worktree-owner.json, the record that
 scripts/worktree-owner-file-read-and-write.py describes. The agents root is ~/agents, or
-$NEDSCHORUS_AGENTS_ROOT when set on the Mac. The agent-seats are those whose agent-home is a
+$NEDSNODES_AGENTS_ROOT when set on the Mac. The agent-seats are those whose agent-home is a
 directory directly under the agents root and that have a handoff-supervisor state file or a
 session-handoff file in ~/.claude/handoffs/, as scripts/recover-crashed-seats.py lists them.
 

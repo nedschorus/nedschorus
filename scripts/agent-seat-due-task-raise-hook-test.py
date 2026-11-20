@@ -41,7 +41,7 @@ _hook_spec = importlib.util.spec_from_file_location("agent_seat_due_task_raise_h
                                                     HOOK_SCRIPT)
 hook = importlib.util.module_from_spec(_hook_spec)
 _hook_spec.loader.exec_module(hook)
-TASK_LIST_ID = "nedschorus-test-seat-tasks"
+TASK_LIST_ID = "nedsnodes-test-seat-tasks"
 MERGED_PR = 900
 MET = {"prerequisites": [{"pr_merged": MERGED_PR}]}
 STOP_PAYLOAD = json.dumps({
@@ -106,7 +106,7 @@ def seat_session_environment():
     # The cases move HOME, from which Python finds the user's site-packages; on the Mac markdown-it-py is there.
     environment["PYTHONUSERBASE"] = site.getuserbase()
     environment["CLAUDE_CODE_SESSION_ATTENDED"] = "1"
-    environment.pop("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER", None)
+    environment.pop("NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER", None)
     return environment
 
 
@@ -635,7 +635,7 @@ check("no task list id in the environment: silent", silent(seat.run(list_id=None
 check("a task list id that is a path, even to a real list: silent",
       silent(seat.run(list_id=f"../tasks/{TASK_LIST_ID}")))
 check("a task list with no directory: silent",
-      silent(seat.run(list_id="nedschorus-no-such-seat-tasks")))
+      silent(seat.run(list_id="nedsnodes-no-such-seat-tasks")))
 
 # --- a headless child of an agent-seat is never raised ------------------------------
 seat = Seat()
@@ -643,7 +643,7 @@ seat.task("68", metadata=MET)
 result = seat.run(environment_changes={"CLAUDE_CODE_SESSION_ATTENDED": "0"})
 check("unattended session (a claude -p child): silent", silent(result), result)
 result = seat.run(environment_changes={
-    "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "scripts/ghi-guide-agent-ask.py"})
+    "NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER": "scripts/ghi-guide-agent-ask.py"})
 check("session whose caller owns its reincarnation: silent", silent(result), result)
 check("silenced sessions record nothing, so the seat's own session still raises the task",
       not seat.state_path.exists(), seat.state_path)

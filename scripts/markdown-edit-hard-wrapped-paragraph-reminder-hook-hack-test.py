@@ -150,7 +150,7 @@ try:
 except ImportError:
     PARSER_AVAILABLE = False
 PARSER_INSTALL_COMMAND = ("python3 -m pip install --user --break-system-packages -r "
-                          "nc-systems/general-tools/python-libraries-pinned-requirements.txt, "
+                          "nn-systems/general-tools/python-libraries-pinned-requirements.txt, "
                           "run with the python3 that `command -v python3` finds in the shell Claude Code runs hooks from")
 check("markdown-it-py is installed, so the reminder works on this machine",
       PARSER_AVAILABLE, f"install it with: {PARSER_INSTALL_COMMAND}")

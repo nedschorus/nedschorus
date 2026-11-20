@@ -30,7 +30,7 @@ with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(
         __file__, __name__ == "__main__"):
     _shell_reader_spec = importlib.util.spec_from_file_location(
         "shell_command_tree_sitter_bash_reader_common",
-        Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
+        Path(__file__).resolve().parents[2] / "nn-systems" / "general-tools"
         / "shell-command-tree-sitter-bash-reader-common.py")
     shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
     _shell_reader_spec.loader.exec_module(shell_reader)
