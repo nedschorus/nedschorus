@@ -131,7 +131,7 @@ store's listing, and the copy takes seconds over ssh; a second shipment of the
 same walk landing a file in those seconds was overwritten without a word, and
 both printed shipped: (GHI "Two shipments of one cold-read-record name at the
 same moment can lose a report while both say it shipped",
-https://github.com/nedschorus/nedschorus/issues/910, measured for the record
+https://github.com/nedsnodes/nedsnodes/issues/910, measured for the record
 shipper). So the files are copied into a staging directory in walk/
 (`.ship-staging-<name>-<random>`, removed once they are in place) and put in
 place by the record shipper's two steps: an add-only file by hard link, which

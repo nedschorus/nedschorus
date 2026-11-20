@@ -1089,7 +1089,7 @@ with tempfile.TemporaryDirectory() as workspace:
     (fake_bin / "gh").chmod(0o755)
     commit_change(root, "docs/nedschorus-wiki/nedschorus-demo-architecture-overview.md",
                   "## Planned work\n\n"
-                  "- GHI [Gone](https://github.com/nedschorus/nedschorus/issues/7)\n")
+                  "- GHI [Gone](https://github.com/nedsnodes/nedsnodes/issues/7)\n")
     environment = dict(os.environ, PATH=f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
     completed = subprocess.run(
         [sys.executable, str(root / "scripts" / CHECK_SCRIPT.name), "--base", base],

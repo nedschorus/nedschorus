@@ -1424,7 +1424,7 @@ def rounds_on_one_head_cases(root, repository, base, frozen_head):
 PULL_REQUEST_2620_MAC_CLAUDE_REVIEW = {
     "id": 5779061216, "user": {"login": 'mac-claude'}, "state": 'COMMENTED',
     "commit_id": 'dc0950712c83b79f47fecd3a2d7cf750dcb99b79',
-    "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#pullrequestreview-5779061216',
+    "html_url": 'https://github.com/nedsnodes/nedsnodes/pull/2620#pullrequestreview-5779061216',
     "body": ('APPROVE\n'
             '\n'
             'Reviewed the whole PR at head dc0950712 (first round). Merge base e7ab8b286 is the same as `git merge-base origin/main HEAD`. Environment: Python 3.14.4 at /usr/bin/python3, on ned-box.\n'
@@ -1492,7 +1492,7 @@ PULL_REQUEST_2620_MAC_CLAUDE_REVIEW = {
             '- The full test run was not run; merge-lane-2 runs it.')}
 PULL_REQUEST_2620_MAC_CLAUDE_COMMENTS = [
     {"id": 4475925026, "path": 'scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py', "line": None, "original_line": None,
-     "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#discussion_r4475925026',
+     "html_url": 'https://github.com/nedsnodes/nedsnodes/pull/2620#discussion_r4475925026',
      "body": ('Surviving mutant: the line that joins a moved comment\'s continuation lines (`elif comments: comments[-1]["body"] += "\\n" + line`) has no test.\n'
               '\n'
               '- **Mutation:** I replaced it with `elif False: pass`. Both test files still pass: posting test exit 0, follow-up test exit 0.\n'
@@ -1501,7 +1501,7 @@ PULL_REQUEST_2620_MAC_CLAUDE_COMMENTS = [
               '\n'
               'A round-trip case with a multi-line comment on a line outside the diff would kill this mutant.')},
     {"id": 4475925031, "path": 'scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py', "line": None, "original_line": None,
-     "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#discussion_r4475925031',
+     "html_url": 'https://github.com/nedsnodes/nedsnodes/pull/2620#discussion_r4475925031',
      "body": ('A comment moved into the review body is read back as several comments when a continuation line of its text has the moved-comment form `- `<path>:<line>`: ...`. Reviewers often cite other places in exactly that form.\n'
               '\n'
               '**Reproduced at head:** I ran `with_finding_category_marks` then `with_outside_comments_in_body` (with no commentable lines) on one fix-in-maintenance comment on `x.py:5`, with this text:\n'
@@ -1525,7 +1525,7 @@ PULL_REQUEST_2620_MAC_CLAUDE_COMMENTS = [
 PULL_REQUEST_2620_MERGE_LANE_2_REVIEW = {
     "id": 5779070233, "user": {"login": 'ned-review-merge'}, "state": 'CHANGES_REQUESTED',
     "commit_id": 'dc0950712c83b79f47fecd3a2d7cf750dcb99b79',
-    "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#pullrequestreview-5779070233',
+    "html_url": 'https://github.com/nedsnodes/nedsnodes/pull/2620#pullrequestreview-5779070233',
     "body": ('REQUEST_CHANGES\n'
             '\n'
             '**Blocking: 1**\n'
@@ -1550,10 +1550,10 @@ PULL_REQUEST_2620_MERGE_LANE_2_REVIEW = {
             "For each finding you fix, say in the fix commit's message whether the finding is one case of a wider pattern; if it is, name the pattern. Fix the other cases in this pull request when they run the same test suites or a reviewer would check them the same way; list in the commit message any you leave for a follow-up pull request. After the merge, merge-lane-2 sends you that list, as it does non-blocking findings, and you open a follow-up pull request for them or tell merge-lane-2 why not.")}
 PULL_REQUEST_2620_MERGE_LANE_2_COMMENTS = [
     {"id": 4475930572, "path": 'scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py', "line": None, "original_line": None,
-     "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#discussion_r4475930572',
+     "html_url": 'https://github.com/nedsnodes/nedsnodes/pull/2620#discussion_r4475930572',
      "body": ('**Blocks** A comment moved into the review body is read back as several comments when a continuation line of its text has the moved-comment form `- `<path>:<line>`: ...` (reproduced by mac-claude at head, also Codex P2). When such a line carries a category mark after the `: `, `print-follow-up-request-block-from-merge-lane-2-reviews` prints a truncated finding plus one merge-lane-2 never made, and exits 0. Fix: make the read-back detect this, for example by having the posting program check that the moved comments read back exactly as posted and refuse otherwise, or by a line format the text cannot reproduce; add a round-trip case with such a continuation line.')},
     {"id": 4475930574, "path": 'scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py', "line": None, "original_line": None,
-     "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#discussion_r4475930574',
+     "html_url": 'https://github.com/nedsnodes/nedsnodes/pull/2620#discussion_r4475930574',
      "body": ('The continuation-join line `elif comments: comments[-1]["body"] += "\\n" + line` has no test: replacing it with `elif False: pass` leaves both test files passing (mac-claude, mutant M4). A round-trip case with a multi-line comment on a line outside the diff would kill it.')}]
 
 
@@ -2292,7 +2292,7 @@ DEMO_OVERVIEW = "docs/nedschorus-wiki/nedschorus-demo-architecture-overview.md"
 
 def demo_overview_text(checked_against, extra=""):
     return (f"# Demo\n\n## Components\n\n- `nc-systems/demo/demo.py` runs the demo.\n{extra}\n"
-            f"**Checked against:** commit [{checked_against}](https://github.com/nedschorus/nedschorus/commit/"
+            f"**Checked against:** commit [{checked_against}](https://github.com/nedsnodes/nedsnodes/commit/"
             f"{checked_against})\n")
 
 
