@@ -10,13 +10,13 @@ WHY THIS EXISTS (user-ruled 2026-09-15, nedschorus#392). The reports and
 `sanity-check-records/` are logs: the user ruled on 2026-08-25 that review
 records are kept as logs, and CLAUDE.md puts logs in the log-store, never in
 the repository. Cold-read records reach it through
-nc-systems/cold-read/cold-read-record-ship.py; these had no way there at all, so the runner
+nn-systems/cold-read/cold-read-record-ship.py; these had no way there at all, so the runner
 told its caller to DELETE the record when the
 work it served landed, and a sanity-check that shaped a design could not be
 cited afterwards.
 
 WHAT IT IS: the cold-read record shipper with the store's kind swapped.
-nc-systems/cold-read/cold-read-record-ship.py holds the ship logic and the store's rules --
+nn-systems/cold-read/cold-read-record-ship.py holds the ship logic and the store's rules --
 ADD-ONLY, REFUSE ON DIFFERENCE, FAIL LOUDLY, what the store is, how ssh and
 rsync are invoked, the store's README -- and this program imports it rather
 than copying any of it, the way scripts/seat-shared-file-ship.py does. Read
@@ -60,7 +60,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 # Share the shipper so store rules and location cannot drift.
 _shipper_spec = importlib.util.spec_from_file_location(
-    "cold_read_record_ship", REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-record-ship.py")
+    "cold_read_record_ship", REPO_ROOT / "nn-systems" / "cold-read" / "cold-read-record-ship.py")
 shipper = importlib.util.module_from_spec(_shipper_spec)
 _shipper_spec.loader.exec_module(shipper)
 

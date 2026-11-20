@@ -1,0 +1,126 @@
+# GitHub identities, credentials, and this organization's token policy
+
+Reference page for the NedsChorus fleet. It answers three questions an agent or
+a human hits repeatedly: **which GitHub account am I acting as, what credential
+holds that identity, and why did GitHub just refuse me?**
+
+It is reference material, not rules. The rules about who may review, approve and
+merge live in `CLAUDE.md` at the repository root, and in the uncommitted
+`CLAUDE.local.md` beside it in whichever checkout an agent is working in. This
+page exists so those files do not fill up with credential trivia.
+
+Everything below was measured on 2026-08-24 unless stated otherwise.
+
+## The identities
+
+These GitHub accounts touch this project: the human owner, a merge identity, a
+review identity, the main-gatekeeper's account, and the machine accounts each
+host runs as.
+
+| account | what it is | org standing |
+|---|---|---|
+| `nedlern` | the human owner's own account, and what `gh` is logged in as on the Mac. Claude agent-seats on the Mac act as `mac-claude` instead. | owner |
+| `ned-review-merge` | merge-lane-2's identity: it reviews other agent-seats' pull requests, approves them, and merges. Formerly the org's second owner, renamed and demoted to member on 2026-08-19. Every agent-session of merge-lane-2 acts as this account, however merge-lane-2 was started. | member |
+| `ned-git-gatekeeper` | the main-gatekeeper's dedicated account (`nn-systems/main-gatekeeper/main-gatekeeper-design.md`, § The credential and enforcement): write on every repository in the organization, never admin or owner. The gate opens a pull request with it rather than pushing to main, so main's push allow-list does not name it. Created 2026-08-29. | member (measured 2026-09-28) |
+| `mac-claude` | the independent reviewer identity. It reviews and approves work merge-lane-2 itself authored — work `ned-review-merge` may not approve, because GitHub refuses an approving review from a pull request's author. | member since 2026-08-24 |
+| `mac-codex` | Mac-side Codex worker. No credential yet. | member (invited 2026-08-24; measured a member 2026-09-23 — listed by the organization's members API, absent from its pending invitations and outside collaborators) |
+| `ubuntu-claude` | the Ubuntu box's live credential; box agent-seats other than merge-lane-2 act as this. | member (invited 2026-08-24; measured a member 2026-09-23 — listed by the organization's members API, absent from its pending invitations and outside collaborators) |
+| `ubuntu-codex` | Ubuntu-side Codex worker. No credential yet. | member (invited 2026-08-24; measured a member 2026-09-23 — listed by the organization's members API, absent from its pending invitations and outside collaborators) |
+
+**Why the identities are separate at all.** GitHub refuses an approving review
+from a pull request's author, and `main` has required reviews enabled with no
+bypass for anyone. So a single identity that both opens and merges pull requests
+can never satisfy the rule on its own work. Each account above exists to be
+*somebody else* at the moment an approval is needed.
+
+**A naming trap, recorded because it has caused real confusion.** "nedlern" is
+both a GitHub account *and* the Unix user every box agent runs as, while the
+box's GitHub account is `ubuntu-claude` and the Mac's Unix user is `el`. A bare
+"nedlern" is ambiguous until the namespace is named.
+
+## The credentials
+
+| account | where the credential lives | kind | expires |
+|---|---|---|---|
+| `nedlern` | this Mac, `gh`'s own store (keychain) | classic | 2027-08-24 |
+| `ned-review-merge` | `~/.config/nedsnodes/ned-review-merge.token`, on this Mac and on ned-box | fine-grained | 2027-08-20 |
+| `ned-git-gatekeeper` | this Mac's keychain, item `nedschorus-git-gatekeeper-github-token` (created 2026-08-29; present 2026-09-28) | fine-grained | 2027-08-30, as the main-gatekeeper design records it; not re-measured |
+| `mac-claude` | `~/.config/nedsnodes/mac-claude.token`, on this Mac and on ned-box | fine-grained | 2027-08-25 |
+| `ubuntu-claude` | ned-box: `~/.config/nedsnodes/ubuntu-claude.token`, which ned-box agent-seats other than merge-lane-2 use; a classic token also remains in `gh`'s own store there | fine-grained (the file); classic (`gh`'s store) | 2027-09-24 (the file); 2027-08-24 (`gh`'s store) |
+
+Token files are mode 600.
+
+**Which account an agent-seat acts as is set in one place.** At every start, the handoff-supervisor sets `GH_TOKEN` to the token of the agent-seat's account: `ubuntu-claude` on ned-box and `mac-claude` on the Mac, except merge-lane-2, which acts as `ned-review-merge`. When the token file is missing, empty or unreadable, it starts no agent-session and says which file it needs.
+
+**Git operations borrow `gh`'s credential.** On both machines `git` is
+configured with `credential.https://github.com.helper = !gh auth git-credential`,
+so a broken or refused `gh` token breaks `git push` as well. The two are not
+independent.
+
+## This organization's token policy, and the four ways it bites
+
+**No token may have a lifetime over 366 days.** This applies to classic and
+fine-grained tokens alike. The refusal does not happen at creation — GitHub
+issues a non-expiring token happily — it happens at *use*, as an HTTP 403 on
+every organization-scoped call:
+
+> The 'nedschorus' organization forbids access via a personal access token
+> (classic) if the token's lifetime is greater than 366 days.
+
+So **"No expiration" is never a valid choice here**, on any token type. This
+took down `nedlern`'s access to the whole organization on 2026-08-24,
+immediately after a routine renewal chose it, and it was simultaneously why the
+Ubuntu box could not push.
+
+**A fine-grained token can only name an organization the account is a member
+of.** An outside collaborator is not offered the organization at all: the
+resource-owner field silently defaults to the personal account, and the
+resulting token authenticates correctly while reaching no repositories. This is
+why the four machine accounts were invited to the organization — membership is
+a prerequisite for holding a narrow, repository-scoped token, not a grant of
+extra power. Organization base permission is deliberately set to **none** and
+member repository creation is **off**, so membership by itself confers nothing;
+each account's repository access comes from its explicit collaborator grant.
+
+**A fine-grained token pointed at the organization needs an owner's approval.**
+Until it is approved the token authenticates, reads public data normally, and
+fails every write with `Resource not accessible by personal access token`. The
+approval lives at **Organization → Settings → Personal access tokens → Pending
+requests**, as a sidebar sub-item rather than a tab. The requirement can be
+switched off in the adjacent **Settings** sub-item.
+
+**A classic token's expiration cannot be edited in place.** The token page
+offers only *Update* (name and scopes) and *Regenerate*. The expiration selector
+lives inside the Regenerate flow, and regenerating issues a new value that must
+then be installed.
+
+## What is deliberately withheld
+
+`ned-review-merge` cannot change branch protection, act on the organization,
+touch workflows, or reach any other repository. `mac-claude` holds only pull
+requests read-and-write plus contents read-only, on this repository alone.
+
+The `nedlern` classic token is the exception and the standing exposure: it
+carries `admin:org`, `admin:enterprise`, `audit_log`, `admin:repo_hook` and
+more, and every agent on the Mac can reach all of it through `gh`'s keyring
+login, which plain `gh` uses whenever `GH_TOKEN` is unset. Narrowing it is an open question for the owner, not a decision
+this page makes.
+
+## Root actions on this Mac leave no log
+
+`sudo` here runs with `!log_allowed`, which switches off logging of the commands
+it permits. Failed authentications are still recorded; successful ones are not,
+and neither is what they ran.
+
+The practical consequence: **"who did this as root, and what exactly did they
+do" cannot be answered by reading anything on this machine.** It can only be
+answered by asking whoever did it.
+
+Measured 2026-08-31, when a sudoers rule appeared at
+`/etc/sudoers.d/nedschorus-mount-apfs-readonly` and nobody knew who had
+installed it. The unified log showed a password accepted at 16:05:20 and the
+file created at 16:05:25 — and nothing at all about the command in between.
+Authorship was established by asking the agent-seats, one of which read it out of a
+predecessor's handoff note. That is recollection, not evidence.
+
+Do not repeat the search expecting a different result.

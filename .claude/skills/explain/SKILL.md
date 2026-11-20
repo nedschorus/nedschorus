@@ -49,7 +49,7 @@ on check 12's closing line.
    in this conversation included; otherwise read the user-ruling where it is
    recorded: a `(user-ruled …)` line in a file, or the walk-minutes, which are
    in `docs/walk/` of the checkout that ran the approval-walk and in the
-   log-store under `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/`. A
+   log-store under `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/`. A
    task's description is an agent's summary: use a task's description to find
    the user-ruling, never as the user-ruling. If you cannot re-read the
    evidence, say so. If anything was wrong, say so first: correct the wrong
@@ -94,7 +94,7 @@ on check 12's closing line.
    as a pronoun, unless the noun is in the same sentence and no other noun there
    could be meant. When "or" could mean one-or-the-other or one-or-both, write
    which. Write each identifier in full, in the form the file
-   `nc-systems/skills/explain/explain-how-to-write-an-identifier-instructions.md` gives. After a
+   `nn-systems/skills/explain/explain-how-to-write-an-identifier-instructions.md` gives. After a
    session-handoff, restate the whole point, not the point's label or its last
    sentence.
 8. **Call each thing by one name, and say who acts at each step.** Use the
@@ -144,7 +144,7 @@ on check 12's closing line.
     placeholders:
 
     ```
-    nc-systems/skills/explain/explain-reply-cold-read-fast-read.py <<'END_OF_EXPLAIN_REPLY'
+    nn-systems/skills/explain/explain-reply-cold-read-fast-read.py <<'END_OF_EXPLAIN_REPLY'
     The user wrote: "<his words>"
     The reply to him:
     <your draft reply>

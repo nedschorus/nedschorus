@@ -9,7 +9,7 @@ issue: "[wiki-write skill, and the detect-set-aside-ask hook that enforces it �
 Two parts, user-ruled 2026-09-13 in a walk.
 
 **1. A `wiki-write` skill** — the procedure for creating or revising a page under
-`docs/nedschorus-wiki/` (renamed from `docs/wiki/` by PR [docs/wiki becomes docs/nedschorus-wiki, so the Obsidian vault has a name](https://github.com/nedschorus/nedschorus/pull/347) on 2026-09-14, after this issue was filed; the search receipt below quotes the old name because that is what was searched). The name is the user's, chosen to match `ghi-write`. This is not a
+`docs/nedsnodes-wiki/` (renamed from `docs/wiki/` by PR [docs/wiki becomes docs/nedsnodes-wiki, so the Obsidian vault has a name](https://github.com/nedschorus/nedschorus/pull/347) on 2026-09-14, after this issue was filed; the search receipt below quotes the old name because that is what was searched). The name is the user's, chosen to match `ghi-write`. This is not a
 family of four skills: `ghi-write` already owns GitHub issues and queue files,
 so this covers the wiki page only.
 
@@ -61,7 +61,7 @@ itself, so adding rather than replacing may be right.
 
 ## Precedent
 
-`nc-systems/main-gatekeeper/main-gatekeeper.py` — "the single program through which every change
+`nn-systems/main-gatekeeper/main-gatekeeper.py` — "the single program through which every change
 reaches main" — checks the content pushed rather than how it was authored.
 `scripts/checkout-freshness-catch-up.py` is an existing Stop hook already doing
 git work at every turn end.
