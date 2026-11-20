@@ -211,7 +211,7 @@ MARKER_NOT_WRITTEN_LINE = (
 )
 
 
-def awaited_phrase(flight: WorkInFlight) -> str:
+def awaited_phrase(flight: "WorkInFlight") -> str:
     """Return the ids of the work the deferral waits for, by kind."""
     parts = [f"subagent {agent_id}" for agent_id in flight.subagent_ids]
     parts += [f"workflow {workflow_id}" for workflow_id in flight.workflow_ids]

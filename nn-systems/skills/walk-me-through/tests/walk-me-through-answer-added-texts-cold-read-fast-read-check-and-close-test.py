@@ -4287,7 +4287,7 @@ def test_an_item_not_shown_needs_no_case_against_line():
         case = Case(document=document)
         checked = case.run("check", *flags)
         check(f"check {flags[0]} on an item with no `#case_against` line records the answer with no rating",
-              checked.returncode == 0 and f"settled without asking the user, " in case.minutes.read_text()
+              checked.returncode == 0 and "settled without asking the user, " in case.minutes.read_text()
               and "#case_against_" not in case.minutes.read_text(), described(checked))
 
 

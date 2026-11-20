@@ -828,7 +828,6 @@ def check_cases(root, repository, base, frozen_head):
 
     git(repository, "reset", "-q", "--hard", frozen_head)
     git(repository, "merge", "-q", "--no-edit", "origin/main")
-    merge = git(repository, "rev-parse", "HEAD")
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                          "--check", "--answers", answers)
     check("check: a merge of origin/main refuses, and says to drop it", code == 1
@@ -2457,7 +2456,7 @@ def replaces_cases(root, repository, base, frozen_head):
         description="#replaces pull request 5\n"))
     check("replaces: a #replaces line with no full link is refused, naming the line",
           code == 1 and err.startswith("REFUSED: pull request 7's description has the line `#replaces pull request 5`")
-          and f"#replaces https://github.com/o/r/pull/<the old pull request's number>" in err, err + out)
+          and "#replaces https://github.com/o/r/pull/<the old pull request's number>" in err, err + out)
 
 
 def conflict_check_cases(root, repository, _base, frozen_head):

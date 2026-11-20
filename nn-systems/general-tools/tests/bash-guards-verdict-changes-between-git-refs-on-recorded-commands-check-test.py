@@ -1411,7 +1411,7 @@ try:
                                       "--new-process-pairs", "none", base_ref=slow_on_ls)
     finally:
         replay.step_deadline_seconds = step_deadline_as_written
-    still_running = subprocess.run(["pgrep", "-f", str(Path(scratch) / f"run-")], capture_output=True,
+    still_running = subprocess.run(["pgrep", "-f", str(Path(scratch) / "run-")], capture_output=True,
                                     text=True).stdout.split()
     check("a step that runs past its deadline: exit 2 within about the deadline, no process left",
           status == 2 and "ran past its deadline of 10 s" in err and time.monotonic() - started < 60

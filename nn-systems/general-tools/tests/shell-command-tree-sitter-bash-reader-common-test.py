@@ -1734,7 +1734,6 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # The real importer, in a process whose user site did not exist when it started.
     import tree_sitter as installed_tree_sitter
-    import tree_sitter_bash as installed_tree_sitter_bash
     installed_site = Path(installed_tree_sitter.__file__).resolve().parents[1]
     probe = f"""
 import importlib.util, json, shutil, site, sys

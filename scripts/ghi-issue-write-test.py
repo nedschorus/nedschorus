@@ -1707,7 +1707,7 @@ def run_cases(scratch: Path):
             except tool.Refused as refusal:
                 lines_out = str(refusal).splitlines()
                 check(failure_name,
-                      lambda: (refusal.code == 1 and len(lines_out) == 4
+                      lambda: (refusal.code == 1 and len(lines_out) == 4  # noqa: F821 check() runs this lambda inside the except, while refusal is bound
                       and lines_out[0].startswith(
                           "Nothing was filed: ghi-guide-agent raised a question "
                           "about a ruling of the user's, and writing that "
@@ -3150,10 +3150,10 @@ def run_edit_cases(scratch: Path):
             check(lookup_name, False, "it reported success")
         except tool.Refused as refusal:
             check(lookup_name,
-                  lambda: (refusal.code == 1
-                  and str(refusal).startswith("Nothing was edited:")
+                  lambda: (refusal.code == 1  # noqa: F821 check() runs this lambda inside the except, while refusal is bound
+                  and str(refusal).startswith("Nothing was edited:")  # noqa: F821 check() runs this lambda inside the except, while refusal is bound
                   and "Run the same scripts/ghi-issue-write.py command again "
-                  "now; the user need not answer anything first." in str(refusal)
+                  "now; the user need not answer anything first." in str(refusal)  # noqa: F821 check() runs this lambda inside the except, while refusal is bound
                   and not failing_lookup.ran("git push")
                   and not lookup_store.exists()
                   and source.read_text() == FILE_TEXT),
@@ -3546,7 +3546,7 @@ def run_edit_cases(scratch: Path):
             check(rejected_case, False, "it proceeded")
         except tool.Refused as refusal:
             check(rejected_case,
-                  lambda: (refusal.code == 66
+                  lambda: (refusal.code == 66  # noqa: F821 check() runs this lambda inside the except, while refusal is bound
                   and rejected_with_question.ran(ASK)
                   and not rejected_with_question.ran("gh issue view 46")
                   and not rejected_store.exists()

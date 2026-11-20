@@ -657,7 +657,7 @@ with tempfile.TemporaryDirectory() as temporary:
               f"{NED_BOX_FOREIGN_COMMENT}\n{BOX_FULL_TEST_RUN}\n{foreign_line}\n{BOX_MIRROR}\n").encode()],
           (exit_code, stub.crontab_writes))
     check("and the line that was removed is printed",
-          f"replaced: scheduled-full-test-run-of-main" in printed
+          "replaced: scheduled-full-test-run-of-main" in printed
           and f"  the line removed: {differing_full_test_run}\n" in printed
           and "installed: transcript-mirror-to-log-store" in printed, printed)
 

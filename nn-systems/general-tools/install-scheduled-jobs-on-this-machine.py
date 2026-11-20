@@ -305,8 +305,8 @@ def jobs_placed_on(table: dict, table_path: Path, machine_name: str, selected_na
             raise Refusal(
                 f"{PROGRAM}: not run — the table places job `{name}` on "
                 f"{', '.join(job['on'])}, not on this machine, `{machine_name}`.",
-                f"Run this on a machine the job is placed on, or pass --job with a job of "
-                f"this machine.")
+                "Run this on a machine the job is placed on, or pass --job with a job of "
+                "this machine.")
     return [(job, job["on"][machine_name]) for job in table["jobs"]
             if machine_name in job["on"] and (not selected_names or job["name"] in selected_names)]
 
