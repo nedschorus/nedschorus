@@ -246,14 +246,20 @@ AFTER UPDATE OF text, agent_message_answered ON entries BEGIN
 END;
 """
 
+_repository_names_spec = importlib.util.spec_from_file_location(
+    "github_repository_name_and_name_before_project_rename_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "github-repository-name-and-name-before-project-rename-common.py")
+repository_names = importlib.util.module_from_spec(_repository_names_spec)
+_repository_names_spec.loader.exec_module(repository_names)
 GHI_REFERENCE = re.compile(
     r"(?<![\w/#-])(?:GHIs?|issues?)\s*#?(\d{1,5})\b"
     r"|\bnedschorus#(\d{1,5})\b"
-    r"|github\.com/nedschorus/nedschorus/issues/(\d{1,5})\b"
+    r"|github\.com/" + repository_names.REPOSITORY_NAME_OR_NAME_BEFORE_PROJECT_RENAME_PATTERN + r"/issues/(\d{1,5})\b"
     r"|\bdocs/issues/(\d{1,5})-", re.IGNORECASE)
 PULL_REQUEST_REFERENCE = re.compile(
     r"(?<![\w/#-])(?:PRs?|pull requests?)\s*#?(\d{1,5})\b"
-    r"|github\.com/nedschorus/nedschorus/pull/(\d{1,5})\b", re.IGNORECASE)
+    r"|github\.com/" + repository_names.REPOSITORY_NAME_OR_NAME_BEFORE_PROJECT_RENAME_PATTERN + r"/pull/(\d{1,5})\b", re.IGNORECASE)
 TASK_REFERENCE = re.compile(r"(?:\b([a-z][a-z0-9-]*[a-z0-9])(?:'s|’s)\s+)?\btasks?\s+#(\d{1,5})\b",
                             re.IGNORECASE)
 # Each part ends on a word character, @ or -, so a path at a sentence's end leaves its full stop out.
