@@ -32,17 +32,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SCRIPT_PATH = Path(__file__).with_name("recover-crashed-seats.py")
-# The supervisor moved into nc-systems/handoff/ on 2026-09-20 and is no
+# The supervisor moved into nn-systems/handoff/ on 2026-09-20 and is no
 # longer a sibling of the recovery tool this suite tests.
 SUPERVISOR_SCRIPT = (SCRIPT_PATH.resolve().parent.parent
-                     / "nc-systems" / "handoff" / "handoff-supervisor.py")
+                     / "nn-systems" / "handoff" / "handoff-supervisor.py")
 
 _spec = importlib.util.spec_from_file_location("recover_crashed_seats", SCRIPT_PATH)
 recovery = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(recovery)
 
 # Every case points recovery at a scratch agents root, through --agents-root
-# or NEDSCHORUS_AGENTS_ROOT, and off macOS recovery refuses the one and
+# or NEDSNODES_AGENTS_ROOT, and off macOS recovery refuses the one and
 # ignores the other. So the suite runs with the root movable on every
 # machine; the "AGENTS ROOT:" cases put the real predicate back to test it.
 real_agents_root_is_movable_on_this_machine = recovery.agents_root_is_movable_on_this_machine
@@ -64,7 +64,7 @@ CLAUDE_JSON_SCRATCH_PATH = CLAUDE_JSON_SCRATCH_DIRECTORY / ".claude.json"
 recovery.claude_json_presets.claude_json_path = lambda: CLAUDE_JSON_SCRATCH_PATH
 
 # launch_seat reads the agent-seat's GitHub token before it starts anything, from
-# ~/.config/nedschorus/<account>.token. No case may read a real token: HOME is a
+# ~/.config/nedsnodes/<account>.token. No case may read a real token: HOME is a
 # scratch directory holding a made-up token for each account, for this process and
 # every supervisor a case starts. The "GITHUB TOKEN:" cases empty it on purpose.
 # The accounts come from the supervisor's own table, so an account added there gets a token here.
@@ -75,9 +75,9 @@ GITHUB_TOKEN_BY_ACCOUNT = {
     account: f"github_pat_{account.upper().replace('-', '_')}_TEST_ONLY_not-a-real-credential"
     for account in {*recovery.supervisor.AGENT_SEAT_GITHUB_ACCOUNTS_OTHER_THAN_THE_MACHINE_DEFAULT.values(),
                     "ubuntu-claude", "mac-claude"}}
-(SCRATCH_HOME_DIRECTORY / ".config" / "nedschorus").mkdir(parents=True)
+(SCRATCH_HOME_DIRECTORY / ".config" / "nedsnodes").mkdir(parents=True)
 for _account, _token in GITHUB_TOKEN_BY_ACCOUNT.items():
-    (SCRATCH_HOME_DIRECTORY / ".config" / "nedschorus" / f"{_account}.token").write_text(
+    (SCRATCH_HOME_DIRECTORY / ".config" / "nedsnodes" / f"{_account}.token").write_text(
         _token + "\n", encoding="utf-8")
 
 # A real run on ned-box opens a window on the user's Mac after each seat it brings
@@ -89,7 +89,7 @@ real_agent_seat_mac_window_open_unless_tmux_client_already_attached = (
 mac_window_requests = []
 recovery.agent_seat_mac_window_open_unless_tmux_client_already_attached = (
     lambda name: mac_window_requests.append(name) or (True, "a window onto it opened on the Mac"))
-os.environ["NEDSCHORUS_SSH_PROGRAM"] = "false"
+os.environ["NEDSNODES_SSH_PROGRAM"] = "false"
 
 failures = []
 
@@ -104,14 +104,14 @@ CALLING_AGENT_SESSION_TEST_VARIABLES = {
     "CLAUDE_CODE_MESSAGING_TOKEN": "calling-token",
     "CLAUDE_CODE_BRIDGE_SESSION_ID": "session_calling",
     "CLAUDE_CODE_SESSION_ATTENDED": "0",
-    "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "calling-program",
+    "NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER": "calling-program",
     "TMUX": "/tmp/tmux-1000/calling-seat,1,0",
     "TMUX_PANE": "%0",
     "IS_DEMO": "1",
     "GH_TOKEN": "decoy-inherited-token",
-    "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": "calling-seat",
-    "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": "/calling/seat/directory",
-    "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID": "calling-supervisor-session",
+    "NEDSNODES_HANDOFF_SUPERVISOR_AGENT_NAME": "calling-seat",
+    "NEDSNODES_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": "/calling/seat/directory",
+    "NEDSNODES_HANDOFF_SUPERVISOR_SESSION_ID": "calling-supervisor-session",
 }
 skips = []
 passes = []
@@ -483,7 +483,7 @@ def supervisor_first_turn_for_a_by_hand_command(command, workspace):
     original_sync = sup.launch_time_git_sync
     # Both launchers pin the seat's task list before the supervisor starts.
     original_task_list = os.environ.get("CLAUDE_CODE_TASK_LIST_ID")
-    os.environ["CLAUDE_CODE_TASK_LIST_ID"] = f"nedschorus-{workspace.name}-tasks"
+    os.environ["CLAUDE_CODE_TASK_LIST_ID"] = f"nedsnodes-{workspace.name}-tasks"
     try:
         sup.launch_agent_session = launch_probe
         sup.launch_time_git_sync = lambda directory: "sync skipped (probe)"
@@ -515,7 +515,7 @@ def ps_confirms_supervisors(seat_supervised_by_process_id):
     """ps answers that each process id given runs the supervisor of the seat
     it maps to, and that no other process id exists."""
     recovery.supervisor.read_process_command_line = lambda process_id: (
-        (f"python3 /agents/nc-systems/handoff/handoff-supervisor.py --agent "
+        (f"python3 /agents/nn-systems/handoff/handoff-supervisor.py --agent "
          f"{seat_supervised_by_process_id[process_id]} --cd /agents/x", True)
         if process_id in seat_supervised_by_process_id else (None, True))
 
@@ -592,10 +592,10 @@ def run_reach_clause_cases(root: Path):
     mac_launcher = recovery.durable_checkout / recovery.LAUNCH_CLAUDE_MAC_WITHIN_A_CHECKOUT
     machines = [
         ("the Mac", lambda: mac_launcher,
-         "; the user reaches it by running /Users/el/Projects/nedschorus/scripts/launch-claude-mac seat-a "
+         "; the user reaches it by running /Users/el/Projects/nedsnodes/scripts/launch-claude-mac seat-a "
          "in a Terminal on his Mac"),
         ("ned-box", lambda: None,
-         "; the user reaches it by running /Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu seat-a "
+         "; the user reaches it by running /Users/el/Projects/nedsnodes/scripts/launch-claude-ubuntu seat-a "
          "in a Terminal on his Mac"),
     ]
     try:
@@ -771,7 +771,7 @@ def run_mac_window_cases(root: Path):
     real_run_tmux = recovery.run_tmux
     real_subprocess_run = recovery.subprocess.run
     real_seat_supervisor_confirmed_by_ps = recovery.seat_supervisor_confirmed_by_ps
-    reach = ("; the user reaches it by running /Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu seat-a "
+    reach = ("; the user reaches it by running /Users/el/Projects/nedsnodes/scripts/launch-claude-ubuntu seat-a "
              "in a Terminal on his Mac")
     opener_commands = []
 
@@ -855,8 +855,8 @@ def run_mac_window_cases(root: Path):
                    "so no window was opened: ssh: connect to host mac port 22: Operation timed "
                    "out. The seat is running") in output
               and "Tell the user what this says" not in output
-              and "/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu seat-a" in output
-              and output.count("/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu seat-a") == 1
+              and "/Users/el/Projects/nedsnodes/scripts/launch-claude-ubuntu seat-a" in output
+              and output.count("/Users/el/Projects/nedsnodes/scripts/launch-claude-ubuntu seat-a") == 1
               and (f"open the seat's window by running on ned-box `python3 "
                    f"{recovery.WINDOW_SENDER_PATH} --agent-seat seat-a`"
                    in output)
@@ -1093,7 +1093,7 @@ def run_user_systemd_scope_cases(root: Path):
         "import json, os, sys\n"
         f"open({str(probe_record)!r}, 'w').write(json.dumps("
         "{'argv': sys.argv[1:], 'XDG_RUNTIME_DIR': os.environ.get('XDG_RUNTIME_DIR')}))\n"
-        "failure = os.environ.get('NEDSCHORUS_TEST_SYSTEMD_RUN_FAILURE')\n"
+        "failure = os.environ.get('NEDSNODES_TEST_SYSTEMD_RUN_FAILURE')\n"
         "if failure:\n"
         "    sys.stderr.write(failure + '\\n')\n"
         "    sys.exit(1)\n",
@@ -1112,7 +1112,7 @@ def run_user_systemd_scope_cases(root: Path):
     def launch(failure=None, runtime_directory=None, systemd_run_installed=True):
         tmux_calls.clear()
         probe_record.unlink(missing_ok=True)
-        for name, value in (("NEDSCHORUS_TEST_SYSTEMD_RUN_FAILURE", failure),
+        for name, value in (("NEDSNODES_TEST_SYSTEMD_RUN_FAILURE", failure),
                             ("XDG_RUNTIME_DIR", runtime_directory)):
             if value is None:
                 os.environ.pop(name, None)
@@ -1130,7 +1130,7 @@ def run_user_systemd_scope_cases(root: Path):
         return exit_code, stderr.getvalue(), probe
 
     saved = {name: os.environ.get(name) for name in
-             ("PATH", "XDG_RUNTIME_DIR", "NEDSCHORUS_TEST_SYSTEMD_RUN_FAILURE")}
+             ("PATH", "XDG_RUNTIME_DIR", "NEDSNODES_TEST_SYSTEMD_RUN_FAILURE")}
     os.environ["PATH"] = f"{stub_directory}{os.pathsep}{os.environ.get('PATH', '')}"
     patch("agent_seat_tmux_server_user_systemd_scope_command_prefix_or_manager_unreachable_reason",
           real_agent_seat_tmux_server_user_systemd_scope_command_prefix_or_manager_unreachable_reason)
@@ -1295,7 +1295,7 @@ def run_github_token_cases(root: Path):
                   exit_code == 1 and tmux_calls == [] and launcher_runs == []
                   and "recover-crashed-seats: the agent-seat merge-lane-2 was not started"
                   in stderr.getvalue()
-                  and "home-without-token-files/.config/nedschorus/ned-review-merge.token"
+                  and "home-without-token-files/.config/nedsnodes/ned-review-merge.token"
                   in stderr.getvalue()
                   and "Once the file is fixed: run this recovery again." in stderr.getvalue(),
                   (exit_code, tmux_calls, launcher_runs, stderr.getvalue()))
@@ -1718,7 +1718,7 @@ with tempfile.TemporaryDirectory() as temporary:
                   "seat-consulted: NOT RELAUNCHED, AT ITS OWN REQUEST — an unconsumed "
                   "handoff (counter 11) asks to be consulted before a relaunch: the user "
                   "asked to be consulted before a relaunch. Nothing was launched. To bring "
-                  "it back, ask the user to run `/Users/el/Projects/nedschorus/scripts/"
+                  "it back, ask the user to run `/Users/el/Projects/nedsnodes/scripts/"
                   f"{'launch-claude-ubuntu' if recovery.launcher_path() is None else 'launch-claude-mac'} "
                   "seat-consulted` in a Terminal on his Mac and to answer its supervisor's restart "
                   "question in that Terminal"),
@@ -1741,7 +1741,7 @@ with tempfile.TemporaryDirectory() as temporary:
     class FakeProcess:
         pass
     def fake_popen(argv, cwd=None, env=None):
-        launched.append((argv, cwd, (env or {}).get("NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID")))
+        launched.append((argv, cwd, (env or {}).get("NEDSNODES_HANDOFF_SUPERVISOR_SESSION_ID")))
         return FakeProcess()
     # supervisor_module.subprocess IS the shared subprocess module: patch the
     # attribute and restore it, or every later real_subprocess.run breaks.
@@ -1802,17 +1802,17 @@ with tempfile.TemporaryDirectory() as temporary:
                 os.environ[name] = value
     started = started_environments[0] if started_environments else {}
     # IS_DEMO and GH_TOKEN are the supervisor's own: it sets both for every agent-session.
-    seat_owned = ("TMUX", "TMUX_PANE", "IS_DEMO", "GH_TOKEN", "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME",
-                  "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY",
-                  "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID")
+    seat_owned = ("TMUX", "TMUX_PANE", "IS_DEMO", "GH_TOKEN", "NEDSNODES_HANDOFF_SUPERVISOR_AGENT_NAME",
+                  "NEDSNODES_HANDOFF_SUPERVISOR_WORKING_DIRECTORY",
+                  "NEDSNODES_HANDOFF_SUPERVISOR_SESSION_ID")
     leaked = sorted(name for name in CALLING_AGENT_SESSION_TEST_VARIABLES
                     if name not in seat_owned and name in started)
     check("the supervisor starts claude without the calling agent-session's variables",
           started_environments and not leaked, leaked)
     check("the supervisor starts claude with its own seat's tmux variables and session id",
           started.get("TMUX") == CALLING_AGENT_SESSION_TEST_VARIABLES["TMUX"]
-          and started.get("NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID") == "abc-123",
-          {name: started.get(name) for name in ("TMUX", "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID")})
+          and started.get("NEDSNODES_HANDOFF_SUPERVISOR_SESSION_ID") == "abc-123",
+          {name: started.get(name) for name in ("TMUX", "NEDSNODES_HANDOFF_SUPERVISOR_SESSION_ID")})
 
     # --- PR #131 review round: the fix-round regressions --------------------
 
@@ -2345,7 +2345,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # recovery marker reaches the successor, never what the prompt says; and
     # it composes with an empty launch-time-git-sync report, so the branch-state
     # sentence is not in this fixture at all. The wording is pinned in
-    # nc-systems/handoff/tests/handoff-supervisor-successor-prompt-test.py, by
+    # nn-systems/handoff/tests/handoff-supervisor-successor-prompt-test.py, by
     # the boot-recovery check that pull request [the ignition prompt's sentences are constants,
     # and both branch-state call sites are pinned whole]
     # (https://github.com/nedsnodes/nedsnodes/pull/590) added. Look there,
@@ -2437,7 +2437,7 @@ with tempfile.TemporaryDirectory() as temporary:
               "/usr/bin/env",
               f"LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS=--handoff-dir "
               f"{workspace.handoffs} --resume-session-id abc-123",
-              f"NEDSCHORUS_AGENTS_ROOT={workspace.agents_root}",
+              f"NEDSNODES_AGENTS_ROOT={workspace.agents_root}",
               "/fake/scripts/launch-claude-mac", workspace.name,
               "--supervisor-checkout", str(recovery.durable_checkout),
               "--first-prompt-file", str(prompt_file)],
@@ -2700,7 +2700,7 @@ with tempfile.TemporaryDirectory() as temporary:
     finally:
         recovery.launcher_path = real_launcher_path
     check("WINDOW: a space in the agents root is carried into the command, not refused",
-          f"'NEDSCHORUS_AGENTS_ROOT={workspace.agents_root}'" in report, report)
+          f"'NEDSNODES_AGENTS_ROOT={workspace.agents_root}'" in report, report)
 
     # --dry-run promises to change nothing: no prompt file, no window.
     workspace = Workspace(root / "window-dry-run-changes-nothing")
@@ -2811,10 +2811,10 @@ with tempfile.TemporaryDirectory() as temporary:
           shlex.split(supervisor_arguments) == ["--handoff-dir", str(workspace.handoffs)]
           and "relaunched without resuming" in report,
           (supervisor_arguments, report))
-    check("B: the launcher branch pins NEDSCHORUS_AGENTS_ROOT to the assessed root",
-          captured_run["env"].get("NEDSCHORUS_AGENTS_ROOT")
+    check("B: the launcher branch pins NEDSNODES_AGENTS_ROOT to the assessed root",
+          captured_run["env"].get("NEDSNODES_AGENTS_ROOT")
           == str(workspace.agents_root),
-          captured_run["env"].get("NEDSCHORUS_AGENTS_ROOT"))
+          captured_run["env"].get("NEDSNODES_AGENTS_ROOT"))
 
     # Finding A on the resume path: --handoff-dir and --resume-session-id
     # travel together, and the box branch composes the same into its
@@ -2869,9 +2869,9 @@ with tempfile.TemporaryDirectory() as temporary:
     # Claude Code, tmux or supervisor variables to the seat it launches, on either branch.
     saved_environment = {name: os.environ.get(name)
                          for name in [*CALLING_AGENT_SESSION_TEST_VARIABLES,
-                                      "NEDSCHORUS_TEST_SEAT_KEEPS_THIS"]}
+                                      "NEDSNODES_TEST_SEAT_KEEPS_THIS"]}
     os.environ.update(CALLING_AGENT_SESSION_TEST_VARIABLES)
-    os.environ["NEDSCHORUS_TEST_SEAT_KEEPS_THIS"] = "kept"
+    os.environ["NEDSNODES_TEST_SEAT_KEEPS_THIS"] = "kept"
     environments_handed_on = {}
     def capture_tmux_environment(*arguments_after_tmux, socket_name=None, environment=None, command_prefix=()):
         # No environment means tmux inherits this process's own.
@@ -2903,7 +2903,7 @@ with tempfile.TemporaryDirectory() as temporary:
               "agent-session's variables",
               branch in environments_handed_on and not leaked, leaked)
         check(f"the {branch} launch branch keeps the rest of the caller's environment",
-              handed_on.get("NEDSCHORUS_TEST_SEAT_KEEPS_THIS") == "kept" and "PATH" in handed_on,
+              handed_on.get("NEDSNODES_TEST_SEAT_KEEPS_THIS") == "kept" and "PATH" in handed_on,
               sorted(handed_on))
 
     # run_tmux itself must pass the environment it is given to tmux, or the filtered environment
@@ -2936,7 +2936,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # statement's trailing semicolon, so compare with it stripped.
     box_assignments = [token.rstrip(";") for token in box_tokens]
     check("task list: the box branch pins the list to the seat name",
-          f"CLAUDE_CODE_TASK_LIST_ID=nedschorus-{workspace.name}-tasks" in box_assignments,
+          f"CLAUDE_CODE_TASK_LIST_ID=nedsnodes-{workspace.name}-tasks" in box_assignments,
           box_command)
     check("task list: the box branch carries the store migration before the pin",
           f'if [ -d "$HOME/.claude/tasks/{workspace.name}-tasks" ]' in box_command
@@ -2972,7 +2972,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # branch off macOS -- launcher_path() returns None there, which is
     # ned-box, where the seats run. The assertion resolves the path and asks
     # the disk, rather than matching the file name the cases above match: when
-    # the supervisor moved to nc-systems/handoff/ on 2026-09-20 and this
+    # the supervisor moved to nn-systems/handoff/ on 2026-09-20 and this
     # command went on composing a sibling of the recovery tool, every one of
     # those name matches still passed, because the path that no longer existed
     # ends with the same file name. tmux still created the session, so
@@ -3069,7 +3069,7 @@ with tempfile.TemporaryDirectory() as temporary:
     shutil.copytree(SCRATCH_HOME_DIRECTORY / ".config", sandbox_home / ".config")
     saved_path_env = os.environ["PATH"]
     saved_home_env = os.environ.get("HOME")
-    saved_agents_root_env = os.environ.get("NEDSCHORUS_AGENTS_ROOT")
+    saved_agents_root_env = os.environ.get("NEDSNODES_AGENTS_ROOT")
     try:
         os.environ["PATH"] = f"{stub_directory}:/usr/bin:/bin:/usr/sbin:/sbin"
         os.environ["HOME"] = str(sandbox_home)
@@ -3079,7 +3079,7 @@ with tempfile.TemporaryDirectory() as temporary:
         # The attached path composes AFTER_EXIT_COMMAND too (its cd rides the
         # same quoted directory); resupervise launches attached, so it is
         # probed directly.
-        os.environ["NEDSCHORUS_AGENTS_ROOT"] = str(workspace.agents_root)
+        os.environ["NEDSNODES_AGENTS_ROOT"] = str(workspace.agents_root)
         detached_capture = (capture_path.read_text(encoding="utf-8")
                             if capture_path.is_file() else "")
         capture_path.write_text("", encoding="utf-8")
@@ -3100,9 +3100,9 @@ with tempfile.TemporaryDirectory() as temporary:
         else:
             os.environ["HOME"] = saved_home_env
         if saved_agents_root_env is None:
-            os.environ.pop("NEDSCHORUS_AGENTS_ROOT", None)
+            os.environ.pop("NEDSNODES_AGENTS_ROOT", None)
         else:
-            os.environ["NEDSCHORUS_AGENTS_ROOT"] = saved_agents_root_env
+            os.environ["NEDSNODES_AGENTS_ROOT"] = saved_agents_root_env
     command_line = next((line for line in detached_capture.splitlines()
                          if "handoff-supervisor.py" in line), "")
     try:
@@ -3141,38 +3141,38 @@ with tempfile.TemporaryDirectory() as temporary:
 
     # Round-4 review note (user-ruled 2026-08-22: allowed overrides must
     # work): default_agents_root resolves the same way the launchers do —
-    # ${NEDSCHORUS_AGENTS_ROOT:-~/agents} on the Mac, as launch-claude-mac
+    # ${NEDSNODES_AGENTS_ROOT:-~/agents} on the Mac, as launch-claude-mac
     # does. Resolving differently assesses a root no seat lives in, and
     # recovery refuses on "no seat directory". Off macOS launch-claude-ubuntu
     # reads no such variable (user-ruled 2026-09-22), so neither does
     # recovery there (user-ruled 2026-09-28T16:37:05Z). Both machines are
     # pinned through launcher_path, with the real predicate put back.
-    saved_root = os.environ.get("NEDSCHORUS_AGENTS_ROOT")
+    saved_root = os.environ.get("NEDSNODES_AGENTS_ROOT")
     launcher_path_before_agents_root_cases = recovery.launcher_path
     try:
         patch("agents_root_is_movable_on_this_machine",
               real_agents_root_is_movable_on_this_machine)
         patch("launcher_path", lambda: Path("/fake/scripts/launch-claude-mac"))
-        os.environ["NEDSCHORUS_AGENTS_ROOT"] = str(root / "custom-agents")
-        check("default_agents_root honors NEDSCHORUS_AGENTS_ROOT",
+        os.environ["NEDSNODES_AGENTS_ROOT"] = str(root / "custom-agents")
+        check("default_agents_root honors NEDSNODES_AGENTS_ROOT",
               recovery.default_agents_root() == root / "custom-agents",
               recovery.default_agents_root())
-        os.environ["NEDSCHORUS_AGENTS_ROOT"] = ""
-        check("an empty NEDSCHORUS_AGENTS_ROOT falls back to ~/agents (the :- rule)",
+        os.environ["NEDSNODES_AGENTS_ROOT"] = ""
+        check("an empty NEDSNODES_AGENTS_ROOT falls back to ~/agents (the :- rule)",
               recovery.default_agents_root() == Path("~/agents").expanduser(),
               recovery.default_agents_root())
         patch("launcher_path", lambda: None)
-        os.environ["NEDSCHORUS_AGENTS_ROOT"] = str(root / "custom-agents")
-        check("AGENTS ROOT: off macOS, default_agents_root ignores NEDSCHORUS_AGENTS_ROOT",
+        os.environ["NEDSNODES_AGENTS_ROOT"] = str(root / "custom-agents")
+        check("AGENTS ROOT: off macOS, default_agents_root ignores NEDSNODES_AGENTS_ROOT",
               recovery.default_agents_root() == Path("~/agents").expanduser(),
               recovery.default_agents_root())
     finally:
         patch("launcher_path", launcher_path_before_agents_root_cases)
         patch("agents_root_is_movable_on_this_machine", lambda: True)
         if saved_root is None:
-            os.environ.pop("NEDSCHORUS_AGENTS_ROOT", None)
+            os.environ.pop("NEDSNODES_AGENTS_ROOT", None)
         else:
-            os.environ["NEDSCHORUS_AGENTS_ROOT"] = saved_root
+            os.environ["NEDSNODES_AGENTS_ROOT"] = saved_root
 
     # User-ruled 2026-09-28T16:37:05Z, closing PR 684's question: off macOS
     # --agents-root is refused, as resupervise-seat.py refuses it for a box
@@ -3257,8 +3257,8 @@ with tempfile.TemporaryDirectory() as temporary:
     (checkout_b / "scripts").mkdir(parents=True)
     (checkout_b / "scripts" / "launch-claude-mac").write_text("#!/bin/sh\nexit 0\n",
                                                              encoding="utf-8")
-    (checkout_b / "nc-systems" / "handoff").mkdir(parents=True)
-    (checkout_b / "nc-systems" / "handoff" / "handoff-supervisor.py").write_text(
+    (checkout_b / "nn-systems" / "handoff").mkdir(parents=True)
+    (checkout_b / "nn-systems" / "handoff" / "handoff-supervisor.py").write_text(
         "", encoding="utf-8")
     checkout_without_launcher_or_supervisor = root / "checkout-without-launcher-or-supervisor"
     checkout_without_launcher_or_supervisor.mkdir()
@@ -3334,7 +3334,7 @@ with tempfile.TemporaryDirectory() as temporary:
         check("CHECKOUT: off macOS, a recovery run from checkout A runs checkout B's supervisor",
               exit_code == 0
               and box_supervisor
-              == str(checkout_b / "nc-systems" / "handoff" / "handoff-supervisor.py"),
+              == str(checkout_b / "nn-systems" / "handoff" / "handoff-supervisor.py"),
               (exit_code, output, box_supervisor))
 
         # The file missing from the durable checkout is never taken from this
@@ -3345,7 +3345,7 @@ with tempfile.TemporaryDirectory() as temporary:
         capture_launches(workspace)
         expected_missing_path = checkout_without_launcher_or_supervisor / (
             "scripts/launch-claude-mac" if sys.platform == "darwin"
-            else "nc-systems/handoff/handoff-supervisor.py")
+            else "nn-systems/handoff/handoff-supervisor.py")
         exit_code, output = recover_through_main_with_checkout(
             workspace, checkout_without_launcher_or_supervisor)
         check("CHECKOUT: a durable checkout without the file a launch needs refuses the seat, "
@@ -4096,11 +4096,11 @@ with tempfile.TemporaryDirectory() as temporary:
           and workspace.launches == [],
           (report_dry, report))
     expected_launcher_word = (str(recovery.launcher_path()) if recovery.launcher_path()
-                              else "/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu")
+                              else "/Users/el/Projects/nedsnodes/scripts/launch-claude-ubuntu")
     resume_command_words = shlex.split(resume_command.replace(" (on the Mac)", ""))
     # The agents-root word rides only the Mac form: launch-claude-ubuntu reads
     # no root (user-ruled 2026-09-22, merge-lane-2's walk).
-    expected_prefix = ([f"NEDSCHORUS_AGENTS_ROOT={workspace.agents_root}"]
+    expected_prefix = ([f"NEDSNODES_AGENTS_ROOT={workspace.agents_root}"]
                        if recovery.launcher_path() else []) + [
         "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS="
         f"--handoff-dir {shlex.quote(str(workspace.handoffs))} --resume-session-id resume-me",
@@ -4148,11 +4148,11 @@ with tempfile.TemporaryDirectory() as temporary:
         patch("launcher_path", real_launcher_path)
     check("EXIT RECORD: off the Mac the by-hand command names launch-claude-ubuntu by its full path, on the Mac",
           box_command.endswith(
-              f" /Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu {workspace.name} (on the Mac)"),
+              f" /Users/el/Projects/nedsnodes/scripts/launch-claude-ubuntu {workspace.name} (on the Mac)"),
           box_command)
     check("EXIT RECORD: off the Mac the by-hand command carries no agents root, which "
           "launch-claude-ubuntu does not read",
-          "NEDSCHORUS_AGENTS_ROOT" not in box_command
+          "NEDSNODES_AGENTS_ROOT" not in box_command
           and box_command.startswith("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS="),
           box_command)
 

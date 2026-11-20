@@ -5,7 +5,7 @@ Claude's one-time folder-trust dialog by adding the seat directory to
 and, when none is set, a theme. Both twins run
 scripts/claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py
 for it: the Mac twin from its own checkout, the box twin from the box's
-~/Projects/nedschorus. That script's own cases are in its -test.py file; these
+~/Projects/nedsnodes. That script's own cases are in its -test.py file; these
 cases measure the write as each launcher runs it.
 
 That file is the HARNESS's live state file, not the launchers' own: running
@@ -155,8 +155,8 @@ class PreTrustSandbox:
                    'esac\n'
                    'exit 0\n')
         # The box twin runs the presets write from the box's own checkout,
-        # $HOME/Projects/nedschorus; in this HOME that is this checkout's copy.
-        box_scripts = self.home / "Projects" / "nedschorus" / "scripts"
+        # $HOME/Projects/nedsnodes; in this HOME that is this checkout's copy.
+        box_scripts = self.home / "Projects" / "nedsnodes" / "scripts"
         box_scripts.mkdir(parents=True)
         (box_scripts / PRESETS_WRITE_SCRIPT_NAME).symlink_to(PRESETS_WRITE_SCRIPT)
         # The Mac launcher refuses unless ~/Projects/nedschorus holds the
@@ -212,17 +212,17 @@ class PreTrustSandbox:
 
     # --- running the launchers -----------------------------------------
     def launcher_environment(self, agents_root) -> dict:
-        """agents_root None leaves NEDSCHORUS_AGENTS_ROOT unset, so the
+        """agents_root None leaves NEDSNODES_AGENTS_ROOT unset, so the
         launcher's own ~/agents default applies."""
         environment = {key: value for key, value in os.environ.items()
-                       if not key.startswith(("NEDSCHORUS_", "LAUNCH_CLAUDE_",
+                       if not key.startswith(("NEDSNODES_", "LAUNCH_CLAUDE_",
                                               "CLAUDE_CODE_"))}
         environment["PATH"] = f"{self.stubs}:{environment.get('PATH', '')}"
         environment["HOME"] = str(self.home)
         environment["TMPDIR"] = str(self.decoy_tmpdir)
-        environment["NEDSCHORUS_AGENT_BOX"] = "stub-box"
+        environment["NEDSNODES_AGENT_BOX"] = "stub-box"
         if agents_root is not None:
-            environment["NEDSCHORUS_AGENTS_ROOT"] = agents_root
+            environment["NEDSNODES_AGENTS_ROOT"] = agents_root
         environment["LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS"] = "5"
         environment["PRE_TRUST_CAPTURES"] = str(self.captures)
         environment["PRE_TRUST_REAL_PYTHON3"] = sys.executable
@@ -482,8 +482,8 @@ def main() -> int:
               (replayed.returncode, replayed.stderr[-300:]))
         box_script, box_argument = sandbox.arrived_presets_write_call()
         check("box: the presets write runs the script in the box's own "
-              "checkout, ~/Projects/nedschorus",
-              box_script == f"{sandbox.home}/Projects/nedschorus/scripts/"
+              "checkout, ~/Projects/nedsnodes",
+              box_script == f"{sandbox.home}/Projects/nedsnodes/scripts/"
                             f"{PRESETS_WRITE_SCRIPT_NAME}",
               box_script)
         check("box: the seat directory is trusted with the box's own $HOME "

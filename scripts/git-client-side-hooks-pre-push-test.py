@@ -20,7 +20,7 @@ the temporary directory:
     <layout>/scripts/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal.py
     <layout>/scripts/run-all-test-suites.py, a fake that fails and logs each
     start, so a case can show the hook never starts it
-    <layout>/nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py
+    <layout>/nn-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py
 So each case runs exactly what git runs on a seat's push. A case that needs
 the conflict check to misbehave puts a fake check at the check's path, and
 leaves the real one alone. No real repository's config is read or written:
@@ -65,11 +65,11 @@ OPEN_PULL_REQUEST_BRANCH_CHECK = (SCRIPTS_DIRECTORY / "git-client-side-hooks-pre
                                   "request-branch-non-fast-forward-or-deletion-refusal.py")
 REAL_TEST_SUITES_RUNNER = SCRIPTS_DIRECTORY / "run-all-test-suites.py"
 GIT_OUTPUT_MODULE_RELATIVE_PATH = Path(
-    "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
+    "nn-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
 REBASE_OR_REPLACE_MODULE_RELATIVE_PATH = Path(
-    "nc-systems/general-tools/pull-request-conflict-with-main-rebase-or-replace-answer-common.py")
+    "nn-systems/general-tools/pull-request-conflict-with-main-rebase-or-replace-answer-common.py")
 
-TIME_BUDGET_VARIABLE = "NEDSCHORUS_PRE_PUSH_CONFLICT_CHECK_SECONDS"
+TIME_BUDGET_VARIABLE = "NEDSNODES_PRE_PUSH_CONFLICT_CHECK_SECONDS"
 FAKE_CHECK_LOG_VARIABLE = "PRE_PUSH_TEST_FAKE_CHECK_LOG"
 FAKE_TEST_SUITES_RUNNER_LOG_VARIABLE = "PRE_PUSH_TEST_FAKE_TEST_SUITES_RUNNER_LOG"
 FAKE_GH_OPEN_PULL_REQUESTS_VARIABLE = "PRE_PUSH_TEST_FAKE_GH_OPEN_PULL_REQUESTS"

@@ -9,8 +9,8 @@ import sys
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
-PAGE_PATH = (REPOSITORY_ROOT / "docs" / "nedschorus-wiki"
-             / "nedschorus-how-to-write-an-architecture-overview.md")
+PAGE_PATH = (REPOSITORY_ROOT / "docs" / "nedsnodes-wiki"
+             / "nedsnodes-how-to-write-an-architecture-overview.md")
 
 _spec = importlib.util.spec_from_file_location(
     "architecture_overview_path_template_and_checked_against_commit_reader", Path(__file__).with_name("architecture-overview-path-template-and-checked-against-commit-reader-common.py"))

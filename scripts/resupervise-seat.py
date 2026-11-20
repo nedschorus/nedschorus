@@ -93,14 +93,14 @@ from pathlib import Path
 
 _supervisor_spec = importlib.util.spec_from_file_location(
     "handoff_supervisor", Path(__file__).resolve().parent.parent
-    / "nc-systems" / "handoff" / "handoff-supervisor.py"
+    / "nn-systems" / "handoff" / "handoff-supervisor.py"
 )
 supervisor = importlib.util.module_from_spec(_supervisor_spec)
 _supervisor_spec.loader.exec_module(supervisor)
 
 _tmux_error_pattern_spec = importlib.util.spec_from_file_location(
     "tmux_target_or_server_does_not_exist_error_pattern_common",
-    Path(__file__).resolve().parent.parent / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parent.parent / "nn-systems" / "general-tools"
     / "tmux-target-or-server-does-not-exist-error-pattern-common.py"
 )
 tmux_error_pattern = importlib.util.module_from_spec(_tmux_error_pattern_spec)
@@ -114,7 +114,7 @@ SCRIPT_DIRECTORY = Path(__file__).resolve().parent
 def default_agents_root() -> Path:
     """Return the agents root using the Mac launcher's environment override."""
     # Checks and launcher must resolve the same root; the Ubuntu launcher always uses ~/agents.
-    return Path(os.environ.get("NEDSCHORUS_AGENTS_ROOT") or "~/agents").expanduser()
+    return Path(os.environ.get("NEDSNODES_AGENTS_ROOT") or "~/agents").expanduser()
 
 
 def refuse(message: str) -> int:
@@ -307,7 +307,7 @@ def launcher_for(machine: str) -> Path:
     return SCRIPT_DIRECTORY / "launch-claude-ubuntu"
 
 
-BOX_SCRIPT_PATH = "$HOME/Projects/nedschorus/scripts/resupervise-seat.py"
+BOX_SCRIPT_PATH = "$HOME/Projects/nedsnodes/scripts/resupervise-seat.py"
 
 
 def resupervise_box_seat(arguments) -> int:
@@ -371,7 +371,7 @@ def resupervise_box_seat(arguments) -> int:
     sys.stdout.flush()  # exec discards buffered output
     sys.stderr.flush()
     # Forward the checked host and handoff directory so launch targets the seat just prepared.
-    environment = {**os.environ, "NEDSCHORUS_AGENT_BOX": arguments.agent_box}
+    environment = {**os.environ, "NEDSNODES_AGENT_BOX": arguments.agent_box}
     if arguments.handoff_dir:
         environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = (
             f"--handoff-dir {shlex.quote(arguments.handoff_dir)}")
@@ -395,7 +395,7 @@ def main(argv=None) -> int:
                              "(default ~/.claude/handoffs)")
     parser.add_argument("--agents-root", default="",
                         help="where seat directories live, for --machine mac only "
-                             "(default $NEDSCHORUS_AGENTS_ROOT, else ~/agents); a box "
+                             "(default $NEDSNODES_AGENTS_ROOT, else ~/agents); a box "
                              "seat is always ~/agents/<name> on the box")
     parser.add_argument(
         "--dry-run", action="store_true",
@@ -529,7 +529,7 @@ def main(argv=None) -> int:
     # Forward the directories checked above so launch cannot switch seats; quote for the launcher's one shell parse.
     # This often runs from another agent-session's shell, whose variables must not reach the seat.
     environment = supervisor.agent_seat_launch_environment_without_calling_agent_session_tmux_and_supervisor_variables(os.environ)
-    environment["NEDSCHORUS_AGENTS_ROOT"] = str(agents_root)
+    environment["NEDSNODES_AGENTS_ROOT"] = str(agents_root)
     environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = (
         f"--handoff-dir {shlex.quote(str(handoff_directory))}")
     os.execve(str(launcher), [str(launcher), arguments.name], environment)
