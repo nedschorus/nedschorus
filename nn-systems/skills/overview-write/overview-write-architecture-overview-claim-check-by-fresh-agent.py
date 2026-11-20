@@ -20,7 +20,7 @@ a program so that no step depends on an agent remembering it:
    writer disputes, as the page's rounds allow. FILE is free text that quotes
    each disputed assertion and gives the answer with the quoted line it rests
    on; this program does not read it, only passes its path to every
-   fresh-agent.
+   fresh-agent, and refuses a FILE that is not a file.
 5. For each claim ranked must fix, runs one more fresh-agent, all of them in
    parallel, given that claim and not the first verdict or rank. The claim
    keeps the rank must fix only when that second answer ranks it must fix
@@ -38,16 +38,17 @@ a program so that no step depends on an agent remembering it:
    exact text, to that file in the checkout the program runs from, creating
    the file when it is missing. The file is
    nn-systems/<system>/docs/<system>-architecture-overview-proposed-improvements-or-changes-entries.md,
-   outside the wiki folder, so the wiki no longer gains a file named after the
+   outside the wiki folder, so the wiki does not gain a file named after the
    overview on every run. A
    follow-up pull request fixes the claims this run appended, except when the
    file on origin/main already holds a claim from this program, a line
    starting "Claim: ", which only this program writes: the run is then taken
    to be that follow-up, or a later one, and the claims this run appended are
-   left to regular maintenance, so "later" is one step. Nits are listed in the
-   report only.
+   left to regular maintenance, so claims ranked fix later get one follow-up
+   pull request, never a chain of them. Nits are listed in the report only.
    The overview points to the file with one line under its first heading,
-   PROPOSED_IMPROVEMENTS_OR_CHANGES_POINTER_LINE_TEMPLATE filled in; for
+   this program's PROPOSED_IMPROVEMENTS_OR_CHANGES_POINTER_LINE_TEMPLATE filled
+   in; for
    docs/nedsnodes-wiki/nedsnodes-handoff-architecture-overview.md it is:
    This document has proposed improvements or changes: read `handoff-architecture-overview-proposed-improvements-or-changes-entries.md` in `nn-systems/handoff/docs/`.
 
@@ -91,9 +92,10 @@ The last line printed, on stdout, starts with "Next: " and says what to do for
 that exit, so the overview-write skill's step 3 is only to do what it says.
 For exits 0, 5 and 6, when step 7 appended claims to the file, the line says
 to commit the file and either to open a follow-up pull request for the appended
-claims once this one merges or that regular maintenance takes them, and, when
-the overview lacks the pointer line of step 7, quotes that line and says to
-add it under the overview's first heading and run the program again.
+claims once this one merges or that regular maintenance takes them. In that
+case only, when the overview also lacks the pointer line of step 7, the line
+quotes it and says to add it under the overview's first heading and run the
+program again.
 For exit 5 the program tells a malformed report apart from claims ranked
 must fix. On the first malformed report for an overview text, its
 last line tells the agent to run the program again; on the second and each
