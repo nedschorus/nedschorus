@@ -305,6 +305,31 @@ def with_finding_category_marks(body, comments):
     return verdict, body, comments
 
 
+def verdict_review_posting_program_marks_missing(review, comments):
+    """Why a verdict review GitHub holds, a dict with "state" and "body", lacks the marks this program
+    writes into a review it posts as ned-review-merge, or None when it has them; comments are the
+    review's inline comments as GitHub returns them. Any state but APPROVED and CHANGES_REQUESTED has
+    no verdict to mark, and returns None."""
+    body = review.get("body") or ""
+    if review.get("state") == "APPROVED":
+        if body.split("\n", 1)[0] != "APPROVE":
+            return "its body does not open with the line APPROVE"
+        return None
+    if review.get("state") != "CHANGES_REQUESTED":
+        return None
+    count = fix_round.BLOCKING_COUNT_PATTERN.match(body)
+    if not count:
+        return ("its body does not open with the line REQUEST_CHANGES, a blank line and the line "
+                + BLOCKING_COUNT_FORMAT.format(count="N"))
+    stated = int(count.group(1))
+    found = len(fix_round.marked(comments)) + len(
+        fix_round.marked(outside_the_diff_comments_read_back_from_review_body(body)))
+    if found != stated:
+        return (f"its body states {BLOCKING_COUNT_FORMAT.format(count=stated)}, but {found} of its comments "
+                f"open with {BLOCKING_MARK.strip()}")
+    return None
+
+
 def commentable_lines(files):
     """Map each path to the new-side line numbers its diff shows, from GitHub's pull request files."""
     lines = {}

@@ -142,6 +142,7 @@ GATE = Path(__file__).with_name("merge-gate.sh")
 DESCRIPTION_DEFECT_LINE_READER = Path(__file__).with_name(
     "pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py")
 NO_SANDBOX_SUITES_PROGRAM = Path(__file__).with_name("no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py")
+VERDICT_REVIEW_MARKS_CHECK = Path(__file__).resolve().with_name("merge-gate-verdict-review-posting-program-marks-check.py")
 GIT_REDIRECTING_ENVIRONMENT_COMMON = Path("nn-systems/general-tools/git-redirecting-environment-variables-removal-common.py")
 GIT_MACHINE_READABLE_OUTPUT_COMMON = Path("nn-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
 FIXTURES = Path(__file__).with_name("merge-gate-test-captured-github-responses")
@@ -167,7 +168,8 @@ elif argv[:1] == ["api"] and re.fullmatch(r"repos/[^/]+/[^/]+/issues/[0-9]+", ar
     key = "link " + argv[1]
 elif argv[:1] == ["api"]:
     endpoint = argv[1]
-    channel = ("reviews" if endpoint.endswith("/reviews") else
+    channel = ("review-comments" if re.search(r"/reviews/[0-9]+/comments$", endpoint) else
+               "reviews" if endpoint.endswith("/reviews") else
                "issue" if "/issues/" in endpoint else
                "inline" if endpoint.endswith("/comments") else "unknown")
     key = channel + (":paginated" if "--paginate" in argv else ":first-page")
@@ -267,6 +269,37 @@ def review(channel_capture, review_id):
     raise SystemExit(f"merge-gate-test: review {review_id} not in {channel_capture}")
 
 
+# merge-lane-2's reviews posted through scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py,
+# whose marks the gate requires of ned-review-merge's latest review with a verdict: on PR 3885, an
+# approval and a request for changes with four blocking comments.
+POSTED_REVIEWS = "nedsnodes-nedsnodes-3885-reviews-channel-paginated.json"
+POSTED_APPROVAL_BODY = review(POSTED_REVIEWS, 5988089520)["body"]
+POSTED_REQUEST_BODY = review(POSTED_REVIEWS, 5952986576)["body"]
+POSTED_REQUEST_COMMENTS = "nedsnodes-nedsnodes-3885-review-5952986576-comments-paginated.json"
+HAND_TYPED_REQUEST_COMMENTS = "nedsnodes-nedsnodes-3881-review-5949985134-comments-paginated.json"
+
+
+def as_posted(channel_capture, through_id=None):
+    """{review id: {"body": ...}} giving each of ned-review-merge's approvals and requests for changes in the
+    channel, up to the one with through_id, the body the posting program writes, for a case about something
+    else that replays a review merge-lane-2 posted before the gate required the posting program's marks."""
+    bodies = {"APPROVED": POSTED_APPROVAL_BODY, "CHANGES_REQUESTED": POSTED_REQUEST_BODY}
+    items = channel_items(captured(channel_capture))
+    ids = [item["id"] for item in items]
+    kept = items[:ids.index(through_id) + 1] if through_id is not None else items
+    return {item["id"]: {"body": bodies[item["state"]]} for item in kept
+            if item["user"]["login"] == "ned-review-merge" and item["state"] in bodies}
+
+
+def whole_channel_as_posted(channel_capture):
+    last_id = channel_items(captured(channel_capture))[-1]["id"]
+    return channel_routes("reviews", channel_prefix(channel_capture, last_id, as_posted(channel_capture)))
+
+
+def review_comments_routes(capture):
+    return channel_routes("review-comments", captured(capture))
+
+
 # The base every refusal case varies: nedschorus PR 667's review channel as it
 # stood after its first review, mac-claude's approval of the merged head, with
 # both comment channels quiet and the state given CLEAN.
@@ -312,11 +345,11 @@ done
 exec "$MERGE_GATE_TEST_REAL_JQ" "$@"
 """
 
-# A stand-in python3 that fails when it is asked to run the description reader,
+# A stand-in python3 that fails when it is asked to run the program the case names,
 # and runs the real python3 for every other call, such as the gh stand-in's.
 PYTHON3_STAND_IN = """#!/usr/bin/env bash
 case "$1" in
-  */pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py)
+  */"$MERGE_GATE_TEST_PYTHON3_FAILING_PROGRAM")
     echo "python3: injected failure" >&2
     exit 5 ;;
 esac
@@ -337,6 +370,8 @@ def gate_copy(text):
     (top / GIT_REDIRECTING_ENVIRONMENT_COMMON).parent.mkdir(parents=True)
     for common in (GIT_REDIRECTING_ENVIRONMENT_COMMON, GIT_MACHINE_READABLE_OUTPUT_COMMON):
         shutil.copyfile(Path(__file__).resolve().parent.parent / common, top / common)
+    # A link, not a copy: the check loads the posting program and its modules from its own resolved directory.
+    (directory / VERDICT_REVIEW_MARKS_CHECK.name).symlink_to(VERDICT_REVIEW_MARKS_CHECK)
     copy = directory / "merge-gate.sh"
     copy.write_text(text)
     return copy
@@ -344,6 +379,7 @@ def gate_copy(text):
 
 def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=None,
              wrapper=None, arguments=None, jq_failing_filter=None, description_reader_fails=False,
+             marks_check_fails=False,
              cwd=None, no_sandbox_suites_state=None):
     case_dir = Path(tempfile.mkdtemp(dir=scratch))
     home = case_dir / "home"
@@ -365,7 +401,9 @@ def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=
     if jq_failing_filter is not None:
         (stand_in_dir / "jq").write_text(JQ_STAND_IN)
         (stand_in_dir / "jq").chmod(0o755)
-    if description_reader_fails:
+    python3_failing_program = (DESCRIPTION_DEFECT_LINE_READER.name if description_reader_fails
+                               else VERDICT_REVIEW_MARKS_CHECK.name if marks_check_fails else None)
+    if python3_failing_program:
         (stand_in_dir / "python3").write_text(PYTHON3_STAND_IN)
         (stand_in_dir / "python3").chmod(0o755)
     routes = dict(routes)
@@ -384,8 +422,9 @@ def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=
     if jq_failing_filter is not None:
         environment.update(MERGE_GATE_TEST_JQ_FAILING_FILTER=jq_failing_filter,
                            MERGE_GATE_TEST_REAL_JQ=shutil.which("jq"))
-    if description_reader_fails:
-        environment.update(MERGE_GATE_TEST_REAL_PYTHON3=shutil.which("python3"))
+    if python3_failing_program:
+        environment.update(MERGE_GATE_TEST_REAL_PYTHON3=shutil.which("python3"),
+                           MERGE_GATE_TEST_PYTHON3_FAILING_PROGRAM=python3_failing_program)
     if arguments is None:
         arguments = [str(pr), expected, since]
     if wrapper:
@@ -571,7 +610,7 @@ def case_live_chain_merge_account_only_approval(gate):
     own = review(reviews, 5286200944)
     routes = {"state": {"stdout_file": str(arranged_state(
         "nedschorus-nedschorus-665-pr-view-state.json", mergeStateStatus=CLEAN))}}
-    routes.update(captured_channel_routes("reviews", "nedschorus-nedschorus-665-reviews-channel"))
+    routes.update(whole_channel_as_posted(reviews))
     routes.update(QUIET_INLINE)
     routes.update(QUIET_ISSUE)
     run = run_gate(gate, "665", own["commit_id"], own["submitted_at"], routes)
@@ -584,7 +623,7 @@ def case_live_chain_second_approval_by_merge_account(gate):
     own = review(BASE_REVIEWS, 5286364766)
     routes = {"state": {"stdout_file": str(arranged_state(
         "nedschorus-nedschorus-667-pr-view-state.json", mergeStateStatus=CLEAN))}}
-    routes.update(captured_channel_routes("reviews", "nedschorus-nedschorus-667-reviews-channel"))
+    routes.update(whole_channel_as_posted(BASE_REVIEWS))
     routes.update(QUIET_INLINE)
     routes.update(QUIET_ISSUE)
     run = run_gate(gate, "667", own["commit_id"], own["submitted_at"], routes)
@@ -638,7 +677,7 @@ def case_lane_662_since_taken_before_its_own_approval(gate):
     own = review(reviews, 5285715840)
     routes = {"state": {"stdout_file": str(arranged_state(
         "nedschorus-nedschorus-662-pr-view-state.json", mergeStateStatus=CLEAN))}}
-    routes.update(captured_channel_routes("reviews", "nedschorus-nedschorus-662-reviews-channel"))
+    routes.update(whole_channel_as_posted(reviews))
     routes.update(QUIET_INLINE)
     routes.update(QUIET_ISSUE)
     run = run_gate(gate, "662", own["commit_id"], "2026-09-23T00:54:38Z", routes)
@@ -840,7 +879,8 @@ def case_b6_merge_accounts_later_findings(gate):
     routes = {"state": {"stdout_file": str(arranged_state(
         "nedschorus-nedschorus-636-pr-view-state.json",
         headRefOid=pin["commit_id"], mergeStateStatus=CLEAN))}}
-    routes.update(channel_routes("reviews", channel_prefix(PR_636_REVIEWS, pin["id"])))
+    routes.update(channel_routes("reviews", channel_prefix(PR_636_REVIEWS, pin["id"], as_posted(PR_636_REVIEWS, pin["id"]))))
+    routes.update(review_comments_routes(POSTED_REQUEST_COMMENTS))
     routes.update(QUIET_INLINE)
     routes.update(QUIET_ISSUE)
     run = run_gate(gate, "636", pin["commit_id"], since, routes)
@@ -956,7 +996,8 @@ def case_e3_approval_covers_another_commit(gate):
     pin = review(PR_636_REVIEWS, 5285938045)
     routes = {"state": {"stdout_file": str(arranged_state(
         "nedschorus-nedschorus-636-pr-view-state.json", mergeStateStatus=CLEAN))}}
-    routes.update(channel_routes("reviews", channel_prefix(PR_636_REVIEWS, pin["id"])))
+    routes.update(channel_routes("reviews", channel_prefix(PR_636_REVIEWS, pin["id"], as_posted(PR_636_REVIEWS, pin["id"]))))
+    routes.update(review_comments_routes(POSTED_REQUEST_COMMENTS))
     routes.update(QUIET_INLINE)
     routes.update(QUIET_ISSUE)
     head = captured_value("nedschorus-nedschorus-636-pr-view-state.json", "headRefOid")
@@ -1616,6 +1657,94 @@ def case_description_unparsable(gate):
         JQ_ERROR_ABOVE, f"\n{RERUN_ONCE_JQ}\n"), run.summary()
 
 
+# THE VERDICT REVIEW MARKS CASES. The gate refuses when ned-review-merge's latest
+# review whose state is APPROVED or CHANGES_REQUESTED lacks the marks
+# scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py writes. PR 3881's
+# approval 5950181743 and its request for changes 5949985134 were typed by hand; PR 3885's
+# 5952986576 was posted by that program, with four comments opening "**Blocks**". Case A1
+# is the pass with no such review, B6 the pass of a posted request for changes.
+PR_3881_REVIEWS = "nedsnodes-nedsnodes-3881-reviews-channel-paginated.json"
+
+
+def pr_3881_routes():
+    approval = review(PR_3881_REVIEWS, 5950181743)
+    routes = {"state": {"stdout_file": str(arranged_state(
+        "nedschorus-nedschorus-667-pr-view-state.json",
+        headRefOid=approval["commit_id"], mergeStateStatus=CLEAN))}}
+    routes.update(captured_channel_routes("reviews", "nedsnodes-nedsnodes-3881-reviews-channel"))
+    routes.update(QUIET_INLINE)
+    routes.update(QUIET_ISSUE)
+    return approval, routes
+
+
+def case_marks_hand_typed_approval_refused(gate):
+    approval, routes = pr_3881_routes()
+    run = run_gate(gate, "3881", approval["commit_id"], approval["submitted_at"], routes)
+    return refused_with(
+        run, "3881",
+        "GATE REFUSED (#3881): ned-review-merge's latest review with a verdict, "
+        "https://github.com/nedsnodes/nedsnodes/pull/3881#pullrequestreview-5950181743 (APPROVED), lacks the "
+        "marks scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py writes: its body does not "
+        "open with the line APPROVE.\n",
+        "\nPost the same review again through scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py "
+        "--github-account ned-review-merge, then run the gate again with that review's submitted_at as "
+        "reviewed-since.\n"), run.summary()
+
+
+def pr_636_request_routes(changed_fields, comments_routes):
+    pin = review(PR_636_REVIEWS, 5285938045)
+    routes = {"state": {"stdout_file": str(arranged_state(
+        "nedschorus-nedschorus-636-pr-view-state.json",
+        headRefOid=pin["commit_id"], mergeStateStatus=CLEAN))}}
+    routes.update(channel_routes("reviews", channel_prefix(PR_636_REVIEWS, pin["id"], changed_fields)))
+    routes.update(comments_routes)
+    routes.update(QUIET_INLINE)
+    routes.update(QUIET_ISSUE)
+    return pin, routes
+
+
+def case_marks_hand_typed_request_for_changes_refused(gate):
+    pin, routes = pr_636_request_routes(None, review_comments_routes(HAND_TYPED_REQUEST_COMMENTS))
+    run = run_gate(gate, "636", pin["commit_id"], review(PR_636_REVIEWS, 5285368166)["submitted_at"], routes)
+    return refused_with(
+        run, "636", "#pullrequestreview-5285920906 (CHANGES_REQUESTED), lacks the marks",
+        "its body does not open with the line REQUEST_CHANGES, a blank line and the line **Blocking: N**.\n"), \
+        run.summary()
+
+
+def case_marks_request_for_changes_with_fewer_blocks_than_its_count_refused(gate):
+    comments = channel_items(captured(POSTED_REQUEST_COMMENTS))
+    blocks = [comment for comment in comments if comment["body"].lstrip().startswith("**Blocks")]
+    fewer = scratch_file("-comments.json", json.dumps([comment for comment in comments if comment is not blocks[0]]))
+    pin, routes = pr_636_request_routes(as_posted(PR_636_REVIEWS, 5285938045),
+                                        channel_routes("review-comments", fewer))
+    run = run_gate(gate, "636", pin["commit_id"], review(PR_636_REVIEWS, 5285368166)["submitted_at"], routes)
+    return refused_with(
+        run, "636", f"its body states **Blocking: {len(blocks)}**, but {len(blocks) - 1} of its comments "
+        "open with **Blocks**.\n"), run.summary()
+
+
+def case_marks_review_comments_read_fails(gate):
+    pin, routes = pr_636_request_routes(
+        as_posted(PR_636_REVIEWS, 5285938045),
+        {"review-comments:paginated": {"stdout_file": str(scratch_file("-empty.json", "")),
+                                       "stderr": "gh: Server Error (HTTP 502)\n", "exit": 1}})
+    run = run_gate(gate, "636", pin["commit_id"], review(PR_636_REVIEWS, 5285368166)["submitted_at"], routes)
+    return could_not_run_after_gh(
+        run, "636", "GATE COULD NOT RUN: could not read the inline comments of review 5285920906 on pull request "
+        "636; any error gh printed is just above this line.\n", f"\n{RERUN_ONCE_GH}\n"), run.summary()
+
+
+def case_marks_check_program_fails(gate):
+    approval, routes = pr_3881_routes()
+    run = run_gate(gate, "3881", approval["commit_id"], approval["submitted_at"], routes, marks_check_fails=True)
+    check_program = gate.parent / VERDICT_REVIEW_MARKS_CHECK.name
+    return could_not_run_after_gh(
+        run, "3881", f"GATE COULD NOT RUN: python3 {check_program} exited 5 when the gate gave it review 5950181743",
+        "\nDo not run the gate again, and do not repair that program or python3 yourself: tell reboot-test this "
+        "message, with SendMessage.\n"), run.summary()
+
+
 CASES = [
     ("A1 everything in order passes, pinned to the approval's commit", case_a1_pass_control),
     ("NO-SANDBOX a failed run on main is noticed on stderr, and the gate still passes",
@@ -1724,6 +1853,13 @@ CASES = [
     ("G3 gh failing on the description read could not run", case_description_read_fails),
     ("G3 a description jq cannot read could not run", case_description_unparsable),
     ("G3 the description reader failing could not run", case_description_reader_fails),
+    ("MARKS a hand-typed approval by the merge account refuses", case_marks_hand_typed_approval_refused),
+    ("MARKS a hand-typed request for changes by the merge account refuses",
+     case_marks_hand_typed_request_for_changes_refused),
+    ("MARKS a request for changes with fewer Blocks comments than its count refuses",
+     case_marks_request_for_changes_with_fewer_blocks_than_its_count_refused),
+    ("MARKS gh failing on the review's comments could not run", case_marks_review_comments_read_fails),
+    ("MARKS the marks check failing could not run", case_marks_check_program_fails),
     ("G3 the gate run from a directory other than its own finds the description reader",
      case_gate_run_from_another_directory_finds_its_reader),
     ("H1 a not-fixed hashtag line whose #follow_up link is a Markdown citation passes",
@@ -1805,6 +1941,16 @@ TOKEN_BLOCK = (
 SINCE_REAL_TIME_CHECK = """jq -n --arg since "$SINCE" '$since | fromdateiso8601' >/dev/null 2>&1 || cannot"""
 
 MUTATIONS = [
+    ("without the verdict review marks refusal",
+     [("    1) fail \"$MERGE_ACCOUNT's latest review with a verdict", "    1) : \"$MERGE_ACCOUNT's latest review with a verdict")],
+     [case_marks_hand_typed_approval_refused, case_marks_hand_typed_request_for_changes_refused,
+      case_marks_request_for_changes_with_fewer_blocks_than_its_count_refused]),
+    ("a request for changes checked without its comments",
+     [('if [ "$verdict_review_state" = "CHANGES_REQUESTED" ]; then', 'if false; then')],
+     [case_b6_merge_accounts_later_findings, case_marks_review_comments_read_fails]),
+    ("the marks check failing read as a refusal",
+     [("    *) cannot \"python3 $VERDICT_REVIEW_MARKS_CHECK", "    *) fail \"python3 $VERDICT_REVIEW_MARKS_CHECK")],
+     [case_marks_check_program_fails]),
     ("F1 without --paginate", [(" --paginate)", ")")],
      [case_b1_inline_beyond_first_page, case_b1_issue_beyond_first_page,
       case_b1_reviews_beyond_first_page, case_b2_pin_beyond_first_page]),
