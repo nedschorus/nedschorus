@@ -19,14 +19,15 @@ Usage:
   4. renames each ~/.claude/projects/<key> that Claude Code made for the reference-checkout or a worktree that still exists, replacing only the part of the key made from the moved directory, and its copy under <log-store>/agent-session-files-by-machine/<machine>/projects/ the same way;
   5. renames each ~/.claude/tasks/nedschorus-<seat>-tasks to nedsnodes-<seat>-tasks, and its copy under <log-store>/agent-session-files-by-machine/<machine>/tasks/;
   6. renames ~/.config/nedschorus to ~/.config/nedsnodes;
+  6a. renames ~/.local/state/nedschorus and ~/.local/share/nedschorus to their nedsnodes names, each ~/.cache/nedschorus-* to nedsnodes-*, and ~/backups/nc-shared-database to ~/backups/nn-shared-database; and, inside them and inside ~/.config/nedsnodes, each file of the shared database whose name starts nc-shared-database (its database file and that file's -wal and -shm, its backups, and its two token files) to the same name starting nn-shared-database;
   7. copies ~/.claude.json to a backup beside it, then rewrites every key and string value in it that holds the old checkout, worktrees-directory or log-store path, to the new path, and `nedschorus/nedschorus` to `nedsnodes/nedsnodes`; and copies ~/.ssh/authorized_keys to a backup beside it, then rewrites the old checkout, worktrees-directory and log-store paths inside each `command="..."` option and nowhere else on the line, keeping the file's permissions;
   8. on ned-box only, renames each systemd user unit entry named `nc-*`, in the unit directory and its *.wants directories, to `nn-*`; a symlink is re-made pointing at the new checkout path with each `nc-` directory and file name in it changed to `nn-`; then runs `systemctl --user daemon-reload`; it starts nothing;
-  9. leaves symlinks at the old reference-checkout path, the old ~/.config/nedschorus path and, on ned-box, the old log-store path, each pointing at its new sibling by a relative name.
+  9. leaves symlinks at the old reference-checkout path, the old ~/.config/nedschorus path, the old ~/.local/state/nedschorus path, the old ~/.local/share/nedschorus path, whose cosmic-ray venv's scripts name its old path in their shebang lines, and, on ned-box, the old log-store path, each pointing at its new sibling by a relative name.
 --rollback reverses the journal's changes in reverse order: it removes the step-9 symlinks, re-makes the step-8 links under their old names, restores core.hooksPath to its old value, renames every directory back, and restores ~/.claude.json and ~/.ssh/authorized_keys from their backups and deletes the backups. A backup is restored only when its SHA-256 matches the one --apply journaled once the copy was complete; a file whose backup never got that record was never rewritten, so it is left as it is, and any partial backup is left in place and named; when a backup recorded complete is missing, --rollback stops, unless the file already holds the backed-up content. It then runs `git worktree repair` with the old paths and `systemctl --user daemon-reload` when --apply ran them, and renames the journal to <journal>.rolled-back-<time>. Every path flag is made absolute when it is read, so every path the journal holds is absolute. --rollback needs only --journal: it takes every other path flag from those the --apply journaled, and refuses, changing nothing, a path flag on its command line whose value differs from the journaled one, printing the command that reverses that --apply; every message that says to run --rollback prints the exact command, with the journal's path and this program's path where the program is at that moment, which is under the renamed checkout once step 1 has moved the checkout it was started from, both quoted for the shell. A change the journal records but that was never made, because --apply stopped first, is skipped.
 
-HARM IT CAN CAUSE. --apply leaves symlinks at the old reference-checkout, ~/.config/nedschorus and (ned-box) log-store paths, so old code keeps working against the new directories until the symlinks are removed by hand. It rewrites ~/.ssh/authorized_keys, after copying it to ~/.ssh/authorized_keys.before-project-rename-<time>; a mistake there would refuse the forced command ned-box's key runs on the Mac, and the backup or --rollback restores it. It rewrites ~/.claude.json, after copying it to ~/.claude.json.before-project-rename-<time>; a Claude Code process that starts or exits during the rewrite can overwrite the rewrite, which is why --apply refuses while any process named `claude` runs. Every directory is moved by a rename on one filesystem, so no directory's contents are copied; the only copies made are the two backups, and the only files deleted are the step-8 links, which are re-made under their new names, and, by --rollback, the step-9 symlinks it removes and the backups it has restored from. Programs holding the old paths (a supervisor, a cron job installed later from the old path) fail until restarted from the new ones.
+HARM IT CAN CAUSE. --apply leaves symlinks at the old reference-checkout, ~/.config/nedschorus, ~/.local/state/nedschorus, ~/.local/share/nedschorus and (ned-box) log-store paths, so old code keeps working against the new directories until the symlinks are removed by hand. It rewrites ~/.ssh/authorized_keys, after copying it to ~/.ssh/authorized_keys.before-project-rename-<time>; a mistake there would refuse the forced command ned-box's key runs on the Mac, and the backup or --rollback restores it. It rewrites ~/.claude.json, after copying it to ~/.claude.json.before-project-rename-<time>; a Claude Code process that starts or exits during the rewrite can overwrite the rewrite, which is why --apply refuses while any process named `claude` runs. Every directory is moved by a rename on one filesystem, so no directory's contents are copied; the only copies made are the two backups, and the only files deleted are the step-8 links, which are re-made under their new names, and, by --rollback, the step-9 symlinks it removes and the backups it has restored from. Programs holding the old paths (a supervisor, a cron job installed later from the old path) fail until restarted from the new ones.
 
-WHAT IT DOES NOT DO OR HANDLE. It does not install, remove or edit cron lines, LaunchAgents or systemd units other than the step-8 renames, start or stop any service or agent-seat, touch GitHub, or edit any file's text other than ~/.claude.json and ~/.ssh/authorized_keys. It does not rewrite the text of a step-8 unit file. Claude Code shortens a project key longer than 200 characters with a hash, so such a key matches no worktree and stays under its old name. Keys of worktrees that no longer exist, and of sessions started in a subdirectory of the checkout, stay as history. The guarded-file store's entries for files in ~/agents/<seat> are not renamed. The -tasks lists of other names, handoff files, and the cwd fields in transcripts are not touched.
+WHAT IT DOES NOT DO OR HANDLE. It does not install, remove or edit cron lines, LaunchAgents or systemd units other than the step-8 renames, start or stop any service or agent-seat, touch GitHub, or edit any file's text other than ~/.claude.json and ~/.ssh/authorized_keys. It does not rewrite the text of a step-8 unit file. It does not touch /etc/sudoers.d/nedschorus-mount-apfs-readonly, installed from config/sudoers-mount-apfs-readonly-for-backup-recovery; the user renames or reinstalls it by hand. Old code that opens the shared database by its old file name, through the step-9 symlink, finds no database and makes an empty one; only the shared database's service opens it, and it starts again from the new code after --apply. Claude Code shortens a project key longer than 200 characters with a hash, so such a key matches no worktree and stays under its old name. Keys of worktrees that no longer exist, and of sessions started in a subdirectory of the checkout, stay as history. The guarded-file store's entries for files in ~/agents/<seat> are not renamed. The -tasks lists of other names, handoff files, and the cwd fields in transcripts are not touched.
 
 HOW IT CAN FAIL. A refusal prints each condition that failed and what to do, and exits 1 with nothing changed. A failure during --apply prints the step and the error, and exits 1 with the journal holding every change made so far: run the --rollback command it prints, or fix the cause and finish by hand. --rollback stops with exit 1 at a journal entry whose paths are in neither the before nor the after state, saying which; --rollback journals each change it reverses, so a second --rollback, after the path is fixed by hand, continues where the first stopped. A `git status` that fails after the repair, in step 2a, stops --apply the same way, after step 1, and on ned-box step 2, have moved the directories, so --rollback is then needed; a worktree whose `git status` already fails before the move does this too, and --check lists such worktrees. --rollback also stops, keeping the journal, when `git config`, `git worktree repair` or `systemctl --user daemon-reload` fails.
 
@@ -82,7 +83,13 @@ EXIT_OK = 0
 EXIT_REFUSED_OR_FAILED = 1
 CHECK_EXAMPLES_SHOWN = 5
 REPAIR_STEP = "2a"
-STEPS = [1, 2, REPAIR_STEP, 3, 4, 5, 6, 7, 8, 9]
+OTHER_STATE_STEP = "6a"
+STEPS = [1, 2, REPAIR_STEP, 3, 4, 5, 6, OTHER_STATE_STEP, 7, 8, 9]
+SHARED_DATABASE_OLD_NAME = f"{OLD_TERM_PREFIX}shared-database"
+SHARED_DATABASE_NEW_NAME = f"{NEW_TERM_PREFIX}shared-database"
+SHARED_DATABASE_FILE_NAME = f"{SHARED_DATABASE_OLD_NAME}.sqlite3"
+SHARED_DATABASE_TOKEN_FILE_NAMES = (f"{SHARED_DATABASE_OLD_NAME}-service.token",
+                                    f"{SHARED_DATABASE_OLD_NAME}-service-accepted-tokens")
 ARGUMENTS = "arguments"
 PATH_FLAGS = ("--machine", "--home", "--claude-dir", "--claude-json", "--config-dir", "--projects-dir",
               "--log-store-parent", "--systemd-user-dir", "--launch-agents-dir", "--authorized-keys", "--journal")
@@ -170,6 +177,13 @@ class Layout:
         self.new_log_store = self.log_store_parent / f"{NEW_NAME}-logs"
         self.old_config = self.config_dir / OLD_NAME
         self.new_config = self.config_dir / NEW_NAME
+        self.old_state = home / ".local" / "state" / OLD_NAME
+        self.new_state = home / ".local" / "state" / NEW_NAME
+        self.old_share = home / ".local" / "share" / OLD_NAME
+        self.new_share = home / ".local" / "share" / NEW_NAME
+        self.cache_dir = home / ".cache"
+        self.old_backups = home / "backups" / SHARED_DATABASE_OLD_NAME
+        self.new_backups = home / "backups" / SHARED_DATABASE_NEW_NAME
 
     def moved_roots(self):
         """(old, new) of each directory this machine's run moves; none lies inside another."""
@@ -281,6 +295,42 @@ def project_key_ops(layout, log_store, worktrees):
             ops.append(rename_op(4, projects / key, projects / new_key))
         if (mirror / key).is_dir():
             ops.append(rename_op(4, mirror / key, mirror / new_key))
+    return ops
+
+
+def shared_database_file_ops(directory_now, directory_then, names):
+    """Rename each entry of directory_now that names() picks to its nn- name; directory_then is where the directory
+    is when the rename runs, after an earlier op of this run has renamed it."""
+    ops = []
+    if not directory_now.is_dir():
+        return ops
+    for entry in sorted(directory_now.iterdir()):
+        if names(entry.name):
+            new_name = SHARED_DATABASE_NEW_NAME + entry.name[len(SHARED_DATABASE_OLD_NAME):]
+            ops.append(rename_op(OTHER_STATE_STEP, directory_then / entry.name, directory_then / new_name,
+                                 exists_now=directory_now / new_name))
+    return ops
+
+
+def other_state_ops(layout):
+    """Step 6a: the state directories no other step renames, and the shared database's file, backups and tokens."""
+    ops = []
+    for old, new in ((layout.old_state, layout.new_state), (layout.old_share, layout.new_share)):
+        if is_real_directory(old):
+            ops.append(rename_op(OTHER_STATE_STEP, old, new))
+    if layout.cache_dir.is_dir():
+        for entry in sorted(layout.cache_dir.iterdir()):
+            if entry.name.startswith(OLD_NAME + "-") and is_real_directory(entry):
+                ops.append(rename_op(OTHER_STATE_STEP, entry, layout.cache_dir / (NEW_NAME + entry.name[len(OLD_NAME):])))
+    state_now = layout.old_state if is_real_directory(layout.old_state) else layout.new_state
+    ops += shared_database_file_ops(state_now, layout.new_state, lambda name: name.startswith(SHARED_DATABASE_FILE_NAME))
+    backups_now = layout.old_backups if is_real_directory(layout.old_backups) else layout.new_backups
+    if backups_now == layout.old_backups:
+        ops.append(rename_op(OTHER_STATE_STEP, layout.old_backups, layout.new_backups))
+    ops += shared_database_file_ops(backups_now, layout.new_backups,
+                                    lambda name: name.startswith(SHARED_DATABASE_OLD_NAME + "-"))
+    config_now = layout.old_config if is_real_directory(layout.old_config) else layout.new_config
+    ops += shared_database_file_ops(config_now, layout.new_config, lambda name: name in SHARED_DATABASE_TOKEN_FILE_NAMES)
     return ops
 
 
@@ -409,12 +459,14 @@ def plan(layout, stamp):
     ops += [relocated(layout, op) for op in log_store_ops]
     if is_real_directory(layout.old_config):
         ops.append(rename_op(6, layout.old_config, layout.new_config))
+    ops += other_state_ops(layout)
     ops += claude_json_ops(layout, stamp)
     ops += authorized_keys_ops(layout, stamp)
     ops += unit_entry_ops(layout)
-    renamed = {op["from"] for op in ops if op["kind"] == "rename" and op["step"] in (1, 2, 6)}
+    renamed = {op["from"] for op in ops if op["kind"] == "rename" and op["step"] in (1, 2, 6, OTHER_STATE_STEP)}
     for old, new in ((layout.old_checkout, layout.new_checkout), (layout.old_log_store, layout.new_log_store),
-                     (layout.old_config, layout.new_config)):
+                     (layout.old_config, layout.new_config), (layout.old_state, layout.new_state),
+                     (layout.old_share, layout.new_share)):
         if str(old) in renamed:
             ops.append({"kind": "symlink", "step": 9, "path": str(old), "target": new.name})
     return ops

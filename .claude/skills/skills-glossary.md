@@ -5,7 +5,6 @@ This page defines the system-terms of this project's skills: the terms they alon
 - **cold-read-cell** — one fresh-agent reviewing one cold-read-target under one reviewer prompt; a cold-read-full-run launches several of them.
 - **cold-read-fast-read** — one fast-clarify cold-read-cell on the fast cold-read-tier and, at the same time, one cold-read-cell that asks "What should be code", run by `nc-systems/cold-read/cold-read-fast-read.py`; it is either the whole review or the step before a cold-read-full-run.
 - **cold-read-full-run** — the /cold-read skill's run of cold-read-cells on the defect-hunt prompt and the terminology prompt, launched by `nc-systems/cold-read/cold-read-grid.py`, with one more cold-read-cell that answers Question 4, What should be code.
-- **cold-read-record** — the directory holding the reports of one cold-read-full-run or cold-read-fast-read, a copy of its cold-read-target taken at launch, and, once its findings are triaged, `cold-read-triage.md`; shipped to the log-store.
 - **cold-read-reviewer-test-case** — a document's first version, its corrected version, and the weighted list of the defects between them, kept frozen in `cold-read-reviewer-test-cases/` to score cold-read-cells.
 - **cold-read-target** — the document under review; a run that makes a cold-read-record copies it there at launch.
 - **cold-read-tier** — the label, `deep`, `second-strongest-model` or `fast`, that sets which model a cold-read-cell asks its agent-binary for, and at what reasoning effort.
@@ -15,4 +14,3 @@ This page defines the system-terms of this project's skills: the terms they alon
 - **sanity-check-record** — the directory one /sanity-check run leaves behind, holding its reports; kept as a log.
 - **sanity-check-request** — the file the requesting agent writes for the fresh-eyes-adversarial-prompt: a problem statement plus off-limits and read-first lists.
 - **walk-document** — the file `docs/walk/<name>.md`, the text of an approval-walk as presented to the user.
-- **walk-minutes** — the document the /walk-me-through skill uses to record the outcome of each item of an approval-walk.

@@ -20,7 +20,7 @@ WHAT MAKES A TASK DUE. One optional key in a task's `metadata`:
 
   prerequisites  a non-empty list of conditions, each {"pr_merged": <number>}
                  or {"issue_closed": <number>} on the repository
-                 nedschorus/nedschorus, or
+                 nedsnodes/nedsnodes, or
                  {"approval_walk_item_decided": {"approval_walk_minutes_file_path":
                  <absolute path of a docs/walk/<name>-minutes.md file>,
                  "approval_walk_item_heading":
@@ -236,7 +236,7 @@ STATE_DIRECTORY_UNDER_HOME = (Path(".local") / "state" / "claude"
 OPEN_TASK_STATUSES = ("pending", "in_progress")
 COMPLETED_TASK_STATUS = "completed"
 
-GITHUB_REPOSITORY = "nedschorus/nedschorus"
+GITHUB_REPOSITORY = "nedsnodes/nedsnodes"
 CONDITION_RECHECK_INTERVAL_SECONDS = 300
 GH_CALL_TIMEOUT_SECONDS = 8
 GH_CALLS_TOTAL_BUDGET_SECONDS = 20

@@ -160,7 +160,7 @@ ACCOUNT_NOTICE_TEXT = (
     "under the earlier account, such as an approval-walk item page, may not open for the user; "
     "GitHub issue [A read-only web server on ned-box renders Markdown files as web pages on the "
     "LAN, for approval-walk item pages and other pages agents publish to claude.ai that only show "
-    "text](https://github.com/nedschorus/nedschorus/issues/2175) covers serving such pages from "
+    "text](https://github.com/nedsnodes/nedsnodes/issues/2175) covers serving such pages from "
     "ned-box.")
 UNBACKED_SENTENCE_LINES = {
     fields.ANNOUNCED_ACTION: ("You said \"{sentence}\" {minutes} minutes ago and have not done it. "
