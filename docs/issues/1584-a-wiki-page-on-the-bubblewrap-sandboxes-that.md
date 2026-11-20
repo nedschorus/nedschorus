@@ -6,7 +6,7 @@ issue: "[A wiki page on the bubblewrap sandboxes that ned-box's programs run age
 
 ## Why
 
-Several programs on ned-box start a bubblewrap sandbox (`bwrap`): the test runner `scripts/run-all-test-suites.py` runs each test suite in one, the cold-read grid's agy cell, `nc-systems/cold-read/cold-read-agy-cell.py`, runs in one, and the benchmark pilot of GHI [A pilot of three past bug fixes, redone by agents on the code as it stood before each fix, to learn whether a benchmark of agent-instructions and hooks can be built from the project's history](https://github.com/nedschorus/nedschorus/issues/1505) runs `claude -p` in one. What each program learned about running inside a sandbox sits today in code comments, in GHI-MDs and in log-store notes, so an agent that writes the next program that starts a sandbox, or runs one program inside another's sandbox, has no one page to read and repeats the same trials.
+Several programs on ned-box start a bubblewrap sandbox (`bwrap`): the test runner `scripts/run-all-test-suites.py` runs each test suite in one, the cold-read grid's agy cell, `nn-systems/cold-read/cold-read-agy-cell.py`, runs in one, and the benchmark pilot of GHI [A pilot of three past bug fixes, redone by agents on the code as it stood before each fix, to learn whether a benchmark of agent-instructions and hooks can be built from the project's history](https://github.com/nedschorus/nedschorus/issues/1505) runs `claude -p` in one. What each program learned about running inside a sandbox sits today in code comments, in GHI-MDs and in log-store notes, so an agent that writes the next program that starts a sandbox, or runs one program inside another's sandbox, has no one page to read and repeats the same trials.
 
 ## What the page says
 
@@ -21,7 +21,7 @@ The page separates what was observed running, with the date and the command, fro
 
 ## Where the page goes
 
-`docs/nedschorus-wiki/nedschorus-bubblewrap-sandboxes-on-ned-box.md` (no file on main has a similar name), checked again by `docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md` when the page is written, with a /cold-read before it lands, as every wiki page gets.
+`docs/nedsnodes-wiki/nedsnodes-bubblewrap-sandboxes-on-ned-box.md` (no file on main has a similar name), checked again by `docs/nedsnodes-wiki/nedsnodes-how-to-choose-a-name-for-files-code-and-glossary-terms.md` when the page is written, with a /cold-read before it lands, as every wiki page gets.
 
 ## Next action
 
@@ -30,5 +30,5 @@ prime-intellect, which runs the pilot, writes the page after GHI 1505's sandbox 
 ## Prior work
 
 - GHI [Each test suite on ned-box runs in its own throwaway test environment, and suites start by free CPU and memory instead of waiting for a machine-wide lock](https://github.com/nedschorus/nedschorus/issues/1374) builds the test runner's sandbox; read it for facts.
-- The nesting probe of 2026-10-10: `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/prime-intellect/benchmark-sandbox-nesting-probe-2026-10-10.md`.
+- The nesting probe of 2026-10-10: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/prime-intellect/benchmark-sandbox-nesting-probe-2026-10-10.md`.
 - GHI [run-agent: one CLI to invoke a Claude or Codex agent headlessly from any caller (Python, shell, either runtime)](https://github.com/nedschorus/nedschorus/issues/41) will start agents too, and will need the page's facts on sandbox nesting.

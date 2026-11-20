@@ -8,7 +8,7 @@ issue: "[A post-checkout git hook in `scripts/git-client-side-hooks/` writes the
 
 `scripts/clean-worktrees.py` removes a worktree only when the worktree holds an owner file, `worktree-owner.json` in the worktree's own git directory, which says which agent-seat or agent-session owns it; a worktree with no owner file is kept forever. The owner file is written only when the program or agent that makes the worktree remembers to run `scripts/worktree-owner-file-read-and-write.py write`, or, for a subagent's worktree, by `scripts/uncommitted-work-snapshot-hook.py` after the subagent's first Edit, Write, NotebookEdit or Bash call there, so a subagent that makes none of those calls leaves its worktree with none (the docstring of `scripts/worktree-owner-file-read-and-write.py`, on main at 78716fd58).
 
-On ned-box on 2026-11-03, `python3 scripts/clean-worktrees.py`, run without `--remove` in the reference-checkout `~/Projects/nedschorus` at 78716fd58, reported 487 worktrees kept, 468 of them because they have no owner file.
+On ned-box on 2026-11-03, `python3 scripts/clean-worktrees.py`, run without `--remove` in the reference-checkout `~/Projects/nedsnodes` at 78716fd58, reported 487 worktrees kept, 468 of them because they have no owner file.
 
 ## Why it matters
 
@@ -44,4 +44,4 @@ Known gap, from the docstring: the hook does not recognise a new agent-seat's ag
 
 ## Where this came from
 
-Item 6 of Question 4, "What should be code", in the cold-read-fast-read of the handoff-system's nc-architecture-overview draft on 2026-11-03: `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/nedschorus-handoff-architecture-overview-draft-2026-11-03/cold-read-fast-read.md`. Checked against main at 78716fd58 on 2026-11-03: `scripts/git-client-side-hooks/` holds `post-merge`, `pre-commit`, `pre-merge-commit`, `pre-push` and `prepare-commit-msg`, and no `post-checkout`. ghi-guide-agent, asked with `--include-closed`, named no issue that covers it.
+Item 6 of Question 4, "What should be code", in the cold-read-fast-read of the handoff-system's nc-architecture-overview draft on 2026-11-03: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/nedsnodes-handoff-architecture-overview-draft-2026-11-03/cold-read-fast-read.md`. Checked against main at 78716fd58 on 2026-11-03: `scripts/git-client-side-hooks/` holds `post-merge`, `pre-commit`, `pre-merge-commit`, `pre-push` and `prepare-commit-msg`, and no `post-checkout`. ghi-guide-agent, asked with `--include-closed`, named no issue that covers it.

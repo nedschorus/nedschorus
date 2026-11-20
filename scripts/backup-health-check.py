@@ -42,11 +42,11 @@ import sys
 import time
 from pathlib import Path
 
-BACKUP_MOUNT = Path(os.environ.get("NEDSCHORUS_BACKUP_MOUNT", "/mnt/backup"))
+BACKUP_MOUNT = Path(os.environ.get("NEDSNODES_BACKUP_MOUNT", "/mnt/backup"))
 TIMESHIFT_LOG_DIRECTORY = Path(
-    os.environ.get("NEDSCHORUS_TIMESHIFT_LOG_DIRECTORY", "/var/log/timeshift"))
+    os.environ.get("NEDSNODES_TIMESHIFT_LOG_DIRECTORY", "/var/log/timeshift"))
 TIMESHIFT_SNAPSHOT_DIRECTORY = Path(
-    os.environ.get("NEDSCHORUS_TIMESHIFT_SNAPSHOT_DIRECTORY",
+    os.environ.get("NEDSNODES_TIMESHIFT_SNAPSHOT_DIRECTORY",
                    "/mnt/backup/timeshift/snapshots"))
 
 # /etc/cron.d/timeshift-hourly runs Timeshift hourly; this limit lets four runs in a row go missing.
@@ -117,7 +117,7 @@ def newest_scheduled_snapshot_age(snapshot_directory: Path):
 def diagnose():
     """Return (headline, detail lines), with headline None when healthy."""
     # Timeshift runs only on ned-box; the environment override permits simulated layouts elsewhere.
-    if sys.platform != "linux" and "NEDSCHORUS_BACKUP_MOUNT" not in os.environ:
+    if sys.platform != "linux" and "NEDSNODES_BACKUP_MOUNT" not in os.environ:
         return None, []
 
     detail = []

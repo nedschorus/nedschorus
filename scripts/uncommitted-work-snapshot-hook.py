@@ -4,7 +4,7 @@
 Runs after every Edit, Write, NotebookEdit and Bash call. For each worktree
 the call may have changed, it writes or replaces the calling `claude`
 process's work-snapshot when something is uncommitted, and deletes it when
-nothing is, through nc-systems/handoff/uncommitted-work-snapshots.py. It
+nothing is, through nn-systems/handoff/uncommitted-work-snapshots.py. It
 never changes a worktree's files, index or branch.
 
 Which worktrees: after Edit, Write and NotebookEdit, the one holding the
@@ -27,7 +27,7 @@ the agent is told through additionalContext that the worktree's uncommitted
 work is not protected; the hook always exits 0, since the tool call has
 already happened.
 
-Design: nc-systems/handoff/handoff-uncommitted-work-snapshots-across-crashes-design.md.
+Design: nn-systems/handoff/handoff-uncommitted-work-snapshots-across-crashes-design.md.
 """
 
 import importlib.util
@@ -37,7 +37,7 @@ import sys
 from pathlib import Path
 
 CLONE_ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = CLONE_ROOT / "nc-systems" / "handoff" / "uncommitted-work-snapshots.py"
+MODULE_PATH = CLONE_ROOT / "nn-systems" / "handoff" / "uncommitted-work-snapshots.py"
 OWNER_FILE_MODULE_PATH = CLONE_ROOT / "scripts" / "worktree-owner-file-read-and-write.py"
 
 FILE_EDITING_TOOLS = ("Edit", "Write", "NotebookEdit")

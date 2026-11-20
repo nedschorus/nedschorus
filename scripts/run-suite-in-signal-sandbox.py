@@ -555,7 +555,7 @@ def run(arguments, platform):
         if psutil is None:
             raise NotRun(f"{sys.executable} cannot import psutil, which reads the machine's "
                          f"CPU use and memory before the suite starts; install the pinned "
-                         f"libraries with `python3 nc-systems/general-tools/"
+                         f"libraries with `python3 nn-systems/general-tools/"
                          f"python-libraries-pinned-requirements-check-and-install.py`, "
                          f"then run this again")
     else:

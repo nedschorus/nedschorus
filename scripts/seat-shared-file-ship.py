@@ -10,7 +10,7 @@ the way such a file gets into a directory both machines can reach.
 WHERE IT GOES. `seats/<seat>/<name>` under the log-store, alongside the kinds
 that are organized by kind:
 
-    nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/<seat>/<name>
+    nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/<seat>/<name>
 
 `seats/` is the one kind organized by PRODUCER rather than by kind, because
 what it holds has nothing else in common: it is whatever one seat needed to
@@ -28,7 +28,7 @@ was false sent a search after a snapshot that never existed. The printed line
 says only where to look and how to list what exists.
 
 THE STORE'S RULES HOLD HERE, WITH ONE DIFFERENCE INSIDE `seats/`. FAIL
-LOUDLY is the record shipper's (nc-systems/cold-read/cold-read-record-ship.py) and is
+LOUDLY is the record shipper's (nn-systems/cold-read/cold-read-record-ship.py) and is
 kept: an unreachable ned-box prints a line opening FAILED and exits non-zero
 with the file still on disk for a later run; a FAILED line for a shipment that
 stops after its copy has begun ends with the command that reruns it. Every
@@ -101,7 +101,7 @@ USAGE
   scripts/seat-shared-file-ship.py --as survey-notes.md /tmp/out.md
 
 THE SEAT NAME comes from `--seat`, else from CLAUDE_CODE_TASK_LIST_ID, which
-the supervisor sets to `nedschorus-<seat name>-tasks` in every seat's
+the supervisor sets to `nedsnodes-<seat name>-tasks` in every seat's
 environment. With neither, the program refuses rather than guessing: a
 directory named for the wrong seat is worse than an error, because the file
 is then filed where nobody will look for it.
@@ -136,13 +136,13 @@ PROGRAM = "seat-shared-file-ship"
 # cannot drift on what the store is, how ssh and rsync are invoked, or how an
 # scp-form destination is split. importlib, because the filename has hyphens.
 _shipper_spec = importlib.util.spec_from_file_location(
-    "cold_read_record_ship", REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-record-ship.py")
+    "cold_read_record_ship", REPO_ROOT / "nn-systems" / "cold-read" / "cold-read-record-ship.py")
 shipper = importlib.util.module_from_spec(_shipper_spec)
 _shipper_spec.loader.exec_module(shipper)
 
 SEATS_KIND_DIRECTORY = "seats"
 SEAT_NAME_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_TASK_LIST_ID"
-SEAT_NAME_PREFIX = "nedschorus-"
+SEAT_NAME_PREFIX = "nedsnodes-"
 SEAT_NAME_SUFFIX = "-tasks"
 
 EXIT_SHIPPED = shipper.EXIT_SHIPPED
@@ -154,7 +154,7 @@ EXIT_BAD_INVOCATION = shipper.EXIT_BAD_INVOCATION
 def seat_name_from_environment():
     """The seat's name from the task-list id the supervisor sets, or None.
 
-    `nedschorus-cold-read-research-tasks` -> `cold-read-research`. Anything
+    `nedsnodes-cold-read-research-tasks` -> `cold-read-research`. Anything
     not of that shape returns None rather than a guess.
     """
     value = os.environ.get(SEAT_NAME_ENVIRONMENT_VARIABLE, "").strip()
@@ -217,7 +217,7 @@ def ensure_seat_directory(destination: SeatsStoreDestination, seat: str):
     BOTH THE DIRECTORY AND THE README ARE THE RECORD SHIPPER'S RULES, called
     here rather than restated: `refresh_store_readme` locally and
     `make_directory_and_refresh_readme_script` over ssh, so this program and
-    nc-systems/cold-read/cold-read-record-ship.py cannot disagree about when the README is
+    nn-systems/cold-read/cold-read-record-ship.py cannot disagree about when the README is
     rewritten. One ssh round trip remotely.
 
     This program appends nothing to the README: the `seats/` line is in

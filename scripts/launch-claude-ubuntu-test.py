@@ -23,7 +23,7 @@ Run it from a checkout, on ned-box, where P1 is parsed by the real /bin/sh
 (dash) rather than by macOS sh standing in for it:
   python3 scripts/launch-claude-ubuntu-test.py
 The GitHub token cases run the real handoff-supervisor from the checkout's
-nc-systems/, and it loads modules from the checkout's scripts/, so the suite
+nn-systems/, and it loads modules from the checkout's scripts/, so the suite
 does not run from a copy of a few files.
 """
 
@@ -102,9 +102,9 @@ class LaunchHarness:
         self.stubs = root / "stubs"
         self.stubs.mkdir()
         # The box-side update runs the update-lock helper from the box's
-        # checkout, $HOME/Projects/nedschorus/scripts, so the helper under
+        # checkout, $HOME/Projects/nedsnodes/scripts, so the helper under
         # test is copied to that path in the sandbox HOME.
-        checkout_scripts = self.home / "Projects" / "nedschorus" / "scripts"
+        checkout_scripts = self.home / "Projects" / "nedsnodes" / "scripts"
         checkout_scripts.mkdir(parents=True)
         shutil.copy(UPDATE_LOCK_HELPER, checkout_scripts / UPDATE_LOCK_HELPER_NAME)
         write_stub(self.stubs, "ssh",
@@ -306,9 +306,9 @@ class LaunchHarness:
         the real supervisor, linked into the sandbox HOME's checkout path, so
         the case measures the refusal the supervisor itself prints.
         token_file_accounts names the accounts given a token file."""
-        (self.home / "Projects" / "nedschorus" / "nc-systems").symlink_to(
-            LAUNCHER.resolve().parent.parent / "nc-systems")
-        token_directory = self.home / ".config" / "nedschorus"
+        (self.home / "Projects" / "nedsnodes" / "nn-systems").symlink_to(
+            LAUNCHER.resolve().parent.parent / "nn-systems")
+        token_directory = self.home / ".config" / "nedsnodes"
         for account in token_file_accounts:
             token_directory.mkdir(parents=True, exist_ok=True)
             (token_directory / f"{account}.token").write_text(
@@ -327,7 +327,7 @@ class LaunchHarness:
         """Launcher -> captured remote string -> P1 replay (-> P2 inside the
         tmux stub). Returns a dict of everything observable.
 
-        mac_environment_agents_root sets NEDSCHORUS_AGENTS_ROOT in the
+        mac_environment_agents_root sets NEDSNODES_AGENTS_ROOT in the
         launcher's own (Mac-side) environment, the way a Mac seat inherits
         it, so a case can show the launcher ignores it.
 
@@ -339,18 +339,18 @@ class LaunchHarness:
             leftover.unlink()
         environment = {key: value for key, value in os.environ.items()
                        if key != "TERM_PROGRAM"
-                       and not key.startswith(("NEDSCHORUS_", "LAUNCH_CLAUDE_"))}
+                       and not key.startswith(("NEDSNODES_", "LAUNCH_CLAUDE_"))}
         if term_program is not None:
             environment["TERM_PROGRAM"] = term_program
         environment["PATH"] = f"{self.stubs}:{environment.get('PATH', '')}"
         environment["LCU_TEST_DIR"] = str(self.captures)
-        environment["NEDSCHORUS_AGENT_BOX"] = "stub-box"
+        environment["NEDSNODES_AGENT_BOX"] = "stub-box"
         if mac_environment_agents_root is not None:
-            environment["NEDSCHORUS_AGENTS_ROOT"] = mac_environment_agents_root
+            environment["NEDSNODES_AGENTS_ROOT"] = mac_environment_agents_root
         if extra_arguments is not None:
             environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = extra_arguments
         if seat_github_account is not None:
-            environment["NEDSCHORUS_SEAT_GITHUB_ACCOUNT"] = seat_github_account
+            environment["NEDSNODES_SEAT_GITHUB_ACCOUNT"] = seat_github_account
         if stdout_on_terminal:
             launched = run_with_stdout_on_terminal(
                 [str(LAUNCHER), *launcher_arguments], str(self.workdir),
@@ -540,8 +540,8 @@ def main() -> int:
         check("default root: the supervisor script rides the box's own $HOME",
               result["supervisor_argv"]
               and result["supervisor_argv"][0]
-              == (f"{harness.home}/Projects/nedschorus"
-                  "/nc-systems/handoff/handoff-supervisor.py"),
+              == (f"{harness.home}/Projects/nedsnodes"
+                  "/nn-systems/handoff/handoff-supervisor.py"),
               result["supervisor_argv"])
         check("default root: the seat directory was created at P1",
               (harness.home / "agents" / "seat-a").is_dir(),
@@ -567,7 +567,7 @@ def main() -> int:
 
         # --- 1c. the launcher reads NO agents root (user-ruled 2026-09-22,
         # merge-lane-2's walk; the launcher's NO AGENTS ROOT note has the
-        # why). NEDSCHORUS_AGENTS_ROOT names a path on the machine that reads
+        # why). NEDSNODES_AGENTS_ROOT names a path on the machine that reads
         # it, and every Mac seat inherits the Mac's own value, exported by
         # recover-crashed-seats.py. Whatever it holds, the box seat lands in
         # the box's ~/agents/<name>, and the value never reaches the box.
@@ -686,9 +686,9 @@ def main() -> int:
         # — so a leak would have to come through the composed string itself.)
         harness = LaunchHarness(root / "task-list-detached")
         result = harness.run(["seat-h", "--no-attach"])
-        check("task list: the pin reaches the supervisor as nedschorus-<seat>-tasks",
+        check("task list: the pin reaches the supervisor as nedsnodes-<seat>-tasks",
               result["supervisor_environment"].get("CLAUDE_CODE_TASK_LIST_ID")
-              == "nedschorus-seat-h-tasks",
+              == "nedsnodes-seat-h-tasks",
               result["supervisor_environment"])
         check("task list: the task tools are enabled for the supervisor",
               result["supervisor_environment"].get(
@@ -704,7 +704,7 @@ def main() -> int:
                                                  encoding="utf-8")
         result = harness.run(["seat-h", "--no-attach"])
         prefixed_store = (harness.home / ".claude" / "tasks"
-                          / "nedschorus-seat-h-tasks")
+                          / "nedsnodes-seat-h-tasks")
         check("migration: the unprefixed store is renamed to the prefixed id",
               not unprefixed_store.exists()
               and (prefixed_store / "1.json").is_file(),
@@ -716,7 +716,7 @@ def main() -> int:
         (unprefixed_store / "1.json").write_text("unprefixed",
                                                  encoding="utf-8")
         prefixed_store = (harness.home / ".claude" / "tasks"
-                          / "nedschorus-seat-h-tasks")
+                          / "nedsnodes-seat-h-tasks")
         prefixed_store.mkdir(parents=True)
         (prefixed_store / "2.json").write_text("prefixed", encoding="utf-8")
         result = harness.run(["seat-h", "--no-attach"])
@@ -731,7 +731,7 @@ def main() -> int:
         result = harness.run(["seat-i", "--no-attach"])
         check("task list: a second seat name yields a DIFFERENT list id",
               result["supervisor_environment"].get("CLAUDE_CODE_TASK_LIST_ID")
-              == "nedschorus-seat-i-tasks",
+              == "nedsnodes-seat-i-tasks",
               result["supervisor_environment"])
 
         # --- the seat's git identity, box-side (user-approved 2026-09-22):
@@ -792,15 +792,15 @@ def main() -> int:
         # TaskList returns empty with no error.
         harness = LaunchHarness(root / "task-list-attached")
         result = harness.run(["seat-j"])
-        check("task list (attached): the supervisor gets nedschorus-<seat>-tasks",
+        check("task list (attached): the supervisor gets nedsnodes-<seat>-tasks",
               result["supervisor_environment"].get("CLAUDE_CODE_TASK_LIST_ID")
-              == "nedschorus-seat-j-tasks"
+              == "nedsnodes-seat-j-tasks"
               and result["supervisor_environment"].get(
                   "CLAUDE_CODE_ENABLE_TODO_TOOLS") == "1",
               result["supervisor_environment"])
         check("task list (attached): the after-exit shell keeps the binding",
               result["after_exit_environment"].get("CLAUDE_CODE_TASK_LIST_ID")
-              == "nedschorus-seat-j-tasks"
+              == "nedsnodes-seat-j-tasks"
               and result["after_exit_environment"].get(
                   "CLAUDE_CODE_ENABLE_TODO_TOOLS") == "1",
               result["after_exit_environment"])
@@ -924,7 +924,7 @@ def main() -> int:
               result["replay"].returncode == 0
               and "handoff-supervisor.py" in " ".join(result["supervisor_argv"])
               and "GH_TOKEN" not in result["remote"]
-              and ".config/nedschorus" not in result["remote"],
+              and ".config/nedsnodes" not in result["remote"],
               (result["replay"].returncode, result["remote"][:400]))
 
         # --- 13. the account override is refused, not ignored: the
@@ -935,7 +935,7 @@ def main() -> int:
                              seat_github_account="ned-review-merge")
         check("account override: refused with exit 2, naming the variable and the table",
               result["launched"].returncode == 2
-              and "NEDSCHORUS_SEAT_GITHUB_ACCOUNT" in result["launched"].stderr
+              and "NEDSNODES_SEAT_GITHUB_ACCOUNT" in result["launched"].stderr
               and "AGENT_SEAT_GITHUB_ACCOUNTS_OTHER_THAN_THE_MACHINE_DEFAULT"
               in result["launched"].stderr,
               (result["launched"].returncode,
