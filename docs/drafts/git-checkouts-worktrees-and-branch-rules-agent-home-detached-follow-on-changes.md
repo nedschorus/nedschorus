@@ -5,8 +5,8 @@ Swept from origin/main at e2cf5ea2 on 2026-10-09 by an Explore subagent, at the 
 ## Code
 
 - `scripts/launch-claude-mac:316-327` and `scripts/launch-claude-ubuntu:373-386`: `worktree add <home> -b <seat> origin/main`, with a fallback that reuses an existing branch; becomes `worktree add --detach <home> origin/main`, the fallback and its comment go.
-- `nc-systems/handoff/handoff-supervisor.py:785-846` `sync_working_branch_with_main` (callers 19, 724, 1623-1624): already handles detached; rename for what it syncs, drop the branch path, reword its `branch sync:` reports.
-- `nc-systems/handoff/handoff-supervisor.py:201-210` `BRANCH_STATE_INSTRUCTION`: assumes the home is on a branch; say to start each topic in a new worktree.
+- `nn-systems/handoff/handoff-supervisor.py:785-846` `sync_working_branch_with_main` (callers 19, 724, 1623-1624): already handles detached; rename for what it syncs, drop the branch path, reword its `branch sync:` reports.
+- `nn-systems/handoff/handoff-supervisor.py:201-210` `BRANCH_STATE_INSTRUCTION`: assumes the home is on a branch; say to start each topic in a new worktree.
 - `.claude/hooks/session-location-write-guard.py:27-41`: the detached refusal tells the agent `git switch -c` in place; in an agent-home, tell it to make a topic worktree.
 - `scripts/obsolete-file-edit-warning-hook.py:120, 127-130`: `git checkout -b <name> origin/main` and `git switch -c` advice; point to a topic worktree.
 - `scripts/checkout-freshness-catch-up.py:6, 168, 205-209`: docstring names a seat branch; "Start your next topic with `git checkout -b`"; "run `git switch -c`" for work of its own; point to a topic worktree.
@@ -18,12 +18,12 @@ Swept from origin/main at e2cf5ea2 on 2026-10-09 by an Explore subagent, at the 
 - `.claude/hooks/session-location-write-guard-test.py:85-87, 100`
 - `scripts/obsolete-file-edit-warning-hook-test.py:337, 345, 565`
 - `scripts/checkout-freshness-catch-up-test.py:7-8, 367, 518`
-- `nc-systems/handoff/tests/handoff-supervisor-successor-prompt-test.py:563, 611, 625, 845-1007, 1186-1189, 2585`
-- `nc-systems/handoff/tests/handoff-supervisor-session-end-and-resume-test.py` (the rename, ten places)
-- `nc-systems/handoff/tests/uncommitted-work-snapshots-test.py:879`
+- `nn-systems/handoff/tests/handoff-supervisor-successor-prompt-test.py:563, 611, 625, 845-1007, 1186-1189, 2585`
+- `nn-systems/handoff/tests/handoff-supervisor-session-end-and-resume-test.py` (the rename, ten places)
+- `nn-systems/handoff/tests/uncommitted-work-snapshots-test.py:879`
 - `scripts/recover-crashed-seats-test.py:396-410, 1235-1249, 1322-1337`
 - `scripts/ghi-info-ask-test.py:789-801, 815`
-- `nc-systems/cold-read/tests/cold-read-fast-read-test.py:899` (fixture branch name only)
+- `nn-systems/cold-read/tests/cold-read-fast-read-test.py:899` (fixture branch name only)
 
 ## Agent instructions
 
@@ -33,13 +33,13 @@ Swept from origin/main at e2cf5ea2 on 2026-10-09 by an Explore subagent, at the 
 
 ## Documents
 
-- `docs/nedschorus-wiki/nedschorus-glossary.md:19, 21, 61, 63`: agent-home, agent-seat, retire-seat, seat-branch (remove or retire the entry).
-- `docs/nedschorus-wiki/nedschorus-sdlc-terms.md:8`: topic branch "Not a seat-branch".
-- `docs/nedschorus-wiki/nedschorus-style-guide.md:15`: `seat-branch` in the `seat` row.
-- `docs/nedschorus-wiki/nedschorus-agent-seat-model.md:18, 32, 38, 67, 69-71`
-- `docs/nedschorus-wiki/nedschorus-fleet-machine-paths-and-checkouts.md:23, 24, 33, 49, 77`
-- `docs/nedschorus-wiki/nedschorus-fleet-git-worktree-working-model.md:64, 205-213, 350-351, 551`
-- `docs/nedschorus-wiki/nedschorus-handoff-architecture-overview.md:27`: the launcher "creates a Mac agent-seat's agent-home and seat-branch"; it creates the agent-home only, detached at main.
+- `docs/nedsnodes-wiki/nedsnodes-glossary.md:19, 21, 61, 63`: agent-home, agent-seat, retire-seat, seat-branch (remove or retire the entry).
+- `docs/nedsnodes-wiki/nedsnodes-sdlc-terms.md:8`: topic branch "Not a seat-branch".
+- `docs/nedsnodes-wiki/nedsnodes-style-guide.md:15`: `seat-branch` in the `seat` row.
+- `docs/nedsnodes-wiki/nedsnodes-agent-seat-model.md:18, 32, 38, 67, 69-71`
+- `docs/nedsnodes-wiki/nedsnodes-fleet-machine-paths-and-checkouts.md:23, 24, 33, 49, 77`
+- `docs/nedsnodes-wiki/nedsnodes-fleet-git-worktree-working-model.md:64, 205-213, 350-351, 551`
+- `docs/nedsnodes-wiki/nedsnodes-handoff-architecture-overview.md:27`: the launcher "creates a Mac agent-seat's agent-home and seat-branch"; it creates the agent-home only, detached at main.
 - `docs/founding/choirmaster-founding-handoff.md:7`: historical; update or mark superseded.
 
 ## GHI-MDs
