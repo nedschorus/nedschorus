@@ -3,7 +3,7 @@
 is caused here at least once.
 
 Every case writes its design and its repository files under a temporary directory.
-Run: python3 nc-systems/skills/tool-design-write/tests/tool-design-write-design-document-next-step-print-test.py
+Run: python3 nn-systems/skills/tool-design-write/tests/tool-design-write-design-document-next-step-print-test.py
 Prints one line per case and exits 0 if every case passes, 1 if one fails."""
 
 import contextlib

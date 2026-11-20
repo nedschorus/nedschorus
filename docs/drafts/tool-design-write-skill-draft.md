@@ -5,7 +5,7 @@ description: Use when you are about to write or revise the design of an in-house
 
 # tool-design-write
 
-A design says what will be built, why, and how, before code is written. This skill changes no code: what it produces is the design's own Markdown file, named and placed as the Design document entry of `docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md` says, and, when it is a GHI-MD, written as the ghi-write skill says. Questions the user asked of past designs, again and again, are listed with citations in `docs/issues/17-code-design-questions-the-user-asked-of-past-designs.md`; a design answers each one that applies to it before the user has to ask.
+A design says what will be built, why, and how, before code is written. This skill changes no code: what it produces is the design's own Markdown file, named and placed as the Design document entry of `docs/nedsnodes-wiki/nedsnodes-file-naming-and-location-standards.md` says, and, when it is a GHI-MD, written as the ghi-write skill says. Questions the user asked of past designs, again and again, are listed with citations in `docs/issues/17-code-design-questions-the-user-asked-of-past-designs.md`; a design answers each one that applies to it before the user has to ask.
 
 ## Two working rules
 
@@ -14,7 +14,7 @@ A design says what will be built, why, and how, before code is written. This ski
 
 ## The order of the work
 
-Run `python3 nc-systems/skills/tool-design-write/tool-design-write-design-document-next-step-print.py <design path>`, do the step it prints, and run it again after each step and after any change to the design, until it exits 0; then do what its last output says. It decides each step from the design file and the form check, so it knows which steps are done.
+Run `python3 nn-systems/skills/tool-design-write/tool-design-write-design-document-next-step-print.py <design path>`, do the step it prints, and run it again after each step and after any change to the design, until it exits 0; then do what its last output says. It decides each step from the design file and the form check, so it knows which steps are done.
 
 ## How to write the design
 
@@ -22,17 +22,17 @@ Read the code before you design. Find the programs, helpers and conventions the 
 
 Recommend one design. When the evidence does not support one, say so instead, with one of these honest exits and what would settle it: `needs-feasibility-evidence`, a prototype or measurement must come first; `needs-human-decision`, the choice is the user's; `postponed`; `rejected`; or `unknown`. A design that takes an honest exit needs only the sections Problem, What exists today and Deferred-decisions, and a section **Honest exit** that names the exit in backticks and what would settle it.
 
-Give the design these sections, as headings at any level from `##` down. `nc-systems/skills/tool-design-write/tool-design-write-required-sections-judgment-steps-and-named-files-exist-check.py` holds the list of required headings, and `--help` prints it.
+Give the design these sections, as headings at any level from `##` down. `nn-systems/skills/tool-design-write/tool-design-write-required-sections-judgment-steps-and-named-files-exist-check.py` holds the list of required headings, and `--help` prints it.
 
 - **Problem**: what is wrong or missing, who meets it, and the evidence from real cases that it needs building; a guard, validation, retry or workaround cites the failure it answers, as CLAUDE.md requires.
 - **Goals and non-goals**: what the tool must do, and what it could reasonably do but will not.
 - **What exists today**: the code, tools and records the design builds on or replaces, cited by path and line.
 - **The design**: each component, the one agent-seat, program or person that owns it, the data it reads and writes and where each record is kept, the flow from the tool's entry point to its outputs, and what the user sees and where.
 - **The judgment steps**: a list item for each step a model must do because it needs judgment, saying which model or agent does it and how the quality of its judgments is tested on real cases. Every other step is code, as CLAUDE.md's code-prompt-code rule says. When every step is code, the section's one item is "None: every step is code".
-- **Failure behaviour**: what the tool does when each step, input, dependency or machine fails, stops partway or is run twice, what it prints, its exit code by `docs/nedschorus-wiki/nedschorus-how-a-program-reports-success-failure-and-findings-with-its-exit-code.md`, and who is told.
+- **Failure behaviour**: what the tool does when each step, input, dependency or machine fails, stops partway or is run twice, what it prints, its exit code by `docs/nedsnodes-wiki/nedsnodes-how-a-program-reports-success-failure-and-findings-with-its-exit-code.md`, and who is told.
 - **Alternatives considered**: the smaller design, doing nothing, the version that does in code each step this design leaves to a model, and each other reasonable design, each with why it was not chosen.
 - **Tests**: how each part is tested, and the command and output that show the built tool works.
-- **Files**: a list item for each file the build creates or changes, in the order the build makes them, each starting with the file's repository path in backticks; an item for a file the build creates carries `#file_not_yet_existing_that_this_design_creates`. Choose each new name by `docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md`.
+- **Files**: a list item for each file the build creates or changes, in the order the build makes them, each starting with the file's repository path in backticks; an item for a file the build creates carries `#file_not_yet_existing_that_this_design_creates`. Choose each new name by `docs/nedsnodes-wiki/nedsnodes-how-to-choose-a-name-for-files-code-and-glossary-terms.md`.
 - **Deferred-decisions**: as the project glossary defines the section.
 
 ## Asking the user
