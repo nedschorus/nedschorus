@@ -938,3 +938,13 @@ The claim check's evidence:
 > - `nn-systems/handoff/handoff-supervisor.py:2443-2445`: "which it can be even after a failed push, so a leftovers branch the program could not push stays only in that checkout".
 > - Ranked fix-later: the program's own failure message names any unpushed branch, so no agent would open the wrong file or lose work by relying on the overview's wording.
 State: open
+
+## E80 — possible problem: an assertion of the overview is contradicted
+
+Claim: The reference-checkout leftovers-saving back-on-main program "saves the checkout's leftovers ... to a branch it pushes, and only then puts the checkout back on main".
+Found by: the overview claim check of 2026-11-20 against commit b514ec8e38942e3ac569f16e463c20b8f3f58325; its report is /home/nedlern/nedsnodes-logs/overview-write-architecture-overview-claim-check-reports/nedsnodes-handoff-architecture-overview/16d3a52c7f9862948c5d6e23537830afa292141a-2026-11-20T16-52-04-140839Z.md.
+Fixed by: regular maintenance, in the overview.
+Goes wrong when: a reader takes the assertion as exact.
+The claim check's evidence:
+> nn-systems/handoff/handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py:27-29 `then runs git switch --no-overwrite-ignore -C main origin/main ... whether or not every push succeeded`. Also :52-54 `except a failed push of a leftovers branch ..., which still lets the checkout go back on main: the unpushed branch stays in the checkout`. The switch does not wait for a successful push, so "only then" is wrong. No agent acts wrongly on it, though: the successor notice (handoff-supervisor.py:2444-2445) already says an unpushed branch stays in the checkout. The rest of the sentence (the supervisor calls `put_reference_checkout_back_on_main` itself, and the successor runs the program when that call failed) is supported at handoff-supervisor.py:2541-2549.
+State: open
