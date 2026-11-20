@@ -102,9 +102,11 @@ answer.
 
 AN ITEM'S TEXT. approval_walk_item_heading_and_item_page_body_lines gives the
 lines of an item that the item page builder puts on its page.
-approval_walk_item_text_as_shown_to_user gives the text the user must have been
-shown before his answer to the item counts: the same lines without the
-`#approval_walk_item_` lines, which the check program writes for agents. The
+approval_walk_item_text_as_shown_to_user gives the item's text as the user is
+shown it, from which the short-answer hook reads the decision-bearing lines
+the user must have been shown before his answer to the item counts: the same
+lines without the `#approval_walk_item_` lines, which the check program writes
+for agents. The
 short-answer hook drops each running count's `of M` only when it compares,
 because M changes when items are added to the walk.
 
@@ -803,9 +805,9 @@ def approval_walk_text_with_running_count_totals_removed(text):
 
 
 def approval_walk_item_text_as_shown_to_user(text, parser, all_units, unit, number):
-    """Return the Markdown the user must be shown for item number of the walk-document text, as the short-answer
-    hook compares it with the agent's message: approval_walk_item_heading_and_item_page_body_lines' heading and lines, without
-    the `#approval_walk_item_` lines."""
+    """Return the Markdown the user is shown for item number of the walk-document text, from which the short-answer
+    hook reads the heading and the decision-bearing lines it looks for in the agent's message:
+    approval_walk_item_heading_and_item_page_body_lines' heading and lines, without the `#approval_walk_item_` lines."""
     heading, body = approval_walk_item_heading_and_item_page_body_lines(text, parser, all_units, unit, number)
     shown = heading + "\n" + "\n".join(body)
     # A tag line removed leaves the blank lines around it, so blank lines are squeezed to one.
