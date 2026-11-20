@@ -23,7 +23,7 @@ Line numbers are on main at adb96dc59. The last column names the agent-seat whos
 
 | File | Line | What it times | Limit | Owner |
 |---|---|---|---|---|
-| `nc-systems/handoff/tests/handoff-supervisor-session-launch-and-seat-lock-test.py` | 985, 1005 | a held lock makes the update skip at once | 0.5 s | reboot-test |
+| `nn-systems/handoff/tests/handoff-supervisor-session-launch-and-seat-lock-test.py` | 985, 1005 | a held lock makes the update skip at once | 0.5 s | reboot-test |
 | same file | 925 | a hung update is killed at its timeout | 15 s | reboot-test |
 | `scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook-hack-test.py` | 337 | judging a 1.6 MB Markdown file | 5 s | agent-instructions-editor |
 | `scripts/style-guide-word-checker-markdown-edit-hook-hack-test.py` | 567 | a 60 KB run of text with no whitespace before a hit | 5 s | agent-instructions-editor |

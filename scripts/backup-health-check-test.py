@@ -71,9 +71,9 @@ def run_check(root: Path, mounted: bool, status_line=True):
     log_directory, snapshot_directory = root / "log", root / "snapshots"
     environment = dict(
         os.environ,
-        NEDSCHORUS_BACKUP_MOUNT=str(root / "mount"),
-        NEDSCHORUS_TIMESHIFT_LOG_DIRECTORY=str(log_directory),
-        NEDSCHORUS_TIMESHIFT_SNAPSHOT_DIRECTORY=str(snapshot_directory),
+        NEDSNODES_BACKUP_MOUNT=str(root / "mount"),
+        NEDSNODES_TIMESHIFT_LOG_DIRECTORY=str(log_directory),
+        NEDSNODES_TIMESHIFT_SNAPSHOT_DIRECTORY=str(snapshot_directory),
     )
     (root / "mount").mkdir(exist_ok=True)
 

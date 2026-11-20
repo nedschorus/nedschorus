@@ -8,7 +8,7 @@ rather than a shell line in one seat's transcript, and so the pins that
 must not drift are pinned:
 
   - model and reasoning effort, explicit (the tier convention of
-    nc-systems/cold-read/cold-read-codex-cell.py: `deep` = gpt-6.1-sol at xhigh);
+    nn-systems/cold-read/cold-read-codex-cell.py: `deep` = gpt-6.1-sol at xhigh);
   - the sandbox, read-only and denying every credential file, placed AFTER
     `review`, because the review's commands drop a profile placed before it
     -- see WHERE THE PERMISSION PROFILE GOES below, which also says how to
@@ -18,7 +18,7 @@ must not drift are pinned:
     walk what-a-cold-read-reviewer-may-read-2026-09-28, "y"); Codex refuses
     the two together. The profile comes from the builder the cold-read Codex
     cell uses, codex_credential_denying_permission_profile_arguments in
-    nc-systems/cold-read/cold-read-cell-common.py;
+    nn-systems/cold-read/cold-read-cell-common.py;
   - the base, as a SHA the caller resolved -- `--base origin/main` drifts
     under a moving remote, so the review's subject is recorded exactly;
   - the output, captured to a file the caller names;
@@ -128,7 +128,7 @@ Measured 2026-09-30 on codex-cli 0.156.0, on both machines, for GHI 804
 denials, because `codex exec review` drops the cell's permission profile",
 docs/issues/804-the-codex-review-cell-s-commands-run-writable.md). Each run
 had a scratch HOME holding two canary credentials,
-`.config/nedschorus/canary.token` and `.ssh/id_canary`, and a scratch
+`.config/nedsnodes/canary.token` and `.ssh/id_canary`, and a scratch
 CODEX_HOME whose config.toml trusted the scratch repository and, on the
 Mac, also carried the Mac config's `sandbox_mode = "workspace-write"` and
 `approval_policy = "never"`. Each ran this cell's command as a built-in
@@ -234,7 +234,7 @@ ned-box, and nothing on the Mac, whose child recorded a workspace-write
 
 WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS -- the one explanation
 for every `codex exec` this repository launches; the other two sites
-(nc-systems/cold-read/cold-read-codex-cell.py, scripts/sanity-check-adversarial-prompts.py) pass the
+(nn-systems/cold-read/cold-read-codex-cell.py, scripts/sanity-check-adversarial-prompts.py) pass the
 same flag and point here.
 
 Codex keeps a memory store under `~/.codex/` that Codex processes on this
@@ -448,7 +448,7 @@ import sys
 _common_spec = importlib.util.spec_from_file_location(
     "cold_read_cell_common",
     pathlib.Path(__file__).resolve().parent.parent
-    / "nc-systems" / "cold-read" / "cold-read-cell-common.py")
+    / "nn-systems" / "cold-read" / "cold-read-cell-common.py")
 common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
 

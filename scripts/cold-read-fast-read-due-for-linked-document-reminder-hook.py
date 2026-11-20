@@ -9,7 +9,7 @@ Wired as a Stop hook in .claude/settings.json.
 WHAT COUNTS AS A LINKED DOCUMENT: in the last reply of the turn (read as
 scripts/absence-claim-locator-reminder-hook.py reads it), a path ending .md
 that is a file:// link, an absolute path under /home/ or /Volumes/, or a path
-starting docs/, nc-systems/ or .claude/, which is resolved against the
+starting docs/, nn-systems/ or .claude/, which is resolved against the
 payload's cwd and then the top of that cwd's checkout. /Volumes/nedhome/<path>,
 the Mac's mount of ned-box, maps to /home/nedlern/<path> when that file exists.
 Skipped: files that do not exist, anything in the log-store or in a
@@ -69,7 +69,7 @@ cold-read-record like any document.
 Records are the directories in the log-store's cold-read-records/ and in a
 cold-read-records/ at the top of the document's checkout or the session's
 checkout whose names match the document by
-nc-systems/cold-read/cold-read-record-names-common.py, and that hold a finished
+nn-systems/cold-read/cold-read-record-names-common.py, and that hold a finished
 report there; a read that failed after freezing its target leaves no report
 and does not count. The record-name, frozen-path and finished-report rules
 are all taken from that module. A record holding a frozen copy under target/
@@ -93,7 +93,7 @@ fast-read is not due again in this agent-session, whatever the document's own
 time: applying a fast read's findings changes the document, which would
 otherwise make it due again every time the agent linked it. A read is this
 agent-session's own when the file a finished fast read writes beside its
-report (nc-systems/cold-read/cold-read-record-names-common.py,
+report (nn-systems/cold-read/cold-read-record-names-common.py,
 cold_read_fast_read_report_agent_session_id_file_path) names the payload's session_id and the
 document's resolved path. The fast read takes the ID from
 CLAUDE_CODE_SESSION_ID, which a subagent's Bash shares with its parent, so a
@@ -108,11 +108,11 @@ the agent so, in additionalContext and on stderr.
 
 SILENT when nothing is due, when this Stop ends the agent's answer to a Stop
 hook's output (the shared rule of
-nc-systems/general-tools/claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py), when the agent-session is a
+nn-systems/general-tools/claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py), when the agent-session is a
 headless `claude -p` child (its last words are its caller's answer), when the
 transcript file does not exist, and when the log-store's cold-read-records
 directory does not exist, as on the Mac, because without it every document
-would look due. NEDSCHORUS_LOG_STORE_COLD_READ_RECORDS_DIRECTORY overrides
+would look due. NEDSNODES_LOG_STORE_COLD_READ_RECORDS_DIRECTORY overrides
 that directory; the log-store is its parent directory.
 
 OUTPUT: {"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": ...}},
@@ -167,7 +167,7 @@ REPOSITORY_TOP = Path(__file__).absolute().parent.parent
 
 def _load_general_tools_module(file_name):
     return load_module(file_name.removesuffix(".py").replace("-", "_"),
-                       REPOSITORY_TOP / "nc-systems" / "general-tools" / file_name)
+                       REPOSITORY_TOP / "nn-systems" / "general-tools" / file_name)
 
 
 # Constants below are built from these modules, so a load that fails ends the
@@ -185,8 +185,8 @@ try:
 except Exception as error:
     sys.exit(fault_exit(error))
 
-LOG_STORE_DIRECTORY = Path(ned_box_home_path_constants.NED_BOX_HOME) / "nedschorus-logs"
-LOG_STORE_COLD_READ_RECORDS_ENVIRONMENT_VARIABLE = "NEDSCHORUS_LOG_STORE_COLD_READ_RECORDS_DIRECTORY"
+LOG_STORE_DIRECTORY = Path(ned_box_home_path_constants.NED_BOX_HOME) / "nedsnodes-logs"
+LOG_STORE_COLD_READ_RECORDS_ENVIRONMENT_VARIABLE = "NEDSNODES_LOG_STORE_COLD_READ_RECORDS_DIRECTORY"
 MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home_path_constants.MAC_MOUNT_OF_NED_BOX_HOME + "/"
 NED_BOX_HOME = ned_box_home_path_constants.NED_BOX_HOME + "/"
 WALK_DIRECTORY_PARTS = ("docs", "walk")
@@ -194,7 +194,7 @@ WALK_DRAFT_SUFFIX = "-draft.md"
 WALK_SUGGESTIONS_SUFFIX = "-cold-read-fast-read.md"
 GIT_TIMEOUT_SECONDS = 5
 MAIN_REFERENCE = "refs/remotes/origin/main"
-FAST_READ_PROGRAM = "nc-systems/cold-read/cold-read-fast-read.py"
+FAST_READ_PROGRAM = "nn-systems/cold-read/cold-read-fast-read.py"
 TRANSCRIPT_UNREADABLE_LINES = (
     "cold-read-fast-read due check skipped: this hook could not read this "
     "agent-session's transcript ({reason}), so it did not check the documents "
@@ -216,7 +216,7 @@ PATH_END = r"[^\s)\]>\"'`<|*]*?\.md(?![\w-])"
 FILE_URL_PATTERN = re.compile(r"file://(/" + PATH_END + ")")
 ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![\w/.:~-])(/(?:home|Volumes)/" + PATH_END + ")")
 RELATIVE_PATH_PATTERN = re.compile(
-    r"(?<![\w/.:~-])((?:docs|nc-systems|\.claude)/" + PATH_END + ")")
+    r"(?<![\w/.:~-])((?:docs|nn-systems|\.claude)/" + PATH_END + ")")
 
 REMINDER_OPENING_LINE = (
     "[rule cold-read-fast-read-due-for-linked-document] cold-read-fast-read due: your last reply linked these documents for the "
@@ -265,7 +265,7 @@ REMINDER_INSTRUCTIONS = (
 def load_cold_read_record_names():
     """Loaded by run() rather than at import, so a fault loading it is reported by main."""
     return load_module("cold_read_record_names",
-                       REPOSITORY_TOP / "nc-systems" / "cold-read" / "cold-read-record-names-common.py")
+                       REPOSITORY_TOP / "nn-systems" / "cold-read" / "cold-read-record-names-common.py")
 
 
 def environment_without_git_redirection():

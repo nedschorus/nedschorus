@@ -251,7 +251,7 @@ def status_line_text(payload: dict) -> str:
     return SEPARATOR.join(segment for segment in segments if segment)
 
 
-PAYLOAD_CAPTURE_VARIABLE = "NEDSCHORUS_STATUSLINE_PAYLOAD_CAPTURE"
+PAYLOAD_CAPTURE_VARIABLE = "NEDSNODES_STATUSLINE_PAYLOAD_CAPTURE"
 
 
 def capture_payload(payload: dict) -> None:

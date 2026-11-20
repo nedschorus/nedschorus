@@ -85,7 +85,7 @@ import time
 _common_spec = importlib.util.spec_from_file_location(
     "cold_read_cell_common",
     pathlib.Path(__file__).resolve().parent.parent
-    / "nc-systems" / "cold-read" / "cold-read-cell-common.py")
+    / "nn-systems" / "cold-read" / "cold-read-cell-common.py")
 common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
 
