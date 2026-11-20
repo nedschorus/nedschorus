@@ -39,7 +39,8 @@ leaves with no decision, REASON saying why, which changes nothing.
 makes ITEM, an item not yet shown named by its heading's title, the next item
 shown, numbering it and moving it to stand right before the waiting item in the
 walk-document, so that close comes back to the waiting item once ITEM is
-answered, and it writes the minutes' `#next_to_present` line. It refuses, writing
+decided, its last sub-step included, unless that item is the summary item, is
+decided or deferred twice, or is gone from the walk-document; and it writes the minutes' `#next_to_present` line. It refuses, writing
 nothing, an ITEM no item heading has, and one already shown, which is every
 numbered item, decided or not; and it refuses, writing nothing, while close
 has not yet recorded the last answer check wrote, since close would then take
@@ -382,7 +383,7 @@ characters between spaces that holds a letter or a digit, on every line but
 those opening `#approval_walk_item_`. When the line names one item that has
 numbered sub-steps, such as `### Item 3.1 of 9`, the walk-minutes do not all
 decide, the step then adds a `#next_to_present` line naming the first of them
-instead, since the user is shown such an item one sub-step at a time, and
+the walk-minutes do not decide, since the user is shown such an item one sub-step at a time, and
 reads that sub-step as this paragraph says. A read of that key
 that wrote its report is used, a read ahead included; one a read-ahead worker
 still runs is waited for, for as long as the worker's process lives, since the
@@ -3208,17 +3209,21 @@ def next_item(walk_finder, minutes, parser, order, summary, answered_numbers, wa
     return [item for item in to_come if not placing.get(item, (None, set()))[1] & set(to_come)][:1]
 
 
-def item_a_bump_suspended(walk_finder, minutes, parser, answered_numbers):
-    """Return the numbers of the item that waited when the user last bumped the answered item, while the minutes
-    record it as neither decided nor deferred twice; else []."""
+def item_a_bump_suspended(walk_finder, minutes, parser, decided_numbers, order, summary):
+    """Return the numbers of the item that waited when the user last bumped an item decided_numbers holds, the
+    items this close decides, a parent decided through its last sub-step included, while that item is still among
+    the walk-document's items in order, is not the summary item, and the minutes record it as neither decided nor
+    deferred twice; else []."""
     text = minutes.read_text(encoding="utf-8")
     for line in reversed(walk_finder.prose_lines(text, parser)):
         match = BUMP_MINUTES_LINE.match(line)
-        if match and walk_finder.parse_items(match["bumped"])[0] == list(answered_numbers):
+        if match and set(walk_finder.parse_items(match["bumped"])[0]) <= set(decided_numbers):
             suspended = walk_finder.parse_items(match["waiting"])[0]
             decided = approval_walk_minutes_read_returning_decided_item_numbers(walk_finder, minutes, parser)
             deferrals = minutes_record(walk_finder, text, parser)[1]
-            return [] if any(number in decided or deferrals[number] > 1 for number in suspended) else suspended
+            # The summary item stays last, so a suspended summary gives way to the walk order like any close.
+            gone = any(number not in order or number == summary for number in suspended)
+            return [] if gone or any(number in decided or deferrals[number] > 1 for number in suspended) else suspended
     return []
 
 
@@ -3461,7 +3466,8 @@ def close(arguments):
                 if number not in inferred_before]
     # The walk order alone can put another unshown item before the item a bump suspended, as when that item was
     # deferred once, so the bump's own record names the item that comes back.
-    numbers = (item_a_bump_suspended(walk_finder, minutes, parser, answered_numbers)
+    numbers = (item_a_bump_suspended(walk_finder, minutes, parser,
+                                     set(answered_numbers) | {number for number, _ in rulings}, order, summary)
                or next_item(walk_finder, minutes, parser, order, summary, answered_numbers, waiting_numbers, placing))
     if numbers and isinstance(numbers[0], int):
         first = numbers[0]

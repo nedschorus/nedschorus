@@ -6148,6 +6148,67 @@ def test_a_bumped_item_answered_gives_way_to_the_once_deferred_item_it_suspended
           and shown == ["one", "three", "Summary"], f"{described(bumped)}{shown}\n{walk_document(case)}")
 
 
+def test_a_bumped_item_answered_while_the_summary_waited_gives_way_to_an_unshown_item_still_to_come():
+    case = Case(next_to_present="item 1 of 9", document=ordered_walk())
+    case.run("check")
+    case.run("close")
+    path = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    summary = re.search(r"^## (?:Item \d+ of \d+: )?Summary$", walk_document(case), re.M)[0]
+    path.write_text(walk_document(case).replace(summary, unshown_item("three", f"{CATEGORY_TAG}must_fix_now")
+                                                + unshown_item("four", f"{CATEGORY_TAG}fix_next") + summary))
+    waiting = marker(case)
+    bumped = case.run("check", "--bump", "four", reply="bump four")
+    shown = titles_shown_in_turn(case)
+    check("once the bumped item is approved, the summary item it suspended stays last, after the unshown item "
+          "still to come", bumped.returncode == 0 and shown == ["three", "Summary"],
+          f"{waiting}\n{described(bumped)}{shown}\n{walk_document(case)}")
+
+
+def test_a_bumped_item_deferred_and_answered_after_the_item_it_suspended_is_decided_does_not_bring_that_item_back():
+    case = Case(next_to_present="item 1 of 9", document=bump_walk())
+    bumped = case.run("check", "--bump", "three", reply="bump three")
+    shown = titles_shown_in_turn(case, {0: ("--deferred",)})
+    check("the bumped item deferred gives way to the item it suspended; once that item is decided, answering the "
+          "bumped item later does not name it again", bumped.returncode == 0
+          and shown == ["one", "two", "three", "Summary"], f"{described(bumped)}{shown}\n{walk_document(case)}")
+
+
+def test_a_bumped_item_answered_after_a_re_plan_removed_the_item_it_suspended_goes_on_in_walk_order():
+    case = Case(next_to_present="item 1 of 9", document=bump_walk())
+    bumped = case.run("check", "--bump", "three", reply="bump three")
+    path = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    path.write_text(re.sub(r"## Item 1 of 9: one\n.*?(?=## )", "", walk_document(case), count=1, flags=re.S))
+    shown = titles_shown_in_turn(case)
+    check("once the bumped item is approved, close goes on in walk order when a re-plan removed the item it "
+          "suspended, and names no item the walk-document lacks", bumped.returncode == 0
+          and shown == ["two", "Summary"], f"{described(bumped)}{shown}\n{walk_document(case)}")
+
+
+def test_a_bumped_item_decided_through_its_last_sub_step_gives_way_to_the_item_it_suspended():
+    document = ordered_walk("## Item 2 of 9: two\n\n#case_against none.\n\nRecommendation: approve.\n\n")
+    case = Case(next_to_present="item 1 of 9", document=document)
+    case.run("check", "--deferred")
+    case.run("close")
+    case.run("check")
+    case.run("close")
+    path = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    path.write_text(walk_document(case).replace("## Summary", unshown_item("three", f"{CATEGORY_TAG}must_fix_now")
+                                                + f"## four\n\n{CATEGORY_TAG}fix_next\n\n### the first part\n\n"
+                                                "No decision here; type N or next to continue.\n\n### the second part"
+                                                "\n\n#case_against none.\n\nRecommendation: approve.\n\n## Summary"))
+    bumped = case.run("check", "--bump", "four", reply="bump four")
+    bumped_item = re.search(r"#next_to_present item (\d+) of (\d+)", marker(case))
+    path.write_text(walk_document(case).replace(
+        "### the first part", f"### Item {bumped_item[1]}.1 of {bumped_item[2]}: the first part").replace(
+        "### the second part", f"### Item {bumped_item[1]}.2 of {bumped_item[2]}: the second part"))
+    with case.minutes.open("a") as minutes:
+        minutes.write(f"#next_to_present item {bumped_item[1]}.1 of {bumped_item[2]}\n")
+    shown = titles_shown_in_turn(case, {0: ("--moved-on-no-decision",)})
+    check("once the bumped item's last sub-step decides it, the once-deferred item it suspended comes back before "
+          "the other unshown item", bumped.returncode == 0 and shown == ["the second part", "one", "three", "Summary"],
+          f"{described(bumped)}{shown}\n{walk_document(case)}")
+
+
 def test_bump_refuses_an_item_no_heading_has_or_one_already_shown_writing_nothing():
     case = Case(next_to_present="item 1 of 9", document=bump_walk())
     document, minutes = walk_document(case), case.minutes.read_text()
