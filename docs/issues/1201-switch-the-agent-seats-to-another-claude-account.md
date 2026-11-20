@@ -76,7 +76,7 @@ The user decided how the switch works on 2026-11-18, answering the eight questio
 
 Two of his answers add no sentence: the user holds the accounts for personal, work and nonprofit use, so the terms do not worry him; and a logout is a step of each switch, so an expired sign-in gets no case of its own.
 
-The Remote Control reconnect that sentence 5 says already happens is the project's program `nc-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py`, which runs each minute on both the Mac and ned-box and turns Remote Control back on in each agent-seat after a Claude login changes the machine's account; the switcher adds no step for it.
+The Remote Control reconnect that sentence 5 says already happens is the project's program `nn-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py`, which runs each minute on both the Mac and ned-box and turns Remote Control back on in each agent-seat after a Claude login changes the machine's account; the switcher adds no step for it.
 
 ## Questions for the user
 
@@ -93,4 +93,4 @@ The user answered the eight questions on 2026-11-18; each names the answer under
 
 ## Next action
 
-From the six sentences and the two answers under § What the user decided, write the design of the switch for the Mac's pilot in this GHI-MD, adding the line `kind: design` to its front matter, then give it the /cold-read that the ghi-write skill requires before an edit-GHI. Before writing it, check what this GHI-MD records only for ned-box: where the Mac keeps Claude's login, and whether Codex is installed and logged in on the Mac. The design also says what the switcher does when the next account in the rotation has not yet reset, how it detects the limit, and how it checks that a switch worked; the cold-read-fast-read of 2026-11-18, `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/1201-switch-the-agent-seats-to-another-claude-account-2026-11-18/cold-read-fast-read.md`, lists these questions.
+From the six sentences and the two answers under § What the user decided, write the design of the switch for the Mac's pilot in this GHI-MD, adding the line `kind: design` to its front matter, then give it the /cold-read that the ghi-write skill requires before an edit-GHI. Before writing it, check what this GHI-MD records only for ned-box: where the Mac keeps Claude's login, and whether Codex is installed and logged in on the Mac. The design also says what the switcher does when the next account in the rotation has not yet reset, how it detects the limit, and how it checks that a switch worked; the cold-read-fast-read of 2026-11-18, `nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/1201-switch-the-agent-seats-to-another-claude-account-2026-11-18/cold-read-fast-read.md`, lists these questions.
