@@ -113,7 +113,7 @@ REMINDER_LAST_LINE = ("\nIf either program reports a finding, do not push a corr
 
 
 def is_reminder(text, top, changed_file="docs/page.md"):
-    return (isinstance(text, str) and text.startswith(hook.HOOK_NAME + ": this push goes ahead now. It sends")
+    return (isinstance(text, str) and text.startswith("[rule git-push-of-markdown-change-citation-checks-reminder] " + hook.HOOK_NAME + ": this push goes ahead now. It sends")
             and changed_file in text
             and f"cd {top} && python3 scripts/dangling-path-citation-check.py" in text
             and f"cd {top} && python3 scripts/stale-code-citation-check.py" in text)
@@ -155,7 +155,7 @@ def main():
 
         text = run_main("git push origin markdown-branch markdown-deleting-branch", repository)
         check("a push of two branches that both change a .md file gives a reminder for each",
-              isinstance(text, str) and text.count(": this push goes ahead now.") == 2
+              isinstance(text, str) and text.count("[rule git-push-of-markdown-change-citation-checks-reminder] " + hook.HOOK_NAME + ": this push goes ahead now.") == 2
               and "It sends markdown-branch," in text and "It sends markdown-deleting-branch," in text,
               repr(text))
 

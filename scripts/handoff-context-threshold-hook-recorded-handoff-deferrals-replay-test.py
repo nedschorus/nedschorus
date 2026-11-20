@@ -36,7 +36,6 @@ _hook_spec = importlib.util.spec_from_file_location("handoff_threshold_hook", HO
 hook = importlib.util.module_from_spec(_hook_spec)
 _hook_spec.loader.exec_module(hook)
 
-WAIT_SECONDS = hook.DEFAULT_BACKGROUND_TASK_WAIT_MINUTES * 60
 failures = []
 
 
@@ -116,7 +115,7 @@ def counted(session, now=NOW):
     """The subagent ids the hook counts, or, when the hook raises, the text "raised <exception>",
     which equals no list: the check then prints a FAIL line naming the exception and the suite goes on."""
     try:
-        return hook.work_in_flight(str(session), WAIT_SECONDS, now=now).subagent_ids
+        return hook.work_in_flight(str(session), now=now).subagent_ids
     except Exception as problem:
         return f"raised {type(problem).__name__}: {problem}"
 
@@ -125,7 +124,7 @@ def check_raises_could_not_read(case_name, session):
     """Checks that the hook raises TranscriptCouldNotBeFullyRead; when it raises anything else, the
     FAIL line names that exception and the suite goes on, as counted() does."""
     try:
-        hook.work_in_flight(str(session), WAIT_SECONDS, now=NOW)
+        hook.work_in_flight(str(session), now=NOW)
     except hook.TranscriptCouldNotBeFullyRead:
         outcome = None
     except Exception as problem:
@@ -205,8 +204,29 @@ def run_synthetic_cases(workspace):
     session = session_with_interim_subagent(case_directory("own-task-74-minutes-short-wait"), [
         launch_record(OWN_TASK_ID, NOW - timedelta(minutes=74)), stale_write])
     short_wait = hook.work_in_flight(str(session), 60 * 60, now=NOW).subagent_ids
-    check("the own background task is judged with the hook's --background-task-wait-minutes",
+    check("a wait given in seconds replaces the own background task's wait-limit",
           short_wait == [], str(short_wait))
+
+    def own_launch_with_command(task_id, moment, command):
+        return [{"type": "assistant", "timestamp": utc_iso(moment), "message": {
+                    "role": "assistant", "content": [{
+                        "type": "tool_use", "id": f"toolu_{task_id}", "name": "Bash",
+                        "input": {"command": command, "run_in_background": True}}]}},
+                {**launch_record(task_id, moment), "message": {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": f"toolu_{task_id}"}]}}]
+
+    session = session_with_interim_subagent(case_directory("own-test-suite-80-minutes"), [
+        *own_launch_with_command(OWN_TASK_ID, NOW - timedelta(minutes=80),
+                                 "python3 scripts/run-all-test-suites.py"), stale_write])
+    check("an interim subagent whose own test suite is 80 minutes old is counted, by the same "
+          "wait-limit table as the threshold-hook's", counted(session) == [SUBAGENT_ID],
+          str(counted(session)))
+
+    session = session_with_interim_subagent(case_directory("own-waiting-task-1-minute"), [
+        *own_launch_with_command(OWN_TASK_ID, NOW - timedelta(minutes=1),
+                                 "gh pr checks 3101 --watch"), stale_write])
+    check("an interim subagent whose own background task is a waiting-task is not counted",
+          counted(session) == [], str(counted(session)))
 
     session = session_with_interim_subagent(case_directory("own-task-notified"), [
         launch_record(OWN_TASK_ID, NOW - timedelta(minutes=30)),
@@ -219,7 +239,7 @@ def run_synthetic_cases(workspace):
     check("an interim subagent with no own transcript is not counted",
           counted(session) == [], str(counted(session)))
     check("should_read_subagent_own_transcripts=False counts the interim subagent from its notices alone",
-          hook.work_in_flight(str(session), WAIT_SECONDS, now=NOW,
+          hook.work_in_flight(str(session), now=NOW,
                               should_read_subagent_own_transcripts=False).subagent_ids == [SUBAGENT_ID])
 
     no_notice = write_jsonl(case_directory("no-notice-yet") / "session.jsonl",
@@ -323,8 +343,8 @@ def run_past_wait_cases(workspace):
             moment = parse_time(expected["moment"])
             session = cut_copy(FIXTURES / case["session_transcript"],
                                Path(workspace) / case["case"] / str(number), moment)
-            by_own = hook.work_in_flight(str(session), WAIT_SECONDS, now=moment)
-            by_notices = hook.work_in_flight(str(session), WAIT_SECONDS, now=moment,
+            by_own = hook.work_in_flight(str(session), now=moment)
+            by_notices = hook.work_in_flight(str(session), now=moment,
                                              should_read_subagent_own_transcripts=False)
             verdicts[(case["case"][:2], expected["moment"])] = by_own.subagent_ids
             check(f"case {case['case']} at {expected['moment']} ({expected['why_this_moment']})",

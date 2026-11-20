@@ -69,8 +69,9 @@ five time fields, and the line is
 say when the job runs (StartCalendarInterval for a time of day; RunAtLoad for
 a login). The plist is Label, ProgramArguments, EnvironmentVariables with the
 machine's PATH, those keys, and both output paths, and its file carries the
-comment line PLIST_WRITTEN_BY_THIS_PROGRAM, which is how --check tells a plist
-this program wrote from one another program wrote: the login restart's
+comment line `<!-- written by nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py -->`,
+held in the constant PLIST_WRITTEN_BY_THIS_PROGRAM, which is how --check tells
+a plist this program wrote from one another program wrote: the login restart's
 installer writes a plist of the same shape, from the same clone, under the
 same label prefix. The login restart's two
 installers (scripts/install-restart-live-seats-at-login-launch-agent.py and
@@ -117,6 +118,11 @@ already says what the table says, with its job loaded, is left alone.
 which is how a new job is shown to run under launchd without waiting for its
 hour.
 
+AFTER EVERY PULL. Each machine's reference-checkout runs --install after
+every merge into it, from its post-merge hook, through
+install-scheduled-jobs-on-this-machine-after-reference-checkout-merge-and-report-install-failure-as-task-for-installer-owner-agent-seat.py,
+so a job added to or changed in the table is installed at the next pull.
+
 RETIRING A JOB. Take it off each machine that runs it, with --remove --job
 NAME, before the pull request that deletes it from the table merges: --remove
 finds a job's cron line and plist through the job's entry in the table. A job
@@ -126,8 +132,8 @@ job this machine runs that no job of the table names for it, NOT IN THE TABLE:
 a cron line whose command runs a program from the machine's clone, directly or
 through an interpreter, and is no cron job's line of the table — not a
 comment, not a line that sets a variable, and not a line that only reads or
-writes a file in the clone; and a plist carrying
-PLIST_WRITTEN_BY_THIS_PROGRAM whose label is no launchd job's of the table.
+writes a file in the clone; and a plist carrying that comment line whose
+label is no launchd job's of the table.
 A plist written before that line existed is not found. A cron line whose
 programs this program cannot tell, because it gives an interpreter or env an
 option, defines a function, or names no program after its interpreter or env,

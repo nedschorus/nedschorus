@@ -84,12 +84,23 @@ def written_by_a_program(record, text,
             and user_turn_text_is_compaction_summary_or_launch_prompt(text))
 
 
+def message_content(record):
+    """The record's message.content, or None when the record has no message dict."""
+    # A transcript record can hold "message": null; a default for a missing key does not cover it.
+    message = record.get("message")
+    return message.get("content") if isinstance(message, dict) else None
+
+
 def typed_by_user(record, treat_compaction_summary_or_launch_prompt_text_as_written_by_a_program=True):
     """The record's text if the user typed it, else None;
     treat_compaction_summary_or_launch_prompt_text_as_written_by_a_program as written_by_a_program takes it."""
     if record.get("type") != "user":
         return None
-    content = record.get("message", {}).get("content")
+    content = message_content(record)
+    # A message typed with an image pasted is a list of text and image blocks.
+    if isinstance(content, list):
+        content = "\n".join(block.get("text", "") for block in content
+                            if isinstance(block, dict) and block.get("type") == "text")
     if not isinstance(content, str):
         return None
     text = content.strip()
@@ -125,7 +136,7 @@ def is_interrupt_notice(record):
     """Whether the record is the harness's note that the user interrupted the agent."""
     if record.get("type") != "user":
         return False
-    content = (record.get("message") or {}).get("content")
+    content = message_content(record)
     if isinstance(content, str):
         texts = [content]
     elif isinstance(content, list):
@@ -141,7 +152,7 @@ def assistant_text(record):
     """An assistant turn's prose, joined, or None."""
     if record.get("type") != "assistant":
         return None
-    content = record.get("message", {}).get("content")
+    content = message_content(record)
     if isinstance(content, str):
         return content.strip() or None
     if not isinstance(content, list):
