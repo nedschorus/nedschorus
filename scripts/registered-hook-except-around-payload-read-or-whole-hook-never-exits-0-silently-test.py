@@ -4,11 +4,11 @@ without printing anything.
 
 A Claude Code hook that exits 0 with nothing printed lets the act go ahead, and nobody learns
 that the hook failed and did not look. The Hooks section of
-docs/nedschorus-wiki/nedschorus-how-a-program-reports-success-failure-and-findings-with-its-exit-code.md
+docs/nedsnodes-wiki/nedsnodes-how-a-program-reports-success-failure-and-findings-with-its-exit-code.md
 says a hook never turns its own failure into a silent 0, and says what it does instead.
 
 The hooks read are the Python files .claude/settings.json registers, found as
-nc-systems/general-tools/claude-code-registered-hook-rule-id-pattern-hook-files-list-and-source-scan-common.py
+nn-systems/general-tools/claude-code-registered-hook-rule-id-pattern-hook-files-list-and-source-scan-common.py
 finds them, and every file in .claude/guard-hooks/ that is not a `-test.py` or `-common.py`.
 
 Each hook's syntax tree is read, not run. A `try` is checked when its body reads stdin, as
@@ -34,18 +34,18 @@ SUITE = "scripts/" + Path(__file__).name
 SETTINGS = REPOSITORY / ".claude" / "settings.json"
 GUARD_HOOKS_DIRECTORY = ".claude/guard-hooks"
 EXIT_CODE_PAGE = (
-    "docs/nedschorus-wiki/nedschorus-how-a-program-reports-success-failure-and-findings-with-its-exit-code.md")
+    "docs/nedsnodes-wiki/nedsnodes-how-a-program-reports-success-failure-and-findings-with-its-exit-code.md")
 
 _rule_ids_spec = importlib.util.spec_from_file_location(
     "claude_code_registered_hook_rule_id_pattern_hook_files_list_and_source_scan_common",
-    REPOSITORY / "nc-systems" / "general-tools"
+    REPOSITORY / "nn-systems" / "general-tools"
     / "claude-code-registered-hook-rule-id-pattern-hook-files-list-and-source-scan-common.py")
 rule_ids = importlib.util.module_from_spec(_rule_ids_spec)
 _rule_ids_spec.loader.exec_module(rule_ids)
 
 _rule_failure_lines_spec = importlib.util.spec_from_file_location(
     "rule_enforcing_nc_test_suite_failure_message_closing_lines_text_common",
-    REPOSITORY / "nc-systems" / "general-tools"
+    REPOSITORY / "nn-systems" / "general-tools"
     / "rule-enforcing-nc-test-suite-failure-message-closing-lines-text-common.py")
 RULE_FAILURE_LINES = importlib.util.module_from_spec(_rule_failure_lines_spec)
 _rule_failure_lines_spec.loader.exec_module(RULE_FAILURE_LINES)
@@ -64,14 +64,14 @@ NOT_A_HOOK_REASON = "the file is not a hook this suite reads"
 # each with what its `except` does. An entry leaves when its hook is fixed: a case below fails
 # on an entry that no longer matches a silent `except`.
 SILENT_EXIT_0_HOOKS_AWAITING_FIX = {
-    ("nc-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py",
+    ("nn-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py",
      "json.JSONDecodeError or ValueError"):
         "main() returns 0 when stdin is not JSON, so no push is checked and nobody is told",
-    ("nc-systems/general-tools/python-edit-changed-tool-message-to-agent-strings-check-reminder-hook.py",
+    ("nn-systems/general-tools/python-edit-changed-tool-message-to-agent-strings-check-reminder-hook.py",
      "json.JSONDecodeError or ValueError or OSError"):
         "main() returns 0 when stdin cannot be read as JSON, so the edit is not inspected and "
         "nobody is told",
-    ("nc-systems/general-tools/python-edit-changed-tool-message-to-agent-strings-check-reminder-hook.py",
+    ("nn-systems/general-tools/python-edit-changed-tool-message-to-agent-strings-check-reminder-hook.py",
      "Exception"):
         "the `try` around sys.exit(main()) exits 0 on any crash, so the edit is not inspected "
         "and nobody is told",
@@ -325,7 +325,7 @@ check("a silent `return 0` around the payload read gives the failure line, word 
       failure_lines({"fixture-hook.py": SILENT_PAYLOAD_READ_HOOK}, {}) == [
           "fixture-hook.py:6: this hook exits 0 without a word when json.JSONDecodeError or "
           "ValueError is raised, so its own failure is silent. Report it as the Hooks section of "
-          "docs/nedschorus-wiki/nedschorus-how-a-program-reports-success-failure-and-findings-with-its-exit-code.md "
+          "docs/nedsnodes-wiki/nedsnodes-how-a-program-reports-success-failure-and-findings-with-its-exit-code.md "
           "says."],
       failure_lines({"fixture-hook.py": SILENT_PAYLOAD_READ_HOOK}, {}))
 check("an `except` around the payload read that prints before it exits passes",
@@ -372,9 +372,9 @@ check("a finding in a file the instruction-file guard protects says how its fix 
 # --- the rule, against the hooks of this checkout ---
 
 HOOK_PATHS = hook_paths()
-check("the hooks read include registered hooks from scripts/, nc-systems/ and .claude/guard-hooks/",
+check("the hooks read include registered hooks from scripts/, nn-systems/ and .claude/guard-hooks/",
       {"scripts/handoff-context-threshold-hook.py",
-       "nc-systems/skills/emergency-stop/emergency-stop-file-shown-and-push-and-merge-refusal-hook.py",
+       "nn-systems/skills/emergency-stop/emergency-stop-file-shown-and-push-and-merge-refusal-hook.py",
        ".claude/guard-hooks/instruction-file-guard.py"} <= set(HOOK_PATHS), HOOK_PATHS)
 sources = {path: (REPOSITORY / path).read_text(encoding="utf-8") for path in HOOK_PATHS}
 lines = failure_lines(sources, SILENT_EXIT_0_HOOKS_AWAITING_FIX)
