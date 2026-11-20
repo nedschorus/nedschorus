@@ -114,10 +114,10 @@ one concept, one home.
 
 ## Part 3 — codification: the duties land in builds already planned
 
-- **The main-gatekeeper** (issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3))
+- **The main-gatekeeper** (issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper.system.design.md)](https://github.com/nedschorus/nedschorus/issues/3))
   owns the git-preserved class's entrance; its commit trailers are the
   provenance record. This design adds requirements, not features.
-- **The handoff build** (issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nn-systems/handoff/handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2))
+- **The handoff build** (issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nn-systems/handoff/handoff.system.design.md](https://github.com/nedschorus/nedschorus/issues/2))
   owns the boundaries: task export, the scrub (its standing duties are
   enumerated on that issue), and — if the open questions resolve that way —
   log extracts and memory placement at the same boundary.
@@ -169,7 +169,7 @@ tokens go to judgment rather than enumeration. Sensors are programs;
 judgment is agents.
 
 **The handoff scrub remains** the persistent agents' own moment (its duties
-enumerated on issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nn-systems/handoff/handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2));
+enumerated on issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nn-systems/handoff/handoff.system.design.md](https://github.com/nedschorus/nedschorus/issues/2));
 the ownership discipline — a temporary worker returns its deliverable to its
 dispatcher and leaves nothing behind, with the dispatcher's own records
 making orphaned dispatches visible — reduces the sweep's load but is not the
@@ -243,7 +243,7 @@ Part 1's four classes do not yet carry priorities, and Class 1 keeps on main som
    the named consumer is the reopening trigger). If ever ruled in, extracts
    are handoff artifacts: they ride the handoff check-in into `handoff/`
    and age out of the working tree with their handoff under the retention
-   rule ([handoff-design.md](../../nn-systems/handoff/handoff-design.md)).
+   rule ([handoff.system.design.md](../../nn-systems/handoff/handoff.system.design.md)).
    Term note, so the two usages stop conflating: "boundary extract" has
    meant both a handoff-time copy of the bridge message logs (the bridge
    specification's usage — the artifact this resolution declines to

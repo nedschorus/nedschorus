@@ -143,8 +143,8 @@ def test_a_held_answer_whose_new_item_only_a_hand_written_line_decides_is_conver
         check(f"a held item whose new item only a hand-written {word} line decides is converted in the same run, "
               f"{outcome}, with the new item, and the run exits 0",
               result.returncode == 0 and decided == {"6", "6.1"} and "FAILED" not in result.stdout
-              and f"item 6 of 30: already decided by the user's answer to item 6.1 of 30, which the hand-written "
-                  f"minutes line 3" in path.read_text()
+              and "item 6 of 30: already decided by the user's answer to item 6.1 of 30, which the hand-written "
+                  "minutes line 3" in path.read_text()
               and path.read_text().rstrip().split("\n")[-2].endswith(outcome),
               described(result) + path.read_text())
 

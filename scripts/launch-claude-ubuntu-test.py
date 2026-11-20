@@ -1200,10 +1200,10 @@ def main() -> int:
             check(f"boot programs fail: stderr says the {step} failed with exit 2, "
                   "that the launch goes on, where its error is, and who acts",
                   len(first) == 1
-                  and (lines + ["", ""])[first[0] + 1].startswith(f"launch-claude-ubuntu: any error the ")
+                  and (lines + ["", ""])[first[0] + 1].startswith("launch-claude-ubuntu: any error the ")
                   and "if none is there" in (lines + ["", ""])[first[0] + 1]
-                  and (lines + ["", "", ""])[first[0] + 2].startswith(f"launch-claude-ubuntu: if you are an agent that ran this launch, tell the user")
-                  and (lines + ["", "", ""])[first[0] + 3].startswith(f"launch-claude-ubuntu: if you are the user, run the command in the first of these lines")
+                  and (lines + ["", "", ""])[first[0] + 2].startswith("launch-claude-ubuntu: if you are an agent that ran this launch, tell the user")
+                  and (lines + ["", "", ""])[first[0] + 3].startswith("launch-claude-ubuntu: if you are the user, run the command in the first of these lines")
                   and "if it fails and prints nothing, ask an agent" in (lines + ["", "", ""])[first[0] + 3],
                   result["replay"].stderr)
         harness = LaunchHarness(root / "boot-programs-succeed")
