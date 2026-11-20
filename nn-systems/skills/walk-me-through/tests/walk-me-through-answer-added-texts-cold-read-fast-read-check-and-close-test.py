@@ -6131,7 +6131,7 @@ def test_bump_shows_the_named_unshown_item_next_and_the_waiting_item_after_it():
 
 
 def test_a_bumped_item_answered_gives_way_to_the_once_deferred_item_it_suspended_not_to_another_unshown_item():
-    document = ordered_walk(f"## Item 2 of 9: two\n\n#case_against none.\n\nRecommendation: approve.\n\n")
+    document = ordered_walk("## Item 2 of 9: two\n\n#case_against none.\n\nRecommendation: approve.\n\n")
     case = Case(next_to_present="item 1 of 9", document=document)
     case.run("check", "--deferred")
     case.run("close")
