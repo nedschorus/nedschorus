@@ -305,7 +305,7 @@ def with_finding_category_marks(body, comments):
     return verdict, body, comments
 
 
-def verdict_review_posting_program_marks_missing(review, comments):
+def posted_verdict_review_missing_review_posting_program_marks_reason_or_none(review, comments):
     """Why a verdict review GitHub holds, a dict with "state" and "body", lacks the marks this program
     writes into a review it posts as ned-review-merge, or None when it has them; comments are the
     review's inline comments as GitHub returns them. Any state but APPROVED and CHANGES_REQUESTED has

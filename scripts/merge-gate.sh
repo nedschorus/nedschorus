@@ -172,7 +172,7 @@ command -v jq >/dev/null 2>&1 || cannot "jq is not on PATH. Put jq on PATH, then
 command -v gh >/dev/null 2>&1 || cannot "gh is not on PATH. Put gh on PATH, then rerun the gate." \
   "If gh is not installed on this machine, tell the user this message."
 DESCRIPTION_DEFECT_LINE_READER="$(dirname "${BASH_SOURCE[0]}")/pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py"
-VERDICT_REVIEW_MARKS_CHECK="$(dirname "${BASH_SOURCE[0]}")/merge-gate-verdict-review-posting-program-marks-check.py"
+VERDICT_REVIEW_POSTING_PROGRAM_MARKS_CHECK_PROGRAM_PATH="$(dirname "${BASH_SOURCE[0]}")/merge-gate-approval-or-changes-request-review-has-review-posting-program-marks-check.py"
 
 # An abbreviated or malformed EXPECTED used to refuse as "head moved", naming the
 # wrong cause: the head had not moved, the caller had passed a short sha.
@@ -257,7 +257,7 @@ if [ -n "$verdict_review" ]; then
   marks_check_input=$(jq -n -c --argjson review "$verdict_review" --argjson comments "$verdict_review_comments" \
     '{review: $review, comments: $comments}')
   [ $? -eq 0 ] || cannot "$VERDICT_REVIEW_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
-  marks_missing=$(python3 "$VERDICT_REVIEW_MARKS_CHECK" <<<"$marks_check_input")
+  marks_missing=$(python3 "$VERDICT_REVIEW_POSTING_PROGRAM_MARKS_CHECK_PROGRAM_PATH" <<<"$marks_check_input")
   marks_check_status=$?
   case "$marks_check_status" in
     0) : ;;
@@ -272,7 +272,7 @@ if [ -n "$verdict_review" ]; then
          "Post it with: python3 scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py --pull-request $PR --head-commit $head --github-account $MERGE_ACCOUNT <review file>" \
          "Leave the review above as it is: the gate reads only $MERGE_ACCOUNT's latest review with a verdict." \
          "Then run the gate again: scripts/merge-gate.sh $PR $head <submitted_at>, where submitted_at is what gh api repos/$REPO/pulls/$PR/reviews/<id> --jq .submitted_at prints for the review id the posting program's success line names." ;;
-    *) cannot "python3 $VERDICT_REVIEW_MARKS_CHECK exited $marks_check_status when the gate gave it review $verdict_review_id, so the gate cannot tell whether that review carries the posting program's marks; any error it printed is just above this line." \
+    *) cannot "python3 $VERDICT_REVIEW_POSTING_PROGRAM_MARKS_CHECK_PROGRAM_PATH exited $marks_check_status when the gate gave it review $verdict_review_id, so the gate cannot tell whether that review carries the posting program's marks; any error it printed is just above this line." \
          "Do not run the gate again, do not merge pull request $PR another way, and do not repair that program or python3 yourself." \
          "Send this whole message, with the error printed above it, to the agent-seat reboot-test, which owns that program, with SendMessage; run the gate again when reboot-test says the program is fixed." ;;
   esac

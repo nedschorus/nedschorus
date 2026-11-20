@@ -5,7 +5,7 @@ scripts/merge-gate.sh runs this on ned-review-merge's latest review whose state 
 CHANGES_REQUESTED. Standard input is one JSON object: "review", the review as GitHub's reviews
 endpoint returns it, and "comments", the list of its inline comments. The marks are the ones
 scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py writes, read by its
-verdict_review_posting_program_marks_missing().
+posted_verdict_review_missing_review_posting_program_marks_reason_or_none().
 
 Exits 0 when the review has the marks; 1 when it lacks them, printing why on standard output;
 2 when standard input is not that object.
@@ -36,9 +36,9 @@ def main():
         review, comments = given["review"], given["comments"]
         if not isinstance(review, dict) or not isinstance(comments, list):
             raise TypeError("review must be an object and comments a list")
-        missing = posting.verdict_review_posting_program_marks_missing(review, comments)
+        missing = posting.posted_verdict_review_missing_review_posting_program_marks_reason_or_none(review, comments)
     except (ValueError, KeyError, TypeError, AttributeError) as error:
-        print(f"scripts/merge-gate-verdict-review-posting-program-marks-check.py: standard input is not one JSON "
+        print(f"scripts/merge-gate-approval-or-changes-request-review-has-review-posting-program-marks-check.py: standard input is not one JSON "
               f"object with a \"review\" object and a \"comments\" list ({type(error).__name__}: {error}).\n"
               f"scripts/merge-gate.sh builds that input from GitHub; if you ran this program yourself, give it "
               f"{{\"review\": <the review as GitHub's pulls/<number>/reviews endpoint returns it>, "

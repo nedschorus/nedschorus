@@ -142,7 +142,7 @@ GATE = Path(__file__).with_name("merge-gate.sh")
 DESCRIPTION_DEFECT_LINE_READER = Path(__file__).with_name(
     "pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py")
 NO_SANDBOX_SUITES_PROGRAM = Path(__file__).with_name("no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py")
-VERDICT_REVIEW_MARKS_CHECK = Path(__file__).resolve().with_name("merge-gate-verdict-review-posting-program-marks-check.py")
+VERDICT_REVIEW_POSTING_PROGRAM_MARKS_CHECK_PROGRAM_PATH = Path(__file__).resolve().with_name("merge-gate-approval-or-changes-request-review-has-review-posting-program-marks-check.py")
 GIT_REDIRECTING_ENVIRONMENT_COMMON = Path("nn-systems/general-tools/git-redirecting-environment-variables-removal-common.py")
 GIT_MACHINE_READABLE_OUTPUT_COMMON = Path("nn-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
 FIXTURES = Path(__file__).with_name("merge-gate-test-captured-github-responses")
@@ -371,7 +371,7 @@ def gate_copy(text):
     for common in (GIT_REDIRECTING_ENVIRONMENT_COMMON, GIT_MACHINE_READABLE_OUTPUT_COMMON):
         shutil.copyfile(Path(__file__).resolve().parent.parent / common, top / common)
     # A link, not a copy: the check loads the posting program and its modules from its own resolved directory.
-    (directory / VERDICT_REVIEW_MARKS_CHECK.name).symlink_to(VERDICT_REVIEW_MARKS_CHECK)
+    (directory / VERDICT_REVIEW_POSTING_PROGRAM_MARKS_CHECK_PROGRAM_PATH.name).symlink_to(VERDICT_REVIEW_POSTING_PROGRAM_MARKS_CHECK_PROGRAM_PATH)
     copy = directory / "merge-gate.sh"
     copy.write_text(text)
     return copy
@@ -402,7 +402,7 @@ def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=
         (stand_in_dir / "jq").write_text(JQ_STAND_IN)
         (stand_in_dir / "jq").chmod(0o755)
     python3_failing_program = (DESCRIPTION_DEFECT_LINE_READER.name if description_reader_fails
-                               else VERDICT_REVIEW_MARKS_CHECK.name if marks_check_fails else None)
+                               else VERDICT_REVIEW_POSTING_PROGRAM_MARKS_CHECK_PROGRAM_PATH.name if marks_check_fails else None)
     if python3_failing_program:
         (stand_in_dir / "python3").write_text(PYTHON3_STAND_IN)
         (stand_in_dir / "python3").chmod(0o755)
@@ -1744,7 +1744,7 @@ def case_marks_review_comments_read_fails(gate):
 def case_marks_check_program_fails(gate):
     approval, routes = pr_3881_routes()
     run = run_gate(gate, "3881", approval["commit_id"], approval["submitted_at"], routes, marks_check_fails=True)
-    check_program = gate.parent / VERDICT_REVIEW_MARKS_CHECK.name
+    check_program = gate.parent / VERDICT_REVIEW_POSTING_PROGRAM_MARKS_CHECK_PROGRAM_PATH.name
     return could_not_run_after_gh(
         run, "3881", f"GATE COULD NOT RUN: python3 {check_program} exited 5 when the gate gave it review 5950181743",
         "\nDo not run the gate again, do not merge pull request 3881 another way, and do not repair that program "
@@ -1957,7 +1957,7 @@ MUTATIONS = [
      [('if [ "$verdict_review_state" = "CHANGES_REQUESTED" ]; then', 'if false; then')],
      [case_b6_merge_accounts_later_findings, case_marks_review_comments_read_fails]),
     ("the marks check failing read as a refusal",
-     [("    *) cannot \"python3 $VERDICT_REVIEW_MARKS_CHECK", "    *) fail \"python3 $VERDICT_REVIEW_MARKS_CHECK")],
+     [("    *) cannot \"python3 $VERDICT_REVIEW_POSTING_PROGRAM_MARKS_CHECK_PROGRAM_PATH", "    *) fail \"python3 $VERDICT_REVIEW_POSTING_PROGRAM_MARKS_CHECK_PROGRAM_PATH")],
      [case_marks_check_program_fails]),
     ("F1 without --paginate", [(" --paginate)", ")")],
      [case_b1_inline_beyond_first_page, case_b1_issue_beyond_first_page,
