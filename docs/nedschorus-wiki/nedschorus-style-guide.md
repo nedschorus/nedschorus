@@ -2,7 +2,7 @@
 
 This page lists words to avoid in this project and what to write instead. Most of the words below each name several different things here, so a reader cannot tell which one the writer meant; "land" has a project word that replaces it; the pronouns leave a reader who lacks the writer's context guessing what each stands for. A listed word stays when it is used in its ordinary English meaning, sits inside code or a quotation, or is talked about rather than used. Write a word you talk about in backquotes, as the table's first column does.
 
-`scripts/style-guide-word-checker-nbd.py` reads the table below. After an agent's Edit or Write of a markdown file, `scripts/style-guide-word-checker-markdown-edit-hook-nbd.py` reports each listed word in the text just written, and the writer decides whether each hit needs changing. Changing a row changes what the hook reports. A form is also reported with a capital first letter, such as "Seat" at the start of a sentence; besides the forms in the third column, the checker skips code, link targets, paths and text in double quotes.
+`scripts/style-guide-word-checker-hack.py` reads the table below. After an agent's Edit or Write of a markdown file, `scripts/style-guide-word-checker-markdown-edit-hook-hack.py` reports each listed word in the text just written, and the writer decides whether each hit needs changing. Changing a row changes what the hook reports. A form is also reported with a capital first letter, such as "Seat" at the start of a sentence; besides the forms in the third column, the checker skips code, link targets, paths and text in double quotes.
 
 ## Words to avoid
 
@@ -25,7 +25,7 @@ This page lists words to avoid in this project and what to write instead. Most o
 | `fast read` | `fast read`, `fast-read` | `cold-read-fast-read` | cold-read-fast-read | files, messages to other agents, messages to the user |
 | `cold-read run` | `cold-read run` | | cold-read-full-run for the review by every cold-read-cell; cold-read-cell for one reviewer | files, messages to other agents, messages to the user |
 | `first prompt` | `first prompt` | `initial-agent-instructions` | initial-agent-instructions | files, messages to other agents, messages to the user |
-| `runtime` | `runtime` | | agent-binary for `claude` or `codex`; "run time" for a duration | files, messages to other agents, messages to the user |
+| `runtime` | `runtime` | | agent-binary for `claude`, `codex` or `agy`; "run time" for a duration | files, messages to other agents, messages to the user |
 | `ruling` | `ruling`, `rulings`, `ruled`, `unruled` | `user-ruling` | user-ruling for a recorded decision of the user; "the user decided" for the act; "the user has not decided" for unruled; "the reviewer decided" for a decision that was not the user's | files, messages to other agents, messages to the user |
 | `harness` | `harness` | `test harness`, `evaluation harness` | "Claude Code" or "Codex", naming the program an agent runs inside, or "the program the agent runs inside" when either is meant; "test harness" for test scaffolding | files, messages to other agents, messages to the user |
 | `shape` | `shape`, `shapes` | | "design", "structure", "format", "option", "case" or "pattern", whichever is meant | files, messages to other agents, messages to the user |

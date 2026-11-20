@@ -1184,7 +1184,7 @@ def item_line_ranges(walk_finder, minutes, value, numbers, total, parser, named_
     openings = walk_finder.item_opening_lines(text, parser, tokens)
     ranges = []
     for unit_numbers, unit_total, _, first, end in spans:
-        if len(numbers) == 1 and len(unit_numbers) > 1:
+        if len(numbers) == 1:
             first, end = walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
                 openings, first, end, numbers[0], unit_numbers, unit_total)
         ranges.append((first, end))
@@ -1240,10 +1240,8 @@ def approval_walk_item_word_counted_line_ranges(walk_finder, text, tokens, parse
 
     def own_range(unit, number):
         unit_numbers, unit_total, _, first, end = unit
-        if len(unit_numbers) > 1:
-            return walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
-                openings, first, end, number, unit_numbers, unit_total)
-        return first, end
+        return walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
+            openings, first, end, number, unit_numbers, unit_total)
 
     def shared_heading_text(unit):
         first_opening = min(own_range(unit, part)[0] for part in unit[0])
@@ -1255,8 +1253,8 @@ def approval_walk_item_word_counted_line_ranges(walk_finder, text, tokens, parse
         ranges.append(own_range(unit, number))
         if len(numbers) > 1 and len(unit[0]) > 1:
             ranges += shared_heading_text(unit)
-        for each in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(all_units, unit):
-            parts = [part for part in each[0] if part.startswith(number + ".") and part not in numbers]
+        for each in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(all_units, unit, [number]):
+            parts =[part for part in each[0] if part.startswith(number + ".") and part not in numbers]
             ranges += [own_range(each, part) for part in parts]
             if parts and len(each[0]) > 1:
                 ranges += shared_heading_text(each)
@@ -1914,7 +1912,7 @@ def check(arguments):
         raise Failure(UNREADABLE_NEW_MARKS.format(item=item, document=document, problems="\n".join(unreadable),
                                                   command=f"python3 {program} check{check_flags(arguments)}"))
     if arguments.not_asked is not None:
-        if arguments.not_asked == NOT_ASKED_RATED_NONE and rating == NOT_ASKED_RATED_WEAK:
+        if arguments.not_asked == NOT_ASKED_RATED_NONE and rating == NOT_ASKED_RATED_WEAK:  # pragma: no mutate, no rating sorts after "weak" ("very strong" sorts before it), so >= matches only weak
             raise Failure(NOT_ASKED_WEAK_GROUND_NOT_NAMED.format(item=item, program=program))
         if arguments.not_asked in NOT_ASKED_WEAK_GROUND_LABELS and rating == NOT_ASKED_RATED_NONE:
             raise Failure(NOT_ASKED_WEAK_GROUND_FOR_RATED_NONE.format(item=item, kind=arguments.not_asked,
@@ -2205,7 +2203,7 @@ def item_title(walk_finder, line):
     # a space before it, as in `x ** 2`, closes nothing.
     code = [span.span() for span in walk_finder.CODE_SPAN.finditer(title)]
     closer = next((found.start() for found in re.finditer(re.escape(opener), title) if opener
-                   and found.start() > 0 and not title[found.start() - 1].isspace()
+                   and found.start() > 0 and not title[found.start() - 1].isspace()  # pragma: no mutate, the return above leaves no opener at position 0, so > 0, > -1 and >= 0 agree
                    and not any(start <= found.start() < end for start, end in code)), None)
     if closer is not None:
         title = title[:closer] + title[closer + len(opener):]
@@ -2309,8 +2307,8 @@ def approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minut
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     all_units = walk_finder.item_unit_spans(document.read_text(encoding="utf-8"), parser)
     unit = walk_finder.waiting_item_units(document, value, numbers, total, parser, all_units)[1][0]
-    sub_steps = [part for each in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(all_units, unit)
-                 for part in each[0] if part.startswith(numbers[0] + ".")]
+    sub_steps = [part for each in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(
+                     all_units, unit, numbers) for part in each[0] if part.startswith(numbers[0] + ".")]
     named = next_item(walk_finder, minutes, parser, sub_steps, None, [], [])
     if not named:
         return None
@@ -2484,21 +2482,27 @@ def walk_document_order(walk_finder, text, units, parser, document, today):
 
 
 def approval_walk_unnumbered_items_moved_past_the_sub_steps_they_split(walk_finder, units):
-    """units, as item_unit_spans gives them, with each unnumbered item that stands between two sub-steps of one
-    whole item, such as 2.1 and 2.2, moved to just after the last unit of the sub-steps that follow it, as
-    approval_walk_item_sub_step_units_below_item_in_walk_document reads them; the units keep their line numbers."""
-    moved, waiting = [], []
+    """units, as item_unit_spans gives them, with each unnumbered item that stands between a numbered unit and the
+    last of that unit's sub-steps, as approval_walk_item_sub_step_units_below_item_in_walk_document finds them, moved
+    to just after that last sub-step, the latest one when several units' sub-steps reach past it, as in 2.1, the
+    unnumbered item, then 2.2, or 3, 4, the unnumbered item, then 3.1; the units keep their line numbers."""
+    after = {}
     for unit in units:
-        if walk_finder.approval_walk_unit_is_unnumbered_item(unit):
-            waiting.append(unit)
+        if not unit[0]:
             continue
-        numbered_above = [other for other in moved if other[0]]
-        is_sub_step = walk_finder.approval_walk_document_unit_is_dotted_sub_step_of_whole_item_of_any_item_number
-        if waiting and not (numbered_above and is_sub_step(unit, numbered_above[-1][0])):
-            moved += waiting
-            waiting = []
+        found = walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(units, unit)
+        last = found[-1][3] if found else None
+        for other in units:
+            if (last is not None and walk_finder.approval_walk_unit_is_unnumbered_item(other)
+                    and unit[3] < other[3] < last):
+                after[other[3]] = max(after.get(other[3], last), last)
+    moved = []
+    for unit in units:
+        if unit[3] in after:
+            continue
         moved.append(unit)
-    return moved + waiting
+        moved += [other for other in units if after.get(other[3]) == unit[3]]
+    return moved
 
 
 class WalkOrderUnusable(Exception):
@@ -2815,19 +2819,119 @@ def held_answers_unresolved(walk_finder, minutes_text, parser):
             for number in held_numbers} - decided
 
 
-def items_decided_through_sub_steps(items, words, unresolved=frozenset()):
+def approval_walk_map_each_item_number_to_direct_sub_steps_found_by_walk_document_item_finder(walk_finder, units,
+                                                                                               presented):
+    """Return {item number: its direct sub-steps, such as 3.1 and 3.2 for 3, but not 3.1.1} for each item of units,
+    as item_unit_spans gives them, taken from the sub-steps approval_walk_item_sub_step_units_below_item_in_walk_document
+    gives the item's unit, and from that unit itself, as in `Items 3 and 3.1 of 9`. The item's unit is the one
+    approval_walk_item_number_unit_within_presented_hierarchy gives it from presented, as
+    approval_walk_minutes_unit_each_item_number_was_last_presented_in reads them, and a number it gives none gets no
+    entry: so approving the 3.1.1 of `3.1 of 12` does not decide a `3.1 of 9` the minutes presented last."""
+    sub_steps_of = {}
+    for number in dict.fromkeys(number for unit in units for number in unit[0]):
+        unit = approval_walk_item_number_unit_within_presented_hierarchy(walk_finder, units, presented, number)
+        if unit is None:
+            continue
+        below = walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(units, unit, [number])
+        sub_steps_of[number] = list(dict.fromkeys(
+            part for part in unit[0] + [part for each in below for part in each[0]]
+            if part.rsplit(".", 1)[0] == number and part != number))
+    return sub_steps_of
+
+
+def approval_walk_unit_is_presented_unit_or_one_of_its_sub_steps(walk_finder, units, presented_unit, number, unit):
+    """Return whether unit, of units as item_unit_spans gives them, is presented_unit or one of the sub-steps of its
+    item number that approval_walk_item_sub_step_units_below_item_in_walk_document finds, such as `Item 3.1.1 of 12`
+    below `Items 3 and 3.1 of 12` for number 3, or that shared unit itself for 3.1."""
+    return unit == presented_unit or unit in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(
+        units, presented_unit, [number])
+
+
+def approval_walk_item_units_above_holding_sub_step_unit(walk_finder, units, unit, number):
+    """Return {each number above number, such as 3.1 and 3 for 3.1.1: the last unit of units up to unit that names
+    it and is unit or has unit among its sub-steps, as 3 for 3.1 of `Items 3 and 3.1 of 12`}, leaving out a number
+    that has no such unit."""
+    found, parts = {}, number.split(".")
+    for depth in range(len(parts) - 1, 0, -1):
+        above = ".".join(parts[:depth])
+        holding = [each for each in units if above in each[0] and each[3] <= unit[3]
+                   and approval_walk_unit_is_presented_unit_or_one_of_its_sub_steps(walk_finder, units, each, above,
+                                                                                     unit)]
+        if holding:
+            found[above] = holding[-1]
+    return found
+
+
+def approval_walk_minutes_unit_each_item_number_was_last_presented_in(walk_finder, units, minutes_text, parser):
+    """Return {item number: the unit of units, as item_unit_spans gives them, the walk last presented it in}, read
+    from the `#next_to_present` lines of minutes_text outside code, in order. A line presents, for each number it
+    names, the one unit naming it, or, when several do, the one whose M is the line's, and with that unit each unit
+    above it that holds it, because the read step descends from `3 of 12` to `3.1.1 of 12` and writes a line for the
+    leaf only; a number below a newly presented unit whose last unit is not
+    approval_walk_unit_is_presented_unit_or_one_of_its_sub_steps of it is dropped."""
+    presented = {}
+    for line in walk_finder.prose_lines(minutes_text, parser):
+        spans = [span.span() for span in walk_finder.CODE_SPAN.finditer(line)]
+        for marker in walk_finder.NEXT_MARKER.finditer(line):
+            if any(start <= marker.start() < end for start, end in spans):
+                continue
+            try:
+                numbers, total = walk_finder.parse_items(marker[2].replace("`", "").strip())
+            except walk_finder.UnusableRange:
+                continue
+            for number in numbers:
+                naming = [unit for unit in units if number in unit[0]]
+                if len(naming) > 1:
+                    naming = [unit for unit in naming if unit[1] == total]
+                if len(naming) != 1:
+                    continue
+                newly = {number: naming[0],
+                         **approval_walk_item_units_above_holding_sub_step_unit(walk_finder, units, naming[0], number)}
+                for above, unit in newly.items():
+                    for other in [other for other in presented if other.startswith(above + ".")
+                                  and not approval_walk_unit_is_presented_unit_or_one_of_its_sub_steps(
+                                      walk_finder, units, unit, above, presented[other])]:
+                        del presented[other]
+                presented.update(newly)
+    return presented
+
+
+def approval_walk_item_number_unit_within_presented_hierarchy(walk_finder, units, presented, number):
+    """Return the unit of units, as item_unit_spans gives them, that number names: the one unit naming it; else the
+    unit presented gives it, as approval_walk_minutes_unit_each_item_number_was_last_presented_in reads them; else
+    the one unit naming it that approval_walk_unit_is_presented_unit_or_one_of_its_sub_steps finds in the unit
+    presented gives the nearest number above it, as `3.1 of 12` below a presented `3 of 12`, or the presented
+    `Items 3 and 3.1 of 12` itself; else None."""
+    naming = [unit for unit in units if number in unit[0]]
+    if len(naming) == 1:
+        return naming[0]
+    if number in presented:
+        return presented[number]
+    parts = number.split(".")
+    for depth in range(len(parts) - 1, 0, -1):
+        above = ".".join(parts[:depth])
+        if above in presented:
+            within = [unit for unit in naming if approval_walk_unit_is_presented_unit_or_one_of_its_sub_steps(
+                walk_finder, units, presented[above], above, unit)]
+            return within[0] if len(within) == 1 else None
+    return None
+
+
+def items_decided_through_sub_steps(items, words, sub_steps_of, unresolved=frozenset()):
     """Return {item: its `#ruling_given` word} for each item of items, such as 3, not in words, the decided items
-    with their words, nor in unresolved, the items whose held answer is unresolved, that has sub-steps among items,
-    such as 3.1 and 3.2, every one of them in words or, deeper, decided through its own sub-steps; an item is never
-    decided through its parent. Its word is its sub-steps' one word once moved_on is left out, moved_on when that
-    leaves none, and part_answers when it leaves more than one."""
+    with their words, nor in unresolved, the items whose held answer is unresolved, that has direct sub-steps in
+    sub_steps_of, as
+    approval_walk_map_each_item_number_to_direct_sub_steps_found_by_walk_document_item_finder
+    gives them, among items, such as 3.1 and 3.2, every one of them in words or, deeper, decided through its own
+    sub-steps; an item is never decided through its parent. Its word is its sub-steps' one word once moved_on is
+    left out, moved_on when that leaves none, and part_answers when it leaves more than one."""
     words, inferred = dict(words), {}
     numbered = [item for item in items if isinstance(item, str)]
     # Deepest first, so a sub-step decided through its own sub-steps, as 5.2 through 5.2.1, counts for its parent.
     for item in sorted(numbered, key=lambda number: -number.count(".")):
         if item in words or item in unresolved:
             continue
-        sub_steps = [other for other in numbered if other.rsplit(".", 1)[0] == item and other != item]
+        sub_steps = [other for other in sub_steps_of.get(item, []) if other in numbered]
         if sub_steps and all(other in words for other in sub_steps):
             ruled = {words[other] for other in sub_steps} - {RULING_GIVEN_MOVED_ON}
             words[item] = inferred[item] = (RULING_GIVEN_MOVED_ON if not ruled else ruled.pop() if len(ruled) == 1
@@ -2841,11 +2945,14 @@ def approval_walk_minutes_read_returning_decided_item_numbers(walk_finder, minut
     items_decided_through_sub_steps finds decided through its sub-steps, unless held_answers_unresolved holds it."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
     minutes_text = minutes.read_text(encoding="utf-8")
-    items = [number for unit in walk_finder.item_unit_spans(document.read_text(encoding="utf-8"), parser)
-             for number in unit[0]]
+    units = walk_finder.item_unit_spans(document.read_text(encoding="utf-8"), parser)
+    items = [number for unit in units for number in unit[0]]
     decided = minutes_record(walk_finder, minutes_text, parser)[0] | set(decided_now)
     return decided | set(items_decided_through_sub_steps(
-        items, dict.fromkeys(decided), held_answers_unresolved(walk_finder, minutes_text, parser)))
+        items, dict.fromkeys(decided), approval_walk_map_each_item_number_to_direct_sub_steps_found_by_walk_document_item_finder(
+            walk_finder, units,
+            approval_walk_minutes_unit_each_item_number_was_last_presented_in(walk_finder, units, minutes_text, parser)),
+        held_answers_unresolved(walk_finder, minutes_text, parser)))
 
 
 def next_item(walk_finder, minutes, parser, order, summary, answered_numbers, waiting_numbers, placing=None,
@@ -3044,8 +3151,11 @@ def close(arguments):
     if answered != DEFERRED:
         deferred_item_heading_noted(walk_finder, minutes, answered_numbers, total, parser, noted=False)
     before = minutes.read_text(encoding="utf-8")
+    sub_steps_of = approval_walk_map_each_item_number_to_direct_sub_steps_found_by_walk_document_item_finder(
+        walk_finder, units or [], approval_walk_minutes_unit_each_item_number_was_last_presented_in(
+            walk_finder, units or [], before, parser))
     inferred_before = items_decided_through_sub_steps(order, minutes_ruling_words(walk_finder, before, parser)[0],
-                                                      held_answers_unresolved(walk_finder, before, parser))
+                                                      sub_steps_of, held_answers_unresolved(walk_finder, before, parser))
     append_to_minutes(minutes, [recorded])
     word = RULING_GIVEN_WORDS[held_outcome] if held_outcome else word
     rulings = [(number, word) for number in answered_numbers]
@@ -3064,7 +3174,8 @@ def close(arguments):
     unresolved = held_answers_unresolved(walk_finder, after, parser)
     # An item this close decides through its last sub-step gets its ruling too, so a pull request held on it moves.
     rulings += [(number, inferred_word) for number, inferred_word
-                in items_decided_through_sub_steps(order, words, unresolved).items() if number not in inferred_before]
+                in items_decided_through_sub_steps(order, words, sub_steps_of, unresolved).items()
+                if number not in inferred_before]
     numbers = next_item(walk_finder, minutes, parser, order, summary, answered_numbers, waiting_numbers, placing)
     if numbers and isinstance(numbers[0], int):
         first = numbers[0]
@@ -3072,10 +3183,18 @@ def close(arguments):
             first, units = unshown_items_gathered_behind_chosen(walk_finder, minutes, first, units, placing, parser,
                                                                 answered_numbers, total)
         numbers = [unnumbered_item_numbered(walk_finder, minutes, first, units)]
-    named = items_named(numbers, count)
+    # A number several headings name, such as 3 in `3 of 9` and `3 of 12`, takes its heading's M, so the read step
+    # can tell which heading the line names.
+    shown_total = count
+    if numbers and len([unit for unit in units or [] if numbers[0] in unit[0]]) > 1:
+        unit = approval_walk_item_number_unit_within_presented_hierarchy(
+            walk_finder, units, approval_walk_minutes_unit_each_item_number_was_last_presented_in(
+                walk_finder, units, minutes.read_text(encoding="utf-8"), parser), numbers[0])
+        shown_total = unit[1] if unit is not None and unit[1] is not None else count
+    named = items_named(numbers, shown_total)
     append_to_minutes(minutes, [NEXT_MARKER_LINE.format(value=named if numbers else CLOSED_MARKER_VALUE)])
     if numbers:
-        not_started = start_read_ahead_of_item_after(walk_finder, top, minutes, parser, numbers, count,
+        not_started = start_read_ahead_of_item_after(walk_finder, top, minutes, parser, numbers, shown_total,
                                                      arguments.fast_read_program)
         output += [not_started] if not_started else []
     output.append(CLOSE_READ_NEXT_ITEM.format(next_item=named, command=READ_STEP_COMMAND.format(

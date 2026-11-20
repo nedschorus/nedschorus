@@ -7,7 +7,7 @@ The naming and location standards for this project's files. Where a tool this pr
 `docs/nedschorus-wiki/nedschorus-glossary.md` defines the project-terms. `.claude/skills/skills-glossary.md`, `docs/design-to-main/design-to-main-glossary.md` and `nc-systems/main-gatekeeper/main-gatekeeper-glossary.md` define the system-terms of the skills, of design-to-main and of the main-gatekeeper. We avoid spaces in directory and file names, using a hyphen, `-`, instead.
 
 - **stem**: a filename without its extension.
-- **suffix**: the closing part of a filename stem that marks the file's kind, written with its leading hyphen and without the extension, such as `-draft`, `-test-design` or `-nbd`; a stem need not have one.
+- **suffix**: the closing part of a filename stem that marks the file's kind, written with its leading hyphen and without the extension, such as `-draft`, `-test-design` or `-hack`; a stem need not have one.
 
 ## Desired locations or file names for various components
 
@@ -70,11 +70,11 @@ The list does not reach the places for documents pending approval, where agents 
 * `-log`: a record of what a program or agent-session did, in time order.
 * `-report`: a finished account written for a reader, such as a reviewer's findings.
 * `-capture`: a verbatim copy of something seen, such as terminal output or a web page.
-* `-draft`: a document still being written, not yet put to review.
+* `-draft`: a document still being written; a cold-read-fast-read may read it, but no one has been asked to approve it yet.
 * `-candidate`: a version frozen for reviewers to read.
 * `-analysis`: a study of data, with its method and conclusions.
 
 A file with one of the six suffixes above whose extension is `.md`, `.txt`, `.log`, `.out`, `.err`, `.json`, `.jsonl` or `.patch` is a log, kept in the log-store and never in git, with two exceptions: a `-draft` or `-candidate` file while it is pending approval, in `docs/drafts/` or a queue directory; and a GHI-MD, which is its GHI's substance even when it ends `-report`, such as `docs/issues/142-draft-md-prompt-research-report.md`. The log-store's `README.md`, `nedlern@ned-box:/home/nedlern/nedschorus-logs/README.md`, names the program or skill that owns each of its directories, and that owner names the files. A file with one of the six suffixes and the extension of code, settings or a picture, `.py`, `.sh`, `.js`, `.mjs`, `.cjs`, `.ts`, `.cts`, `.yml`, `.yaml`, `.toml`, `.png` or `.svg`, is not a log; such a file, and one whose extension neither list names, goes where this page's entry for its kind says.
 
-One more suffix is not a log suffix: `-nbd`, the end of the name of a file whose whole content is nice-but-dirty, just before any extension, such as `scripts/log-store-session-dialogs-refresh-nbd.py`; no file without the suffix holds nice-but-dirty code. The project glossary, `docs/nedschorus-wiki/nedschorus-glossary.md`, defines -nbd and nice-but-dirty.
+One more suffix is not a log suffix: `-hack`, the end of the name of a file whose whole content is nn-hack, just before any extension, such as `scripts/log-store-session-dialogs-refresh-hack.py`; no file without the suffix holds nn-hack code. The project glossary, `docs/nedschorus-wiki/nedschorus-glossary.md`, defines -hack and nn-hack.
 

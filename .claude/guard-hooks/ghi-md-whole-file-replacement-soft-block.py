@@ -74,8 +74,8 @@ GHI_MD_DIRECTORY_PARTS = ("docs", "issues")
 GHI_MD_NAME_PATTERN = re.compile(r"^\d+-.*\.md$")
 
 # Messages to agents follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
-REFUSAL = (
-    "Refused: this command replaces the whole GHI-MD {path}, which can undo changes merged "
+GHI_MD_WHOLE_FILE_REPLACEMENT_REFUSAL = (
+    "[rule bash-guard-ghi-md-whole-file-replacement] Refused: this command replaces the whole GHI-MD {path}, which can undo changes merged "
     "into it on main after your copy was written.\n"
     "Change the GHI-MD with the Edit tool instead, one passage at a time, so main's other "
     "changes stay.\n"
@@ -243,7 +243,7 @@ def main(stdin=sys.stdin):
     marker_path = _instruction_file_guard.marker_root(payload, str(replaced)) / REASON_MARKER_NAME
     if _marker_common.consume_approval_marker(marker_path):
         return 0
-    deny(REFUSAL.format(path=replaced, marker_path=marker_path))
+    deny(GHI_MD_WHOLE_FILE_REPLACEMENT_REFUSAL.format(path=replaced, marker_path=marker_path))
     return 0
 
 

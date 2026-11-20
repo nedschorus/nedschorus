@@ -2315,10 +2315,10 @@ def _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root=False)
 
 
 
-def git_failure_next_steps(rerun):
+def git_failure_next_steps(rerun, failure):
     """The lines that tell an agent what to do after a git failure in a run started as rerun."""
     return next_step_lines.git_failure_next_step_lines(
-        rerun, PROGRAM_PATH, text_the_failure_line_contains="git's failure:")
+        rerun, PROGRAM_PATH, git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=str(failure), text_the_failure_line_contains="git's failure:")
 
 
 REPO_PLACEHOLDER = "<checkout>"
@@ -2375,7 +2375,11 @@ def build_tool_message_to_agent_printed_when_git_cannot_find_the_repository_top_
 
 
 def rerun_command(arguments):
-    """The command line that runs this program again with arguments, from any directory."""
+    """The command line that runs this program again with arguments.
+
+    Only the program's path is made absolute: a relative path among the arguments, and --repo's default of the
+    current directory, still need the directory the first run started in.
+    """
     return shlex.join(["python3", os.path.abspath(__file__)] + list(arguments))
 
 
@@ -2550,7 +2554,7 @@ def main(argv=None, runner=run_command):
         repo_rerun = rerun_command(["--repo", REPO_PLACEHOLDER]
                                    + arguments_without_repo(sys.argv[1:] if argv is None else argv))
         print(build_tool_message_to_agent_printed_when_git_cannot_find_the_repository_top_level_from_surfaces_skip_left_in_exit_codes_and_repo_rerun_command(args.repo, named, failure, set(args.skip), repo_rerun)
-              + "\n" + git_failure_next_steps(rerun), file=sys.stderr, flush=True)
+              + "\n" + git_failure_next_steps(rerun, failure), file=sys.stderr, flush=True)
         wanted = named
     shown = wanted if wanted == args.path else "%s (given as %s)" % (wanted, args.path)
 

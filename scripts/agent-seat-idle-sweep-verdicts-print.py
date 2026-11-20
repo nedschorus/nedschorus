@@ -93,6 +93,10 @@ AGENT_EXIT_CODE_KEY = "agent_exit_code"
 USAGE_LIMIT_API_ERROR = "usage_limit_reached"
 SYNTHETIC_MODEL = "<synthetic>"
 TASK_TOOL_NAMES = ("TaskCreate", "TaskUpdate")
+# The texts Claude Code's task tools return on success: "Task #<n> created successfully: <subject>"
+# and "Updated task #<n> <fields>".
+TASK_TOOL_SUCCESS_RESULT_PATTERN = re.compile(
+    r"Task #(?P<created>\d+) created successfully\b|Updated task #(?P<updated>\d+)\b")
 HANDOFF_PUT_OFF_TEXT = ("Your handoff was put off at {time} and nothing is running now. "
                         "Is now a good time to hand off?")
 
@@ -163,13 +167,21 @@ RX_GERUND_NARRATIVE = re.compile(
 RX_GERUND_NOUN = re.compile(r"^\W*\w+\s+(list|order|time|notes?|material|guide|room)\b", re.I)
 RX_NOW_NEXT = re.compile(r"^\W*(?:now|next|then)\b|\bnow\b|\bnext\b", re.I)
 # The user has the next move in these; an event-conditional sentence is a promise after the event.
+# "If you don't, I'll ..." and "unless you object, I'll ..." leave the move with the agent.
 RX_CONDITIONAL_ON_USER = re.compile(
-    r"\b(?:should you|want me|would you|shall I|say the word|say go|your call|if you'?d like|"
+    r"\b(?:should you|want me|would you|shall I|say the word|say go|your call|"
     r"can I|may I|on your (?:go|word|approval|ok|yes|y))\b"
+    r"|\bif you\b(?!\s+(?:don'?t|do not|haven'?t|have not|didn'?t|did not|won'?t|will not)\s*(?:[,;.]|$))"
     r"|^\W*(?:say|tell me|reply|answer|pick|choose)\b", re.I)
+# "as" is temporal only before "each" or before "it" or "they" and a verb that is not a form of be,
+# a modal or past tense: "as it opens", not "as it is", "as it currently stands", "as the task
+# requires" or "as those two items"; "these", "those" and "that" are left out, being determiners too.
 RX_CONDITIONAL_ON_EVENT = re.compile(
     r"\b(?:if|once|when|whenever|after|unless|until|tomorrow|later|next session|next time|"
-    r"as soon as|the moment|in a day|in an hour|by tomorrow)\b", re.I)
+    r"as soon as|the moment|in a day|in an hour|by tomorrow)\b"
+    r"|\bas\s+(?:each\b|(?:it|they)\s+(?!(?:(?:\w+ly|always|now|still|already|often|never)\s+)?"
+    r"(?:is|are|was|were|be|should|would|could|can|may|might|must|will|does|did|do|has|had|have|"
+    r"says?|said|stands?|seems?|looks?|goes|went|happens|turns|\w+ed)\b)[a-z])", re.I)
 RX_NEGATED_ACTION = re.compile(
     r"\b(?:without|instead of|rather than|not yet|never|no longer|don't|won't|can't)\s+"
     r"(?:\w+\s+){0,2}?(?:push|pushing|commit|committing|dispatch|dispatching|fork|forking|file|"
@@ -325,7 +337,7 @@ class TranscriptFacts:
         self.last_model_turn_record = None
         self.turn_ended_after_last_model_turn_record = False
         self.turn_ending_messages = []   # (record, time, time of the prompt that began its turn)
-        self.task_tool_calls = []        # (time, name, input)
+        self.task_tool_calls = []        # (time, name, input, task id), only calls whose result succeeded
         self.tool_calls = []             # (time, name, input), every tool call
         self.launch_times = {}           # subagent or background task id -> time
         self.last_task_notification = {} # task id -> (time, whether it is interim)
@@ -349,8 +361,11 @@ def read_main_transcript(path):
     newest_text_record = None
     turn_started_at = None
     awaiting_turn_start = True
+    task_tool_calls = []                 # (tool use id, (time, name, input))
+    task_id_by_succeeded_tool_use_id = {}
     for record in transcript_records(path):
         moment = parse_time(record.get("timestamp"))
+        task_id_by_succeeded_tool_use_id.update(succeeded_task_tool_result_task_ids(record))
         if awaiting_turn_start and record.get("type") == "user":
             turn_started_at = moment
             awaiting_turn_start = False
@@ -373,7 +388,8 @@ def read_main_transcript(path):
         for block in tool_uses(record):
             facts.tool_calls.append((moment, block.get("name"), block.get("input") or {}))
             if block.get("name") in TASK_TOOL_NAMES:
-                facts.task_tool_calls.append((moment, block.get("name"), block.get("input") or {}))
+                task_tool_calls.append(
+                    (block.get("id"), (moment, block.get("name"), block.get("input") or {})))
         if "<task-id>" in (text := task_notification_carrier_text(record)):
             for notification in threshold_hook.TASK_NOTIFICATION_PATTERN.findall(text):
                 interim = interim_recognizer.task_notification_is_interim(notification)
@@ -385,7 +401,38 @@ def read_main_transcript(path):
                 launched = result.get(key)
                 if isinstance(launched, str) and launched not in facts.launch_times:
                     facts.launch_times[launched] = moment
+    facts.task_tool_calls = [(*call, task_id_by_succeeded_tool_use_id[tool_use_id])
+                             for tool_use_id, call in task_tool_calls
+                             if tool_use_id in task_id_by_succeeded_tool_use_id]
     return facts
+
+
+def succeeded_task_tool_result_task_ids(record):
+    """{tool use id: task id} for each result in this record that shows a task call recorded
+    something, the task id read from the success text. A TaskUpdate on a task id that does not
+    exist returns "Task not found" with no is_error, and a call whose turn was interrupted has no
+    result, so only the success text counts; a TaskCreate's input names no id, so its id comes from
+    its result."""
+    content = (record.get("message") or {}).get("content")
+    if record.get("type") != "user" or not isinstance(content, list):
+        return {}
+    task_ids = {}
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "tool_result":
+            success = TASK_TOOL_SUCCESS_RESULT_PATTERN.match(tool_result_text(block))
+            if success:
+                task_ids[block.get("tool_use_id")] = success["created"] or success["updated"]
+    return task_ids
+
+
+def tool_result_text(block):
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(part.get("text", "") for part in content
+                       if isinstance(part, dict) and isinstance(part.get("text"), str))
+    return ""
 
 
 def newest_token_spend_in(path):
@@ -397,7 +444,8 @@ def newest_token_spend_in(path):
     return newest
 
 
-def running_subagent_entry(agent_id, facts, transcript, newest_spend_by_subagent_transcript, now):
+def running_subagent_entry(agent_id, facts, transcript, newest_spend_by_subagent_transcript, now,
+                           task_ids_ended_in_session_transcript):
     """The entry for a subagent the session's records leave running. Claude Code marks a subagent's
     report interim while background commands it launched still run, its final report included, so
     a subagent whose last report is interim and that has spent no token since is reported as
@@ -410,7 +458,8 @@ def running_subagent_entry(agent_id, facts, transcript, newest_spend_by_subagent
         return entry
     own = threshold_hook.work_in_flight(str(own_transcript),
                                         background_task_wait_seconds=float("inf"), now=now,
-                                        should_raise_on_undecodable_bytes=True)
+                                        should_raise_on_undecodable_bytes=True,
+                                        task_ids_ended_in_session_transcript=task_ids_ended_in_session_transcript)
     entry[fields.SUBAGENT_STOPPED_AT] = iso(stopped_at)
     entry[fields.SUBAGENT_OWN_RUNNING_BACKGROUND_COMMANDS] = [
         {"id": task_id, "started": iso(own.launched_at_by_id.get(task_id))}
@@ -503,7 +552,15 @@ def open_tasks_with_prerequisites_or_blocked_by(task_directory):
 def sets_prerequisites_or_blocked_by(task_tool_input):
     """Whether a TaskCreate or TaskUpdate call records what a task waits on: the only call that can
     back a promise to act after an event or a hold."""
-    return bool((task_tool_input.get("metadata") or {}).get("prerequisites")
+    metadata = task_tool_input.get("metadata")
+    # The transcript keeps the input as the model wrote it, and TaskCreate accepts metadata
+    # written as a JSON string.
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except ValueError:
+            metadata = None
+    return bool((metadata.get("prerequisites") if isinstance(metadata, dict) else None)
                 or task_tool_input.get("addBlockedBy"))
 
 
@@ -620,9 +677,10 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
                                     "source": str(source) if last_spend else None}
         verdict[fields.LAST_TOOL_CALL_AT] = iso(max(
             (moment for moment, _, _ in facts.tool_calls if moment), default=None))
-        verdict[fields.LAST_TASK_CALL_SETTING_PREREQUISITES_OR_BLOCKED_BY_AT] = iso(max(
-            (moment for moment, _, tool_input in facts.task_tool_calls
-             if moment and sets_prerequisites_or_blocked_by(tool_input)), default=None))
+        verdict[fields.SUCCESSFUL_TASK_TOOL_CALLS_SETTING_PREREQUISITES_OR_BLOCKED_BY] = [
+            {"time": iso(moment), "name": name, "task": task_id}
+            for moment, name, tool_input, task_id in facts.task_tool_calls
+            if moment and sets_prerequisites_or_blocked_by(tool_input)]
 
         last = facts.last_model_turn_record or {}
         limit = is_usage_limit(last)
@@ -639,7 +697,8 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
                 str(transcript), background_task_wait_seconds=float("inf"), now=now)
             running_subagents = [
                 running_subagent_entry(agent_id, facts, transcript,
-                                       newest_spend_by_subagent_transcript, now)
+                                       newest_spend_by_subagent_transcript, now,
+                                       flight.ended_task_ids)
                 for agent_id in flight.subagent_ids]
         except threshold_hook.TranscriptCouldNotBeFullyRead as error:
             raise ReadFailure(f"{error}: it is the last line, still being written, which the next "

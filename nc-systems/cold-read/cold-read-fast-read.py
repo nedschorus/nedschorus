@@ -912,6 +912,8 @@ TABLE_ROW_PATTERN = re.compile(r"^(\s*\|)(.*)$")
 LIST_ITEM_PATTERN = re.compile(r"^(\s*(?:[-*+]|\d+[.)])\s+)(.*)$")
 BLOCKQUOTE_PATTERN = re.compile(r"^(\s*>+\s*)(.*)$")
 FRONTMATTER_FIELD_PATTERN = re.compile(r"^(\s*[A-Za-z0-9_.-]+:\s+)(\S.*)$")
+FRONTMATTER_KEY_PATTERN = re.compile(r"^\s*[A-Za-z0-9_.-]+:(?=\s|$)")
+BLOCK_SCALAR_INDICATOR_PATTERN = re.compile(r"^[|>][-+0-9]*\s*$")
 CODE_FENCE_PATTERN = re.compile(r"^\s*(```|~~~)")
 
 
@@ -978,9 +980,13 @@ def sentence_id_markup(text: str, units: dict = None):
     # Text with no id before the first unit, such as a frontmatter list that
     # opens the document, belongs to that first unit; when no unit follows,
     # as in a frontmatter-only document, it becomes a unit of its own whose id
-    # goes on the line it starts on.
+    # goes on the line it starts on, unless it has no words to restate.
     pieces_before_first_unit = []
+    # What take() would test for words in each of those pieces: a field's
+    # value, never its key.
+    words_before_first_unit = []
     first_piece_line = None
+    block_scalar_field_indent = None
 
     def take(sentence: str, unit_text: str = None, code: bool = False):
         """The id marker for this sentence, or None when there is nothing to
@@ -989,7 +995,7 @@ def sentence_id_markup(text: str, units: dict = None):
         with no id of its own joins the last unit."""
         nonlocal counter
         if not carries_words(sentence):
-            join_last_unit(unit_text if unit_text is not None else sentence)
+            join_last_unit(unit_text if unit_text is not None else sentence, sentence)
             return None
         counter += 1
         name = f"s{counter}"
@@ -997,11 +1003,12 @@ def sentence_id_markup(text: str, units: dict = None):
         unit_pieces[name] = [*pieces_before_first_unit,
                              unit_text if unit_text is not None else sentence]
         pieces_before_first_unit.clear()
+        words_before_first_unit.clear()
         if code:
             code_units.add(name)
         return f"[{name}]"
 
-    def join_last_unit(piece: str):
+    def join_last_unit(piece: str, tested: str = None):
         nonlocal first_piece_line
         if unit_pieces:
             unit_pieces[next(reversed(unit_pieces))].append(piece)
@@ -1010,6 +1017,7 @@ def sentence_id_markup(text: str, units: dict = None):
                 # Every caller appends the piece's line to `marked` next.
                 first_piece_line = len(marked)
             pieces_before_first_unit.append(piece)
+            words_before_first_unit.append(piece if tested is None else tested)
 
     def mark_prose(content: str, already_open: bool, prefix: str = "") -> str:
         """Insert an id before each sentence of one line's content."""
@@ -1044,12 +1052,21 @@ def sentence_id_markup(text: str, units: dict = None):
             elif index == 0:
                 marked.append(line)
             else:
-                field = FRONTMATTER_FIELD_PATTERN.match(line)
+                indent = len(line) - len(line.lstrip())
+                in_block_scalar = (block_scalar_field_indent is not None
+                                   and (not stripped or indent > block_scalar_field_indent))
+                if not in_block_scalar:
+                    block_scalar_field_indent = None
+                field = None if in_block_scalar else FRONTMATTER_FIELD_PATTERN.match(line)
                 marker = take(field.group(2), line) if field else None
                 if not field:
                     # A folded value's continuation or a list entry: part
-                    # of the field above it.
-                    join_last_unit(line)
+                    # of the field above it. A block scalar's line is all
+                    # value, even when it looks like a key, as `Warning:` does.
+                    join_last_unit(line, line if in_block_scalar
+                                   else FRONTMATTER_KEY_PATTERN.sub("", line))
+                elif BLOCK_SCALAR_INDICATOR_PATTERN.match(field.group(2)):
+                    block_scalar_field_indent = indent
                 marked.append(f"{field.group(1)}{marker} {field.group(2)}"
                               if marker else line)
             index += 1
@@ -1094,8 +1111,8 @@ def sentence_id_markup(text: str, units: dict = None):
             continues_previous = ends_open(content)
         index += 1
 
-    if pieces_before_first_unit:
-        name = f"s{counter + 1}"
+    if carries_words(" ".join(words_before_first_unit)):
+        name = f"s{counter + 1}"  # pragma: no mutate, text waits here only while take() has made no unit, so counter is 0 and | 1 and ^ 1 give + 1
         unit_pieces[name] = list(pieces_before_first_unit)
         sentences[name] = " ".join("\n".join(pieces_before_first_unit).split())
         line = marked[first_piece_line]
@@ -1193,7 +1210,7 @@ def attach_sentences_and_coverage(report_text: str, sentences: dict,
 
 # A bare issue, pull request or task number: `#` and digits, with whatever
 # repository name is glued to its front (`nedschorus#418`,
-# `nedschorus/nedschorus#418`), because each is a number where the project's citation rule wants
+# `nedsnodes/nedsnodes#418`), because each is a number where the project's citation rule wants
 # an ID-type and a name. A repository name may not start after a word
 # character or any of `& / . : -`, so no piece of a URL's path becomes one. A
 # bare `#` may not follow `&` or a word character, which keeps an HTML entity
@@ -1317,7 +1334,7 @@ def cold_read_target_text_at_merge_base_with_origin_main_or_none(target: pathlib
                 f"git {' '.join(arguments)} failed in {root} "
                 f"(exit {completed.returncode}): {completed.stderr.strip() or 'no message'}",
                 root,
-                arguments[0] == "merge-base" and "origin/main" in completed.stderr)
+                arguments[0] == "merge-base" and "origin/main" in completed.stderr)  # pragma: no mutate, arguments[0] is always a string constant of this module, which CPython stores once, so is gives the same as ==
         return completed.stdout
 
     if not git_stdout("ls-files", "--", relative).strip():

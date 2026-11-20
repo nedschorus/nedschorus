@@ -9,6 +9,10 @@ A partial append can leave a torn record that prevents subsequent records from b
 The runner's output is copied to stderr line by line as it arrives, so a run stopped before
 it ends still shows its progress; stdout keeps only the SUMMARY line and where the record went.
 
+The runner is given --leave-out-suites-that-run-the-real-claude-cli: a head test run runs a pull
+request's code, so it starts no real claude, and the merge-lane puts a claude that exits 1 first
+on its PATH.
+
 Exit codes: 0 suites passed, 1 suite failed, 2 refused, unable to start, or no suite failed but
 one did not run because its test sandbox did not start, 4 failed step,
 5 record not written, 7 uncaught exception. Local logs and the record remain available for recovery."""
@@ -197,7 +201,7 @@ def first_tracked_file_that_differs(checkout: Path):
     changed = scheduled_full_test_run_of_main.git(
         checkout, "status", "--porcelain", "-z", "--untracked-files=no")
     if changed.returncode != 0:
-        return None, git_output.git_stderr_error_text_without_progress_lines(changed.stderr)
+        return None, git_output.git_stderr_first_error_message_else_last_line(changed.stderr)
     entries = git_output.status_entries(changed.stdout)
     if entries:
         return entries[0].path, None
@@ -264,6 +268,7 @@ def parse_arguments(argv):
     parser.add_argument("--test-suite-runner-program")
     parser.add_argument("--temporary-directory")
     parser.add_argument("--recorded-inputs-directory")
+    parser.add_argument("--save-recorded-inputs-to-directory")
     return parser.parse_args(argv)
 
 
@@ -317,7 +322,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
             steps_failed.append((
                 f"not run — git finds no merge base of {head} and "
                 f"{MAIN_AS_THE_CLONE_HAS_IT} in {checkout}: "
-                f"{git_output.git_stderr_error_text_without_progress_lines(merge_base.stderr)}",
+                f"{git_output.git_stderr_first_error_message_else_last_line(merge_base.stderr)}",
                 "Pass --since the commit the selection starts from, then run this again."))
         else:
             since = merge_base.stdout.strip()
@@ -345,9 +350,12 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
         command = [
             sys.executable, str(runner), "--checkout", str(checkout),
             "--only-suites-whose-recorded-inputs-changed-since", since,
-            "--log-dir", str(logs)]
+            "--log-dir", str(logs), "--leave-out-suites-that-run-the-real-claude-cli"]
         if arguments.recorded_inputs_directory:
             command += ["--recorded-inputs-directory", arguments.recorded_inputs_directory]
+        if arguments.save_recorded_inputs_to_directory:
+            command += ["--save-recorded-inputs-to-directory",
+                        arguments.save_recorded_inputs_to_directory]
         try:
             completed, seconds_waiting_for_lock, lock_never_released = (
                 scheduled_run.run_test_suite_runner_waiting_for_the_machine_lock(

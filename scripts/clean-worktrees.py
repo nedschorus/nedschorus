@@ -15,9 +15,10 @@ running. A worktree that is not idle is KEPT, with the reason, when:
   - its owner file cannot be read;
   - it has no owner file, as agent-homes and worktrees made by hand have,
     and is not a merge-lane review checkout;
-  - it is locked with `git worktree lock`, as Claude Code locks a subagent's
-    worktree while the subagent runs, apart from the lock CLAUDE CODE'S LOCK
-    below unlocks;
+  - it is locked with `git worktree lock`, apart from the lock CLAUDE CODE'S
+    LOCK below unlocks; a subagent's worktree that Claude Code made through
+    its `WorktreeCreate` hook, with an owner file and no lock, is judged by
+    its owner;
   - git would prune it, its directory being gone, unless STOPPED PARTWAY
     below applies;
   - a rebase, merge, cherry-pick or revert is in progress in it, or git
@@ -330,7 +331,6 @@ the run where it failed; with --remove-worktree-and-force-delete-its-branch
 or --force-delete-branch that is exit 1 with a FAILED line.
 """
 
-import contextlib
 import fnmatch
 import hashlib
 import importlib.util
@@ -342,7 +342,6 @@ import shutil
 import stat
 import subprocess
 import sys
-import tempfile
 import time
 from collections import Counter
 from dataclasses import dataclass, field
@@ -382,6 +381,13 @@ _merge_lane_common_spec = importlib.util.spec_from_file_location(
     REPO_ROOT / "scripts" / "merge-lane-pull-request-helpers-common-options-paths-and-token.py")
 merge_lane_common = importlib.util.module_from_spec(_merge_lane_common_spec)
 _merge_lane_common_spec.loader.exec_module(merge_lane_common)
+
+_task_file_rewrite_spec = importlib.util.spec_from_file_location(
+    "agent_seat_task_list_task_file_rewrite_common",
+    REPO_ROOT / "nc-systems" / "general-tools" / "agent-seat-task-list-task-file-rewrite-common.py")
+_task_file_rewrite = importlib.util.module_from_spec(_task_file_rewrite_spec)
+_task_file_rewrite_spec.loader.exec_module(_task_file_rewrite)
+agent_seat_task_list_task_file_rewrite = _task_file_rewrite.agent_seat_task_list_task_file_rewrite
 
 # After a merge, merge-lane-2's merge program removes pr<n>-head and pr<n>-merged and runs main's tests
 # in pr<n>-merge-commit-on-main-worktree; between its steps no process has a working directory
@@ -435,7 +441,7 @@ MAIN_BRANCH = "main"
 # One listing of every pull request serves the whole invocation; gh pages through them all.
 PULL_REQUEST_LISTING_TIMEOUT_SECONDS = 300
 PULL_REQUEST_LISTING_LIMIT = 100000
-PULL_REQUEST_HEAD_REFS_LISTING_TIMEOUT_SECONDS = 120
+PULL_REQUEST_HEAD_REFS_LISTING_TIMEOUT_SECONDS = 120  # pragma: no mutate, a limit a second longer or shorter changes nothing a test can see without a git ls-remote that runs for two minutes
 PULL_REQUEST_HEAD_REF = re.compile(r"refs/pull/(\d+)/head")
 FINISHED_PULL_REQUEST_STATES = ("MERGED", "CLOSED")
 FORCE_DELETABLE_BRANCH_LINE_START = (
@@ -684,8 +690,9 @@ def branch_refs_and_tips_with_no_worktree_not_fully_on_main(repo, freed_branches
                 for record in git_output.worktree_records(listing)} - set(freed_branches)
     unlanded = git_output.run_git(repo, ["for-each-ref", "--format=%(objectname) %(refname:lstrip=2)",
                                          "--no-merged", "origin/main", "refs/heads/"])
-    refs = [line.split(" ", 1) for line in os.fsdecode(unlanded).splitlines()]
-    return [(branch, tip) for tip, branch in refs if branch not in attached and branch != MAIN_BRANCH]
+    # Split on the ASCII space alone: a ref name can hold other whitespace, such as U+00A0.
+    refs = [line.partition(" ") for line in os.fsdecode(unlanded).splitlines()]
+    return [(branch, tip) for tip, _, branch in refs if branch not in attached and branch != MAIN_BRANCH]
 
 
 def first_prompt_list_module():
@@ -2111,18 +2118,9 @@ def close_restored_branch_tasks(repo, remove, only_done, task_lists_directory=No
         task = dict(task, status="completed", description=(
             str(task.get("description", "")).rstrip("\n")
             + f"\nMarked completed by scripts/clean-worktrees.py at {now}: {reason}."))
-        partial = None
         try:
-            # A partial file of its own: cleaners run at the same time, one per session-handoff.
-            descriptor, partial = tempfile.mkstemp(prefix=f".{task_file.name}.", suffix=".partial",
-                                                   dir=task_file.parent)
-            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                stream.write(json.dumps(task, indent=2))
-            os.replace(partial, task_file)
+            agent_seat_task_list_task_file_rewrite(task_file, task)
         except OSError as error:
-            if partial is not None:
-                with contextlib.suppress(OSError):
-                    os.unlink(partial)
             out(f"FAILED: {name} could not be rewritten as completed ({type(error).__name__}: "
                 f"{error}); it is left as it was")
             failures += 1
@@ -2269,7 +2267,9 @@ def remove_one_named_worktree(repo, main_checkout, path):
             continue
         if not removal_never_began(record, listed):
             branch = record.get("branch")
-            if branch and branch != MAIN_BRANCH and commit_of(repo, f"refs/heads/{branch}") != "unknown":
+            if (branch and branch != MAIN_BRANCH and
+                    commit_of(repo, f"refs/heads/{branch}") != "unknown"  # pragma: no mutate, commit_of returns "unknown" or a hex commit name, and every hex digit sorts before "u", so < gives what != gives
+            ):
                 failure = push_branch_unless_origin_holds_its_last_commit_failure(repo, branch)
                 if failure is not None:
                     print(f"{Path(path).name}: kept — an earlier run of scripts/clean-worktrees.py "
@@ -2429,7 +2429,8 @@ def main(argv=None):
                    else WHAT_A_STOPPED_INVOCATION_REMOVED_WITHOUT_REMOVE)
         print(f"{STOPPED_LINE_START}{' '.join(str(error).split())}; {removed}\n"
               + next_step_lines.git_failure_next_step_lines(
-                  rerun, text_the_failure_line_contains=STOPPED_LINE_START.strip()),
+                  rerun, git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=str(error),
+                  text_the_failure_line_contains=STOPPED_LINE_START.strip()),
               file=sys.stderr)
         return 2
 

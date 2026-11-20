@@ -104,6 +104,17 @@ with tempfile.TemporaryDirectory() as directory:
           texts == ["see this screenshot\nand fix it"], texts)
 
 with tempfile.TemporaryDirectory() as directory:
+    # "unknown_block_kind" sorts after "text", so only an exact type match leaves it out.
+    path = write_transcript(directory, [
+        {"type": "user", "message": {"role": "user", "content": [
+            {"type": "text", "text": "the words typed"},
+            {"type": "unknown_block_kind", "text": "words from a block that is not text"}]}},
+    ])
+    texts = user_texts(path)
+    check("a block whose type is not text adds none of its text field to the message",
+          texts == ["the words typed"], texts)
+
+with tempfile.TemporaryDirectory() as directory:
     path = write_transcript(directory, [
         {"type": "user", "message": None},
         {"type": "assistant", "message": None},

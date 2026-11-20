@@ -91,6 +91,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("editing CLAUDE.md is blocked", result.returncode == 2, str(result.returncode))
     check("the block opens by telling the agent to check whether the change needs the user's approval",
           result.stderr.splitlines()[0] == (
+              f"[rule write-guard-guarded-file-edit-needs-approval-marker] "
               f"Before you change {workspace / 'CLAUDE.md'}, check whether the change needs the "
               "user's approval: it does only when the approval page lists it and it is none of "
               "the page's exceptions."), result.stderr)

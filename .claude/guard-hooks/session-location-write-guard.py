@@ -40,6 +40,7 @@ CHECK_IGNORE_IGNORED = 0
 CHECK_IGNORE_NOT_IGNORED = 1
 
 DETACHED_DENY_MESSAGE = (
+    "[rule write-guard-checkout-without-branch] "
     "Refusing to write {path}: this checkout is on a detached HEAD. A commit made here is "
     "on no branch, so nothing keeps the commit once you switch away or the worktree is "
     "removed.\n"
@@ -60,6 +61,7 @@ DETACHED_DENY_MESSAGE = (
 )
 
 UNBORN_DENY_MESSAGE = (
+    "[rule write-guard-checkout-without-branch] "
     "Refusing to write {path}: this session's checkout is a repository with no commits yet. "
     "HEAD names the branch {branch}, but that branch does not exist until something is "
     "committed, so this is most often a stray `git init` directory, not the checkout you "
@@ -74,6 +76,7 @@ UNBORN_DENY_MESSAGE = (
 )
 
 REFERENCE_DENY_MESSAGE = (
+    "[rule write-guard-reference-checkout-write] "
     "Refusing to write {path}: this session sits in the machine's reference checkout, the "
     "main worktree other agents read as the truth about main.\n"
     "Do the work in your own worktree, and leave this checkout as it is.\n"
@@ -95,6 +98,7 @@ COULD_NOT_CHECK_MESSAGE = (
 )
 
 CROSS_REFERENCE_DENY_MESSAGE = (
+    "[rule write-guard-reference-checkout-write] "
     "Refusing to write {path}: it is inside the machine's reference checkout, the main "
     "worktree other agents read as the truth about main, and this session works in another "
     "checkout.\n"

@@ -1072,16 +1072,26 @@ def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: P
     git_in(["config", "user.name", "agent"], home)
     git_in(["config", "user.email", "agent@nedschorus.invalid"], home)
 
-    def launch_time_git_sync_next_steps(rerun):
+    def launch_time_git_sync_next_steps(rerun, error="fatal: stub failure"):
         return supervisor.next_step_lines.git_failure_next_step_lines(
-            rerun, rerun_fails_when="prints an error again",
+            rerun, git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=error,
+            rerun_fails_when="prints an error again",
             which_lines_to_quote_in_the_report=(
                 "the launch-time-git-sync line in this prompt and the error the rerun printed"),
             read_by_a_subagent=False, next_step_to_skip_when_the_rerun_fails_too="act on the rest of this prompt")
 
     report = sync_with_failing_call(home, "rev-parse --show-toplevel")
     check("a launch-time-git-sync git failure ends with the next steps, naming the git command to rerun",
-          report.endswith(launch_time_git_sync_next_steps(f"`git -C {home} rev-parse --show-toplevel`")), report)
+          report.endswith(launch_time_git_sync_next_steps(f"git -C {home} rev-parse --show-toplevel")), report)
+    lock_file = home / ".git" / "index.lock"
+    lock_report = sync_with_failing_call(home, "rev-parse --show-toplevel",
+                                         stderr=f"fatal: Unable to create '{lock_file}': File exists.")
+    check("a launch-time-git-sync git failure whose error names a lock file gets the step that waits "
+          "for that lock file, then reruns the git command",
+          f"Git's error names the lock file {lock_file}: " in lock_report
+          and lock_report.endswith(launch_time_git_sync_next_steps(
+              f"git -C {home} rev-parse --show-toplevel",
+              f"fatal: Unable to create '{lock_file}': File exists.")), lock_report)
     plan = supervisor.DialogIgnitionPlan(root / "extract.md", {})
     pushed = supervisor.BRANCH_STATE_PUSHED_TO_ORIGIN_INSTRUCTION
     for shape, prompt in (
@@ -1165,7 +1175,7 @@ def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: P
         report = sync_with_failing_call(home, call)
         check(f"a failed `git {call}` on a level branch is reported with git's error",
               " left as is — " in report and "fatal: stub failure" in report
-              and launch_time_git_sync_next_steps(f"`git -C {home} {call}`") in report
+              and launch_time_git_sync_next_steps(f"git -C {home} {call}") in report
               and wrong_answer not in report, report)
 
     main_moves("main moves past the failing-git home")
@@ -1199,7 +1209,7 @@ def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: P
           "with git's error in place of the commit",
           "fast-forwarded to main (its new commit could not be read" in report
           and "fatal: stub failure" in report
-          and launch_time_git_sync_next_steps(f"`git -C {home} rev-parse --short HEAD`") in report, report)
+          and launch_time_git_sync_next_steps(f"git -C {home} rev-parse --short HEAD") in report, report)
 
     (home / "agent-note.txt").write_text("own work\n", encoding="utf-8")
     git_in(["add", "-A"], home)
@@ -1274,7 +1284,7 @@ def expected_overview_refresh_due_line(system: str, pinned: str, main: str,
         f"':(exclude)nc-systems/{system}/*.md'` lists, as "
         "docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md "
         "defines a refresh, ending in the line `**Checked against:** commit "
-        f"[{main_full}](https://github.com/nedschorus/nedschorus/commit/{main_full})`. "
+        f"[{main_full}](https://github.com/nedsnodes/nedsnodes/commit/{main_full})`. "
         f"When the subagent reports, show the user the diff between {overview} and "
         f"{draft}. Once the user has been shown the diff, run `python3 "
         f"{HANDOFF_ARCHITECTURE_OVERVIEW_REFRESH_USER_SHOWN_MARK_SCRIPT_PATH} {system}`. When the user "
@@ -1436,13 +1446,13 @@ def run_overview_refresh_due_cases(workspace: Path):
     def pinned_line(sha):
         # The line a design's refresh appends; an overview's own line is checked_line.
         return (f"**Pinned to what landed:** commit [{sha[:7]}]"
-                f"(https://github.com/nedschorus/nedschorus/commit/{sha}) on "
+                f"(https://github.com/nedsnodes/nedsnodes/commit/{sha}) on "
                 "2026-09-28 — the widget as it landed.")
 
     def checked_line(sha):
         # As the page on writing an nc-architecture-overview spells it: the full sha twice.
         return (f"**Checked against:** commit [{sha}]"
-                f"(https://github.com/nedschorus/nedschorus/commit/{sha})")
+                f"(https://github.com/nedsnodes/nedsnodes/commit/{sha})")
 
     widget_overview = "docs/nedschorus-wiki/nedschorus-widget-architecture-overview.md"
     landed = commit({"nc-systems/widget/widget.py": "print('widget')\n"}, "the widget lands")
@@ -1683,7 +1693,7 @@ def run_overview_refresh_unusable_system_name_cases(workspace: Path):
 
     def checked_line(sha):
         return (f"**Checked against:** commit "
-                f"[{sha}](https://github.com/nedschorus/nedschorus/commit/{sha})\n")
+                f"[{sha}](https://github.com/nedsnodes/nedsnodes/commit/{sha})\n")
 
     systems = ("café", "o'brien", "widget")
     landed = commit({f"nc-systems/{system}/main.py": "print(1)\n" for system in systems},
@@ -1769,7 +1779,7 @@ def run_overview_refresh_withheld_while_pull_request_open_cases(workspace: Path)
     def pinned_line(sha, system):
         # An overview's last line, as the page on writing one spells it.
         return (f"**Checked against:** commit [{sha}]"
-                f"(https://github.com/nedschorus/nedschorus/commit/{sha})")
+                f"(https://github.com/nedsnodes/nedsnodes/commit/{sha})")
 
     fake_gh_count = [0]
 
@@ -1832,7 +1842,7 @@ def run_overview_refresh_withheld_while_pull_request_open_cases(workspace: Path)
     main = publish()
     expected = expected_widget_overview_refresh_due_line(landed, main, 1, git_in(["rev-parse", main], repository).stdout.strip())
     refresh_title = "The widget overview is refreshed against what landed"
-    refresh_url = "https://github.com/nedschorus/nedschorus/pull/9001"
+    refresh_url = "https://github.com/nedsnodes/nedsnodes/pull/9001"
 
     due, console, calls = due_with_a_fake_gh(gh_answering([
         {"url": refresh_url, "title": refresh_title,
@@ -1845,7 +1855,7 @@ def run_overview_refresh_withheld_while_pull_request_open_cases(workspace: Path)
           f"pull request \"{refresh_title}\" ({refresh_url}) already changes "
           f"{widget_overview}" in console, console)
     check("gh is asked once, for the open pull requests and the files each changes",
-          calls == ["pr list --repo nedschorus/nedschorus --state open "
+          calls == ["pr list --repo nedsnodes/nedsnodes --state open "
                     "--json url,title,files --limit 200"], repr(calls))
 
     due, console, calls = due_with_a_fake_gh(gh_answering([
@@ -1896,7 +1906,7 @@ def run_overview_refresh_withheld_while_pull_request_open_cases(workspace: Path)
     main = publish()
     expected = expected_widget_overview_refresh_due_line(landed, main, 1, git_in(["rev-parse", main], repository).stdout.strip())
     gadget_title = "The gadget overview is refreshed against what landed"
-    gadget_url = "https://github.com/nedschorus/nedschorus/pull/9002"
+    gadget_url = "https://github.com/nedsnodes/nedsnodes/pull/9002"
     due, console, calls = due_with_a_fake_gh(gh_answering([
         {"url": gadget_url, "title": gadget_title, "files": [{"path": gadget_overview}]}]))
     check("of two due systems, only the one whose overview no open pull request "
@@ -1913,7 +1923,7 @@ def run_overview_refresh_once_a_day_cases(workspace: Path):
     first that day, on either machine.
 
     Ruled 2026-10-01, the user's "y" to the merge-lane-2 seat, recorded at
-    https://github.com/nedschorus/nedschorus/pull/852#issuecomment-5939116857:
+    https://github.com/nedsnodes/nedsnodes/pull/852#issuecomment-5939116857:
     "one reminder a day for each overview that is behind, from whichever seat
     starts up first that day; the other seats stay quiet until the next day."
     The day's reminder is a mark in the log-store, one per system, which the
@@ -1949,7 +1959,7 @@ def run_overview_refresh_once_a_day_cases(workspace: Path):
     def pinned_line(sha, system):
         # An overview's last line, as the page on writing one spells it.
         return (f"**Checked against:** commit [{sha}]"
-                f"(https://github.com/nedschorus/nedschorus/commit/{sha})")
+                f"(https://github.com/nedsnodes/nedsnodes/commit/{sha})")
 
     reminder_mark = getattr(supervisor, "handoff_architecture_overview_refresh_user_shown_mark", None)
     marks_directory = root / "daily-overview-refresh-reminder-marks"
@@ -2212,7 +2222,7 @@ def run_overview_refresh_once_a_day_cases(workspace: Path):
 
     # The open-pull-request check stays as it was, and comes first.
     refresh_title = "Both overviews are refreshed against what landed"
-    refresh_url = "https://github.com/nedschorus/nedschorus/pull/9003"
+    refresh_url = "https://github.com/nedsnodes/nedsnodes/pull/9003"
     due, console, calls = due_at(early_the_next_day, gh_directory=gh_answering([
         {"url": refresh_url, "title": refresh_title,
          "files": [{"path": widget_overview}, {"path": gadget_overview}]}]))
@@ -2395,7 +2405,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
     (seat / "docs" / "nedschorus-wiki").mkdir(parents=True)
     (seat / "docs" / "nedschorus-wiki" / "nedschorus-widget-architecture-overview.md").write_text(
         f"# The widget\n\n**Checked against:** commit [{landed}]"
-        f"(https://github.com/nedschorus/nedschorus/commit/{landed})\n", encoding="utf-8")
+        f"(https://github.com/nedsnodes/nedsnodes/commit/{landed})\n", encoding="utf-8")
     (seat / "nc-systems" / "widget" / "widget.py").write_text("print(2)\n", encoding="utf-8")
     git_in(["add", "-A"], seat)
     git_in(["commit", "--quiet", "-m", "the overview is pinned and the widget grows"], seat)
@@ -3298,18 +3308,22 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
           supervisor.next_step_from(parsed) == "merge the queue\nand then rest",
           repr(supervisor.next_step_from(parsed)))
 
-    # The work the handoff-deferral did not wait for reaches the successor, in the writer's order.
+    # The refused commands reach the successor. The retired late-task fields are what a
+    # session-handoff written before their retirement carries; they must be read without failing.
     deferral_fields = {"written-at": recent, "next-step": "carry on"}
     for ordinal in (2, 1, 10):
         deferral_fields[f"background-task-started-during-handoff-deferral-{ordinal}"] = (
             f'blate{ordinal:04d} "job {ordinal}" command: "python3 job{ordinal}.py"')
     deferral_fields["cold-read-full-run-command-refused-during-handoff-deferral-1"] = (
         '"python3 nc-systems/cold-read/cold-read-grid.py --target a.md" in /work')
-    deferral_prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), deferral_fields)
-    check("the successor is told the background tasks started during the deferral, in order",
-          "started 3 background Bash task(s) during its handoff-deferral" in deferral_prompt
-          and deferral_prompt.index("blate0001") < deferral_prompt.index("blate0002")
-          < deferral_prompt.index("blate0010"), deferral_prompt)
+    handoff_path.write_text("".join(f"{key}: {value}\n" for key, value in deferral_fields.items()),
+                            encoding="utf-8")
+    deferral_prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"),
+                                                       supervisor.parse_handoff_file(handoff_path))
+    check("an old session-handoff's retired background-task-started-during-handoff-deferral fields "
+          "add nothing to the successor's prompt",
+          "blate" not in deferral_prompt and "background task(s)" not in deferral_prompt,
+          deferral_prompt)
     check("the successor is told the refused cold-read-full-run and where to run it",
           "a hook refused 1 cold-read-full-run(s)" in deferral_prompt
           and "cold-read-grid.py --target a.md\" in /work" in deferral_prompt, deferral_prompt)
