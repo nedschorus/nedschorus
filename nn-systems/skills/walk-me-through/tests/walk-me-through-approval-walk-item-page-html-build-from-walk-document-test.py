@@ -531,6 +531,8 @@ def run_page_link_cases(scratch):
     result, page = built(scratch, "4.1")
     check("a sub-step's own page links to the item before its item",
           '<a href="https://claude.ai/artifact/Item3">Previous: item 3</a>' in page_links(page), page_links(page))
+    check("a sub-step's first page prints no command to rebuild the item before, whose Next link opens whole items only",
+          "has no Next link" not in result.stdout and "python3 " not in result.stdout, result.stdout)
     result, page = built(scratch, "x")
     check("an item number no heading can name is refused with exit 1 when walk-minutes exist, not a crash",
           result.returncode == 1 and "has no heading for item x" in result.stderr and page == "", result)

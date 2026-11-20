@@ -45,7 +45,7 @@ a failed publish's line gives no link. When there is no Previous link, such as w
 program says why.
 
 The item after has no link yet when this item's first page is built, so that page cannot be given its Next link in the
-same invocation of the program; on a first page, built without --version, the program prints the command that builds
+same invocation of the program; on a whole item's first page, built without --version, the program prints the command that builds
 the item before's page again, with --version set to that item's next version, to run once this item's page is
 published and its `#item_page` line recorded; that page then gets its Next link to this one. An item's next version is
 one more than the larger of its `#item_page` lines with a link and the highest version those lines state, because an
@@ -268,7 +268,8 @@ def main(argv):
             if before is None:
                 notes.append(NO_PREVIOUS_LINK.format(reason=NO_ITEM_BEFORE.format(
                     number=arguments.item.split(".")[0], minutes=minutes)))
-            elif arguments.version is None:
+            # Next links open whole items' pages only, so a sub-step's page gives the item before nothing to rebuild.
+            elif arguments.version is None and "." not in arguments.item:
                 before_version = next_version(item_page_lines, walk_finder, before[0])
                 before_output = Path(arguments.output).with_name(f"item-{before[0]}-version-{before_version}.html")
                 command = shlex.join(["python3", str(Path(__file__).resolve()), str(document), str(before[0]), str(before_output),
