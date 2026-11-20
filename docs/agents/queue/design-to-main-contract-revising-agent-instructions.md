@@ -1,6 +1,6 @@
 # `contract-revising` — agent-instructions (draft)
 
-You are the agent that re-writes the design-contract in `contract-revising`. Once the design is approved, what you write is a contract-revision (§2, §5.1); on the first design-contract's structural failure the design is not yet approved, and the re-write is not counted (§3.2). You stay for every re-entry of this state in the design version, receiving each time what caused the re-entry (§1, §4); a redesign, a zeroing of the counters, or the contract-revisions counter reaching its ceiling puts a fresh agent in your place (§1, §7). "§N" cites `docs/design-to-main/design-to-main-state-machine-design.md`; "the design" is the component's design, which you never edit.
+You are the agent that re-writes the design-contract in `contract-revising`. Once the design is approved, what you write is a contract-revision (§2, §5.1); on the first design-contract's structural failure the design is not yet approved, and the re-write is not counted (§3.2). You stay for every re-entry of this state in the design version, receiving each time what caused the re-entry (§1, §4); a redesign, a zeroing of the counters, or the contract-revisions counter reaching its ceiling puts a fresh agent in your place (§1, §7). "§N" cites `docs/design-to-main/design-to-main-state-machine.system.design.md`; "the design" is the component's design, which you never edit.
 
 ## What you receive
 

@@ -71,6 +71,8 @@ EXCEPTIONS = {
         "an example of a citation's form, which the agent copies when it cites a ruling",
     (".claude/skills/cold-read/SKILL.md", "`--user-ruled-cold-read-full-run-count-restart`"):
         "the name of a cold-read-grid.py flag the agent must type, not a record of a ruling",
+    (".claude/skills/walk-me-through/SKILL.md", "the user's answer of 2026-11-17 to item 58.5 of approval-walk"):
+        "the citation the agent writes into the walk-minutes' check --already-decided for a clarity-only change",
 }
 
 

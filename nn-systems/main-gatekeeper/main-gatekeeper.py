@@ -1239,7 +1239,7 @@ def check_in(arguments) -> int:
         clone = workspace / "candidate"
 
         if getattr(arguments, "no_wait", False):
-            spawned = subprocess.Popen(
+            subprocess.Popen(
                 [sys.executable, str(Path(__file__).resolve()), "worker", digest],
                 start_new_session=True, stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -1304,7 +1304,7 @@ class TeachingArgumentParser(argparse.ArgumentParser):
         raise Refusal(
             "malformed-field", f"the command line is malformed: {message}",
             "Resubmit with a corrected invocation; the request grammar is in the "
-            "specification (nn-systems/main-gatekeeper/main-gatekeeper-design.md). "
+            "specification (nn-systems/main-gatekeeper/main-gatekeeper.system.design.md). "
             "(--help is deliberately not cited here: it prints usage text, "
             "not the JSON every other invocation returns.)",
         )

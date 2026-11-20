@@ -777,7 +777,7 @@ def test_a_question_held_in_an_interruption_item_is_not_checked():
                      f"{ANSWER_LINE}\n\n**Item 3:**\n\nShould I merge PR 5 now?\n\n{ANSWER_LINE}\n")
     partly_opened = (f"## Items 3, 2.1 and 2.2 of 11: three questions\n\n**Item 3:**\n\nShould I merge PR 5 now?\n\n"
                      f"Should I file the GHI?\n\n**Item 2.2:**\n\nShould I rename the hook?\n\n{ANSWER_LINE}\n")
-    without_openings = f"## Items 2.1 and 3 of 11: two questions\n\nShould I file the GHI?\n\nShould I merge PR 5 now?\n"
+    without_openings = "## Items 2.1 and 3 of 11: two questions\n\nShould I file the GHI?\n\nShould I merge PR 5 now?\n"
     for case_name, shared, reply_line, passes in (
             ("under a shared heading, the interruption item's own question passes",
              with_openings, "Should I file the GHI?", True),
