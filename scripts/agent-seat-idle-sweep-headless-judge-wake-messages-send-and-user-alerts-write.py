@@ -617,7 +617,7 @@ def text_sent_to(outcome, seat, text):
 def owning_agent_seat_task_opened_unless_open(tasks_root, subject, description):
     """Open a task on OWNING_AGENT_SEAT's task list unless one with the subject that is not marked
     completed is there; return the new task's id, or None. Raises OSError."""
-    list_directory = tasks_root / f"nedschorus-{OWNING_AGENT_SEAT}-tasks"
+    list_directory = tasks_root / f"nedsnodes-{OWNING_AGENT_SEAT}-tasks"
     if list_directory.is_dir():
         for path in list_directory.glob("*.json"):
             try:

@@ -137,7 +137,7 @@ def usage_limit(resets_at, when=LONG_AGO):
 
 
 DONE_TURN = [user("go"), assistant("Done."), turn_end()]
-OWNER_TASKS = "nedschorus-reboot-test-tasks"
+OWNER_TASKS = "nedsnodes-reboot-test-tasks"
 DELIVERY_TASK_SUBJECT = "Idle sweep: a message it sent is missing from the agent-seat's transcript"
 
 
