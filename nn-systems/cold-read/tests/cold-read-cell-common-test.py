@@ -144,6 +144,7 @@ WHAT IS PINNED HERE.
 Run: python3 nn-systems/cold-read/tests/cold-read-cell-common-test.py
 """
 
+import argparse
 import hashlib
 import importlib.util
 import json
@@ -914,6 +915,20 @@ with tempfile.TemporaryDirectory() as scratch:
         "cold_read_claude_cell_under_test", SYSTEM_DIRECTORY / "cold-read-claude-cell.py")
     claude_module = importlib.util.module_from_spec(claude_spec)
     claude_spec.loader.exec_module(claude_module)
+    def structured_answer_run_settings(prompt_cache_five_minute_ttl):
+        build = claude_module.structured_answer_invocation_builder(
+            "high", REPO_ROOT / ".claude/skills/cold-read/prompts/terminology-answer-schema.json",
+            Path("/unused-answer.json"),
+            parsed_arguments=argparse.Namespace(
+                prompt_cache_five_minute_ttl=prompt_cache_five_minute_ttl))
+        command, _ = build("claude-opus-5", "the prompt")
+        return json.loads(command[command.index("--settings") + 1])
+
+    check("a JSON-answer claude run given --prompt-cache-five-minute-ttl gets "
+          '"promptCacheTtl": "5m" in its --settings, and one not given it does not',
+          structured_answer_run_settings(True).get("promptCacheTtl") == "5m"
+          and "promptCacheTtl" not in structured_answer_run_settings(False),
+          f"{structured_answer_run_settings(True)!r}; {structured_answer_run_settings(False)!r}")
     codex_spec = importlib.util.spec_from_file_location(
         "cold_read_codex_cell_under_test", SYSTEM_DIRECTORY / "cold-read-codex-cell.py")
     codex_module = importlib.util.module_from_spec(codex_spec)
