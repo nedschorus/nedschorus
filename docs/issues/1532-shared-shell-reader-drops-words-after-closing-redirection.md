@@ -11,8 +11,8 @@ On main at 986387b3, on ned-box, run in a scratch checkout:
 ```
 python3 - <<'EOF'
 import importlib.util, sys
-sys.path.insert(0, 'nc-systems/general-tools')
-spec = importlib.util.spec_from_file_location('r', 'nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py')
+sys.path.insert(0, 'nn-systems/general-tools')
+spec = importlib.util.spec_from_file_location('r', 'nn-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py')
 r = importlib.util.module_from_spec(spec); spec.loader.exec_module(r)
 for c in ['git push --force origin main', 'git push >&- --force origin main', 'git push 2>&- --force origin main']:
     print(repr(c), [list(x) for x in r.simple_commands(c)])
@@ -33,7 +33,7 @@ The force-push guard, `.claude/guard-hooks/force-push-with-open-pull-request-gua
 
 ## Why it matters
 
-The force-push guard exists so that a frozen-head, the pushed head commit of a pull request under review, is never rewritten. With a closing redirection (`>&-`, `2>&-` or `<&-`) anywhere before `--force`, an agent's force push to a branch with an open pull request goes through, and the reviewed head commit is lost from the branch. Every other guard that calls `simple_commands` in `nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py` reads the same truncated words.
+The force-push guard exists so that a frozen-head, the pushed head commit of a pull request under review, is never rewritten. With a closing redirection (`>&-`, `2>&-` or `<&-`) anywhere before `--force`, an agent's force push to a branch with an open pull request goes through, and the reviewed head commit is lost from the branch. Every other guard that calls `simple_commands` in `nn-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py` reads the same truncated words.
 
 The cause, as the reproduction shows: tree-sitter-bash parses a closing operator ending in `&-` as a redirection that takes a destination. For `>&-`, every following word becomes that destination. For `2>&-`, only the next word does, and the parser then inserts a missing `;`, so `origin main` becomes a separate command. Either way, the words never reach the command's arguments.
 

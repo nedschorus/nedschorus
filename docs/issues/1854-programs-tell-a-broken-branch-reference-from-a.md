@@ -18,11 +18,11 @@ Each site came from one pull request in the 2026-10-20 round of fixes to program
 - `scripts/checkout-freshness-catch-up.py`, the unborn-HEAD check added by [checkout-freshness-catch-up tells a failed git command from git's no](https://github.com/nedschorus/nedschorus/pull/1744), at line 733 of that pull request's head commit.
 - `scripts/new-shared-names-reminder-hook.py:294` on main, from [The name-collision and new-shared-names hooks report their own git failures instead of exiting 0 silently](https://github.com/nedschorus/nedschorus/pull/1757).
 - `scripts/ghi-issue-write.py`, `head_is_unborn`, at lines 569-576 of the head commit of [ghi-issue-write reports a failed git command instead of reading it as an answer](https://github.com/nedschorus/nedschorus/pull/1759); because that function answers "no commit yet", the merge-base step after it also reads its own failure as "no merge base", so fixing the function fixes both.
-- `nc-systems/cold-read/cold-read-cell-common.py`, `checkout_commit_for_provenance_stamp`, from [Cold-read-cell provenance stamp says checkout=no-commits-yet for a checkout with no commits, not a git failure](https://github.com/nedschorus/nedschorus/pull/1769).
+- `nn-systems/cold-read/cold-read-cell-common.py`, `checkout_commit_for_provenance_stamp`, from [Cold-read-cell provenance stamp says checkout=no-commits-yet for a checkout with no commits, not a git failure](https://github.com/nedschorus/nedschorus/pull/1769).
 
 ## What to do
 
-Write one shared helper that answers "does HEAD have a commit?" with three outcomes: a commit, no commit yet, or git could not tell, the last carrying the git command, its exit code and its stderr, so each caller can build the failure report it already builds for other git failures. Put it beside the project's other shared modules that several programs load by path, such as `nc-systems/general-tools/tmux-target-or-server-does-not-exist-error-pattern-common.py`, and name it by the naming page. Make the four sites use it.
+Write one shared helper that answers "does HEAD have a commit?" with three outcomes: a commit, no commit yet, or git could not tell, the last carrying the git command, its exit code and its stderr, so each caller can build the failure report it already builds for other git failures. Put it beside the project's other shared modules that several programs load by path, such as `nn-systems/general-tools/tmux-target-or-server-does-not-exist-error-pattern-common.py`, and name it by the naming page. Make the four sites use it.
 
 The helper's steps, each checked on ned-box with git 2.53.0 in the scratch repositories above:
 

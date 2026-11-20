@@ -4,7 +4,7 @@ issue: "[Two shipments of one cold-read-record name at the same moment can lose 
 
 # Two shipments of one cold-read-record name at the same moment can lose a report while both say it shipped
 
-Filed by the merge-lane-2 seat on 2026-10-01 (UTC), from a finding it reproduced. The reproduction comes first, then the cause, what it causes, and the next action. A line number given without a file, such as `:543`, is in `nc-systems/cold-read/cold-read-record-ship.py` at main `dad220d`.
+Filed by the merge-lane-2 seat on 2026-10-01 (UTC), from a finding it reproduced. The reproduction comes first, then the cause, what it causes, and the next action. A line number given without a file, such as `:543`, is in `nn-systems/cold-read/cold-read-record-ship.py` at main `dad220d`.
 
 ## Reproduction
 
@@ -17,8 +17,8 @@ mkdir -p "$S/a/$NAME" "$S/b/$NAME"
 printf '<!-- provenance: checkout a -->\nreport from checkout a\n' > "$S/a/$NAME/fast-read.md"
 printf '<!-- provenance: checkout b -->\nreport from checkout b\n' > "$S/b/$NAME/fast-read.md"
 export COLD_READ_RECORD_SHIP_DESTINATION="$S/store/cold-read-records"
-python3 nc-systems/cold-read/cold-read-record-ship.py "$S/a/$NAME" &
-python3 nc-systems/cold-read/cold-read-record-ship.py "$S/b/$NAME" &
+python3 nn-systems/cold-read/cold-read-record-ship.py "$S/a/$NAME" &
+python3 nn-systems/cold-read/cold-read-record-ship.py "$S/b/$NAME" &
 wait
 cat "$S/store/cold-read-records/$NAME/fast-read.md"
 ```

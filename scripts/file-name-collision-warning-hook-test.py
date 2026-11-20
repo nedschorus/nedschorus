@@ -57,7 +57,7 @@ HOOK_MODULE_SPEC.loader.exec_module(HOOK_MODULE)
 
 _rule_failure_lines_spec = importlib.util.spec_from_file_location(
     "rule_enforcing_nc_test_suite_failure_message_closing_lines_text_common",
-    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    REPOSITORY_ROOT / "nn-systems" / "general-tools"
     / "rule-enforcing-nc-test-suite-failure-message-closing-lines-text-common.py")
 RULE_FAILURE_LINES = importlib.util.module_from_spec(_rule_failure_lines_spec)
 _rule_failure_lines_spec.loader.exec_module(RULE_FAILURE_LINES)
@@ -180,17 +180,17 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     commit_file(repository, "docs/Design-To-Main-Notes.md")
     commit_file(repository, ".claude/skills/walk-me-through/SKILL.md")
     commit_file(repository, "docs/README.md")
-    commit_file(repository, "nc-queue/.gitkeep")
+    commit_file(repository, "nn-queue/.gitkeep")
     commit_file(repository, ".gitignore", "docs/walk/\ncold-read-records/\n")
 
     # --- the instrument can say "something here" ------------------------
-    colliding = write_file(repository, "nc-systems/cold-read/cold-read-grid.py")
+    colliding = write_file(repository, "nn-systems/cold-read/cold-read-grid.py")
     warned = run_hook(hook_payload(repository, colliding))
     warning = agent_text(warned)
     check("a new file whose name is already a tracked file's warns",
           warning != "", f"stdout was {warned.stdout!r}")
     check("the warning names BOTH paths, so no search is needed",
-          "nc-systems/cold-read/cold-read-grid.py" in warning
+          "nn-systems/cold-read/cold-read-grid.py" in warning
           and "scripts/cold-read-grid.py" in warning, warning)
     check("the warning arrives on additionalContext under PostToolUse",
           (json.loads(warned.stdout or "{}").get("hookSpecificOutput", {})
@@ -232,8 +232,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("line 4 points at the naming page instead of restating it",
           padded_warning_lines[3].startswith(
               "If both files are meant to exist and the file you wrote is not a draft, "
-              "rename the file you wrote following the rules in docs/nedschorus-wiki/"
-              "nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md")
+              "rename the file you wrote following the rules in docs/nedsnodes-wiki/"
+              "nedsnodes-how-to-choose-a-name-for-files-code-and-glossary-terms.md")
           and "3 or 4 parts" not in warning and "three or four" not in warning,
           repr(padded_warning_lines[3]))
     check("line 5 tells an agent that wrote the file by mistake to delete it",
@@ -249,7 +249,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("editing the only file with that name is silent",
           silent(run_hook(hook_payload(repository, existing, "Edit"))))
 
-    for exempt in ("nc-systems/handoff/SKILL.md", "scripts/README.md",
+    for exempt in ("nn-systems/handoff/SKILL.md", "scripts/README.md",
                    "docs/.gitkeep"):
         written = write_file(repository, exempt)
         check(f"the exempt name {Path(exempt).name} is silent",
@@ -285,12 +285,12 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     # so each side gets a case whose tracked fixture carries the uppercase.
     # Then the distinction that is not about case at all -- whether there are
     # two files -- which the filesystem answers and the platform does not.
-    cased = write_file(repository, "nc-systems/Cold-Read-Grid.PY")
+    cased = write_file(repository, "nn-systems/Cold-Read-Grid.PY")
     check("a written name differing only in letter case warns",
           agent_text(run_hook(hook_payload(repository, cased))) != "",
           "the fold on the WRITTEN side did not fire")
 
-    lowercased = write_file(repository, "nc-systems/design-to-main-notes.md")
+    lowercased = write_file(repository, "nn-systems/design-to-main-notes.md")
     check("a TRACKED name differing only in letter case warns",
           agent_text(run_hook(hook_payload(repository, lowercased))) != "",
           "the fold on the TRACKED side did not fire")
@@ -566,9 +566,9 @@ with tempfile.TemporaryDirectory() as planted_temporary_directory:
     git(["config", "user.email", "test@example.invalid"], planted)
     git(["config", "user.name", "file-name-collision test"], planted)
     commit_file(planted, "scripts/named-twice-on-purpose.py")
-    commit_file(planted, "nc-systems/named-twice-on-purpose.py")
+    commit_file(planted, "nn-systems/named-twice-on-purpose.py")
     commit_file(planted, "docs/README.md")
-    commit_file(planted, "nc-queue/README.md")
+    commit_file(planted, "nn-queue/README.md")
     planted_failure = ""
     planted_names, planted_collisions = {}, {}
     try:
@@ -578,7 +578,7 @@ with tempfile.TemporaryDirectory() as planted_temporary_directory:
     check("the repository-wide check reports a planted collision",
           sorted(planted_collisions) == ["named-twice-on-purpose.py"]
           and sorted(planted_collisions["named-twice-on-purpose.py"]) == [
-              "nc-systems/named-twice-on-purpose.py",
+              "nn-systems/named-twice-on-purpose.py",
               "scripts/named-twice-on-purpose.py"],
           planted_failure or repr(planted_collisions))
     check("the repository-wide check lets the exempt names repeat",

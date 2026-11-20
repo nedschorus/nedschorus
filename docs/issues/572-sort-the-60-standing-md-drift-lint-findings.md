@@ -56,7 +56,7 @@ A finding is not automatically a defect in the document. Each is a claim that no
 
 ## Open scope question
 
-Seven of the 60 sit in queue directories — `docs/issues/queue/` (4), `docs/nedschorus-wiki/queue/` (1) and `nc-queue/` (2). It was ten: the three in `docs/agents/queue/` were mis-parses, and the placeholder fix removed them. Queue material is not-yet-decided by definition and is emptied by GHI [Queue drain procedure — the review process that empties wiki/queue, the pair queue, and the draft-label issue queue](https://github.com/nedschorus/nedschorus/issues/24). The same argument that put `docs/drafts/` out of scope may put these there too. Not ruled; whoever takes this issue should settle it with the user before editing a queue file.
+Seven of the 60 sit in queue directories — `docs/issues/queue/` (4), `docs/nedsnodes-wiki/queue/` (1) and `nn-queue/` (2). It was ten: the three in `docs/agents/queue/` were mis-parses, and the placeholder fix removed them. Queue material is not-yet-decided by definition and is emptied by GHI [Queue drain procedure — the review process that empties wiki/queue, the pair queue, and the draft-label issue queue](https://github.com/nedschorus/nedschorus/issues/24). The same argument that put `docs/drafts/` out of scope may put these there too. Not ruled; whoever takes this issue should settle it with the user before editing a queue file.
 
 ## Related, and not this issue
 
@@ -64,4 +64,4 @@ GHI [Reference-integrity checker: links resolve and cited revision-paths exist �
 
 One stale pointer worth repairing when this issue has a number: GHI [Eight sanity-check runner follow-ups from the /sanity-check skill's first sanity-check, for the drain to split](https://github.com/nedschorus/nedschorus/issues/412) cites GHI [md-drift-lint.py is tested and invoked by nothing](https://github.com/nedschorus/nedschorus/issues/336) as the place that "holds that lint's backlog". That issue is closed; this one is that place now.
 
-Filed on the user's ruling of 2026-09-20, walk `four-questions-after-the-dangling-path-check-2026-09-20`, item 3: one GHI for the backlog, which sorts before it fixes, and which carries the forward-reference noise question. Minutes: `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/four-questions-after-the-dangling-path-check-2026-09-20-minutes.md`.
+Filed on the user's ruling of 2026-09-20, walk `four-questions-after-the-dangling-path-check-2026-09-20`, item 3: one GHI for the backlog, which sorts before it fixes, and which carries the forward-reference noise question. Minutes: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/four-questions-after-the-dangling-path-check-2026-09-20-minutes.md`.

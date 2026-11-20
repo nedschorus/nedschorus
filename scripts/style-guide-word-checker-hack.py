@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Find candidate style-guide violations in Markdown; the writer decides which uses need revision.
 
-The word list is the "Words to avoid" table of docs/nedschorus-wiki/nedschorus-style-guide.md,
+The word list is the "Words to avoid" table of docs/nedsnodes-wiki/nedsnodes-style-guide.md,
 read at import, so the page agents read and the list this checker flags cannot differ.
 
 Inflections are explicit because generated forms also match unrelated words.
@@ -26,7 +26,7 @@ class StyleGuideWordListEntry(NamedTuple):
 
 
 STYLE_GUIDE_PAGE_PATH = (Path(__file__).resolve().parent.parent
-                         / "docs" / "nedschorus-wiki" / "nedschorus-style-guide.md")
+                         / "docs" / "nedsnodes-wiki" / "nedsnodes-style-guide.md")
 WORDS_TO_AVOID_HEADING = "## Words to avoid"
 WORDS_TO_AVOID_COLUMNS = ("Word", "Forms flagged", "Forms not flagged", "Write instead",
                           "Applies to")
