@@ -132,7 +132,7 @@ OPEN_STATE_OPENING = "State: open"
 
 LOG_STORE_HOST = "nedlern@ned-box"
 LOG_STORE_HOSTNAME = "ned-box"
-LOG_STORE_DIRECTORY = ghi_issue_write.GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY
+GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY = ghi_issue_write.GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY
 FILE_NAME_INFIX = ghi_issue_write.PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX
 GHI_LINK_PATTERN = re.compile(r"https://github\.com/[^/\s]+/[^/\s]+/issues/\d+")
 
@@ -180,19 +180,19 @@ def local_path(named: str, argv) -> Path:
 
 
 def ghi_md_file_names(ghi_md_name: str, argv):
-    """The names of the GHI-MD's files in LOG_STORE_DIRECTORY, oldest name first."""
+    """The names of the GHI-MD's files in GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY, oldest name first."""
     refuse_unless_on_ned_box(f"The files of GHI-MD {ghi_md_name} are", argv)
     number = re.match(r"(\d+)-", ghi_md_name)
     bare = ghi_md_name[number.end():] if number else ghi_md_name
     leading = re.escape(number.group(0)) if number else r"\d+-"
     pattern = re.compile(f"(?:{leading})?{re.escape(bare + FILE_NAME_INFIX)}.*\\.md")
     try:
-        names = sorted(name for name in os.listdir(LOG_STORE_DIRECTORY) if pattern.fullmatch(name))
+        names = sorted(name for name in os.listdir(GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY) if pattern.fullmatch(name))
     except OSError as failure:
-        raise Failed(f"the log-store directory {LOG_STORE_DIRECTORY} could not be listed: {failure}")
+        raise Failed(f"the log-store directory {GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY} could not be listed: {failure}")
     if not names:
         raise Refused(
-            f"No file in {LOG_STORE_DIRECTORY} is named after GHI-MD {ghi_md_name}.\n"
+            f"No file in {GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY} is named after GHI-MD {ghi_md_name}.\n"
             f"Give the GHI-MD's name as the part of the given file's name before {FILE_NAME_INFIX}, or give the file itself.")
     return names
 
@@ -483,10 +483,10 @@ def main(argv=None) -> int:
         if arguments.command == "show" and "/" not in arguments.file and not arguments.file.endswith(".md"):
             for name in ghi_md_file_names(arguments.file, argv):
                 try:
-                    text = (Path(LOG_STORE_DIRECTORY) / name).read_text(encoding="utf-8")
+                    text = (Path(GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY) / name).read_text(encoding="utf-8")
                 except OSError as failure:
-                    raise Failed(f"{name} in {LOG_STORE_DIRECTORY} could not be read: {failure}")
-                print(f"{LOG_STORE_HOST}:{LOG_STORE_DIRECTORY}/{name}\n{show(text.splitlines())}\n")
+                    raise Failed(f"{name} in {GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY} could not be read: {failure}")
+                print(f"{LOG_STORE_HOST}:{GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY}/{name}\n{show(text.splitlines())}\n")
             return 0
         path = local_path(arguments.file, argv)
         text = path.read_text(encoding="utf-8")
@@ -531,7 +531,9 @@ def main(argv=None) -> int:
         spans = entry_spans(lines)
         for entry in arguments.entries:
             if tries_since_user_ruling(entry_lines(lines, spans, entry)) >= MAXIMUM_TRIES:
-                print(f"Entry {entry} now has {MAXIMUM_TRIES} tries: unless this try settles it, run the needs-the-user subcommand on it with --because three-tries.")
+                print(f"Entry {entry} now has {MAXIMUM_TRIES} tries.\n"
+                      "If this try found it not worth doing, run the second-agent-verdict subcommand on it: if the second agent disagrees, that subcommand marks the entry as needing the user.\n"
+                      "If this try neither settles it nor found it not worth doing, run the needs-the-user subcommand on it with --because three-tries.")
     if arguments.command == "second-agent-verdict" and marked_for_the_user:
         print(f"The second agent disagreed on try {MAXIMUM_TRIES} of entry {arguments.entry}, the last try rule 4 of GHI 1132 allows, so the entry was marked as needing the user.\n"
               "In your report, say what the user must decide, from the second agent's reasons above.")

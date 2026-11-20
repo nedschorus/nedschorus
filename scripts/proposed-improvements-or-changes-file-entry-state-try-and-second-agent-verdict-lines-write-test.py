@@ -139,6 +139,9 @@ case("a second try says nothing of 3 tries", "now has" not in run(fresh(), "try"
 before = path.read_text(encoding="utf-8")
 code, _, err = run(path, "try", "E2", "E1", "--by", "h", "--found", "fourth", "--source", "PR 5")
 case("the third try says the entry has 3 tries", "Entry E1 now has 3 tries" in third_out)
+case("the third try sends a not-worth-doing try to the second agent, and only another try to needs-the-user",
+     "If this try found it not worth doing, run the second-agent-verdict subcommand" in third_out
+     and "If this try neither settles it nor found it not worth doing, run the needs-the-user subcommand" in third_out)
 case("a fourth try exits 1", code == 1)
 case("a fourth try says to mark the entry for the user", "REFUSED:" in err and "--because three-tries" in err)
 case("a refused try changes no entry", path.read_text(encoding="utf-8") == before)
@@ -401,7 +404,7 @@ for name in ("1058-daily-x-proposed-improvements-or-changes-ghi-guide-agent-2026
 
 def show_by_name(name, hostname="ned-box", directory=store):
     with mock.patch.object(PROGRAM.socket, "gethostname", return_value=hostname), \
-            mock.patch.object(PROGRAM, "LOG_STORE_DIRECTORY", str(directory)):
+            mock.patch.object(PROGRAM, "GHI_GUIDE_AGENT_LOG_STORE_DIRECTORY", str(directory)):
         return run(name, "show")
 
 
