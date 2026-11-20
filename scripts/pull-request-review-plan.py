@@ -462,29 +462,41 @@ def literal_piece_positions(node):
         return {source_position(node)}
     if isinstance(node, ast.JoinedStr):
         return {source_position(part) for part in node.values if isinstance(part, ast.Constant)}
-    if isinstance(node, ast.BinOp):
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         return set().union(*(literal_piece_positions(operand) for operand in addition_chain_operands(node)))
     return set()
 
 
+def passes_its_text_up(child, parent):
+    """True when parent's value holds child's text as it is: an f-string part, an operand of a +
+    chain, a keyword argument, or a branch of a conditional expression. A comparison, a
+    subscript or any other expression turns the text into something else, such as a Boolean."""
+    return (isinstance(parent, (ast.JoinedStr, ast.FormattedValue, ast.keyword))
+            or (isinstance(parent, ast.BinOp) and isinstance(parent.op, ast.Add))
+            or (isinstance(parent, ast.IfExp) and child is not parent.test))
+
+
 def nearest_call_prints_its_argument(node, parents, helper_printers):
-    """True when the call nearest above node, if any, is a printing call or helper printer, the
-    exception a raise statement builds, or a method called on node itself, as .format is. The
-    collector also counts a string inside any call nested in a printed argument, such as the
-    pattern in print(re.sub("a", "b", text)), but such a string steers the call, not the text."""
+    """True when node's text reaches, unchanged, a statement or the argument of a printing call or
+    helper printer, the exception a raise statement builds, or a method called on node itself, as
+    .format is. The collector also counts a string inside any call nested in a printed argument,
+    such as the pattern in print(re.sub("a", "b", text)), but such a string steers the call, not
+    the text; and one inside a comparison, as in print(x == "yes"), which prints only a Boolean."""
     child = node
     parent = parents.get(child)
-    while parent is not None and not isinstance(parent, ast.Call):
-        if isinstance(parent, ast.stmt):
-            return True
+    while passes_its_text_up(child, parent):
         child, parent = parent, parents.get(parent)
-    if parent is None:
+    if isinstance(parent, ast.stmt):
         return True
+    if isinstance(parent, ast.Attribute):
+        call = parents.get(parent)
+        return parent.value is child and isinstance(call, ast.Call) and call.func is parent
+    if not isinstance(parent, ast.Call) or child is parent.func:
+        return False
     call_name = ast.unparse(parent.func)
     return (call_name in PRINTING_CALL_NAMES
             or (isinstance(parent.func, ast.Name) and parent.func.id in helper_printers)
-            or (isinstance(parents.get(parent), ast.Raise) and parents[parent].exc is parent)
-            or (child is parent.func and isinstance(parent.func, ast.Attribute)))
+            or (isinstance(parents.get(parent), ast.Raise) and parents[parent].exc is parent))
 
 
 def printed_string_literal_positions(tree, source):

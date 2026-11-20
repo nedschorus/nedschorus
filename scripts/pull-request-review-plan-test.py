@@ -257,6 +257,9 @@ def run_unit_cases():
          '"push"', '"push --force"'),
         ("a regular expression", 'import re\nPATTERN = re.compile(r"^git push\\b")\n', 'r"^git push\\b"', 'r"^git (push|reset)\\b"'),
         ("a string beside a printed one on the same line", 'import re\nprint(re.sub("a", "b", "shown"))\n', '"a"', '"z"'),
+        ("a string compared inside a printed argument", 'print(x == "yes")\n', '"yes"', '"no"'),
+        ("a string compared inside an assignment expression in a printed argument",
+         'print(allowed := command == "push")\n', '"push"', '"reset"'),
     ]
     for case_name, source, old_text, new_text in behaviour_string_cases:
         check(f"normalized AST keeps a string that carries behaviour: {case_name}",
@@ -265,6 +268,7 @@ def run_unit_cases():
         ("a raised exception's message", 'def f():\n    raise ValueError("old failure")\n'),
         ("a helper printer's text", 'import sys\ndef say(stream, text):\n    print(text, file=stream)\nsay(sys.stderr, "old line")\n'),
         ("a .format template that is printed", 'print("old {}".format(1))\n'),
+        ("a + chain whose other operand is a repetition", 'print("old " + ("x" * count))\n'),
     ]
     for case_name, source in printed_string_cases:
         check(f"normalized AST ignores a printed string: {case_name}",
