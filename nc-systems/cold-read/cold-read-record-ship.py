@@ -95,7 +95,7 @@ with the design:
      the user on 2026-09-18 at item 5 of the walk
      skill-sentences-and-shipper-questions-2026-09-18 and landed in PR
      "walk-files-ship: a walk's five files reach the log-store's walk/ kind at
-     the walk's close" (https://github.com/nedschorus/nedschorus/pull/501). The
+     the walk's close" (https://github.com/nedsnodes/nedsnodes/pull/501). The
      point of the 2026-09-20 ruling is that the two shippers stop differing.
 
      ONLY THE TRIAGE FILE, AND ONLY THE RECORD'S OWN. The name is matched as the
