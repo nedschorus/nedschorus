@@ -306,6 +306,9 @@ AGENT_BINARY_WIDE_CAUSE_CLASSES = frozenset(
 USER_CLEARABLE_CAUSE_CLASSES = frozenset(
     {"logged-out", "agent-binary-missing", "account-limit", "model-limit"})
 CAUSE_DETAIL_MAX_CHARACTERS = 120
+UNRECOGNISED_FAILURE_TEXT_CAUSE_CLASS = "unrecognised-failure-text"
+# Retried, unlike the user-clearable classes, but its line may be a usage limit only the user can judge.
+TOLD_TO_THE_USER_CAUSE_CLASSES = USER_CLEARABLE_CAUSE_CLASSES | {UNRECOGNISED_FAILURE_TEXT_CAUSE_CLASS}
 # Drop per-attempt timestamps from details that the grid reports for an entire agent-binary.
 DETAIL_IS_REST_OF_LINE = "rest-of-line"
 DETAIL_IS_WHOLE_LINE = "whole-line"
@@ -325,8 +328,11 @@ class RecognisedFailureText(typing.NamedTuple):
 
 def classify_failed_attempt(
     *, stdout: str, stderr: str, exit_code, recognised_texts, start_error: str = "",
+    agent_binary_failure_line_prefix_checked_when_no_recognised_failure_text_matched: str = "",
 ) -> tuple:
     """Return (cause class, detail) for an attempt that produced no report."""
+    watched_prefix = agent_binary_failure_line_prefix_checked_when_no_recognised_failure_text_matched
+    first_unrecognised_watched_line = ""
     for line in f"{stdout}\n{stderr}".splitlines():
         stripped = line.strip()
         timestamp = LEADING_TRACING_LOGGER_TIMESTAMP.match(stripped)
@@ -342,6 +348,13 @@ def classify_failed_attempt(
                 else:
                     detail = text.detail
                 return text.cause_class, detail
+        if (watched_prefix and not first_unrecognised_watched_line
+                and untimestamped.startswith(watched_prefix)):
+            first_unrecognised_watched_line = untimestamped
+    # Only a failed exit: on exit 0 stdout is the reviewer's own prose, which may start with the prefix.
+    if first_unrecognised_watched_line and exit_code not in (0, None):
+        return (UNRECOGNISED_FAILURE_TEXT_CAUSE_CLASS,
+                first_unrecognised_watched_line[:CAUSE_DETAIL_MAX_CHARACTERS])
     if start_error:
         return "agent-binary-missing", start_error
     if exit_code == 0:
@@ -809,11 +822,14 @@ def run_model_chain(
     recognised_failure_texts_for_model=None, child_environment=None,
     per_model_run_timeout_seconds=None, parse_agent_binary_final_result_from_stdout_line=None,
     report_wait_after_result_line_seconds: float = 0.0,
+    agent_binary_failure_line_prefix_checked_when_no_recognised_failure_text_matched: str = "",
 ) -> int:
     """Try models until one produces a report, then stamp the report."""
     # parse_agent_binary_final_result_from_stdout_line takes effect only with per_model_run_timeout_seconds.
     # build_invocation must apply the same per-model effort mapping used by the stamp.
     failed_attempts: list[str] = []
+    # The cell's log is deleted when a later model's report lands, so the fell-back line must quote these.
+    unrecognised_failure_lines_of_failed_models: list[str] = []
     produced_by = ""
     produced_tokens = ""
     for model in chain:
@@ -880,10 +896,21 @@ def run_model_chain(
             if completed.stdout:
                 print(completed.stdout, file=sys.stderr)
             print(f"{program}: {model} failed (exit {completed.returncode})", file=sys.stderr)
-            print(cause_line(program, *classify_failed_attempt(
+            cause_class, detail = classify_failed_attempt(
                 stdout=completed.stdout or "", stderr=completed.stderr or "",
-                exit_code=completed.returncode, recognised_texts=recognised_texts)),
-                file=sys.stderr)
+                exit_code=completed.returncode, recognised_texts=recognised_texts,
+                agent_binary_failure_line_prefix_checked_when_no_recognised_failure_text_matched=(
+                    agent_binary_failure_line_prefix_checked_when_no_recognised_failure_text_matched))
+            if cause_class == UNRECOGNISED_FAILURE_TEXT_CAUSE_CLASS:
+                print(f"{program}: {model} printed a line starting "
+                      f"\"{agent_binary_failure_line_prefix_checked_when_no_recognised_failure_text_matched}\" "
+                      "that matches none of this cell's recognised failure texts, so it may be "
+                      "a usage limit in a wording the cell does not recognise: "
+                      f"\"{detail}\"\n"
+                      "If that line reports a usage limit, tell the user, quoting it, so a "
+                      "recognised failure text can be added for it.", file=sys.stderr)
+                unrecognised_failure_lines_of_failed_models.append(f"{model} printed \"{detail}\"")
+            print(cause_line(program, cause_class, detail), file=sys.stderr)
             continue
         # Recover only after exit 0; a failed model's leftover file is not an accepted review.
         if not report.is_file():
@@ -926,7 +953,10 @@ def run_model_chain(
         print(
             f"{program}: {FELL_BACK_PHRASE} {produced_by} after "
             + ", ".join(failed_attempts)
-            + ". The report's provenance stamp records this.",
+            + ". The report's provenance stamp records this."
+            + (" Tell the user: " + "; ".join(unrecognised_failure_lines_of_failed_models)
+               + ", which may be a usage limit in a wording the cell does not recognise."
+               if unrecognised_failure_lines_of_failed_models else ""),
             file=sys.stderr,
         )
 
@@ -969,6 +999,7 @@ def run_cell(
     per_model_run_timeout_seconds=None, parse_agent_binary_final_result_from_stdout_line=None,
     report_wait_after_result_line_seconds: float = 0.0,
     cold_read_cell_launcher_own_command_line_options_adder=None,
+    agent_binary_failure_line_prefix_checked_when_no_recognised_failure_text_matched: str = "",
 ) -> int:
     """cold_read_cell_launcher_own_command_line_options_adder, when given, adds
     one launcher's own options to the parser, and invocation_builder then also
@@ -1044,6 +1075,8 @@ def run_cell(
             per_model_run_timeout_seconds=per_model_run_timeout_seconds,
             parse_agent_binary_final_result_from_stdout_line=parse_agent_binary_final_result_from_stdout_line,
             report_wait_after_result_line_seconds=report_wait_after_result_line_seconds,
+            agent_binary_failure_line_prefix_checked_when_no_recognised_failure_text_matched=(
+                agent_binary_failure_line_prefix_checked_when_no_recognised_failure_text_matched),
         )
         if exit_code == 0 and staging_directory is not None:
             exit_code = move_staged_report(program, reviewer_report, report)

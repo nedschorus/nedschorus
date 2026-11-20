@@ -46,7 +46,8 @@ WHAT IS PINNED HERE.
     reports are listed with their causes, every .md file in the record is
     marked INCOMPLETE SET, an agent-binary whose every cell is absent for one
     agent-binary-wide cause gets one AGENT-BINARY DOWN: line, and a cause the user
-    can clear ends the text with "Tell the user:". Apart from the retry, a
+    can clear, or an unrecognised-failure-text line, ends the text with "Tell
+    the user:". Apart from the retry, a
     cause changes what is reported, never what is decided: the cases below
     drive the stub through the real limit texts and check that the closing
     text and the exit code turn only on what landed. The grid's FELL BACK
@@ -1029,6 +1030,45 @@ try:
                if "Tell the user: claude model-limit — " in line]) == 1
           and result.stdout.rstrip().splitlines()[-1].startswith("Tell the user: claude model-limit — ")
           and result.stdout.count("Tell the user: claude model-limit — ") == 2,
+          repr(result.stdout))
+
+    # --- All three Claude cells fail twice on a line no recognised text matches --
+    # Retried, unlike a cause the user can clear, but the line may be a usage
+    # limit in a new wording, so the user is told once per agent-binary and
+    # class, on the first FAILED line and in the closing text.
+    UNRECOGNISED_LIMIT_LINE = "You've used 100% of your weekly allowance · resets Nov 25, 9am"
+    told_unrecognised = f"Tell the user: claude unrecognised-failure-text — {UNRECOGNISED_LIMIT_LINE} (log: "
+    repository = build_scratch_repository(scratch, "checkout-unrecognised-failure-text")
+    result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
+        [{"fragment": "claude-", "attempts": 2, "stdout": UNRECOGNISED_LIMIT_LINE}])})
+    failed_lines = lines_opening(result, "FAILED")
+    check("an unrecognised-failure-text cause is retried, and its retry is FAILED quoting the line",
+          len(lines_opening(result, "RETRYING:")) == 3 and len(failed_lines) == 3
+          and all(f"unrecognised-failure-text — {UNRECOGNISED_LIMIT_LINE} (stderr kept: " in line
+                  and "attempt-2.stderr.log" in line for line in failed_lines),
+          repr(result.stdout))
+    check("the first FAILED line alone tells the user, quoting the line and naming the log",
+          [line for line in failed_lines if "Tell the user:" in line] == failed_lines[:1]
+          and f". {told_unrecognised}" in failed_lines[0]
+          and failed_lines[0].endswith(".md.attempt-2.stderr.log)."),
+          repr(failed_lines))
+    check("the closing text ends by telling the user the line once, with the log to check",
+          result.stdout.rstrip().splitlines()[-1].startswith(told_unrecognised)
+          and result.stdout.count(told_unrecognised) == 2
+          and "AGENT-BINARY DOWN:" not in result.stdout,
+          repr(result.stdout))
+
+    # --- A retry that fails otherwise: the second attempt's cause rules --------
+    repository = build_scratch_repository(scratch, "checkout-unrecognised-then-exit")
+    result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
+        [{"fragment": "claude-hunt-deep.md", "attempts": 2,
+          "stdout_by_attempt": {"1": UNRECOGNISED_LIMIT_LINE, "2": "Error: something else"}}])})
+    check("RETRYING names the unrecognised line, FAILED the retry's exit-1, and no one is told",
+          [line.split(" (first attempt's log kept: ")[0] for line in lines_opening(result, "RETRYING:")]
+          == [f"RETRYING: claude-hunt-deep — unrecognised-failure-text — {UNRECOGNISED_LIMIT_LINE}"]
+          and len(lines_opening(result, "FAILED")) == 1
+          and lines_opening(result, "FAILED")[0].startswith("FAILED (exit 1): claude-hunt-deep — exit-1 — ")
+          and "Tell the user:" not in result.stdout,
           repr(result.stdout))
 
     # --- Two Claude cells hit the account limit; one fails otherwise twice ----

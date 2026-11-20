@@ -127,6 +127,10 @@ def model_family_name(model: str) -> str:
     return parts[1].capitalize() if len(parts) > 1 and parts[1] else model
 
 
+# Every usage-limit wording the CLI has used starts with this; the words after it change.
+AGENT_BINARY_FAILURE_LINE_PREFIX_CHECKED_WHEN_NO_RECOGNISED_FAILURE_TEXT_MATCHED = "You've "
+
+
 # Match the CLI's failure messages at line starts; model-limit prefixes use the current model family.
 def recognised_failure_texts_for_model(model: str) -> list:
     family = model_family_name(model)
@@ -149,6 +153,8 @@ def main() -> int:
         tier_to_effort=TIER_TO_REASONING_EFFORT,
         invocation_builder=invocation_builder,
         recognised_failure_texts_for_model=recognised_failure_texts_for_model,
+        agent_binary_failure_line_prefix_checked_when_no_recognised_failure_text_matched=(
+            AGENT_BINARY_FAILURE_LINE_PREFIX_CHECKED_WHEN_NO_RECOGNISED_FAILURE_TEXT_MATCHED),
         cold_read_cell_launcher_own_command_line_options_adder=cold_read_cell_launcher_own_command_line_options_adder,
     )
 

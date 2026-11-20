@@ -2125,6 +2125,9 @@ def main():
                           "model, or manage usage credits, to continue.\n", ""),
          "Opus", 2),
         ("claude", "agent-binary-missing", cli_missing, "No such file or directory", 2),
+        ("claude", "unrecognised-failure-text",
+         cli_answering(1, "You've used 100% of your weekly allowance · resets Nov 25, 9am\n", ""),
+         "You've used 100% of your weekly allowance · resets Nov 25, 9am", 2),
     )
     try:
         for runtime, expected_class, fake_run, expected_detail, calls_per_launch in real_cases:
@@ -2145,6 +2148,15 @@ def main():
                   and len(launched_commands) == calls_per_launch * (2 if relaunched else 1),
                   f"raised={raised!r}, launches={len(launched_commands)}, "
                   f"output was {output[-700:]!r}")
+            if expected_class == "unrecognised-failure-text":
+                # Relaunched like any failure the user cannot clear, but the
+                # line may be a usage limit in a new wording, so the user is told.
+                check("a relaunched claude cell that failed twice on an unrecognised "
+                      "\"You've \" line is followed by the tell-the-user line, then triage",
+                      output.endswith(failed[0] + "\n"
+                                      + "Tell the user what the FAILED line above says.\n"
+                                      + triage_lines(runtime)),
+                      f"output was {output[-700:]!r}")
             if runtime == "codex" and expected_class == "logged-out":
                 check("a failed codex launch prints the last 20 lines its CLI wrote, "
                       "not its whole session",
