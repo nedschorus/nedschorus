@@ -206,18 +206,55 @@ def main():
         second_try_unreadable = root / "second-try-unreadable" / "emergency-stop"
         second_try_unreadable.parent.mkdir()
         newer_unreadable = second_try_unreadable / "2099-01-01T00-00-00Z.md"
+        newer_unreadable_answer = lambda f: common.Unreadable(newer_unreadable, "bad bytes")
         status, out = run_start_with_reads(second_try_unreadable, reads_in_order(
             common.NoStop, lambda f: common.Lifted(newer_unreadable, "#emergency_stop_lifted x"),
-            lambda f: common.Unreadable(newer_unreadable, "bad bytes")))
+            newer_unreadable_answer, newer_unreadable_answer))
         check("start whose second try finds the newest file unreadable: deletes the first try's stop file, "
-              "and FAILED saying it wrote no emergency-stop file",
-              status == 1 and out == (
-                  f"FAILED: start wrote no emergency-stop file: the newest emergency-stop file, {newer_unreadable}, "
-                  "cannot be read: bad bytes. That unreadable file already counts as an emergency stop in force, so "
-                  "pushes and merges stay refused; writing a newer emergency-stop file would hide the unreadable "
-                  "one.\nTell the user the file's path and this error, and leave the file as it is: only the user "
-                  "repairs or moves it.\n")
+              "and FAILED saying, from a fresh read, that the unreadable file keeps pushes refused",
+              status == 1 and out == both_tries_failed(
+                  f"the newest emergency-stop file, {newer_unreadable}, cannot be read: bad bytes", refused)
               and list(second_try_unreadable.iterdir()) == [], (out, list(second_try_unreadable.iterdir())))
+
+        nothing_written = root / "unreadable-before-any-write" / "emergency-stop"
+        nothing_written.parent.mkdir()
+        status, out = run_start_with_reads(nothing_written, reads_in_order(
+            lambda f: common.Unreadable(nothing_written / "2099-01-01T00-00-00Z.md", "bad bytes")))
+        check("start that finds the newest file unreadable before writing anything: FAILED saying it wrote no "
+              "emergency-stop file",
+              status == 1 and out.startswith("FAILED: start wrote no emergency-stop file: the newest "
+                                             "emergency-stop file, ") and not nothing_written.exists(), out)
+
+        own_unreadable = root / "own-file-unreadable" / "emergency-stop"
+        own_unreadable.parent.mkdir()
+        own_written = own_unreadable / "2026-11-14T12-00-00Z.md"
+        own_unreadable_answer = lambda f: common.Unreadable(own_written, "[Errno 5] Input/output error")
+        status, out = run_start_with_reads(own_unreadable, reads_in_order(
+            common.NoStop, own_unreadable_answer, own_unreadable_answer))
+        check("start whose own stop file reads back unreadable twice: deletes it, and FAILED saying from a fresh "
+              "read that nothing is refused, not to leave the deleted file",
+              status == 1 and out == both_tries_failed(f"no emergency-stop file in {own_unreadable} is in force",
+                                                        not_refused)
+              and list(own_unreadable.iterdir()) == [], (out, list(own_unreadable.iterdir())))
+
+        appended_then_lifted = root / "appended-then-lifted" / "emergency-stop"
+        appended_then_lifted.parent.mkdir()
+        first_file = appended_then_lifted / "2026-11-14T12-00-00Z.md"
+
+        def other_seat_appends_then_user_lifts(f):
+            program.append(first_file, "2026-11-14T12:00:00+00:00 evidence added by md-skills: main is red")
+            program.append(first_file, "#emergency_stop_lifted all clear")
+            return common.Lifted(first_file, "#emergency_stop_lifted all clear")
+
+        status, out = run_start_with_reads(appended_then_lifted, reads_in_order(
+            common.NoStop, other_seat_appends_then_user_lifts))
+        newer_state = common.read_state(appended_then_lifted)
+        check("start whose first stop file another agent-seat added to before the read-back: the retry keeps "
+              "that file, with the other agent-seat's words and the lift, and says so",
+              status == 0 and isinstance(newer_state, common.InForce) and newer_state.path != first_file
+              and out == (f"started the emergency stop {newer_state.path}; it kept {first_file}, the stop file "
+                          "its first try wrote, because another agent-seat added to it after start wrote it\n")
+              and "evidence added by md-skills: main is red" in first_file.read_text(), (out, newer_state))
 
         mount = root / "mount-lost"
         lost_folder = mount / "emergency-stop"

@@ -27,7 +27,8 @@ Subcommands:
       When that succeeds, it deletes the first try's stop file unless that
       file is the one in force; when it also fails, it deletes the stop files
       it created, so a failed start never comes into force later, and prints
-      FAILED, saying what the folder now holds.
+      FAILED, saying what the folder now holds. Either way it keeps a file it
+      created that another agent-seat has since added to, and says so.
   coordinate --agent-seat NAME --words TEXT
       Names another coordinating agent-seat, on the user's word.
   push-notification sent | failed [--error TEXT]
@@ -125,6 +126,13 @@ def append(path, line):
         handle.write(line.rstrip("\n") + "\n")
 
 
+def append_own(created, path, line):
+    """append, keeping created's record of start's own text when path is a stop file start created."""
+    append(path, line)
+    if path in created:
+        created[path] += line.rstrip("\n") + "\n"
+
+
 def failed(message):
     print(f"FAILED: {message}")
     return 1
@@ -160,7 +168,7 @@ class ReadBackNotInForce(Exception):
 
 def start(folder, agent_seat, kind, words, jobs_file, moment, rerun=None):
     rerun = rerun or rerun_command(["start", f"--{kind}", words])
-    created = []
+    created = {}
     try:
         return start_once(folder, agent_seat, kind, words, jobs_file, moment, rerun, created)[0]
     except ReadBackNotInForce:
@@ -168,29 +176,60 @@ def start(folder, agent_seat, kind, words, jobs_file, moment, rerun=None):
     try:
         report, in_force_path = start_once(folder, agent_seat, kind, words, jobs_file, moment, rerun, created)
     except (StartRefused, ReadBackNotInForce) as failure:
-        for path in created:
-            path.unlink()
-        if isinstance(failure, StartRefused):
+        kept = delete_stop_files_holding_only_start_text(created)
+        if isinstance(failure, StartRefused) and not created:
             raise
+        # A refusal raised before the deletes can name a file start has just deleted, so the message comes
+        # from a fresh read of the folder.
         state = common.read_state(folder)
         raise StartRefused("start wrote its emergency stop and read the emergency-stop folder back, twice, and "
-                           "neither time found its stop in force, so it deleted the stop files it wrote. A read of "
-                           f"the folder now finds that {folder_state_description(state)}. {refused_clause(state)}"
+                           f"neither time found its stop in force, so it {deleted_clause(created, kept)}. A read "
+                           f"of the folder now finds that {folder_state_description(state)}. {refused_clause(state)}"
                            f"\nTell the user this whole message.\nRun start again only if the user says to: {rerun}")
-    for path in created:
-        # The second try can append to the first try's file, which is then the stop in force.
-        if path != in_force_path:
-            path.unlink()
+    # The second try can append to the first try's file, which is then the stop in force.
+    kept = delete_stop_files_holding_only_start_text(
+        {path: text for path, text in created.items() if path != in_force_path})
+    if kept:
+        report += (f"; it kept {', '.join(str(path) for path in kept)}, the stop file its first try wrote, "
+                   "because another agent-seat added to it after start wrote it")
     return report
 
 
+def delete_stop_files_holding_only_start_text(created):
+    """Deletes each stop file in created (path: the text start wrote) that still holds just that text.
+
+    Returns the paths kept: another agent-seat appended to each, and was told its words were saved."""
+    kept = []
+    for path, text in created.items():
+        try:
+            unchanged = path.read_text(encoding="utf-8") == text
+        except UnicodeDecodeError:
+            unchanged = False
+        if unchanged:
+            path.unlink()
+        else:
+            kept.append(path)
+    return kept
+
+
+def deleted_clause(created, kept):
+    if not kept:
+        return "deleted the stop files it wrote"
+    kept_list = ", ".join(str(path) for path in kept)
+    if len(kept) == len(created):
+        return (f"kept the stop files it wrote, {kept_list}, because another agent-seat added to them after "
+                "start wrote them")
+    return (f"deleted the stop files it wrote except {kept_list}, which it kept because another agent-seat "
+            "added to them after start wrote them")
+
+
 def start_once(folder, agent_seat, kind, words, jobs_file, moment, rerun, created):
-    """(report, path of the stop file in force); appends each stop file it creates to created.
+    """(report, path of the stop file in force); adds each stop file it creates to created, with its text.
 
     Raises ReadBackNotInForce when the folder read back after the write does not hold its stop in force."""
     state = common.read_state(folder)
     if isinstance(state, common.InForce):
-        append(state.path, f"{moment.isoformat()} {kind} added by {agent_seat}: {one_line(words)}")
+        append_own(created, state.path, f"{moment.isoformat()} {kind} added by {agent_seat}: {one_line(words)}")
         return f"added to the emergency stop in force, {state.path}", state.path
     if isinstance(state, common.Unreadable):
         raise StartRefused(f"start wrote no emergency-stop file: the newest emergency-stop file, {state.path}, "
@@ -215,11 +254,11 @@ def start_once(folder, agent_seat, kind, words, jobs_file, moment, rerun, create
             handle.write(text)
         os.link(temporary, path)
     except FileExistsError:
-        append(path, f"{moment.isoformat()} {kind} added by {agent_seat}: {one_line(words)}")
+        append_own(created, path, f"{moment.isoformat()} {kind} added by {agent_seat}: {one_line(words)}")
         return in_force_check(folder, path, f"added to the emergency stop started at the same second, {path}")
     finally:
         os.unlink(temporary)
-    created.append(path)
+    created[path] = text
     return in_force_check(folder, path, f"started the emergency stop {path}")
 
 
