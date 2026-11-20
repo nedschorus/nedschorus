@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Give one document the cold-read-fast-read: one fast-clarify cold-read-cell
-on the fast cold-read-tier and, at the same time, one cold-read-cell on Opus
-for Question 4.
+on the fast cold-read-tier and, at the same time, unless --without-question-4
+is given, one cold-read-cell on Opus for Question 4.
 
 Usage:
   nn-systems/cold-read/cold-read-fast-read.py --target docs/walk/foo-draft.md
+  nn-systems/cold-read/cold-read-fast-read.py --target docs/walk/foo-draft.md --without-question-4
 
 WHAT IT DOES. Picks the report path from the cold-read-target, runs
 ONE fast-clarify cold-read-cell on the fast cold-read-tier through
@@ -230,6 +231,14 @@ it is still running, its answer is dropped, and a line on stderr says
 Question 4 was abandoned. A SIGTERM or SIGHUP sent to the read ends it that
 way too, with exit 128 plus the signal's number: the cell is in a session of
 its own, so a signal to the read's process group does not reach it.
+
+WITHOUT QUESTION 4. With --without-question-4 no Question 4 cell is
+started, and the report's `## Question 4: What should be code` section holds
+one line saying Question 4 was not asked because of that option. The walk
+check program,
+nn-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py,
+passes it on every fast read it runs. A read run from the Mac on ned-box
+passes the option on to the read there.
 """
 
 from __future__ import annotations
@@ -352,9 +361,12 @@ Lay out your report as follows, and do not look for an example report: first the
 Write your report to {REPORT_PATH}, once, when your analysis is complete. That file is your entire deliverable: what you say in conversation is discarded. Start your report with a list of the files you were told to examine. Note if you were unable to read any of them. {REPORT_PATH} is the only file to create; write nothing anywhere else.
 """
 
-# QUESTION 4, asked of every document by a cell of its own: the user's text,
-# word for word, heading included. The heading is also the report section's.
+# QUESTION 4, asked by a cell of its own: the user's text, word for word,
+# heading included. The heading is also the report section's.
 WHAT_SHOULD_BE_CODE_QUESTION_REPORT_SECTION_HEADING = "## Question 4: What should be code"
+WITHOUT_QUESTION_4_OPTION = "--without-question-4"
+WITHOUT_QUESTION_4_SECTION_LINE = (
+    f"Question 4 was not asked: this fast read was run with {WITHOUT_QUESTION_4_OPTION}.")
 WHAT_SHOULD_BE_CODE_QUESTION = WHAT_SHOULD_BE_CODE_QUESTION_REPORT_SECTION_HEADING + """
 What here relies on an LLM following English instructions, or on a human remembering to do something, where code could do the job? The model handles what truly needs interpretation: understanding ambiguous intent, classifying semantically complex material, drafting open-ended content, ranking alternatives no known libraries or algorithms cover. Code handles everything where variability adds nothing: validation, parsing, calculation, state transitions, sequencing, retries, deduplication, filtering, formatting contracts, invariant enforcement, tool routing when the rule is known. Go through every step the text gives to a model or a person, and ask whether code could do it, constrain it to a bounded choice, take over its state or control flow, or check its result. A step that works reliably today, costs little, and fails loudly is not an issue, and neither is one that code already does. BE CONCISE: for each step, quote the exact phrase, then a sentence naming the work and the code that could do or check it. Number each item, most useful first. If there are none, say "No issues"."""
 
@@ -523,11 +535,12 @@ def mac_mount_path_of_ned_box_path(ned_box_path: str) -> str:
     return MAC_MOUNT_OF_NED_BOX_HOME + ned_box_path[len(NED_BOX_HOME):]
 
 
-def cold_read_fast_read_script_rerun_shell_command_line_for_mac(ned_box_target: str) -> str:
+def cold_read_fast_read_script_rerun_shell_command_line_for_mac(ned_box_target: str,
+                                                               options: tuple = ()) -> str:
     """The command line, quoted for a shell, that runs this program once
-    more on the Mac on `ned_box_target` in its Mac mount form."""
+    more on the Mac on `ned_box_target` in its Mac mount form, with `options`."""
     return shlex.join(["python3", str(pathlib.Path(__file__).resolve()), "--target",
-                       mac_mount_path_of_ned_box_path(ned_box_target)])
+                       mac_mount_path_of_ned_box_path(ned_box_target), *options])
 
 
 def text_with_ned_box_paths_rewritten_as_mac_mount_paths(text: str) -> str:
@@ -572,10 +585,10 @@ def lines_ending_with_message_for_the_user(message_for_the_user: str,
             f"{one_line}")
 
 
-def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
-    """Run the fast read on ned-box on `ned_box_target`, with the script of
-    the ned-box checkout holding it, relay its output in Mac mount paths, and
-    return its exit code, or 1 when it could not be run."""
+def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str, options: tuple = ()) -> int:
+    """Run the fast read on ned-box on `ned_box_target` with `options`, with
+    the script of the ned-box checkout holding it, relay its output in Mac
+    mount paths, and return its exit code, or 1 when it could not be run."""
     directory = str(pathlib.PurePosixPath(ned_box_target).parent)
     session_id = os.environ.get(record_names.AGENT_SESSION_ID_ENVIRONMENT_VARIABLE)
     session_assignment = (
@@ -586,10 +599,11 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
         f"cd -- \"$top\" && ")
     fast_read_invocation = (
         f"python3 {shlex.quote(str(pathlib.Path(__file__).resolve().relative_to(REPO_ROOT)))} "
-        f"--target {shlex.quote(ned_box_target)}")
+        f"--target {shlex.quote(ned_box_target)}"
+        + "".join(f" {shlex.quote(option)}" for option in options))
     remote_command = f"{checkout_entry}{session_assignment}exec {fast_read_invocation}"
     command_for_a_person = f"{checkout_entry}{fast_read_invocation}"
-    rerun_command = cold_read_fast_read_script_rerun_shell_command_line_for_mac(ned_box_target)
+    rerun_command = cold_read_fast_read_script_rerun_shell_command_line_for_mac(ned_box_target, options)
     print(f"{PROGRAM}: git on this machine cannot read the ned-box worktree "
           f"holding the target, so the fast read runs on ned-box on "
           f"{ned_box_target}.", file=sys.stderr)
@@ -1641,16 +1655,18 @@ def fast_read_report_finish_and_print_path(
     *, report: pathlib.Path, cell_report: pathlib.Path, target: pathlib.Path, sentences: dict,
     marked_copy_kept, full_run_class_name, bare_references, launch_sha256: str,
     on_records_route: bool, backup_line: str,
-    question_4_cell: WhatShouldBeCodeQuestionCell, edit_changed_ids: list,
+    question_4_cell: typing.Optional[WhatShouldBeCodeQuestionCell], edit_changed_ids: list,
     edit_removed_units: list, quota_line: str = "",
 ) -> int:
     """Turn the cell's report, cell_report, into the read's, written once at
-    report: wait for the Question 4 cell and add its section, attach the sentences, the
+    report: wait for the Question 4 cell, if one was started, and add its section, attach the sentences, the
     coverage and the bare numbers, name an edit made during the read and the
     Sonnet backup, ship the record, print the path. Returns 0, or 1 when
     the record did not reach the log-store, whether or not Question 4 was
     answered."""
-    question_4_section = what_should_be_code_section(question_4_cell)
+    question_4_section = (
+        what_should_be_code_section(question_4_cell) if question_4_cell is not None
+        else f"\n{WHAT_SHOULD_BE_CODE_QUESTION_REPORT_SECTION_HEADING}\n\n{WITHOUT_QUESTION_4_SECTION_LINE}\n")
     # Before anything reads or ships it: put each original sentence under
     # the restatement claiming its id, and say which sentences no
     # restatement claimed.
@@ -1698,6 +1714,9 @@ def main() -> int:
     parser.add_argument(
         "--target", required=True,
         help="document path, relative to the current directory or absolute")
+    parser.add_argument(
+        WITHOUT_QUESTION_4_OPTION, action="store_true",
+        help="ask Questions 1 to 3 only; start no Question 4 cell")
     args = parser.parse_args()
     # Raising SystemExit runs the finally below that stops the Question 4 cell,
     # and the temporary directory's cleanup; the default action runs neither.
@@ -1733,7 +1752,8 @@ def main() -> int:
               f"edit changed: {error})")
         return 1
     except NedBoxWorktreeUnreadableThroughMacMount as error:
-        return cold_read_fast_read_run_on_ned_box_over_ssh(error.ned_box_target)
+        return cold_read_fast_read_run_on_ned_box_over_ssh(
+            error.ned_box_target, (WITHOUT_QUESTION_4_OPTION,) if args.without_question_4 else ())
     except CheckoutRootUnreadable as error:
         print(f"{PROGRAM}: no fast read ran and no report was written: could "
               f"not tell which checkout holds the target, so could not tell "
@@ -1787,7 +1807,8 @@ def main() -> int:
         report.unlink(missing_ok=True)
         # Started after every write this program makes in the checkout before
         # its report, so the claude launcher's stray-write check sees none of them.
-        question_4_cell = what_should_be_code_cell_start(target, pathlib.Path(scratch))
+        question_4_cell = (None if args.without_question_4
+                           else what_should_be_code_cell_start(target, pathlib.Path(scratch)))
         finish = dict(
             report=report, cell_report=cell_report, target=target, sentences=sentences,
             marked_copy_kept=marked_copy if on_records_route else None,
@@ -1839,7 +1860,7 @@ def main() -> int:
                 CLAUDE_CELL_LAUNCHER, exit_code, output)
         finally:
             # Inside the temporary directory: the cell writes there until it stops.
-            if not question_4_cell.section_collected_output.is_set():
+            if question_4_cell is not None and not question_4_cell.section_collected_output.is_set():
                 what_should_be_code_cell_abandon(question_4_cell)
     if bare_references:
         print(f"{PROGRAM}: bare issue, pull request or task numbers in this walk "
