@@ -1,6 +1,6 @@
 # Fast, parallel reviews of pull requests
 
-How this project keeps the review of a pull request short, and which parts of the review run side by side. It is for any agent-seat that reviews, merges or authors a pull request. Terms are the project glossary's, `docs/nedsnodes-wiki/nedsnodes-glossary.md`, and, for cold-read-fast-read, the skills glossary's, `.claude/skills/skills-glossary.md`. Which content a pull request reviewer gives findings on, and which findings block a merge, the -hack rule included, is the "Review scope" section of `docs/agents/pr-reviewer-instructions.md`, called the review scope rule below and not restated here; rule 2 below narrows it for one kind of finding, and rule 3 adds a check merge-lane-2 runs itself. Each program named below says in its docstring, or for `scripts/merge-gate.sh` in its header comment, what it does, except where the section Open work says the docstring is out of date; this page says how the programs fit and why the rules around them exist.
+How this project keeps the review of a pull request short, and which parts of the review run side by side. It is for any agent-seat that reviews, merges or authors a pull request. Terms are the project glossary's, `docs/nedsnodes-wiki/nedsnodes-glossary.md`, and, for cold-read-fast-read, the skills glossary's, `.claude/skills/skills-glossary.md`. Which content a pull request reviewer gives findings on, and which findings block a merge, the -hack rule included, is the "Review scope" section of `docs/agents/pr-reviewer-instructions.md`, called the review scope rule below and not restated here; rule 2 below narrows it for one kind of finding, and rule 3 adds a check merge-lane-2 runs itself. Each program named below says in its docstring, or for `scripts/merge-gate.sh` in its header comment, what it does; this page says how the programs fit and why the rules around them exist.
 
 ## Why reviews were slow
 
@@ -67,8 +67,7 @@ Last, `scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pul
 
 ## Open work
 
-`scripts/pull-request-review-plan.py`, from PR [pull-request-review-plan: compute a pull request's review tier, fix-round delta and brief facts](https://github.com/nedschorus/nedschorus/pull/943), states for one pull request its set of reviewers under rule 1, the review round, a fix-round's new commits, and the changed tool-messages-to-agent. It differs from rule 1 in three ways, and until it is changed, rule 1 governs:
+`scripts/pull-request-review-plan.py`, from PR [pull-request-review-plan: compute a pull request's review tier, fix-round delta and brief facts](https://github.com/nedschorus/nedschorus/pull/943), states for one pull request its set of reviewers under rule 1, the review round, a fix-round's new commits, and the changed tool-messages-to-agent. It differs from rule 1 in two ways, and until it is changed, rule 1 governs:
 
-- Its names for the three sets, `seat-alone`, `seat-and-codex` and `full-reviewer`, and its docstring date from when merge-lane-2 read pull requests' code itself.
 - It gives the Codex review to every fenced code block in Markdown, where the review scope rule has reviewers review only those a pull request's description asks for.
 - It treats a change to any Python string constant as text, though a string constant that is never printed, such as a regular expression or a path, changes behavior and belongs to Everything else.

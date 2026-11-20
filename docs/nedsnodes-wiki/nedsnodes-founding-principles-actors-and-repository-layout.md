@@ -31,7 +31,7 @@ Two kinds of agent, each defined in the glossary, `docs/nedsnodes-wiki/nedsnodes
 | `~/.claude/handoffs/` | Session handoffs, one file per agent-seat, on each machine only and never committed. |
 | `nn-queue/` | User-requested notes awaiting their initial walk — verbatim, unreviewed, 90-day TTL; dispersed to durable homes at the walk. |
 | `docs/nedsnodes-wiki/queue/`, `docs/issues/queue/` | Destination-rooted queues: wiki-bound doctrine and GHI-MD-bound documents awaiting the user's drain (promote / edit / demote / drop). |
-| `nn-systems/` | The project's built systems, one directory each with its program, design document and tests: `handoff/` (session reincarnation, the handoff-supervisor and the handoff writer) and `main-gatekeeper/` (the program meant to be the only way a change reaches main, dormant until activated). |
+| `nn-systems/` | The project's built systems, one directory each: `cold-read/` (the programs that run a cold-read-fast-read and a cold-read-full-run), `handoff/` (session reincarnation, the handoff-supervisor and the handoff writer), `main-gatekeeper/` (the program meant to be the only way a change reaches main, dormant until activated), `nn-shared-database/` (the service that alone reads and writes the project's shared database on ned-box) and `skills/` (the programs the skills run); beside them, `general-tools/`, which is not a system, as the glossary's nc-system entry says. |
 | Issues labeled `queue-drain-candidate` | Issues awaiting the user's drain — same format as every issue, walkable; no work ever waits on one, and nothing requiring the user's admission takes effect without it. |
 
 ## Working in a fresh clone
