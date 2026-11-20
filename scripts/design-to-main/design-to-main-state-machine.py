@@ -338,7 +338,8 @@ def coverage_types_of_the_test_designs_requirements(test_design_text):
 
 def the_set_of_coverage_types_the_test_design_asks_for(requirement_coverage_types):
     present = {t for t in requirement_coverage_types
-               if t != tables.COVERAGE_TYPE_NO_TESTS}
+               if t not in (tables.COVERAGE_TYPE_NO_TESTS,
+                            tables.COVERAGE_TYPE_USER_TESTS_BY_HAND)}
     if not present:
         return (tables.COVERAGE_TYPE_NO_TESTS,)
     return tuple(sorted(present))

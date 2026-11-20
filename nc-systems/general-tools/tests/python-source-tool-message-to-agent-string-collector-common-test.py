@@ -584,6 +584,8 @@ SCOPE_FORMS_EACH_RULE_ONCE_MISSED = (
      'emit("never shown")\n', []),
     ("a comprehension target hides the function's local at a printed form inside the comprehension",
      'def main(items):\n    text = "local hidden"\n    [print(text) for text in items]\n', []),
+    ("an outer comprehension's target hides the function's local inside a comprehension nested in it",
+     'def main(rows):\n    text = "outer target hidden"\n    [[print(text) for cell in row] for text in rows]\n', []),
     ("a comprehension target hides the function's local inside a lambda the comprehension calls",
      'def main(items):\n    text = "lambda hidden"\n    [(lambda: print(text))() for text in items]\n', []),
     ("a helper's parameter printed in a comprehension's first iterable, which the target does not hide",

@@ -251,7 +251,7 @@
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/style-guide-word-checker-markdown-edit-hook-nbd.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/style-guide-word-checker-markdown-edit-hook-hack.py",
             "timeout": 30
           },
           {
@@ -261,7 +261,7 @@
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook-nbd.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook-hack.py",
             "timeout": 30
           }
         ]

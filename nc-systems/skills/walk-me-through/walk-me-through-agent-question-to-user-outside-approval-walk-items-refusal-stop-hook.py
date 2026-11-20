@@ -308,7 +308,7 @@ The numbered lines:
 {lines}"""
 
 REFUSAL_OPENING_TEMPLATE = (
-    "approval-walk question check: this hook refused to end your turn on purpose, because your reply seems to "
+    "[rule walk-me-through-agent-question-to-user-outside-walk-items-refused] approval-walk question check: this hook refused to end your turn on purpose, because your reply seems to "
     "ask the user something outside an item of the open approval-walk {walk} ({decided}). The flagged text: "
     "\"{sentence}\". While a walk is open the user's answer goes to the waiting item, item {waiting}, so a "
     "question asked in prose leaves him unable to tell which question his letter answers.")
@@ -319,7 +319,7 @@ REFUSAL_INSTRUCTIONS = (
     "If the flagged text asks the user to decide or answer something, do these three steps:",
     "1. Add it to the walk-document {document} as an interruption item headed `## <the point of the question>`, "
     "with no number. In the file, place it right after the whole of item {waiting_whole_item}: past that item's "
-    "sub-steps and `#### Withdrawn version` sections, and before the next item below those sub-steps and sections. Under the heading, "
+    "sub-steps and `#### Withdrawn version` sections, and before the next item below those sub-steps and sections, or, when no item follows, at the end of the file, below any text after those sub-steps and sections. Under the heading, "
     "give it a line of its own naming "
     "its category, the one for how soon its work must happen, one of {category_tags}, and a line "
     "`{waits_on_tag} <title>` for each item it must follow, as the walk-me-through skill's section "
@@ -354,7 +354,7 @@ NO_PAGE_TEMPLATE = (
     "none and add to {minutes} the line `#item_page item <N> of <M> <the page's link>`, which this hook reads back; "
     "then put the same link in place of `<page link>` in the item's closing line.")
 NO_WALK_REFUSAL_OPENING_TEMPLATE = (
-    "approval-walk closing-line check: this hook refused to end your turn on purpose, because your message ends "
+    "[rule walk-me-through-closing-line-without-open-walk-refused] approval-walk closing-line check: this hook refused to end your turn on purpose, because your message ends "
     "with an approval-walk item's closing line, \"{line}\", but the checkout you work in, {top}, has no open or "
     "paused approval-walk in {walk_directory}{missing}. Your message has already reached the user. The "
     "walk-me-through hooks read an approval-walk's walk-minutes and walk-document only in {walk_directory}, so the "
@@ -475,9 +475,8 @@ def shown_item_lines(reply_lines, document_lines, units, openings):
     shown = set()
     for numbers, total, _, first, end in units:
         unit_shown = normalized(document_lines[first]) in reply_set
-        spans = [(number, *(walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
-            openings, first, end, number, numbers, total) if len(numbers) > 1 else (first, end)))
-                 for number in numbers or [None]]
+        spans = [(number, *walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
+            openings, first, end, number, numbers, total)) for number in numbers or [None]]
         if unit_shown:
             # A Withdrawn heading, an opening that names no item, ends the lead-in as it ends an item's lines.
             withdrawn = [line for line in openings if first < line < end and not openings[line][0]]

@@ -1046,13 +1046,14 @@ def write_handoff_and_report_supervisor(argv) -> int:
                        handoff_deferral_lines=handoff_deferral_lines,
                        background_task_lines=background_task_lines,
                        background_task_past_wait_limit_lines=past_wait_limit_lines)
-    # Flushed at once: the supervisor may end this session soon after the handoff file appears.
-    print(f"handoff-write-and-check-supervisor: wrote {handoff_path} (session-handoff-sequence-number {counter})", flush=True)  # pragma: no mutate, the next line's print flushes the same buffer at once, so flush=False changes no output
-    print(f"handoff-write-and-check-supervisor: {roster_report}", flush=True)
-    print(f"handoff-write-and-check-supervisor: {background_task_report}", flush=True)
-    print(f"handoff-write-and-check-supervisor: {handoff_deferral_report}", flush=True)
-    print(f"handoff-write-and-check-supervisor: {past_wait_limit_report}", flush=True)
-    print(f"handoff-write-and-check-supervisor: {prune_report}", flush=True)
+    print(f"handoff-write-and-check-supervisor: wrote {handoff_path} (session-handoff-sequence-number {counter})")
+    print(f"handoff-write-and-check-supervisor: {roster_report}")
+    print(f"handoff-write-and-check-supervisor: {background_task_report}")
+    print(f"handoff-write-and-check-supervisor: {handoff_deferral_report}")
+    print(f"handoff-write-and-check-supervisor: {past_wait_limit_report}")
+    print(f"handoff-write-and-check-supervisor: {prune_report}")
+    # Flushed before the audit, which can take 45 seconds: the supervisor may end this session soon after the handoff file appears.
+    sys.stdout.flush()
     print(f"handoff-write-and-check-supervisor: {run_branch_protection_audit()}")
 
     answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(state_path)

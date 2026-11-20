@@ -63,7 +63,7 @@ CORRECT_PREREQUISITES_LINE = (
 
 def problem_text(task_id, problem, subject=None):
     subject = subject if subject is not None else f"Subject of task {task_id}"
-    return (f'Task {task_id} "{subject}" is never raised as its metadata.prerequisites stand, '
+    return (f'[rule due-task-prerequisites-unusable-correct-them] Task {task_id} "{subject}" is never raised as its metadata.prerequisites stand, '
             f"because {problem}.\n{CORRECT_PREREQUISITES_LINE}")
 
 GH_STAND_IN = """#!{python}
@@ -215,7 +215,7 @@ check("prerequisites met: the Stop hook's JSON, no decision, no systemMessage",
       set(output) == {"hookSpecificOutput"}
       and output["hookSpecificOutput"].get("hookEventName") == "Stop",
       result.stdout)
-expected_text = (f'Act on task 7 "Check the nightly run" now: its prerequisites are met: '
+expected_text = (f'[rule due-task-raise-when-prerequisites-met] Act on task 7 "Check the nightly run" now: its prerequisites are met: '
                  f'PR "Merged" (https://x/{MERGED_PR}) is merged.\n{DEFER_LINE}')
 check("prerequisites met: the exact text handed to the agent",
       context_of(result) == expected_text, repr(context_of(result)))
@@ -295,7 +295,7 @@ check("blockedBy alone, one blocker still open: silent", silent(seat.run()))
 seat.task("52", status="completed")
 result = seat.run()
 check("blockedBy alone, every blocker completed: the exact text handed to the agent",
-      context_of(result) == ('Act on task 50 "Ship after both" now: the tasks it waited on '
+      context_of(result) == ('[rule due-task-raise-when-prerequisites-met] Act on task 50 "Ship after both" now: the tasks it waited on '
                              f"are completed: task 51, task 52.\n{DEFER_LINE}"),
       repr(context_of(result)))
 check("blockedBy alone: no gh call", seat.gh_calls() == [], seat.gh_calls())
@@ -340,22 +340,22 @@ check("a task with no metadata and no blockedBy: no state written",
 seat = Seat()
 seat.task("40", metadata={"prerequisites": [{"pr_merged": 101}, {"issue_closed": 202}]})
 seat.respond({
-    "pr:101": {"state": "MERGED", "title": "Add the\nthing", "url": "https://github.com/nedschorus/nedschorus/pull/101"},
-    "issue:202": {"state": "CLOSED", "title": "The bug", "url": "https://github.com/nedschorus/nedschorus/issues/202"},
+    "pr:101": {"state": "MERGED", "title": "Add the\nthing", "url": "https://github.com/nedsnodes/nedsnodes/pull/101"},
+    "issue:202": {"state": "CLOSED", "title": "The bug", "url": "https://github.com/nedsnodes/nedsnodes/issues/202"},
 })
 result = seat.run()
 expected_text = (
-    'Act on task 40 "Subject of task 40" now: its prerequisites are met: '
-    'PR "Add the thing" (https://github.com/nedschorus/nedschorus/pull/101) is merged; '
-    'GHI "The bug" (https://github.com/nedschorus/nedschorus/issues/202) is closed.'
+    '[rule due-task-raise-when-prerequisites-met] Act on task 40 "Subject of task 40" now: its prerequisites are met: '
+    'PR "Add the thing" (https://github.com/nedsnodes/nedsnodes/pull/101) is merged; '
+    'GHI "The bug" (https://github.com/nedsnodes/nedsnodes/issues/202) is closed.'
     f"\n{DEFER_LINE}")
 check("prerequisites met: raised with each prerequisite cited by title and link",
       context_of(result) == expected_text, repr(context_of(result)))
 calls = seat.gh_calls()
 check("prerequisites met: gh asked read-only view calls on the project repository",
       sorted(call["argv"] for call in calls) == [
-          ["issue", "view", "202", "--repo", "nedschorus/nedschorus", "--json", "state,title,url"],
-          ["pr", "view", "101", "--repo", "nedschorus/nedschorus", "--json", "state,title,url"]],
+          ["issue", "view", "202", "--repo", "nedsnodes/nedsnodes", "--json", "state,title,url"],
+          ["pr", "view", "101", "--repo", "nedsnodes/nedsnodes", "--json", "state,title,url"]],
       calls)
 check("prerequisites met: GH_TOKEN removed before gh runs",
       calls and not any(call["gh_token_present"] for call in calls), calls)
@@ -371,7 +371,7 @@ seat = Seat()
 seat.task("42", metadata={"prerequisites": [{"pr_merged": 103}]})
 seat.respond({"pr:103": "fail"})
 result = seat.run()
-GH_COMMAND_103 = "`gh pr view 103 --repo nedschorus/nedschorus --json state,title,url`"
+GH_COMMAND_103 = "`gh pr view 103 --repo nedsnodes/nedsnodes --json state,title,url`"
 GH_FAILURE_103 = ("This hook could not ask GitHub whether PR 103 is merged, so no task "
                   f"waiting on it was raised: {GH_COMMAND_103} exited 1: gh stand-in: "
                   "failing on purpose. It asks again at the first stop at least 5 minutes "
@@ -412,7 +412,7 @@ result = seat.run()
 text = context_of(result) or ""
 check("gh failing at a stop that raises a task: exit 0, the raise, then the gh failure "
       "line for the agent",
-      result.returncode == 0 and text.startswith('Act on task 40 "Met anyway" now')
+      result.returncode == 0 and text.startswith('[rule due-task-raise-when-prerequisites-met] Act on task 40 "Met anyway" now')
       and text.splitlines()[-1].startswith(
           "This hook could not ask GitHub whether PR 103 is merged, so no task waiting on it "
           f"was raised: {GH_COMMAND_103} exited 1")
@@ -422,7 +422,7 @@ seat = Seat()
 seat.task("43", metadata={"prerequisites": [{"pr_merged": 104}]})
 seat.respond({"pr:104": "garbage"})
 check("gh answering unparsable output: reported, exit 1",
-      reported(seat.run(), "`gh pr view 104 --repo nedschorus/nedschorus --json "
+      reported(seat.run(), "`gh pr view 104 --repo nedsnodes/nedsnodes --json "
                            "state,title,url` exited 0 without printing a JSON object"))
 
 seat = Seat()
@@ -437,7 +437,7 @@ environment = {**seat_session_environment(), "HOME": str(seat.home), "PATH": str
 result = subprocess.run([sys.executable, str(HOOK_SCRIPT)], input=STOP_PAYLOAD,
                         capture_output=True, text=True, env=environment, check=False)
 check("gh not installed: reported, exit 1",
-      reported(result, "`gh pr view 105 --repo nedschorus/nedschorus --json state,title,url` "
+      reported(result, "`gh pr view 105 --repo nedsnodes/nedsnodes --json state,title,url` "
                        "could not be run: "), result)
 
 real_subprocess_run = hook.subprocess.run
@@ -453,7 +453,7 @@ try:
 finally:
     hook.subprocess.run = real_subprocess_run
 check("gh timing out is a gh failure naming the command and its time limit, not an answer",
-      timed_out == {"gh_failure": "`gh issue view 9 --repo nedschorus/nedschorus --json "
+      timed_out == {"gh_failure": "`gh issue view 9 --repo nedsnodes/nedsnodes --json "
                                   "state,title,url` did not answer within 8 seconds"},
       timed_out)
 
@@ -480,7 +480,7 @@ check("unreadable prerequisites changed to another unreadable value: named again
                 "know"))
 seat.task("46", metadata={"prerequisites": [{"pr_merged": 107}]})
 check("unreadable prerequisites corrected and met: raised",
-      (context_of(seat.run()) or "").startswith("Act on task 46 "))
+      (context_of(seat.run()) or "").startswith("[rule due-task-raise-when-prerequisites-met] Act on task 46 "))
 
 seat = Seat()
 seat.task("48", metadata={"prerequisites": [{"pr_merged": 108}]})
@@ -578,7 +578,7 @@ check("given a blocker after the raise: held, silent", silent(seat.run()))
 seat.task("111", status="completed")
 result = seat.run()
 check("the blocker completed: raised for it, with the exact text",
-      context_of(result) == ('Act on task 110 "Wait again" now: the tasks it waited on are '
+      context_of(result) == ('[rule due-task-raise-when-prerequisites-met] Act on task 110 "Wait again" now: the tasks it waited on are '
                              f"completed: task 111.\n{DEFER_LINE}"), repr(context_of(result)))
 check("the blocker completed: raised once, then silent", silent(seat.run()))
 
@@ -616,7 +616,7 @@ check("malformed task files alone: silent", silent(seat.run()))
 seat.task("64", metadata=MET)
 text = context_of(seat.run()) or ""
 check("malformed task files beside a due task: the due task still raised",
-      text.startswith("Act on task 64 ") and text.count("Act on task") == 1, text)
+      text.startswith("[rule due-task-raise-when-prerequisites-met] Act on task 64 ") and text.count("Act on task") == 1, text)
 
 seat = Seat()
 seat.task("65", metadata=MET)
@@ -673,7 +673,7 @@ check("state cannot be written: reported on stderr, exit 1, and no raise goes un
 seat.state_path.parent.unlink()
 text = context_of(seat.run()) or ""
 check("state writable again: the task the failed write left unraised is raised",
-      text.startswith("Act on task 70 "), text)
+      text.startswith("[rule due-task-raise-when-prerequisites-met] Act on task 70 "), text)
 
 seat = Seat()
 seat.task("71", metadata={"prerequisites": [{"pr_merged": 140}]})
@@ -716,7 +716,7 @@ check("state pruned of deleted tasks and conditions no open task names",
       state["raised"] == {} and state["checks"] == {}, state)
 
 # --- the next-action prompt, when no walk is open and nothing runs ----------------
-NEXT_ACTION_FIRST_LINE = ("No approval-walk is open and none of your work is running, so do not "
+NEXT_ACTION_FIRST_LINE = ("[rule due-task-idle-agent-seat-start-ready-tasks-and-next-approval-walk] No approval-walk is open and none of your work is running, so do not "
                           "stop here.")
 
 
@@ -813,7 +813,7 @@ result = seat.stop()
 text = context_of(result) or ""
 check("next-action: a raised task's expired prerequisite that GitHub cannot answer is "
       "reported in the prompt",
-      first_text.startswith("Act on task 9 ") and result.returncode == 0
+      first_text.startswith("[rule due-task-raise-when-prerequisites-met] Act on task 9 ") and result.returncode == 0
       and text.startswith(NEXT_ACTION_FIRST_LINE)
       and f"This hook could not ask GitHub whether PR {MERGED_PR} is merged" in text
       and "1 more open task(s) are not listed" in text, (first_text, result))
@@ -967,7 +967,7 @@ seat = IdleSeat()
 seat.task("8", metadata=MET, subject="Due now")
 text = context_of(seat.stop()) or ""
 check("next-action: a due task is raised alone, with no next-action prompt",
-      text.startswith("Act on task 8 ") and NEXT_ACTION_FIRST_LINE not in text, text)
+      text.startswith("[rule due-task-raise-when-prerequisites-met] Act on task 8 ") and NEXT_ACTION_FIRST_LINE not in text, text)
 
 seat = IdleSeat()
 (seat.walk_directory / "broken-minutes.md").mkdir()
@@ -1033,7 +1033,7 @@ seat.minutes_say("#next_to_present item 2 of 3",
                  "item 1 of 3: approved; every text the change adds has had a fast read. <accepted>")
 result = seat.run()
 check("approval-walk item closed <accepted>: raised, with the exact text",
-      context_of(result) == (f'Act on task 70 "Build item 1" now: its prerequisites are met: the '
+      context_of(result) == (f'[rule due-task-raise-when-prerequisites-met] Act on task 70 "Build item 1" now: its prerequisites are met: the '
                              f'approval-walk item "{ITEM_1}" is decided in {seat.minutes}.'
                              f"\n{DEFER_LINE}"), repr(context_of(result)))
 check("approval-walk item: raised once, then silent", silent(seat.run()))
@@ -1043,7 +1043,7 @@ seat = WalkSeat()
 seat.waiting_task("71", f"Item 1 of 3: {ITEM_1}")
 seat.minutes_say("item 1 of 3: disapproved; every text the change adds has had a fast read. <rejected>")
 check("approval-walk item closed <rejected>, named with its running count: raised",
-      (context_of(seat.run()) or "").startswith("Act on task 71 "))
+      (context_of(seat.run()) or "").startswith("[rule due-task-raise-when-prerequisites-met] Act on task 71 "))
 
 seat = WalkSeat()
 seat.waiting_task("72", ITEM_1)
@@ -1060,7 +1060,7 @@ check("approval-walk item with sub-steps, one sub-step decided: not raised", sil
 seat.minutes_say("item 2.1 of 3: moved on; the item asked for no decision. <moved on, no decision>",
                  "item 2.2 of 3: approved; every text the change adds has had a fast read. <accepted>")
 check("approval-walk item whose sub-steps are all decided: raised",
-      (context_of(seat.run()) or "").startswith("Act on task 73 "))
+      (context_of(seat.run()) or "").startswith("[rule due-task-raise-when-prerequisites-met] Act on task 73 "))
 
 def hook_and_next_item_agree(seat, heading, number):
     """True when the hook finds the item decided exactly when the answer program's next_item, given only that
@@ -1091,7 +1091,7 @@ seat.minutes_say("item 1.1 of 2: approved; every text the change adds has had a 
                  "item 1.2.1 of 2: approved; every text the change adds has had a fast read. <accepted>",
                  "item 1.2.2 of 2: approved; every text the change adds has had a fast read. <accepted>")
 check("approval-walk item decided through a sub-step itself decided through its sub-steps: raised",
-      (context_of(seat.run()) or "").startswith("Act on task 79 "))
+      (context_of(seat.run()) or "").startswith("[rule due-task-raise-when-prerequisites-met] Act on task 79 "))
 check("approval-walk item decided through a sub-step decided through its sub-steps: the hook and next_item agree",
       hook_and_next_item_agree(seat, "Parent", "1"))
 
@@ -1111,7 +1111,7 @@ seat.minutes_say("item 1 of 2: approved; every text the change adds has had a fa
                  "item 4 of 19: already decided by the user-ruling of 2026-11-01; the walk does not "
                  "come back to it. <accepted>")
 check("approval-walk item renumbered and decided: raised",
-      (context_of(seat.run()) or "").startswith("Act on task 74 "))
+      (context_of(seat.run()) or "").startswith("[rule due-task-raise-when-prerequisites-met] Act on task 74 "))
 
 seat = WalkSeat()
 seat.waiting_task("75", "A heading the walk-document lacks")

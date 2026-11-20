@@ -121,7 +121,7 @@ UNOPENABLE_FILE_URL_PATTERN = re.compile(
 TRAILING_SENTENCE_PUNCTUATION = ".,;:!?"
 
 PREVIOUS_REPLY_OPENING_LINES = (
-    PROGRAM + ": your previous reply to the user showed {count} path(s) under /home/nedlern/ "
+    "[rule ned-box-path-in-agent-reply-unclickable-on-mac-warning] " + PROGRAM + ": your previous reply to the user showed {count} path(s) under /home/nedlern/ "
     "that the user cannot open from the reply. The user reads replies on the Mac, which mounts "
     "ned-box's /home/nedlern/ at /Volumes/nedhome/, so only a file:///Volumes/nedhome/ link opens "
     "a ned-box file there.",

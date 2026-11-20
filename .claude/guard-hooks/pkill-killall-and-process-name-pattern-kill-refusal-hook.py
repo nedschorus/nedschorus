@@ -84,7 +84,7 @@ BACKGROUND_COMMAND_OUTPUT_FILE_WAIT_PROGRAM = (
     / "claude-code-background-command-output-file-wait-until-no-process-writes-it.py")
 
 REFUSAL_TEMPLATE = (
-    "Refused on purpose: `{what}` signals every process a name pattern matches. "
+    "[rule bash-guard-kill-processes-by-name-pattern] Refused on purpose: `{what}` signals every process a name pattern matches. "
     "Every agent on this machine runs as the same user, so the pattern also matches "
     "other agents' processes, such as their test runs, and the signal ends their work too.\n"
     "If the process is a background command you started with the Bash tool, stop it "
@@ -94,7 +94,7 @@ REFUSAL_TEMPLATE = (
 )
 
 PGREP_FULL_COMMAND_LINE_LOOP_CONDITION_REFUSAL = (
-    "Refused on purpose: `pgrep -f` in the condition of a while or until loop also matches the "
+    "[rule bash-guard-pgrep-full-command-line-loop-condition] Refused on purpose: `pgrep -f` in the condition of a while or until loop also matches the "
     "command line of the shell running the loop, which holds the same words, so the condition "
     "never changes and the loop never ends.\n"
     "If you are waiting for a background command you started with the Bash tool, run this, where "

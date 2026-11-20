@@ -2297,9 +2297,9 @@ check("a bare number is found, with its line",
       found("One.\nMerged as PR #466 today.") == [(2, "#466")])
 check("a repository prefix is kept with the number it cites",
       found("see nedschorus#418.") == [(1, "nedschorus#418")]
-      and found("in nedschorus/nedschorus#39") == [(1, "nedschorus/nedschorus#39")])
+      and found("in nedsnodes/nedsnodes#39") == [(1, "nedsnodes/nedsnodes#39")])
 check("a link whose text is the number is still a bare number",
-      found("[nedschorus#46](https://github.com/nedschorus/nedschorus/issues/46)")
+      found("[nedschorus#46](https://github.com/nedsnodes/nedsnodes/issues/46)")
       == [(1, "nedschorus#46")])
 check("a quoted reference keeps its repository prefix",
       found('`[s106] "nedschorus#385"`') == [(1, "nedschorus#385")])
@@ -3113,6 +3113,17 @@ block_scalar_marked, _ = sentence_id_markup("---\ndescription: |\n  Note: words 
 check("a block scalar's line shaped like a field gets no id inside the scalar's text; the id goes after the field's key",
       block_scalar_marked == "---\ndescription: [s1] |\n  Note: words here\n---\n",
       repr(block_scalar_marked))
+
+for case_name, scalar_ended_by_field in (
+        ("a field at the block scalar's own indent ends the scalar and gets its own id",
+         "---\ndescription: |\n  words here\nname: x\n---\n"),
+        ("a field indented less than a nested block scalar's field ends the scalar and gets its own id",
+         "---\nmeta:\n  description: |\n    words here\nname: x\n---\n")):
+    scalar_ended_marked = sentence_id_markup(scalar_ended_by_field)
+    check(case_name,
+          scalar_ended_marked == (scalar_ended_by_field.replace("name: x", "name: [s1] x"),
+                                  {"s1": "x"}),
+          repr(scalar_ended_marked))
 
 worded_before_first_unit = sentence_id_markup("---\ntags:\n  - Foo\n---\nBody.\n")
 check("frontmatter words before the first unit join that unit and make no unit of their own",

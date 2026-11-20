@@ -268,6 +268,7 @@ def parse_arguments(argv):
     parser.add_argument("--test-suite-runner-program")
     parser.add_argument("--temporary-directory")
     parser.add_argument("--recorded-inputs-directory")
+    parser.add_argument("--save-recorded-inputs-to-directory")
     return parser.parse_args(argv)
 
 
@@ -352,6 +353,9 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
             "--log-dir", str(logs), "--leave-out-suites-that-run-the-real-claude-cli"]
         if arguments.recorded_inputs_directory:
             command += ["--recorded-inputs-directory", arguments.recorded_inputs_directory]
+        if arguments.save_recorded_inputs_to_directory:
+            command += ["--save-recorded-inputs-to-directory",
+                        arguments.save_recorded_inputs_to_directory]
         try:
             completed, seconds_waiting_for_lock, lock_never_released = (
                 scheduled_run.run_test_suite_runner_waiting_for_the_machine_lock(

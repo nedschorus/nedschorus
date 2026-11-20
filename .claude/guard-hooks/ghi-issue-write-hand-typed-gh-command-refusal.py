@@ -77,11 +77,11 @@ DECISIONS, and where they depart from the design of record:
   every spelling gh takes (`-R X`, `-RX`, `-R=X`, `--repo X`, `--repo=X`;
   each checked against gh 2.101.0 on 2026-09-24). When the flag is given
   more than once, gh uses the last one, and so does this guard. Reading it
-  only after the subcommand let `gh -R nedschorus/nedschorus issue create`
-  and `gh issue -R nedschorus/nedschorus comment` through while naming this
+  only after the subcommand let `gh -R nedsnodes/nedsnodes issue create`
+  and `gh issue -R nedsnodes/nedsnodes comment` through while naming this
   repository, and agents do write `gh --repo X issue ...`. Found in the
   review of PR "Hand-typed gh issue comments, creates and body edits are
-  refused" (https://github.com/nedschorus/nedschorus/pull/708), where Codex
+  refused" (https://github.com/nedsnodes/nedsnodes/pull/708), where Codex
   also raised it.
 - `gh api` writes to issue endpoints are out of scope: the design's accepted
   residual (user-ruled 2026-08-07, reaffirmed 2026-08-09), "the enumeration
@@ -127,9 +127,15 @@ with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(
         _REPOSITORY_ROOT / "nc-systems" / "general-tools" / "shell-command-tree-sitter-bash-reader-common.py")
     shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
     _shell_reader_spec.loader.exec_module(shell_reader)
+    _repository_names_spec = importlib.util.spec_from_file_location(
+        "github_repository_name_and_name_before_project_rename_common",
+        _REPOSITORY_ROOT / "nc-systems" / "general-tools"
+        / "github-repository-name-and-name-before-project-rename-common.py")
+    repository_names = importlib.util.module_from_spec(_repository_names_spec)
+    _repository_names_spec.loader.exec_module(repository_names)
 is_program = shell_reader.is_program
 
-PROJECT_REPOSITORY = "nedschorus/nedschorus"
+PROJECT_REPOSITORY = repository_names.REPOSITORY
 
 ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 ISSUE_URL_PATTERN = re.compile(
@@ -191,7 +197,7 @@ REOPEN_OUTCOME = "why the issue is reopening"
 COMMENT_OUTCOME = "what the comment would say"
 EDIT_BODY_OUTCOME = "the change"
 NO_COMMENTS_LINE = (
-    "Do not comment on this project's issues: what an issue says lives in its "
+    "[rule bash-guard-gh-issue-comment] Do not comment on this project's issues: what an issue says lives in its "
     "GHI-MD, and a comment would sit outside it."
 )
 # Ends the comment, body and title refusals, except where the lookup line only
@@ -236,7 +242,7 @@ REOPEN_WITH_COMMENT_REFUSAL = (
     "{record_line}"
 )
 CREATE_REFUSAL = (
-    "Do not file this project's issues with gh issue create.\n"
+    "[rule bash-guard-gh-issue-create-by-hand] Do not file this project's issues with gh issue create.\n"
     "Write the issue as a GHI-MD, a markdown file whose first heading is the "
     "issue's title, then file it with: python3 scripts/ghi-issue-write.py "
     "create <path>\n"
@@ -244,7 +250,7 @@ CREATE_REFUSAL = (
     "run, stop and tell the user."
 )
 EDIT_BODY_REFUSAL = (
-    "Do not set this project's issue bodies with gh issue edit: an issue's body is "
+    "[rule bash-guard-gh-issue-body-or-title-set-by-hand] Do not set this project's issue bodies with gh issue edit: an issue's body is "
     "the links to its files on main, and scripts/ghi-issue-write.py writes it from "
     "those files.\n"
     + LABELS_ONLY_LINE + "\n"
@@ -256,7 +262,7 @@ EDIT_BODY_REFUSAL = (
 # and the edit changes that file's first heading, so {title_line} stops the
 # agent wherever the tool could not retitle.
 EDIT_TITLE_REFUSAL = (
-    "Do not set this project's issue titles with gh issue edit: "
+    "[rule bash-guard-gh-issue-body-or-title-set-by-hand] Do not set this project's issue titles with gh issue edit: "
     "scripts/ghi-issue-write.py sets an issue's title from the first heading of the "
     "issue's GHI-MD, when the issue has one file on main and an edit changes that "
     "heading.\n"
@@ -283,11 +289,11 @@ TITLE_LINES_LOOKUP_FAILED = (
     "<path>"
 )
 DELETE_REFUSAL = (
-    "Do not delete this project's issues: a deleted issue cannot be restored.\n"
+    "[rule bash-guard-gh-issue-delete] Do not delete this project's issues: a deleted issue cannot be restored.\n"
     "{close_lines}"
 )
 DELETE_REFUSAL_NO_FILE = (
-    "Do not delete this project's issues: a deleted issue cannot be restored.\n"
+    "[rule bash-guard-gh-issue-delete] Do not delete this project's issues: a deleted issue cannot be restored.\n"
     "This issue has no file on main under docs/issues/<number>-* or a system's "
     "directory: if the issue was filed by mistake, close it with gh issue close "
     "<number> --reason \"not planned\"; otherwise stop and tell the user."
@@ -411,7 +417,8 @@ def names_another_repository(flags, positionals, repository_from_environment):
     elif repository_from_environment is not None:
         named.append(repository_from_environment)
     named.extend(word for word in positionals if ISSUE_URL_PATTERN.match(word))
-    return any(normalized_repository(value) != PROJECT_REPOSITORY
+    return any(repository_names.normalize_repository_name_reading_name_before_project_rename_as_current(normalized_repository(value))
+               != PROJECT_REPOSITORY
                for value in named if value)
 
 

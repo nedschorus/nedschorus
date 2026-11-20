@@ -95,7 +95,7 @@ with the design:
      the user on 2026-09-18 at item 5 of the walk
      skill-sentences-and-shipper-questions-2026-09-18 and landed in PR
      "walk-files-ship: a walk's five files reach the log-store's walk/ kind at
-     the walk's close" (https://github.com/nedschorus/nedschorus/pull/501). The
+     the walk's close" (https://github.com/nedsnodes/nedsnodes/pull/501). The
      point of the 2026-09-20 ruling is that the two shippers stop differing.
 
      ONLY THE TRIAGE FILE, AND ONLY THE RECORD'S OWN. The name is matched as the
@@ -331,7 +331,7 @@ in the nedschorus repository, which this machine also clones:
   task lists, seat-briefs and global CLAUDE.md, mirrored by
   `scripts/transcript-mirror-to-log-store.py`
 - `session-dialogs/` -- each mirrored session's complete filtered dialog,
-  kept current by `scripts/log-store-session-dialogs-refresh-nbd.py`
+  kept current by `scripts/log-store-session-dialogs-refresh-hack.py`
 - `seats/` -- a seat's shared files, shipped by
   `scripts/seat-shared-file-ship.py`
 - `analysis/` -- analyses, placed by hand
@@ -367,6 +367,10 @@ in the nedschorus repository, which this machine also clones:
   -- one log per run of the waiter that removes a worktree once no record in
   it is being written, written by
   `nc-systems/general-tools/git-worktree-remove-deferred-until-cold-read-record-and-sanity-check-record-being-written-locks-release-then-ship-to-log-store-waiter.py`
+- `maintenance-job-reports/` -- one report per maintenance-job per run, each
+  written by the program the job runs; today the weekly count of each hook
+  rule ID,
+  `nc-systems/general-tools/claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report.py`
 
 To change this file, edit STORE_README in
 nc-systems/cold-read/cold-read-record-ship.py. The next shipment rewrites this file

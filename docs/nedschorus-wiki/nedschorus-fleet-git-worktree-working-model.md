@@ -430,8 +430,8 @@ the prune command — report only; the prune stays deliberate.
 
 **R26. New MDs land in canonical locations — ruled-unbuilt (issue [MD-placement guidance as symmetric pre-tool remind hooks on both runtimes (boss-directed design, build deferred)](https://github.com/nedschorus/nedschorus/issues/11)).** A
 PreToolUse *remind* hook on MD writes outside the canonical locations, symmetric
-across both agent runtimes, one shared config — the repository root
-`README.md` § "Where things live" becomes the single-source path list at
+across both agent runtimes, one shared config — the page
+`docs/nedschorus-wiki/nedschorus-founding-principles-actors-and-repository-layout.md` § "Where things live" becomes the single-source path list at
 build time (known gap: it lacks `docs/agents/`). Remind, not block: MD
 creation is overwhelmingly legitimate. Build trigger: a note landing
 astray despite the queue rule. The hook-plus-config pair serves R23 and

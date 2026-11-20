@@ -1112,7 +1112,7 @@ def sentence_id_markup(text: str, units: dict = None):
         index += 1
 
     if carries_words(" ".join(words_before_first_unit)):
-        name = f"s{counter + 1}"
+        name = f"s{counter + 1}"  # pragma: no mutate, text waits here only while take() has made no unit, so counter is 0 and | 1 and ^ 1 give + 1
         unit_pieces[name] = list(pieces_before_first_unit)
         sentences[name] = " ".join("\n".join(pieces_before_first_unit).split())
         line = marked[first_piece_line]
@@ -1210,7 +1210,7 @@ def attach_sentences_and_coverage(report_text: str, sentences: dict,
 
 # A bare issue, pull request or task number: `#` and digits, with whatever
 # repository name is glued to its front (`nedschorus#418`,
-# `nedschorus/nedschorus#418`), because each is a number where the project's citation rule wants
+# `nedsnodes/nedsnodes#418`), because each is a number where the project's citation rule wants
 # an ID-type and a name. A repository name may not start after a word
 # character or any of `& / . : -`, so no piece of a URL's path becomes one. A
 # bare `#` may not follow `&` or a word character, which keeps an HTML entity
@@ -1334,7 +1334,7 @@ def cold_read_target_text_at_merge_base_with_origin_main_or_none(target: pathlib
                 f"git {' '.join(arguments)} failed in {root} "
                 f"(exit {completed.returncode}): {completed.stderr.strip() or 'no message'}",
                 root,
-                arguments[0] == "merge-base" and "origin/main" in completed.stderr)
+                arguments[0] == "merge-base" and "origin/main" in completed.stderr)  # pragma: no mutate, arguments[0] is always a string constant of this module, which CPython stores once, so is gives the same as ==
         return completed.stdout
 
     if not git_stdout("ls-files", "--", relative).strip():

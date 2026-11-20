@@ -78,7 +78,7 @@ The order is the whole of it: a merged pull request's head branch is deleted
 here seconds after the merge, so a branch test finds nothing exactly when
 the work is most finished, and the run walks into `git worktree add` and
 `git commit` with nothing to commit (reviewed 2026-09-21, on PR [Build the
-GHI write tool's create verb](https://github.com/nedschorus/nedschorus/pull/569),
+GHI write tool's create verb](https://github.com/nedsnodes/nedsnodes/pull/569),
 where both deaths were reproduced against a real repository). A branch says
 whether this run's work is in flight; main says whether it is done, and done
 is what a rerun needs to know.
@@ -127,7 +127,7 @@ remove --force`, and the next run's add then fails on the name.
 Both of those hold of the edit operation's step 3 as much as of create's step
 4: it asks GitHub about its branch, and its worktree leaves no branch behind.
 It did neither until the review of PR [Build the GHI write tool's edit
-verb](https://github.com/nedschorus/nedschorus/pull/596), where the cost was
+verb](https://github.com/nedsnodes/nedsnodes/pull/596), where the cost was
 measured — an edit's branch name is derived from the file's content, so one
 branch left behind wedged every later run on that content, not one run.
 
@@ -189,7 +189,7 @@ caller's input being wrong — the 64 below — and the run that learned it at
 step 5 had already pushed a branch and opened a pull request naming an
 issue that does not exist. One read serves that test and both of the steps
 that may change the issue (reviewed 2026-09-21 on PR [Build the GHI write
-tool's edit verb](https://github.com/nedschorus/nedschorus/pull/596)).
+tool's edit verb](https://github.com/nedsnodes/nedsnodes/pull/596)).
 
 WHICH RUNS ARE ADJUDICATED is settled before step 2 is reached, by the same
 branch test the pull-request resume uses. Nothing new to land is nothing to
@@ -261,7 +261,7 @@ first. Merging both is CLEAN in either order — each branch changed the
 line once against its own base — and what reaches main is the second
 file's content with the first's correction gone, git and merge-lane each
 shown no conflict at all. Reproduced 2026-09-21 reviewing PR [Build the
-GHI write tool's edit verb](https://github.com/nedschorus/nedschorus/pull/596).
+GHI write tool's edit verb](https://github.com/nedsnodes/nedsnodes/pull/596).
 So the open pull request is what the second run is checked against:
 `refuse_on_an_earlier_edit_still_open`.
 
@@ -271,7 +271,7 @@ nothing at the author's path on a move, so that comparison passes on two
 Nones and says nothing at all about the deletion. Checking only it turned
 the duplicate that a missing removal used to leave into a discard of
 another seat's work: measured against a real repository on 2026-09-21,
-reviewing PR [Build the GHI write tool's edit verb](https://github.com/nedschorus/nedschorus/pull/596),
+reviewing PR [Build the GHI write tool's edit verb](https://github.com/nedsnodes/nedsnodes/pull/596),
 a run whose author moved a file while another seat changed it at the old
 path exited 0, opened a pull request, and left the other seat's line
 nowhere in the branch it pushed. Both paths are compared now, and either
@@ -404,6 +404,13 @@ _stop_signals_spec = importlib.util.spec_from_file_location(
 stop_signals = importlib.util.module_from_spec(_stop_signals_spec)
 _stop_signals_spec.loader.exec_module(stop_signals)
 
+_repository_names_spec = importlib.util.spec_from_file_location(
+    "github_repository_name_and_name_before_project_rename_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "github-repository-name-and-name-before-project-rename-common.py")
+repository_names = importlib.util.module_from_spec(_repository_names_spec)
+_repository_names_spec.loader.exec_module(repository_names)
+
 
 def _load_sibling_script(module_name, file_name):
     spec = importlib.util.spec_from_file_location(
@@ -419,7 +426,7 @@ pre_push_conflict_check = _load_sibling_script(
     "git_client_side_hooks_pre_push_conflict_check",
     "git-client-side-hooks-pre-push-conflict-check.py")
 
-DEFAULT_REPO = "nedschorus/nedschorus"
+DEFAULT_REPO = "nedsnodes/nedsnodes"
 GHI_MD_DIRECTORY = "docs/issues"
 SYSTEM_DIRECTORY = "nc-systems"
 # Where a design moves once its code lands: the `docs/` directory of the
@@ -549,10 +556,10 @@ def run(arguments, timeout=GH_TIMEOUT_SECONDS, cwd=None, check=True):
     return completed
 
 
-def git_failure_next_steps(rerun: str, program: str) -> str:
-    """What an agent does after a git command this program ran failed."""
+def git_failure_next_steps(rerun: str, program: str, said: str) -> str:
+    """What an agent does after a git command this program ran failed, printing said."""
     return next_step_lines.git_failure_next_step_lines(
-        rerun, program, rerun_fails_when="stops again on a line naming a git command and its exit code",
+        rerun, program, git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=said, rerun_fails_when="stops again on a line naming a git command and its exit code",
         which_lines_to_quote_in_the_report=('that line and the "So" line after it, from the command that '
                                             'printed this message and from the rerun, or the corrected command'))
 
@@ -570,7 +577,7 @@ def git_failure_refusal(arguments, completed, not_done: str) -> Refused:
     return Refused(
         f"{shlex.join(arguments)} exited {completed.returncode}: {said}\n"
         f"So {not_done}.\n"
-        + git_failure_next_steps(rerun, "scripts/ghi-issue-write.py"), 1)
+        + git_failure_next_steps(rerun, "scripts/ghi-issue-write.py", said), 1)
 
 
 def head_is_unborn(repository_root: Path, runner) -> bool:
@@ -998,7 +1005,7 @@ def validate(path: Path):
     docs/issues/archived/ (measured 2026-09-21): an agent handed one of
     those was told by `create` to use `edit`, and by `edit` that the path
     is not one this tool writes. Named in the review of PR [Build the GHI
-    write tool's edit verb](https://github.com/nedschorus/nedschorus/pull/596).
+    write tool's edit verb](https://github.com/nedsnodes/nedsnodes/pull/596).
     The three lines each name the condition they apply under, so the agent
     reads only the one it is in.
 
@@ -1743,7 +1750,7 @@ def refuse_if_already_landed_on_main(repo: str, text: str, title: str,
     otherwise find no numbered copy and file a second issue: the Codex
     review cell's P2 on PR [The ghi-write tool finds a landed design in its
     system's docs/, filed by its issue:
-    line](https://github.com/nedschorus/nedschorus/pull/849). A numbered
+    line](https://github.com/nedsnodes/nedsnodes/pull/849). A numbered
     file moved directly into a system's directory is not compared, as
     before."""
     runner(["git", "fetch", "origin", "main"], cwd=str(repository_root))
@@ -1752,16 +1759,26 @@ def refuse_if_already_landed_on_main(repo: str, text: str, title: str,
         number = issue_number_in_file_name(Path(landed))
         read = runner(["git", "show", f"{revision}:{landed}"],
                       cwd=str(repository_root))
-        if read.stdout == with_issue_frontmatter(text, repo, number, title):
+        if is_ghi_md_on_main_same_as_staged_copy_reading_name_before_project_rename_as_current(read.stdout,
+                                with_issue_frontmatter(text, repo, number, title)):
             raise already_landed_refusal(repo, landed, title, number)
     for landed in landed_designs_on_main(revision, repository_root, runner):
         read = runner(["git", "show", f"{revision}:{landed}"],
                       cwd=str(repository_root))
         number = issue_number_in_frontmatter(read.stdout)
         if (number is not None
-                and read.stdout == with_issue_frontmatter(text, repo, number,
-                                                          title)):
+                and is_ghi_md_on_main_same_as_staged_copy_reading_name_before_project_rename_as_current(
+                    read.stdout, with_issue_frontmatter(text, repo, number, title))):
             raise already_landed_refusal(repo, landed, title, number)
+
+
+def is_ghi_md_on_main_same_as_staged_copy_reading_name_before_project_rename_as_current(on_main, staged) -> bool:
+    """Whether main's copy is the document this run would land, a link to the
+    repository's name before the project rename counting as a link to its name:
+    a copy that landed before the rename holds the old name in its `issue:` line."""
+    return (on_main is not None and
+            repository_names.rewrite_github_links_from_repository_name_before_project_rename(on_main)
+            == repository_names.rewrite_github_links_from_repository_name_before_project_rename(staged))
 
 
 def already_landed_refusal(repo: str, landed: str, title: str, number: int):
@@ -1843,8 +1860,8 @@ def land_file(repo: str, number: int, title: str, source: Path,
     staged = with_issue_frontmatter(source_text, repo, number, title)
 
     runner(["git", "fetch", "origin", "main"], cwd=str(repository_root))
-    if blob_at("origin/main", destination, repository_root,
-               runner) == staged:
+    if is_ghi_md_on_main_same_as_staged_copy_reading_name_before_project_rename_as_current(blob_at("origin/main", destination,
+                                    repository_root, runner), staged):
         report(f"step 4 already done: main's copy of {destination} is this "
                "file")
         return destination
@@ -2136,7 +2153,7 @@ def writable_relative_path(relative: str) -> bool:
     that function calls this one, so the files an issue's body is built
     from and the files this operation will land are one set. They were two
     rules until the review of PR [Build the GHI write tool's edit
-    verb](https://github.com/nedschorus/nedschorus/pull/596), where this
+    verb](https://github.com/nedsnodes/nedsnodes/pull/596), where this
     one took any depth under docs/issues/ and any depth from three down
     under nc-systems/ while that one took neither, and the disagreement was
     reproduced against a repository with a bare remote and `gh` stubbed:
@@ -2204,7 +2221,7 @@ def validate_edit(path: Path, repository_root: Path):
     the same file, sends its holder HERE to edit the issue's own file
     instead, so a "move it" line here sent an agent in a circle back out.
     Raised non-blocking on PR [Build the GHI write tool's edit
-    verb](https://github.com/nedschorus/nedschorus/pull/596) and fixed
+    verb](https://github.com/nedsnodes/nedsnodes/pull/596) and fixed
     2026-09-22. The move line is kept for the state that does want it — the
     issue's own file sitting somewhere this tool does not write — under the
     condition that says which state it is.
@@ -2342,7 +2359,7 @@ def refuse_on_conflict(relative: str, on_main, moved_from, moved_from_on_main,
     Nones, and the removal is then the whole of what the run does to that
     other seat's work: it deletes it, exit 0, saying only that it moved the
     content. Reproduced against a real repository on 2026-09-21, reviewing
-    PR [Build the GHI write tool's edit verb](https://github.com/nedschorus/nedschorus/pull/596):
+    PR [Build the GHI write tool's edit verb](https://github.com/nedsnodes/nedsnodes/pull/596):
     the branch that run pushed did not hold the other seat's line at all. So
     the check covers the path the `git rm` names, or it does not cover the
     move."""
@@ -2389,7 +2406,7 @@ def refuse_on_an_earlier_edit_still_open(repo: str, number: int,
     reaches main is the later file with the earlier correction wiped out of
     it, and nobody is shown a conflict — not git, not merge-lane.
     Reproduced 2026-09-21 reviewing PR [Build the GHI write tool's edit
-    verb](https://github.com/nedschorus/nedschorus/pull/596): run 1 made a
+    verb](https://github.com/nedsnodes/nedsnodes/pull/596): run 1 made a
     line read one way, run 2 put it back and added a line, both exited 0,
     and main after both merges held run 1's wording with run 2's addition.
     The behaviour it defends against is an author revising a GHI-MD a
@@ -2418,7 +2435,7 @@ def refuse_on_an_earlier_edit_still_open(repo: str, number: int,
 
     The `gh pr list` was the one left open, and the whole loss came back
     through it: reproduced 2026-09-22 reviewing PR [Build the GHI write
-    tool's edit verb](https://github.com/nedschorus/nedschorus/pull/596),
+    tool's edit verb](https://github.com/nedsnodes/nedsnodes/pull/596),
     against a bare remote with `gh` answering HTTP 401 and git working. A
     first edit landed and opened its pull request; a second edit of the
     same file, made while `gh` was failing, read the failed lookup as no
@@ -2573,7 +2590,7 @@ def edit_landing_state(number: int, staged: str, on_main,
 
     Only the first was tested until this was measured on 2026-09-21,
     reviewing PR [Build the GHI write tool's edit
-    verb](https://github.com/nedschorus/nedschorus/pull/596). In the second
+    verb](https://github.com/nedsnodes/nedsnodes/pull/596). In the second
     state main's copy is NOT this file — the edit has not merged — so the
     run asked ghi-guide-agent a question it had already asked, and the question is
     the same draft with the same exclusion, so the answer is the same: a
@@ -2719,7 +2736,7 @@ def read_issue(repo: str, number: int, relative: str, runner,
     operating failure.
 
     gh says which of the two happened. Measured 2026-09-21 against
-    nedschorus/nedschorus — `gh issue view 999999 --repo nedschorus/nedschorus
+    nedsnodes/nedsnodes — `gh issue view 999999 --repo nedsnodes/nedsnodes
     --json title,body`, exit 1, nothing on stdout, this on stderr:
 
       GraphQL: Could not resolve to an issue or pull request with the number
@@ -2738,7 +2755,7 @@ def read_issue(repo: str, number: int, relative: str, runner,
     that is read, and only when it is there, a body of tests answering this
     call with title and body alone being none the wiser. Raised
     non-blocking on PR [Build the GHI write tool's edit
-    verb](https://github.com/nedschorus/nedschorus/pull/596).
+    verb](https://github.com/nedsnodes/nedsnodes/pull/596).
 
     `number_from_issue_line` is True for a landed design, whose number comes
     from its `issue:` frontmatter line rather than its name, so the two
@@ -2797,10 +2814,10 @@ def title_follows_heading_in_this_edit(document_before_this_edit,
     the heading check asked a copy of two of the conditions, and an edit
     changing a heading to the title the issue already held was refused
     although no rename followed (review of PR [GHI titles name the
-    work](https://github.com/nedschorus/nedschorus/pull/829)); step 4 and
+    work](https://github.com/nedsnodes/nedsnodes/pull/829)); step 4 and
     the frontmatter title kept their own copies until the reviews of PR
     [GHI heading check runs after the duplicate
-    refusals](https://github.com/nedschorus/nedschorus/pull/838)."""
+    refusals](https://github.com/nedsnodes/nedsnodes/pull/838)."""
     return (heading_changed_in_this_edit(document_before_this_edit, heading)
             and len(paths) <= 1
             and issue.get("title") != heading)
@@ -2814,7 +2831,7 @@ def issue_title_after_this_edit(document_before_this_edit, heading: str,
     THE ISSUE'S TITLE, NOT THE FILE'S HEADING. That line cites the issue
     the way the project's citation rule says to cite one — by title, as a link — and it was
     built from `first_heading` until the review of PR [Build the GHI write
-    tool's edit verb](https://github.com/nedschorus/nedschorus/pull/596).
+    tool's edit verb](https://github.com/nedsnodes/nedsnodes/pull/596).
     In `create` the two are one thing: the issue is filed under the
     heading. In `edit` they are not, and the docstring's own measurement
     says how far apart — 2026-09-21, of the 26 filed GHI-MDs on main, 25
@@ -2927,7 +2944,7 @@ def issue_file_set_for_this_edit(number: int, relative: str, on_main, paths,
     two and renamed the issue after the design's heading, and step 5 wrote
     a body of no links. Both reproduced on PR [The ghi-write tool finds a
     landed design in its system's docs/, filed by its issue:
-    line](https://github.com/nedschorus/nedschorus/pull/849), review round
+    line](https://github.com/nedsnodes/nedsnodes/pull/849), review round
     1. Counted with it, this run answers as the rerun after the merge will,
     reading the line this edit lands; and the link resolves now, because
     the file is on main at this path.
@@ -3252,7 +3269,7 @@ def main_with_stop_signals_raising_system_exit(argv):
             # and an agent that followed it would change the heading, which
             # none of the three checks would then match, and file a second
             # issue (review of PR [GHI heading check runs after the
-            # duplicate refusals](https://github.com/nedschorus/nedschorus/pull/838)).
+            # duplicate refusals](https://github.com/nedsnodes/nedsnodes/pull/838)).
             # Left so on purpose. Reading those states would make the dry
             # run fetch main and list the open issues, and it promises to change neither
             # git nor GitHub; and none of the three states can hold a heading
