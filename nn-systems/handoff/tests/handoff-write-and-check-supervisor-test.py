@@ -2502,7 +2502,7 @@ def run_background_task_fields_cases(workspace: Path):
         del record["timestamp"]
     records = [
         *background_bash_launch_records("brunning01", "Six-reviewer grid",
-                                        "python3 nc-systems/cold-read/cold-read-grid.py --target a.md",
+                                        "python3 nn-systems/cold-read/cold-read-grid.py --target a.md",
                                         running_launched_at_text),
         *background_bash_launch_records("bfinished1", "Finished earlier", "python3 done.py",
                                         "2026-10-28T21:05:00.000Z"),
@@ -2523,7 +2523,7 @@ def run_background_task_fields_cases(workspace: Path):
           fields.get("background-task-1")
           == 'brunning01 "Six-reviewer grid" started at '
              + running_launched_at.strftime("%Y-%m-%dT%H:%M:%SZ") + ' command: '
-             + json.dumps("python3 nc-systems/cold-read/cold-read-grid.py --target a.md"),
+             + json.dumps("python3 nn-systems/cold-read/cold-read-grid.py --target a.md"),
           body)
     check("a background task whose launch record has no time is listed as started at an "
           "unrecorded time",
