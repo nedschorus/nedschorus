@@ -51,7 +51,7 @@ script: it composes a command and sends it over ssh, and the box cannot even
 resolve its own ssh alias. So a box seat splits: --machine ubuntu runs steps 1-4
 over ssh on the box (this same script, --prepare-only, in the box's checkout)
 and then runs launch-claude-ubuntu here on the Mac. A Mac seat does all five
-steps locally, running the launcher in ~/Projects/nedschorus, the reference-checkout,
+steps locally, running the launcher in ~/Projects/nedsnodes, the reference-checkout,
 whichever checkout this script runs from, because the seat's handoff-supervisor keeps
 the code of the checkout its launcher took it from.
 
@@ -303,7 +303,7 @@ def launcher_for(machine: str) -> Path:
     if machine == "mac":
         # A Mac seat's handoff-supervisor keeps the code of the checkout it starts from, so its
         # launcher is the reference-checkout's, whichever checkout this script runs from.
-        return Path("~/Projects/nedschorus/scripts/launch-claude-mac").expanduser()
+        return Path("~/Projects/nedsnodes/scripts/launch-claude-mac").expanduser()
     return SCRIPT_DIRECTORY / "launch-claude-ubuntu"
 
 
@@ -466,7 +466,7 @@ def main(argv=None) -> int:
     if not arguments.prepare_only and not launcher.is_file():
         return refuse(
             f"{launcher} does not exist, so no successor can be launched; nothing was killed. "
-            "Clone nedschorus to ~/Projects/nedschorus on this Mac, then re-run."
+            "Clone nedschorus to ~/Projects/nedsnodes on this Mac, then re-run."
         )
 
     # Never kill the operator's own tmux session mid-recovery. Without $TMUX, display-message can select an unrelated session.

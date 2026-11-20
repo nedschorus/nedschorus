@@ -19,9 +19,9 @@ WORKSPACE=$(mktemp -d)
 trap 'rm -rf "$WORKSPACE"' EXIT
 STUBS="$WORKSPACE/stubs"
 mkdir -p "$STUBS" "$WORKSPACE/home/Projects" "$WORKSPACE/agents"
-# The Mac launcher runs the handoff-supervisor of ~/Projects/nedschorus and
+# The Mac launcher runs the handoff-supervisor of ~/Projects/nedsnodes and
 # refuses when that file is missing.
-ln -s "$(cd "$SCRIPT_DIRECTORY/.." && pwd)" "$WORKSPACE/home/Projects/nedschorus"
+ln -s "$(cd "$SCRIPT_DIRECTORY/.." && pwd)" "$WORKSPACE/home/Projects/nedsnodes"
 
 # Stubs. `claude update` behavior comes from CLAUDE_UPDATE_MODE: hang, fail,
 # or ok — each leaves a marker so a test can assert whether update ran.

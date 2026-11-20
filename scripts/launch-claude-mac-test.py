@@ -50,10 +50,10 @@ import time
 from pathlib import Path
 
 LAUNCHER = Path(__file__).with_name("launch-claude-mac")
-# The sandbox HOME's ~/Projects/nedschorus links here, so the launcher finds a
+# The sandbox HOME's ~/Projects/nedsnodes links here, so the launcher finds a
 # reference-checkout and a case that runs the real supervisor finds its modules.
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
-SUPERVISOR_WITHIN_A_CHECKOUT = Path("nc-systems") / "handoff" / "handoff-supervisor.py"
+SUPERVISOR_WITHIN_A_CHECKOUT = Path("nn-systems") / "handoff" / "handoff-supervisor.py"
 UPDATE_LOCK_HELPER_NAME = "agent-binary-update-under-lock.py"
 # The bytes launch-claude-mac writes to colour an iTerm2 session's background:
 # iTerm2's SetColors sequence, OSC 1337 ... BEL, with the seat colour.
@@ -124,7 +124,7 @@ class MacLaunchSandbox:
     def __init__(self, root: Path):
         self.home = root / "home"
         self.home.mkdir(parents=True)
-        self.reference_checkout = self.home / "Projects" / "nedschorus"
+        self.reference_checkout = self.home / "Projects" / "nedsnodes"
         self.reference_checkout.parent.mkdir()
         self.reference_checkout.symlink_to(REPOSITORY_ROOT)
         self.workdir = root / "workdir"
@@ -825,11 +825,11 @@ def main() -> int:
         # code and runs the conversation extractor from there at each
         # session-handoff, so a launcher run from a topic-worktree must not
         # tie the seat to that worktree. LAUNCHER lives in this checkout,
-        # never the sandbox's ~/Projects/nedschorus, so the default case is a
+        # never the sandbox's ~/Projects/nedsnodes, so the default case is a
         # launcher run from another checkout. ---------------------------------
         sandbox = MacLaunchSandbox(root / "supervisor-checkout-default")
         result = sandbox.run("~/agents", seat_name="seat-d")
-        check("supervisor checkout: by default the supervisor runs from ~/Projects/nedschorus, "
+        check("supervisor checkout: by default the supervisor runs from ~/Projects/nedsnodes, "
               "not from the launcher's own checkout",
               result.returncode == 0 and sandbox.supervisor_argv()[:1]
               == [str(sandbox.reference_checkout / SUPERVISOR_WITHIN_A_CHECKOUT)],

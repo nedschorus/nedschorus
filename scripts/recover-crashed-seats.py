@@ -796,7 +796,7 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
         handoff_directory, extra_supervisor_arguments)
     if launcher is not None:
         environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = supervisor_arguments
-        environment["NEDSCHORUS_AGENTS_ROOT"] = str(seat_directory.parent)
+        environment["NEDSNODES_AGENTS_ROOT"] = str(seat_directory.parent)
         command = [str(launcher), name, "--no-attach", *mac_launcher_supervisor_checkout_arguments()]
         if first_prompt_file is not None:
             command += ["--first-prompt-file", str(first_prompt_file)]
@@ -880,7 +880,7 @@ def iterm_window_command_text(name: str, seat_directory: Path, handoff_directory
              "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS="
              + compose_supervisor_arguments_for_seat_launch(
                  handoff_directory, extra_supervisor_arguments),
-             f"NEDSCHORUS_AGENTS_ROOT={seat_directory.parent}",
+             f"NEDSNODES_AGENTS_ROOT={seat_directory.parent}",
              str(launcher_path()), name, *mac_launcher_supervisor_checkout_arguments()]
     if first_prompt_file is not None:
         words += ["--first-prompt-file", str(first_prompt_file)]

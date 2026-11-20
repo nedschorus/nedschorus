@@ -3301,7 +3301,7 @@ with tempfile.TemporaryDirectory() as temporary:
               and mac_launch_commands[0][0]
               == str(checkout_b / "scripts" / "launch-claude-mac"),
               (exit_code, output, mac_launch_commands))
-        # The launcher would otherwise run the supervisor of ~/Projects/nedschorus, not checkout B's.
+        # The launcher would otherwise run the supervisor of ~/Projects/nedsnodes, not checkout B's.
         check("CHECKOUT: on the Mac, the launch passes --supervisor-checkout naming checkout B",
               len(mac_launch_commands) == 1
               and mac_launch_commands[0][1:5]

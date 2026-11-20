@@ -139,7 +139,7 @@ def check(case_name, condition, detail=""):
 
 def reference_checkout_mac_launcher(workspace: Path) -> Path:
     """The launcher resupervise-seat.py runs for a Mac seat, in this suite's sandbox HOME."""
-    launcher = workspace / "home" / "Projects" / "nedschorus" / "scripts" / "launch-claude-mac"
+    launcher = workspace / "home" / "Projects" / "nedsnodes" / "scripts" / "launch-claude-mac"
     launcher.parent.mkdir(parents=True, exist_ok=True)
     return launcher
 
@@ -383,14 +383,14 @@ def run_missing_launcher_case(workspace: Path):
         env={**os.environ, "HOME": str(home_without_reference_checkout)},
     )
     beside.unlink()
-    missing = home_without_reference_checkout / "Projects" / "nedschorus" / "scripts" / "launch-claude-mac"
+    missing = home_without_reference_checkout / "Projects" / "nedsnodes" / "scripts" / "launch-claude-mac"
     check("a missing launcher refuses before anything is killed: --machine mac with no "
-          "launcher in ~/Projects/nedschorus refuses, even with one beside the script, naming "
+          "launcher in ~/Projects/nedsnodes refuses, even with one beside the script, naming "
           "the missing launcher and the fix",
           result.returncode == 1
           and f"{missing} does not exist, so no successor can be launched; nothing was killed"
           in result.stderr
-          and "Clone nedschorus to ~/Projects/nedschorus on this Mac" in result.stderr,
+          and "Clone nedschorus to ~/Projects/nedsnodes on this Mac" in result.stderr,
           result.stdout + result.stderr)
 
 
@@ -902,7 +902,7 @@ def run_override_propagation_case(workspace: Path):
     )
     beside.unlink()
     recorded = record.read_text(encoding="utf-8") if record.is_file() else ""
-    check("--machine mac runs the launcher in ~/Projects/nedschorus, not the one beside "
+    check("--machine mac runs the launcher in ~/Projects/nedsnodes, not the one beside "
           "the script",
           recorded and not beside_record.exists(),
           (recorded, beside_record.exists(), result.stdout, result.stderr))
@@ -1181,7 +1181,7 @@ def main() -> int:
 def run_all_cases() -> int:
     with tempfile.TemporaryDirectory(prefix="resupervise-seat-test-") as scratch:
         workspace = Path(scratch)
-        # resupervise-seat.py runs ~/Projects/nedschorus's Mac launcher, so every run here
+        # resupervise-seat.py runs ~/Projects/nedsnodes's Mac launcher, so every run here
         # sees a sandbox HOME whose launcher a case writes or this stand-in answers for.
         os.environ["HOME"] = str(workspace / "home")
         stand_in = reference_checkout_mac_launcher(workspace)

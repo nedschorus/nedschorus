@@ -45,7 +45,7 @@
 # --no-attach creates the session without attaching this terminal (for scripts
 # and checks); attach later by running the plain form.
 #
-# The handoff-supervisor runs from ~/Projects/nedschorus, the reference-checkout,
+# The handoff-supervisor runs from ~/Projects/nedsnodes, the reference-checkout,
 # as on the box, whichever checkout this launcher was run from: the supervisor
 # keeps the code of the checkout it started from and runs the conversation
 # extractor from there at every session-handoff, so a supervisor started from a
@@ -54,7 +54,7 @@
 # scripts/recover-crashed-seats.py passes its --checkout through it.
 #
 # Requires on this Mac: tmux, python3, claude on the PATH, and
-# ~/Projects/nedschorus (or the --supervisor-checkout path).
+# ~/Projects/nedsnodes (or the --supervisor-checkout path).
 
 set -eu
 
@@ -70,7 +70,7 @@ if [ $# -eq 1 ] && { [ "$1" = --help ] || [ "$1" = -h ]; }; then
     echo "  --first-prompt-file <path> the file whose text is the new agent-session's first prompt"
     echo "  --supervisor-checkout <path>"
     echo "                             the checkout whose handoff-supervisor the seat runs"
-    echo "                             (default ~/Projects/nedschorus, whichever checkout"
+    echo "                             (default ~/Projects/nedsnodes, whichever checkout"
     echo "                             this launcher was run from)"
     echo
     echo "Work that need not run on the Mac goes to ned-box instead: launch-claude-ubuntu."
@@ -154,7 +154,7 @@ AGENT_NAME="$1"
 shift
 ATTACH=yes
 FIRST_PROMPT_FILE=""
-SUPERVISOR_CHECKOUT="$HOME/Projects/nedschorus"
+SUPERVISOR_CHECKOUT="$HOME/Projects/nedsnodes"
 while [ $# -gt 0 ]; do
     case "$1" in
         (--no-attach) ATTACH=no; shift ;;
@@ -167,7 +167,7 @@ done
 case "$SUPERVISOR_CHECKOUT" in
     ([!/]*) SUPERVISOR_CHECKOUT="$PWD/$SUPERVISOR_CHECKOUT" ;;
 esac
-SUPERVISOR="$SUPERVISOR_CHECKOUT/nc-systems/handoff/handoff-supervisor.py"
+SUPERVISOR="$SUPERVISOR_CHECKOUT/nn-systems/handoff/handoff-supervisor.py"
 case "$AGENT_NAME" in
     (*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-]*|"") echo "launch-claude-mac: agent names are letters, digits, - and _" >&2; exit 2 ;;
 esac
@@ -204,7 +204,7 @@ command -v claude >/dev/null 2>&1 || {
 }
 [ -f "$SUPERVISOR" ] || {
     echo "launch-claude-mac: refused, because $SUPERVISOR does not exist, so $SUPERVISOR_CHECKOUT, the checkout the seat's handoff-supervisor would run from, holds no nedschorus checkout; nothing was started." >&2
-    echo "launch-claude-mac: if ~/Projects/nedschorus is missing on this Mac, clone nedschorus there and launch again." >&2
+    echo "launch-claude-mac: if ~/Projects/nedsnodes is missing on this Mac, clone nedschorus there and launch again." >&2
     echo "launch-claude-mac: if you passed --supervisor-checkout, pass the root of a nedschorus checkout that exists." >&2
     exit 2
 }
@@ -325,7 +325,7 @@ fi
 # ends the quote early and the composed command fails to parse — after the
 # caller was already told the launch succeeded: an apostrophe --handoff-dir
 # lands in the recovery prompt-file path, and an apostrophe agents root
-# reaches AGENT_DIRECTORY through NEDSCHORUS_AGENTS_ROOT, and an apostrophe
+# reaches AGENT_DIRECTORY through NEDSNODES_AGENTS_ROOT, and an apostrophe
 # --supervisor-checkout reaches SUPERVISOR. AGENT_NAME needs no escaping —
 # validated above to letters, digits, - and _.
 escape_single_quotes() {
