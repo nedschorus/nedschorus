@@ -2467,7 +2467,20 @@ def test_a_first_deferral_with_an_open_item_before_the_summary_item_is_an_ordina
           and marker(case) == "#next_to_present item 4 of 5", described(closed) + case.minutes.read_text())
 
 
-DEFERRED_NOTE = "(deferred: moved to just before the summary item)"
+def test_a_first_deferral_with_an_unshown_item_written_after_the_summary_item_is_an_ordinary_deferral():
+    document = ordered_walk() + "\n" + unshown_item("a case the walk missed", f"{CATEGORY_TAG}fix_next")
+    case = Case(next_to_present="item 1 of 9", document=document)
+    case.run("check", "--deferred")
+    closed = case.run("close")
+    check("a first Z on item 1, which the summary item follows in the walk-document, is an ordinary deferral while "
+          "an unshown item written after the summary item is still to come",
+          closed.returncode == 0
+          and closed.stdout.split("\n")[0] == ("item 1 of 9 is deferred, and the minutes record it; it comes back "
+                                              "just before the summary item.")
+          and "leaves the walk" not in case.minutes.read_text(), described(closed) + case.minutes.read_text())
+
+
+DEFERRED_NOTE ="(deferred: moved to just before the summary item)"
 
 
 def walk_document(case):
@@ -4761,6 +4774,11 @@ def test_the_read_step_presents_an_item_rated_none_that_is_shown_all_the_same():
         ("that `check --not-asked none` settled but close has not closed, as when the advisor objected",
          close_the_issue_case(recorded="item 22 of 26: settled without asking the user, not asked, case against none "
                                        "#case_against_none (2026-11-07 16:20), which makes its change. Fast reads:\n")),
+        ("that `check --not-asked 2` settled but close has not closed, as when the advisor objected",
+         close_the_issue_case(recorded="item 22 of 26: settled without asking the user, not asked, kind 2 "
+                                       "#case_against_none (2026-11-07 16:20), which makes its change. Fast reads:\n")),
+        ("whose touches line names a file not yet written, which `check --not-asked none` refuses",
+         close_the_issue_case(touches="#not_asked_touches docs/a-page-the-change-adds.md\n\n")),
     )
     for described_case, case in cases:
         result = case.run(WAITING_ITEM_READ)
@@ -6112,6 +6130,24 @@ def test_bump_shows_the_named_unshown_item_next_and_the_waiting_item_after_it():
           described(again))
 
 
+def test_a_bumped_item_answered_gives_way_to_the_once_deferred_item_it_suspended_not_to_another_unshown_item():
+    document = ordered_walk("## Item 2 of 9: two\n\n#case_against none.\n\nRecommendation: approve.\n\n")
+    case = Case(next_to_present="item 1 of 9", document=document)
+    case.run("check", "--deferred")
+    case.run("close")
+    case.run("check")
+    case.run("close")
+    path = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    path.write_text(walk_document(case).replace("## Summary", unshown_item("three", f"{CATEGORY_TAG}must_fix_now")
+                                                + unshown_item("four", f"{CATEGORY_TAG}fix_next") + "## Summary"))
+    waiting = marker(case)
+    bumped = case.run("check", "--bump", "four", reply="bump four")
+    shown = titles_shown_in_turn(case)
+    check("once the bumped item is approved, the once-deferred item 1 that waited comes back before the other "
+          "unshown item", waiting.startswith("#next_to_present item 1 of ") and bumped.returncode == 0
+          and shown == ["one", "three", "Summary"], f"{described(bumped)}{shown}\n{walk_document(case)}")
+
+
 def test_bump_refuses_an_item_no_heading_has_or_one_already_shown_writing_nothing():
     case = Case(next_to_present="item 1 of 9", document=bump_walk())
     document, minutes = walk_document(case), case.minutes.read_text()
@@ -6134,9 +6170,15 @@ def test_bump_refuses_while_the_last_answer_has_no_close_line_writing_nothing():
     answered = case.run("check")
     document, minutes = walk_document(case), case.minutes.read_text()
     bumped = case.run("check", "--bump", "three", reply="bump three")
-    check("check --bump refuses between check and close, saying to run close first",
+    top = shlex.quote(str(case.checkout.resolve()))
+    check("check --bump refuses between check and close, printing the close command and then the whole bump command "
+          "to run again",
           answered.returncode == 0 and bumped.returncode == 1
-          and "for item 1 of 9, has no close line after it" in bumped.stderr and " close`" in bumped.stderr,
+          and "hold the user's answer to item 1 of 9, which check wrote and close has not yet recorded" in bumped.stderr
+          and f"Run `python3 {PROGRAM} close --cwd {top}` first and do what it prints, except reading and presenting "
+              "the item it names next: in place of that, run "
+              f"`python3 {PROGRAM} check --bump three --cwd {top} --user-reply-as-typed 'bump three'` and do what it "
+              "prints" in bumped.stderr,
           described(answered) + described(bumped))
     check("a check --bump refused between check and close writes nothing",
           walk_document(case) == document and case.minutes.read_text() == minutes)
