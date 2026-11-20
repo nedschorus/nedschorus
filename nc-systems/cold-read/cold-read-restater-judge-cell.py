@@ -311,6 +311,7 @@ def main() -> int:
         common.report_stray_writes(PROGRAM, baseline, report)
         return refusal.exit_code
 
+    common.record_directory_being_written_lock_hold_shared_until_exit_unless_parent_passed_descriptor(report.parent)
     uniform_effort = args.effort or JUDGE_MODEL_TO_REASONING_EFFORT[chain[0]]
     target_argument = ",".join(
         case_argument[JUDGED_ROLE_INDEX] for case_argument in args.case)

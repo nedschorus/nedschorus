@@ -53,24 +53,29 @@ def _load(module_name, path):
     return module
 
 
-shell_reader = _load(
-    "shell_command_tree_sitter_bash_reader_common",
-    _REPOSITORY_ROOT / "nc-systems" / "general-tools"
-    / "shell-command-tree-sitter-bash-reader-common.py")
-_marker_common = _load("guard_approval_marker_common",
-                       _REPOSITORY_ROOT / ".claude" / "hooks" / "guard-approval-marker-common.py")
-# The instruction-file guard's checkout-root and marker-root lookups, so both
-# guards place their marker files at the same root.
-_instruction_file_guard = _load("instruction_file_guard",
-                                _HOOKS_DIRECTORY / "instruction-file-guard.py")
+_crash_notice = _load("guard_hook_crash_fail_open_with_notice_common",
+                      _HOOKS_DIRECTORY / "guard-hook-crash-fail-open-with-notice-common.py")
+
+with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(
+        __file__, __name__ == "__main__"):
+    shell_reader = _load(
+        "shell_command_tree_sitter_bash_reader_common",
+        _REPOSITORY_ROOT / "nc-systems" / "general-tools"
+        / "shell-command-tree-sitter-bash-reader-common.py")
+    _marker_common = _load("guard_approval_marker_common",
+                           _REPOSITORY_ROOT / ".claude" / "guard-hooks" / "guard-approval-marker-common.py")
+    # The instruction-file guard's checkout-root and marker-root lookups, so both
+    # guards place their marker files at the same root.
+    _instruction_file_guard = _load("instruction_file_guard",
+                                    _HOOKS_DIRECTORY / "instruction-file-guard.py")
 
 REASON_MARKER_NAME = ".ghi-md-whole-file-replacement-reason"
 GHI_MD_DIRECTORY_PARTS = ("docs", "issues")
 GHI_MD_NAME_PATTERN = re.compile(r"^\d+-.*\.md$")
 
-# Messages to agents follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
-REFUSAL = (
-    "Refused: this command replaces the whole GHI-MD {path}, which can undo changes merged "
+# Messages to agents follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
+GHI_MD_WHOLE_FILE_REPLACEMENT_REFUSAL = (
+    "[rule bash-guard-ghi-md-whole-file-replacement] Refused: this command replaces the whole GHI-MD {path}, which can undo changes merged "
     "into it on main after your copy was written.\n"
     "Change the GHI-MD with the Edit tool instead, one passage at a time, so main's other "
     "changes stay.\n"
@@ -212,10 +217,7 @@ def deny(reason):
 
 
 def main(stdin=sys.stdin):
-    try:
-        payload = json.load(stdin)
-    except ValueError:
-        return 0
+    payload = json.load(stdin)
     if not isinstance(payload, dict):
         return 0
     tool_name = payload.get("tool_name")
@@ -241,9 +243,10 @@ def main(stdin=sys.stdin):
     marker_path = _instruction_file_guard.marker_root(payload, str(replaced)) / REASON_MARKER_NAME
     if _marker_common.consume_approval_marker(marker_path):
         return 0
-    deny(REFUSAL.format(path=replaced, marker_path=marker_path))
+    deny(GHI_MD_WHOLE_FILE_REPLACEMENT_REFUSAL.format(path=replaced, marker_path=marker_path))
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(__file__, True):
+        sys.exit(main())

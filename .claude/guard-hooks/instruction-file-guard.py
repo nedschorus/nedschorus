@@ -20,11 +20,19 @@ import os
 import sys
 from pathlib import Path
 
-_marker_spec = importlib.util.spec_from_file_location(
-    "guard_approval_marker_common",
-    Path(__file__).resolve().parents[1] / "hooks" / "guard-approval-marker-common.py")
-_guard_approval_marker_common = importlib.util.module_from_spec(_marker_spec)
-_marker_spec.loader.exec_module(_guard_approval_marker_common)
+_crash_notice_spec = importlib.util.spec_from_file_location(
+    "guard_hook_crash_fail_open_with_notice_common",
+    Path(__file__).resolve().parent / "guard-hook-crash-fail-open-with-notice-common.py")
+_crash_notice = importlib.util.module_from_spec(_crash_notice_spec)
+_crash_notice_spec.loader.exec_module(_crash_notice)
+
+with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(
+        __file__, __name__ == "__main__"):
+    _marker_spec = importlib.util.spec_from_file_location(
+        "guard_approval_marker_common",
+        Path(__file__).resolve().parent / "guard-approval-marker-common.py")
+    _guard_approval_marker_common = importlib.util.module_from_spec(_marker_spec)
+    _marker_spec.loader.exec_module(_guard_approval_marker_common)
 consume_approval_marker = _guard_approval_marker_common.consume_approval_marker
 read_marker_approval = _guard_approval_marker_common.read_marker_approval
 
@@ -41,6 +49,7 @@ REVIEW_RECORD_DIRECTORY_NAMES = ("cold-read-records", "md-review-records", "sani
 APPROVAL_MARKER_NAME = ".walk-approved"
 
 MISSING_SESSION_DIRECTORY_DENY_MESSAGE = (
+    "[rule write-guard-guarded-file-edit-needs-approval-marker] "
     "Refusing to modify {path}: this session's working directory ({cwd}) does not exist, so "
     "there is no session checkout to resolve an approval marker from. A seat whose worktree "
     "was removed while the session ran reaches this state. Move to a directory that exists, "
@@ -100,6 +109,7 @@ PRE_APPROVED_CHANGE_MARKER_STEP = (
 def guarded_write_deny_message(guarded_kind: str, draft_lines: str = "") -> str:
     """The refusal of a guarded write, for the kind of guarded file named."""
     return (
+        "[rule write-guard-guarded-file-edit-needs-approval-marker] "
         "Before you change {path}, check whether the change needs the user's approval: it does "
         "only when the approval page lists it and it is none of the page's exceptions.\n"
         "The approval page is " + APPROVAL_PAGE_PATH + ". This guard refuses every write to "
@@ -136,6 +146,7 @@ DENY_MESSAGE = guarded_write_deny_message(
     "machinery are,")
 
 PRE_APPROVED_CHANGE_MARKER_WITHOUT_REASON_DENY_MESSAGE = (
+    "[rule write-guard-guarded-file-edit-needs-approval-marker] "
     "Refusing to modify {path}: {marker_path} has `" + PRE_APPROVED_CHANGE_MARKER_FIRST_LINE
     + "` as its first line but no second line saying why the change needs no approval, so it "
     "approves nothing; this guard left it in place.\n"
@@ -147,19 +158,28 @@ PRE_APPROVED_CHANGE_MARKER_WITHOUT_REASON_DENY_MESSAGE = (
     "that follows gives the steps for asking him."
 )
 
-MEMORY_WRITE_DENY_MESSAGE = (
-    "Refusing to write {path}: it is in a Claude Code memory directory, where nothing "
-    "recalls a note at the moment it applies.\n"
-    "If what you meant to save would change how agents work, propose to the user the exact "
-    "edit, with its wording, to the instruction file, skill or program where an agent would "
-    "meet it.\n"
-    "If you cannot tell where it belongs, tell the user in one sentence what you meant to "
-    "remember, and ask him where to save it so that an agent recalls it when it applies.\n"
-    "If it matters only to this conversation, drop it.\n"
-    "If you are a subagent, put this to the agent that dispatched you instead.\n"
-    "No {marker} marker lets a write into a memory directory through, so do not write one "
-    "for this."
-)
+def memory_write_deny_message(asked: str, asked_again: str) -> str:
+    """The refusal of a memory write, sending the proposal and the question to the one named."""
+    return (
+        "[rule write-guard-claude-code-memory-directory-write] "
+        "Refusing to write {path}: it is in a Claude Code memory directory, where nothing "
+        "recalls a note at the moment it applies.\n"
+        "If what you meant to save would change how agents work, propose to " + asked
+        + " the exact edit, with its wording, to the instruction file, skill or program where "
+        "an agent would meet it.\n"
+        "If you cannot tell where it belongs, tell " + asked + " in one sentence what you "
+        "meant to remember, and ask " + asked_again + " where to save it so that an agent "
+        "recalls it when it applies.\n"
+        "If it matters only to this conversation, drop it.\n"
+        "No {marker} marker lets a write into a memory directory through, so do not write one "
+        "for this."
+    )
+
+
+MAIN_AGENT_MEMORY_WRITE_DENY_MESSAGE = memory_write_deny_message("the user", "him")
+
+SUBAGENT_MEMORY_WRITE_DENY_MESSAGE = memory_write_deny_message(
+    "the agent that dispatched you", "that agent")
 
 
 def is_pre_approved_change_marker(marker_words) -> bool:
@@ -315,10 +335,7 @@ def is_in_session_scratchpad(file_path: str, session_id) -> bool:
 
 
 def main() -> int:
-    try:
-        payload = json.loads(sys.stdin.read() or "{}")
-    except json.JSONDecodeError:
-        return 0
+    payload = json.loads(sys.stdin.read() or "{}")
     tool_input = payload.get("tool_input") or {}
     # NotebookEdit names its target notebook_path; Edit and Write use file_path.
     file_path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
@@ -328,7 +345,10 @@ def main() -> int:
         return 0
     # Checked before the marker, which approves instruction edits but never a memory write.
     if is_in_memory_directory(file_path):
-        print(MEMORY_WRITE_DENY_MESSAGE.format(path=file_path, marker=APPROVAL_MARKER_NAME),
+        # Claude Code puts agent_id in the hook input only when a subagent made the call.
+        memory_deny_message = (SUBAGENT_MEMORY_WRITE_DENY_MESSAGE if payload.get("agent_id")
+                               else MAIN_AGENT_MEMORY_WRITE_DENY_MESSAGE)
+        print(memory_deny_message.format(path=file_path, marker=APPROVAL_MARKER_NAME),
               file=sys.stderr)
         return 2
     reusable_prompt = is_reusable_prompt(file_path)
@@ -364,4 +384,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(__file__, True):
+        sys.exit(main())

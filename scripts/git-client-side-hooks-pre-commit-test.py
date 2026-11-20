@@ -538,28 +538,35 @@ def run_config_failure_cases(scratch: Path):
     stand_in = stand_in_directory / "git"
     stand_in.write_text(
         "#!/bin/sh\n"
-        'if [ "$1" = config ] && [ "$2" = --local ] && [ "$3" = "$FAIL_CONFIG_ARGUMENT" ]; then\n'
+        'if [ "$1" = config ] && [ "$2" = --local ] && [ "$3" = "$FAIL_CONFIG_ARGUMENT" ]'
+        ' && { [ -z "${FAIL_CONFIG_KEY:-}" ] || [ "$4" = "$FAIL_CONFIG_KEY" ]; }; then\n'
         '    echo "fatal: injected git config failure" >&2\n'
         "    exit 128\n"
         "fi\n"
         f'exec "{real_git}" "$@"\n')
     stand_in.chmod(0o755)
-    for label, fail_argument, config_name, expected in (
-            ("writing the tripwire back", "user.name", "prime-intellect",
+    for label, fail_argument, fail_key, config_name, expected in (
+            ("writing the tripwire back", "user.name", "", "prime-intellect",
              "and writing unconfigured-agent back failed"),
-            ("reading user.name", "--get", TRIPWIRE_NAME,
-             "because reading user.name from the clone's own git config")):
-        repository = ThrowawayRepository(scratch, "config-fails-" + fail_argument.strip("-"),
-                                         config_name=config_name)
+            ("reading user.name", "--get", "user.name", TRIPWIRE_NAME,
+             "because reading user.name from the clone's own git config"),
+            ("reading user.email", "--get", "user.email", TRIPWIRE_NAME,
+             "because reading user.email from the clone's own git config")):
+        repository = ThrowawayRepository(
+            scratch, "config-fails-" + fail_argument.strip("-") + "-" + (fail_key or "write"),
+            config_name=config_name)
         environment = repository.environment({
             **FAKE_SESSION, **SEAT_IDENTITY, "FAIL_CONFIG_ARGUMENT": fail_argument,
+            "FAIL_CONFIG_KEY": fail_key,
             "PATH": f"{stand_in_directory}{os.pathsep}{os.environ.get('PATH', '')}"})
         completed = subprocess.run(
             ["sh", str(HOOK_DIRECTORY / "pre-commit")], cwd=str(repository.root),
             env=environment, capture_output=True, text=True, timeout=30)
-        check(f"when git config fails {label}, the hook says so, shows git's error, and refuses",
+        check(f"when git config fails {label}, the hook says so, shows git's error, refuses, "
+              f"and does not go on to say it wrote the tripwire back",
               completed.returncode != 0 and expected in completed.stderr
-              and "fatal: injected git config failure" in completed.stderr,
+              and "fatal: injected git config failure" in completed.stderr
+              and WRITTEN_BACK_CLOSING not in completed.stderr,
               (completed.returncode, completed.stderr))
 
 

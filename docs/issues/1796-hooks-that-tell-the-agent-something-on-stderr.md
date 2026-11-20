@@ -28,7 +28,7 @@ The [Claude Code hooks reference](https://code.claude.com/docs/en/hooks) describ
 
 ## Why this matters
 
-Each hook listed below writes on stderr, with exit 1, either an instruction the agent is meant to follow, or the news that a hook's work was not done, so that the agent knows not to rely on it. Neither reaches the agent. The user sees, at most, a notice in the transcript view, and the agent goes on as if the hook had run cleanly. Some docstrings say outright that the agent is told: `scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook-nbd.py:19` says an exit-1 line means "the agent is told the check was not made".
+Each hook listed below writes on stderr, with exit 1, either an instruction the agent is meant to follow, or the news that a hook's work was not done, so that the agent knows not to rely on it. Neither reaches the agent. The user sees, at most, a notice in the transcript view, and the agent goes on as if the hook had run cleanly. Some docstrings say outright that the agent is told: `scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook-hack.py:19` says an exit-1 line means "the agent is told the check was not made".
 
 ## The hooks
 
@@ -38,7 +38,7 @@ Line numbers are at origin/main commit `1846c5282`, and each cites the line that
 
 ### Instructions the agent is meant to follow
 
-- `scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook-nbd.py:325` (PostToolUse): markdown-it-py is missing; tells the agent to go on, write each paragraph as one line, and tell the user.
+- `scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook-hack.py:325` (PostToolUse): markdown-it-py is missing; tells the agent to go on, write each paragraph as one line, and tell the user.
 - `scripts/new-shared-names-reminder-hook.py:425` (PostToolUse): a git failure; tells the agent nothing needs rerunning, and what to do if the failure recurs.
 - `scripts/ned-box-path-in-agent-reply-unclickable-on-mac-warning-hook.py:83` (UserPromptSubmit): the hook broke; tells the agent how to link a ned-box file for the Mac, and to tell the user if the failure recurs.
 - `scripts/absence-claim-locator-reminder-hook.py:525` (Stop and SubagentStop): the hook broke; tells the agent to run the hook's test and tell the user what it reports if the failure recurs.
@@ -47,8 +47,8 @@ Line numbers are at origin/main commit `1846c5282`, and each cites the line that
 
 ### News that the hook's work was not done
 
-- `scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook-nbd.py:313`, `:331` and `:349` (PostToolUse): a git failure, an Edit whose added lines cannot be found, and the hook's own crash handler.
-- `scripts/style-guide-word-checker-markdown-edit-hook-nbd.py:169` (PostToolUse): the crash handler. The docstring at `:10-12` names exit 1 as the hook's way of reporting a fault.
+- `scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook-hack.py:313`, `:331` and `:349` (PostToolUse): a git failure, an Edit whose added lines cannot be found, and the hook's own crash handler.
+- `scripts/style-guide-word-checker-markdown-edit-hook-hack.py:169` (PostToolUse): the crash handler. The docstring at `:10-12` names exit 1 as the hook's way of reporting a fault.
 - `scripts/bare-number-citation-in-markdown-and-agent-reply-warning-hook.py:771` (UserPromptSubmit and PostToolUse): the crash handler.
 - `scripts/obsolete-file-edit-warning-hook.py:581` (PostToolUse): the crash handler.
 - `scripts/agent-seat-due-task-raise-hook.py:516` (Stop): the crash handler; its stderr text tells the agent that no task was checked at this stop, and that the first stop without the fault raises any due task.
@@ -61,7 +61,7 @@ Line numbers are at origin/main commit `1846c5282`, and each cites the line that
 
 These two say the agent need not act, so an agent that never reads them loses nothing. They are listed so that step 2 of the next action decides their channel too: leave them at exit 1, or move them with the rest.
 
-How the list was made: for every program registered in `.claude/settings.json` at `1846c5282`, `grep -n 'return 1$\|exit(1)\|EXIT_.*= *1'` and `grep -n 'file=sys.stderr'`, then reading each match. `.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py` has `EXIT_REFUSED = 1`, but only on its `--approve` and `--restore` command-line paths; run as a hook, it reports in `additionalContext` and exits 0. A hook that exits 1 through a value computed elsewhere would not show in this search.
+How the list was made: for every program registered in `.claude/settings.json` at `1846c5282`, `grep -n 'return 1$\|exit(1)\|EXIT_.*= *1'` and `grep -n 'file=sys.stderr'`, then reading each match. `.claude/guard-hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py` has `EXIT_REFUSED = 1`, but only on its `--approve` and `--restore` command-line paths; run as a hook, it reports in `additionalContext` and exits 0. A hook that exits 1 through a value computed elsewhere would not show in this search.
 
 ## Related, and not the same work
 

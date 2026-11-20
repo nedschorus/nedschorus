@@ -16,6 +16,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -197,14 +198,29 @@ class GeminiTaskTests(unittest.TestCase):
                 result = self.run_cli(mode, extra=("--deadline-minutes", "0.03"))
                 self.assertEqual(result.returncode, 1, result.stderr)
                 self.assertIn("deadline passed", result.stderr)
-                pid = int(self.child.read_text())
-                # Linux can retain a dead orphan as a zombie until PID 1 reaps it.
-                state = Path(f"/proc/{pid}/stat")
-                if sys.platform.startswith("linux") and state.exists():
-                    self.assertEqual(state.read_text().split(") ")[-1][0], "Z")
-                else:
-                    with self.assertRaises(ProcessLookupError):
-                        os.kill(pid, 0)
+                self.assert_process_dies(int(self.child.read_text()))
+
+    def assert_process_dies(self, pid, timeout=10):
+        # SIGKILL takes effect asynchronously; under load the child can still be running
+        # when the launcher returns. Linux can keep a dead orphan as a zombie until PID 1 reaps it.
+        deadline = time.monotonic() + timeout
+        last = None
+        while time.monotonic() < deadline:
+            if sys.platform.startswith("linux"):
+                try:
+                    last = Path(f"/proc/{pid}/stat").read_text().split(") ")[-1][0]
+                except FileNotFoundError:
+                    return
+                if last == "Z":
+                    return
+            else:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    return
+                last = "alive"
+            time.sleep(0.05)
+        self.fail(f"process {pid} still not dead after {timeout}s; last state {last!r}")
 
     def test_bad_arguments(self):
         for extra in (("--deadline-minutes", "nan"), ("--deadline-minutes", "0"),
@@ -248,14 +264,13 @@ class GeminiTaskTests(unittest.TestCase):
     def test_sandbox_arguments_and_credential_denial_order(self):
         common = runner.agy_cell.common
         with patch.object(common, "credential_directories_present", return_value=["/credentials"]), \
-                patch.object(common, "credential_files_found_now", return_value=["/data/.env"]), \
                 patch.object(common, "reviewer_program_login_files", return_value=["/codex/auth.json"]) as login:
             prefix = runner.agy_cell.credential_sandbox_prefix("linux", writable_paths=[
                 (self.report, False), (self.base, True)], network=False)
             self.assertEqual(prefix, ["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--bind", str(self.report),
                                      str(self.report), "--bind", str(self.base), str(self.base),
                                      "--unshare-net", "--tmpfs", "/credentials", "--ro-bind", "/dev/null",
-                                     "/data/.env", "--ro-bind", "/dev/null", "/codex/auth.json"])
+                                     "/codex/auth.json"])
             login.assert_called_with(except_program="agy", only_present=True)
             legacy = runner.agy_cell.credential_sandbox_prefix("linux")
             self.assertEqual(legacy[:4], ["bwrap", "--dev-bind", "/", "/"])

@@ -106,7 +106,7 @@ here anyway split the recovery: the automatic launch seated <root>/<name>,
 while the by-hand command printed when that launch fails runs
 launch-claude-ubuntu, which seats ~/agents/<name>, not the seat that was
 assessed. Raised by ned-review-merge's inline question 4088153045 on PR
-[The ubuntu launcher reads no agents-root variable: a box seat is always ~/agents/<name>](https://github.com/nedschorus/nedschorus/pull/684);
+[The ubuntu launcher reads no agents-root variable: a box seat is always ~/agents/<name>](https://github.com/nedsnodes/nedsnodes/pull/684);
 the user answered "Y" at 2026-09-28T16:37:05Z, closing question 1 of
 merge-lane-2's walk merge-lane-2-meta-walk-open-items-2026-09-23, to refuse
 the flag off macOS as resupervise-seat.py refuses it with --machine ubuntu.
@@ -124,7 +124,7 @@ came from this tool's own checkout, so a recovery run by hand from a worktree
 left the seat's supervisor running that worktree's code for the rest of its
 life, and the seat stopped at its next handoff once the worktree was removed,
 because at every handoff the supervisor runs the conversation extractor from
-its own checkout (GHI [recover-crashed-seats: a recovered seat's supervisor runs from whichever checkout the recovery was run from, and stops at its next handoff once that checkout is removed](https://github.com/nedschorus/nedschorus/issues/659)).
+its own checkout (GHI [recover-crashed-seats: a recovered seat's supervisor runs from whichever checkout the recovery was run from, and stops at its next handoff once that checkout is removed](https://github.com/nedsnodes/nedsnodes/issues/659)).
 The user answered "y" on 2026-09-29, walk
 open-items-this-seat-holds-2026-09-24, item 12, to: "The choices: always run
 the supervisor from the machine's reference clone, `~/Projects/nedschorus`, as
@@ -291,9 +291,12 @@ def agent_seat_tmux_server_user_systemd_scope_command_prefix_or_manager_unreacha
     """Return (prefix, failure): the systemd-run words that start the seat's tmux server in a
     transient scope of the user's systemd manager, or ([], why the manager cannot be reached).
 
-    Probes the manager with a scope that runs `true` first, because systemd-run and tmux both
-    exit 1, so a failed wrapped launch could not say which of them failed.
+    Sets XDG_RUNTIME_DIR in environment to /run/user/<uid> when it is missing, as under cron,
+    since without it systemd-run --user cannot find the manager. Probes the manager with a
+    scope that runs `true` first, because systemd-run and tmux both exit 1, so a failed
+    wrapped launch could not say which of them failed.
     """
+    environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
     if shutil.which("systemd-run") is None:
         return [], "systemd-run is not installed"
     probe = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "true"]
@@ -651,17 +654,19 @@ def launcher_path():
 def reach_clause_for_a_running_seat(name: str) -> str:
     """Return the report clause naming how the operator opens a seat recovery left running."""
     # Recovery launches detached on the seat's own tmux socket, where a plain `tmux attach` finds nothing.
-    if launcher_path() is not None:
-        return f"; reach it with: launch-claude-mac {name}"
-    return (f"; reach it with: {LAUNCH_CLAUDE_UBUNTU_SCRIPT_PATH_IN_MAC_REPOSITORY_CLONE} {name} "
-            f"from the Mac, or tmux -L {name} attach -t {name} here")
+    return f"; the user reaches it by running {mac_launcher_command(name, launcher_path() is None)} in a Terminal on his Mac"
 
 
 WINDOW_SENDER_PATH = Path(__file__).resolve().with_name(
     "open-mac-window-from-ned-box.py")
-# The Mac's own clone; this path is shown to the user, who runs it in a Mac Terminal.
-LAUNCH_CLAUDE_UBUNTU_SCRIPT_PATH_IN_MAC_REPOSITORY_CLONE = (
-    "/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu")
+_mac_reference_checkout_path_constant_specification = importlib.util.spec_from_file_location(
+    "mac_reference_checkout_launcher_scripts_directory_path_constant_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "mac-reference-checkout-launcher-scripts-directory-path-constant-common.py")
+mac_reference_checkout_path_constant = importlib.util.module_from_spec(_mac_reference_checkout_path_constant_specification)
+_mac_reference_checkout_path_constant_specification.loader.exec_module(mac_reference_checkout_path_constant)
+mac_launcher_command = (
+    mac_reference_checkout_path_constant.mac_reference_checkout_launcher_path_agent_seat_start_command_text_for_user_to_type)
 AGENT_SEAT_MAC_WINDOW_NOT_OPENED_REPORT_TEXT = "WINDOW NOT OPENED"
 ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_OPEN_FAILED_EXIT_STATUS = 3
 
@@ -755,8 +760,8 @@ def by_hand_launch_command_for_seat(name: str, seat_directory: Path, handoff_dir
         "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS=" + shlex.quote(
             compose_supervisor_arguments_for_seat_launch(handoff_directory,
                                                          extra_supervisor_arguments)),
-        "launch-claude-ubuntu" if launcher is None else shlex.quote(str(launcher)),
-        shlex.quote(name),
+        mac_launcher_command(shlex.quote(name), agent_seat_is_on_ned_box=True) if launcher is None
+        else f"{shlex.quote(str(launcher))} {shlex.quote(name)}",
     ]
     if first_prompt_file is not None:
         words += ["--first-prompt-file", shlex.quote(str(first_prompt_file))]
@@ -823,8 +828,6 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
     )
     if first_prompt_file is not None:
         supervisor_command += f" --first-prompt-file {shlex.quote(str(first_prompt_file))}"
-    # Cron gives no XDG_RUNTIME_DIR, without which systemd-run --user cannot find the manager.
-    environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
     command_prefix, scope_failure = (
         agent_seat_tmux_server_user_systemd_scope_command_prefix_or_manager_unreachable_reason(
             name, environment))
@@ -1245,8 +1248,9 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
                     f"answer it in the seat's tmux session{reach_clause_for_a_running_seat(name)}")
         return (f"{name}: {SEAT_ASKED_TO_BE_CONSULTED_REPORT_MARKER} — an unconsumed handoff "
                 f"(counter {counter}) asks to be consulted before a relaunch: {reason}. Nothing "
-                f"was launched. To bring it back, launch it by hand (launch-claude-mac {name} "
-                f"or launch-claude-ubuntu {name}) and answer its supervisor's restart question")
+                "was launched. To bring it back, "
+                f"{mac_reference_checkout_path_constant.mac_reference_checkout_launcher_agent_seat_start_command_agent_instruction_to_ask_user_to_type_in_mac_terminal(name, launcher_path() is None)} "
+                "and to answer its supervisor's restart question in that Terminal")
 
     if verdict == "offer-after-recorded-exit":
         exit_code, recorded_at, session_id = detail

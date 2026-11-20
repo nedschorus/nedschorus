@@ -681,6 +681,18 @@ with tempfile.TemporaryDirectory() as scratch_name:
               code == program.EXIT_PASSED_OR_KILLED and "linux" in subreaper_calls,
               (code, output, subreaper_calls))
 
+    original_clean_up = program.runner.clean_up_after_earlier_runs
+    program.runner.clean_up_after_earlier_runs = lambda *arguments: [
+        "could not remove the temporary directory /tmp/x, given to a suite by a run that was killed"]
+    try:
+        code, output, ran = main_with_nothing_run("darwin", sandbox=((), None))
+    finally:
+        program.runner.clean_up_after_earlier_runs = original_clean_up
+    check("the report lines of the cleanup after earlier runs are printed before the suite runs",
+          code == program.EXIT_PASSED_OR_KILLED and len(ran) == 1
+          and f"{program.PROGRAM}: could not remove the temporary directory /tmp/x" in output,
+          (code, output, ran))
+
     def sandbox_exec_missing(platform=None):
         raise program.runner.SignalSandboxCouldNotStart("/usr/bin/sandbox-exec is not on this Mac")
 

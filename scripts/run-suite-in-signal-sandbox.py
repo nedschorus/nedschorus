@@ -578,11 +578,13 @@ def run(arguments, platform):
         # Clean up after earlier runs here, as scripts/run-all-test-suites.py does.
         if lock_handle is None:
             with runner.lock_held_while_cleaning_up_after_earlier_runs(Path(arguments.lock_file)):
-                runner.clean_up_after_earlier_runs(Path(arguments.lock_file), previous_holder,
-                                                   platform)
+                clean_up_lines = runner.clean_up_after_earlier_runs(
+                    Path(arguments.lock_file), previous_holder, platform)
         else:
-            runner.clean_up_after_earlier_runs(Path(arguments.lock_file), previous_holder,
-                                               platform)
+            clean_up_lines = runner.clean_up_after_earlier_runs(
+                Path(arguments.lock_file), previous_holder, platform)
+        for line in clean_up_lines:
+            print(f"{PROGRAM}: {line}", flush=True)
         admitted = contextlib.nullcontext(0.0)
         if in_test_sandbox:
             readings = runner.TestSuiteAdmissionMachineCpuAndMemoryReadingsSampler(psutil)

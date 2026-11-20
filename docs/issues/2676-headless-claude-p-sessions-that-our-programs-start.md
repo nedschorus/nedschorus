@@ -31,13 +31,13 @@ A headless session with these tools can send mail from the user's account, share
 
 | program | permission mode the session runs in | MCP flags |
 |---|---|---|
-| `nc-systems/cold-read/cold-read-claude-cell.py`, `invocation_builder` (line 93); also run, as a subprocess or by import, by `nc-systems/cold-read/cold-read-grid.py`, `nc-systems/cold-read/cold-read-restater-judge-cell.py` and `scripts/agent-facing-message-ask-two-fresh-agents-next-step-and-check-named-script-flags.py` | user default, bypassPermissions | none |
+| `nc-systems/cold-read/cold-read-claude-cell.py`, `invocation_builder` (line 93); also run, as a subprocess or by import, by `nc-systems/cold-read/cold-read-grid.py`, `nc-systems/cold-read/cold-read-restater-judge-cell.py` and `scripts/tool-message-to-agent-ask-two-fresh-agents-next-step-and-check-named-script-flags.py` | user default, bypassPermissions | none |
 | `scripts/sanity-check-adversarial-prompts.py`, `run_claude` (line 623), `--setting-sources user` | user default, bypassPermissions | none |
 | `scripts/ghi-guide-agent-ask.py`, `run_claude` (line 566) | `--permission-mode bypassPermissions` | none |
 | `scripts/merge-lane-pull-request-claude-reviewer-headless-run-and-review-post.py`, `run_reviewer` (line 218), and the `claude -p --resume` command it prints for an agent to run by hand (line 264) | `--permission-mode dontAsk` | none |
 | `nc-systems/skills/walk-me-through/walk-me-through-agent-question-to-user-outside-approval-walk-items-refusal-stop-hook.py`, `model_judgement` (line 531), a Stop hook in `.claude/settings.json` that starts `claude -p` to judge question-like text in an agent message | user default, bypassPermissions | none |
 | `nc-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py`, `run_fresh_agent` (line 447) | user default, bypassPermissions | none |
-| `nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py`, `start_claude` (line 152) | user default, bypassPermissions | none |
+| `nc-systems/handoff/uncommitted-work-snapshot-hook-scheduled-check-that-real-claude-session-is-recorded-as-owner.py`, `start_claude` (line 152) | user default, bypassPermissions | none |
 
 Search: `git grep -n -E '"claude", "-p"|claude_program, "-p"|--output-format' origin/main`, excluding tests; no program on main passes `--strict-mcp-config` or `--mcp-config` (`git grep -- "--strict-mcp-config\|--mcp-config" origin/main -- "*.py"` finds none outside tests). The shared launcher that the design in [GHI 2266](https://github.com/nedschorus/nedschorus/issues/2266) plans, a `run_claude` in a file `scripts/guide-agent-ask-scripts-common.py` not yet built, would have the same gap as that design is drafted, and [GHI 41](https://github.com/nedschorus/nedschorus/issues/41), one CLI for every headless agent run, is where a single fix could live.
 

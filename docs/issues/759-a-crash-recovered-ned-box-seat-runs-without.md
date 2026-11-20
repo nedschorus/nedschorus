@@ -25,3 +25,10 @@ The same gap reaches every box seat brought back after a reboot. `scripts/restar
 One pull request, with a test for each half:
 1. `scripts/recover-crashed-seats.py`'s box branch carries the same token prefix `scripts/launch-claude-ubuntu:255` composes, for the same account, so a box seat recovered after a crash or restarted at login reads its token file exactly as a launched one does; its test checks the composed pane command, as `scripts/launch-claude-ubuntu-test.py` checks the launcher's.
 2. `scripts/launch-claude-mac` prints the warning only when it is about to create the session, not when it attaches to a running one.
+
+## Outcome
+
+Both gaps are fixed by commit `20a702536`, merged in PR [Set every agent-seat's GitHub token in the handoff-supervisor, so merge-lane-2 acts as ned-review-merge on every start path](https://github.com/nedschorus/nedschorus/pull/2221), which took a different route from the next action above: the handoff-supervisor, rather than each launcher, now sets the token. Checked on main at `93082592b`, 2026-11-10:
+
+- Gap 1: `nc-systems/handoff/handoff-supervisor.py`, which every start path runs, reads the token of the agent-seat's account in `agent_seat_github_account_lookup_and_token_file_read` (`:983-1004`) and sets `GH_TOKEN` in its own environment (`:2795`), which every agent-session it starts inherits; it refuses to start with exit 5 when the token file is missing, unreadable or empty. `scripts/recover-crashed-seats.py`'s `launch_seat` reads the token through the same function before launching (`:773-778`), so a recovery that cannot read it reports that instead of starting a seat whose refusal no one sees. Every one of the 10 `claude` processes running on ned-box at the check had `GH_TOKEN` set.
+- Gap 2: neither launcher chooses an account or prints a missing-token warning any more; both refuse `NEDSCHORUS_SEAT_GITHUB_ACCOUNT` (`scripts/launch-claude-mac:164`, `scripts/launch-claude-ubuntu:154`). `grep -n "NO SEAT TOKEN" scripts/launch-claude-mac scripts/launch-claude-ubuntu` finds nothing.

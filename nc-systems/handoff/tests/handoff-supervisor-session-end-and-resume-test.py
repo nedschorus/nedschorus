@@ -124,6 +124,16 @@ def run_ask_user_before_restart_without_a_terminal_case(workspace: Path):
           result.returncode == 0 and "EOFError" not in result.stderr, result.stderr[-300:])
     check("ask-user-before-restart without a terminal says why it stopped",
           "no terminal to ask on" in result.stdout, result.stdout[-300:])
+    launcher = ("launch-claude-ubuntu"
+                if supervisor.handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box()
+                else "launch-claude-mac")
+    check("ask-user-before-restart without a terminal names the agent-seat, has the agent ask the user to run "
+          "this machine's launcher in a Terminal on his Mac, and names the handoff file",
+          "the agent-seat noterm's session-handoff" in result.stdout
+          and f"To start it again, ask the user to run `/Users/el/Projects/nedschorus/scripts/{launcher} noterm` "
+              "in a Terminal on his Mac." in result.stdout
+          and str(handoff_directory / "noterm-handoff.md") in result.stdout,
+          result.stdout[-600:])
 
     state = supervisor.read_supervisor_state(handoff_directory / "noterm-supervisor-state.json")
     check("the consumed counter is recorded before stopping",
@@ -173,8 +183,8 @@ def run_old_field_name_dont_restart_case(workspace: Path):
 def run_no_seat_recycle_refusal_case(workspace: Path):
     """A handoff arriving at a supervisor with no terminal must not reincarnate:
     the successor would inherit this stdio and die at its first need for
-    input (observed 2026-08-14 — an adopted console session was killed and
-    its successor reported into a log file). The session stays up and the
+    input (observed 2026-08-14 — a console session was killed and its
+    successor reported into a log file). The session stays up and the
     handoff stays unconsumed for a seated supervisor."""
     handoff_directory = workspace / "noseat"
     handoff_directory.mkdir(parents=True, exist_ok=True)
@@ -220,7 +230,7 @@ def run_agent_exit_record_cases(workspace: Path):
     2026-09-02: record how the agent exited). Every stop after a session's end
     that launches no successor records the agent's exit code and the time in
     the state file; recover-crashed-seats.py offers such a seat instead of
-    resuming it. The record is cleared before every launch or adoption, so a
+    resuming it. The record is cleared before every launch, so a
     seat that once exited cleanly and later crashed does not read as clean."""
     # --- End to end: the real exit code of a real session -----------------
     name = "exitrecord"
@@ -282,7 +292,8 @@ def run_agent_exit_record_cases(workspace: Path):
     )
     state = supervisor.read_supervisor_state(handoff_directory / f"{name}-supervisor-state.json")
     check("EXIT RECORD: the in-cycle ask-user-before-restart stop records the terminated session's code",
-          result.returncode == 0 and "no terminal to ask on; stopping" in result.stdout
+          result.returncode == 0 and f"stopped {name} without restarting it" in result.stdout
+          and f"`/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu {name}`" in result.stdout
           and state.get("consumed_counter") == 1
           and supervisor.agent_exit_record_from_supervisor_state(state) is not None
           and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY) == -15
@@ -290,13 +301,13 @@ def run_agent_exit_record_cases(workspace: Path):
           f"{state} {result.stdout[-300:]} {result.stderr[-300:]}")
 
     # --- In process: the paths a subprocess cannot reach -------------------
-    def settings_for(case: str, adopted_session=None):
+    def settings_for(case: str):
         directory = workspace / f"exitrecord-in-process-{case}"
         directory.mkdir(parents=True, exist_ok=True)
         return supervisor.SupervisorSettings(
             agent=f"exitrecord{case}", working_directory=workspace,
             handoff_directory=directory, agent_command="unused-stub-agent",
-            first_prompt="", adopted_session=adopted_session)
+            first_prompt="")
 
     def launch_recording(sessions, launched_state_snapshots, settings):
         def launch(agent_command, session_id, working_directory, prompt, **_):
@@ -339,32 +350,6 @@ def run_agent_exit_record_cases(workspace: Path):
           and state[supervisor.AGENT_EXIT_CODE_STATE_KEY] == 9
           and state[supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY] != "2026-01-01T00:00:00+00:00"
           and not supervisor.agent_exit_record_is_a_stop_at_an_ask_user_before_restart_handoff(state),
-          str(state))
-
-    # Cleared at adoption too, and an adopted session's code is unknown — its
-    # poll() says 0 for any process that is merely gone — so it is recorded as
-    # null rather than skipped.
-    settings = settings_for("adopted", supervisor.AdoptedSession("adopted-session", 99999999))
-    supervisor.write_supervisor_state(settings.state_path, {
-        supervisor.AGENT_EXIT_CODE_STATE_KEY: 0,
-        supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY: "2026-01-01T00:00:00+00:00"})
-    written_states = []
-    real_write_supervisor_state = supervisor.write_supervisor_state
-
-    def write_recording(state_path, state):
-        written_states.append(dict(state))
-        real_write_supervisor_state(state_path, state)
-
-    with supervisor_names_replaced(write_supervisor_state=write_recording), \
-            contextlib.redirect_stdout(io.StringIO()):
-        supervisor.supervise_sessions(settings)
-    state = supervisor.read_supervisor_state(settings.state_path)
-    check("EXIT RECORD: an earlier record is cleared before an adopted session is watched",
-          written_states and supervisor.AGENT_EXIT_CODE_STATE_KEY not in written_states[0],
-          str(written_states))
-    check("EXIT RECORD: an adopted session's end is recorded with its code unknown",
-          supervisor.agent_exit_record_from_supervisor_state(state) is not None
-          and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY, "absent") is None,
           str(state))
 
     # A handoff arrives with a terminal to ask on. The session is still running
@@ -730,6 +715,18 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
 
     # A cleaner stopped by the handoff's timeout partway through a removal
     # leaves the announcement and no confirmation.
+    force_deleted_line = ("branch closed-head-branch: deleted with git branch -D, its last commit abc "
+                          "being the head of pull request #1 (closed)")
+    force_summary = supervisor.summarize_worktree_cleanup_output([
+        "branch orphaned-branch: deleted", force_deleted_line])
+    check("WORKTREE CLEANUP: a branch deleted with git branch -D is reported on its own, not among "
+          "the branches with nothing beyond main",
+          force_summary == ("worktree cleanup: 0 finished worktree(s) removed, "
+                            "1 branch ref(s) with nothing beyond main deleted; "
+                            "1 finished pull request's head branch(es), holding commits main lacks, "
+                            "deleted with git branch -D: " + force_deleted_line),
+          force_summary)
+
     stopped_summary = supervisor.summarize_worktree_cleanup_output([
         "first-wt: removing it will discard 1 uncommitted, untracked or ignored file(s): one.txt",
         "first-wt: removed, branch first-branch deleted",
@@ -855,9 +852,9 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
 
     kept_marker = supervisor.KEPT_FOR_RECORDS_MARKER + "cold-read-records/r-2026-10-19 "
     kept_summary = supervisor.summarize_worktree_cleanup_output([
-        "failed-ship-wt" + kept_marker + "(FAILED: r-2026-10-19 — ned-box unreachable)",
+        "failed-ship-wt" + kept_marker + "(FAILED: r-2026-10-19 — nedlern@ned-box unreachable)",
         "failed-ship-wt" + supervisor.KEPT_FOR_RECORDS_MARKER
-        + "sanity-check-records/s-2026-10-19 (FAILED: s-2026-10-19 — ned-box unreachable)",
+        + "sanity-check-records/s-2026-10-19 (FAILED: s-2026-10-19 — nedlern@ned-box unreachable)",
         "silent-ship-wt" + kept_marker
         + "(the shipper printed nothing (exit 1): NotADirectoryError: store)",
         "locked-wt: removal FAILED — locked",
@@ -992,7 +989,7 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
 
     # A printed failure explains a nonzero exit only when the cleaner went on to finish.
     kept_for_record_line = ("rec-wt" + supervisor.KEPT_FOR_RECORDS_MARKER
-                            + "cold-read-records/r (FAILED: ned-box unreachable)")
+                            + "cold-read-records/r (FAILED: nedlern@ned-box unreachable)")
     for kind, printed in (
             ("worktree kept for an unshipped record", f"print({kept_for_record_line!r})\n"),
             ("failed removal", "print('locked-wt: removal FAILED — locked')\n")):
@@ -1113,7 +1110,7 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
 
 def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
     """The ruling of 2026-09-21 (GHI [The handoff-supervisor resumes a session
-    that died without a handoff, instead of stopping the seat](https://github.com/nedschorus/nedschorus/issues/613)):
+    that died without a handoff, instead of stopping the seat](https://github.com/nedsnodes/nedsnodes/issues/613)):
     a session that dies without writing a handoff is resumed, chosen by how it
     died, under a budget of one resume that produces no new work.
 
@@ -1141,8 +1138,7 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
             (-15, True, "SIGTERM", "exit code -15 (SIGTERM, as subprocess reports it)"),
             (137, True, "SIGKILL", "exit code 137 (SIGKILL, as a shell reports it)"),
             (-9, True, "SIGKILL", "exit code -9 (SIGKILL, as subprocess reports it)"),
-            (3, True, "error status", "exit code 3 (another non-zero status)"),
-            (None, False, "adopted session", "exit code None (an adopted session)")):
+            (3, True, "error status", "exit code 3 (another non-zero status)")):
         decision = supervisor.resume_or_stop_after_a_death_without_a_handoff(exit_code)
         check(f"RULING TABLE: {row} -> {'resume' if expect_resume else 'stop'}",
               decision.resume is expect_resume and reason_fragment in decision.reason,
@@ -1184,7 +1180,7 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
     first_prompt = "You are the seat. Do the work."
 
     def supervise_a_seat_whose_sessions_die(case: str, deaths, stdin_isatty=True,
-                                            adopted_session=None, handoffs_after_launches=(),
+                                            handoffs_after_launches=(),
                                             resume_session_id="", seat_first_prompt=None,
                                             transcripts_before_the_supervisor=None,
                                             transcripts_unreadable_after_launches=()):
@@ -1218,7 +1214,7 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
             agent=f"death{case}", working_directory=workspace,
             handoff_directory=case_directory, agent_command="unused-stub-agent",
             first_prompt=first_prompt if seat_first_prompt is None else seat_first_prompt,
-            adopted_session=adopted_session, resume_session_id=resume_session_id)
+            resume_session_id=resume_session_id)
         launches, state_at_each_launch = [], []
         for earlier_session_id, earlier_turns in (transcripts_before_the_supervisor or {}).items():
             with (case_projects / f"{earlier_session_id}.jsonl").open("w", encoding="utf-8") as stream:
@@ -1312,20 +1308,7 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
               and died.launches[0][1] == supervisor.first_prompt_from_launch_command_marked_not_typed_by_the_user(first_prompt),
               str(died.launches))
 
-    # 3. An adopted session's code is None — this supervisor never owned it —
-    # so its death stops the seat, and nothing is launched over it.
-    adopted = supervise_a_seat_whose_sessions_die(
-        "adopted", [(0, 0)], adopted_session=supervisor.AdoptedSession("adopted-session", 99999999))
-    check("TABLE IN THE LOOP: an adopted session's death stops without launching anything",
-          adopted.launches == [] and not adopted.overran
-          and "exit code is unknown" in adopted.printed,
-          f"{adopted.launches} {adopted.printed[-300:]}")
-    check("TABLE IN THE LOOP: the adopted stop still writes the exit record, code unknown",
-          adopted.record is not None
-          and adopted.state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY, "absent") is None,
-          str(adopted.state))
-
-    # 4. THE BUDGET STOPS A LOOP. A session that dies again and again without
+    # 3. THE BUDGET STOPS A LOOP. A session that dies again and again without
     # adding a single turn gets its launch and one resume, and no more. The
     # script holds four deaths, so a third launch would be taken rather than
     # raising: the count below is the assertion, not merely that it stopped.
@@ -1351,8 +1334,15 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
           all(supervisor.AGENT_EXIT_CODE_STATE_KEY not in launched_state
               for launched_state in looping.state_at_each_launch),
           str(looping.state_at_each_launch))
+    looping_session_id = looping.launches[0][0]
+    check("BUDGET: the console says launching for the first launch and resuming for the resume",
+          [line for line in looping.printed.splitlines()
+           if f" session {looping_session_id} (generation 0)" in line]
+          == [f"handoff-supervisor: launching session {looping_session_id} (generation 0)",
+              f"handoff-supervisor: resuming session {looping_session_id} (generation 0)"],
+          looping.printed[-600:])
 
-    # 5. THE BUDGET RESETS. The second session does real work before dying, so
+    # 4. THE BUDGET RESETS. The second session does real work before dying, so
     # the resume that produced it is not a workless one and the budget comes
     # back whole: this seat gets three launches where the looping seat got
     # two. Without the reset a long-lived seat would eventually refuse to
@@ -1374,7 +1364,7 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
     # 5a. A SUCCESSOR STARTS WITH THE BUDGET WHOLE. The predecessor spends its
     # one resume, works, and writes a handoff; the successor works and dies.
     # Found at c7419d4 by merge-lane-2's review of PR [The handoff-supervisor
-    # resumes a session that died without a handoff](https://github.com/nedschorus/nedschorus/pull/651):
+    # resumes a session that died without a handoff](https://github.com/nedsnodes/nedsnodes/pull/651):
     # the successor was measured against its predecessor's turn count and
     # spent budget, refused, and the seat went dark.
     reincarnated = supervise_a_seat_whose_sessions_die(
@@ -1513,7 +1503,7 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
     check("CUT TRANSCRIPT: a transcript cut mid-character counts its whole turns, not a crash",
           cut_count == 1, repr(cut_count))
 
-    # 6. The no-terminal refusal holds for a resume exactly as for a successor:
+    # 5. The no-terminal refusal holds for a resume exactly as for a successor:
     # a resumed session inherits this supervisor's stdio, and without a
     # terminal it reads EOF at its first need for input (observed 2026-08-14).
     seatless = supervise_a_seat_whose_sessions_die("noterminal", [(-15, 0), (-15, 0)],

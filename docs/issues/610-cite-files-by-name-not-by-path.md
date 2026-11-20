@@ -51,7 +51,7 @@ All measured at commit [Merge pull request #606 from nedschorus/ghi-terms-are-na
 | `SUPERVISOR_STATE_FILE_SUFFIX` | `-supervisor-state.json` | `handoff-supervisor.py` |
 | `SUPERVISOR_LOCK_FILE_SUFFIX` | `-supervisor.lock` | `handoff-supervisor.py` |
 | `HANDOFF_FILE_SUFFIX` | `-handoff.md` | `handoff-supervisor.py` |
-| `FIRED_MARKER_SUFFIX` | `-handoff-asked` | `handoff-context-threshold-hook.py` |
+| `HANDOFF_ASKED_MARKER_SUFFIX` | `-handoff-asked` | `handoff-context-threshold-hook.py` |
 | `SEAT_NAME_SUFFIX` | `-tasks` | `seat-shared-file-ship.py` |
 | `MINUTES_ROLE_SUFFIX` | `-minutes` | `walk-files-ship.py` |
 | `WALK_DRAFT_SUFFIX` | `-draft.md` | `cold-read-fast-read.py` |

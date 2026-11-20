@@ -387,7 +387,7 @@ check("every registered hook that may install the pinned libraries has a timeout
 # Each way a hook reaches the install must be found, or the case above checks nothing for it.
 check("the timeout case finds the hard-wrap reminder, which loads the Markdown parser, and a Bash "
       "guard that loads the shell reader",
-      ("scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook-nbd.py", "the Markdown parser")
+      ("scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook-hack.py", "the Markdown parser")
       in [(entry[0], entry[3]) for entry in installing_hooks]
       and any(entry[3] == "the shell reader" for entry in installing_hooks), installing_hooks)
 

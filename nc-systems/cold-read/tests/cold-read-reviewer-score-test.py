@@ -71,6 +71,11 @@ def run(*args):
                           capture_output=True, text=True, check=False)
 
 
+def without_test_paths(text):
+    """Return text without the scorer's path and the scratch directory, which may hold any word."""
+    return text.replace(str(SCORER), "").replace(str(scratch), "")
+
+
 def placement_table(rows):
     """rows: (id, placement, confidence, reason[, quote]). Returns one table."""
     out = ["| Finding | Quote | Placement | Confidence | Reason |",
@@ -186,6 +191,22 @@ with tempfile.TemporaryDirectory(prefix="cold-read-reviewer-score-test-") as nam
     check("a list with no sentences-with-no-defect section gives None, not an "
           "empty list that would print twelve true negatives for nothing",
           scorer.read_defect_list_sentences_with_no_defect(plain_ruler) is None)
+    id_only_ruler = scratch / "id-only-sentence-row.md"
+    id_only_ruler.write_text("## Sentences with no defect\n\n| N3 |\n"
+                             "| N1 | A sentence. |\n", encoding="utf-8")
+    try:
+        id_only_sentences = scorer.read_defect_list_sentences_with_no_defect(id_only_ruler)
+    except IndexError as error:
+        id_only_sentences = f"IndexError: {error}"
+    check("a sentences-with-no-defect row holding an id and no sentence is "
+          "skipped, not a crash",
+          id_only_sentences == {"N1": "A sentence."}, str(id_only_sentences))
+    check("a section starts on the line after its heading: text after the "
+          "heading on the heading's own line is not part of it",
+          scorer.read_section("## Table 2 — U9 retired\n| U1 |\n## Next\n",
+                              "## Table 2") == "| U1 |\n",
+          repr(scorer.read_section("## Table 2 — U9 retired\n| U1 |\n## Next\n",
+                                   "## Table 2")))
 
     # --- Scoring arithmetic ------------------------------------------------
     result = run("--placements", str(placements), "--defect-list", str(ruler))
@@ -310,7 +331,7 @@ with tempfile.TemporaryDirectory(prefix="cold-read-reviewer-score-test-") as nam
           and "The two files are different." in result.stderr
           and f"rename {same_run / 'ann-run-1--placement.md'} to "
               f"{same_run / 'ann-run-3--placement.md'}" in result.stderr
-          and "delete" not in result.stderr
+          and "delete" not in without_test_paths(result.stderr)
           and "Then run the scorer again: python3 " in result.stderr,
           result.stdout + result.stderr)
     padded_run = write_placements(scratch / "padded-run-number", {
@@ -323,7 +344,7 @@ with tempfile.TemporaryDirectory(prefix="cold-read-reviewer-score-test-") as nam
           result.returncode == 64 and "both run 1 of reader 'ann'" in result.stderr
           and "The two files are byte-identical" in result.stderr
           and f"delete {padded_run / 'ann-run-1--placement.md'}." in result.stderr
-          and "rename" not in result.stderr,
+          and "rename" not in without_test_paths(result.stderr),
           result.stdout + result.stderr)
     check("a reviewer's name is the file name before '--placement.md'",
           scorer.reviewer_name_from_placement_file_name(pathlib.Path("a--b--placement.md")) == "a--b"
@@ -379,6 +400,41 @@ with tempfile.TemporaryDirectory(prefix="cold-read-reviewer-score-test-") as nam
     check("a heavy row missed in half the runs of a set is listed as missed, "
           "and the median of 9 and 5 prints as 7",
           "| ann + bob | 7 | 54 % | 2 | 1 |" in result.stdout,
+          result.stdout + result.stderr)
+
+    captured = io.StringIO()
+    with contextlib.redirect_stdout(captured):
+        scorer.print_unions({"ann": {"rows_hit": {2}}, "bob": {"rows_hit": {2}}},
+                            {1: 5, 2: 1}, 6, [2], 6)
+    check("a row of weight exactly 5 that a set misses in its only run is "
+          "listed as a heavy row missed",
+          "| ann + bob | 1 | 17 % | 1 | 1 |" in captured.getvalue(),
+          captured.getvalue())
+
+    captured = io.StringIO()
+    with contextlib.redirect_stdout(captured):
+        scorer.print_unions({"ann-run-1": {"rows_hit": {1}},
+                             "bob-run-2": {"rows_hit": {2}},
+                             "carl-run-1": {"rows_hit": {3}}},
+                            weights, total, [3, 2], 6)
+    check("a set size with no run every member shares is skipped, and the "
+          "sizes after it are still scored: sets of 3 share no run, "
+          "ann + carl share run 1",
+          "### Sets of 3" not in captured.getvalue()
+          and "| ann + carl | 9 | 69 % | 2 | none |" in captured.getvalue(),
+          captured.getvalue())
+
+    odd_highest_run = write_placements(scratch / "odd-highest-run", {
+        "ann--placement.md": [("1", "ROW 1", "sure", "x")],
+        "ann-run-1--placement.md": [("1", "ROW 2", "sure", "x")],
+        "zed-run-4--placement.md": [("1", "ROW 3", "sure", "x")],
+    })
+    result = run("--placements", str(odd_highest_run), "--defect-list", str(ruler))
+    check("the run number offered for the renamed file is one past the "
+          "highest run of that reader alone: ann's highest is 1, so 2, "
+          "whatever run another reader has",
+          f"rename {odd_highest_run / 'ann-run-1--placement.md'} to "
+          f"{odd_highest_run / 'ann-run-2--placement.md'}" in result.stderr,
           result.stdout + result.stderr)
 
     # --- Flags on the sentences with no defect -----------------------------

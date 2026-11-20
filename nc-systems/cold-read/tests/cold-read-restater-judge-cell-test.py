@@ -136,6 +136,19 @@ if "dump_prompt" in step:
 if "report" in step:
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(step["report"], encoding="utf-8")
+if "dump_record_directory_lock_held" in step:
+    # What the shipper's lock test sees while the judge writes: "held" when any process holds the
+    # record's being-written lock, so a shipment now would print FAILED and copy nothing.
+    import fcntl
+    probe = os.open(report_path.parent, os.O_RDONLY)
+    try:
+        fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        held = "free"
+    except BlockingIOError:
+        held = "held"
+    finally:
+        os.close(probe)
+    pathlib.Path(step["dump_record_directory_lock_held"]).write_text(held, encoding="utf-8")
 if "stdout" in step:
     sys.stdout.write(step["stdout"])
 sys.exit(step.get("exit", 0))
@@ -480,6 +493,21 @@ with tempfile.TemporaryDirectory() as scratch:
           and str(other_directory / "test-cases/draft-one.md") in judged
           and str(repository / "test-cases") not in judged,
           f"exit {result.returncode}; stderr={result.stderr[-400:]!r}; prompt={judged[:300]!r}")
+
+    # A judge cell run directly holds its record's being-written lock while the judge writes, so
+    # no shipment copies the record half-written.
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "direct-lock")
+    lock_held_file = scratch / "direct-judge-record-directory-lock-held"
+    result = run_judge_cell(
+        repository, stubs,
+        {"*": {"report": STUB_JUDGE_REPORT, "dump_record_directory_lock_held": str(lock_held_file)}},
+        report,
+    )
+    lock_seen = lock_held_file.read_text(encoding="utf-8") if lock_held_file.exists() else "not written"
+    check("a judge cell run directly holds its record's being-written lock while the judge writes",
+          lock_seen == "held" and result.returncode == 0,
+          f"lock {lock_seen}; exit {result.returncode}; stderr={result.stderr[-1000:]!r}")
 
 print()
 if failures:

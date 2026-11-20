@@ -25,6 +25,12 @@ SCRIPT_PATH = Path(__file__).with_name(
 _spec = importlib.util.spec_from_file_location("tmp_cleanup_rule_installer", SCRIPT_PATH)
 installer = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(installer)
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    Path(__file__).resolve().with_name("git-redirecting-environment-removal-test-fixture.py"))
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 RULE = Path("/checkout/config/rule.conf")
 failures = []
@@ -237,6 +243,67 @@ else:
     check("the rule file parses: systemd-tmpfiles accepts it with nothing to report",
           parsed.returncode == 0 and parsed.stderr == "",
           f"exit {parsed.returncode}: {parsed.stderr}")
+
+# The user's install command first fast-forwards the reference-checkout. Run that part on a
+# real clone holding an ignored file at a path main newly tracks: git must refuse and leave it.
+with tempfile.TemporaryDirectory() as scratch:
+    root = Path(scratch)
+
+    def git(arguments, cwd):
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                        *arguments], cwd=cwd, check=True, capture_output=True)
+
+    origin = root / "origin"
+    origin.mkdir()
+    git(["init", "-q", "-b", "main"], origin)
+    git(["commit", "-q", "--allow-empty", "-m", "first"], origin)
+    clone = root / "clone"
+    git(["clone", "-q", str(origin), str(clone)], root)
+    (origin / "ignored-here").mkdir()
+    (origin / "ignored-here" / "notes.txt").write_text("main's copy\n")
+    git(["add", "-A"], origin)
+    git(["commit", "-q", "-m", "main tracks a file the clone ignores"], origin)
+    (clone / "ignored-here").mkdir()
+    (clone / "ignored-here" / ".gitignore").write_text("*\n")
+    (clone / "ignored-here" / "notes.txt").write_text("the only copy\n")
+    on_ned_box = installer.USER_INSTALL_COMMAND_LINE.split("'")[1]
+    fast_forward = on_ned_box.split(" && python3 ")[0].replace(
+        "~/Projects/nedschorus", str(clone))
+    ran = subprocess.run(fast_forward, shell=True, capture_output=True, text=True)
+    survived = (clone / "ignored-here" / "notes.txt").read_text()
+check("the install command's fast-forward over an ignored file at a path main tracks fails, "
+      "naming the file",
+      ran.returncode != 0 and "ignored-here/notes.txt" in ran.stderr,
+      (fast_forward, ran.returncode, ran.stderr))
+check("and the ignored file survives", survived == "the only copy\n", survived)
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+
+    def git(arguments, cwd):
+        return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                               *arguments], cwd=cwd, check=True, capture_output=True,
+                              text=True).stdout.strip()
+
+    origin = root / "origin"
+    origin.mkdir()
+    git(["init", "-q", "-b", "main"], origin)
+    git(["commit", "-q", "--allow-empty", "-m", "first"], origin)
+    clone = root / "clone"
+    git(["clone", "-q", str(origin), str(clone)], root)
+    git(["commit", "-q", "--allow-empty", "-m", "main moves on"], origin)
+    git(["switch", "-q", "-c", "some-topic-branch"], clone)
+    topic_before = git(["rev-parse", "HEAD"], clone)
+    on_ned_box = installer.USER_INSTALL_COMMAND_LINE.split("'")[1]
+    fast_forward = on_ned_box.split(" && python3 ")[0].replace(
+        "~/Projects/nedschorus", str(clone), 1)
+    ran = subprocess.run(fast_forward, shell=True, capture_output=True, text=True)
+    topic_after = git(["rev-parse", "HEAD"], clone)
+check("the install command stops when the reference-checkout is on a branch other than main, "
+      "saying so",
+      ran.returncode != 0 and "is not on main" in ran.stderr, (ran.returncode, ran.stderr))
+check("and that branch is not fast-forwarded", topic_after == topic_before,
+      (topic_before, topic_after))
 
 if failures:
     print(f"\n{len(failures)} failed: {', '.join(failures)}")

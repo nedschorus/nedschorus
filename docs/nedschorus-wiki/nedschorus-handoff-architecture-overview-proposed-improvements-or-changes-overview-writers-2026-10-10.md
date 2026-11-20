@@ -18,7 +18,7 @@ State: open
 
 Gain: a smaller handoff-supervisor. `--adopt-session-id`, `--adopt-process-id` and `AdoptedSession` are passed by no launcher or recovery program; `resupervise-seat.py` retires an unsupervised agent-session instead, and its docstring says no entry point reaches adoption. GHI [Run named agents on the Ubuntu box, reachable from iTerm2 by name: launch-claude with tmux attach-or-create, and the migration it requires](https://github.com/nedschorus/nedschorus/issues/45) records adoption of a running agent-session as deliberately deferred, so removal may need the user; git keeps the code if it is wanted later.
 Rests on: `nc-systems/handoff/handoff-supervisor.py:1254-1293` (`class AdoptedSession`), `:1524-1537` and `:1619-1626` (the adopted branches of `supervise_sessions`), `:1803-1809` and `:1830-1845` (the flags and their checks), `:64-65` and `:420-424` (the unknown-exit-code case only an adopted session has); `scripts/resupervise-seat.py:45-47` ("which no entry point reaches"); a search of `scripts/` and `nc-systems/` for `adopt-session-id` outside the handoff-supervisor and tests found only that docstring.
-State: open
+State: done
 
 ## E5 — improvement: delete the changeover check for handoff-supervisors that predate the flock lock
 

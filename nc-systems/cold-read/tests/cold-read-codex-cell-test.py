@@ -54,8 +54,8 @@ covered in nc-systems/cold-read/tests/cold-read-cell-common-test.py.
 Every case runs the cell with a stub `codex` first on PATH, so no model is
 ever called: the stub is the seam that lets the cell's own logic be tested
 without the model, the money, or the wait. Every case also runs it with HOME
-at a scratch home, so the cell's credential scan and the permission profile
-it hands codex name no path in the real home (checked on the successful
+at a scratch home, so the permission profile it hands codex names no path
+in the real home (checked on the successful
 path, from the argv the stub was given).
 
 Every case runs a copy of the cell outside this checkout, most of them from
@@ -353,11 +353,9 @@ with tempfile.TemporaryDirectory() as scratch:
           and "STUB CODEX CELL REPORT" in report_text, repr(report_text[:200]))
     check("the successful cell prints nothing to stdout",
           result.stdout == "", repr(result.stdout[:200]))
-    # The permission profile names what the credential scan found. Run with
-    # the real HOME, it names the real home's credential directories, and
-    # on Linux every credential-named file in the real home; run with the
-    # scratch home it names nothing there. Paths inside the repository are
-    # the repository scan root's, and are left out of the comparison.
+    # Run with the real HOME, the permission profile names the real home's
+    # credential directories; run with the scratch home it names nothing
+    # there. Paths inside the repository are left out of the comparison.
     received_argv = (json.loads(argv_dump.read_text(encoding="utf-8"))
                      if argv_dump.is_file() else [])
     profile_table = next((argument for argument in received_argv

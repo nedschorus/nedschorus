@@ -37,7 +37,7 @@ production_scripts() warns about below: the writer stopped being parsed, and
 its three cases went on passing by finding nothing in a file they no longer
 read (finding 2 of the review of pull request [The handoff system moves into
 nc-systems/handoff/, except what a live seat holds]
-(https://github.com/nedschorus/nedschorus/pull/578), 2026-09-21; measured
+(https://github.com/nedsnodes/nedsnodes/pull/578), 2026-09-21; measured
 that day -- a hand-built name added to the writer failed nothing). The set
 of scripts read is derived from the layout now, and
 PROGRAMS_THAT_NEED_THESE_FILE_NAMES fails loudly when a program this suite
@@ -178,13 +178,13 @@ def module_level_suffix_constant_names(tree):
     Until 2026-09-28 these names were a hand-typed set beside
     SPELLED_OUT_NAMES, and the pull request [The name guard reads the
     supervisor's constants instead of its own
-    copy](https://github.com/nedschorus/nedschorus/pull/599) anchored only
+    copy](https://github.com/nedsnodes/nedsnodes/pull/599) anchored only
     the values. A constant added under a new name was then invisible to every
     case: the seat merge-lane-2 added a fourth *_SUFFIX constant to the
     supervisor and built a file name from it by hand, and the suite exited 0,
     while changing a known constant's value exited 1. The case is not hypothetical: the pull
     request [The handoff file's name is defined
-    once](https://github.com/nedschorus/nedschorus/pull/579) added
+    once](https://github.com/nedsnodes/nedsnodes/pull/579) added
     HANDOFF_FILE_SUFFIX as the third constant, and both lists had to be
     updated by hand. User-approved 2026-09-28, walk
     open-items-this-seat-holds-2026-09-24, item 7.
@@ -275,6 +275,20 @@ def suffix_constants_defining_failure_detail(defining):
         f"If {supervisor} no longer defines them, put the definitions back in "
         f"nc-systems/handoff/{supervisor}.",
         RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE])
+
+
+def every_program_read_case(names_read):
+    """(passed, detail) of the case that every program needing these names
+    is among the scripts read, given the names of the scripts read."""
+    programs_not_read = [name for name in PROGRAMS_THAT_NEED_THESE_FILE_NAMES
+                         if name not in names_read]
+    return not programs_not_read, programs_not_read_failure_detail(programs_not_read)
+
+
+def suffix_constants_defined_once_case(defining):
+    """(passed, detail) of the case that only the supervisor defines the
+    suffix constants, given the names of the scripts that define them."""
+    return defining == [SUPERVISOR_SCRIPT.name], suffix_constants_defining_failure_detail(defining)
 
 
 def production_scripts():
@@ -409,7 +423,7 @@ def definitions_by_constant(tree):
     remedy clause at all -- finding 3 of PR #599 coming back for that shape
     (reviewer of the pull request [A suffix constant defined twice is named
     as a duplicate, annotation
-    included](https://github.com/nedschorus/nedschorus/pull/643),
+    included](https://github.com/nedsnodes/nedsnodes/pull/643),
     2026-09-22).
 
     WHICH LINE IS IN FORCE IS A QUESTION ONLY WHEN EVERY DEFINITION IS
@@ -731,14 +745,13 @@ for script in scripts_read:
 # Asked first, because it is the question every case below assumes an answer
 # to. Each of them reports what it found in the scripts that were read; none
 # of them can say anything about a script that was not.
-names_read = {script.name for script in scripts_read}
-programs_not_read = [name for name in PROGRAMS_THAT_NEED_THESE_FILE_NAMES
-                     if name not in names_read]
 check("every program that needs these names is among the scripts read",
-      not programs_not_read, programs_not_read_failure_detail(programs_not_read))
+      *every_program_read_case({script.name for script in scripts_read}))
+moved_out_passed, moved_out_detail = every_program_read_case(
+    set(PROGRAMS_THAT_NEED_THESE_FILE_NAMES) - {"recover-crashed-seats.py"})
 check("a program moved out of the places this suite reads fails with the rule and one fix "
       "per cause",
-      programs_not_read_failure_detail(["recover-crashed-seats.py"]).split("\n") == [
+      not moved_out_passed and moved_out_detail.split("\n") == [
           "['recover-crashed-seats.py'] not found directly in scripts/ or in an "
           "nc-systems/<system>/ directory, the places this suite reads; the cases below cannot "
           "check a program they do not read.",
@@ -751,7 +764,7 @@ check("a program moved out of the places this suite reads fails with the rule an
           "If your change deleted one of those programs, remove it from "
           "PROGRAMS_THAT_NEED_THESE_FILE_NAMES in scripts/supervisor-file-names-defined-once-test.py.",
           RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
-      programs_not_read_failure_detail(["recover-crashed-seats.py"]))
+      moved_out_detail)
 
 check("no production script composes any of these file names itself",
       not composing,
@@ -832,10 +845,11 @@ check("the names this guard hunts are the supervisor's own, not a stale copy",
          and not duplicated_constants else ""))
 
 check("the suffix constants are defined in one script",
-      defining == [SUPERVISOR_SCRIPT.name], suffix_constants_defining_failure_detail(defining))
+      *suffix_constants_defined_once_case(defining))
+second_definer_passed, second_definer_detail = suffix_constants_defined_once_case(
+    ["handoff-supervisor.py", "recover-crashed-seats.py"])
 check("a second script defining the suffix constants fails with the rule and one fix per cause",
-      suffix_constants_defining_failure_detail(
-          ["handoff-supervisor.py", "recover-crashed-seats.py"]).split("\n") == [
+      not second_definer_passed and second_definer_detail.split("\n") == [
           "defined in ['handoff-supervisor.py', 'recover-crashed-seats.py'], expected only "
           "handoff-supervisor.py; every other script imports them from handoff-supervisor.py, so "
           "that a renamed suffix changes in one definition.",
@@ -844,11 +858,12 @@ check("a second script defining the suffix constants fails with the rule and one
           "If handoff-supervisor.py no longer defines them, put the definitions back in "
           "nc-systems/handoff/handoff-supervisor.py.",
           RULE_FAILURE_LINES.FAILURE_MAY_COME_FROM_MAIN_NOT_YOUR_CHANGE_REPORT_IT_CLOSING_LINE],
-      suffix_constants_defining_failure_detail(["handoff-supervisor.py", "recover-crashed-seats.py"]))
+      second_definer_detail)
+no_definer_passed, no_definer_detail = suffix_constants_defined_once_case([])
 check("no script defining the suffix constants says so",
-      suffix_constants_defining_failure_detail([]).startswith(
+      not no_definer_passed and no_definer_detail.startswith(
           "defined in no script, expected only handoff-supervisor.py;"),
-      suffix_constants_defining_failure_detail([]))
+      no_definer_detail)
 
 print()
 if failures:

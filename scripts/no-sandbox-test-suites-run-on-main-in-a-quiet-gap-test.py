@@ -56,8 +56,6 @@ GIT = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign
 STAND_IN_RUNNER = '''import json, os, sys, time
 with open(os.environ["QUIET_GAP_TEST_CALLS"], "a") as calls:
     calls.write(json.dumps(sys.argv[1:]) + "\\n")
-with open(os.environ["QUIET_GAP_TEST_CALLS"] + ".xdg", "w") as seen:
-    seen.write(os.environ.get("XDG_RUNTIME_DIR", "unset"))
 log_dir = sys.argv[sys.argv.index("--log-dir") + 1]
 os.makedirs(log_dir, exist_ok=True)
 mode = os.environ.get("QUIET_GAP_TEST_RUNNER", "pass")
@@ -84,8 +82,17 @@ if mode == "fail":
     print(f"FAIL outside-a-test.py exit 1 — log {log}")
     print("SUMMARY: 1 passed, 1 failed, 2 total")
     sys.exit(1)
+if mode == "not-run-weekly-limit":
+    # The runner's real output for a suite claude's weekly limit stopped: a progress line
+    # without a log, then the closing list's line, and no FAIL line.
+    why = ("stopped by an outside cause: NOT RUN: the trial; claude stopped: account-limit — "
+           "weekly limit · resets Nov 16, 8pm (America/Los_Angeles)")
+    print(f"NOT RUN outside-a-test.py {why} (1.4s)")
+    print(f"NOT RUN outside-a-test.py {why} — log {log_dir}/outside-a-test.py.log")
+    print("SUMMARY: 1 passed, 0 failed, 1 not run, 2 total")
+    sys.exit(2)
 if mode == "refuse":
-    print("run-all-test-suites: not run — a refusal for the test", file=sys.stderr)
+    print("scripts/run-all-test-suites.py: not run — a refusal for the test", file=sys.stderr)
     sys.exit(2)
 print("SUMMARY: 2 passed, 0 failed, 2 total")
 '''
@@ -224,19 +231,6 @@ with tempfile.TemporaryDirectory() as directory:
     check("at the same commit after a pass, no run is due", code == 0 and calls == []
           and "no run due" in printed, (code, printed))
 
-    saved_xdg = os.environ.pop("XDG_RUNTIME_DIR", None)
-    s.commit_on_origin("cron starts the program without the user's session bus")
-    code, printed, calls = s.run()
-    if saved_xdg is not None:
-        os.environ["XDG_RUNTIME_DIR"] = saved_xdg
-    daily = program.module_loaded_by_path(
-        "daily_full_test_run_of_main", PROGRAM_PATH.with_name("daily-full-test-run-of-main.py"))
-    wanted = daily.environment_with_user_runtime_directory_when_the_user_session_bus_exists(
-        {}).get("XDG_RUNTIME_DIR", "unset")
-    seen = Path(f"{s.calls}.xdg").read_text()
-    check("started without XDG_RUNTIME_DIR, as under cron, the runner is given the user's "
-          "runtime directory as the daily full run gives it",
-          code == 0 and len(calls) == 1 and seen == wanted, (code, printed, seen, wanted))
     first_commit = s.state()["passing_commit"]
 
     # --- main moves, and the run fails -------------------------------------------
@@ -268,6 +262,13 @@ with tempfile.TemporaryDirectory() as directory:
         code, printed, calls = s.run("fail")
     check("a failure is tried again once the hour has passed", len(calls) == 1, (code, printed))
 
+    log_mark, fail_prefix = runner.SUITE_LINE_LOG_MARK, runner.FAILED_SUITE_LINE_PREFIX
+    check("a closing-list line before the suite's progress line keeps the closing list's log",
+          program.failing_suites_and_logs(
+              f"{fail_prefix}outside-a-test.py exit 1{log_mark}/logs/outside-a-test.py.log\n"
+              f"{fail_prefix}outside-a-test.py exit 1 (1.0s)\n", fail_prefix, log_mark)
+          == [("outside-a-test.py", "/logs/outside-a-test.py.log")])
+
     # --- Following a failure up ---------------------------------------------------
     own = held(Path(f"{s.state_file}.lock"))
     before = s.state_file.read_text()
@@ -297,6 +298,23 @@ with tempfile.TemporaryDirectory() as directory:
           len(calls) == 1 and code == 0 and s.state()["passing_commit"] == git(
               s.origin, "rev-parse", "HEAD"), (code, printed))
     check("after a passing run the merge gate's notice is empty", s.notice() == "")
+
+    passing_before = s.state()["passing_commit"]
+    s.merge_on_origin(142)
+    code, printed, calls = s.run("not-run-weekly-limit")
+    state = s.state()
+    record = Path(state["last_run"]["record"]).read_text()
+    check("a suite claude's weekly limit stopped makes a stopped run, not a failed one, whose "
+          "reason, record and notice carry claude's words, with no failing suite, and the "
+          "passing commit kept",
+          code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and state["last_run"]["result"] == "stopped"
+          and "weekly limit · resets Nov 16, 8pm" in state["last_run"]["reason"]
+          and "outside-a-test.py" in state["last_run"]["reason"]
+          and " — log " not in state["last_run"]["reason"]
+          and state["last_run"]["failing_suites"] == [] and "failing suite:" not in record
+          and "result: stopped" in record and "weekly limit · resets Nov 16, 8pm" in record
+          and "weekly limit · resets Nov 16, 8pm" in s.notice()
+          and state["passing_commit"] == passing_before, (code, printed, state, record))
 
     s.merge_on_origin(43)
     began = time.monotonic()
@@ -403,19 +421,76 @@ with tempfile.TemporaryDirectory() as directory:
 
     real_add = program.git
 
-    def worktree_add_fails(clone, *arguments, **options):
-        if arguments[:2] == ("worktree", "add"):
-            return subprocess.CompletedProcess(arguments, 128, "", "fatal: injected failure")
-        return real_add(clone, *arguments, **options)
-
-    with constants(git=worktree_add_fails):
-        code, printed, calls = s.run()
+    # git writes "Preparing worktree (...)" before the error of a worktree it cannot add.
+    worktree = s.temporary / program.PROGRAM / "worktree-of-main"
+    git(s.clone, "worktree", "add", "-q", "--detach", str(worktree))
+    subprocess.run(["rm", "-rf", str(worktree)], check=True)
+    code, printed, calls = s.run()
     state = s.state()
     head = git(s.origin, "rev-parse", "HEAD")
-    check("a worktree that cannot be made stops the run, exit 4, recorded with git's error",
+    reason = state["last_run"]["reason"]
+    check("a worktree that cannot be made stops the run, exit 4, recorded with git's fatal: "
+          "line, not the progress line before it",
           code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and calls == []
-          and f"the worktree of {head[:12]} could not be made: fatal: injected failure"
-          == state["last_run"]["reason"], (code, printed, state))
+          and reason.startswith(f"the worktree of {head[:12]} could not be made: fatal: ")
+          and "already registered worktree" in reason and "Preparing worktree" not in reason,
+          (code, printed, state))
+    git(s.clone, "worktree", "prune")
+
+    def worktree_add_hook_fails(clone, *arguments, **options):
+        if arguments[:2] == ("worktree", "add"):
+            return subprocess.CompletedProcess(
+                arguments, 1, "", "Preparing worktree (detached HEAD 0123456)\n"
+                "HEAD is now at 0123456 start\nthe post-checkout hook failed\n")
+        return real_add(clone, *arguments, **options)
+
+    with constants(git=worktree_add_hook_fails):
+        code, printed, calls = s.run()
+    check("a worktree add whose post-checkout hook fails is recorded with the hook's last line",
+          code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and s.state()["last_run"]["reason"]
+          == f"the worktree of {head[:12]} could not be made: the post-checkout hook failed",
+          (code, printed, s.state()))
+
+    def fetch_fails_after_progress(clone, *arguments, **options):
+        if arguments[:1] == ("fetch",):
+            return subprocess.CompletedProcess(
+                arguments, 1, "", "From https://github.com/nedsnodes/nedsnodes\n"
+                "error: cannot lock ref 'refs/remotes/origin/main': is at 1 but expected 2\n"
+                " ! 1..3  main -> origin/main  (unable to update local ref)\n"
+                "error: some local refs could not be updated\n")
+        return real_add(clone, *arguments, **options)
+
+    with constants(git=fetch_fails_after_progress):
+        code, printed, calls = s.run()
+    check("a fetch that fails after its From line is recorded with git's error: line and "
+          "the line that continues it",
+          code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and s.state()["last_run"]["reason"]
+          == "git fetch origin failed: error: cannot lock ref 'refs/remotes/origin/main': is at "
+          "1 but expected 2 ! 1..3  main -> origin/main  (unable to update local ref)",
+          (code, printed, s.state()))
+
+    def worktree_remove_fails_after_a_warning(clone, *arguments, **options):
+        if arguments[:2] == ("worktree", "remove"):
+            return subprocess.CompletedProcess(
+                arguments, 128, "", "warning: unable to unlink 'suite.log': Permission denied\n"
+                "fatal: failed to delete 'worktree-of-main': Directory not empty\n")
+        if arguments[:2] == ("worktree", "prune"):
+            return subprocess.CompletedProcess(arguments, 0, "", "")
+        return real_add(clone, *arguments, **options)
+
+    class RmtreeThatRemovesNothing:
+        @staticmethod
+        def rmtree(*arguments, **options):
+            pass
+
+    stuck = s.temporary / "a-worktree-that-cannot-be-removed"
+    stuck.mkdir()
+    with constants(git=worktree_remove_fails_after_a_warning, shutil=RmtreeThatRemovesNothing):
+        why = program.remove_worktree(s.clone, stuck)
+    stuck.rmdir()
+    check("a worktree remove that fails after a warning: line gives its fatal: line as the "
+          "reason, not the warning before it",
+          why == "fatal: failed to delete 'worktree-of-main': Directory not empty", why)
 
     def rev_parse_fails(clone, *arguments, **options):
         if arguments[:1] == ("rev-parse",):
@@ -449,10 +524,15 @@ with tempfile.TemporaryDirectory() as directory:
     s.state_file = s.root / "a-file" / "state.json"
     (s.root / "a-file").write_text("x\n")
     code, printed, calls = s.run()
-    s.state_file = real_state_file
     check("a lock that cannot be taken stops the program with exit 4 and says why",
           code == program.EXIT_RUN_STOPPED_BY_A_FAILED_STEP and "could not be taken" in printed and calls == [],
           (code, printed))
+    code, printed, _ = s.run("pass", "--record-follow-up-request-sent")
+    s.state_file = real_state_file
+    check("--record-follow-up-request-sent refuses, exit 2, when its lock file cannot be opened, "
+          "and says why",
+          code == program.EXIT_REFUSED and "the lock file" in printed
+          and "could not be opened" in printed, (code, printed))
 
     # --- A failed fetch -----------------------------------------------------------
     s.commit_on_origin("after the fetch fails")

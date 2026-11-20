@@ -44,8 +44,8 @@ as input that is not JSON or a transcript that cannot be read, one line on
 stderr naming it and saying what to do instead, and exit 1: Claude Code records a Stop hook's exit 1 as a
 non-blocking error and still ends the turn.
 
-Agent-facing messages follow
-docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+Tool-messages-to-agent follow
+docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 """
 import importlib.util
 import json
@@ -57,7 +57,8 @@ HERE = Path(__file__).resolve().parent
 FRESHNESS_HOOK_FILE = HERE.parents[1] / "scripts" / "checkout-freshness-catch-up.py"
 STOP_HOOKS_STAY_SILENT_RULE_FILE = HERE / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py"
 
-REFUSAL_OPENING_TEMPLATE = (
+REFUSAL_RULE_ID_OPENING = "[rule checkout-freshness-changed-skill-not-invoked-again-stop-refused] "
+REFUSAL_OPENING_TEMPLATE = REFUSAL_RULE_ID_OPENING + (
     "changed-skill check (nc-systems/general-tools/checkout-freshness-changed-skill-invoke-again-"
     "refusal-stop-hook.py): this hook refused to end your turn on purpose, because a checkout-freshness note "
     "told you that the main branch changed {path}, and this agent-session invoked the {skill} skill before that "
@@ -73,8 +74,8 @@ REFUSAL_INSTRUCTIONS_TEMPLATE = (
     "once for each note that the main branch changed a skill.\n"
     "If you cannot tell whether you are still following it, invoke it again: that costs one tool call.")
 FROM_NOW_ON_LINE = (
-    "From now on, when a note beginning `checkout-freshness: main changed` names a skill you are following, "
-    "invoke that skill again before its next step.")
+    "From now on, when a note holding `checkout-freshness: main changed` anywhere in its text names a skill you "
+    "are following, invoke that skill again before its next step.")
 
 # Only lines holding one of these are parsed: every record the checks read holds one.
 CANDIDATE_LINE_MARKERS = (b'"Skill"', b"<command-name>/", b"checkout-freshness", b"changed-skill check")
@@ -90,10 +91,20 @@ def load_module(name, path):
 
 freshness_hook = load_module("checkout_freshness_catch_up", FRESHNESS_HOOK_FILE)
 
-SKILL_CHANGED_NOTE_PATTERN = re.compile(
-    re.escape(freshness_hook.SKILL_CHANGED_NOTE)
-    .replace(re.escape("{path}"), r"(?P<path>\S+)")
-    .replace(re.escape("{skill}"), r"(?P<skill>\S+)"))
+
+
+def note_pattern_with_optional_rule_id(note):
+    """A pattern for the note's text, its rule-ID opening optional: a note delivered before the
+    note carried its rule ID has none."""
+    opening_match = re.match(r"\[rule [a-z0-9-]+\] ", note)
+    opening = opening_match.group(0) if opening_match else ""
+    return (f"(?:{re.escape(opening)})?" if opening else "") + (
+        re.escape(note[len(opening):])
+        .replace(re.escape("{path}"), r"(?P<path>\S+)")
+        .replace(re.escape("{skill}"), r"(?P<skill>\S+)"))
+
+
+SKILL_CHANGED_NOTE_PATTERN = re.compile(note_pattern_with_optional_rule_id(freshness_hook.SKILL_CHANGED_NOTE))
 
 
 def refusal_opening(path, skill):
@@ -172,7 +183,8 @@ def skills_due(records):
             newest_note.pop(skill, None)
     return [(path, skill) for skill, (index, path, invoked_before) in newest_note.items()
             if invoked_before
-            and not any(refusal_opening(path, skill) in stop_block_text(record) for record in records[index:])]
+            and not any(refusal_opening(path, skill)[len(REFUSAL_RULE_ID_OPENING):] in stop_block_text(record)
+                        for record in records[index:])]
 
 
 def refusal_reason(due):
@@ -206,12 +218,13 @@ def main():
     try:
         output = run(sys.stdin.read())
     except Exception as error:
-        print(f"checkout-freshness-changed-skill-invoke-again-refusal-stop-hook: the hook failed, so it did not "
-              f"check whether the main branch changed a skill this agent-session invoked: {error!r}. Your turn can "
-              f"still end. If a note beginning `checkout-freshness: main changed` named a "
-              f"skill you have not invoked again since that note, and whose steps you will still act on in this "
-              f"agent-session: invoke that skill again with the Skill tool before you act on the skill's next "
-              f"step.",
+        print(f"nc-systems/general-tools/checkout-freshness-changed-skill-invoke-again-refusal-stop-hook.py: the "
+              f"hook failed, so it did not check whether the main branch changed a skill this agent-session "
+              f"invoked: {error!r}. Claude Code still ends your turn. When you next act in this "
+              f"agent-session, first look back through your context: if text added to it earlier in this agent-session, holding `checkout-freshness: main "
+              f"changed` anywhere in it, named a skill you have not invoked again since, and whose steps you will "
+              f"still act on in this agent-session: invoke that skill again with the Skill tool, which loads its "
+              f"new text, before you act on the skill's next step.",
               file=sys.stderr)
         return 1
     if output is not None:
