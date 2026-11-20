@@ -118,14 +118,14 @@ For each recorded mutant, `recorded_mutants_judged_in_one_worktree` finds the hu
 - `recorded_mutant_line_ends_with_pragma` (line 854 on origin/main 69db0032a) calls `recorded_mutant_hunk_place` (line 752) with `line_equal_or_with_pragma_no_mutate_after`, which reads `y = x  # pragma: no mutate` as `y = x`. The hunk matches at its own line in `double`, the mutated line has no pragma, so it returns False.
 - `source_with_recorded_mutant_applied` (line 775) then calls `recorded_mutant_hunk_place` with exact comparison. At the hunk's own line the context line now differs, so it searches the whole file, finds the 7 lines exactly once, in `twice`, and mutates `twice`.
 
-The suites then judge the twin's mutant, not the recorded one. The defect is on main; pull request 2772 neither causes it nor fixes it. The Codex review cell found it while reviewing that pull request; its report is `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers/cx/pr2772-fb66f1c0/codex-code-review-report.md`, whose finding "Apply the mutant at the pragma lookup's resolved location" cites lines 899-900 of the program at that pull request's head.
+The suites then judge the twin's mutant, not the recorded one. The defect is on main; pull request 2772 neither causes it nor fixes it. The Codex review cell found it while reviewing that pull request; its report is `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/merge-lane-2/merge-helpers/cx/pr2772-fb66f1c0/codex-code-review-report.md`, whose finding "Apply the mutant at the pragma lookup's resolved location" cites lines 899-900 of the program at that pull request's head.
 
 ## What it costs, and how likely it is
 
 - A false MUTANT KILLED, as in the reproduction, closes the task the nightly full mutation pass opened for the surviving mutant, while the recorded mutant may still survive. The test gap stays unseen until a later full mutation pass records the mutant again.
 - A false MUTANT SURVIVED happens in the mirror case, when a suite tests `double` but nothing tests `twice`: the twin's mutant survives, so the check reports the recorded mutant as surviving although a suite kills it. It sends an agent to write a test the code does not need.
 
-It is hypothetical today. Of the 122 diff files in `nedlern@ned-box:/home/nedlern/nedschorus-logs/scheduled-full-mutation-pass-runs-of-merged-pull-requests/surviving-mutant-diffs/` on 2026-11-07, 97 name a file present on origin/main 69db0032a, and in none of those 97 do a hunk's whole lines appear at more than one place in the file, read either exactly or reading a pragma comment as absent. The other 25 name a file no longer on origin/main.
+It is hypothetical today. Of the 122 diff files in `nedlern@ned-box:/home/nedlern/nedsnodes-logs/scheduled-full-mutation-pass-runs-of-merged-pull-requests/surviving-mutant-diffs/` on 2026-11-07, 97 name a file present on origin/main 69db0032a, and in none of those 97 do a hunk's whole lines appear at more than one place in the file, read either exactly or reading a pragma comment as absent. The other 25 name a file no longer on origin/main.
 
 ## What to do
 

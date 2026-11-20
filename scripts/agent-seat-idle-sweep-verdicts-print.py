@@ -16,7 +16,7 @@ What it reads, for each agent-seat that has a handoff-supervisor state file
   under `subagents/workflows/` of the agents a Workflow-tool run starts (Claude Code's Workflow
   tool runs a script that starts several subagents in the background);
 - the walk-minutes in the agent-seat's `docs/walk/`, the handoff deferral marker file, the task
-  list `<tasks root>/nedschorus-<seat>-tasks/`, and, for a usage limit, `oauthAccount.accountUuid`
+  list `<tasks root>/nedsnodes-<seat>-tasks/`, and, for a usage limit, `oauthAccount.accountUuid`
   in `~/.claude.json`;
 - GitHub, through `gh`, for the prerequisites of open tasks, only when rule 4 needs the answer.
 
@@ -72,13 +72,13 @@ _SCRIPTS = Path(__file__).resolve().parent
 threshold_hook = _load("handoff_context_threshold_hook",
                        _SCRIPTS / "handoff-context-threshold-hook.py")
 supervisor = _load("handoff_supervisor",
-                   _SCRIPTS.parent / "nc-systems" / "handoff" / "handoff-supervisor.py")
+                   _SCRIPTS.parent / "nn-systems" / "handoff" / "handoff-supervisor.py")
 deferred_marker_files = _load(
     "handoff_deferred_marker_and_refused_commands_files_common",
-    _SCRIPTS.parent / "nc-systems" / "handoff" / "handoff-deferred-marker-and-refused-commands-files-common.py")
+    _SCRIPTS.parent / "nn-systems" / "handoff" / "handoff-deferred-marker-and-refused-commands-files-common.py")
 due_task_hook = _load("agent_seat_due_task_raise_hook", _SCRIPTS / "agent-seat-due-task-raise-hook.py")
 walk_finder = _load("walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
-                    _SCRIPTS.parent / "nc-systems" / "skills" / "walk-me-through"
+                    _SCRIPTS.parent / "nn-systems" / "skills" / "walk-me-through"
                     / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py")
 fields = _load("agent_seat_idle_sweep_verdict_fields_common",
                _SCRIPTS / "agent-seat-idle-sweep-verdict-fields-common.py")
@@ -799,7 +799,7 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
             return verdict
 
         verdict[fields.LAST_TURN_ENDING_MESSAGE] = last_message_of(facts)
-        task_directory = paths.tasks_root / f"nedschorus-{seat}-tasks"
+        task_directory = paths.tasks_root / f"nedsnodes-{seat}-tasks"
         open_waiting_tasks = open_tasks_with_prerequisites_or_blocked_by(task_directory)
         verdict["sentences"] = matched_sentences(facts, since, open_waiting_tasks)
         sentences_by_code_reading = fields.verdict_sentences_grouped_by_code_reading(

@@ -555,9 +555,9 @@ with tempfile.TemporaryDirectory() as workspace:
 
     check(
         "keyed lookup mangles the worktree path",
-        extractor.project_directory_for_working_directory(Path("/Users/el/Projects/nedschorus")).name
-        == "-Users-el-Projects-nedschorus",
-        extractor.project_directory_for_working_directory(Path("/Users/el/Projects/nedschorus")).name,
+        extractor.project_directory_for_working_directory(Path("/Users/el/Projects/nedsnodes")).name
+        == "-Users-el-Projects-nedsnodes",
+        extractor.project_directory_for_working_directory(Path("/Users/el/Projects/nedsnodes")).name,
     )
 
 # --- Repeated agent paragraphs in the log-store's session dialogs ----------

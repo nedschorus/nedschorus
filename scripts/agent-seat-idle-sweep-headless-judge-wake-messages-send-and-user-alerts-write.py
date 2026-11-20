@@ -4,7 +4,7 @@ wake it with a cross-session message, judged by a headless agent-session where c
 
 Design: docs/issues/940-tasks-raise-themselves-when-their-due-time-passes.md, § The idle sweep.
 Cron runs this every minute on ned-box, from the entry in
-nc-systems/general-tools/scheduled-jobs-on-each-machine.json.
+nn-systems/general-tools/scheduled-jobs-on-each-machine.json.
 
 Each invocation, under a lock that keeps two from overlapping:
 1. Reads its log, the one record of what it has done, and derives from it each agent-seat's state:
@@ -107,19 +107,19 @@ verdicts_print = _load("agent_seat_idle_sweep_verdicts_print",
                        _SCRIPTS / "agent-seat-idle-sweep-verdicts-print.py")
 fields = verdicts_print.fields
 user_alerts = _load("user_alerts_pending_and_claimed_files_write_claim_release_and_delete_common",
-                    _SCRIPTS.parent / "nc-systems" / "general-tools"
+                    _SCRIPTS.parent / "nn-systems" / "general-tools"
                     / "user-alerts-pending-and-claimed-files-write-claim-release-and-delete-common.py")
 agent_seat_task_list = _load(
     "agent_seat_task_list_new_pending_task_write_common",
-    _SCRIPTS.parent / "nc-systems" / "general-tools" / "agent-seat-task-list-new-pending-task-write-common.py")
+    _SCRIPTS.parent / "nn-systems" / "general-tools" / "agent-seat-task-list-new-pending-task-write-common.py")
 headless_command_line = _load(
     "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
-    _SCRIPTS.parent / "nc-systems" / "general-tools"
+    _SCRIPTS.parent / "nn-systems" / "general-tools"
     / "claude-code-headless-run-command-line-prefix-with-no-connectors-and-explicit-permission-mode-common.py")
 
-LOG_FILE = (Path.home() / "nedschorus-logs" / "agent-seat-idle-sweep"
+LOG_FILE = (Path.home() / "nedsnodes-logs" / "agent-seat-idle-sweep"
             / "agent-seat-idle-sweep-messages-sent-and-verdicts.jsonl")
-STATE_DIRECTORY = (Path.home() / ".local" / "state" / "nedschorus"
+STATE_DIRECTORY = (Path.home() / ".local" / "state" / "nedsnodes"
                    / "agent-seat-idle-sweep-run-lock-and-headless-agent-session-empty-working-directory")
 # The folder's name is the name the receiving agent-seat sees the message come from.
 HEADLESS_WORKING_DIRECTORY_NAME = "agent-seat-idle-sweep"
@@ -681,7 +681,7 @@ class Sweep:
     def owning_agent_seat_task_opened_unless_open(self):
         """Open the sent-text task on OWNING_AGENT_SEAT's task list unless one not marked
         completed is there; return the new task's id, or None. Raises OSError."""
-        list_directory = self.paths.tasks_root / f"nedschorus-{OWNING_AGENT_SEAT}-tasks"
+        list_directory = self.paths.tasks_root / f"nedsnodes-{OWNING_AGENT_SEAT}-tasks"
         if list_directory.is_dir():
             for path in list_directory.glob("*.json"):
                 try:

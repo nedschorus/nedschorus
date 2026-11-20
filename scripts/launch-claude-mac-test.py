@@ -4,7 +4,7 @@ environment the seat is launched with.
 
 The rule (PR #137 review P3, user-ruled 2026-08-22): an override either
 works or is blocked, never a third state. A literal-tilde
-NEDSCHORUS_AGENTS_ROOT (a quoted export sends one) used to half-work — this
+NEDSNODES_AGENTS_ROOT (a quoted export sends one) used to half-work — this
 launcher would mkdir a literal ~ directory while every fleet Python tool
 expanduser()s the same value, splitting the seat across two directories.
 Now ~/ resolves to $HOME exactly as the operator's shell would have made
@@ -28,7 +28,7 @@ observed in a process started after it, and a case that greps the composed
 string would pass on a string that never runs.
 
 The launcher's own CLAUDE_CODE_* variables are stripped alongside
-NEDSCHORUS_* and LAUNCH_CLAUDE_*: the launcher runs locally and its
+NEDSNODES_* and LAUNCH_CLAUDE_*: the launcher runs locally and its
 children inherit its environment, so without the strip a suite run from a
 seat that already has CLAUDE_CODE_TASK_LIST_ID set would pass on the
 ambient value rather than the composed one.
@@ -218,7 +218,7 @@ class MacLaunchSandbox:
         """Hand the supervisor's GitHub token check to the real interpreter, so
         the case measures the refusal the real supervisor prints for the
         sandbox HOME. token_file_accounts names the accounts given a token file."""
-        token_directory = self.home / ".config" / "nedschorus"
+        token_directory = self.home / ".config" / "nedsnodes"
         for account in token_file_accounts:
             token_directory.mkdir(parents=True, exist_ok=True)
             (token_directory / f"{account}.token").write_text(
@@ -270,8 +270,8 @@ class MacLaunchSandbox:
         placed in LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS the way
         recover-crashed-seats.py's launch_seat places it — after the strip
         of ambient LAUNCH_CLAUDE_* values, so the case measures its own.
-        seat_github_account rides NEDSCHORUS_SEAT_GITHUB_ACCOUNT the same
-        way, after the strip of ambient NEDSCHORUS_* values.
+        seat_github_account rides NEDSNODES_SEAT_GITHUB_ACCOUNT the same
+        way, after the strip of ambient NEDSNODES_* values.
         inherited_github_token sets GH_TOKEN, which is otherwise stripped so
         the suite's own token cannot decide a case.
         term_program sets TERM_PROGRAM, which is otherwise stripped so the
@@ -288,9 +288,9 @@ class MacLaunchSandbox:
             **{key: value for key, value in os.environ.items()
                if key not in ("TERM_PROGRAM", "GH_TOKEN")
                and key not in GIT_IDENTITY_VARIABLES
-               and not key.startswith(("NEDSCHORUS_", "LAUNCH_CLAUDE_",
+               and not key.startswith(("NEDSNODES_", "LAUNCH_CLAUDE_",
                                        "CLAUDE_CODE_"))},
-            "NEDSCHORUS_AGENTS_ROOT": agents_root,
+            "NEDSNODES_AGENTS_ROOT": agents_root,
             "HOME": str(self.home),
             "SHELL": str(self.stubs / "record-shell"),
             "PATH": f"{self.stubs}:/usr/bin:/bin:/usr/sbin:/sbin",
@@ -305,7 +305,7 @@ class MacLaunchSandbox:
             environment["LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS"] = str(
                 update_timeout_seconds)
         if seat_github_account is not None:
-            environment["NEDSCHORUS_SEAT_GITHUB_ACCOUNT"] = seat_github_account
+            environment["NEDSNODES_SEAT_GITHUB_ACCOUNT"] = seat_github_account
         if inherited_github_token is not None:
             environment["GH_TOKEN"] = inherited_github_token
         if ambient_git_identity is not None:
@@ -693,9 +693,9 @@ def main() -> int:
               len(detached_pane_commands) == 1
               and detached_pane_commands[0].endswith("; exit $?"),
               detached_pane_commands)
-        check("task list: the pin reaches the supervisor as nedschorus-<seat>-tasks",
+        check("task list: the pin reaches the supervisor as nedsnodes-<seat>-tasks",
               sandbox.supervisor_environment().get("CLAUDE_CODE_TASK_LIST_ID")
-              == "nedschorus-seat-a-tasks",
+              == "nedsnodes-seat-a-tasks",
               sandbox.supervisor_environment())
         check("task list: the task tools are enabled for the supervisor",
               sandbox.supervisor_environment().get(
@@ -711,7 +711,7 @@ def main() -> int:
                                                  encoding="utf-8")
         result = sandbox.run("~/agents", seat_name="seat-m")
         prefixed_store = (sandbox.home / ".claude" / "tasks"
-                          / "nedschorus-seat-m-tasks")
+                          / "nedsnodes-seat-m-tasks")
         check("migration: the unprefixed store is renamed to the prefixed id",
               result.returncode == 0 and not unprefixed_store.exists()
               and (prefixed_store / "1.json").is_file(),
@@ -724,7 +724,7 @@ def main() -> int:
         (unprefixed_store / "1.json").write_text("unprefixed",
                                                  encoding="utf-8")
         prefixed_store = (sandbox.home / ".claude" / "tasks"
-                          / "nedschorus-seat-m-tasks")
+                          / "nedsnodes-seat-m-tasks")
         prefixed_store.mkdir(parents=True)
         (prefixed_store / "2.json").write_text("prefixed", encoding="utf-8")
         result = sandbox.run("~/agents", seat_name="seat-m")
@@ -740,7 +740,7 @@ def main() -> int:
         sandbox.run("~/agents", seat_name="seat-b")
         check("task list: a second seat name yields a DIFFERENT list id",
               sandbox.supervisor_environment().get("CLAUDE_CODE_TASK_LIST_ID")
-              == "nedschorus-seat-b-tasks",
+              == "nedsnodes-seat-b-tasks",
               sandbox.supervisor_environment())
 
         # --- the seat's git identity (user-approved 2026-09-22): author and
@@ -785,15 +785,15 @@ def main() -> int:
         check("attached: tmux gets mouse mode on and copy-command pbcopy",
               tmux_argv_sets_mouse_mode_and_pbcopy(sandbox.tmux_argv()),
               sandbox.tmux_argv())
-        check("task list (attached): the supervisor gets nedschorus-<seat>-tasks",
+        check("task list (attached): the supervisor gets nedsnodes-<seat>-tasks",
               sandbox.supervisor_environment().get("CLAUDE_CODE_TASK_LIST_ID")
-              == "nedschorus-seat-c-tasks"
+              == "nedsnodes-seat-c-tasks"
               and sandbox.supervisor_environment().get(
                   "CLAUDE_CODE_ENABLE_TODO_TOOLS") == "1",
               sandbox.supervisor_environment())
         check("task list (attached): the after-exit shell keeps the binding",
               sandbox.after_exit_environment().get("CLAUDE_CODE_TASK_LIST_ID")
-              == "nedschorus-seat-c-tasks"
+              == "nedsnodes-seat-c-tasks"
               and sandbox.after_exit_environment().get(
                   "CLAUDE_CODE_ENABLE_TODO_TOOLS") == "1",
               sandbox.after_exit_environment())
@@ -876,7 +876,7 @@ def main() -> int:
               result.returncode == 0
               and "handoff-supervisor.py" in composed_command
               and "GH_TOKEN" not in composed_command
-              and ".config/nedschorus" not in composed_command,
+              and ".config/nedsnodes" not in composed_command,
               (result.returncode, composed_command[:400], result.stderr[:300]))
 
         # --- a GH_TOKEN the launcher inherits reaches neither the seat's tmux
@@ -934,7 +934,7 @@ def main() -> int:
                              seat_github_account="ned-review-merge")
         check("account override: refused with exit 2, naming the variable and the table",
               result.returncode == 2
-              and "NEDSCHORUS_SEAT_GITHUB_ACCOUNT" in result.stderr
+              and "NEDSNODES_SEAT_GITHUB_ACCOUNT" in result.stderr
               and "AGENT_SEAT_GITHUB_ACCOUNTS_OTHER_THAN_THE_MACHINE_DEFAULT" in result.stderr,
               (result.returncode, result.stderr[:300]))
         check("account override: refused before any side effect",
