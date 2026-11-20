@@ -329,6 +329,7 @@ REPOSITORY_WIDE_CHECKS = (
     "scripts/git-redirecting-environment-variables-defined-once-test.py",
     "scripts/git-redirecting-environment-variables-removed-by-every-caller-test.py",
     "scripts/python-files-pass-selected-ruff-rules-test.py",
+    "scripts/registered-hook-except-around-payload-read-or-whole-hook-never-exits-0-silently-test.py",
     "scripts/registered-hook-messages-carry-no-citations-test.py",
     "scripts/supervisor-file-names-defined-once-test.py",
     "scripts/test-suites-run-directly-ignore-git-redirecting-environment-test.py",
