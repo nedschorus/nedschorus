@@ -1,10 +1,10 @@
 ---
-issue: "[The pull request review plan gives the Codex-only review tier to Python changes to strings that change behaviour, which merge-lane-2's seat-brief gives a Claude reviewer](https://github.com/nedschorus/nedschorus/issues/3889)"
+issue: "[The pull request review plan gives the Codex-only review tier to Python changes to strings that change behaviour, which merge-lane-2's seat-brief gives a Claude reviewer](https://github.com/nedsnodes/nedsnodes/issues/3889)"
 ---
 
 # The pull request review plan gives the Codex-only review tier to Python changes to strings that change behaviour, which merge-lane-2's seat-brief gives a Claude reviewer
 
-Filed by merge-lane-2 on ned-box on 2026-11-18. The reproduction comes first; the contradiction and the next action follow it.
+Filed by merge-lane-2 on ned-box on 2026-11-18. The reproduction comes first; why it happens, the contradiction, what is decided and the next action follow it.
 
 ## Reproduction
 
@@ -55,6 +55,14 @@ merge-lane-2's seat-brief, `nedlern@ned-box:/home/nedlern/agents/merge-lane-2/CL
 
 The program still sends every change to a registered hook, to `.claude/guard-hooks/` and to `.claude/settings.json` to `claude-and-codex-review-and-head-tests-tier` whatever it changes. A module that a hook only imports, and every other program, is not covered by that exception, so a change to a string that steers its behaviour reaches main without a Claude reviewer.
 
+## What is decided
+
+The seat-brief's "printed text" is the intended rule. The user decided it on 2026-10-02, in item 1.3 of the approval-walk waiting-agent-facing-texts-and-review-rules-2026-10-02. He approved a middle tier that reads "Tests only, or only printed text, comments and docstrings, …: the Codex review cell … and the head test run … No Claude reviewer." Before that answer, "string constants" had been changed to "printed text", because the program's "string constants" also covered strings that carry behaviour, such as a regular expression, a command's arguments or a path. The walk-minutes, `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/waiting-agent-facing-texts-and-review-rules-2026-10-02-minutes.md`, record the change of wording and the approval under "## Item 1". They also say a follow-up pull request was to change the program's rule to match; no such pull request was opened before this GHI was filed.
+
+So the program changes. A Python change limited to docstrings, comments and printed strings gets `codex-review-and-head-tests-tier`; a Python change to any other string gets `claude-and-codex-review-and-head-tests-tier`. The other kinds of change at `codex-review-and-head-tests-tier`, such as test files and fenced code in Markdown, keep it.
+
+A printed string is one that `tool_message_to_agent_string_nodes_in_source`, in `nn-systems/general-tools/python-source-tool-message-to-agent-string-collector-common.py`, finds: a string printed or written to standard output or standard error, raised, put in a hook's output, or assigned to a name ending in a message suffix such as `_MESSAGE`. One narrowing: that finder also counts a string inside a call nested in a printed argument, such as the pattern in `print(re.sub("a", "b", text))`, and such a string steers the call, so it is not a printed string here. A string the finder does not find, such as `argparse` help text or a logging call's text, gets the stricter tier.
+
 ## What to do next
 
-Which rule is intended, the program's Rule 1 or the seat-brief's "printed text", is a design question for the program's owner, merge-lane-2, and the user; this issue does not choose a fix. The next action is for merge-lane-2 to put the choice to the user. Three ways out are open, and none is chosen here. First, the program changes so that only a docstring, a comment or a string that is printed text counts as allowed at the lower tier, with a test built from the reproduction's first two cases; the program already finds printed strings for another purpose, with `tool_message_to_agent_string_nodes_in_source`, which it loads from `nn-systems/general-tools/`, and that finder could decide which strings `visit_Constant` blanks. Second, the seat-brief changes to say "string constants", as the program does. Third, the seat-brief's tier bullets stop restating the rule and say only that the tier is the one the program prints, so the rule is kept in one place.
+PR [Review plan: only printed strings, not every string constant, get the Codex-only tier](https://github.com/nedsnodes/nedsnodes/pull/3952) makes that change. Its tests are the reproduction's three cases, which now get `claude-and-codex-review-and-head-tests-tier`, and cases showing that printed strings still get `codex-review-and-head-tests-tier`. merge-lane-2 reviews it. When it merges, reboot-test writes the outcome into this GHI-MD and runs `python3 scripts/ghi-issue-write.py close <this GHI-MD> --reason completed`.
