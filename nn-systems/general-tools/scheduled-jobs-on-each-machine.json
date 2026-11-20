@@ -108,7 +108,7 @@
     },
     {
       "name": "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher",
-      "owner": "MD-skills",
+      "owner": "cold-read-research",
       "program": "nn-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py",
       "arguments": [],
       "output": ".claude/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.log",
@@ -173,7 +173,7 @@
     },
     {
       "name": "claude-code-temp-folders-of-exited-agent-sessions-delete",
-      "owner": "cold-read-improvement",
+      "owner": "prime-intellect",
       "program": "nn-systems/general-tools/claude-code-temp-folders-of-exited-agent-sessions-delete.py",
       "arguments": ["--then-tmp-and-reviewer-scratch-folders-unchanged-a-day-and-unused-delete"],
       "output": ".claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log",
