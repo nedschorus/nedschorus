@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Give one document the cold-read-fast-read: one fast-clarify cold-read-cell
-on the fast cold-read-tier and, at the same time, one cold-read-cell on Opus
-for Question 4.
+on the fast cold-read-tier and, at the same time, unless --without-question-4
+is given, one cold-read-cell on Opus for Question 4.
 
 Usage:
   nn-systems/cold-read/cold-read-fast-read.py --target docs/walk/foo-draft.md
+  nn-systems/cold-read/cold-read-fast-read.py --target docs/walk/foo-draft.md --without-question-4
+  nn-systems/cold-read/cold-read-fast-read.py --record-finding-outcomes-in-cold-read-record <record directory> \
+      --finding-outcome 'Q2.1=applied' --finding-outcome 'Q4.1=declined: <reason>' ...
 
 WHAT IT DOES. Picks the report path from the cold-read-target, runs
 ONE fast-clarify cold-read-cell on the fast cold-read-tier through
@@ -207,6 +210,30 @@ this;` and gives the reset time Gemini named, without its seconds, and the
 line after it tells the agent that ran the read to copy that line into its
 next message to the user, so the user hears that Ultra ran out.
 
+FINDING OUTCOMES. After a read on the records route, once the record has
+shipped, stderr says either that the report has no findings, or lists each
+finding by its id, `Q<question>.<number>` as in `Q2.1`, with the opening of its
+text, and then gives a ready-made command: this program with
+--record-finding-outcomes-in-cold-read-record naming the record directory and one
+--finding-outcome '<id>=<applied, or declined: reason>' for each finding.
+Which lines are findings, and how they are numbered, is
+nn-systems/cold-read/cold-read-fast-read-report-findings-parse-and-finding-outcomes-check-common.py's to say. A
+walk draft's read has no cold-read-record, so it prints no command and its
+findings get no outcomes. After revising, the agent replaces each placeholder
+with `applied` or `declined: <reason>` and runs the command. That invocation
+launches nothing: it refuses, writing nothing, with REFUSED on stdout, its
+problems on stderr and exit 64, when the directory holds no fast read report,
+when the report has no findings, when the record already holds its outcomes
+file, and when a value is malformed, names a finding the report lacks or one
+given before, or when a finding has no value. Otherwise it writes
+cold-read-fast-read-finding-outcomes.json into the record directory, once,
+holding the report's sha256 and each finding's question, number, outcome and
+reason, while it holds the record's being-written lock, then ships the record
+as a read does, prints the shipper's line on stderr as `record:` and the
+file's path on stdout, and exits 0, or 1 when the record did not reach the
+log-store, saying on stderr how to ship it. The file is never rewritten,
+because the log-store keeps a record's files add-only.
+
 QUESTION 4, WHAT SHOULD BE CODE. The fast-clarify cell answers Questions 1
 to 3. A second cell, started just before it, runs beside it, its retry and the
 Sonnet backup, and asks Question 4 of the cold-read-target itself, not the
@@ -230,6 +257,14 @@ it is still running, its answer is dropped, and a line on stderr says
 Question 4 was abandoned. A SIGTERM or SIGHUP sent to the read ends it that
 way too, with exit 128 plus the signal's number: the cell is in a session of
 its own, so a signal to the read's process group does not reach it.
+
+WITHOUT QUESTION 4. With --without-question-4 no Question 4 cell is
+started, and the report's `## Question 4: What should be code` section holds
+one line saying Question 4 was not asked because of that option. The walk
+check program,
+nn-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py,
+passes it on every fast read it runs. A read run from the Mac on ned-box
+passes the option on to the read there.
 """
 
 from __future__ import annotations
@@ -276,6 +311,12 @@ _record_shipper_spec = importlib.util.spec_from_file_location(
     "cold_read_record_ship", RECORD_SHIPPER)
 record_shipper = importlib.util.module_from_spec(_record_shipper_spec)
 _record_shipper_spec.loader.exec_module(record_shipper)
+# Finds a report's findings and checks and records the agent's outcome for each.
+_finding_outcomes_spec = importlib.util.spec_from_file_location(
+    "cold_read_fast_read_report_findings_parse_and_finding_outcomes_check_common",
+    pathlib.Path(__file__).with_name("cold-read-fast-read-report-findings-parse-and-finding-outcomes-check-common.py"))
+finding_outcomes = importlib.util.module_from_spec(_finding_outcomes_spec)
+_finding_outcomes_spec.loader.exec_module(finding_outcomes)
 _git_redirecting_removal_spec = importlib.util.spec_from_file_location(
     "git_redirecting_environment_variables_removal_common",
     REPO_ROOT / "nn-systems" / "general-tools"
@@ -352,9 +393,12 @@ Lay out your report as follows, and do not look for an example report: first the
 Write your report to {REPORT_PATH}, once, when your analysis is complete. That file is your entire deliverable: what you say in conversation is discarded. Start your report with a list of the files you were told to examine. Note if you were unable to read any of them. {REPORT_PATH} is the only file to create; write nothing anywhere else.
 """
 
-# QUESTION 4, asked of every document by a cell of its own: the user's text,
-# word for word, heading included. The heading is also the report section's.
+# QUESTION 4, asked by a cell of its own: the user's text, word for word,
+# heading included. The heading is also the report section's.
 WHAT_SHOULD_BE_CODE_QUESTION_REPORT_SECTION_HEADING = "## Question 4: What should be code"
+WITHOUT_QUESTION_4_OPTION = "--without-question-4"
+WITHOUT_QUESTION_4_SECTION_LINE = (
+    f"Question 4 was not asked: this fast read was run with {WITHOUT_QUESTION_4_OPTION}.")
 WHAT_SHOULD_BE_CODE_QUESTION = WHAT_SHOULD_BE_CODE_QUESTION_REPORT_SECTION_HEADING + """
 What here relies on an LLM following English instructions, or on a human remembering to do something, where code could do the job? The model handles what truly needs interpretation: understanding ambiguous intent, classifying semantically complex material, drafting open-ended content, ranking alternatives no known libraries or algorithms cover. Code handles everything where variability adds nothing: validation, parsing, calculation, state transitions, sequencing, retries, deduplication, filtering, formatting contracts, invariant enforcement, tool routing when the rule is known. Go through every step the text gives to a model or a person, and ask whether code could do it, constrain it to a bounded choice, take over its state or control flow, or check its result. A step that works reliably today, costs little, and fails loudly is not an issue, and neither is one that code already does. BE CONCISE: for each step, quote the exact phrase, then a sentence naming the work and the code that could do or check it. Number each item, most useful first. If there are none, say "No issues"."""
 
@@ -522,11 +566,12 @@ def mac_mount_path_of_ned_box_path(ned_box_path: str) -> str:
     return MAC_MOUNT_OF_NED_BOX_HOME + ned_box_path[len(NED_BOX_HOME):]
 
 
-def cold_read_fast_read_script_rerun_shell_command_line_for_mac(ned_box_target: str) -> str:
+def cold_read_fast_read_script_rerun_shell_command_line_for_mac(ned_box_target: str,
+                                                               options: tuple = ()) -> str:
     """The command line, quoted for a shell, that runs this program once
-    more on the Mac on `ned_box_target` in its Mac mount form."""
+    more on the Mac on `ned_box_target` in its Mac mount form, with `options`."""
     return shlex.join(["python3", str(pathlib.Path(__file__).resolve()), "--target",
-                       mac_mount_path_of_ned_box_path(ned_box_target)])
+                       mac_mount_path_of_ned_box_path(ned_box_target), *options])
 
 
 def text_with_ned_box_paths_rewritten_as_mac_mount_paths(text: str) -> str:
@@ -571,10 +616,10 @@ def lines_ending_with_message_for_the_user(message_for_the_user: str,
             f"{one_line}")
 
 
-def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
-    """Run the fast read on ned-box on `ned_box_target`, with the script of
-    the ned-box checkout holding it, relay its output in Mac mount paths, and
-    return its exit code, or 1 when it could not be run."""
+def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str, options: tuple = ()) -> int:
+    """Run the fast read on ned-box on `ned_box_target` with `options`, with
+    the script of the ned-box checkout holding it, relay its output in Mac
+    mount paths, and return its exit code, or 1 when it could not be run."""
     directory = str(pathlib.PurePosixPath(ned_box_target).parent)
     session_id = os.environ.get(record_names.AGENT_SESSION_ID_ENVIRONMENT_VARIABLE)
     session_assignment = (
@@ -585,10 +630,11 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
         f"cd -- \"$top\" && ")
     fast_read_invocation = (
         f"python3 {shlex.quote(str(pathlib.Path(__file__).resolve().relative_to(REPO_ROOT)))} "
-        f"--target {shlex.quote(ned_box_target)}")
+        f"--target {shlex.quote(ned_box_target)}"
+        + "".join(f" {shlex.quote(option)}" for option in options))
     remote_command = f"{checkout_entry}{session_assignment}exec {fast_read_invocation}"
     command_for_a_person = f"{checkout_entry}{fast_read_invocation}"
-    rerun_command = cold_read_fast_read_script_rerun_shell_command_line_for_mac(ned_box_target)
+    rerun_command = cold_read_fast_read_script_rerun_shell_command_line_for_mac(ned_box_target, options)
     print(f"{PROGRAM}: git on this machine cannot read the ned-box worktree "
           f"holding the target, so the fast read runs on ned-box on "
           f"{ned_box_target}.", file=sys.stderr)
@@ -1640,16 +1686,18 @@ def fast_read_report_finish_and_print_path(
     *, report: pathlib.Path, cell_report: pathlib.Path, target: pathlib.Path, sentences: dict,
     marked_copy_kept, full_run_class_name, bare_references, launch_sha256: str,
     on_records_route: bool, backup_line: str,
-    question_4_cell: WhatShouldBeCodeQuestionCell, edit_changed_ids: list,
+    question_4_cell: typing.Optional[WhatShouldBeCodeQuestionCell], edit_changed_ids: list,
     edit_removed_units: list, quota_line: str = "",
 ) -> int:
     """Turn the cell's report, cell_report, into the read's, written once at
-    report: wait for the Question 4 cell and add its section, attach the sentences, the
+    report: wait for the Question 4 cell, if one was started, and add its section, attach the sentences, the
     coverage and the bare numbers, name an edit made during the read and the
     Sonnet backup, ship the record, print the path. Returns 0, or 1 when
     the record did not reach the log-store, whether or not Question 4 was
     answered."""
-    question_4_section = what_should_be_code_section(question_4_cell)
+    question_4_section = (
+        what_should_be_code_section(question_4_cell) if question_4_cell is not None
+        else f"\n{WHAT_SHOULD_BE_CODE_QUESTION_REPORT_SECTION_HEADING}\n\n{WITHOUT_QUESTION_4_SECTION_LINE}\n")
     # Before anything reads or ships it: put each original sentence under
     # the restatement claiming its id, and say which sentences no
     # restatement claimed.
@@ -1687,17 +1735,108 @@ def fast_read_report_finish_and_print_path(
         record_line = ship_record(report.parent)
         print(f"{PROGRAM}: record: {record_line}", file=sys.stderr)
         shipped = record_line.startswith(RECORD_SHIPPED_LINE_PREFIX)
+        print(finding_outcomes_to_record_lines(report.parent), file=sys.stderr)
     print(report)
     return 0 if shipped else 1
+
+
+def finding_outcomes_to_record_lines(record_dir: pathlib.Path) -> str:
+    """What the agent is told after a read on the records route: that the report has no findings, or each
+    finding's id and opening and the command that records what the agent did with each."""
+    findings = finding_outcomes.cold_read_fast_read_record_findings(record_dir)
+    if not findings:
+        return f"{PROGRAM}: the report has no findings, so it needs no finding outcomes."
+    return "\n".join(
+        [f"{PROGRAM}: the report has {len(findings)} finding{'' if len(findings) == 1 else 's'}:"]
+        + finding_outcomes.finding_list_lines(findings)
+        + [f"After you revise, record what you did with each finding: run the command below, with "
+           f"`{finding_outcomes.APPLIED}` or `{finding_outcomes.DECLINED}: <your reason>` in place of each "
+           f"`{finding_outcomes.FINDING_OUTCOME_PLACEHOLDER}`, keeping the single quotes. It refuses a list "
+           f"that leaves out a finding or names one the report does not have. The outcomes are written once, so "
+           f"run it when your revision is done.",
+           finding_outcomes.cold_read_fast_read_finding_outcomes_record_command(
+               pathlib.Path(__file__).resolve(), record_dir, findings)])
+
+
+def finding_outcomes_refused(record_dir, problems, then=()) -> int:
+    """Print the refusal of a --record-finding-outcomes-in-cold-read-record invocation, which wrote nothing."""
+    print(f"{PROGRAM}: no finding outcomes were written for {record_dir}:\n"
+          + "\n".join([f"- {problem}" for problem in problems] + list(then)), file=sys.stderr)
+    print(f"REFUSED (no finding outcomes written for {record_dir})")
+    return EXIT_BAD_INVOCATION
+
+
+def finding_outcomes_record(record_dir: pathlib.Path, values: list) -> int:
+    """Write the outcome of every finding of record_dir's report into the record's outcomes file, once, and
+    ship the record. Returns 0 when the record shipped, 1 when the file was written but the record did not
+    reach the log-store, and EXIT_BAD_INVOCATION when nothing was written."""
+    report = finding_outcomes.cold_read_fast_read_record_report_path(record_dir)
+    outcomes_file = finding_outcomes.finding_outcomes_file_path(record_dir)
+    if not report.is_file():
+        return finding_outcomes_refused(record_dir, [
+            f"{record_dir} holds no cold-read-fast-read report, {report.name}. Give the directory the read "
+            f"printed the report in, the parent of the path it printed on stdout."])
+    findings = finding_outcomes.cold_read_fast_read_record_findings(record_dir)
+    if not findings:
+        return finding_outcomes_refused(record_dir, [
+            f"{report} has no findings, so it needs no finding outcomes. Run nothing more for it."])
+    if outcomes_file.exists():
+        return finding_outcomes_refused(record_dir, [
+            f"{outcomes_file} already holds this record's finding outcomes. It is written once, because the "
+            f"log-store keeps a record's files add-only and would refuse a changed copy.",
+            f"If the record has not reached the log-store since, run `python3 "
+            f"{shlex.quote(str(RECORD_SHIPPER))} {shlex.quote(str(record_dir))}` to ship it."])
+    try:
+        outcomes = finding_outcomes.cold_read_fast_read_finding_outcomes_from_values(values, findings)
+    except finding_outcomes.FindingOutcomesRefused as refusal:
+        return finding_outcomes_refused(
+            record_dir, refusal.args[0],
+            ["Run the command again with one value for each finding below, and no others:"]
+            + finding_outcomes.finding_list_lines(findings))
+    # Held while the file is written, so a shipment started meanwhile copies nothing rather than half a file.
+    record_shipper.record_directory_being_written_lock_take(record_dir)
+    with outcomes_file.open("x", encoding="utf-8") as written:
+        written.write(finding_outcomes.finding_outcomes_file_text(
+            report.read_bytes(), outcomes,
+            datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")))
+    record_line = ship_record(record_dir)
+    print(f"{PROGRAM}: record: {record_line}", file=sys.stderr)
+    print(outcomes_file)
+    if record_line.startswith(RECORD_SHIPPED_LINE_PREFIX):
+        return 0
+    print(f"{PROGRAM}: the finding outcomes are written in {outcomes_file}, but the record did not reach the "
+          f"log-store.\nOnce the cause the record line names is fixed, run `python3 "
+          f"{shlex.quote(str(RECORD_SHIPPER))} {shlex.quote(str(record_dir))}` to ship it. Do not record the "
+          f"outcomes again: they are written.", file=sys.stderr)
+    return 1
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
-        "--target", required=True,
+        "--target",
         help="document path, relative to the current directory or absolute")
+    parser.add_argument(
+        WITHOUT_QUESTION_4_OPTION, action="store_true",
+        help="ask Questions 1 to 3 only; start no Question 4 cell")
+    parser.add_argument(
+        finding_outcomes.FINDING_OUTCOMES_RECORD_OPTION, metavar="COLD_READ_RECORD", type=pathlib.Path,
+        help="instead of reading a document, record the outcome of every finding of the fast read report "
+             "this cold-read-record directory holds, as the command a read prints says")
+    parser.add_argument(
+        finding_outcomes.FINDING_OUTCOME_OPTION, action="append", default=[], metavar="'QN.M=OUTCOME'",
+        help=f"with {finding_outcomes.FINDING_OUTCOMES_RECORD_OPTION}, once for each finding: "
+             f"'Q2.1={finding_outcomes.APPLIED}' or 'Q4.1={finding_outcomes.DECLINED}: <reason>'")
     args = parser.parse_args()
+    outcomes_record = getattr(args, finding_outcomes.FINDING_OUTCOMES_RECORD_OPTION[2:].replace("-", "_"))
+    if (args.target is None) == (outcomes_record is None):
+        parser.error(f"give --target, or {finding_outcomes.FINDING_OUTCOMES_RECORD_OPTION}, but not both")
+    if outcomes_record is not None:
+        return finding_outcomes_record(outcomes_record.resolve(), args.finding_outcome)
+    if args.finding_outcome:
+        parser.error(f"{finding_outcomes.FINDING_OUTCOME_OPTION} needs "
+                     f"{finding_outcomes.FINDING_OUTCOMES_RECORD_OPTION}")
     # Raising SystemExit runs the finally below that stops the Question 4 cell,
     # and the temporary directory's cleanup; the default action runs neither.
     signal.signal(signal.SIGTERM, cell_common.exit_on_sigterm)
@@ -1732,7 +1871,8 @@ def main() -> int:
               f"edit changed: {error})")
         return 1
     except NedBoxWorktreeUnreadableThroughMacMount as error:
-        return cold_read_fast_read_run_on_ned_box_over_ssh(error.ned_box_target)
+        return cold_read_fast_read_run_on_ned_box_over_ssh(
+            error.ned_box_target, (WITHOUT_QUESTION_4_OPTION,) if args.without_question_4 else ())
     except CheckoutRootUnreadable as error:
         print(f"{PROGRAM}: no fast read ran and no report was written: could "
               f"not tell which checkout holds the target, so could not tell "
@@ -1786,7 +1926,8 @@ def main() -> int:
         report.unlink(missing_ok=True)
         # Started after every write this program makes in the checkout before
         # its report, so the claude launcher's stray-write check sees none of them.
-        question_4_cell = what_should_be_code_cell_start(target, pathlib.Path(scratch))
+        question_4_cell = (None if args.without_question_4
+                           else what_should_be_code_cell_start(target, pathlib.Path(scratch)))
         finish = dict(
             report=report, cell_report=cell_report, target=target, sentences=sentences,
             marked_copy_kept=marked_copy if on_records_route else None,
@@ -1838,7 +1979,7 @@ def main() -> int:
                 CLAUDE_CELL_LAUNCHER, exit_code, output)
         finally:
             # Inside the temporary directory: the cell writes there until it stops.
-            if not question_4_cell.section_collected_output.is_set():
+            if question_4_cell is not None and not question_4_cell.section_collected_output.is_set():
                 what_should_be_code_cell_abandon(question_4_cell)
     if bare_references:
         print(f"{PROGRAM}: bare issue, pull request or task numbers in this walk "

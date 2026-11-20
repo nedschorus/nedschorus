@@ -42,6 +42,10 @@ GENERATED_INPUT_COPY_SUFFIXES = (SENTENCE_ID_MARKED_COPY_SUFFIX,)
 # session's reads from other sessions'. Claude Code sets the variable in the
 # Bash environment; a subagent's Bash sees its parent's ID.
 COLD_READ_FAST_READ_REPORT_AGENT_SESSION_ID_FILE_SUFFIX = ".agent-session.json"
+# Whether the agent applied or declined each finding of the record's fast read
+# report, written once by cold-read-fast-read.py --record-finding-outcomes-in-cold-read-record.
+# Not .md, so COMPLETED_REPORT_NAME_PATTERN never takes it for a report.
+COLD_READ_FAST_READ_FINDING_OUTCOMES_FILE_NAME = "cold-read-fast-read-finding-outcomes.json"
 AGENT_SESSION_ID_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_SESSION_ID"
 
 
@@ -240,7 +244,7 @@ _CODE_OR_MAC_MOUNT_LINK_TARGET_PATTERN = re.compile(
     r"(?P<code>^[ \t]*(?P<fence>`{3,}|~{3,}).*?(?:^[ \t]*(?P=fence)[ \t]*$|\Z)"
     r"|(?P<ticks>`+).+?(?<!`)(?P=ticks)(?!`))"
     r"|(?P<target_start>\]\(<?)" + re.escape(MAC_MOUNT_OF_NED_BOX_HOME_LINK_PREFIX),
-    re.MULTILINE | re.DOTALL)
+    re.MULTILINE | re.DOTALL)  # pragma: no mutate, the two flags share no bit, so ^ and + give the same flags as |
 
 
 def text_with_mac_mount_of_ned_box_home_file_links_rewritten_as_ned_box_home_paths(text: str) -> str:

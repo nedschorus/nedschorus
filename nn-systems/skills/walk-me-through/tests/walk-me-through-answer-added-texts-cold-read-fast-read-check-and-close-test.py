@@ -62,11 +62,13 @@ failures = []
 # Behaves as cold-read-fast-read.py does on the records route: writes a
 # cold-read-record with cold-read-fast-read.md and target/, prints the report's path.
 STAND_IN = r'''
-import os, signal, sys, time
+import json, os, signal, sys, time
 from pathlib import Path
 target = Path(sys.argv[sys.argv.index("--target") + 1])
 with open(os.environ["STAND_IN_CALLS"], "a") as calls:
     calls.write(target.read_text())
+with open(os.environ["STAND_IN_ARGUMENTS"], "a") as arguments:
+    arguments.write(json.dumps({"arguments": sys.argv[1:], "text": target.read_text()}) + "\n")
 mode = os.environ.get("STAND_IN_MODE", "")
 if mode == "slow":
     time.sleep(3)  # A read ahead still running when the item it reads comes up.
@@ -88,7 +90,9 @@ if mode == "silent-exit":
 record = Path(os.environ["STAND_IN_RECORDS"]) / (target.stem + "-2026-10-17")
 (record / "target").mkdir(parents=True, exist_ok=True)
 (record / "target" / target.name).write_text(target.read_text())
-(record / "cold-read-fast-read.md").write_text("findings\n")
+(record / "cold-read-fast-read.md").write_text(
+    "## Question 2: Where you struggled\n\n1. `three`: unclear.\n\n## Question 4: What should be code\n\n"
+    "1. `three` — code could count it.\n" if mode == "with-findings" else "findings\n")
 print(record / "cold-read-fast-read.md")
 if mode == "path-then-exit":
     sys.exit(4)
@@ -231,6 +235,7 @@ class Case:
         self.counts_log = self.root / "counts.tsv"
         self.calls = self.root / "stand-in-calls.txt"
         self.calls.write_text("")
+        self.fast_read_arguments = self.root / "stand-in-arguments.jsonl"
         self.stand_in = self.root / "cold-read-fast-read-stand-in.py"
         self.stand_in.write_text(STAND_IN)
         self.temporary_directory = self.root / temporary_directory_name
@@ -286,6 +291,7 @@ class Case:
                                                        "--user-reply-as-typed"} & set(flags):
             flags = (*flags, "--user-reply-as-typed", reply)
         environment = dict(environment or os.environ, STAND_IN_MODE=mode, STAND_IN_CALLS=str(self.calls),
+                           STAND_IN_ARGUMENTS=str(self.fast_read_arguments),
                            STAND_IN_RECORDS=str(self.records), TMPDIR=str(self.temporary_directory),
                            GH_STAND_IN_CALLS=str(self.gh_calls))
 
@@ -4116,7 +4122,7 @@ def test_a_git_grep_that_fails_is_reported_and_writes_nothing():
     (stub / "git").chmod(0o755)
     before = case.minutes.read_text()
     environment = dict(os.environ, PATH=f"{stub}:{os.environ['PATH']}", STAND_IN_CALLS=str(case.calls),
-                       STAND_IN_RECORDS=str(case.records))
+                       STAND_IN_ARGUMENTS=str(case.fast_read_arguments), STAND_IN_RECORDS=str(case.records))
     result = subprocess.run([sys.executable, str(PROGRAM), "check", "--not-asked", "3", "--cwd", str(case.checkout),
                              "--cold-read-records", str(case.records), "--fast-read-program", str(case.stand_in),
                              "--counts-log", str(case.counts_log)],
@@ -4675,6 +4681,31 @@ def next_item_waiting(case, answered, waiting):
     """Record answered as decided and waiting as next, as a check and close would."""
     with open(case.minutes, "a") as minutes:
         minutes.write(approved_line(answered) + f"#next_to_present {waiting}\n")
+
+
+def fast_reads_run(case):
+    """[(arguments, text)] of each cold-read-fast-read the stand-in ran, in order."""
+    if not case.fast_read_arguments.exists():
+        return []
+    return [(read["arguments"], read["text"]) for read in
+            map(json.loads, case.fast_read_arguments.read_text().splitlines())]
+
+
+def test_every_fast_read_is_run_without_question_4():
+    case = Case()
+    case.run("check")
+    added = fast_reads_run(case)
+    check("each fast read of a text an answer adds is run with --without-question-4",
+          len(added) == 2 and all("--without-question-4" in arguments for arguments, _ in added), repr(added))
+    case = item_read_case()
+    answered_and_closed(case)
+    case.run(WAITING_ITEM_READ)
+    reads = fast_reads_run(case)
+    read_ahead = [arguments for arguments, text in reads if "## Item 4 of 5: four" in text]
+    waiting = [arguments for arguments, text in reads if "## Item 3 of 5: three" in text]
+    check("the read ahead and the read of a waiting item are each run with --without-question-4",
+          len(read_ahead) == 1 and len(waiting) == 1
+          and all("--without-question-4" in arguments for arguments in read_ahead + waiting), repr(reads))
 
 
 def test_close_reads_the_item_after_the_next_one_ahead_and_the_read_step_uses_it():
@@ -5932,6 +5963,108 @@ def test_close_reads_an_answer_line_whose_time_is_the_old_local_form_or_the_utc_
               and "\nitem 3 of 9: approved; every text the change adds has had a fast read." in case.minutes.read_text(),
               described(closed) + case.minutes.read_text())
 
+
+
+_finding_outcomes_spec = importlib.util.spec_from_file_location(
+    "cold_read_fast_read_report_findings_parse_and_finding_outcomes_check_common",
+    Path(__file__).resolve().parents[3] / "cold-read"
+    / "cold-read-fast-read-report-findings-parse-and-finding-outcomes-check-common.py")
+finding_outcomes = importlib.util.module_from_spec(_finding_outcomes_spec)
+_finding_outcomes_spec.loader.exec_module(finding_outcomes)
+FINDINGS_MODE = "with-findings"
+
+
+def item_read_report(result):
+    """The report path the read step's first line names."""
+    return Path(result.stdout.split("\n")[0].rsplit(": ", 1)[1])
+
+
+def finding_outcomes_recorded(report):
+    """Write the outcomes file for every finding of report, as cold-read-fast-read.py would."""
+    findings = finding_outcomes.cold_read_fast_read_record_findings(report.parent)
+    outcomes = finding_outcomes.cold_read_fast_read_finding_outcomes_from_values(
+        [f"{finding_outcomes.finding_id(f.question, f.number)}=applied" for f in findings], findings)
+    finding_outcomes.finding_outcomes_file_path(report.parent).write_text(
+        finding_outcomes.finding_outcomes_file_text(report.read_bytes(), outcomes, "2026-10-17T10:00:00+00:00"))
+
+
+def withheld_for_finding_outcomes(case, result, item="item 3 of 5"):
+    """Whether result withholds item from being presented for its findings' outcomes, as the step prints that."""
+    report = item_read_report(result) if "its cold-read-fast-read, of its text" in result.stdout else None
+    lines = result.stdout.rstrip("\n").split("\n")
+    return (result.returncode == 1
+            and f"{item} is not handed over to be presented yet: its cold-read-fast-read report " in result.stdout
+            and "has findings with no recorded outcome, 2 of 2." in result.stdout
+            and "  Q2.1: `three`: unclear." in lines and "  Q4.1: `three` — code could count it." in lines
+            and (report is None or (
+                f"python3 {case.stand_in} --record-finding-outcomes-in-cold-read-record {report.parent} \\"
+                in lines))
+            and "  --finding-outcome 'Q2.1=<applied, or declined: reason>' \\" in lines
+            and "  --finding-outcome 'Q4.1=<applied, or declined: reason>'" in lines
+            and lines[-1].startswith(f"Then run `python3 {PROGRAM} {WAITING_ITEM_READ} {AFTER_FIXES} --cwd ")
+            and not any(line.startswith(("Present ", "Then present ")) for line in lines))
+
+
+def test_the_read_step_withholds_an_item_until_each_finding_of_its_read_has_an_outcome():
+    case = item_read_case()
+    answered_and_closed(case)
+    first = case.run(WAITING_ITEM_READ, mode=FINDINGS_MODE)
+    check("the read step lists the findings of the read it ran, prints the command that records their outcomes, "
+          "naming the record and the fast read program, and does not hand the item over, exit 1",
+          withheld_for_finding_outcomes(case, first)
+          and "Read that report and apply each finding that holds to item 3 of 5" in first.stdout, described(first))
+    again = case.run(WAITING_ITEM_READ)
+    check("run again before the outcomes are recorded, the step still does not hand the item over",
+          withheld_for_finding_outcomes(case, again) and times_read(case, "## Item 3 of 5: three") == 1,
+          described(again))
+    finding_outcomes_recorded(item_read_report(first))
+    handed = case.run(WAITING_ITEM_READ)
+    check("once every finding has its outcome, the step hands the item over, exit 0",
+          handed.returncode == 0 and handed.stdout.rstrip("\n").split("\n")[-1].startswith("Then present item 3 of 5"),
+          described(handed))
+
+
+def test_after_fixes_with_no_read_withholds_the_item_until_its_latest_read_has_finding_outcomes():
+    case = item_read_case()
+    answered_and_closed(case)
+    first = case.run(WAITING_ITEM_READ, mode=FINDINGS_MODE)
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    document.write_text(document.read_text().replace(
+        ITEM_3_HEADING, ITEM_3_HEADING + "\nThis item, e.g. this one, asks little.\n"))
+    result = case.run(WAITING_ITEM_READ, AFTER_FIXES)
+    check(f"{AFTER_FIXES} after a wording fix runs no read and does not hand the item over while its latest read's "
+          "findings have no outcomes, exit 1",
+          "item 3 of 5: no new cold-read-fast-read: " in result.stdout
+          and withheld_for_finding_outcomes(case, result) and times_read(case, ITEM_3_HEADING) == 1,
+          described(result))
+    finding_outcomes_recorded(item_read_report(first))
+    handed = case.run(WAITING_ITEM_READ, AFTER_FIXES)
+    check(f"{AFTER_FIXES} hands the item over once its latest read's findings have their outcomes",
+          handed.returncode == 0 and handed.stdout.rstrip("\n").split("\n")[-1].startswith("Present item 3 of 5"),
+          described(handed))
+
+
+def test_the_read_step_says_so_when_its_reads_report_cannot_be_read_for_finding_outcomes():
+    case = item_read_case()
+    answered_and_closed(case)
+    first = case.run(WAITING_ITEM_READ, mode=FINDINGS_MODE)
+    shutil.rmtree(item_read_report(first).parent)
+    result = case.run(WAITING_ITEM_READ)
+    check("when the read's report is gone, the step does not hand the item over, says why and what to do, exit 1",
+          result.returncode == 1
+          and "item 3 of 5 is not handed over to be presented: whether each finding of its cold-read-fast-read "
+              "report" in result.stderr
+          and f"If {item_read_report(first).parent} is gone: delete " in result.stderr
+          and not any(line.startswith(("Present ", "Then present ")) for line in result.stdout.split("\n")),
+          described(result))
+    outcome_file = Path(result.stderr.split(f"If {item_read_report(first).parent} is gone: delete ", 1)[1]
+                        .split(", this program's record of that read", 1)[0])
+    outcome_file.unlink()
+    read_again = case.run(WAITING_ITEM_READ)
+    check("following that instruction, the step gives the item a new read and hands it over",
+          read_again.returncode == 0 and "had to be run now" in read_again.stdout
+          and read_again.stdout.rstrip("\n").split("\n")[-1].startswith("Then present item 3 of 5")
+          and times_read(case, "## Item 3 of 5: three") == 2, described(read_again))
 
 
 def stopped_by_sigterm(*_):
