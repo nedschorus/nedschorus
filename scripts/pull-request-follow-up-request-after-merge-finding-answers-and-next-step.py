@@ -167,7 +167,7 @@ pre_push_conflict_check = load_script_beside_this_one("git-client-side-hooks-pre
 new_shared_names_lister = load_script_beside_this_one("new-shared-names-in-changed-files-list.py")
 
 PROGRAM = "scripts/" + Path(__file__).name
-REPOSITORY = "nedschorus/nedschorus"
+REPOSITORY = "nedsnodes/nedsnodes"
 POSTING_PROGRAM_FILE_NAME = "merge-lane-pull-request-reviewer-review-post-and-read-back.py"
 REPLACES_READER_FILE_NAME = "pull-request-description-replaces-line-replaced-pull-request-chain-reader-common.py"
 FOLLOW_UP_REQUEST_LINE_START = "#follow_up_request"

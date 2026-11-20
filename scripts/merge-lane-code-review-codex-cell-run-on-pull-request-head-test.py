@@ -107,7 +107,7 @@ def main():
         completed, gh_calls, cell_calls = run_program(scratch, helpers)
         detail = f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}"
         check("the description is read from GitHub with the merge account's token",
-              gh_calls == [{"argv": ["pr", "view", "7", "--repo", "nedschorus/nedschorus",
+              gh_calls == [{"argv": ["pr", "view", "7", "--repo", "nedsnodes/nedsnodes",
                                      "--json", "body", "--jq", ".body"], "gh_token": TOKEN}],
               json.dumps(gh_calls))
         check("the description is saved under cx/pr<n>-<base>",
