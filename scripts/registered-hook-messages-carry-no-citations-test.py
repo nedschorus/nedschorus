@@ -109,8 +109,8 @@ def load_hook(relative_path):
 for text in ("this exact failure corrupted a command on 2026-08-17",
              "(user-ruled before)", "rule: nedschorus#27", "evidence on #37",
              "fixed by PR 931", "see GHI 913", "issue #46 holds it",
-             "https://github.com/nedschorus/nedschorus/pull/931",
-             "https://github.com/nedschorus/nedschorus/issues/913",
+             "https://github.com/nedsnodes/nedsnodes/pull/931",
+             "https://github.com/nedsnodes/nedsnodes/issues/913",
              "answered at 2026-09-19T04:00:31Z", "on 2026-09-07/08", "on 2026-08-10-11"):
     check(f"a citation is caught: {text}", citations_in(text) != [], text)
 for text in ("gh issue close <number> --reason completed",

@@ -35,7 +35,7 @@ notice was printed by the listing alone, so `--task <id>` denied a task whose
 file was on disk and --seats printed a total that silently left it out
 (reviewer's finding on pull request [seat-task-list-read: a task can be cited
 and opened like the other
-ID-types](https://github.com/nedschorus/nedschorus/pull/607), 2026-09-21).
+ID-types](https://github.com/nedsnodes/nedsnodes/pull/607), 2026-09-21).
 There are now four such paths -- the listing, --task, --seats and
 --every-task-list -- and the notice is pinned on each.
 
@@ -212,7 +212,7 @@ check("seat_of leaves a list id of another shape whole",
 # --- which machine this is -------------------------------------------------
 #
 # The blocking finding of pull request [Show every seat's task list, from both
-# machines](https://github.com/nedschorus/nedschorus/pull/634), reproduced by
+# machines](https://github.com/nedsnodes/nedsnodes/pull/634), reproduced by
 # both reviewers on ned-box: the machine was a constant, so on ned-box the
 # tool called ned-box's store the Mac's, never read the Mac, and ssh'd to
 # itself. These four cases and the four under `both machines` below are what
@@ -977,7 +977,7 @@ with tempfile.TemporaryDirectory() as root:
     # name the machines actually read, not the machines asked for: it once
     # said "on the machines read: ned-box" above a line saying ned-box was not
     # read (Codex's P2 on pull request [The task viewer names only the
-    # machines it actually read](https://github.com/nedschorus/nedschorus/pull/655),
+    # machines it actually read](https://github.com/nedsnodes/nedsnodes/pull/655),
     # carried by merge-lane-2).
     with pretending_the_host_is("Edwards-MacBook-Air.local"):
         _, alone_message, alone_code = run_and_code(
@@ -995,7 +995,7 @@ with tempfile.TemporaryDirectory() as root:
 # boundary, where tarfile raises nothing and simply returns fewer files. Both
 # are the machine not read, never a traceback and never a short list
 # (merge-lane-2's finding on pull request [Fold every seat, on both machines,
-# into the one task viewer](https://github.com/nedschorus/nedschorus/pull/646)).
+# into the one task viewer](https://github.com/nedsnodes/nedsnodes/pull/646)).
 BOX_TAR_WITHOUT_END_MARKER = BOX_TAR.rstrip(b"\0")
 BOX_TAR_CUT_AT_A_MEMBER_BOUNDARY = BOX_TAR_WITHOUT_END_MARKER + bytes(
     -len(BOX_TAR_WITHOUT_END_MARKER) % tarfile.BLOCKSIZE)
