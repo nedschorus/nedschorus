@@ -28,7 +28,7 @@ Source: `git show 7a99785c:docs/issues/queue/18-write-test-plan-agent-native-rid
 
 2. **Reach-posit obligation.** Each planned test declares which design-significant paths it reaches; the declared set is diffed against measured execution (coverage.py dynamic contexts) — red on posited-but-unreached (false-green detector) or reached-but-forbidden. Escalation layers, per-claim rather than standing: trace assertions for ordering claims; scripted-debugger interior-state assertions for claims with no test-visible seam.
 
-3. **Test-kind taxonomy (selection menu).** The skill selects kinds per claim across five axes (scope, oracle, input production, environment/workload, suite adequacy) rather than defaulting to example-based functional tests. Reference by pointer, not import: `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/MD-skills/automated-testing-kinds-survey-2026-07-29.md` (COPS, 2026-07-29; routine / trigger-reserved / reject buckets, 24-kind menu, 11 planner questions). Binding framing rulings: evidence value for good, maintainable code first — cost (CPU/tokens/storage) is a bound, not a ranking key; standard terminology only.
+3. **Test-kind taxonomy (selection menu).** The skill selects kinds per claim across five axes (scope, oracle, input production, environment/workload, suite adequacy) rather than defaulting to example-based functional tests. Reference by pointer, not import: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/MD-skills/automated-testing-kinds-survey-2026-07-29.md` (COPS, 2026-07-29; routine / trigger-reserved / reject buckets, 24-kind menu, 11 planner questions). Binding framing rulings: evidence value for good, maintainable code first — cost (CPU/tokens/storage) is a bound, not a ranking key; standard terminology only.
 
 4. **Skip-expiry convention.** Every skipped or disabled test carries an owner and an expiry date from day one. Belongs in this skill's text or implement-with-evidence's, whichever first writes a test.
 
@@ -45,7 +45,7 @@ Two rules the 2026-09-02 walk adopted, to be carried into the skill as concrete 
 - When adding or changing a test fixture that represents the output of an external system, run the real command first and generate the fixture from what it printed. If the command is unsafe to run directly, capture it in a sandbox and say so in the capture note — the fixture then proves what the sandbox does, not what the real system does. Never type, copy or infer those values from the code under test. Record the capture command and the machine it ran on beside the fixture. Without that capture, the test is not finished.
 - Do not merge a code path that neither the author nor a reviewer can execute. If nobody can run it, get an environment that can, or leave the path out.
 
-A third rule — at least one test per script that asks the real system on every run, rather than replaying a recording — was drafted four times and never reached wording the user accepted. It is the live-check half of rider 1 and is closed, replaced by the canary-test rules the user approved in items 19 to 32 of approval-walk md-skills-seat-open-decisions-2026-10-15 (minutes `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/md-skills-seat-open-decisions-2026-10-15-minutes.md`): a change needs a canary test when no test in the repository runs the real program to check a behaviour the change relies on, and a test in the repository that runs the real program counts, and is better. A scheduled-canary-test is kept, and a scheduled job reruns it. The project's existing idiom for its absent-system case is the visible SKIP line, as in `scripts/clean-worktrees-test.py`.
+A third rule — at least one test per script that asks the real system on every run, rather than replaying a recording — was drafted four times and never reached wording the user accepted. It is the live-check half of rider 1 and is closed, replaced by the canary-test rules the user approved in items 19 to 32 of approval-walk md-skills-seat-open-decisions-2026-10-15 (minutes `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/md-skills-seat-open-decisions-2026-10-15-minutes.md`): a change needs a canary test when no test in the repository runs the real program to check a behaviour the change relies on, and a test in the repository that runs the real program counts, and is better. A scheduled-canary-test is kept, and a scheduled job reruns it. The project's existing idiom for its absent-system case is the visible SKIP line, as in `scripts/clean-worktrees-test.py`.
 
 ## 2026-09-16: code that runs only against a stand-in
 
@@ -99,7 +99,7 @@ The cost of running a check decides which tier runs it, not whether the check is
 
 Whether write-test-plan is a skill at all, the question that came before the build, is settled. The user ruled on 2026-09-06, on the reboot-test seat's walk: "prose instructions are a skill only if used outside the state machine, e.g. at the user's request; instructions that exist only for a node are 'canned instructions', not skills." The state machine is design-to-main's. Planning tests is what design-to-main's `test-design-writing` node does, but as of 2026-10-30 design-to-main is not running, and every pull request is built outside it, by an author who plans its tests.
 
-On 2026-10-30 at 14:00 the user approved item 5 of approval-walk md-skills-seat-open-questions-from-item-2-carried-over-approval-walk-2026-10-28 (minutes `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/md-skills-seat-open-questions-from-item-2-carried-over-approval-walk-2026-10-28-minutes.md`, line 189). The choice he approved, as the item showed it (walk-document `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/md-skills-seat-open-questions-from-item-2-carried-over-approval-walk-2026-10-28.md`, line 232):
+On 2026-10-30 at 14:00 the user approved item 5 of approval-walk md-skills-seat-open-questions-from-item-2-carried-over-approval-walk-2026-10-28 (minutes `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/md-skills-seat-open-questions-from-item-2-carried-over-approval-walk-2026-10-28-minutes.md`, line 189). The choice he approved, as the item showed it (walk-document `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/md-skills-seat-open-questions-from-item-2-carried-over-approval-walk-2026-10-28.md`, line 232):
 
 > Choice 1: a skill, in `.claude/skills/write-test-plan/`, for any agent writing tests; the test-design-writing agent-instructions point to it.
 
@@ -111,8 +111,8 @@ Build the skill `.claude/skills/write-test-plan/`, with the riders and rules in 
 
 ## Evidence of record
 
-- Six-agent source read: `nc-queue/archived/2026-07-22-candidate-skill-source-evidence.md` (this skill's section)
-- cops delta packet: `nc-queue/archived/2026-07-23-cops-candidate-skill-delta-packet.md` (this skill's section)
+- Six-agent source read: `nn-queue/archived/2026-07-22-candidate-skill-source-evidence.md` (this skill's section)
+- cops delta packet: `nn-queue/archived/2026-07-23-cops-candidate-skill-delta-packet.md` (this skill's section)
 - Shortlist origin: `docs/issues/9-neds-notes.md` § Working skill shortlist
 - The 2026-09-02 walk that triggered the build: `docs/walk/prevention-rules-from-the-2026-08-31-fix-rounds-minutes.md` (lands with the build)
 - The defects: https://github.com/nedschorus/nedschorus/pull/222 and https://github.com/nedschorus/nedschorus/pull/223
