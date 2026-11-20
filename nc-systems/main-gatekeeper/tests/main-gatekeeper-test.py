@@ -1237,7 +1237,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
     no_gh_environment.pop("CLAUDE_CODE_SESSION_ID", None)
     completed = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "audit",
-         "--repo-slug", "nedschorus/nedschorus"],
+         "--repo-slug", "nedsnodes/nedsnodes"],
         capture_output=True, text=True, check=False, env=no_gh_environment,
     )
     audit_payload = load_payload(completed.stdout)

@@ -16,7 +16,7 @@ The seams are flags the tests use; cron passes none, so each takes its default:
 
 The design is GHI "Test suites that run without a sandbox leave per-change test
 runs unless the change edits a file they read, and run on main in a quiet gap",
-https://github.com/nedschorus/nedschorus/issues/2381, parts 2 and 4. A selective
+https://github.com/nedsnodes/nedsnodes/issues/2381, parts 2 and 4. A selective
 run of scripts/run-all-test-suites.py leaves out each suite listed in its
 SUITES_RUN_WITHOUT_ANY_SANDBOX unless the change edits a file that suite reads,
 so this program is what runs every one of them after a change reaches main. It

@@ -20,8 +20,8 @@ import tempfile
 from pathlib import Path
 
 READER = Path(__file__).with_name("pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py")
-ISSUE = "https://github.com/nedschorus/nedschorus/issues/1154"
-PULL_REQUEST = "https://github.com/nedschorus/nedschorus/pull/1636"
+ISSUE = "https://github.com/nedsnodes/nedsnodes/issues/1154"
+PULL_REQUEST = "https://github.com/nedsnodes/nedsnodes/pull/1636"
 ONE_CHARACTER_EACH = " (each byte that is not UTF-8 counts as one character): byte "
 
 failures = []
@@ -166,7 +166,7 @@ case_follow_up_link_with_a_query = link_is(f"#root_cause_not_fixed b. #follow_up
 case_follow_up_markdown_citation = link_is(f"#root_cause_not_fixed b. #follow_up GHI [Ask]({ISSUE}).", ISSUE)
 case_follow_up_first_link_read = link_is(f"Root cause not fixed: b. #follow_up {ISSUE} or {PULL_REQUEST}", ISSUE)
 case_follow_up_link_to_a_commit = link_is(
-    "#root_cause_not_fixed b. #follow_up https://github.com/nedschorus/nedschorus/commit/40ad4f50c38e", None)
+    "#root_cause_not_fixed b. #follow_up https://github.com/nedsnodes/nedsnodes/commit/40ad4f50c38e", None)
 case_follow_up_http_link = link_is("#root_cause_not_fixed b. #follow_up http://github.com/o/r/issues/1", None)
 case_line_with_no_link = link_is("#root_cause_not_fixed the outage had to end first.", None)
 case_link_without_the_follow_up_hashtag = link_is(f"#root_cause_not_fixed b; see {ISSUE}", None)
