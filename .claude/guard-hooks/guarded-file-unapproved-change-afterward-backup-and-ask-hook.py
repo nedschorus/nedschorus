@@ -78,6 +78,12 @@ OWNER_VARIABLE = "GUARDED_FILE_VERSIONS_OWNER_KEY"
 # a child with about half of that, so a hung SMB mount is still reported in additionalContext
 # before Claude Code kills the hook.
 MAC_STORE_DEADLINE_SECONDS = 15
+# A run on the Mac starts no further file's store work after this share of the deadline, saves
+# what it settled, and leaves the rest to the next run: a change to hundreds of guarded files,
+# such as a merge that moves them, takes several runs, where one run would never finish.
+MAC_STORE_WORK_SHARE_OF_DEADLINE = 0.6
+# The state key of a state whose first run, the stocking run, was cut off by its time budget.
+STOCKING_UNFINISHED_KEY = "stocking_unfinished"
 
 STATE_FILE_NAME = HOOK_NAME + "-state.json"
 # The checkout state's key for {path: blob id} of the versions the checkout's first run found
@@ -182,6 +188,12 @@ STORE_FAILED = (
     "checked against the versions the user approved: {reason}.\n"
     "Tell the user what failed, with this remedy: {remedy}\n"
     "Once the store can be reached, the next tool call checks the files again.")
+STORE_WORK_LEFT_FOR_NEXT_RUN = (
+    "The guarded-file backup reached its time limit on the Mac's store with {count} changed "
+    "guarded file(s) not yet copied or checked; it saved what it finished, and the next tool "
+    "call goes on with the rest.\n"
+    "Nothing is needed from you unless this message keeps coming with the same count: then tell "
+    "the user the backup is not getting through its files.")
 FIRST_RUN_VERSION_LOST = (
     "[rule guarded-file-changed-without-approval-ask-user-afterward] "
     "The guarded-file backup could not approve version {blob} of {path}, the version this "
@@ -993,8 +1005,12 @@ def approval_takes(store, path, key, rule):
             or not seen_lines(store.log(path), key))
 
 
-def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, quiet):
-    """Everything that touches the store. Returns (asks, reminders, settled paths).
+def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, quiet,
+                out_of_time=lambda: False):
+    """Everything that touches the store. Returns (asks, reminders, settled paths, deferred
+    paths). A path is deferred when out_of_time() turned true before its store work was done:
+    its state entry is then left as it was, so the next run does the same work again, which
+    every store write here tolerates.
 
     approvals: [(path, key, how, rule)] git's own work and renames, recorded before the checks.
     checks: the files whose content changed, each copied unless its checkout's branch HEAD
@@ -1002,12 +1018,16 @@ def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, q
     unsettled_unchanged: [(path, key)] files left unsettled by an earlier run. quiet: a rebase,
     merge, cherry-pick or revert is stopped, so every version is copied and nothing is asked."""
     for path, key, how, rule in approvals:
+        if out_of_time():
+            return [], [], {}, {check.path for check in checks} | {path for path, *_ in approvals}
         if key in store.approved(path) or not approval_takes(store, path, key, rule):
             continue
         store.approve(path, key)
         log_line(store, path, "approved", session, owner, key, how)
     asks, reminders, settled = [], [], {}
-    for check in checks:
+    for index, check in enumerate(checks):
+        if out_of_time():
+            return asks, reminders, settled, {check.path for check in checks[index:]}
         bytes_hash = ""
         if check.key != DELETED and not check.in_git:
             store.copy(check.path, check.copy_hash, check.data)
@@ -1043,6 +1063,9 @@ def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, q
             log_line(store, check.path, "reminded", session, check.key)
             reminders.append((check.path, check.key))
     for path, key in unsettled_unchanged:
+        if out_of_time():
+            # Their state entries stay unsettled, so the next run reminds or asks about them.
+            break
         approved = store.approved(path)
         if key in approved:
             settled[path] = True
@@ -1061,7 +1084,7 @@ def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, q
         elif not was_reminded(log, key, session):
             log_line(store, path, "reminded", session, key)
             reminders.append((path, key))
-    return asks, reminders, settled
+    return asks, reminders, settled, set()
 
 
 def read_file(path):
@@ -1193,7 +1216,7 @@ def run_hook(payload):
 
     outside_path = outside_state_path()
     outside_state = read_state(outside_path)
-    outside_stocking = outside_state is None
+    outside_stocking = outside_state is None or bool(outside_state.get(STOCKING_UNFINISHED_KEY))
     outside_state = outside_state or {"files": {}}
     groups.append(("outside", outside_path, outside_state, outside_files(), None, outside_stocking))
 
@@ -1202,7 +1225,8 @@ def run_hook(payload):
         git_directory = Path(git_text(checkout, "rev-parse", "--absolute-git-dir").strip())
         checkout_path = git_directory / STATE_FILE_NAME
         checkout_state = read_state(checkout_path)
-        checkout_stocking = checkout_state is None
+        checkout_stocking = (checkout_state is None
+                             or bool(checkout_state.get(STOCKING_UNFINISHED_KEY)))
         checkout_state = checkout_state or {"files": {}, "reflog": None, "stopped": False,
                                             FIRST_RUN_VERSIONS_KEY: {}}
         migrated = BASE_COMMIT_KEY in checkout_state
@@ -1311,10 +1335,20 @@ def run_hook(payload):
                 write_state(plan[1], plan[2])
         return []
 
+    budget_end = (time.monotonic() + deadline_seconds() * MAC_STORE_WORK_SHARE_OF_DEADLINE
+                  if machine == "mac" else None)
+
+    def out_of_time():
+        return budget_end is not None and time.monotonic() > budget_end
+
     def work(store):
         results = []
+        briefs_unfinished = False
         if stocking_machine:
             for path in seat_briefs():
+                if out_of_time():
+                    briefs_unfinished = True
+                    break
                 if not store.approved(path):
                     data = read_file(path)
                     key = blob_hash(data)
@@ -1379,10 +1413,13 @@ def run_hook(payload):
             approvals += [(path, DELETED, HOW_DELETION, APPROVE_ALWAYS)
                           for path, key in [(path, value[2]) for path, value in changed.items()]
                           + unsettled if key == DELETED]
-            asks, reminders, settled = store_phase(store, session, owner(), checks, unsettled,
-                                                   approvals, quiet)
+            asks, reminders, settled, deferred = store_phase(store, session, owner(), checks,
+                                                             unsettled, approvals, quiet,
+                                                             out_of_time)
             settled.update({path: True for path in skipped})
-            results.append((asks, reminders, settled, skipped, unreadable))
+            # The outside group runs first, so its stocking is unfinished while a seat-brief is.
+            unfinished = bool(deferred) or (kind == "outside" and briefs_unfinished)
+            results.append((asks, reminders, settled, skipped, unreadable, deferred, unfinished))
         return results
 
     try:
@@ -1392,13 +1429,16 @@ def run_hook(payload):
             store=store_directory(machine))
         return [STORE_FAILED.format(reason=str(error).rstrip("."), remedy=remedy)]
 
-    asks, reminders, lost = [], [], []
-    for plan, (plan_asks, plan_reminders, settled, skipped, unreadable) in zip(plans, results):
-        state, changed = plan[2], plan[4]
+    asks, reminders, lost, left = [], [], [], 0
+    for plan, (plan_asks, plan_reminders, settled, skipped, unreadable, deferred,
+               unfinished) in zip(plans, results):
+        state = plan[2]
+        changed = {path: value for path, value in plan[4].items() if path not in deferred}
+        left += len(deferred)
         if plan[13] is not None:
             first_run = state[FIRST_RUN_VERSIONS_KEY]
             # A version git no longer holds stays recorded, so each later change reports it.
-            for path in (set(plan[15])
+            for path in (set(plan[15]) - deferred
                          - {path for path, _ in unreadable}):  # pragma: no mutate, every unreadable path is one of plan[15], so `^` gives the same set
                 del first_run[path]
             lost += unreadable
@@ -1414,15 +1454,23 @@ def run_hook(payload):
         for path in [path for path, value in state["files"].items()
                      if value[4] == DELETED and value[6]]:
             del state["files"][path]
-        if plan[8] is not None:
-            state["reflog"] = plan[8]
-        if "stopped" in state:
-            state["stopped"] = plan[7]
+        if unfinished:
+            # The reflog position and a stopped operation stay as they were, so the next run
+            # finds the same git work for the deferred files, and a stocking run stays one.
+            if plan[9]:
+                state[STOCKING_UNFINISHED_KEY] = True
+        else:
+            state.pop(STOCKING_UNFINISHED_KEY, None)
+            if plan[8] is not None:
+                state["reflog"] = plan[8]
+            if "stopped" in state:
+                state["stopped"] = plan[7]
         write_state(plan[1], state)
         asks += plan_asks
         reminders += plan_reminders
-    return [FIRST_RUN_VERSION_LOST.format(path=path, blob=blob, program=HOOK_PATH)
-            for path, blob in lost] + messages(asks, reminders)
+    return ([FIRST_RUN_VERSION_LOST.format(path=path, blob=blob, program=HOOK_PATH)
+             for path, blob in lost] + messages(asks, reminders)
+            + ([STORE_WORK_LEFT_FOR_NEXT_RUN.format(count=left)] if left else []))
 
 
 def seat_briefs():

@@ -1419,6 +1419,7 @@ def cases(scratch):
 
     # -- the Mac's store over a stand-in mount
     mac_cases(scratch)
+    mac_store_backlog_cases(scratch)
     durable_ref_cases(scratch)
     reflog_copy_and_saved_state_cases(scratch)
 
@@ -2507,6 +2508,128 @@ def mac_cases(scratch):
           "before the hook's timeout",
           "did not run" in message and "the store did not answer within 3.0 seconds" in message
           and world.last_seconds < 30, (message, world.last_seconds))
+
+
+
+def mac_world_without_first_run(scratch, name):
+    """A Mac world whose stand-in store is mounted and whose deadline is 3 s; no run yet."""
+    world = World(Path(scratch) / name, machine="mac")
+    world.scratch.mkdir(exist_ok=True)
+    mount_point = Path(scratch) / name / "store"
+    table = Path(scratch) / name / "mount-table"
+    table.write_text(f"//nedlern@ned-box/nedlern on {mount_point} (smbfs)\n")
+    world.extra_environment = {"GUARDED_FILE_VERSIONS_MOUNT_POINT": str(mount_point),
+                               "GUARDED_FILE_VERSIONS_MOUNT_TABLE": str(table),
+                               "GUARDED_FILE_VERSIONS_DEADLINE_SECONDS": "3"}
+    return world
+
+
+def hook_with_slow_store_appends(seconds):
+    """The hook loaded in this process, each Store.append first sleeping seconds: the SMB round
+    trips that make the Mac's store slow, which a local stand-in store does not have."""
+    hook = load_hook_in_this_process()
+    append = hook.Store.append
+
+    def slow_append(self, *arguments):
+        time.sleep(seconds)
+        return append(self, *arguments)
+
+    hook.Store.append = slow_append
+    return hook
+
+
+def runs_until_done(world, hook, limit):
+    """The messages of each run, until a run leaves no file for the next or limit runs."""
+    runs = []
+    for _ in range(limit):
+        runs.append(run_hook_in_this_process(world, hook, "session-a", "owner-a"))
+        if not any("reached its time limit" in message for message in runs[-1]):
+            break
+    return runs
+
+
+def asked_count(messages, path):
+    return sum("A guarded file changed" in message and f"{path}, version" in message
+               for message in messages)
+
+
+def mac_store_backlog_cases(scratch):
+    # -- a change to more guarded files than one run's deadline on the Mac's store allows, such
+    # as a merge that moves hundreds of them, is settled over several runs
+    documents = [f"part-{number:02}/CLAUDE.md" for number in range(40)]
+    world = mac_world_without_first_run(scratch, "mac-backlog")
+    world.run()
+    for name in documents:
+        (world.repo / name).parent.mkdir()
+        (world.repo / name).write_text(f"{name} v1\n")
+    world.git("add", ".")
+    world.git("commit", "-q", "-m", "forty documents")
+    # 40 files at 0.1 s an append take more than the 3 s deadline in one run.
+    hook = hook_with_slow_store_appends(0.1)
+    runs = runs_until_done(world, hook, 8)
+    every_message = [message for messages in runs for message in messages]
+    check("with more changed guarded files than one run's deadline allows, no run reports that "
+          "the store did not answer",
+          not any("did not run" in message for message in every_message), every_message)
+    check("the first run says it saved its progress and how many files it left for the next",
+          any("reached its time limit" in message and "not yet copied or checked" in message
+              for message in runs[0]), runs[0])
+    check("later runs go on with the files left until a run leaves none",
+          1 < len(runs) < 8, len(runs))
+    check("every changed file's version is seen in the store once the runs are done",
+          all(world.key(world.repo / name) in world.store_file(world.repo / name, "log")
+              for name in documents))
+    check("every changed file is asked about once in all, not again in each run",
+          all(asked_count(every_message, world.repo / name) == 1 for name in documents),
+          [name for name in documents if asked_count(every_message, world.repo / name) != 1])
+
+    # -- a merge that brings in more guarded files than one run's deadline allows, as the
+    # project rename's merge did, has git's own work approved over several runs, none asked about
+    world = mac_world_without_first_run(scratch, "mac-merge-backlog")
+    world.run()
+    world.git("checkout", "-q", "-b", "incoming")
+    for name in documents:
+        (world.repo / name).parent.mkdir()
+        (world.repo / name).write_text(f"{name} merged\n")
+    world.git("add", ".")
+    world.git("commit", "-q", "-m", "forty documents on another branch")
+    world.git("checkout", "-q", "main")
+    world.run()
+    world.git("merge", "-q", "--no-ff", "--no-edit", "incoming")
+    hook = hook_with_slow_store_appends(0.1)
+    runs = runs_until_done(world, hook, 12)
+    every_message = [message for messages in runs for message in messages]
+    check("a merge of more guarded files than one run's deadline allows is approved over several "
+          "runs, none failing",
+          1 < len(runs) < 12 and "reached its time limit" in "".join(runs[0])
+          and not any("did not run" in message for message in every_message), every_message)
+    check("every merged file is approved as git's own work, and none is asked about",
+          all(world.key(world.repo / name) in world.store_file(world.repo / name, "approved")
+              for name in documents)
+          and not any("A guarded file changed" in message for message in every_message),
+          every_message)
+
+    # -- a first run cut off by its time budget stays a first run, so the files it left are
+    # approved as found, as the first run would have, and not asked about
+    world = mac_world_without_first_run(scratch, "mac-stocking-backlog")
+    for name in documents:
+        (world.repo / name).parent.mkdir()
+        (world.repo / name).write_text(f"{name} uncommitted\n")
+    world.git("add", ".")
+    hook = hook_with_slow_store_appends(0.1)
+    runs = runs_until_done(world, hook, 8)
+    every_message = [message for messages in runs for message in messages]
+    check("a first run with more files than its deadline allows is finished by later runs",
+          1 < len(runs) < 8 and "reached its time limit" in "".join(runs[0]), len(runs))
+    check("the files the first run left are approved as found, not asked about",
+          all(world.key(world.repo / name) in world.store_file(world.repo / name, "approved")
+              for name in documents)
+          and not any("A guarded file changed" in message for message in every_message),
+          every_message)
+    check("once the first run is finished, its state no longer marks it unfinished",
+          "stocking_unfinished" not in next((world.repo / ".git").glob("*-state.json"),
+                                            Path("/dev/null")).read_text()
+          and next((world.repo / ".git").glob("*-state.json"), None) is not None)
 
 
 if __name__ == "__main__":
