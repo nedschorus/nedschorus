@@ -690,11 +690,13 @@ try:
 
     repository = build_scratch_repository(scratch, "checkout-target-moves-mid-run")
     slow_stubs = scratch / "stub-bin-target-moves-mid-run"
+    note_left_by_stopped_cells = "notes-left-before-the-frozen-copy-moved.md"
     started = time.monotonic()
     result = run_grid(repository, slow_stubs, {
         "COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS": "120",
         "COLD_READ_GRID_TEST_STUB_FAST_REPORT_NAME_FRAGMENT": "codex-hunt-second-strongest-model",
-        "COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET": "1"})
+        "COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET": "1",
+        "COLD_READ_GRID_TEST_STUB_WRITE_PATHS_BEFORE_SLEEPING": str(repository / note_left_by_stopped_cells)})
     elapsed = time.monotonic() - started
     check("a frozen copy moved mid-run stops the run long before the readers finish",
           elapsed < 60, f"{elapsed:.0f} s; stdout={result.stdout!r}")
@@ -744,16 +746,21 @@ try:
           processes_mentioning(str(slow_stubs), str(repository)) == [],
           processes_mentioning(str(slow_stubs), str(repository)))
     # A stopped cell never reaches its own stray-write check, so the grid checks for it.
-    # The edit here is to the frozen copy, which is under the gitignored record, so the
-    # grid's check finds nothing to report.
+    # The edit to the frozen copy is under the gitignored record, so the check reports
+    # only the note the cells wrote outside their reports.
     check("every stopped cell is named as stopped",
           all(f"{name}.md: stopped before it finished" in result.stdout
               for name in ("claude-hunt-deep", "claude-hunt-second-strongest-model",
                            "claude-terminology-deep", "codex-hunt-deep",
                            "codex-terminology-deep")),
           repr(result.stdout))
-    check("the grid's check ran for the stopped cells and found no write outside the record",
-          "WRITE CHECK DID NOT RUN" not in result.stdout and "STRAY WRITE:" not in result.stdout,
+    # The cell that finished ran its own check and reports the note in its own line too.
+    check("the grid's check ran for the cells stopped when the frozen copy moved, and lists only "
+          "their write outside the record",
+          "WRITE CHECK DID NOT RUN" not in result.stdout
+          and [line.split(" ", 3)[2] for line in result.stdout.splitlines()
+               if line.startswith("STRAY WRITE:") and " changed after the cells launched. " in line]
+          == [note_left_by_stopped_cells],
           repr(result.stdout))
 
     # --- A frozen copy that moves while reviewers have written but not exited
@@ -1133,12 +1140,16 @@ try:
           == sorted([new_file, TARGET_RELATIVE_PATH, already_untracked])
           and lines_opening(result, "WRITE CHECK DID NOT RUN:") == [],
           repr(result.stdout))
-    check("a new file gets a delete command",
-          any(line.startswith(f"STRAY WRITE: {new_file} ") and f"`rm -r -- {new_file}`" in line
+    # The commands name the repository in full, so they hit the same file from any directory.
+    resolved_repository = repository.resolve()
+    check("a new file gets a delete command naming its absolute path",
+          any(line.startswith(f"STRAY WRITE: {new_file} ")
+              and f"`rm -r -- {shlex.quote(str(resolved_repository / new_file))}`" in line
               for line in stray_lines), repr(stray_lines))
-    check("a committed file gets a restore command",
+    check("a committed file gets a restore command run in the repository",
           any(line.startswith(f"STRAY WRITE: {TARGET_RELATIVE_PATH} ")
-              and f"`git restore --staged --worktree -- {TARGET_RELATIVE_PATH}`" in line
+              and f"`git -C {shlex.quote(str(resolved_repository))} restore --staged --worktree -- "
+                  f"{TARGET_RELATIVE_PATH}`" in line
               for line in stray_lines), repr(stray_lines))
     check("a file already changed before the run gets no undo command",
           any(line.startswith(f"STRAY WRITE: {already_untracked} ")
@@ -1645,6 +1656,41 @@ try:
           len(lines) == 1 and lines[0].startswith("WRITE CHECK DID NOT RUN: claude-hunt-deep.md — ")
           and "git status failed when it checked (injected git status failure)" in lines[0],
           repr(lines))
+
+    # A stopped cell that `git mv`s a file the agent had already edited: restoring the
+    # destination would delete it, and the agent's edits with it.
+    rename_repository = (scratch / "checkout-stopped-cell-renames-an-edited-file").resolve()
+    rename_repository.mkdir()
+
+    def git_in_rename_repository(*arguments):
+        subprocess.run(["git", "-C", str(rename_repository), "-c", "user.name=grid test",
+                        "-c", "user.email=grid-test@example.invalid", *arguments],
+                       check=True, capture_output=True)
+
+    git_in_rename_repository("init", "--quiet")
+    (rename_repository / "agent-draft.md").write_text("Committed text.\n", encoding="utf-8")
+    git_in_rename_repository("add", "agent-draft.md")
+    git_in_rename_repository("commit", "--quiet", "-m", "seed")
+    (rename_repository / "agent-draft.md").write_text(
+        "Committed text.\nThe agent's own edit, not yet committed.\n", encoding="utf-8")
+    with mock.patch.object(grid_module.cell_common, "REPO_ROOT", rename_repository):
+        rename_baseline = grid_module.cell_common.working_tree_state()
+        git_in_rename_repository("mv", "agent-draft.md", "renamed-by-a-reviewer.md")
+        reported = set()
+        rename_lines = grid_module.stopped_cells_write_check_lines(
+            [scratch / "claude-hunt-deep.md"], rename_baseline, None, reported)
+        (rename_repository / "renamed-by-a-reviewer.md").write_text("A later write.\n", encoding="utf-8")
+        later_lines = grid_module.stopped_cells_write_check_lines(
+            [scratch / "codex-hunt-deep.md"], rename_baseline, None, reported)
+    destination_lines = [line for line in rename_lines
+                         if line.startswith("STRAY WRITE: renamed-by-a-reviewer.md ")]
+    check("a file renamed from one the agent had edited gets no undo command, and is named as renamed",
+          len(destination_lines) == 1 and "no undo command is given" in destination_lines[0]
+          and "renamed from agent-draft.md" in destination_lines[0]
+          and "restore" not in destination_lines[0] and "rm -r" not in destination_lines[0],
+          repr(rename_lines))
+    check("a path already listed is not listed again when later cells are stopped",
+          later_lines == [], repr(later_lines))
     attempt = grid_module.start_attempt(
         [sys.executable, "-c", "import time; time.sleep(120)"],
         scratch / "report.md", 1, scratch / "cell.stderr.log")

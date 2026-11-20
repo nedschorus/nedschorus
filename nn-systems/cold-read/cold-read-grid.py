@@ -296,15 +296,22 @@ STOPPED_CELLS_STRAY_WRITE_LINE = (
     "STRAY WRITE: {path} changed after the cells launched. The grid checked for the stopped "
     "cells {cells}, whose own check never runs, and cannot tell who changed it. {undo}")
 STRAY_WRITE_UNDO_UNTRACKED = (
-    "If its content shows a reviewer wrote it, delete it: `rm -r -- {path}`. "
+    "If its content shows a reviewer wrote it, delete it: `rm -r -- {absolute_path}`. "
     "Ask the user about it if you did not make it and are unsure.")
 STRAY_WRITE_UNDO_TRACKED = (
-    "If its content shows a reviewer wrote it, undo it: `git restore --staged --worktree -- {path}`. "
+    "If its content shows a reviewer wrote it, undo it: "
+    "`git -C {repository} restore --staged --worktree -- {path}`. "
     "Ask the user about it if you did not make it and are unsure.")
 STRAY_WRITE_NO_UNDO_ALREADY_CHANGED = (
     "It already had uncommitted changes before the cells launched, so no undo command is given: "
-    "one would also undo those. Read `git diff -- {path}` against the edits you know are your own, "
-    "and ask the user about any change you did not make.")
+    "one would also undo those. Read `git -C {repository} diff -- {path}` against the edits you know "
+    "are your own, and ask the user about any change you did not make.")
+# Restoring a rename's destination deletes it, and with it the uncommitted changes its source held.
+STRAY_WRITE_NO_UNDO_RENAMED_FROM_ALREADY_CHANGED = (
+    "It was renamed from {origin}, which already had uncommitted changes before the cells launched, "
+    "so no undo command is given: one would delete those changes. Read `git -C {repository} diff "
+    "HEAD -M -- {origin} {path}` against the edits you know are your own, and ask the user about "
+    "any change you did not make.")
 STOPPED_CELL_LINE = "{report}: stopped before it finished{deleted}."
 WORKING_TREE_SNAPSHOT_NOT_TAKEN_REASON = "its snapshot of the working tree before the cells launched failed ({error})"
 WORKING_TREE_CHECK_FAILED_REASON = "git status failed when it checked ({error})"
@@ -956,16 +963,17 @@ def working_tree_snapshot_or_failure_reason() -> tuple:
 def stopped_cells_write_check_lines(stopped_report_paths: list, baseline,
                                     baseline_failure_reason, already_reported: set) -> list:
     """Return a line per path changed since the baseline and not yet reported, each with
-    its undo command, or, when no check can run, a line per stopped cell saying so."""
+    its undo command, or, when no check can run, a line per stopped cell saying so.
+    A path that leaves the snapshot after the baseline is not detected, such as an
+    already-untracked file a stopped cell deletes, or a changed tracked file it resets to HEAD."""
     reason = None if baseline is not None else (
         baseline_failure_reason or "no snapshot of the working tree was taken before the cells launched")
     if baseline is not None:
         try:
             changed = sorted({name for name, _ in cell_common.working_tree_state() - baseline})
-            untracked = {entry.path for entry in git_machine_readable_output.status_entries(
+            entries = git_machine_readable_output.status_entries(
                 git_machine_readable_output.run_git(
                     cell_common.REPO_ROOT, ["status", "--porcelain", "-z", "--untracked-files=all"]))
-                if entry.code == "??"}
         except (cell_common.WriteDetectorUnavailable,
                 git_machine_readable_output.GitCommandFailed) as error:
             reason = WORKING_TREE_CHECK_FAILED_REASON.format(
@@ -974,18 +982,25 @@ def stopped_cells_write_check_lines(stopped_report_paths: list, baseline,
         return [f"WRITE CHECK DID NOT RUN: {path.name} — "
                 + STOPPED_CELL_WRITE_CHECK_LINE.format(cell=cell_name_of(path), reason=reason)
                 for path in stopped_report_paths]
+    untracked = {entry.path for entry in entries if entry.code == "??"}
+    origin_of = {entry.path: entry.origin_path for entry in entries if entry.origin_path}
     changed_before = {name for name, _ in baseline}
     cells = ", ".join(cell_name_of(path) for path in stopped_report_paths)
+    repository = shlex.quote(str(cell_common.REPO_ROOT))
     lines = []
     for name in changed:
         if name in already_reported:
             continue
         already_reported.add(name)
         undo = (STRAY_WRITE_NO_UNDO_ALREADY_CHANGED if name in changed_before
+                else STRAY_WRITE_NO_UNDO_RENAMED_FROM_ALREADY_CHANGED if origin_of.get(name) in changed_before
                 else STRAY_WRITE_UNDO_UNTRACKED if name in untracked
                 else STRAY_WRITE_UNDO_TRACKED)
         lines.append(STOPPED_CELLS_STRAY_WRITE_LINE.format(
-            path=name, cells=cells, undo=undo.format(path=shlex.quote(name))))
+            path=name, cells=cells, undo=undo.format(
+                path=shlex.quote(name), repository=repository,
+                absolute_path=shlex.quote(str(cell_common.REPO_ROOT / name)),
+                origin=shlex.quote(origin_of.get(name) or ""))))
     return lines
 
 
