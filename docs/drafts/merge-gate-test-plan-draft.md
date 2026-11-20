@@ -9,7 +9,7 @@ horrible code that generates)."
 
 Suite destination `scripts/merge-gate-test.py`, beside the program it tests, per
 the Test row of
-[docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md](file:///Users/el/agents/merge-lane-backlog/docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md).
+[docs/nedsnodes-wiki/nedsnodes-file-naming-and-location-standards.md](file:///Users/el/agents/merge-lane-backlog/docs/nedsnodes-wiki/nedsnodes-file-naming-and-location-standards.md).
 
 **Where the code under test is.** `scripts/merge-gate.sh` is NOT on main yet; that
 is what this build produces. The cleaned program sits on the local branch
