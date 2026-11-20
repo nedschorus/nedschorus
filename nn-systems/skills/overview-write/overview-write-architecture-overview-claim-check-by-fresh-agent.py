@@ -16,15 +16,20 @@ a program so that no step depends on an agent remembering it:
    of the page, gives the three ranks of a contradicted or unsupported claim
    (must fix, fix later, nit), since the page at an older commit lacks them,
    and fixes the report's form, so this program can count the verdicts and
-   ranks. --writer-answers gives it the writer's answers to verdicts the
-   writer disputes, as the page's rounds allow.
+   ranks. --writer-answers FILE gives it the writer's answers to verdicts the
+   writer disputes, as the page's rounds allow. FILE is free text that quotes
+   each disputed assertion and gives the answer with the quoted line it rests
+   on; this program does not read it, only passes its path to every
+   fresh-agent.
 5. For each claim ranked must fix, runs one more fresh-agent, all of them in
    parallel, given that claim and not the first verdict or rank. The claim
    keeps the rank must fix only when that second answer ranks it must fix
    again; otherwise it is ranked fix later.
 6. Writes the report, the second answers after it, under a header this
    program writes, to
-   <report directory>/<overview file name without .md>/<overview blob>-<UTC time>.md.
+   <report directory>/<overview file name without .md>/<overview blob>-<UTC time>.md,
+   where <report directory> is --report-directory, by default
+   /home/nedlern/nedsnodes-logs/overview-write-architecture-overview-claim-check-reports.
    The blob names the overview's exact text, which holds the commit it is
    checked against, so a report stays valid across a rebase or a fix-round
    that leaves the overview's text alone, and no model runs again for it.
@@ -35,11 +40,16 @@ a program so that no step depends on an agent remembering it:
    nn-systems/<system>/docs/<system>-architecture-overview-proposed-improvements-or-changes-entries.md,
    outside the wiki folder, so the wiki no longer gains a file named after the
    overview on every run. A
-   follow-up pull request fixes the claims, except when the file on origin/main
-   already holds a claim from this program, a line starting "Claim: ", which
-   only this program writes: the run is then taken to be that follow-up, or a
-   later one, and its claims ranked fix later are left to regular maintenance,
-   so "later" is one step. Nits are listed in the report only.
+   follow-up pull request fixes the claims this run appended, except when the
+   file on origin/main already holds a claim from this program, a line
+   starting "Claim: ", which only this program writes: the run is then taken
+   to be that follow-up, or a later one, and the claims this run appended are
+   left to regular maintenance, so "later" is one step. Nits are listed in the
+   report only.
+   The overview points to the file with one line under its first heading,
+   PROPOSED_IMPROVEMENTS_OR_CHANGES_POINTER_LINE_TEMPLATE filled in; for
+   docs/nedsnodes-wiki/nedsnodes-handoff-architecture-overview.md it is:
+   This document has proposed improvements or changes: read `handoff-architecture-overview-proposed-improvements-or-changes-entries.md` in `nn-systems/handoff/docs/`.
 
 scripts/pull-request-review-plan.py refuses a pull request that adds or changes
 an overview until the newest report for the overview's blob at the pull
@@ -72,19 +82,18 @@ Usage:
 Exit 0: report written, and no claim ranked must fix remains. 1: refused,
 nothing run. 2: program defect. 3: md-drift-lint found problems, so no
 fresh-agent ran. 4: a fresh-agent failed, so no report was written. 5: report
-written, and a claim ranked must fix remains, or the report is malformed. 6:
-no claim ranked must fix remains, but git could not remove the temporary
-worktree; the report
-was still written, its result printed, and scripts/pull-request-review-plan.py
-accepts it as it accepts an exit-0 report.
+written, and a claim ranked must fix remains, or the report is malformed.
+6: no claim ranked must fix remains, but git could not remove the temporary
+worktree; the report was still written, its result printed, and
+scripts/pull-request-review-plan.py accepts it as it accepts an exit-0 report.
 
 The last line printed, on stdout, starts with "Next: " and says what to do for
 that exit, so the overview-write skill's step 3 is only to do what it says.
-For exits 0, 5 and 6, when step 7 wrote a file, the line says to commit it
-and either to open a follow-up pull request for its claims once this one
-merges or that regular maintenance takes them, and, when the overview lacks
-the line pointing to that file, to add that line under the overview's first
-heading and run the program again.
+For exits 0, 5 and 6, when step 7 appended claims to the file, the line says
+to commit the file and either to open a follow-up pull request for the appended
+claims once this one merges or that regular maintenance takes them, and, when
+the overview lacks the pointer line of step 7, quotes that line and says to
+add it under the overview's first heading and run the program again.
 For exit 5 the program tells a malformed report apart from claims ranked
 must fix. On the first malformed report for an overview text, its
 last line tells the agent to run the program again; on the second and each
@@ -646,9 +655,10 @@ def main(argv=None):
                         help="the overview's path, relative to the top of the checkout")
     parser.add_argument("--revision", default="HEAD", help="the commit or branch whose overview text is checked")
     parser.add_argument("--writer-answers", type=Path, metavar="FILE",
-                        help="the writer's answers to disputed verdicts of an earlier report")
+                        help="a free-text file of the writer's answers to disputed verdicts of an earlier report; "
+                             "see step 4 above")
     parser.add_argument("--report-directory", type=Path, default=OVERVIEW_WRITE_ARCHITECTURE_OVERVIEW_CLAIM_CHECK_REPORT_DIRECTORY,
-                        metavar="DIR")
+                        metavar="DIR", help="where reports are written; default %(default)s")
     arguments = None
     try:
         arguments = parser.parse_args(argv)
