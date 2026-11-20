@@ -47,7 +47,7 @@ absence = load("absence_claim_locator_reminder_hook", SCRIPTS / "absence-claim-l
 bare_number = load("bare_number_citation_in_markdown_and_agent_reply_warning_hook",
                    SCRIPTS / "bare-number-citation-in-markdown-and-agent-reply-warning-hook.py")
 walk = load("walk_me_through_current_item_stop_hook",
-            REPOSITORY_TOP / "nc-systems" / "skills" / "walk-me-through"
+            REPOSITORY_TOP / "nn-systems" / "skills" / "walk-me-through"
             / "walk-me-through-agent-reply-to-user-not-ending-with-waiting-item-closing-line-refusal-stop-hook.py")
 
 failures = []

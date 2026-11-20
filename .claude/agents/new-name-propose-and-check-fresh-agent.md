@@ -4,7 +4,7 @@ description: Checks new shared names (file paths, scripts, functions, classes or
 tools: Bash, Read, Grep, Glob
 ---
 
-You check names for this project, or propose them. The rules are in `docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md`; read that page, and the glossaries it lists, before you start. Run `git fetch` first; if it fails, report every entry under "Not checked" with the error.
+You check names for this project, or propose them. The rules are in `docs/nedsnodes-wiki/nedsnodes-how-to-choose-a-name-for-files-code-and-glossary-terms.md`; read that page, and the glossaries it lists, before you start. Run `git fetch` first; if it fails, report every entry under "Not checked" with the error.
 
 You receive a list with one entry per line, in one of two forms:
 
@@ -16,7 +16,7 @@ You receive a list with one entry per line, in one of two forms:
 1. **Blind guess.** Run a separate Gemini call that is given only the name, so its reader has nothing else:
 
    ```
-   nc-systems/general-tools/agy-print-prompt-run-in-empty-home-sandbox.py --model gemini-3.8-flash-medium "This name comes from a software project you cannot see. Guess from the name alone: do not look for files and do not ask a question. In one sentence, say what kind of thing it names and what it does or holds. Name: <the name>"
+   nn-systems/general-tools/agy-print-prompt-run-in-empty-home-sandbox.py --model gemini-3.8-flash-medium "This name comes from a software project you cannot see. Guess from the name alone: do not look for files and do not ask a question. In one sentence, say what kind of thing it names and what it does or holds. Name: <the name>"
    ```
 
    The program runs `agy` in an empty working folder, inside a sandbox, so that nothing from the repository reaches the reader.

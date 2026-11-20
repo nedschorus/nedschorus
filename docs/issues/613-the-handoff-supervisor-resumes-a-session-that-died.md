@@ -11,13 +11,13 @@ The handoff-supervisor stops when its session dies without writing a handoff. Th
 
 Done by PR [The handoff-supervisor resumes a session that died without a handoff](https://github.com/nedschorus/nedschorus/pull/651), merged 2026-09-22 as that pull request's merge commit [aff81ae4](https://github.com/nedschorus/nedschorus/commit/aff81ae4a60d275087e773722a5a5f1a27bd199f).
 
-The budget it built is 1, not the 2 this issue asks for below: `CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET = 1` in `nc-systems/handoff/handoff-supervisor.py`. The user ruled on 2026-09-22: "If resume doesn't work, then dont try again".
+The budget it built is 1, not the 2 this issue asks for below: `CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET = 1` in `nn-systems/handoff/handoff-supervisor.py`. The user ruled on 2026-09-22: "If resume doesn't work, then dont try again".
 
 Closed 2026-09-29 by the user's "y" at walk open-items-this-seat-holds-2026-09-24, item 13.
 
 ## What happens today
 
-`nc-systems/handoff/handoff-supervisor.py` line 1702, reached when `wait_for_handoff` returns `None`: the supervisor records the child's exit code and time in its state file, prints `session ended without a handoff; supervisor stopping`, and returns 0.
+`nn-systems/handoff/handoff-supervisor.py` line 1702, reached when `wait_for_handoff` returns `None`: the supervisor records the child's exit code and time in its state file, prints `session ended without a handoff; supervisor stopping`, and returns 0.
 
 That is deliberate. The exit record is the signal that lets `scripts/recover-crashed-seats.py` tell "stopped under supervision" from "crashed" — a seat carrying a record is offered, one without is resumed. The gap is not in that distinction; it is that **nothing fires automatically**. Recovery runs only when a person or the login-time program invokes a launch.
 
@@ -65,7 +65,7 @@ The exit record is still written on every stopping path, so `scripts/recover-cra
 
 Most of the machinery exists. `RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF` is defined at line 87 and already used at lines 1533 and 1650 — but only on the **startup** path, when a launch lands on an already-dead seat. This wires the same, already-exercised mechanism into the in-loop death path.
 
-The budget is the only genuinely new concept. Search receipt for that claim: `grep -n "attempt\|retry\|consecutive\|RESTART_\|MAX_" nc-systems/handoff/handoff-supervisor.py` returns **0 matches** on main at `4ed4e49`. There is no retry or attempt counter anywhere in the file.
+The budget is the only genuinely new concept. Search receipt for that claim: `grep -n "attempt\|retry\|consecutive\|RESTART_\|MAX_" nn-systems/handoff/handoff-supervisor.py` returns **0 matches** on main at `4ed4e49`. There is no retry or attempt counter anywhere in the file.
 
 ## Next action
 
