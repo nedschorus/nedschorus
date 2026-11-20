@@ -131,7 +131,7 @@ the merge not yet run is run, until that time. That time is
 --second-pass-stops-starting-mutants-seconds-before-next-scheduled-run, by
 default 30 minutes, before cron next starts this program on ned-box, which
 this program reads from its schedule in --scheduled-jobs-on-each-machine-json-file,
-by default nc-systems/general-tools/scheduled-jobs-on-each-machine.json, a
+by default nn-systems/general-tools/scheduled-jobs-on-each-machine.json, a
 schedule of the form `<minute> <hour> * * *`: a run still going when cron
 starts the next one would make that one exit
 EXIT_ANOTHER_RUN_HOLDS_THE_LOCK. From that time on the second pass starts on
@@ -312,8 +312,8 @@ that cannot be written is printed on standard output instead, and the run
 exits EXIT_RECORD_NOT_WRITTEN.
 
 SCHEDULE. Installed on ned-box by
-nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py from
-nc-systems/general-tools/scheduled-jobs-on-each-machine.json, with both output
+nn-systems/general-tools/install-scheduled-jobs-on-this-machine.py from
+nn-systems/general-tools/scheduled-jobs-on-each-machine.json, with both output
 streams appended to its log, which, with the record, is where its failures
 are read. Run by hand on ned-box, from an agent's shell too, as a unit of the
 user's systemd, which outlives the shell, with its output in the same log:
@@ -347,7 +347,7 @@ applies: an unwritten record outranks a failed step, which outranks a lost
 task, which outranks an unjudged recheck, which outranks a carried-on merge.
 """
 
-# Messages here follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
+# Messages here follow docs/nedsnodes-wiki/nedsnodes-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 
 import argparse
 import fcntl
@@ -391,7 +391,7 @@ MERGES_WITH_MUTANTS_NOT_RUN_STATE_KEY = "merges_with_mutants_not_run"
 ERRORED_MUTANT_KEYS_ALREADY_REPORTED_STATE_KEY = "errored_mutant_keys_already_reported"
 FIRST_PASS_MUTANTS_RUN_PER_MERGE_AT_MOST = 12
 SCHEDULED_JOBS_ON_EACH_MACHINE_JSON_FILE = (
-    REPOSITORY_ROOT / "nc-systems" / "general-tools" / "scheduled-jobs-on-each-machine.json")
+    REPOSITORY_ROOT / "nn-systems" / "general-tools" / "scheduled-jobs-on-each-machine.json")
 DEFAULT_SECOND_PASS_STOPS_STARTING_MUTANTS_SECONDS_BEFORE_NEXT_SCHEDULED_RUN = 30 * 60
 LOCK_FILE_NAME = "scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.lock"
 DEFAULT_TASK_LISTS_DIRECTORY = Path.home() / ".claude" / "tasks"
@@ -443,17 +443,17 @@ mutation_testing = module_loaded_by_path(
     "mutation_testing_changed_lines_quick_or_full_pass_survivors", MUTATION_TESTING_PROGRAM)
 git_redirecting_removal = module_loaded_by_path(
     "git_redirecting_environment_variables_removal_common",
-    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    REPOSITORY_ROOT / "nn-systems" / "general-tools"
     / "git-redirecting-environment-variables-removal-common.py")
 agent_seat_task_list = module_loaded_by_path(
     "agent_seat_task_list_new_pending_task_write_common",
-    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    REPOSITORY_ROOT / "nn-systems" / "general-tools"
     / "agent-seat-task-list-new-pending-task-write-common.py")
 agent_seat_task_list_new_pending_task_write = (
     agent_seat_task_list.agent_seat_task_list_new_pending_task_write)
 agent_seat_task_list_task_file_rewrite = module_loaded_by_path(
     "agent_seat_task_list_task_file_rewrite_common",
-    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    REPOSITORY_ROOT / "nn-systems" / "general-tools"
     / "agent-seat-task-list-task-file-rewrite-common.py").agent_seat_task_list_task_file_rewrite
 
 

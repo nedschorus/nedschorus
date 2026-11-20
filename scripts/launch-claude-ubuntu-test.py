@@ -23,7 +23,7 @@ Run it from a checkout, on ned-box, where P1 is parsed by the real /bin/sh
 (dash) rather than by macOS sh standing in for it:
   python3 scripts/launch-claude-ubuntu-test.py
 The GitHub token cases run the real handoff-supervisor from the checkout's
-nc-systems/, and it loads modules from the checkout's scripts/, so the suite
+nn-systems/, and it loads modules from the checkout's scripts/, so the suite
 does not run from a copy of a few files.
 """
 
@@ -306,8 +306,8 @@ class LaunchHarness:
         the real supervisor, linked into the sandbox HOME's checkout path, so
         the case measures the refusal the supervisor itself prints.
         token_file_accounts names the accounts given a token file."""
-        (self.home / "Projects" / "nedsnodes" / "nc-systems").symlink_to(
-            LAUNCHER.resolve().parent.parent / "nc-systems")
+        (self.home / "Projects" / "nedsnodes" / "nn-systems").symlink_to(
+            LAUNCHER.resolve().parent.parent / "nn-systems")
         token_directory = self.home / ".config" / "nedsnodes"
         for account in token_file_accounts:
             token_directory.mkdir(parents=True, exist_ok=True)
@@ -541,7 +541,7 @@ def main() -> int:
               result["supervisor_argv"]
               and result["supervisor_argv"][0]
               == (f"{harness.home}/Projects/nedsnodes"
-                  "/nc-systems/handoff/handoff-supervisor.py"),
+                  "/nn-systems/handoff/handoff-supervisor.py"),
               result["supervisor_argv"])
         check("default root: the seat directory was created at P1",
               (harness.home / "agents" / "seat-a").is_dir(),

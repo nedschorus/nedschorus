@@ -91,7 +91,7 @@ for statement in ast.parse(guard_source.read_text(encoding="utf-8")).body:
             for target in statement.targets):
         reason = ast.literal_eval(statement.value)
         check("the refusal says the handoff writer adds the command without agent action",
-              "The handoff writer script, nc-systems/handoff/handoff-write-and-check-supervisor.py,"
+              "The handoff writer script, nn-systems/handoff/handoff-write-and-check-supervisor.py,"
               " adds the command to your session-handoff, so you need not." in reason,
               reason)
         break
@@ -916,11 +916,11 @@ with tempfile.TemporaryDirectory() as workspace:
             ("while kill -0 4242; do sleep 30; done", 0),
             ("sleep 120; echo finished", 75),
             ("sleep 120 >/dev/null 2>&1", 0),
-            ("sleep 600 && python3 nc-systems/cold-read/cold-read-grid.py", 75),
+            ("sleep 600 && python3 nn-systems/cold-read/cold-read-grid.py", 75),
             ("until grep -q done out.txt; do sleep 5; done; python3 scripts/run-all-test-suites.py", 90),
-            ("until [ -f /tmp/r ]; do sleep 5; done; python3 nc-systems/cold-read/cold-read-grid.py --target CLAUDE.md", 75),
+            ("until [ -f /tmp/r ]; do sleep 5; done; python3 nn-systems/cold-read/cold-read-grid.py --target CLAUDE.md", 75),
             ("while pgrep -f x >/dev/null; do sleep 20; done; python3 scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py 1 2 3", 75),
-            ("until [ -s first.out ]; do sleep 10; done && python3 nc-systems/cold-read/cold-read-fast-read.py --target a.md", 75),
+            ("until [ -s first.out ]; do sleep 10; done && python3 nn-systems/cold-read/cold-read-fast-read.py --target a.md", 75),
             ("until grep -q done out.txt; do sleep 5; done; cat out.txt | tail -5", 75),
             ("until [ -f x ]; do sleep 5; done; for p in 1 2 3; do python3 scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py $p; done", 75),
             ("while kill -0 4242; do\n  sleep 30\ndone > /dev/null 2>&1", 0),
@@ -928,7 +928,7 @@ with tempfile.TemporaryDirectory() as workspace:
             ("while kill -0 4242; do sleep 30; done && echo finished; gh pr view 12", 75),
             ("for f in scripts/*-test.py; do python3 $f; done", 90),
             ("while read -r line; do echo \"$line\" >> out.txt; done < in.txt", 75),
-            ("python3 nc-systems/cold-read/cold-read-grid.py --target docs/x.md", 75),
+            ("python3 nn-systems/cold-read/cold-read-grid.py --target docs/x.md", 75),
             (None, 75)):
         seconds = hook.background_task_kind_and_wait_limit_minutes_from_command(command)[1] * 60
         check(f"the wait-limit of {command!r} is {expected_minutes} minutes",
@@ -1011,7 +1011,7 @@ with tempfile.TemporaryDirectory() as workspace:
 
     eighty_minutes_after_launch = datetime(2026, 9, 15, 0, 1, 47, 899000, tzinfo=timezone.utc)
     for command, in_flight in (("python3 scripts/run-all-test-suites.py", True),
-                               ("python3 nc-systems/cold-read/cold-read-grid.py", False),
+                               ("python3 nn-systems/cold-read/cold-read-grid.py", False),
                                (None, False)):
         records = [usage_record(100_000, cache_read=450_000)]
         if command is not None:
@@ -1630,7 +1630,7 @@ with tempfile.TemporaryDirectory() as workspace:
         check("the deferral names the work it waits for",
               "(subagent a2573a7737ae643dc)" in result.stderr, result.stderr[:600])
         check("the instruction on new work says the handoff writer, not the agent, adds stopped work to the session-handoff",
-              "When you run the handoff writer script, nc-systems/handoff/handoff-write-and-check-supervisor.py,"
+              "When you run the handoff writer script, nn-systems/handoff/handoff-write-and-check-supervisor.py,"
               " before this agent-session ends, it names in your session-handoff each subagent still working,"
               " whenever it started, and each background Bash task that started since this handoff-deferral"
               " began and is still running, so you need not add that work to your task list"
@@ -2166,7 +2166,7 @@ with tempfile.TemporaryDirectory() as workspace:
                 ("nc-mutation-testing",
                  "python3 scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py", 105),
                 ("test-suite", "cd /tmp/x && python3 scripts/run-all-test-suites.py", 90),
-                ("a command no kind matches", "python3 nc-systems/cold-read/cold-read-grid.py", 75)):
+                ("a command no kind matches", "python3 nn-systems/cold-read/cold-read-grid.py", 75)):
             for age, holds in ((timedelta(minutes=limit_minutes), False),
                                (timedelta(minutes=limit_minutes) - timedelta(milliseconds=1), True)):
                 boundary_session = transcript_of(
@@ -2911,7 +2911,7 @@ def runtime_union_annotations(path):
 
 # The Mac's python3 is Apple's 3.9, which runs this hook and the handoff writer that imports it.
 for importing_script in (HOOK_SCRIPT,
-                         HOOK_SCRIPT.parent.parent / "nc-systems" / "handoff" / "handoff-write-and-check-supervisor.py"):
+                         HOOK_SCRIPT.parent.parent / "nn-systems" / "handoff" / "handoff-write-and-check-supervisor.py"):
     union_annotations = runtime_union_annotations(importing_script)
     check(f"{importing_script.name} imports under Python 3.9: no `X | None` annotation evaluated at import",
           not union_annotations, union_annotations)

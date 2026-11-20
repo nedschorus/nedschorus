@@ -1015,7 +1015,7 @@ def commissioned_reviewer_cases(root, repository, base, frozen_head):
     then merge-lane-2 requests changes on the same commit. Round 1: after the fix commit is pushed,
     the commissioned reviewer posts on it before merge-lane-2's next review. The scratch repository's
     commits stand in for the pull request's."""
-    bash_guards = ("nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-"
+    bash_guards = ("nn-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-"
                    "transcript-recorded-commands-check.py")
     reviewer_round_0 = pull_request_2213_review(
         5718075290, "mac-claude", "COMMENTED", frozen_head,
@@ -1093,7 +1093,7 @@ def split_review_cases(root, repository, base, frozen_head):
     merge-lane-2 requested changes on an earlier head, then on the frozen-head it posted its review
     in two changes-requested parts, 14 s apart, after the commissioned reviewer's comment-only
     review; each part holds one **Blocks.** comment. base stands in for the earlier head."""
-    grid = "nc-systems/cold-read/cold-read-grid.py"
+    grid = "nn-systems/cold-read/cold-read-grid.py"
     reviews = [
         review(review_id=5721655691, commit_id=base, body="merge-lane-2: the head test run failed again."),
         review(state="COMMENTED", review_id=5722014373, commit_id=frozen_head, login="mac-claude",
@@ -2083,11 +2083,11 @@ def suite_cases(root, repository, _base, _frozen_head):
     runner_calls(root)
 
 
-DEMO_OVERVIEW = "docs/nedschorus-wiki/nedschorus-demo-architecture-overview.md"
+DEMO_OVERVIEW = "docs/nedsnodes-wiki/nedsnodes-demo-architecture-overview.md"
 
 
 def demo_overview_text(checked_against, extra=""):
-    return (f"# Demo\n\n## Components\n\n- `nc-systems/demo/demo.py` runs the demo.\n{extra}\n"
+    return (f"# Demo\n\n## Components\n\n- `nn-systems/demo/demo.py` runs the demo.\n{extra}\n"
             f"**Checked against:** commit [{checked_against}](https://github.com/nedsnodes/nedsnodes/commit/"
             f"{checked_against})\n")
 
@@ -2101,9 +2101,9 @@ def write_claim_check_report(report_directory, repository, revision, result="no 
 
 def architecture_overview_cases(root, repository, _base, _frozen_head):
     """PRs 3571 and 3591: the pull request changes the demo overview, and the round changes code it describes."""
-    (repository / "nc-systems" / "demo").mkdir(parents=True)
-    described = commit_file(repository, "nc-systems/demo/demo.py", "one\n", "demo code")
-    (repository / "docs" / "nedschorus-wiki").mkdir(parents=True)
+    (repository / "nn-systems" / "demo").mkdir(parents=True)
+    described = commit_file(repository, "nn-systems/demo/demo.py", "one\n", "demo code")
+    (repository / "docs" / "nedsnodes-wiki").mkdir(parents=True)
     frozen_head = commit_file(repository, DEMO_OVERVIEW, demo_overview_text(described), "demo overview")
     reviews = [review(commit_id=frozen_head)]
     answers = answers_file(root, GOOD_ANSWERS)
@@ -2123,14 +2123,14 @@ def architecture_overview_cases(root, repository, _base, _frozen_head):
     runner_calls(root)
 
     git(repository, "reset", "-q", "--hard", frozen_head)
-    fix = commit_file(repository, "nc-systems/demo/demo.py", "two\n", "round changes described code")
+    fix = commit_file(repository, "nn-systems/demo/demo.py", "two\n", "round changes described code")
     code, out, err = check_round_at(frozen_head)
     check("overview: a round whose commit changes code the overview describes, while its **Checked against:** "
           "names an earlier commit, refuses with exit 1 before the suites and the push, naming the overview, the "
           "code and the claim check",
           code == 1 and "Not pushed yet" not in out and runner_calls(root) == []
           and f"{DEMO_OVERVIEW} names commit {described}, and later commits of the pull request change code the "
-          "overview describes: nc-systems/demo/demo.py." in err
+          "overview describes: nn-systems/demo/demo.py." in err
           and "set each one's **Checked against:** line to name the fix commit's full id" in err
           and f"overview-write-architecture-overview-claim-check-by-fresh-agent.py --overview {DEMO_OVERVIEW}" in err
           and "so pushing it would cost a second push under review" in err, out + err)

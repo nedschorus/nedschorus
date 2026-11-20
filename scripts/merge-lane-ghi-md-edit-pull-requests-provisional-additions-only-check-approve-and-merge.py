@@ -8,7 +8,7 @@ Usage:
 
 Cron runs it every 5 minutes on ned-box, whether or not any agent-session is
 running. It is installed on ned-box alone by
-nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py, from the
+nn-systems/general-tools/install-scheduled-jobs-on-this-machine.py, from the
 table beside it, scheduled-jobs-on-each-machine.json:
 
     */5 * * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge.py >> /home/nedlern/.claude/merge-lane-ghi-md-edit-pull-requests-provisional-additions-only-check-approve-and-merge.log 2>&1
@@ -146,7 +146,7 @@ MERGE_PROGRAM = Path(__file__).resolve().with_name(
     "merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py")
 TITLE_PREFIX = "GHI-MD edit for issue"
 PROVISIONAL_HEADING = "## Provisional additions (not yet vetted by the user)"
-MARKDOWN_PARSER_MODULE = (CHECKOUT / "nc-systems" / "general-tools"
+MARKDOWN_PARSER_MODULE = (CHECKOUT / "nn-systems" / "general-tools"
                           / "markdown-commonmark-parser-with-tables-common.py")
 # Every character Python's str.splitlines() splits on except "\n": CommonMark reads a carriage
 # return as a line break where git does not, and other Markdown tools split on the rest.

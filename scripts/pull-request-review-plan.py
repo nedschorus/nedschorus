@@ -39,7 +39,7 @@ base branch to the earlier reviewed head, each measured from its merge base;
 main's unrelated files should not decide it.
 
 Rule 3: list changed tool-message-to-agent strings, with their context and old text.
-nc-systems/general-tools/python-source-tool-message-to-agent-string-collector-common.py
+nn-systems/general-tools/python-source-tool-message-to-agent-string-collector-common.py
 decides which strings are tool-messages-to-agent and which files are tests. Tool-message-to-agent
 strings are printed, written or raised strings; strings assigned to names
 ending in _ADVICE, _INSTRUCTION, _LINE, _MESSAGE, _NOTICE, _REASON, _REFUSAL
@@ -57,7 +57,7 @@ when it names a module-level string constant, as the collector's
 text_as_agent_reads_it_with_placeholder_stand_ins says; --json gives that text
 as new_text_as_agent_reads_it_with_placeholder_stand_ins. The
 target file is written as
-nc-systems/general-tools/python-edit-changed-tool-message-to-agent-strings-check-reminder-hook.py
+nn-systems/general-tools/python-edit-changed-tool-message-to-agent-strings-check-reminder-hook.py
 writes it: in the directory tool-message-to-agent-fast-read-targets under the
 system temporary directory, named after the source file and a digest of the
 text. A listed string whose cold-read-record the pull request's description names, and whose text matches that record's target file, gets the record's path instead of a cold-read-fast-read command; every other string keeps its command.
@@ -93,17 +93,17 @@ another string.
 
 Rule 4: a pull request that adds or changes an nc-architecture-overview, a
 file at the path scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py
-gives for a directory under nc-systems/ at the head, is refused, with exit 1
+gives for a directory under nn-systems/ at the head, is refused, with exit 1
 and no plan, until the newest claim-check report for the overview's text at
 the head says every claim is supported, or that no must-fix claim remains.
-nc-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py
+nn-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py
 writes the reports, keyed by the overview's blob, under
 --overview-write-architecture-overview-claim-check-report-directory, the log-store's
 overview-write-architecture-overview-claim-check-reports by default.
 
 The code an overview describes is every path its Components section names in
 backticks, whatever the path's extension, and every file under
-nc-systems/<system>/ other than a .md file. Rule 4 also refuses such a pull
+nn-systems/<system>/ other than a .md file. Rule 4 also refuses such a pull
 request in either of these cases:
   1. The commit the overview's **Checked against:** line names is on
      origin/main, and the pull request changes code the overview describes.
@@ -160,20 +160,20 @@ from urllib.parse import quote
 
 _git_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 _git_redirecting_removal_spec = importlib.util.spec_from_file_location(
     "git_redirecting_environment_variables_removal_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "git-redirecting-environment-variables-removal-common.py")
 git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
 _git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
 
 _tool_message_to_agent_string_collector_spec = importlib.util.spec_from_file_location(
     "python_source_tool_message_to_agent_string_collector_common",
-    Path(__file__).resolve().parent.parent / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parent.parent / "nn-systems" / "general-tools"
     / "python-source-tool-message-to-agent-string-collector-common.py")
 _tool_message_to_agent_string_collector = importlib.util.module_from_spec(_tool_message_to_agent_string_collector_spec)
 _tool_message_to_agent_string_collector_spec.loader.exec_module(_tool_message_to_agent_string_collector)
@@ -182,7 +182,7 @@ f_string_field_text = _tool_message_to_agent_string_collector.f_string_field_tex
 tool_message_to_agent_string_nodes_in_source = _tool_message_to_agent_string_collector.tool_message_to_agent_string_nodes_in_source
 _message_reminder_hook_spec = importlib.util.spec_from_file_location(
     "python_edit_changed_tool_message_to_agent_strings_check_reminder_hook",
-    Path(__file__).resolve().parent.parent / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parent.parent / "nn-systems" / "general-tools"
     / "python-edit-changed-tool-message-to-agent-strings-check-reminder-hook.py")
 _message_reminder_hook = importlib.util.module_from_spec(_message_reminder_hook_spec)
 _message_reminder_hook_spec.loader.exec_module(_message_reminder_hook)
@@ -198,12 +198,12 @@ FAST_READ_COMMAND = _message_reminder_hook.FAST_READ_COMMAND
 PLAN_PRINTED_WITH_MESSAGES_MISSING_FAST_READ_COMMAND_EXIT_STATUS = 3
 _cold_read_record_names_spec = importlib.util.spec_from_file_location(
     "cold_read_record_names_common",
-    Path(__file__).resolve().parent.parent / "nc-systems" / "cold-read" / "cold-read-record-names-common.py")
+    Path(__file__).resolve().parent.parent / "nn-systems" / "cold-read" / "cold-read-record-names-common.py")
 cold_read_record_names = importlib.util.module_from_spec(_cold_read_record_names_spec)
 _cold_read_record_names_spec.loader.exec_module(cold_read_record_names)
 _overview_claim_check_spec = importlib.util.spec_from_file_location(
     "overview_write_architecture_overview_claim_check_by_fresh_agent",
-    Path(__file__).resolve().parent.parent / "nc-systems" / "skills" / "overview-write"
+    Path(__file__).resolve().parent.parent / "nn-systems" / "skills" / "overview-write"
     / "overview-write-architecture-overview-claim-check-by-fresh-agent.py")
 overview_claim_check = importlib.util.module_from_spec(_overview_claim_check_spec)
 _overview_claim_check_spec.loader.exec_module(overview_claim_check)
@@ -518,9 +518,9 @@ def classify_changed_file_into_class_tier_and_reason(repository, old_revision, n
         if changes_code:
             return "code", "codex-review-and-head-tests-tier", f"{path} changes lines inside fenced code blocks"
         return "prose", "no-reviewer-tier", f"{path} changes only prose outside fenced code blocks"
-    if (path.startswith(("docs/", "nc-queue/"))
+    if (path.startswith(("docs/", "nn-queue/"))
             and Path(path).suffix not in PROSE_DIRECTORY_CODE_EXTENSIONS):
-        return "prose", "no-reviewer-tier", f"{path} is prose under docs/ or nc-queue/"
+        return "prose", "no-reviewer-tier", f"{path} is prose under docs/ or nn-queue/"
     if path.endswith(".py"):
         if status == "A":
             return "code", "claude-and-codex-review-and-head-tests-tier", f"{path} is a new program"
@@ -653,7 +653,7 @@ def changed_tool_message_to_agent_text_entries(repository, old_revision, new_rev
     for changed_file in changed_files:
         path = changed_file["path"]
         if (not path.endswith(".py") or path_is_test_file(path)
-                or not path.startswith(("scripts/", ".claude/guard-hooks/", "nc-systems/"))
+                or not path.startswith(("scripts/", ".claude/guard-hooks/", "nn-systems/"))
                 or changed_file["status"] == "D"):
             continue
         new_nodes = tool_message_to_agent_string_nodes_in_source(read_revision_blob_or_none(repository, new_revision, path))
@@ -876,13 +876,13 @@ def merged_tree_against_origin_main(repository, head):
 
 def changed_architecture_overview_paths_and_systems(repository, head, changed_files):
     """(path, system) for each nc-architecture-overview the pull request adds or
-    changes whose system has a directory under nc-systems/ at head."""
+    changes whose system has a directory under nn-systems/ at head."""
     overviews = []
     for entry in changed_files:
         system = overview_claim_check.nc_architecture_overview_described_system_name_from_page_path(entry["path"])
         if entry["status"] == "D" or system is None:
             continue
-        if not git_result_or_refuse(repository, "ls-tree", "-d", "--name-only", head, f"nc-systems/{system}").stdout.strip():
+        if not git_result_or_refuse(repository, "ls-tree", "-d", "--name-only", head, f"nn-systems/{system}").stdout.strip():
             continue
         overviews.append((entry["path"], system))
     return overviews
@@ -902,7 +902,7 @@ def architecture_overview_component_paths(overview_text):
 
 
 def path_is_architecture_overview_described_code(path, system, component_paths):
-    if path.startswith(f"nc-systems/{system}/") and not path.endswith(".md"):
+    if path.startswith(f"nn-systems/{system}/") and not path.endswith(".md"):
         return True
     return any(path == component or path.startswith(component + "/") for component in component_paths)
 
@@ -966,8 +966,8 @@ def architecture_overview_checked_against_commit_refusal_message(number, head, p
     lines.append("  1. Commit every change to the code the overview describes, then make the overview's "
                  "**Checked against:** line name the last of those commits, or a commit of main when the pull request "
                  "no longer changes that code, as the section \"Keeping an overview true\" of "
-                 "docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md says, and commit the overview.")
-    lines.extend(f"  2. Run the claim check again: python3 nc-systems/skills/overview-write/"
+                 "docs/nedsnodes-wiki/nedsnodes-how-to-write-an-architecture-overview.md says, and commit the overview.")
+    lines.extend(f"  2. Run the claim check again: python3 nn-systems/skills/overview-write/"
                  f"overview-write-architecture-overview-claim-check-by-fresh-agent.py --overview {shlex.quote(problem['path'])}"
                  for problem in problems)
     lines.append("  3. Do what the claim check prints, and push once its report shows no must-fix claim remains.")
@@ -1010,11 +1010,11 @@ def architecture_overview_claim_check_refusal_message(number, head, shortfalls, 
     lines.extend(architecture_overview_claim_check_refusal_message_lines_one_per_overview(shortfalls, report_directory))
     lines.append("Send this whole message to the pull request's author. The author clears it on ned-box, in a checkout "
                  "of the pull request's branch at its head, by running for each overview listed:")
-    lines.extend(f"     python3 nc-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py "
+    lines.extend(f"     python3 nn-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py "
                  f"--overview {shlex.quote(shortfall['path'])}" for shortfall in shortfalls)
     lines.append("If the command fails to run, the author does what it prints.")
     lines.append("If its report shows a must-fix claim remaining, the author fixes the overview as the section "
-                 "\"Checking an overview\" of docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md "
+                 "\"Checking an overview\" of docs/nedsnodes-wiki/nedsnodes-how-to-write-an-architecture-overview.md "
                  "says, commits, runs the command again, and pushes once the report shows no must-fix claim remains.")
     lines.append(f"Once the author says each listed overview's newest report shows no must-fix claim remains: run "
                  f"scripts/pull-request-review-plan.py --pull-request {number} again.")
@@ -1199,7 +1199,7 @@ def changed_lines_for_agent_text_entry(entry):
     return list(difflib.unified_diff(old_lines, new_lines, lineterm="", n=2))[2:]
 
 
-PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE = "needs the user's approval unless it is a cosmetic-change, as `docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md` defines one: this is a prompt, text the program hands an agent as its instructions"
+PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_NEEDING_USER_APPROVAL_LINE = "needs the user's approval unless it is a cosmetic-change, as `docs/nedsnodes-wiki/nedsnodes-which-changes-need-the-users-approval.md` defines one: this is a prompt, text the program hands an agent as its instructions"
 PULL_REQUEST_REVIEW_PLAN_LABEL_PRINTED_BESIDE_CHANGED_AGENT_PROMPT_WITH_COSMETIC_CHANGE_NEEDING_NO_APPROVAL_LINE = "cosmetic-change, needs no approval: this prompt changed only in whitespace at line ends or in the number of blank lines between its paragraphs"
 
 

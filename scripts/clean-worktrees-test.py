@@ -939,7 +939,7 @@ with tempfile.TemporaryDirectory() as scratch:
     handoffs.mkdir(parents=True)
     snapshots_module_spec = importlib.util.spec_from_file_location(
         "uncommitted_work_snapshots_for_owner_keys",
-        CLEAN_SCRIPT.resolve().parent.parent / "nc-systems" / "handoff" / "uncommitted-work-snapshots.py")
+        CLEAN_SCRIPT.resolve().parent.parent / "nn-systems" / "handoff" / "uncommitted-work-snapshots.py")
     snapshots_module = importlib.util.module_from_spec(snapshots_module_spec)
     snapshots_module_spec.loader.exec_module(snapshots_module)
 
@@ -2364,7 +2364,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     snapshots_module_spec = importlib.util.spec_from_file_location(
         "uncommitted_work_snapshots_for_one_named",
-        CLEAN_SCRIPT.resolve().parent.parent / "nc-systems" / "handoff" / "uncommitted-work-snapshots.py")
+        CLEAN_SCRIPT.resolve().parent.parent / "nn-systems" / "handoff" / "uncommitted-work-snapshots.py")
     snapshots_module = importlib.util.module_from_spec(snapshots_module_spec)
     snapshots_module_spec.loader.exec_module(snapshots_module)
     live_session = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()"],
@@ -2985,7 +2985,7 @@ if sys.platform.startswith("linux"):
 
         snapshots_module_spec = importlib.util.spec_from_file_location(
             "uncommitted_work_snapshots_for_lock_cases",
-            CLEAN_SCRIPT.resolve().parent.parent / "nc-systems" / "handoff"
+            CLEAN_SCRIPT.resolve().parent.parent / "nn-systems" / "handoff"
             / "uncommitted-work-snapshots.py")
         snapshots_module = importlib.util.module_from_spec(snapshots_module_spec)
         snapshots_module_spec.loader.exec_module(snapshots_module)

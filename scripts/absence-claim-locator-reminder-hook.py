@@ -23,14 +23,14 @@ code, quoted text and block quotes do not count.
 
 THE HOOK STAYS SILENT when any of these holds:
   - this Stop ends the agent's answer to a Stop hook's output (the shared
-    rule of nc-systems/general-tools/claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py);
+    rule of nn-systems/general-tools/claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py);
   - the agent searched this turn: it invoked the skill find-missing-file or
     find-info, or ran a Bash command naming one of find-info's search
     programs, SEARCH_PROGRAM_NAMES;
   - this agent-session (for a subagent, this subagent) was already reminded:
     agents remember the reminder for a while, so it comes once;
   - no user attends the agent-session, as
-    nc-systems/general-tools/agent-session-unattended-by-user-check-common.py
+    nn-systems/general-tools/agent-session-unattended-by-user-check-common.py
     decides, such as a headless `claude -p` child. The reminder would otherwise
     become the child's last words, which its caller reads as the answer;
   - a SubagentStop payload names no agent_transcript_path: the main
@@ -87,14 +87,14 @@ from pathlib import Path
 # Every Stop hook obeys this rule first: see the module's docstring.
 _stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_location(
     "claude_code_stop_hooks_stay_silent_while_agent_answers_a_stop_hook_rule_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
 stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
 _stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
 
 _agent_session_unattended_by_user_check_common_specification = importlib.util.spec_from_file_location(
     "agent_session_unattended_by_user_check_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "agent-session-unattended-by-user-check-common.py")
 agent_session_unattended_by_user_check_common = importlib.util.module_from_spec(
     _agent_session_unattended_by_user_check_common_specification)

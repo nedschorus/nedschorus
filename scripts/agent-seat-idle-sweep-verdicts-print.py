@@ -70,13 +70,13 @@ _SCRIPTS = Path(__file__).resolve().parent
 threshold_hook = _load("handoff_context_threshold_hook",
                        _SCRIPTS / "handoff-context-threshold-hook.py")
 supervisor = _load("handoff_supervisor",
-                   _SCRIPTS.parent / "nc-systems" / "handoff" / "handoff-supervisor.py")
+                   _SCRIPTS.parent / "nn-systems" / "handoff" / "handoff-supervisor.py")
 deferred_marker_files = _load(
     "handoff_deferred_marker_and_refused_commands_files_common",
-    _SCRIPTS.parent / "nc-systems" / "handoff" / "handoff-deferred-marker-and-refused-commands-files-common.py")
+    _SCRIPTS.parent / "nn-systems" / "handoff" / "handoff-deferred-marker-and-refused-commands-files-common.py")
 due_task_hook = _load("agent_seat_due_task_raise_hook", _SCRIPTS / "agent-seat-due-task-raise-hook.py")
 walk_finder = _load("walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
-                    _SCRIPTS.parent / "nc-systems" / "skills" / "walk-me-through"
+                    _SCRIPTS.parent / "nn-systems" / "skills" / "walk-me-through"
                     / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py")
 fields = _load("agent_seat_idle_sweep_verdict_fields_common",
                _SCRIPTS / "agent-seat-idle-sweep-verdict-fields-common.py")

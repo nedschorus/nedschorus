@@ -17,7 +17,7 @@ Each time, the Mac's pre-push test run refused every Mac push whose selection in
 
 ## Why it is found late
 
-- No pull request has its tests run on the Mac before it merges: `nedlern@ned-box:/home/nedlern/nedschorus-logs/pull-request-head-test-runs/mac/` holds two records, both from 2026-10-01.
+- No pull request has its tests run on the Mac before it merges: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/pull-request-head-test-runs/mac/` holds two records, both from 2026-10-01.
 - The Mac's nightly full test run of main would show the failure the next morning, but no program tells anyone what that run found. GHI [The daily full test runs tell the user about failures and about test cases that run nowhere or lack a tool, and every test suite prints a skipped test case in one format](https://github.com/nedschorus/nedschorus/issues/1206) covers that.
 - The suites are right on the machine they were written on, so neither their author nor a reviewer has a reason to look.
 

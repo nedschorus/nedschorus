@@ -31,7 +31,7 @@ WHAT IT READS.
   ned-box's own ~/.claude/projects is not read: the mirror copies it each minute, and one copy keeps one
   link per message.
 - The walk-minutes: <agents-directory>/*/docs/walk/*-minutes.md, then <log-store>/walk/*-minutes.md, the
-  copies nc-systems/skills/walk-me-through/walk-files-ship.py ships; <log-store>/walk/superseded/ is not read. A line is a user-ruling
+  copies nn-systems/skills/walk-me-through/walk-files-ship.py ships; <log-store>/walk/superseded/ is not read. A line is a user-ruling
   when it is the answer line that walk-me-through's check program writes for an approved or disapproved
   answer (ANSWER_LINE_WITH_TIME below; a deferred answer decides nothing), or when it holds the project's
   citation of a decision of his with its date (USER_RULED_CITATION below). The answer line's time is UTC
@@ -55,7 +55,7 @@ that prompt is part 2, so entry_pairs stays empty, ready, with its unreviewed st
 
 TAGS. From his own words: each GHI, pull request, task, system and repository file he names. From the
 agent message he answered: each GHI, pull request, task and system it names; a file it names is tagged by
-its system only. A system is nc-systems/<system>/; a file under .claude/skills/ is in nc-systems/skills/.
+its system only. A system is nn-systems/<system>/; a file under .claude/skills/ is in nn-systems/skills/.
 A file outside both has no system. A path is a repository file when its longest trailing part is a file on
 origin/main, so a Mac, ned-box or worktree path resolves to the same file. A task is "task <agent-seat>
 <number>", the agent-seat being the one named just before "task #N" (as "merge-lane-2's task #N"), else
@@ -81,7 +81,7 @@ said_at_utc, link, tags, anchors and
 text, the text cut to its first INDEX_FILE_TEXT_WORDS words with "…" appended when cut (the full text is in
 the store). The anchor list holds one anchor per line, sorted, every anchor of an entry in the index file.
 An anchor is a literal string a hook finds in a tool's file path: "/<path>" for a tagged repository file,
-"/nc-systems/<system>/" for a tagged system, and "/docs/issues/<number>-<words>.md" for a tagged GHI whose
+"/nn-systems/<system>/" for a tagged system, and "/docs/issues/<number>-<words>.md" for a tagged GHI whose
 GHI-MD is on origin/main; a GHI without one has no anchor, nor has a pull request or a task. The leading
 "/" keeps "scripts/x.py" from matching "other-scripts/x.py". Each file is written beside itself and renamed
 over the old one, so a reader sees a whole file; the index file is written first.
@@ -125,7 +125,7 @@ from zoneinfo import ZoneInfo
 
 HERE = Path(__file__).resolve().parent
 TRANSCRIPT_READER_FILE = HERE / "search-user-messages-in-transcripts.py"
-GIT_ENVIRONMENT_FILE = (HERE.parent / "nc-systems" / "general-tools"
+GIT_ENVIRONMENT_FILE = (HERE.parent / "nn-systems" / "general-tools"
                         / "git-redirecting-environment-variables-removal-common.py")
 RUN_AGAIN_COMMAND = f"python3 {Path(__file__).resolve()}"
 
@@ -248,7 +248,7 @@ END;
 
 _repository_names_spec = importlib.util.spec_from_file_location(
     "github_repository_name_and_name_before_project_rename_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "github-repository-name-and-name-before-project-rename-common.py")
 repository_names = importlib.util.module_from_spec(_repository_names_spec)
 _repository_names_spec.loader.exec_module(repository_names)
@@ -285,7 +285,7 @@ ANSWER_LINE_WITH_TIME = re.compile(
     r"which makes its change\. Fast reads:$", re.IGNORECASE)
 USER_RULED_CITATION = re.compile(r"\buser-ruled (?P<date>\d{4}-\d\d-\d\d)(?P<time>T\d\d:\d\d(?::\d\d)?Z)?")
 
-# Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
+# Messages follow docs/nedsnodes-wiki/nedsnodes-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 FAILED_LINE = "FAILED: {what}: {error}"
 OWNER_REPORT_INSTRUCTION = ("If it fails the same way at the next run, send prime-intellect, the agent-seat that owns "
                             "this program, the FAILED line above with SendMessage.")
@@ -385,7 +385,7 @@ class Repository:
         """The repository files a text names, each as its path on origin/main."""
         found = set()
         for token in PATH_TOKEN.findall(text):
-            parts = [part for part in token.strip("/").split("/") if part]
+            parts = [part for part in convert_file_path_before_project_rename_to_path_after(token.strip("/")).split("/") if part]
             for start in range(len(parts)):
                 candidate = "/".join(parts[start:])
                 if candidate in self.files:
@@ -396,7 +396,7 @@ class Repository:
         return found
 
     def systems_named(self, text):
-        """The systems a text names by a path: nc-systems/<system>/ directories."""
+        """The systems a text names by a path: nn-systems/<system>/ directories."""
         systems = set()
         for token in PATH_TOKEN.findall(text):
             system = system_of_path(token)
@@ -405,12 +405,23 @@ class Repository:
         return systems
 
 
+# Transcripts, walk minutes and stored tags written before the project rename name files and directories by their old
+# names, and the move program leaves those records as they are.
+_path_names_spec = importlib.util.spec_from_file_location(
+    "project_rename_path_names_before_and_after_common",
+    Path(__file__).resolve().with_name("project-rename-path-names-before-and-after-common.py"))
+_path_names = importlib.util.module_from_spec(_path_names_spec)
+_path_names_spec.loader.exec_module(_path_names)
+convert_file_path_before_project_rename_to_path_after = _path_names.convert_file_path_before_project_rename_to_path_after
+
+
 def system_of_path(path):
-    match = re.search(r"(?:^|/)nc-systems/([\w.-]+)(?:/|$)", path)
+    path = convert_file_path_before_project_rename_to_path_after(path)
+    match = re.search(r"(?:^|/)nn-systems/([\w.-]+)(?:/|$)", path)
     if match:
-        return f"nc-systems/{match.group(1)}/"
+        return f"nn-systems/{match.group(1)}/"
     if re.search(r"(?:^|/)\.claude/skills/[\w.-]+", path):
-        return "nc-systems/skills/"
+        return "nn-systems/skills/"
     return None
 
 
@@ -445,6 +456,7 @@ def tags_named_in(text, repository, default_seat, known_seats, files_are_tags):
 def anchors_of(tags, repository):
     anchors = set()
     for tag in tags:
+        tag = convert_file_path_before_project_rename_to_path_after(tag)
         if tag.startswith("GHI "):
             anchors.update("/" + path for path in repository.ghi_md_paths.get(int(tag.split(" ")[1]), ()))
         elif tag.startswith(("PR ", "task ")):
@@ -709,7 +721,7 @@ def index_lines(connection, repository, built_at):
     for entry_id, tag in connection.execute(
             "SELECT entry_tags.entry_id, tag FROM entry_tags JOIN entries USING (entry_id) WHERE state = ?",
             (STATE_STANDING,)):
-        tags_by_entry.setdefault(entry_id, []).append(tag)
+        tags_by_entry.setdefault(entry_id, set()).add(convert_file_path_before_project_rename_to_path_after(tag))
     rows = connection.execute(
         "SELECT entry_id, kind, said_at_utc, text, source_path, source_line FROM entries WHERE state = ? "
         "ORDER BY said_at_utc DESC, entry_id DESC", (STATE_STANDING,)).fetchall()

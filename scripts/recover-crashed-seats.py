@@ -180,7 +180,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Share the relative path so imports and box launches cannot diverge.
-SUPERVISOR_SCRIPT_WITHIN_A_CHECKOUT = Path("nc-systems") / "handoff" / "handoff-supervisor.py"
+SUPERVISOR_SCRIPT_WITHIN_A_CHECKOUT = Path("nn-systems") / "handoff" / "handoff-supervisor.py"
 SUPERVISOR_SCRIPT = Path(__file__).resolve().parent.parent / SUPERVISOR_SCRIPT_WITHIN_A_CHECKOUT
 LAUNCH_CLAUDE_MAC_WITHIN_A_CHECKOUT = Path("scripts") / "launch-claude-mac"
 # Use a durable checkout: removing a worktree must not break a recovered supervisor.
@@ -661,7 +661,7 @@ WINDOW_SENDER_PATH = Path(__file__).resolve().with_name(
     "open-mac-window-from-ned-box.py")
 _mac_reference_checkout_path_constant_specification = importlib.util.spec_from_file_location(
     "mac_reference_checkout_launcher_scripts_directory_path_constant_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "mac-reference-checkout-launcher-scripts-directory-path-constant-common.py")
 mac_reference_checkout_path_constant = importlib.util.module_from_spec(_mac_reference_checkout_path_constant_specification)
 _mac_reference_checkout_path_constant_specification.loader.exec_module(mac_reference_checkout_path_constant)

@@ -43,7 +43,7 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 HOOK_PATH = Path(__file__).with_name("style-guide-word-checker-markdown-edit-hook-hack.py")
 CHECKER_PATH = Path(__file__).with_name("style-guide-word-checker-hack.py")
 SHARED_GIT_TRACKING_CHECK_RELATIVE_PATH = Path(
-    "nc-systems", "general-tools", "edited-file-path-within-checkout-root-and-git-check-ignore-common.py")
+    "nn-systems", "general-tools", "edited-file-path-within-checkout-root-and-git-check-ignore-common.py")
 SHARED_GIT_TRACKING_CHECK_PATH = (Path(__file__).resolve().parents[1]
                                   / SHARED_GIT_TRACKING_CHECK_RELATIVE_PATH)
 GIT_RUNNER_MODULE_NAME = "git-machine-readable-output-runner-and-parser-common.py"
@@ -90,7 +90,7 @@ def build_checker_tree(root, page_text):
     """Lay out scripts/, the shared git helpers and the style guide page under root; return (checker, hook) paths."""
     scripts_directory = Path(root) / "scripts"
     scripts_directory.mkdir(parents=True)
-    page_path = Path(root) / "docs" / "nedschorus-wiki" / "nedschorus-style-guide.md"
+    page_path = Path(root) / "docs" / "nedsnodes-wiki" / "nedsnodes-style-guide.md"
     page_path.parent.mkdir(parents=True)
     page_path.write_text(page_text, encoding="utf-8")
     checker_copy = scripts_directory / CHECKER_PATH.name
@@ -658,7 +658,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     copy_shared_git_tracking_check(pageless_scripts_directory.parent)
     result = run_hook(write_payload(checkout, new_page, "The seat.\n"), hook_path=pageless_hook)
     check("a checker without its style guide page is reported on stderr, exit 1",
-          reported(result, "nedschorus-style-guide.md"), result.stdout + result.stderr)
+          reported(result, "nedsnodes-style-guide.md"), result.stdout + result.stderr)
 
     # A page whose table is broken: the checker refuses to load rather than
     # flagging against the rows it could read, and the hook reports that.

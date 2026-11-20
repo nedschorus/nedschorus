@@ -30,7 +30,7 @@ RSYNC_SSH_TRANSPORT = ("ssh -o BatchMode=yes -o ConnectTimeout=10"
                        " -o ServerAliveInterval=15 -o ServerAliveCountMax=4")
 SERVER_ALIVE_OPTIONS = ("ServerAliveInterval=15", "ServerAliveCountMax=4")
 STAMP_NAME = "last-complete-mirror-pass-utc.txt"
-WATCHER = SCRIPTS_DIR.parent / "nc-systems" / "handoff" / (
+WATCHER = SCRIPTS_DIR.parent / "nn-systems" / "handoff" / (
     "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py")
 WATCHER_PROGRAM = "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher"
 STAMP_LINE = re.compile(r"\A(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)\n\Z")

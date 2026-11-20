@@ -113,8 +113,8 @@ therefore remove the worktree the first is testing. So a run holds an
 exclusive lock on scheduled-full-test-run-of-main.lock in its directory, and a
 second run exits 6 having done nothing.
 
-WHAT IS REUSED. nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py is loaded by
-path, the way nc-systems/handoff/handoff-supervisor.py loads it, for the
+WHAT IS REUSED. nn-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py is loaded by
+path, the way nn-systems/handoff/handoff-supervisor.py loads it, for the
 Pacific date (pacific_time_of), the test that this machine is ned-box
 (this_machine_is_ned_box), ned-box's ssh target, and
 run_on_ned_box_or_here, which runs one shell command over ssh or here with
@@ -128,7 +128,7 @@ picks out, and the environment its own git calls run in, which drops the
 variables that send git into another repository.
 
 SCHEDULE. Installed on each machine by
-nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py, from the
+nn-systems/general-tools/install-scheduled-jobs-on-this-machine.py, from the
 table beside that program, scheduled-jobs-on-each-machine.json, which is where
 a change to either machine's schedule is made; its --check mode compares what
 a machine has installed with the table.
@@ -193,12 +193,12 @@ def module_loaded_by_path(module_name: str, path: Path):
 
 handoff_user_review_of_agent_memory_stores_mark = module_loaded_by_path(
     "handoff_user_review_of_agent_memory_stores_mark",
-    REPOSITORY_ROOT / "nc-systems" / "handoff" / "handoff-user-review-of-agent-memory-stores-mark.py")
+    REPOSITORY_ROOT / "nn-systems" / "handoff" / "handoff-user-review-of-agent-memory-stores-mark.py")
 run_all_test_suites = module_loaded_by_path(
     "run_all_test_suites", Path(__file__).resolve().with_name("run-all-test-suites.py"))
 git_output = module_loaded_by_path(
     "git_machine_readable_output_runner_and_parser_common",
-    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    REPOSITORY_ROOT / "nn-systems" / "general-tools"
     / "git-machine-readable-output-runner-and-parser-common.py")
 
 SCHEDULED_FULL_TEST_RUN_DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedsnodes-logs"

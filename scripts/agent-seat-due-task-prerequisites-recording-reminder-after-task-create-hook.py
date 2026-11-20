@@ -2,7 +2,7 @@
 """After each TaskCreate, tell the agent how to record what the new task waits
 on, so scripts/agent-seat-due-task-raise-hook.py can raise the task when that
 work is done, and the branches and worktrees it holds, so
-nc-systems/handoff/agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py
+nn-systems/handoff/agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py
 leaves them out of the first prompt's list while the task is open.
 
 Wired as a PostToolUse hook with matcher TaskCreate in .claude/settings.json.
@@ -27,12 +27,12 @@ from pathlib import Path
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
     "failed_command_tool_message_to_agent_rerun_once_then_stop_and_report_lines_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 
-# Messages here follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
+# Messages here follow docs/nedsnodes-wiki/nedsnodes-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 PROGRAM = "agent-seat-due-task-prerequisites-recording-reminder-after-task-create-hook"
 
 # The user set this wording; change it only with his approval. {task_id_clause} is the only addition.

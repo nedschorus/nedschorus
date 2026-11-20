@@ -28,7 +28,7 @@ was false sent a search after a snapshot that never existed. The printed line
 says only where to look and how to list what exists.
 
 THE STORE'S RULES HOLD HERE, WITH ONE DIFFERENCE INSIDE `seats/`. FAIL
-LOUDLY is the record shipper's (nc-systems/cold-read/cold-read-record-ship.py) and is
+LOUDLY is the record shipper's (nn-systems/cold-read/cold-read-record-ship.py) and is
 kept: an unreachable ned-box prints a line opening FAILED and exits non-zero
 with the file still on disk for a later run; a FAILED line for a shipment that
 stops after its copy has begun ends with the command that reruns it. Every
@@ -136,7 +136,7 @@ PROGRAM = "seat-shared-file-ship"
 # cannot drift on what the store is, how ssh and rsync are invoked, or how an
 # scp-form destination is split. importlib, because the filename has hyphens.
 _shipper_spec = importlib.util.spec_from_file_location(
-    "cold_read_record_ship", REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-record-ship.py")
+    "cold_read_record_ship", REPO_ROOT / "nn-systems" / "cold-read" / "cold-read-record-ship.py")
 shipper = importlib.util.module_from_spec(_shipper_spec)
 _shipper_spec.loader.exec_module(shipper)
 
@@ -217,7 +217,7 @@ def ensure_seat_directory(destination: SeatsStoreDestination, seat: str):
     BOTH THE DIRECTORY AND THE README ARE THE RECORD SHIPPER'S RULES, called
     here rather than restated: `refresh_store_readme` locally and
     `make_directory_and_refresh_readme_script` over ssh, so this program and
-    nc-systems/cold-read/cold-read-record-ship.py cannot disagree about when the README is
+    nn-systems/cold-read/cold-read-record-ship.py cannot disagree about when the README is
     rewritten. One ssh round trip remotely.
 
     This program appends nothing to the README: the `seats/` line is in

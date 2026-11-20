@@ -98,7 +98,7 @@ another run or a no-sandbox suite held its lock; 2 bad invocation or a refused
 runner or a write failed, or the runner reported a suite NOT RUN, which the state file records where it can.
 
 SCHEDULE. Installed on ned-box alone by
-nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py, from the
+nn-systems/general-tools/install-scheduled-jobs-on-this-machine.py, from the
 table beside it, scheduled-jobs-on-each-machine.json:
 
     */10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/scripts/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py >> /home/nedlern/.claude/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.log 2>&1
@@ -162,11 +162,11 @@ def module_loaded_by_path(name, path):
 
 git_redirecting_environment = module_loaded_by_path(
     "git_redirecting_environment_variables_removal_common",
-    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    REPOSITORY_ROOT / "nn-systems" / "general-tools"
     / "git-redirecting-environment-variables-removal-common.py")
 git_output = module_loaded_by_path(
     "git_machine_readable_output_runner_and_parser_common",
-    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    REPOSITORY_ROOT / "nn-systems" / "general-tools"
     / "git-machine-readable-output-runner-and-parser-common.py")
 
 

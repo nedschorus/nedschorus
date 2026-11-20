@@ -37,7 +37,7 @@ from typing import NamedTuple, Optional
 # Every Stop hook obeys this rule first: see the module's docstring.
 _stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_location(
     "claude_code_stop_hooks_stay_silent_while_agent_answers_a_stop_hook_rule_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
 stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
 _stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
@@ -57,7 +57,7 @@ _interim_recognizer_specification.loader.exec_module(interim_recognizer)
 
 _deferred_marker_file_specification = importlib.util.spec_from_file_location(
     "handoff_deferred_marker_and_refused_commands_files_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "handoff"
+    Path(__file__).resolve().parents[1] / "nn-systems" / "handoff"
     / "handoff-deferred-marker-and-refused-commands-files-common.py")
 handoff_deferred_marker_and_refused_commands_files_common = importlib.util.module_from_spec(_deferred_marker_file_specification)
 _deferred_marker_file_specification.loader.exec_module(handoff_deferred_marker_and_refused_commands_files_common)
@@ -97,7 +97,7 @@ DEFAULT_THRESHOLD_USED_PERCENTAGE = 33.0
 
 FIRST_TAIL_READ_BYTES = 256 * 1024
 
-# Messages below follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
+# Messages below follow docs/nedsnodes-wiki/nedsnodes-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 # Keep the procedure in the skill so hook instructions cannot drift from it.
 # The count can pass 100% of the window, so a compacted session's message gives both shares.
 SHARE_WITH_COMPACTION_DROPPED = (
@@ -130,7 +130,7 @@ NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION = (
     "Carry on, open approval-walks included. Short work, which usually ends "
     "within 10 minutes, such as a cold-read-fast-read, may start; run such work "
     "as a subagent or a background Bash task. When you run the handoff writer "
-    "script, nc-systems/handoff/handoff-write-and-check-supervisor.py, before "
+    "script, nn-systems/handoff/handoff-write-and-check-supervisor.py, before "
     "this agent-session ends, it names in your session-handoff each subagent "
     "still working, whenever it started, and each background Bash task that "
     "started since this handoff-deferral began and is still running, so you need "

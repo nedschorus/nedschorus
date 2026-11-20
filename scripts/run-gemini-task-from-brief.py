@@ -62,7 +62,7 @@ def _load(name, path):
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-agy_cell = _load("cold_read_agy_cell", ROOT / "nc-systems/cold-read/cold-read-agy-cell.py")
+agy_cell = _load("cold_read_agy_cell", ROOT / "nn-systems/cold-read/cold-read-agy-cell.py")
 codex_task = _load("run_codex_task_from_brief", ROOT / "scripts/run-codex-task-from-brief.py")
 PROGRAM = "run-gemini-task-from-brief"
 
