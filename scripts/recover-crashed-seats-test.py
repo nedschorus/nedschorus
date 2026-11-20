@@ -2345,7 +2345,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # nc-systems/handoff/tests/handoff-supervisor-successor-prompt-test.py, by
     # the boot-recovery check that pull request [the ignition prompt's sentences are constants,
     # and both branch-state call sites are pinned whole]
-    # (https://github.com/nedschorus/nedschorus/pull/590) added. Look there,
+    # (https://github.com/nedsnodes/nedsnodes/pull/590) added. Look there,
     # not here, before trusting that a wording change is guarded.
     boot_recovery_prompt = supervisor_module.IgnitionPlanWithoutConversationTail(
         "Finish the walk.").compose("")
@@ -3243,7 +3243,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # GHI [recover-crashed-seats: a recovered seat's supervisor runs from
     # whichever checkout the recovery was run from, and stops at its next
     # handoff once that checkout is removed]
-    # (https://github.com/nedschorus/nedschorus/issues/659), user-ruled
+    # (https://github.com/nedsnodes/nedsnodes/issues/659), user-ruled
     # 2026-09-29: a launched seat's supervisor runs from the durable checkout,
     # whichever checkout the recovery runs from. The program under test runs
     # from checkout A, this one; --checkout names a scratch checkout B, and
