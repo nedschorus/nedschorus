@@ -31,7 +31,7 @@ WHAT IT READS.
   ned-box's own ~/.claude/projects is not read: the mirror copies it each minute, and one copy keeps one
   link per message.
 - The walk-minutes: <agents-directory>/*/docs/walk/*-minutes.md, then <log-store>/walk/*-minutes.md, the
-  copies scripts/walk-files-ship.py ships; <log-store>/walk/superseded/ is not read. A line is a user-ruling
+  copies nc-systems/skills/walk-me-through/walk-files-ship.py ships; <log-store>/walk/superseded/ is not read. A line is a user-ruling
   when it is the answer line that walk-me-through's check program writes for an approved or disapproved
   answer (ANSWER_LINE_WITH_TIME below; a deferred answer decides nothing), or when it holds the project's
   citation of a decision of his with its date (USER_RULED_CITATION below). The answer line's time is UTC
@@ -246,14 +246,20 @@ AFTER UPDATE OF text, agent_message_answered ON entries BEGIN
 END;
 """
 
+_repository_names_spec = importlib.util.spec_from_file_location(
+    "github_repository_name_and_name_before_project_rename_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "github-repository-name-and-name-before-project-rename-common.py")
+repository_names = importlib.util.module_from_spec(_repository_names_spec)
+_repository_names_spec.loader.exec_module(repository_names)
 GHI_REFERENCE = re.compile(
     r"(?<![\w/#-])(?:GHIs?|issues?)\s*#?(\d{1,5})\b"
     r"|\bnedschorus#(\d{1,5})\b"
-    r"|github\.com/nedschorus/nedschorus/issues/(\d{1,5})\b"
+    r"|github\.com/" + repository_names.REPOSITORY_NAME_OR_NAME_BEFORE_PROJECT_RENAME_PATTERN + r"/issues/(\d{1,5})\b"
     r"|\bdocs/issues/(\d{1,5})-", re.IGNORECASE)
 PULL_REQUEST_REFERENCE = re.compile(
     r"(?<![\w/#-])(?:PRs?|pull requests?)\s*#?(\d{1,5})\b"
-    r"|github\.com/nedschorus/nedschorus/pull/(\d{1,5})\b", re.IGNORECASE)
+    r"|github\.com/" + repository_names.REPOSITORY_NAME_OR_NAME_BEFORE_PROJECT_RENAME_PATTERN + r"/pull/(\d{1,5})\b", re.IGNORECASE)
 TASK_REFERENCE = re.compile(r"(?:\b([a-z][a-z0-9-]*[a-z0-9])(?:'s|’s)\s+)?\btasks?\s+#(\d{1,5})\b",
                             re.IGNORECASE)
 # Each part ends on a word character, @ or -, so a path at a sentence's end leaves its full stop out.

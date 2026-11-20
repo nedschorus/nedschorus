@@ -152,8 +152,9 @@ def line_number_citations(document: pathlib.Path, repository_root: pathlib.Path,
         for column, found, word in marks:
             suffixed = lint.LINE_SUFFIXED_PATH.match(word)
             if suffixed:
-                cited = int(suffixed.group("line"))
-                yield number, found, cited, cited, word
+                first = int(suffixed.group("line"))
+                last = int(suffixed.group("last_line") or first)
+                yield number, found, first, last, word
         for match in LINE_NUMBER_PHRASE.finditer(line):
             earlier = [found for column, found, word in marks if column < match.start()]
             if not earlier:
@@ -313,8 +314,7 @@ def findings_for_document(document: pathlib.Path, repository_root: pathlib.Path,
             return [], 0
         return [(stamp_line,
                  f"{DESIGN_AS_OF_NAME} is {stamp!r}, which is not a date: "
-                 f"write a day the calendar has, as YYYY-MM-DD, so a cited "
-                 f"file's history can be compared against it")], 0
+                 f"write a day the calendar has, as YYYY-MM-DD")], 0
 
     pinned = pinned_line_ranges(text, repository_root, lint)
     findings = []
@@ -355,14 +355,15 @@ def findings_for_document(document: pathlib.Path, repository_root: pathlib.Path,
     return findings, pinned_count
 
 
-def git_failure_next_steps(argv) -> str:
+def git_failure_next_steps(argv, failure) -> str:
     """The lines telling an agent what to do after a git command failed."""
     # The rerun must start in this directory: FILE arguments are relative to it.
     rerun = (f"cd {shlex.quote(os.getcwd())} && "
              + shlex.join(["python3", str(pathlib.Path(__file__).resolve()),
                            *(sys.argv[1:] if argv is None else argv)]))
     return next_step_lines.git_failure_next_step_lines(
-        rerun, PROGRAM, text_the_failure_line_contains="could not check, because a git command failed")
+        rerun, PROGRAM, git_error_line_shown_in_tool_message_to_agent_checked_for_lock_file_path=str(failure),
+        text_the_failure_line_contains="could not check, because a git command failed")
 
 
 def main(argv=None) -> int:
@@ -371,7 +372,7 @@ def main(argv=None) -> int:
     except git_machine_readable_output.GitCommandFailed as failure:
         print(f"{PROGRAM}: could not check, because a git command failed, so "
               f"no result is reported: {failure}\n"
-              f"{git_failure_next_steps(argv)}",
+              f"{git_failure_next_steps(argv, failure)}",
               file=sys.stderr)
         return EXIT_COULD_NOT_CHECK
 

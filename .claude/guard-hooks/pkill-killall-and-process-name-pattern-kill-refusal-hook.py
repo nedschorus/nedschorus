@@ -54,12 +54,20 @@ import json
 import sys
 from pathlib import Path
 
-_shell_reader_spec = importlib.util.spec_from_file_location(
-    "shell_command_tree_sitter_bash_reader_common",
-    Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
-    / "shell-command-tree-sitter-bash-reader-common.py")
-shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
-_shell_reader_spec.loader.exec_module(shell_reader)
+_crash_notice_spec = importlib.util.spec_from_file_location(
+    "guard_hook_crash_fail_open_with_notice_common",
+    Path(__file__).resolve().parent / "guard-hook-crash-fail-open-with-notice-common.py")
+_crash_notice = importlib.util.module_from_spec(_crash_notice_spec)
+_crash_notice_spec.loader.exec_module(_crash_notice)
+
+with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(
+        __file__, __name__ == "__main__"):
+    _shell_reader_spec = importlib.util.spec_from_file_location(
+        "shell_command_tree_sitter_bash_reader_common",
+        Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
+        / "shell-command-tree-sitter-bash-reader-common.py")
+    shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
+    _shell_reader_spec.loader.exec_module(shell_reader)
 is_program = shell_reader.is_program
 
 NAME_PATTERN_KILL_PROGRAMS = ("pkill", "killall")
@@ -76,7 +84,7 @@ BACKGROUND_COMMAND_OUTPUT_FILE_WAIT_PROGRAM = (
     / "claude-code-background-command-output-file-wait-until-no-process-writes-it.py")
 
 REFUSAL_TEMPLATE = (
-    "Refused on purpose: `{what}` signals every process a name pattern matches. "
+    "[rule bash-guard-kill-processes-by-name-pattern] Refused on purpose: `{what}` signals every process a name pattern matches. "
     "Every agent on this machine runs as the same user, so the pattern also matches "
     "other agents' processes, such as their test runs, and the signal ends their work too.\n"
     "If the process is a background command you started with the Bash tool, stop it "
@@ -86,7 +94,7 @@ REFUSAL_TEMPLATE = (
 )
 
 PGREP_FULL_COMMAND_LINE_LOOP_CONDITION_REFUSAL = (
-    "Refused on purpose: `pgrep -f` in the condition of a while or until loop also matches the "
+    "[rule bash-guard-pgrep-full-command-line-loop-condition] Refused on purpose: `pgrep -f` in the condition of a while or until loop also matches the "
     "command line of the shell running the loop, which holds the same words, so the condition "
     "never changes and the loop never ends.\n"
     "If you are waiting for a background command you started with the Bash tool, run this, where "
@@ -249,10 +257,7 @@ PARSER_UNAVAILABLE_NEXT_STEP_LINES = (
 
 
 def main(stdin=sys.stdin):
-    try:
-        payload = json.load(stdin)
-    except ValueError:
-        return 0
+    payload = json.load(stdin)
     if not isinstance(payload, dict) or payload.get("tool_name") != "Bash":
         return 0
     command = (payload.get("tool_input") or {}).get("command")
@@ -278,4 +283,5 @@ def deny(reason):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    with _crash_notice.guard_hook_crash_fail_open_with_notice_context_manager(__file__, True):
+        sys.exit(main())

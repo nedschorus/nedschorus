@@ -60,7 +60,21 @@ target file is written as
 nc-systems/general-tools/python-edit-changed-tool-message-to-agent-strings-check-reminder-hook.py
 writes it: in the directory tool-message-to-agent-fast-read-targets under the
 system temporary directory, named after the source file and a digest of the
-text. A target that cannot be
+text. A listed string whose cold-read-record the pull request's description names, and whose text matches that record's target file, gets the record's path instead of a cold-read-fast-read command; every other string keeps its command.
+The description names a record by an absolute path that ends
+/cold-read-records/<record name>, as in
+nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/<record name>;
+the program drops any text before the path's first slash and reads the path on
+the machine it runs on, so a record kept on ned-box is used only when the
+program runs on ned-box. A string's new text as the agent reads it, the text its
+cold-read-fast-read target file would hold, matches when it equals the contents
+of a file under the record's target/ directory once each run of whitespace in both is made one space and the ends
+are stripped; a text that is only part of such a file does not match. A
+record is used only when it holds its cold-read-fast-read report, because a
+read that failed leaves target/ and no report. A named record that is not a
+directory, holds no report or no target file, or cannot be read is listed in
+the plan with the reason, and its strings keep their commands; such a record
+does not change the exit code. A target that cannot be
 written is marked in the plan, which leaves its message with no
 cold-read-fast-read command, so the program exits 3 after printing the plan.
 A string the collector's kind calls a prompt, text a program hands an agent as
@@ -110,7 +124,8 @@ no-reviewer-tier because prose outside code is outside the review scope.
 Reads the pull request, reviews, inline comments and live base tip through
 four read-only gh calls, and each replaced pull request and its reviews through
 two more. Reads commits, refs and diffs from the local repository,
-and, under rule 4, the claim-check reports.
+the cold-read-records the description names, and, under rule 4, the
+claim-check reports.
 Never fetches, pushes or writes refs. git merge-tree --write-tree may write
 tree objects. Writes no file except the cold-read-fast-read target files and
 the optional --brief-skeleton file. The program refuses, with exit 1 and no
@@ -118,8 +133,9 @@ plan, to write --brief-skeleton over an existing file, because a rerun must not
 erase the checks the merge-lane wrote into it by hand.
 Exit 0: success. Exit 1: refusal, including malformed arguments or unavailable
 inputs. Exit 2: program defect, with exception and traceback on stderr.
-Exit 3: the plan is printed, but a listed message has no cold-read-fast-read
-command, so that a caller notices the missing reads.
+Exit 3: the plan is printed, but a listed message has neither a
+cold-read-fast-read command nor a cold-read-record, so that a caller notices
+the missing reads.
 
 Usage:
   scripts/pull-request-review-plan.py --pull-request N [--repository DIR]
@@ -180,6 +196,11 @@ fast_read_target_file_name = _message_reminder_hook.fast_read_target_file_name
 cold_read_fast_read_review_command_line_for_target_file = _message_reminder_hook.cold_read_fast_read_review_command_line_for_target_file
 FAST_READ_COMMAND = _message_reminder_hook.FAST_READ_COMMAND
 PLAN_PRINTED_WITH_MESSAGES_MISSING_FAST_READ_COMMAND_EXIT_STATUS = 3
+_cold_read_record_names_spec = importlib.util.spec_from_file_location(
+    "cold_read_record_names_common",
+    Path(__file__).resolve().parent.parent / "nc-systems" / "cold-read" / "cold-read-record-names-common.py")
+cold_read_record_names = importlib.util.module_from_spec(_cold_read_record_names_spec)
+_cold_read_record_names_spec.loader.exec_module(cold_read_record_names)
 _overview_claim_check_spec = importlib.util.spec_from_file_location(
     "overview_write_architecture_overview_claim_check_by_fresh_agent",
     Path(__file__).resolve().parent.parent / "nc-systems" / "skills" / "overview-write"
@@ -198,6 +219,8 @@ GIT_FULL_HASH_PATTERN = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 DIFF_HUNK_HEADER_PATTERN = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
 REGISTERED_HOOK_PATH_PATTERN = re.compile(r'\$CLAUDE_PROJECT_DIR"?/([^"\s]+)')
 MARKDOWN_SECTION_HEADING_PATTERN = re.compile(r"^##\s")
+COLD_READ_RECORD_PATH_IN_DESCRIPTION_PATTERN = re.compile(
+    r"(/[^\s`'\"<>()\[\],;:]*/" + cold_read_record_names.RECORDS_DIRECTORY_NAME + r"/[^\s/`'\"<>()\[\],;:]+)")
 COMPONENTS_SECTION_HEADING_PATTERN = re.compile(r"^##\s+Components\s*$")
 BACKTICKED_TEXT_PATTERN = re.compile(r"`([^`]+)`")
 # A component path is relative to the repository; this leaves out
@@ -518,8 +541,8 @@ def classify_changed_file_into_class_tier_and_reason(repository, old_revision, n
     return "code", "claude-and-codex-review-and-head-tests-tier", f"{path} is not Python or Markdown, so no check shows its change leaves behaviour alone"
 
 
-def changed_files_with_classes_and_tiers(repository, old_revision, new_revision,
-                                        hook_registration_old_revision=None):
+def changed_file_statuses_and_paths(repository, old_revision, new_revision):
+    """(status, path) for each file git diff --no-renames lists between the revisions, in git's order."""
     # Keep NUL separators: paths can contain spaces, tabs and newlines.
     output = run_git_in_repository(repository, "diff", "--no-renames", "--name-status", "-z", old_revision, new_revision)
     if output.returncode:
@@ -531,6 +554,12 @@ def changed_files_with_classes_and_tiers(repository, old_revision, new_revision,
         fields.pop()
     if len(fields) % 2:
         raise ValueError("git's NUL-separated name-status output has an incomplete entry")
+    return list(zip(fields[::2], fields[1::2]))
+
+
+def changed_files_with_classes_and_tiers(repository, old_revision, new_revision,
+                                        hook_registration_old_revision=None):
+    statuses_and_paths = changed_file_statuses_and_paths(repository, old_revision, new_revision)
     # Include hooks present when the branch was cut, as well as registrations
     # added on main or the branch since then.
     registered_paths = (registered_hook_paths_at_revision(repository, old_revision)
@@ -538,7 +567,7 @@ def changed_files_with_classes_and_tiers(repository, old_revision, new_revision,
     if hook_registration_old_revision is not None:
         registered_paths |= registered_hook_paths_at_revision(repository, hook_registration_old_revision)
     changed_files = []
-    for status, path in zip(fields[::2], fields[1::2]):
+    for status, path in statuses_and_paths:
         file_class, tier, reason = classify_changed_file_into_class_tier_and_reason(
             repository, old_revision, new_revision, path, status, registered_paths)
         changed_files.append({"path": path, "status": status, "class": file_class,
@@ -665,13 +694,54 @@ def changed_tool_message_to_agent_text_entries(repository, old_revision, new_rev
     return sorted(entries, key=lambda entry: (entry["path"], entry["line"], entry["label"]))
 
 
-def entries_with_fast_read_commands(entries):
-    """Give each entry its target file's name and the cold-read-fast-read command
-    for its new text as the agent reads it, written to that file the way the
+def text_with_whitespace_runs_as_one_space(text):
+    return " ".join(text.split())
+
+
+def named_cold_read_records_with_target_texts(description):
+    """Each cold-read-record path the description names, once, with the
+    whitespace-normalised text of each file under its target/ directory, or,
+    as problem, why the record cannot be used."""
+    records = []
+    for path in dict.fromkeys(match.rstrip(".")
+                              for match in COLD_READ_RECORD_PATH_IN_DESCRIPTION_PATTERN.findall(description or "")):
+        record = Path(path)
+        target_texts, problem = set(), None
+        try:
+            report = cold_read_record_names.cold_read_record_file_path_prefixed_name_else_name_before_prefix(
+                record, cold_read_record_names.COLD_READ_FAST_READ_REPORT_FILE_NAME)
+            if not record.is_dir():
+                problem = "it is not a directory on this machine"
+            elif not report.is_file():
+                problem = f"it holds no {report.name}, so its cold-read-fast-read did not finish"
+            else:
+                targets = sorted(file for file in (record / cold_read_record_names.FROZEN_TARGET_DIRECTORY_NAME).rglob("*")
+                                 if file.is_file())
+                if not targets:
+                    problem = f"its {cold_read_record_names.FROZEN_TARGET_DIRECTORY_NAME}/ directory holds no file"
+                target_texts = {text_with_whitespace_runs_as_one_space(target.read_text(encoding="utf-8"))
+                                for target in targets}
+        except (OSError, UnicodeDecodeError) as failure:
+            target_texts, problem = set(), f"it could not be read: {type(failure).__name__}: {failure}"
+        records.append({"path": path, "target_texts": target_texts, "problem": problem})
+    return records
+
+
+def entries_with_fast_read_commands(entries, named_records=()):
+    """Give each entry its target file's name and either the path of a named
+    record whose target file holds its new text as the agent reads it, or the
+    cold-read-fast-read command for that text, written to that file the way the
     message reminder hook writes it, or the reason the file could not be written."""
     for entry in entries:
         text = entry["new_text_as_agent_reads_it_with_placeholder_stand_ins"]
         entry["fast_read_target_file_name"] = fast_read_target_file_name(entry["path"], text)
+        normalised = text_with_whitespace_runs_as_one_space(text)
+        entry["cold_read_record"] = next(
+            (record["path"] for record in named_records if normalised in record["target_texts"]), None)
+        if entry["cold_read_record"] is not None:
+            entry["fast_read_command"] = None
+            entry["fast_read_target_error"] = None
+            continue
         try:
             target = fast_read_target_written(entry["path"], text)
         except OSError as failure:
@@ -684,6 +754,8 @@ def entries_with_fast_read_commands(entries):
 
 
 def fast_read_line_for_agent_text_entry(entry):
+    if entry["cold_read_record"] is not None:
+        return "cold-read-record named in the description: " + entry["cold_read_record"]
     if entry["fast_read_command"] is not None:
         return "cold-read-fast-read: " + entry["fast_read_command"]
     return ("cold-read-fast-read: none, because this message's text could not be written to a file: "
@@ -696,7 +768,7 @@ def plan_entries_missing_fast_read_command(plan):
     missing, seen = [], set()
     for entry in plan["tool_message_to_agent_text_whole_pull_request"] + plan["tool_message_to_agent_text_delta"]:
         key = (entry["path"], entry["line"], entry["new_text"])
-        if entry["fast_read_command"] is None and key not in seen:
+        if entry["fast_read_target_error"] is not None and key not in seen:
             seen.add(key)
             missing.append(entry)
     return missing
@@ -868,11 +940,9 @@ def architecture_overview_checked_against_commit_problems(repository, head, chan
     return problems
 
 
-def architecture_overview_checked_against_commit_refusal_message(number, head, problems):
-    lines = [f"pull request {number} adds or changes {len(problems)} nc-architecture-overview(s) whose "
-             "**Checked against:** commit does not hold the code the overview describes at "
-             f"head {head[:12]}, so no plan was computed. The claim check read the code at that commit, so its "
-             "report does not cover the code this pull request would merge."]
+def architecture_overview_checked_against_commit_refusal_message_lines_one_per_overview(head, problems):
+    """One indented line per problem architecture_overview_checked_against_commit_problems found."""
+    lines = []
     for problem in problems:
         if problem["named_is_on_main"]:
             lines.append(f"  {problem['path']} names commit {problem['named']} of main, and this pull request "
@@ -882,6 +952,15 @@ def architecture_overview_checked_against_commit_refusal_message(number, head, p
         else:
             lines.append(f"  {problem['path']} names commit {problem['named']}, and later commits of the pull request "
                          f"change code the overview describes: {', '.join(problem['later_changed_paths'])}.")
+    return lines
+
+
+def architecture_overview_checked_against_commit_refusal_message(number, head, problems):
+    lines = [f"pull request {number} adds or changes {len(problems)} nc-architecture-overview(s) whose "
+             "**Checked against:** commit does not hold the code the overview describes at "
+             f"head {head[:12]}, so no plan was computed. The claim check read the code at that commit, so its "
+             "report does not cover the code this pull request would merge."]
+    lines.extend(architecture_overview_checked_against_commit_refusal_message_lines_one_per_overview(head, problems))
     lines.append("Send this whole message to the pull request's author. The author clears it on ned-box, in a checkout "
                  "of the pull request's branch, for each overview listed:")
     lines.append("  1. Commit every change to the code the overview describes, then make the overview's "
@@ -912,16 +991,23 @@ def architecture_overview_claim_check_shortfalls(repository, head, changed_files
     return shortfalls
 
 
-def architecture_overview_claim_check_refusal_message(number, head, shortfalls, report_directory):
-    lines = [f"pull request {number} adds or changes {len(shortfalls)} nc-architecture-overview(s), and for each one "
-             f"listed below no claim-check report on the overview's text at head {head[:12]} shows that no "
-             "must-fix claim remains, so no plan was computed."]
+def architecture_overview_claim_check_refusal_message_lines_one_per_overview(shortfalls, report_directory):
+    """One indented line per shortfall architecture_overview_claim_check_shortfalls found, naming where it looked."""
+    lines = []
     for shortfall in shortfalls:
         looked_for = overview_claim_check.overview_write_architecture_overview_claim_check_report_directory_for_overview(report_directory, shortfall["path"]) / f"{shortfall['blob']}-*.md"
         newest = shortfall["newest_report"]
         lines.append(f"  {shortfall['path']} (git blob {shortfall['blob'][:12]} at head): looked on {socket.gethostname()} for "
                      f"{looked_for}; newest report found: "
                      + (f"{newest[0]}, whose result is: {newest[1]}" if newest else "none, so the check has not run on this text"))
+    return lines
+
+
+def architecture_overview_claim_check_refusal_message(number, head, shortfalls, report_directory):
+    lines = [f"pull request {number} adds or changes {len(shortfalls)} nc-architecture-overview(s), and for each one "
+             f"listed below no claim-check report on the overview's text at head {head[:12]} shows that no "
+             "must-fix claim remains, so no plan was computed."]
+    lines.extend(architecture_overview_claim_check_refusal_message_lines_one_per_overview(shortfalls, report_directory))
     lines.append("Send this whole message to the pull request's author. The author clears it on ned-box, in a checkout "
                  "of the pull request's branch at its head, by running for each overview listed:")
     lines.extend(f"     python3 nc-systems/skills/overview-write/overview-write-architecture-overview-claim-check-by-fresh-agent.py "
@@ -1013,6 +1099,7 @@ def compute_pull_request_review_plan(arguments):
     replaced_pull_requests = replaced_pull_requests_with_reviewed_head_counts(
         number, github_repository, pull_request.get("body"))
     posting_rule, posting_reason = posting_rule_and_reason_for_author(pull_request["author"]["login"])
+    named_records = named_cold_read_records_with_target_texts(pull_request.get("body"))
     plan = {
         "pull_request": number, "title": pull_request["title"], "url": pull_request["url"], "state": pull_request["state"],
         "head": head, "base_branch": base_branch, "diff_base": diff_base, "diff_base_reason": diff_base_reason,
@@ -1030,7 +1117,8 @@ def compute_pull_request_review_plan(arguments):
         "changed_files": changed_files, "delta_files": [],
         "test_files_to_run": test_files_to_run_for_changed_files(repository, head, changed_files),
         "tool_message_to_agent_text_whole_pull_request": entries_with_fast_read_commands(
-            changed_tool_message_to_agent_text_entries(repository, merge_base, head, changed_files)),
+            changed_tool_message_to_agent_text_entries(repository, merge_base, head, changed_files), named_records),
+        "named_cold_read_records": [{"path": record["path"], "problem": record["problem"]} for record in named_records],
         "tool_message_to_agent_text_delta": [],
     }
     if earlier:
@@ -1050,7 +1138,7 @@ def compute_pull_request_review_plan(arguments):
                 plan["delta_files_restricted_to_pull_request_files"] = True
             plan["delta_files"] = delta_files
             plan["tool_message_to_agent_text_delta"] = entries_with_fast_read_commands(
-                changed_tool_message_to_agent_text_entries(repository, earlier, head, delta_files))
+                changed_tool_message_to_agent_text_entries(repository, earlier, head, delta_files), named_records)
             plan["delta_tier"], plan["delta_tier_decided_by"] = review_tier_and_deciding_reason(delta_files)
             reasons = plan["delta_only_review_reasons"]
             if merge_commits:
@@ -1084,6 +1172,9 @@ def plan_fact_lines(plan):
              f"round: {plan['round']}" + (" (a fix round)" if plan['fix_round'] else "")]
     lines.extend(f"  carried over by #replaces: {replaced['reviewed_heads']} reviewed heads of {replaced['url']}"
                  for replaced in plan["replaced_pull_requests"])
+    lines.extend(f"named cold-read-record not used: {record['path']}, because {record['problem']}; "
+                 "the strings it would cover keep their cold-read-fast-read commands"
+                 for record in plan["named_cold_read_records"] if record["problem"])
     if plan["fix_round"]:
         lines.extend([f"  earlier reviewed head: {plan['earlier_reviewed_head']}", f"  delta range: {plan['delta_range']}"
                       + (" (files restricted to the pull request's own files)" if plan['delta_files_restricted_to_pull_request_files'] else ""),
@@ -1210,7 +1301,7 @@ def build_review_plan_argument_parser():
     parser = RefusingArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--pull-request", type=int, required=True, metavar="N")
     parser.add_argument("--repository", type=Path, default=Path.cwd(), metavar="DIR")
-    parser.add_argument("--github-repository", default="nedschorus/nedschorus", metavar="OWNER/NAME")
+    parser.add_argument("--github-repository", default="nedsnodes/nedsnodes", metavar="OWNER/NAME")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--brief-skeleton", type=Path, metavar="PATH")
     parser.add_argument("--overview-write-architecture-overview-claim-check-report-directory", type=Path, metavar="DIR",

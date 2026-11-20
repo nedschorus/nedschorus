@@ -87,6 +87,12 @@ The page goes in the wiki, next to the glossary. Do you agree that agents look t
 """ + ANSWER_LINE
 # The minutes' `#next_to_present` line gives M as 10; once the agent adds the item a refusal asks for, the walk has 11.
 M_AFTER_THE_ADDED_ITEM = "11"
+M_WITH_NO_ITEM_ADDED = "10"
+# Shown before every closing line the refusal gives, so that the agent copies none between backticks.
+NOT_IN_BACKTICKS = ("Write the line or lines below as plain text, with no backticks around them, since the user sees "
+                    "text between backticks as code.")
+NO_QUESTION_SENTENCE = ("If the flagged text does not ask the user anything, end the turn with only the waiting item's "
+                        f"closing line, printed below. {NOT_IN_BACKTICKS}")
 INTERRUPTION_ITEM = f"""## Item 2.1 of 11: merge-lane-2's question about the GHI
 
 merge-lane-2 asks: should I file one GHI listing the remaining seats' tests?
@@ -98,12 +104,12 @@ Recommendation: File it.
 
 # Real replies that show or explain the waiting item, each with that item's walk-document text; each must pass.
 REAL_ITEM_5_REPLY = 'Item 5 of 23 is still waiting for your answer, so here it is again. The page linked below already shows it.\n\n## Item 5 of 23: when the rejected-rows alert repeats and clears\n\nOn 2026-10-26 you approved two rules for the rejected-rows alert (walk ghi-972-agent-seat-database-service-design-nine-remaining-decisions-approval-walk-2026-10-26, item 2):\n- While rows are still being rejected, the alert repeats 24 hours after the last one.\n- The alert\'s condition clears "after a sending-job pass that sends and has no new rejection".\n\nThis item changes the clearing rule, because it fails in two ways.\n\nExample 1: an alert reports row A. An hour later row B is rejected. The next pass sends with no new rejection, so the condition clears, and B is never reported.\n\nExample 2: on an idle Mac, no pass sends anything, so the condition never clears.\n\nThe strongest case against: No harm found; it costs only the work or a short delay.\n\n#new_if_d Alternative: keep the wording you approved on 2026-10-26.\n\nRecommendation: while the condition holds, rows rejected since the last alert set off a new alert 24 hours after the last one. A pass that finds no row rejected since the last alert clears the condition, and the next rejection then alerts at once.\n\n#new "While the condition holds, rows rejected since the last rejected-rows alert make the job write a new one 24 hours after the last; a pass that finds no row rejected since the last alert clears the condition, so the next rejection is reported on the pass that finds it."\n\n[Item 5 of 23, when the rejected-rows alert repeats and clears](https://claude.ai/artifact/G9kzSQvayD96kRMvRKsh1s) · A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · Z defer · E explain · O other options'
-REAL_ITEM_7_REPLY = 'Yes, item 7 is about losing ned-box\'s disk. But it doesn\'t propose solving that. It only corrects one sentence in the GHI 972 design ([docs/issues/972-a-small-service-on-ned-box-keeps-one.md](https://github.com/nedschorus/nedschorus/issues/972)) that promises more than the design delivers. Nothing gets built.\n\n**What the design says** (it\'s still a design; no program sends events yet):\n- A program that records an event about an agent-seat first writes it to a local events file on its own machine.\n- A sender then passes the event on to the agent-seat database service on ned-box.\n- A sent event stays in the local events file until a nightly backup holds it.\n- The backups are kept in `~/backups/agent-seat-database/` on ned-box, and the Mac copies the newest one each night.\n- After a restore, each machine sends again whatever its local events file still holds, so the record catches up.\n\n**The sentence**, from condition 1 of the design: "So a restore from the newest backup loses nothing, however long ago that backup ran."\n\n**Where the sentence is false** (a made-up example; it has never happened): ned-box\'s disk dies at 15:00, and the last backup ran at 02:00. You restore that backup from the Mac\'s copy.\n- The Mac\'s events since 02:00 are still in the Mac\'s local events file, so they come back.\n- ned-box\'s own events since 02:00 were in ned-box\'s local events file, on the dead disk, so they\'re gone.\n- The same loss hits one machine\'s events if its local events file is set aside as corrupt.\n\nSo up to a day of events can be lost, which the sentence says can\'t happen.\n\n**The proposed sentence:** "So a restore from the newest backup loses nothing that a machine\'s local events file still holds, however long ago that backup ran."\n\nThe point is that whoever runs the restore knows the record may be missing up to a day, and doesn\'t trust it as complete. I recommend approving it: it costs one sentence and nothing more. If you disapprove, the sentence stays as it is.\n\n[Item 7 of 23, "a restore from the newest backup loses nothing"](https://claude.ai/artifact/G9kzSQvayD96kRMvRKsh1s) · A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · Z defer · E explain · O other options'
-REAL_ITEM_1_REPLY = 'The handoff was written 16 seconds ago, so nothing has drifted. I\'m resuming the walk at item 1. The page is already published, so it stays at the same link.\n\nNo item in this walk has been ruled on yet. We resume at item 1 of 5.\n\n## Item 1 of 5: close the cold-read speed-up measurement on its first-half result\n\nOn 2026-10-03 this agent-seat started measuring whether a faster cold-read-full-run finds fewer problems than the slower one. The plan had two halves. The first half\'s interim result came in on 2026-10-04 and showed no loss: the faster run found as many of the known problems as the slower one (p=0.72, so no difference showed up; [first-half results](file:///Volumes/nedhome/nedschorus-logs/seats/cold-read-improvement/cold-read-speed-up-measurement-first-half-2026-10-03/RESULTS-first-half-interim-2026-10-04.md)). Some scoring checks on the first half never ran, and neither did the second half.\n\nThe cold-read has changed a lot since then:\n- it now uses six reviewers instead of the old set;\n- a cold-read-fast-read now runs before every full run;\n- a rebuild is planned ([GHI 2158](https://github.com/nedschorus/nedschorus/issues/2158)).\n\nA second half would measure a cold-read that no longer exists.\n\n**Alternative:** plan a new measurement of today\'s cold-read once the rebuild lands.\n\n**The case against closing it:** the interim result comes from one small sample that was only partly scored, so "no loss" is weak evidence.\n\n**Recommendation:** close task #9, "Run the first half and bring results to the user", on the interim result and run no second half. Also close task #10, which only prepared the scoring checks.\n\n[Item 1 of 5 page](https://claude.ai/artifact/EZrNpowcQr6iRYHYAQCDHJ) · A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · Z defer · E explain · O other options'
+REAL_ITEM_7_REPLY = 'Yes, item 7 is about losing ned-box\'s disk. But it doesn\'t propose solving that. It only corrects one sentence in the GHI 972 design ([docs/issues/972-a-small-service-on-ned-box-keeps-one.md](https://github.com/nedsnodes/nedsnodes/issues/972)) that promises more than the design delivers. Nothing gets built.\n\n**What the design says** (it\'s still a design; no program sends events yet):\n- A program that records an event about an agent-seat first writes it to a local events file on its own machine.\n- A sender then passes the event on to the agent-seat database service on ned-box.\n- A sent event stays in the local events file until a nightly backup holds it.\n- The backups are kept in `~/backups/agent-seat-database/` on ned-box, and the Mac copies the newest one each night.\n- After a restore, each machine sends again whatever its local events file still holds, so the record catches up.\n\n**The sentence**, from condition 1 of the design: "So a restore from the newest backup loses nothing, however long ago that backup ran."\n\n**Where the sentence is false** (a made-up example; it has never happened): ned-box\'s disk dies at 15:00, and the last backup ran at 02:00. You restore that backup from the Mac\'s copy.\n- The Mac\'s events since 02:00 are still in the Mac\'s local events file, so they come back.\n- ned-box\'s own events since 02:00 were in ned-box\'s local events file, on the dead disk, so they\'re gone.\n- The same loss hits one machine\'s events if its local events file is set aside as corrupt.\n\nSo up to a day of events can be lost, which the sentence says can\'t happen.\n\n**The proposed sentence:** "So a restore from the newest backup loses nothing that a machine\'s local events file still holds, however long ago that backup ran."\n\nThe point is that whoever runs the restore knows the record may be missing up to a day, and doesn\'t trust it as complete. I recommend approving it: it costs one sentence and nothing more. If you disapprove, the sentence stays as it is.\n\n[Item 7 of 23, "a restore from the newest backup loses nothing"](https://claude.ai/artifact/G9kzSQvayD96kRMvRKsh1s) · A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · Z defer · E explain · O other options'
+REAL_ITEM_1_REPLY = 'The handoff was written 16 seconds ago, so nothing has drifted. I\'m resuming the walk at item 1. The page is already published, so it stays at the same link.\n\nNo item in this walk has been ruled on yet. We resume at item 1 of 5.\n\n## Item 1 of 5: close the cold-read speed-up measurement on its first-half result\n\nOn 2026-10-03 this agent-seat started measuring whether a faster cold-read-full-run finds fewer problems than the slower one. The plan had two halves. The first half\'s interim result came in on 2026-10-04 and showed no loss: the faster run found as many of the known problems as the slower one (p=0.72, so no difference showed up; [first-half results](file:///Volumes/nedhome/nedschorus-logs/seats/cold-read-improvement/cold-read-speed-up-measurement-first-half-2026-10-03/RESULTS-first-half-interim-2026-10-04.md)). Some scoring checks on the first half never ran, and neither did the second half.\n\nThe cold-read has changed a lot since then:\n- it now uses six reviewers instead of the old set;\n- a cold-read-fast-read now runs before every full run;\n- a rebuild is planned ([GHI 2158](https://github.com/nedsnodes/nedsnodes/issues/2158)).\n\nA second half would measure a cold-read that no longer exists.\n\n**Alternative:** plan a new measurement of today\'s cold-read once the rebuild lands.\n\n**The case against closing it:** the interim result comes from one small sample that was only partly scored, so "no loss" is weak evidence.\n\n**Recommendation:** close task #9, "Run the first half and bring results to the user", on the interim result and run no second half. Also close task #10, which only prepared the scoring checks.\n\n[Item 1 of 5 page](https://claude.ai/artifact/EZrNpowcQr6iRYHYAQCDHJ) · A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · Z defer · E explain · O other options'
 REAL_ITEM_3_1_REPLY = 'Item 3 is approved and recorded.\n\n`#new` text 1, "Proposed: that hook also gives every subagent a folder of...": fast read had to be run (/home/nedlern/agents/cold-read-improvement/cold-read-records/cold-read-improvement-open-items-2026-10-30-item-3-of-5-new-1-2026-10-30).\n\nNone of its findings changed what the item decides. I made one wording fix: "that hook" became "the Agent-tool pointer hook". A background subagent is building the scratch-folder hook. It will test it end to end, then send the pull request to merge-lane-2. The pointer to the briefs wiki page waits until that page exists, because a pointer to a missing page would be broken.\n\nI added item 3.1 from your remark about the reason against, so the walk now has 6 items. I also removed a line from the memory index that pointed at a note that doesn\'t exist.\n\n## Item 3.1 of 6: "more work for agents" is not a case against\n\nEvery approval-walk item states the strongest case against its recommendation, just before the recommendation. Item 3\'s case against was "a hook that edits briefs is more code to build and test than one sentence". You answered: "The reason against is the usual, this is more work." The time agents spend building something costs you almost nothing. What costs you is what you have to read and rule on.\n\nI tried to save that as a note in Claude Code\'s memory, and the instruction-file guard refused: a memory note is not read at the moment it applies. The place an agent would meet the rule is this sentence in the walk-me-through skill, `.claude/skills/walk-me-through/SKILL.md`: "Just before each recommendation, state in one sentence the strongest case against it."\n\n**Proposed:** add after that sentence: "The work agents must do to build it is not a case against; more for the user to read or rule on is. When you find no other case against, write "The case against this recommendation: none found.""\n\n**The alternative:** leave the skill as it is, and you keep pointing it out when an item does it.\n\n**The case against this recommendation:** an agent barred from the easy reason may reach for a vague one instead of writing "none found". An example is "this could have unforeseen effects".\n\n**Recommendation:** add the two sentences to the walk-me-through skill.\n\n[Item 3.1 of 6, "more work for agents" is not a case against](https://claude.ai/artifact/LXin9KHmdixhJGn3Hm3Fgx) · A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · Z defer · E explain · O other options'
 REAL_ITEM_5_DOCUMENT_TEXT = '## Item 5 of 23: when the rejected-rows alert repeats and clears\n\nYou approved on 2026-10-26 that the rejected-rows alert repeats 24 hours after the last one while rows are still rejected, and clears "after a sending-job pass that sends and has no new rejection" (walk ghi-972-agent-seat-database-service-design-nine-remaining-decisions-approval-walk-2026-10-26, item 2); this changes it because the clearing rule fails two ways.\n\nExample 1: an alert reports row A; an hour later row B is rejected; the next pass sends with no new rejection, so the condition clears and B is never reported. Example 2: on an idle Mac no pass sends anything, so the condition never clears.\n\nThe strongest case against: No harm found; it costs only the work or a short delay.\n\n#new_if_d Alternative: keep the user-ruling\'s wording.\n\nRecommendation: while the condition holds, rows rejected since the last alert make a new alert 24 hours after the last one; a pass with no rejection since the last alert clears the condition, and the next rejection then alerts at once.\n\n#new "While the condition holds, rows rejected since the last rejected-rows alert make the job write a new one 24 hours after the last; a pass that finds no row rejected since the last alert clears the condition, so the next rejection is reported on the pass that finds it."\n'
 REAL_ITEM_7_DOCUMENT_TEXT = '## Item 7 of 23: "a restore from the newest backup loses nothing"\n\nCondition 1 says each machine keeps sent events until a backup holds them, "So a restore from the newest backup loses nothing, however long ago that backup ran." You approved that sentence on 2026-10-14 (walk ghi-972-seat-service-design-open-defects-2026-10-14, item 9); this changes it because it fails when the restore follows the loss of ned-box\'s disk, since ned-box\'s own local events file goes with it, and when a machine\'s local file was set aside as corrupt after that backup.\n\n\nThe strongest case against: No harm found; it costs only the work or a short delay.\n\n#new_if_d Alternative: leave the sentence.\n\nRecommendation: qualify the promise, so whoever runs a restore after a disk loss, or after a local events file was set aside as corrupt, does not expect a complete record.\n\n#new "So a restore from the newest backup loses nothing that a machine\'s local events file still holds, however long ago that backup ran."\n'
-REAL_ITEM_1_DOCUMENT_TEXT = '## Item 1 of 5: close the cold-read speed-up measurement on its first-half result\n\nOn 2026-10-03 this agent-seat started a measurement: does a faster cold-read-full-run find fewer problems than the slower one? The measurement was planned in two halves, each a set of documents run both ways. The first half\'s interim result, on 2026-10-04, showed no loss: the faster run found as many of the known problems as the slower one (p=0.72, so no difference showed; [first-half results](file:///Volumes/nedhome/nedschorus-logs/seats/cold-read-improvement/cold-read-speed-up-measurement-first-half-2026-10-03/RESULTS-first-half-interim-2026-10-04.md)). Some scoring checks on the first half, and the whole second half, never ran.\n\nSince then the cold-read has changed a great deal: six reviewers instead of the old set, a cold-read-fast-read before every full run, and a planned rebuild ([GHI 2158, Rebuild the /cold-read skill so its programs do the mechanical steps and print each instruction when the agent needs it](https://github.com/nedschorus/nedschorus/issues/2158)). A second half would measure a cold-read that no longer exists.\n\nAlternative: plan a new measurement of today\'s cold-read, after the rebuild lands.\n\nThe case against this recommendation: the interim result rests on one small, partly scored sample, so "no loss" is weak evidence.\n\nRecommendation: close task #9, "Run the first half and bring results to the user", on the interim result, run no second half, and close task #10, which only prepared the scoring checks.\n'
+REAL_ITEM_1_DOCUMENT_TEXT = '## Item 1 of 5: close the cold-read speed-up measurement on its first-half result\n\nOn 2026-10-03 this agent-seat started a measurement: does a faster cold-read-full-run find fewer problems than the slower one? The measurement was planned in two halves, each a set of documents run both ways. The first half\'s interim result, on 2026-10-04, showed no loss: the faster run found as many of the known problems as the slower one (p=0.72, so no difference showed; [first-half results](file:///Volumes/nedhome/nedschorus-logs/seats/cold-read-improvement/cold-read-speed-up-measurement-first-half-2026-10-03/RESULTS-first-half-interim-2026-10-04.md)). Some scoring checks on the first half, and the whole second half, never ran.\n\nSince then the cold-read has changed a great deal: six reviewers instead of the old set, a cold-read-fast-read before every full run, and a planned rebuild ([GHI 2158, Rebuild the /cold-read skill so its programs do the mechanical steps and print each instruction when the agent needs it](https://github.com/nedsnodes/nedsnodes/issues/2158)). A second half would measure a cold-read that no longer exists.\n\nAlternative: plan a new measurement of today\'s cold-read, after the rebuild lands.\n\nThe case against this recommendation: the interim result rests on one small, partly scored sample, so "no loss" is weak evidence.\n\nRecommendation: close task #9, "Run the first half and bring results to the user", on the interim result, run no second half, and close task #10, which only prepared the scoring checks.\n'
 REAL_ITEM_3_1_DOCUMENT_TEXT = '## Item 3.1 of 6: "more work for agents" is not a case against\n\nEvery approval-walk item states, just before its recommendation, "the strongest case against it". Item 3 gave "a hook that edits briefs is more code to build and test than one sentence", and you answered: "The reason against is the usual, this is more work." The time agents spend building something costs you almost nothing; what costs you is what you have to read and rule on. I tried to save that as a note in Claude Code\'s memory, and the instruction-file guard refused: a memory note is not read at the moment it applies. The place an agent would meet the rule is this sentence in the walk-me-through skill, `.claude/skills/walk-me-through/SKILL.md`: "Just before each recommendation, state in one sentence the strongest case against it."\n\n#new Proposed: add after that sentence: "The work agents must do to build it is not a case against; more for the user to read or rule on is. When you find no other case against, write "The case against this recommendation: none found.""\n\nThe alternative: leave the skill as it is, and you keep pointing it out when an item does it.\n\nThe case against this recommendation: an agent barred from the easy reason may reach for a vague one, such as "this could have unforeseen effects", instead of writing "none found".\n\nRecommendation: add the two sentences to the walk-me-through skill.\n'
 REAL_CASES = (
     ("a reply showing item 5 again with its recommendation reworded", REAL_ITEM_5_REPLY, REAL_ITEM_5_DOCUMENT_TEXT,
@@ -234,7 +240,9 @@ class Case:
         environment = attendance_check.environment_without_agent_session_attendance_variables(os.environ)
         environment.update({"PATH": f"{bin_directory}{os.pathsep}{os.environ['PATH']}",
                             "FAKE_CLAUDE_CALLS": str(self.calls), "FAKE_CLAUDE_MODE": model,
-                            hook.LOG_PATH_VARIABLE: str(self.log)})
+                            hook.LOG_PATH_VARIABLE: str(self.log),
+                            # The machine's real emergency-stop folder must not decide a case.
+                            "NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(self.calls.parent / "no-emergency-stop")})
         environment.update(environment_extra or {})
         return subprocess.run([sys.executable, str(HOOK_SCRIPT)],
                               input=json.dumps(payload) if stdin_text is None else stdin_text,
@@ -322,7 +330,7 @@ LOGGED_LINES_THAT_ASK_NOTHING = (
      "One thing waits on you later, not now. Before merging that pull request, merge-lane-2 needs your approval of "
      "the not-restarted message it adds. I'll bring that to you once questions are allowed again."),
     ("an ask phrase inside a negation", "cold-read-improvement says the docstring fix for the record-names guard's "
-     "list of what it does not catch is up for review: [PR 2368](https://github.com/nedschorus/nedschorus/pull/2368)."
+     "list of what it does not catch is up for review: [PR 2368](https://github.com/nedsnodes/nedsnodes/pull/2368)."
      " Nothing here needs your answer."),
     ("a status report", "I'm continuing your request from the last session: everything that needs your ruling is "
      "collected into one approval-walk. Meanwhile, without needing you, I merged two GHI-MD pull requests, checked "
@@ -341,6 +349,30 @@ def test_each_kind_of_logged_line_that_asks_nothing_passes_once_the_model_says_s
         check(f"{case_name} goes to the model", len(calls) == 1 and numbered_lines(calls[0]).startswith("1. "), calls)
 
 
+def test_the_item_the_block_message_asks_for_is_one_the_close_step_can_place():
+    case = Case()
+    case.reply("Should I merge the pull request now?")
+    reason = blocked_reason(case.run()) or ""
+    close_spec = importlib.util.spec_from_file_location("check_and_close", hook.WALK_CHECK_PROGRAM)
+    close = importlib.util.module_from_spec(close_spec)
+    close_spec.loader.exec_module(close)
+    tags = [close.WALK_CATEGORY_TAG + category for category in close.WALK_CATEGORIES]
+    check("the message names every category tag the close step reads", all(f"`{tag}`" in reason for tag in tags),
+          reason)
+    check("the message promises no fixed turn for the new item",
+          "shown after item 2 is answered" not in reason and "when the user answers item 2" not in reason
+          and "a new item after item 2" not in reason, reason)
+    document = WALK_DOCUMENT + f"\n## merge-lane-2's question about the GHI\n\n{tags[1]}\n\nRecommendation: File it.\n"
+    parser = hook.walk_finder.markdown_parser()
+    units = hook.walk_finder.item_unit_spans(document, parser)
+    try:
+        placing = close.unshown_items_placing(hook.walk_finder, document, units, parser, "walk.md", "2026-11-11")
+    except close.WalkOrderUnusable as problem:
+        placing = problem
+    check("an item headed and tagged as the message says is placed by the close step's walk order",
+          isinstance(placing, dict) and [key[0] for key, _ in placing.values()] == [1], placing)
+
+
 def test_the_block_message_says_what_to_do():
     case = Case()
     case.reply("Should I merge the pull request now?")
@@ -353,11 +385,19 @@ def test_the_block_message_says_what_to_do():
              "The flagged text: \"Should I merge the pull request now?\""),
             ("the message names the waiting item", "goes to the waiting item, item 2,"),
             ("the message gives the interruption item a heading with no number, and names the script whose close "
-             "step numbers it",
-             "headed `## <the point of the question>`, with no number, placed right after item 2. Do not number it "
-             "yourself: when the user answers item 2, the close step of "
+             "step chooses when it is shown and numbers it",
+             "headed `## <the point of the question>`, with no number. In the file, place it right after the whole "
+             "of item 2: past that item's sub-steps and `#### Withdrawn version` sections, and before the next item "
+             "below those sub-steps and sections, or, when no item follows, at the end of the file, below any text after those sub-steps and sections. Under the heading, give it a line of its own naming its category, the one for how soon its work must happen, one of "
+             "`#approval_walk_item_in_category_must_fix_now`, "
+             "`#approval_walk_item_in_category_fix_next`, `#approval_walk_item_in_category_fix_during_maintenance`, "
+             "`#approval_walk_item_in_category_file_an_improvement_feature_or_change`, and a line "
+             "`#approval_walk_item_waits_on <title>` for each item it must follow, as the walk-me-through skill's "
+             "section \"Re-planning\" says. Do not number it yourself: the close step of "
              "nc-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py "
-             "writes the next number into this heading."),
+             "chooses when the user sees it, among the items not yet shown, by the items it waits on, its category "
+             "and the day it first entered a walk, so he may see it later than items placed below it in the file, "
+             "and writes its number into this heading then."),
             ("the message says to quote the question whole with a recommendation",
              "Quote the question whole in the item, as its asker wrote it, whether you or another agent, giving each "
              "line of the flagged text a line of its own, word for word, and putting the rest of the question on "
@@ -368,17 +408,19 @@ def test_the_block_message_says_what_to_do():
              "an action, as in `Recommendation: <what you recommend doing>.` State the alternative before it, as in "
              "`The alternative: <what D does instead>.`"),
             ("the message says not to show the new item now",
-             "Do not show the new item now: it is shown after item 2 is answered."),
+             "Do not show the new item now: the walk shows it when its turn comes."),
             ("the message gives the closing line's form when the minutes record no page for the waiting item",
-             "End the message you write next with the line `I added the question as a new item after item 2.` and "
+             "End the message you write next with the line `I added the question to the walk as a new item.` and "
              "then the waiting item's closing line, as the walk-me-through skill writes it, as the last text of that "
-             f"message:\n`[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the poem page lives](<page link>) · "
-             f"{CLOSING_LINE_ANSWER_LETTERS}`\n"
+             f"message. {NOT_IN_BACKTICKS}\n[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the poem page lives](<page link>) · "
+             f"{CLOSING_LINE_ANSWER_LETTERS}\n{NO_QUESTION_SENTENCE}\n"
+             f"[Item 2 of {M_WITH_NO_ITEM_ADDED}, where the poem page lives](<page link>) · "
+             f"{CLOSING_LINE_ANSWER_LETTERS}\n"
              "The minutes record no `#item_page` line for item 2. For each such item, publish its page first if it "
              f"has none and add to {case.minutes} the line `#item_page item <N> of <M> <the page's link>`, which this "
              "hook reads back; then put the same link in place of `<page link>` in the item's closing line.\n"),
-            ("the message says how to clear a false block",
-             "If the flagged text does not ask the user anything, reword it in your reply so that it no longer reads")):
+            ("the message says how to clear a false block, with the closing line that keeps the walk's count",
+             f"{NO_QUESTION_SENTENCE}\n[Item 2 of {M_WITH_NO_ITEM_ADDED}, where the poem page lives]")):
         check(case_name, phrase in reason, reason)
     check("the message asks for no change to M in any heading or in the minutes",
           "item count M" not in reason and "#next_to_present" not in reason, reason)
@@ -460,6 +502,14 @@ def test_a_line_about_only_the_waiting_items_decision_passes():
     check("a hashtag marker is dropped only when a word character follows `#`, so a heading keeps its text",
           hook.normalized("#new_if_d Alternative: x") == "alternative: x" and hook.normalized("## Item 3") == "item 3"
           and hook.normalized("#9 is closed") == "is closed", hook.normalized("#new_if_d Alternative: x"))
+
+
+def test_while_a_sub_step_waits_the_interruption_item_goes_after_the_whole_item():
+    case = Case(document=f"# A walk\n\n{REAL_ITEM_3_1_DOCUMENT_TEXT}\n", minutes="#next_to_present item 3.1 of 6")
+    case.reply("Should I merge the pull request now?")
+    check_blocked("while sub-step 3.1 waits, the interruption item goes after the whole of item 3, not between its "
+                  "sub-steps", case.run(model="yes"), "place it right after the whole of item 3: past that item's sub-steps",
+                  "later than items placed below it in the file,")
 
 
 def test_a_question_about_something_other_than_the_waiting_item_still_blocks():
@@ -592,6 +642,16 @@ def test_a_failed_model_check_blocks():
         os.environ.pop("FAKE_CLAUDE_CALLS", None)
 
 
+def test_a_question_above_a_label_subheading_in_an_interruption_item_is_held():
+    stray = "merge-lane-2 asks: should I file one GHI listing the remaining seats' tests?"
+    item = INTERRUPTION_ITEM.replace("Recommendation: File it.", "#### Item 2.1: details\n\nMore.\n\nRecommendation: File it.")
+    case = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + item, minutes="#next_to_present item 2 of 11")
+    case.records(PEER_PROMPT, text_record(stray),
+                 text_record("I added it as Item 2.1 of 11.\n\nItem 2 of 11 is waiting for your answer."))
+    check_silent("a question above a `#### Item 2.1: details` subheading in interruption item 2.1 is still the item's, "
+                 "so it passes", case.run(model="yes"))
+
+
 def test_a_question_held_in_an_interruption_item_is_not_checked():
     stray = "merge-lane-2 asks: should I file one GHI listing the remaining seats' tests?"
     closing = "I added it as Item 2.1 of 11.\n\nItem 2 of 11 is waiting for your answer."
@@ -604,7 +664,7 @@ def test_a_question_held_in_an_interruption_item_is_not_checked():
           held.model_calls())
     unnumbered = Case(document=WALK_DOCUMENT + "\n" + INTERRUPTION_ITEM.replace("## Item 2.1 of 11: ", "## "))
     unnumbered.records(PEER_PROMPT, text_record(stray), text_record(
-        "I added the question as a new item after item 2.\n\nItem 2 of 10 is waiting for your answer."))
+        "I added the question to the walk as a new item.\n\nItem 2 of 10 is waiting for your answer."))
     check_silent("a question an unnumbered item holds, headed as the refusal's step 1 says, passes",
                  unnumbered.run(model="yes"))
     held.reply("Should I merge the pull request now?\n\n" + closing)
@@ -653,7 +713,7 @@ def test_a_question_held_in_an_interruption_item_is_not_checked():
             ("a numbered question passes when the item holds it without its number",
              "1. Should I keep both hooks?", "Should I keep both hooks?", True),
             ("a question the item holds with a link passes when the reply holds the link's text",
-             "Should I merge PR 5 now?", "Should I merge [PR 5](https://github.com/nedschorus/nedschorus/pull/5) now?",
+             "Should I merge PR 5 now?", "Should I merge [PR 5](https://github.com/nedsnodes/nedsnodes/pull/5) now?",
              True),
             ("a line that is the end of an item word for word passes", ANSWER_LINE, "Should I keep both hooks?", True),
             ("a question that is only part of a word of the item blocks",
@@ -801,9 +861,79 @@ def test_a_withdrawn_versions_lines_under_a_shared_heading_are_not_the_shown_ite
             check_blocked(case_name, case.run(), '"Should I drop the poem page?"')
 
 
+def test_an_item_under_a_shared_heading_is_shown_by_its_own_opening_or_item_n_of_m_heading():
+    item_3_opening = "**Item 3: its name.** The name follows the naming page."
+    item_3_question = "Should I keep its name?"
+    document = (f"# The poem page: approval-walk\n\n## Items 2 and 3 of 10: the poem page?\n\n"
+                f"**Item 2: where it lives.** Should I keep the poem page in the wiki?\n\n{ANSWER_LINE}\n\n"
+                f"{item_3_opening}\n\n{item_3_question}\n\n{ANSWER_LINE}\n\n"
+                f"**Item 4 of 10: its hook.** Should I build the hook?\n\n{ANSWER_LINE}\n")
+    closing = f"[Item 3 of 10, its name](https://claude.ai/artifact/x) · {CLOSING_LINE_ANSWER_LETTERS}"
+    for case_name, reply in (
+            ("the second item of a shared unit shown under its own `Item N of M` heading sends no line to the model",
+             f"## Item 3 of 10: its name\n\n{item_3_opening}\n\n{item_3_question}\n\n{ANSWER_LINE}\n\n{closing}"),
+            ("the second item of a shared unit shown from its own opening sends no line to the model",
+             f"{item_3_opening}\n\n{item_3_question}\n\n{ANSWER_LINE}\n\n{closing}"),
+            ("the shared heading's own line, shown with only the second item, sends no line to the model",
+             f"## Items 2 and 3 of 10: the poem page?\n\n{item_3_opening}\n\n{item_3_question}\n\n{closing}"),
+            ("every item of a shared unit shown under the shared heading sends no line to the model, past the first "
+             "item's answer line",
+             f"## Items 2 and 3 of 10: the poem page?\n\n**Item 2: where it lives.** Should I keep the poem page in "
+             f"the wiki?\n\n{ANSWER_LINE}\n\n{item_3_opening}\n\n{item_3_question}\n\n{ANSWER_LINE}\n\n{closing}")):
+        case = Case(minutes="#next_to_present item 3 of 10", document=document)
+        case.reply(reply)
+        check_silent(case_name, case.run(model="yes"))
+        check(f"{case_name}: no model call", case.model_calls() == [], case.model_calls())
+    for case_name, reply, flagged in (
+            ("an item of a shared unit whose closing line alone names it is not shown, so its question is checked",
+             f"{item_3_question}\n\n{closing}", item_3_question),
+            ("an item shown under its own heading does not show the next unit's item",
+             f"## Item 3 of 10: its name\n\nShould I build the hook?\n\n{closing}", "Should I build the hook?"),
+            ("an item shown under its own heading does not show the other item of its unit",
+             f"## Item 3 of 10: its name\n\nShould I keep the poem page in the wiki?\n\n{closing}",
+             "Should I keep the poem page in the wiki?")):
+        case = Case(minutes="#next_to_present item 3 of 10", document=document)
+        case.reply(reply)
+        check_blocked(case_name, case.run(model="yes"), f'"{flagged}"')
+    lead_in = "Both items ask whether the page should change?"
+    case = Case(minutes="#next_to_present item 3 of 10",
+                document=document.replace("the poem page?\n\n", f"the poem page?\n\n{lead_in}\n\n", 1))
+    case.reply(f"## Items 2 and 3 of 10: the poem page?\n\n{lead_in}\n\n{item_3_opening}\n\n{closing}")
+    check_silent("a reply showing a shared heading passes the unit's lines before its first item's opening",
+                 case.run(model="yes"))
+    case.reply(f"## Item 3 of 10: its name\n\n{lead_in}\n\n{closing}")
+    check_blocked("an item shown under its own heading does not show its unit's lines before the first item's opening",
+                  case.run(model="yes"), f'"{lead_in}"')
+    case = Case(minutes="#next_to_present item 3 of 10", document=document)
+    case.reply(f"## Items 2 and 3 of 10: the poem page?\n\n{item_3_question}\n\n{closing}")
+    check_silent("the shared heading alone shows each item of its unit, with no opening or own heading shown",
+                 case.run(model="yes"))
+    withdrawn_question = "Should the poem page move to the archive?"
+    case = Case(minutes="#next_to_present item 3 of 10",
+                document=document.replace("the poem page?\n\n", f"the poem page?\n\n#### Withdrawn version\n\n"
+                                                                  f"{withdrawn_question}\n\n", 1))
+    case.reply(f"## Items 2 and 3 of 10: the poem page?\n\n{withdrawn_question}\n\n{item_3_opening}\n\n{closing}")
+    check_blocked("a Withdrawn version before a shared unit's first opening is not shown by the shared heading",
+                  case.run(model="yes"), f'"{withdrawn_question}"')
+    case = Case(minutes="#next_to_present item 3 of 10",
+                document=document.replace("the poem page?\n\n", "the poem page?\n\n#new The new text: both items "
+                                                                  "keep the poem page?\n\n", 1))
+    case.reply(f"## Items 2 and 3 of 10: the poem page?\n\nIf you approve, the new text: both items keep the poem "
+               f"page?\n\n{item_3_opening}\n\n{closing}")
+    check_silent("a `#new` line before a shared unit's first opening passes shown after `If you approve, the new text:`",
+                 case.run(model="yes"))
+    without_openings = (f"# The poem page: approval-walk\n\n## Items 2 and 3 of 10: the poem page\n\n"
+                        f"Should I keep the poem page in the wiki?\n\n{ANSWER_LINE}\n\n{item_3_question}\n\n"
+                        f"{ANSWER_LINE}\n")
+    case = Case(minutes="#next_to_present item 3 of 10", document=without_openings)
+    case.reply(f"## Item 3 of 10: its name\n\n{item_3_question}\n\n{ANSWER_LINE}\n\n{closing}")
+    check_silent("an item of a shared unit with no opening of its own holds the whole unit, past the first answer line",
+                 case.run(model="yes"))
+
+
 HANDOFF_WALK_ITEM_1_2_LINES = (
     "## Item 1.2 of 6: a wait limit for each kind of background Bash task",
-    "Item 1.1, from about 9,000 measured runs, proposed 90 minutes for a test suite, 105 for nc-mutation-testing, 75 for every other kind, and 0 for a waiter (explained below). In [handoff-design.md](https://github.com/nedschorus/nedschorus/blob/main/nc-systems/handoff/handoff-design.md), the threshold hook's old text: \"The hook now counts a background Bash task as in flight while it is younger than `--background-task-wait-minutes` and no completion notification names it, judging each task's wait on its own;\"",
+    "Item 1.1, from about 9,000 measured runs, proposed 90 minutes for a test suite, 105 for nc-mutation-testing, 75 for every other kind, and 0 for a waiter (explained below). In [handoff-design.md](https://github.com/nedsnodes/nedsnodes/blob/main/nc-systems/handoff/handoff-design.md), the threshold hook's old text: \"The hook now counts a background Bash task as in flight while it is younger than `--background-task-wait-minutes` and no completion notification names it, judging each task's wait on its own;\"",
     "#new The new text: \"The hook now counts a background Bash task as in flight while it is younger than its kind's wait limit and no completion notification names it, judging each task's wait on its own. A table the hook reads gives each kind its command patterns and its wait limit, and replaces the hook's `--background-task-wait-minutes` option: the first kind whose pattern matches the command is the task's kind, a command no pattern matches gets 75 minutes, and a kind that only waits, such as `gh pr checks --watch` or a `sleep` loop, has a limit of 0 minutes, so it is never in flight.\"",
     "The rule for a subagent's own background work, approved 2026-10-30, reads the same table. [advisor]",
     "A waiter, such as `gh pr checks --watch`, does no work; it only watches for an outside event. A limit of 0 means the handoff never waits for it, and the next agent-session starts the watch again.",
@@ -816,7 +946,7 @@ HANDOFF_WALK_ITEM_1_2_REPLY = "\n\n".join((
     "Last ruled on: item 1.1.1 (the glossary terms), which you approved on 2026-11-01.",
     "I found two work-snapshots in this seat's worktree. Both held the same four drafts in docs/drafts/ (work-with-mac skill, its proposals, the bang-prefix sentence and the objective section). Those files are still there, uncommitted, with the same contents, so there was nothing to restore. I deleted both snapshots.",
     "## Item 1.2 of 6: a wait limit for each kind of background Bash task",
-    "Item 1.1, from about 9,000 measured runs, proposed 90 minutes for a test suite, 105 for nc-mutation-testing, 75 for every other kind, and 0 for a waiter (explained below). In [handoff-design.md](https://github.com/nedschorus/nedschorus/blob/main/nc-systems/handoff/handoff-design.md), the threshold hook's old text: \"The hook now counts a background Bash task as in flight while it is younger than `--background-task-wait-minutes` and no completion notification names it, judging each task's wait on its own;\"",
+    "Item 1.1, from about 9,000 measured runs, proposed 90 minutes for a test suite, 105 for nc-mutation-testing, 75 for every other kind, and 0 for a waiter (explained below). In [handoff-design.md](https://github.com/nedsnodes/nedsnodes/blob/main/nc-systems/handoff/handoff-design.md), the threshold hook's old text: \"The hook now counts a background Bash task as in flight while it is younger than `--background-task-wait-minutes` and no completion notification names it, judging each task's wait on its own;\"",
     "If you approve, the new text: \"The hook now counts a background Bash task as in flight while it is younger than its kind's wait limit and no completion notification names it, judging each task's wait on its own. A table the hook reads gives each kind its command patterns and its wait limit, and replaces the hook's `--background-task-wait-minutes` option: the first kind whose pattern matches the command is the task's kind, a command no pattern matches gets 75 minutes, and a kind that only waits, such as `gh pr checks --watch` or a `sleep` loop, has a limit of 0 minutes, so it is never in flight.\"",
     "The rule for a subagent's own background work, approved 2026-10-30, reads the same table. [advisor]",
     "A waiter, such as `gh pr checks --watch`, does no work; it only watches for an outside event. A limit of 0 means the handoff never waits for it, and the next agent-session starts the watch again.",
@@ -942,19 +1072,25 @@ def test_two_waiting_items():
     case = Case(minutes="#next_to_present items 2 and 3 of 10")
     case.reply("Should I merge the pull request now?")
     check_blocked("with two items waiting, the interruption item follows the later one and both are named",
-                  case.run(), "`## <the point of the question>`, with no number, placed right after item 3. Do not number it yourself: when the user answers item 3,",
-                  "`I added the question as a new item after item 3.`",
+                  case.run(), "`## <the point of the question>`, with no number. In the file, place it right after the whole of "
+                  "item 3: past that item's sub-steps", "`I added the question to the walk as a new item.`",
                   "and then each waiting item's closing line, on a line of its own, as the walk-me-through skill "
-                  f"writes it, as the last text of that message:\n`[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the "
-                  f"poem page lives](<page link>) · {CLOSING_LINE_ANSWER_LETTERS}`\n`[Item 3 of "
+                  f"writes it, as the last text of that message. {NOT_IN_BACKTICKS}\n[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the "
+                  f"poem page lives](<page link>) · {CLOSING_LINE_ANSWER_LETTERS}\n[Item 3 of "
                   f"{M_AFTER_THE_ADDED_ITEM}, the hook](<page link>) · "
-                  f"{CLOSING_LINE_ANSWER_LETTERS}`\nThe minutes record no `#item_page` line for items 2 and 3. For each such item")
+                  f"{CLOSING_LINE_ANSWER_LETTERS}\n{NO_QUESTION_SENTENCE}\n[Item 2 of {M_WITH_NO_ITEM_ADDED}, where "
+                  f"the poem page lives](<page link>) · {CLOSING_LINE_ANSWER_LETTERS}\n[Item 3 of "
+                  f"{M_WITH_NO_ITEM_ADDED}, the hook](<page link>) · "
+                  f"{CLOSING_LINE_ANSWER_LETTERS}\nThe minutes record no `#item_page` line for items 2 and 3. For each such item")
     mixed = Case(minutes="#item_page item 3 of 10 https://claude.ai/artifact/p3\n#next_to_present items 2 and 3 of 10")
     mixed.reply("Should I merge the pull request now?")
     check_blocked("with two items waiting and a page for one, each gets its own form of the closing line",
-                  mixed.run(), f"`[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the poem page lives](<page link>) · "
-                  f"{CLOSING_LINE_ANSWER_LETTERS}`\n`[Item 3 of {M_AFTER_THE_ADDED_ITEM}, the hook]"
-                  f"(https://claude.ai/artifact/p3) · {CLOSING_LINE_ANSWER_LETTERS}`\n"
+                  mixed.run(), f"[Item 2 of {M_AFTER_THE_ADDED_ITEM}, where the poem page lives](<page link>) · "
+                  f"{CLOSING_LINE_ANSWER_LETTERS}\n[Item 3 of {M_AFTER_THE_ADDED_ITEM}, the hook]"
+                  f"(https://claude.ai/artifact/p3) · {CLOSING_LINE_ANSWER_LETTERS}\n{NO_QUESTION_SENTENCE}\n"
+                  f"[Item 2 of {M_WITH_NO_ITEM_ADDED}, where the poem page lives](<page link>) · "
+                  f"{CLOSING_LINE_ANSWER_LETTERS}\n[Item 3 of {M_WITH_NO_ITEM_ADDED}, the hook]"
+                  f"(https://claude.ai/artifact/p3) · {CLOSING_LINE_ANSWER_LETTERS}\n"
                   "The minutes record no `#item_page` line for item 2. For each such item")
 
 
@@ -1069,16 +1205,21 @@ def test_the_refusal_gives_the_waiting_items_closing_line_and_it_passes_once_the
     case = Case(minutes="#item_page item 2 of 10 https://claude.ai/artifact/p2\n#next_to_present item 2 of 10")
     case.reply("Should I merge the pull request now?")
     reason = blocked_reason(case.run()) or ""
-    expected = (f"`[Item 2 of 11, where the poem page lives](https://claude.ai/artifact/p2) · "
-                f"{CLOSING_LINE_ANSWER_LETTERS}`")
-    check("the refusal gives the waiting item's closing line with its page link and the new total",
-          reason.endswith(f"as the last text of that message:\n{expected}\n" + hook.REFUSAL_INSTRUCTIONS[-2]
-                          + "\n" + hook.REFUSAL_INSTRUCTIONS[-1]), reason)
+    expected = (f"[Item 2 of 11, where the poem page lives](https://claude.ai/artifact/p2) · "
+                f"{CLOSING_LINE_ANSWER_LETTERS}")
+    unchanged = expected.replace("Item 2 of 11", "Item 2 of 10")
+    check("the refusal gives the waiting item's closing line with its page link, the new total for a question and "
+          "the walk's own total for text that asks nothing",
+          reason.endswith(f"as the last text of that message. {NOT_IN_BACKTICKS}\n{expected}\n{NO_QUESTION_SENTENCE}\n{unchanged}\n"
+                          + hook.REFUSAL_INSTRUCTIONS[-1]), reason)
+    case.reply(unchanged)
+    check_silent("the reply the refusal asks for when the flagged text asks nothing, the closing line alone, passes",
+                 case.run(model="yes"))
     done = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n"
                 + INTERRUPTION_ITEM.replace("merge-lane-2 asks: should I file one GHI listing the remaining seats' "
                                             "tests?", "Should I merge the pull request now?"),
                 minutes="#item_page item 2 of 10 https://claude.ai/artifact/p2\n#next_to_present item 2 of 11")
-    done.reply("Should I merge the pull request now?\n\nI added the question as Item 2.1 of 11.\n\n" + expected[1:-1])
+    done.reply("Should I merge the pull request now?\n\nI added the question as Item 2.1 of 11.\n\n" + expected)
     check_silent("the reply the refusal's step 4 asks for passes once steps 1 and 2 are done", done.run(model="yes"))
 
 
@@ -1337,6 +1478,24 @@ def print_live_model_labels():
     finally:
         shutil.rmtree(SUITE_ROOT, ignore_errors=True)
     return 0
+
+
+def test_silent_during_an_emergency_stop():
+    case = Case()
+    case.reply("The tests passed.\n\nShould I merge the pull request now?\n\nItem 2 of 10 is waiting for your answer.")
+    stop_folder = case.root / "emergency-stop"
+    stop_folder.mkdir()
+    stop_file = stop_folder / "2026-10-30T01-00-00Z.md"
+    stop_file.write_text("# Emergency stop\ncoordinating agent-seat: reboot-test\n")
+    check_silent("a question outside the walk passes while an emergency stop is in force",
+                 case.run(model="yes", environment_extra={"NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(stop_folder)}))
+    stop_file.write_bytes(b"\xff\xfe")
+    check_silent("an unreadable emergency-stop file counts as a stop in force",
+                 case.run(model="yes", environment_extra={"NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(stop_folder)}))
+    stop_file.write_text("started\n#emergency_stop_lifted all clear\n")
+    check_blocked("after the lift the question is refused again",
+                  case.run(model="yes", environment_extra={"NEDSCHORUS_EMERGENCY_STOP_FOLDER": str(stop_folder)}),
+                  '"Should I merge the pull request now?"')
 
 
 def main():

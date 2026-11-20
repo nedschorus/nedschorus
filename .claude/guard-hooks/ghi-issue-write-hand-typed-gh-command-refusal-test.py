@@ -68,11 +68,10 @@ def decision_for(command, tool_name="Bash"):
 # The refusals as they read when the issue's files cannot be looked up, as in
 # these cases, whose checkout does not exist.
 CLOSE_WITH_COMMENT_FALLBACK = guard.CLOSE_WITH_COMMENT_REFUSAL.format(
-    record_line=guard.record_line(guard.CLOSE_OUTCOME, None))
+    close_lines=guard.close_lines(None))
 REOPEN_WITH_COMMENT_FALLBACK = guard.REOPEN_WITH_COMMENT_REFUSAL.format(
     record_line=guard.record_line(guard.REOPEN_OUTCOME, None))
-DELETE_FALLBACK = guard.DELETE_REFUSAL.format(
-    record_line=guard.record_line(guard.CLOSE_OUTCOME, None))
+DELETE_FALLBACK = guard.DELETE_REFUSAL.format(close_lines=guard.close_lines(None))
 COMMENT_FALLBACK = guard.comment_refusal(None)
 EDIT_BODY_FALLBACK = guard.edit_body_refusal(None)
 EDIT_TITLE_FALLBACK = guard.edit_title_refusal(None)
@@ -95,13 +94,15 @@ REFUSED = [
     ("comment through the web", "gh issue comment 46 -w", COMMENT_FALLBACK),
     ("comment editing the last comment", 'gh issue comment 46 --edit-last -b "x"',
      COMMENT_FALLBACK),
-    ("comment naming this repository", "gh issue comment 46 -R nedschorus/nedschorus -b x",
+    ("comment naming this repository", "gh issue comment 46 -R nedsnodes/nedsnodes -b x",
      COMMENT_FALLBACK),
+    ("comment naming the repository's old name, which GitHub redirects",
+     f"gh issue comment 46 -R {guard.repository_names.OLD_REPOSITORY} -b x", COMMENT_FALLBACK),
     ("comment naming this repository with a host",
      "gh issue comment 46 --repo github.com/NedSchorus/NedSchorus -b x",
      COMMENT_FALLBACK),
     ("comment by this repository's issue URL",
-     "gh issue comment https://github.com/nedschorus/nedschorus/issues/46 -b x",
+     "gh issue comment https://github.com/nedsnodes/nedsnodes/issues/46 -b x",
      COMMENT_FALLBACK),
     ("comment behind env and an assignment", "env GH_PAGER= gh issue comment 46 -b x",
      COMMENT_FALLBACK),
@@ -141,7 +142,7 @@ REFUSED = [
     ("a title whose value looks like -b",
      'gh issue edit 46 --title "-b is a flag"', EDIT_TITLE_FALLBACK),
     ("edit with a title naming this repository",
-     'gh issue edit 46 -R nedschorus/nedschorus --title "T"',
+     'gh issue edit 46 -R nedsnodes/nedsnodes --title "T"',
      EDIT_TITLE_FALLBACK),
     ("delete", "gh issue delete 46 --yes", DELETE_FALLBACK),
     ("the second command of a pipeline", "true | gh issue comment 46 -b x",
@@ -149,35 +150,35 @@ REFUSED = [
     # This repository named by a repository flag before the subcommand, in
     # each place and spelling gh accepts.
     ("create with -R between gh and issue",
-     "gh -R nedschorus/nedschorus issue create -t A -b B", guard.CREATE_REFUSAL),
+     "gh -R nedsnodes/nedsnodes issue create -t A -b B", guard.CREATE_REFUSAL),
     ("comment with --repo between gh and issue",
-     "gh --repo nedschorus/nedschorus issue comment 46 -b x",
+     "gh --repo nedsnodes/nedsnodes issue comment 46 -b x",
      COMMENT_FALLBACK),
     ("comment with --repo= between gh and issue",
-     "gh --repo=nedschorus/nedschorus issue comment 46 -b x",
+     "gh --repo=nedsnodes/nedsnodes issue comment 46 -b x",
      COMMENT_FALLBACK),
     ("delete with an attached -R value between gh and issue",
-     "gh -Rnedschorus/nedschorus issue delete 46 --yes", DELETE_FALLBACK),
+     "gh -Rnedsnodes/nedsnodes issue delete 46 --yes", DELETE_FALLBACK),
     ("create with -R and a host between gh and issue",
-     "gh -R github.com/nedschorus/nedschorus issue create -t A -b B",
+     "gh -R github.com/nedsnodes/nedsnodes issue create -t A -b B",
      guard.CREATE_REFUSAL),
     ("comment with -R between issue and the subcommand",
-     "gh issue -R nedschorus/nedschorus comment 46 -b x",
+     "gh issue -R nedsnodes/nedsnodes comment 46 -b x",
      COMMENT_FALLBACK),
     ("edit with --repo between issue and the subcommand",
-     "gh issue --repo nedschorus/nedschorus edit 46 --body x",
+     "gh issue --repo nedsnodes/nedsnodes edit 46 --body x",
      EDIT_BODY_FALLBACK),
     ("close with -R= between issue and the subcommand",
-     "gh issue -R=nedschorus/nedschorus close 46 -c done",
+     "gh issue -R=nedsnodes/nedsnodes close 46 -c done",
      CLOSE_WITH_COMMENT_FALLBACK),
     ("comment with -R= after the subcommand",
-     "gh issue comment 46 -R=nedschorus/nedschorus -b x",
+     "gh issue comment 46 -R=nedsnodes/nedsnodes -b x",
      COMMENT_FALLBACK),
     ("comment with repository flags in two places, this one last",
-     "gh -R cli/cli issue -R nedschorus/nedschorus comment 46 -b x",
+     "gh -R cli/cli issue -R nedsnodes/nedsnodes comment 46 -b x",
      COMMENT_FALLBACK),
     ("comment with two -R flags after the subcommand, this one last",
-     "gh issue comment 46 -R cli/cli -R nedschorus/nedschorus -b x",
+     "gh issue comment 46 -R cli/cli -R nedsnodes/nedsnodes -b x",
      COMMENT_FALLBACK),
     # The shell runs a command substitution inside double quotes exactly as
     # it runs a bare one, so the write inside either is refused.
@@ -252,14 +253,14 @@ ALLOWED = [
     ("comment on another repository with -R= between issue and the "
      "subcommand", "gh issue -R=cli/cli comment 5 -b x"),
     ("the -R flag outranks GH_REPO",
-     "GH_REPO=nedschorus/nedschorus gh -R cli/cli issue comment 5 -b x"),
+     "GH_REPO=nedsnodes/nedsnodes gh -R cli/cli issue comment 5 -b x"),
     ("view with -R between gh and issue",
-     "gh -R nedschorus/nedschorus issue view 46"),
+     "gh -R nedsnodes/nedsnodes issue view 46"),
     ("-R between gh and issue with no subcommand",
-     "gh -R nedschorus/nedschorus issue"),
+     "gh -R nedsnodes/nedsnodes issue"),
     ("a -R flag with no value", "gh -R"),
     ("comment with repository flags in two places, another one last",
-     "gh -R nedschorus/nedschorus issue -R cli/cli comment 5 -b x"),
+     "gh -R nedsnodes/nedsnodes issue -R cli/cli comment 5 -b x"),
     ("the write tool itself", "python3 scripts/ghi-issue-write.py create docs/issues/queue/x.md"),
     ("the write tool's edit", "python3 scripts/ghi-issue-write.py edit docs/issues/46-x.md"),
     ("gh issue comment quoted as prose", 'echo "run gh issue comment 46 -b x"'),
@@ -274,7 +275,7 @@ ALLOWED = [
     ("an escaped \\$( in double quotes, which the shell does not run",
      'echo "\\$(gh issue comment 46 -b x)"'),
     ("a pull request comment", "gh pr comment 700 -b looks-good"),
-    ("gh api", "gh api repos/nedschorus/nedschorus/issues/46/comments -f body=x"),
+    ("gh api", "gh api repos/nedsnodes/nedsnodes/issues/46/comments -f body=x"),
     ("gh issue with no subcommand", "gh issue"),
     ("a bare gh", "gh"),
 ]
@@ -301,16 +302,19 @@ for files in RECORD_LINE_CASES:
     REFUSAL_TEXTS += [
         guard.comment_refusal(files), guard.edit_body_refusal(files),
         guard.edit_title_refusal(files),
-        guard.CLOSE_WITH_COMMENT_REFUSAL.format(
-            record_line=guard.record_line(guard.CLOSE_OUTCOME, files)),
         guard.REOPEN_WITH_COMMENT_REFUSAL.format(
-            record_line=guard.record_line(guard.REOPEN_OUTCOME, files)),
-        guard.DELETE_REFUSAL.format(
-            record_line=guard.record_line(guard.CLOSE_OUTCOME, files))]
+            record_line=guard.record_line(guard.REOPEN_OUTCOME, files))]
+    if files != []:
+        REFUSAL_TEXTS += [
+            guard.CLOSE_WITH_COMMENT_REFUSAL.format(close_lines=guard.close_lines(files)),
+            guard.DELETE_REFUSAL.format(close_lines=guard.close_lines(files))]
 OPENING_WORDS = ("Do not", "Put", "If", "Write", "Edit", "To change", "Close",
                  "Run", "Record", "Change", "This", "The", "Otherwise")
 for text in REFUSAL_TEXTS:
     for line in text.splitlines():
+        # The rule ID opens the refusal's first line; the instruction follows it.
+        if line.startswith("[rule "):
+            line = line.split("] ", 1)[1]
         check(f"refusal line is an instruction: {line[:48]}",
               line.startswith(OPENING_WORDS)
               and "ruled" not in line
@@ -337,11 +341,6 @@ for tool_name in ("Edit", "Write"):
     check(f"a {tool_name} call passes", decision_for("gh issue comment 1 -b x",
                                                    tool_name=tool_name) is None)
 check("an empty command passes", decision_for("") is None)
-stdout = io.StringIO()
-with contextlib.redirect_stdout(stdout):
-    code = guard.main(stdin=io.StringIO("not json"))
-check("an unreadable payload exits 0 and says nothing",
-      code == 0 and not stdout.getvalue().strip(), f"{code} {stdout.getvalue()}")
 
 # The shared shell reader is imported, not copied: a change there reaches
 # this guard, and a broken import fails here instead of failing open at runtime.
@@ -397,21 +396,24 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     refusal = refusal_in_checkout("gh issue close 46 -c done")
     check("close: an issue with one file on main is told to record the outcome in it",
           refusal is not None and refusal.split("\n")[1] ==
-          "Record the outcome in docs/issues/46-the-only-file.md, then open the edit's pull "
-          "request with: python3 scripts/ghi-issue-write.py edit docs/issues/46-the-only-file.md",
-          refusal)
-    check("close: the refusal says to close only after that edit has merged and its rerun",
-          refusal is not None and refusal.split("\n")[2].startswith(
-              "Close the issue after that edit's pull request has merged and its rerun has "
-              "finished, without --comment"), refusal)
+          "Record the outcome in docs/issues/46-the-only-file.md, then close the issue with "
+          "the line below that fits.", refusal)
+    check("close: the refusal names the close operation on that file, not gh issue close",
+          refusal is not None and refusal.split("\n")[3] ==
+          "If the issue's work is done: python3 scripts/ghi-issue-write.py close "
+          "docs/issues/46-the-only-file.md --reason completed"
+          and "gh issue close" not in refusal, refusal)
 
     refusal = refusal_in_checkout("gh issue close 47 --comment done")
     check("close: an issue with several files on main is given all of them to choose among",
           refusal is not None and refusal.split("\n")[1] ==
           "The issue's files on main are: docs/issues/47-supporting-notes.md, "
           "docs/issues/47-the-ghi-md.md. Record the outcome in the issue's GHI-MD among "
-          "them, then open the edit's pull request with: python3 "
-          "scripts/ghi-issue-write.py edit <that path>", refusal)
+          "them, then close the issue with the line below that fits, giving that path.",
+          refusal)
+    check("close: with several files, the close lines say <that path>",
+          refusal is not None and refusal.split("\n")[3].endswith(
+              "close <that path> --reason completed"), refusal)
 
     refusal = refusal_in_checkout("gh issue close 48 -c done")
     check("close: an issue with no file on main is told to stop, and the message ends there",
@@ -425,12 +427,12 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               "Record why the issue is reopening in docs/issues/46-the-only-file.md"), refusal)
 
     refusal = refusal_in_checkout(
-        "gh issue delete https://github.com/nedschorus/nedschorus/issues/46 --yes")
+        "gh issue delete https://github.com/nedsnodes/nedsnodes/issues/46 --yes")
     check("delete by URL: the issue number is read from the URL and its file named",
           refusal is not None and refusal.split("\n")[1].startswith(
               "Record the outcome in docs/issues/46-the-only-file.md"), refusal)
     check("delete: the duplicate line comes first among the close lines",
-          refusal is not None and refusal.split("\n")[3].startswith(
+          refusal is not None and refusal.split("\n")[2].startswith(
               "If this issue covers the same work as another issue: "), refusal)
 
     refusal = refusal_in_checkout("gh issue delete 48 --yes")
@@ -466,6 +468,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           refusal == guard.NO_COMMENTS_LINE + "\n" + NO_FILE_LINE, refusal)
 
     BODY_FIRST_LINES = [
+        "[rule bash-guard-gh-issue-body-or-title-set-by-hand] "
         "Do not set this project's issue bodies with gh issue edit: an issue's body is "
         "the links to its files on main, and scripts/ghi-issue-write.py writes it from "
         "those files.",
@@ -494,6 +497,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           refusal is not None and refusal.split("\n")[:3] == BODY_FIRST_LINES, refusal)
 
     TITLE_FIRST_LINES = [
+        "[rule bash-guard-gh-issue-body-or-title-set-by-hand] "
         "Do not set this project's issue titles with gh issue edit: "
         "scripts/ghi-issue-write.py sets an issue's title from the first heading of the "
         "issue's GHI-MD, when the issue has one file on main and an edit changes that "

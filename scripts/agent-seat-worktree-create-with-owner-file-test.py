@@ -272,6 +272,28 @@ def main():
         check("run outside any clone: exit 1 naming the git command that failed",
               outside.returncode == 1 and "rev-parse" in outside.stderr, f"{outside!r}")
 
+        # --- --owned-by-agent-session --------------------------------------------------------
+        # The suite may itself run under claude, so the walk up the parent processes is replaced.
+        snapshots = creator.owner_file.load_uncommitted_work_snapshots_module_once()
+        with replaced(snapshots, "claude_owner_process_id", lambda start: os.getpid()):
+            code, stdout, stderr = machine.run_in_process("session-owned", "--owned-by-agent-session")
+        session_owned = machine.managed / "session-owned"
+        check("--owned-by-agent-session: the owner file names the nearest claude parent's agent-session "
+              "and the calling agent-seat",
+              code == 0 and stdout == f"{session_owned}\n"
+              and machine.owner_file(session_owned) == {
+                  "owner_kind": "agent-session", "agent_seat": SEAT,
+                  "owner_key": snapshots.owner_key_of_process(os.getpid())}, f"{code} {stderr}")
+        with replaced(snapshots, "claude_owner_process_id", lambda start: None):
+            code, stdout, stderr = machine.run_in_process("--detach", "no-claude", main_commit,
+                                                          "--owned-by-agent-session")
+        no_claude = machine.managed / "no-claude"
+        check("--owned-by-agent-session with no claude among the parent processes: exit 1, the "
+              "cause on stderr, the worktree removed",
+              code == 1 and stdout == "" and "no process named claude" in stderr
+              and not no_claude.exists() and no_claude.resolve() not in machine.registered_worktrees(),
+              f"{code} {stderr}")
+
         # --- the owner file cannot be written ----------------------------------------------
         def refuse_write(*arguments, **keywords):
             raise creator.owner_file.WorktreeOwnerFileError("disk full (injected)")

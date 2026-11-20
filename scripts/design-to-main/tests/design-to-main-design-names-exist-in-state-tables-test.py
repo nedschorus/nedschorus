@@ -86,7 +86,7 @@ def machine_names_in_the_state_tables_module(tables):
         "refusal-class": {
             value for name, value in vars(tables).items() if name.startswith("REFUSAL_")},
         "coverage-type": set(tables.COVERAGE_TYPES_THAT_ARE_AGENT_INSTRUCTIONS)
-                         | {tables.COVERAGE_TYPE_NO_TESTS},
+                         | {tables.COVERAGE_TYPE_NO_TESTS, tables.COVERAGE_TYPE_USER_TESTS_BY_HAND},
         "user-ruling the machine acts on": {
             value for name, value in vars(tables).items() if name.startswith("RULING_")},
     }
@@ -119,7 +119,7 @@ MACHINE_NAMES_DEFINED_OUTSIDE_THE_STATE_TABLES_MODULE = {
     "investigation-report": ("design-to-main-state-machine.py",
                              "the state-package's key for the investigation report's path "
                              "(sections 2 and 9)"),
-    "tests-begun": ("design-to-main-run-state.py", "a run-state.json field (section 9)"),
+    "tests-begun": ("design-to-main-run-state.py", "a design-to-main-run-state.json field (section 9)"),
 }
 
 # Backticked words that are not the machine's names, each with its reason.
@@ -138,7 +138,7 @@ BACKTICKED_TOKENS_THAT_ARE_NOT_MACHINE_NAMES = {
     "git show": "a git command the arbitrator runs (section 9)",
     "supersedes": "the notes' section 13 edge name, which a run does not use (section 9)",
     "script": "a coverage-type (section 2) the tables module does not name: the machine "
-              "reads only the agent-instructions types and no-tests",
+              "reads only the agent-instructions types, user and no-tests",
     "can-not-be-tested": "a no-tests reason, written in the test-design, which the machine "
                          "reads only for its coverage-type lines (section 2)",
     "do-not-know-how-to-test": "a no-tests reason (section 2), as can-not-be-tested",

@@ -5,7 +5,8 @@ The check reads a Bash command and its result. It speaks only when the command h
 search, such as grep, rg or find, and the result is empty, and then only for these causes:
 
 - An unquoted relative glob expanded to a name beginning with -, in the directory the
-  command had cd'd into, before any --: the program read that name as an option.
+  command had cd'd into, before the -- that ends the options: the program read that name
+  as an option.
 - The agent's grep, which is ugrep, refuses the pattern of a bare grep with "exceeds
   complexity limits".
 - A search program is not installed on the machine that ran it.
@@ -94,7 +95,7 @@ DIAGNOSTIC_LINE = re.compile(
     r"|(?:[^\s:]*/)?(?:zsh|bash|sh|dash|ksh)(?::\d+)?"
     r"|[^\s:]+: line \d+"
     r"|(?:[^\s:]*/)?[^\s:/.\d][^\s:/.]*):\s[^\n]*?"
-    r"(?:command not found|No such file or directory|Permission denied"
+    r"(?:not found|No such file or directory|Permission denied"
     r"|Is a directory|cannot open|unrecognized option|invalid option"
     r"|unknown option|Connection refused|Could not resolve hostname"
     r"|Operation timed out|exceeds complexity limits|error)"
@@ -240,8 +241,9 @@ def fnmatch_pattern(marked):
                    for character in marked)
 
 
-class Placed(collections.namedtuple("Placed", "host directory words program_index")):
-    """A simple command with the machine and directory it ran in; directory None is unknown."""
+class Placed(collections.namedtuple("Placed", "host directory words program_index redirects")):
+    """A simple command with the machine and directory it ran in; directory None is unknown.
+    redirects holds only the command's own, not those of a { } or ( ) around it."""
 
     @property
     def program(self):
@@ -275,7 +277,7 @@ def split_into_simple_commands_with_the_machine_and_directory_each_runs_in(comma
             else:
                 directories[shell] = None
             continue
-        placed.append(Placed(host, directory, list(words), index))
+        placed.append(Placed(host, directory, list(words), index, tuple(words.redirects)))
         if host is None and index is not None and shell_reader.is_program(words[index], "ssh"):
             arguments = [plain(word) for word in words[index + 1:]]
             remote = shell_reader.ssh_remote_command(arguments)
@@ -334,27 +336,74 @@ def machine_name(host):
     return host if host else "this machine"
 
 
+def names_a_word_expanded_to(command, word, machines, unchecked):
+    """Return, sorted, the names that the first path component of word matches in the
+    directory command ran in; or None, with one line in unchecked, when that directory could
+    not be listed."""
+    try:
+        entries = machines.directory_entries(command.host, command.directory)
+    except MachineStateQueryGotNoAnswer as error:
+        line = (f"whether `{plain(word)}` expanded, in "
+                f"{command.directory}, the directory the command ran in, "
+                f"to a name beginning with -: {error}")
+        if line not in unchecked:
+            unchecked.append(line)
+        return None
+    pattern = fnmatch_pattern(word.split("/", 1)[0])
+    return sorted(name for name in entries if fnmatch.fnmatchcase(name, pattern))
+
+
+GREP_PROGRAMS = frozenset({"grep", "egrep", "fgrep", "zgrep", "ugrep"})
+
+
+def grep_arguments_options_end_and_option_value_positions(arguments):
+    """Return where grep's options end in arguments, and the positions before it of the
+    words grep reads as an option's value. The end is the position of the -- that grep reads
+    as their end, or len(arguments) when there is none."""
+    values = set()
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        index += 1
+        if argument == "--":
+            return index - 1, frozenset(values)
+        if argument.startswith("--"):
+            if argument in GREP_LONG_OPTIONS_TAKING_A_VALUE:
+                values.add(index)
+                index += 1
+        elif argument.startswith("-") and argument != "-":
+            for position, letter in enumerate(argument[1:], start=1):
+                if letter in GREP_SHORT_OPTIONS_TAKING_A_VALUE:
+                    if position == len(argument) - 1:
+                        values.add(index)
+                        index += 1
+                    break
+    return len(arguments), frozenset(value for value in values if value < len(arguments))
+
+
 def glob_dash_name_causes(placed, machines, unchecked):
     causes = []
     for command in placed:
         if command.directory is None or command.program_index is None:
             continue
-        for word in command.words[command.program_index + 1:]:
-            if word == "--":
-                break
+        words = command.words[command.program_index + 1:]
+        arguments = [plain(word) for word in words]
+        # Only grep's options that take a value are known; another program's options end at
+        # its first --.
+        options_end, option_values = (
+            grep_arguments_options_end_and_option_value_positions(arguments)
+            if command.program in GREP_PROGRAMS
+            else (arguments.index("--") if "--" in arguments else len(arguments), frozenset()))
+        for position, word in enumerate(words[:options_end]):
             first_component = word.split("/", 1)[0]
             if plain(first_component) == first_component or word.startswith(("/", "~")):
                 continue
-            try:
-                entries = machines.directory_entries(command.host, command.directory)
-            except MachineStateQueryGotNoAnswer as error:
-                unchecked.append(f"whether `{plain(word)}` expanded, in "
-                                 f"{command.directory}, the directory the command ran in, "
-                                 f"to a name beginning with -: {error}")
+            names = names_a_word_expanded_to(command, word, machines, unchecked)
+            if names is None:
                 break
-            pattern = fnmatch_pattern(first_component)
-            dashed = sorted(name for name in entries
-                            if name.startswith("-") and fnmatch.fnmatchcase(name, pattern))
+            # An option's value takes only the first name of its glob; grep reads the rest as
+            # it reads any other word.
+            dashed = [name for name in names[position in option_values:] if name.startswith("-")]
             if dashed:
                 causes.append(Cause(GLOB_DASH_NAME, (
                     f"`{plain(word)}` expanded, in {command.directory} on "
@@ -369,9 +418,12 @@ def glob_dash_name_causes(placed, machines, unchecked):
     return causes
 
 
-def agents_grep_options_and_patterns_without_file_names(command):
+def agents_grep_options_and_patterns_without_file_names(command, machines, unchecked):
     """Return the options and patterns of a grep that Claude Code's grep function hands to
-    ugrep, its file names left out; or None for any other command."""
+    ugrep, its file names left out; or None for any other command. A word before -- that
+    begins with - stays in when its expansion could not be checked: with one line in
+    unchecked when the directory the command ran in could not be listed, and with none when
+    that directory is not known."""
     # Only a bare grep run by this machine's shell reaches the function; a wrapper such as
     # xargs or timeout runs the system grep.
     if command.host is not None or command.program_index is None \
@@ -379,10 +431,22 @@ def agents_grep_options_and_patterns_without_file_names(command):
             or any(not shell_reader.ENVIRONMENT_ASSIGNMENT_PATTERN.match(word)
                    for word in command.words[:command.program_index]):
         return None
-    arguments = [plain(word) for word in command.words[command.program_index + 1:]]
+    words = command.words[command.program_index + 1:]
+    arguments = [plain(word) for word in words]
     if any(fnmatch.fnmatchcase(argument, rule) for argument in arguments
            for rule in AGENTS_GREP_PASSES_TO_SYSTEM_GREP):
         return None
+    # A word that begins with - and holds an unquoted glob character names files only when
+    # the shell expanded it, and glob_dash_name_causes judges those names; one that matched
+    # nothing reached grep as written, as an option or an option's value such as
+    # --include=*.md. After the -- that ends the options every word is a pattern or a file
+    # name, whatever it begins with, and the loop below keeps at most the first.
+    options_end, option_values = grep_arguments_options_end_and_option_value_positions(arguments)
+    arguments = [argument for position, (word, argument) in enumerate(zip(words, arguments))
+                 if not (position < options_end and position not in option_values
+                         and argument.startswith("-") and plain(word) != word
+                         and command.directory is not None
+                         and names_a_word_expanded_to(command, word, machines, unchecked))]
     kept = []
     pattern_given = False
     index = 0
@@ -418,22 +482,67 @@ def agents_grep_options_and_patterns_without_file_names(command):
     return kept
 
 
-def pattern_too_complex_causes(placed, machines, unchecked):
+REDIRECT_OPERATOR = re.compile(r"(\d*)(>>|>\||>&|<&|>|<>|<)(-?)")
+
+
+def does_command_own_redirect_send_stderr_elsewhere_than_stdout(command):
+    """Whether the command's own redirects, read in order as bash applies them, leave its stderr
+    pointing anywhere but the stdout the command started with, which the agent is shown."""
+    shown, closed = "shown", "closed"
+    points_to = {1: shown, 2: shown}
+
+    def file_destination(target):
+        special = re.fullmatch(r"/dev/(?:std(out|err)|fd/(\d+))", target)
+        if special:
+            source = {"out": 1, "err": 2}.get(special.group(1)) or int(special.group(2))
+            return points_to.get(source, closed)
+        return ("file", target)
+
+    for operator, target in command.redirects:
+        descriptor = re.fullmatch(r"(\d+)(-?)", target)
+        if operator in ("&>", "&>>") or operator == ">&" and not descriptor and target != "-":
+            points_to[1] = points_to[2] = file_destination(target)
+            continue
+        match = REDIRECT_OPERATOR.fullmatch(operator)
+        if not match:
+            continue  # A here-document or here-string feeds stdin only.
+        number, kind, dash = match.groups()
+        fd = int(number) if number else (0 if kind.startswith("<") else 1)
+        if kind in (">&", "<&"):
+            if dash or target in ("-", ""):
+                points_to[fd] = closed
+            elif descriptor:
+                source = int(descriptor.group(1))
+                points_to[fd] = points_to.get(source, closed)
+                if descriptor.group(2) and source != fd:
+                    points_to[source] = closed  # A move, such as 2>&1-, closes its source.
+            continue
+        points_to[fd] = file_destination(target)
+    return points_to[2] != shown
+
+
+def pattern_too_complex_causes(placed, machines, unchecked, output=""):
+    # A refusal the agent saw is not hidden, and the warning says it was. A refusal shown is
+    # taken for that of each grep whose own redirect let it through.
+    refusal_shown = AGENTS_GREP_REFUSAL in (output or "")
     causes = []
     for command in placed:
-        arguments = agents_grep_options_and_patterns_without_file_names(command)
+        if refusal_shown and not does_command_own_redirect_send_stderr_elsewhere_than_stdout(command):
+            continue
+        arguments = agents_grep_options_and_patterns_without_file_names(
+            command, machines, unchecked)
         if not arguments:
             continue
         try:
             refused = machines.agents_grep_refuses(arguments, command.directory)
         except MachineStateQueryGotNoAnswer as error:
             unchecked.append(f"whether the agent's grep refuses the pattern of "
-                             f"`{' '.join(arguments)}`: {error}")
+                             f"`{shlex.join(arguments)}`: {error}")
             continue
         if refused:
             causes.append(Cause(PATTERN_TOO_COMPLEX, (
                 f"The agent's grep, which is ugrep, refuses the pattern of "
-                f"`grep {' '.join(arguments)}` with \"{AGENTS_GREP_REFUSAL}\", so that "
+                f"`grep {shlex.join(arguments)}` with \"{AGENTS_GREP_REFUSAL}\", so that "
                 f"grep searched nothing; its 2>/dev/null or a later stage of the pipe hid "
                 f"the refusal.\n"
                 f"Run the search again with rg, or with a grep pattern that holds no bounded "
@@ -442,14 +551,21 @@ def pattern_too_complex_causes(placed, machines, unchecked):
     return causes
 
 
-def program_missing_causes(placed, machines, unchecked):
+def not_found_error_shown(output, program):
+    """Whether output holds the shell's "not found" line for program, which the agent saw."""
+    name = os.path.basename(program)
+    return any("not found" in line and re.search(rf"(?<![\w.-]){re.escape(name)}(?![\w.-])", line)
+               for line in (output or "").splitlines())
+
+
+def program_missing_causes(placed, machines, unchecked, output=""):
     causes = []
     asked = set()
     for command in placed:
         if not is_search(command):
             continue
         program = plain(command.words[command.program_index])
-        if (command.host, program) in asked:
+        if (command.host, program) in asked or not_found_error_shown(output, program):
             continue
         asked.add((command.host, program))
         try:
@@ -485,8 +601,8 @@ def judge_command_result(command, cwd, stdout="", exit_code=0, machines=None):
         return Verdict(False, reason="no search in the command")
     unchecked = []
     causes = (glob_dash_name_causes(placed, machines, unchecked)
-              + pattern_too_complex_causes(placed, machines, unchecked)
-              + program_missing_causes(placed, machines, unchecked))
+              + pattern_too_complex_causes(placed, machines, unchecked, stdout)
+              + program_missing_causes(placed, machines, unchecked, stdout))
     return Verdict(True, causes=causes, unchecked=unchecked,
                    reason=None if causes else "none of the three causes was found")
 

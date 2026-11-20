@@ -25,7 +25,7 @@ Each removes a step an agent must remember or a signal an agent must discount by
 5. **A codex cell that returns an empty last message saves a provenance-only report.** `run_codex` returns the last-message file with no emptiness check; the claude chain checks (`exited 0 but produced no review`). Verified in the code 2026-09-15; no observed miss. Run 1 fresh-eyes-codex. Done: PR [Sanity-check runner: keep project hooks out of claude cells, refuse a saved text that is not a report](https://github.com/nedschorus/nedschorus/pull/417), merged 2026-09-16, refuses an empty text on both runtimes through its required-phrase check. No separate work.
 6. **A `LEAK-WARNING` line names the line it matched.** Run 1 printed 22, each naming only the coined name and the file, so telling expected off-limits-path hits from real leaks means searching the request by hand. Run 2 mechanization-claude F6.
 7. **A record for a skill is always `<date>-SKILL`**, because every skill's file is `SKILL.md`; two skills checked on one day differ only by `-2`. Include the parent directory when the stem is `SKILL`. Fresh-eyes-claude, hard part 10. Run 1 of this check landed under a different stem only because the target was a queue draft.
-8. **A `--runtime` flag, so a rerun repeats only the failed runtime.** Today `--attack` reruns both, and the 2026-09-15 rerun re-ran two healthy codex cells at full cost. Run 2 cut-claude Q3, run 1 mechanization-codex F3.
+8. **A `--runtime` flag, so a rerun repeats only the failed agent-binary.** Today `--attack` reruns both, and the 2026-09-15 rerun re-ran two healthy codex cells at full cost. Run 2 cut-claude Q3, run 1 mechanization-codex F3.
 
 ## Outcome
 

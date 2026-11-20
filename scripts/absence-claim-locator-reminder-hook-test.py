@@ -32,7 +32,7 @@ LABELLED_REPLIES = Path(
 EXPECTED_PRECISION_LINE = "fires 103: correct 88, incorrect 15, unclear 0; precision 0.8544"
 B01_CLAIM = "The transcripts it points to are gone."
 REMINDER_FOR_B01 = (
-    "absence-claim reminder: your reply says a file or record is gone, missing "
+    "[rule absence-claim-run-locator-before-saying-missing] absence-claim reminder: your reply says a file or record is gone, missing "
     "or cannot be found (\"are gone\"), and you have not run the locator this "
     "turn. Files agents call missing are often in another checkout, the "
     "log-store, a transcript or a backup.\n"
@@ -48,7 +48,7 @@ REMINDER_FOR_B01 = (
     "reminder comes once per session."
 )
 SUBAGENT_REMINDER_FOR_B01 = (
-    "absence-claim reminder: your reply says a file or record is gone, missing "
+    "[rule absence-claim-run-locator-before-saying-missing] absence-claim reminder: your reply says a file or record is gone, missing "
     "or cannot be found (\"are gone\"), and you have not run the locator this "
     "turn. Files agents call missing are often in another checkout, the "
     "log-store, a transcript or a backup.\n"
@@ -327,6 +327,12 @@ for case_name, text in [
      "The files containing code are missing."),
     ("pattern 2: that is the match's subject, the sentence's own verb follows",
      "The transcript that is gone is the only copy."),
+    ("pattern 2: a defining verb before a colon, the match in a relative clause",
+     "The report uses two sources: the mirror, and the transcript that is missing."),
+    ("pattern 6: a search tool as the subject, a can't elsewhere in the sentence",
+     "The locator isn't in the repository, so we can't run it."),
+    ("pattern 2: an artifact word and an edited-element word joined by a second and",
+     "Ned left and the transcript and the guard are gone."),
 ]:
     check(f"trigger: {case_name}", bool(hook.absence_claim_matches(text)), text)
 
@@ -391,6 +397,14 @@ for case_name, text in [
     ("an -ing word in a compound noun before an edited-element word", "The file naming rules are gone."),
     ("an -ing word in a compound noun before code", "The log formatting code is gone."),
     ("a search tool as the subject, an adverb before the match", "We know the locator still cannot find branch names."),
+    ("an artifact word ending in -ing after the subject's first noun is a participle",
+     "The guard ruling out stale files is gone."),
+    ("an artifact word before a clause-opening word other than and", "Nobody touched the transcript because the parser is gone."),
+    ("an artifact word in the clause before and, not right before it", "The transcript went stale and the parser is gone."),
+    ("an artifact word as a verb's object before the second and, a pronoun subject",
+     "Ned left and I edited the transcript and the guard is gone."),
+    ("an artifact word as a verb's object before the second and, a second determiner",
+     "Ned left and the commit touched the transcript and the guard is gone."),
 ]:
     check(f"trigger: silent on {case_name}", not hook.absence_claim_matches(text),
           hook.absence_claim_matches(text))
