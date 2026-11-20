@@ -1,6 +1,6 @@
 # Ordinary hyphenated words
 
-Words whose hyphen is part of the word: standard English words that dictionaries list with the hyphen, and standard computing terms. `scripts/new-shared-names-in-changed-files-list.py` does not list these as new names. A hyphenated phrase that is neither here nor in a glossary is either a new project-term, which goes to the user, or a compound that the hyphen rule says to write without the hyphen. The words are ordered by how often agents use them.
+Words whose hyphen is part of the word: standard English words that dictionaries list with the hyphen, and standard computing terms. `scripts/new-shared-names-in-changed-files-list.py` does not list the words below as new names. A hyphenated phrase that is neither here nor in a glossary is one of three things: a standard English word that dictionaries list with the hyphen, or a standard computing term, which is added to this list; a new project-term or system-term, which goes to the user; or an ordinary compound, which the naming page's section [Hyphens in prose mark the project's own terms](nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md#hyphens-in-prose-mark-the-projects-own-terms) says to write without the hyphen.
 
 - follow-up
 - read-only
@@ -91,7 +91,6 @@ Words whose hyphen is part of the word: standard English words that dictionaries
 - self-correction
 - round-trip
 - one-sided
-- machine-readable
 - deep-dive
 - cross-check
 - to-do
@@ -107,6 +106,5 @@ Words whose hyphen is part of the word: standard English words that dictionaries
 - cut-off
 - open-source
 - off-by-one
-- human-readable
 - fail-closed
 - catch-all

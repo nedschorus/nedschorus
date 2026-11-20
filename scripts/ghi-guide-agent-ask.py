@@ -182,7 +182,7 @@ AGENT_BOX = os.environ.get("NEDSCHORUS_AGENT_BOX", "ned")
 NED_BOX_HOSTNAME = "ned-box"
 DEFAULT_AGENTS_ROOT = Path(os.environ.get("NEDSCHORUS_AGENTS_ROOT", "~/agents")).expanduser()
 DEFAULT_SEAT_DIR = DEFAULT_AGENTS_ROOT / "ghi-guide-agent"
-DEFAULT_REPO = "nedschorus/nedschorus"
+DEFAULT_REPO = "nedsnodes/nedsnodes"
 STATE_FILE_NAME = ".ghi-guide-agent-state.json"
 LOCK_FILE_NAME = ".ghi-guide-agent-state.lock"
 
@@ -350,7 +350,7 @@ EXIT_RULING_QUESTION = 3
 NOT_ABOUT_ISSUES_MESSAGE = (
     "Not a question about GitHub issues: ghi-guide-agent reports which issues relate to a subject.\n"
     'Ask again as: scripts/ghi-guide-agent-ask.py "Which issues cover <your subject>?"\n'
-    "If that is refused too, search yourself: gh issue list --repo nedschorus/nedschorus "
+    "If that is refused too, search yourself: gh issue list --repo nedsnodes/nedsnodes "
     '--state all --search "<terms>"')
 RULING_QUESTION_MESSAGE_TEMPLATE = (
     "ghi-guide-agent found a ruling of the user's that it cannot tell still applies: {sentence}\n"

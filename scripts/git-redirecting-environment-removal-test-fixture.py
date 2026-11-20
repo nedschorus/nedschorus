@@ -18,7 +18,7 @@ put 14 test commits on a live seat's branch and overwrote the shared
 `user.name` and `user.email` on ned-box on 2026-09-22. GitHub issue "Test
 suites write into the ambient repository when GIT_DIR is set: git init's
 result is unchecked and the suite runner passes no environment"
-(https://github.com/nedschorus/nedschorus/issues/639), "Next action" item 2.
+(https://github.com/nedsnodes/nedsnodes/issues/639), "Next action" item 2.
 
 WHY THE PROCESS'S ENVIRONMENT, not the environment of one git helper. A suite
 starts the program it tests with its own environment, and that program runs

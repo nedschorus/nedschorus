@@ -61,6 +61,8 @@ REFUSAL_FORM = "form"
 COVERAGE_TYPES_THAT_ARE_AGENT_INSTRUCTIONS = ("prompt", "script-and-prompt")
 # no-tests runs nothing and counts as neither pass nor fail; emit it alone when the coverage set is empty.
 COVERAGE_TYPE_NO_TESTS = "no-tests"
+# A person tests a user requirement by hand from the test-design, so test-writing writes and emits nothing for it.
+COVERAGE_TYPE_USER_TESTS_BY_HAND = "user"
 # Only coverage-type lines are machine-readable; the rest of the test-design syntax belongs to its author.
 TEST_DESIGN_COVERAGE_TYPE_LINE_PREFIX = "coverage-type:"
 

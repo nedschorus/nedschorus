@@ -1341,7 +1341,7 @@ def run_architecture_overview_checked_against_commit_cases(fixture):
     flag = ["--overview-write-architecture-overview-claim-check-report-directory", str(report_directory)]
 
     def write_overview_with_report(named, path=FIXTURE_OVERVIEW_PATH):
-        last_line = f"**Checked against:** commit [{named}](https://github.com/nedschorus/nedschorus/commit/{named})\n" if named else ""
+        last_line = f"**Checked against:** commit [{named}](https://github.com/nedsnodes/nedsnodes/commit/{named})\n" if named else ""
         text = ("# Example overview\n\nIt is not `scripts/sibling-program.py`.\n\n## Components\n\n"
                 "- `nc-systems/example/parent-program.py`: the program.\n"
                 "- `scripts/example-program.py`: a shared script.\n- `config`: its settings.\n"
