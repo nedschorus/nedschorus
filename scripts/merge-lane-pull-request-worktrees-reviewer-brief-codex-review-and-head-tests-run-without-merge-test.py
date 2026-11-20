@@ -727,7 +727,7 @@ def main():
               completed.returncode == 2 and calls == []
               and "main-moved-on.txt" in completed.stdout
               and completed.stdout.rstrip().endswith(
-                  f"because they may be someone's unsaved work.")
+                  "because they may be someone's unsaved work.")
               and survived == "the only copy\n"
               and head_of(checkout) == merge_base,
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}\n{survived}")

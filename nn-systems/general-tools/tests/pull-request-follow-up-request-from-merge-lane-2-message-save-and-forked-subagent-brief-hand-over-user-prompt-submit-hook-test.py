@@ -113,7 +113,7 @@ def test_saves_and_hands_over_the_brief():
         saved = repository / SAVED
         check("the block is saved word for word, without the signature line",
               saved.exists() and saved.read_text() == BLOCK, saved.read_text() if saved.exists() else "missing")
-        second = message(f"#follow_up_request pull request 1965\n1. one finding\n")
+        second = message("#follow_up_request pull request 1965\n1. one finding\n")
         code, _, context, err = run(MERGE_MESSAGE + "\n" + second, repository)
         check("two merge-lane-2 messages with blocks get one brief each",
               code == 0 and context is not None and context.count("For you, the author:\n") == 2

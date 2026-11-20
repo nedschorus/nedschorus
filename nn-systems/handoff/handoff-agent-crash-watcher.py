@@ -124,7 +124,7 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 PROGRAM = "handoff-agent-seat-died-without-session-handoff-restart-watcher"

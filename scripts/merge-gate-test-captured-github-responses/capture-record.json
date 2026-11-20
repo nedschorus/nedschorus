@@ -968,6 +968,62 @@
       "stderr": "gh: Not Found (HTTP 404)\n",
       "gh_version": "gh version 2.102.0 (2026-09-30)",
       "machine": "ned-box"
+    },
+    {
+      "file": "nedsnodes-nedsnodes-3885-reviews-channel-paginated.json",
+      "command": [
+        "gh",
+        "api",
+        "repos/nedsnodes/nedsnodes/pulls/3885/reviews",
+        "--paginate"
+      ],
+      "captured_at_utc": "2026-11-20T19:26:37Z",
+      "exit_code": 0,
+      "stderr": "",
+      "machine": "ned-box",
+      "gh_version": "gh version 2.104.0 (2026-11-12)"
+    },
+    {
+      "file": "nedsnodes-nedsnodes-3885-review-5952986576-comments-paginated.json",
+      "command": [
+        "gh",
+        "api",
+        "repos/nedsnodes/nedsnodes/pulls/3885/reviews/5952986576/comments",
+        "--paginate"
+      ],
+      "captured_at_utc": "2026-11-20T19:26:38Z",
+      "exit_code": 0,
+      "stderr": "",
+      "machine": "ned-box",
+      "gh_version": "gh version 2.104.0 (2026-11-12)"
+    },
+    {
+      "file": "nedsnodes-nedsnodes-3881-reviews-channel-paginated.json",
+      "command": [
+        "gh",
+        "api",
+        "repos/nedsnodes/nedsnodes/pulls/3881/reviews",
+        "--paginate"
+      ],
+      "captured_at_utc": "2026-11-20T19:26:38Z",
+      "exit_code": 0,
+      "stderr": "",
+      "machine": "ned-box",
+      "gh_version": "gh version 2.104.0 (2026-11-12)"
+    },
+    {
+      "file": "nedsnodes-nedsnodes-3881-review-5949985134-comments-paginated.json",
+      "command": [
+        "gh",
+        "api",
+        "repos/nedsnodes/nedsnodes/pulls/3881/reviews/5949985134/comments",
+        "--paginate"
+      ],
+      "captured_at_utc": "2026-11-20T19:26:38Z",
+      "exit_code": 0,
+      "stderr": "",
+      "machine": "ned-box",
+      "gh_version": "gh version 2.104.0 (2026-11-12)"
     }
   ]
 }
