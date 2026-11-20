@@ -6,7 +6,7 @@ issue: "[Fix the defects a full cold read found in the ghi-write skill, `.claude
 
 ## What is wrong
 
-On 2026-11-11 the ghi-write skill, `.claude/skills/ghi-write/SKILL.md`, had a cold-read-full-run, because pull request [3120](https://github.com/nedschorus/nedschorus/pull/3120) adds one sentence to its step 4. Its seven reviewers, and an eighth that answered which steps should be code, also found defects in text that pull request does not change. Those defects are listed below, so that someone can fix them in a later pull request. Each defect quotes the skill as it stood at commit `f9c696542`, and names the reviewer reports that raised it. The reports, and the triage that sorted them, are in the cold-read-record `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/SKILL-ghi-write-2026-11-11-2`. A report is named by its file there: `claude-hunt-deep.md` is "claude-deep", `claude-hunt-second-strongest-model.md` is "claude-second", `codex-hunt-deep.md` is "codex-deep", `codex-hunt-second-strongest-model.md` is "codex-second", `agy-hunt-gemini-4-argon-high.md` is "agy", the two `-terminology-deep.md` files are "claude-term" and "codex-term", and `question-4-what-should-be-code-answer.md` is "Q4". A number after a report's name is the number of the finding in it.
+On 2026-11-11 the ghi-write skill, `.claude/skills/ghi-write/SKILL.md`, had a cold-read-full-run, because pull request [3120](https://github.com/nedschorus/nedschorus/pull/3120) adds one sentence to its step 4. Its seven reviewers, and an eighth that answered which steps should be code, also found defects in text that pull request does not change. Those defects are listed below, so that someone can fix them in a later pull request. Each defect quotes the skill as it stood at commit `f9c696542`, and names the reviewer reports that raised it. The reports, and the triage that sorted them, are in the cold-read-record `nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/SKILL-ghi-write-2026-11-11-2`. A report is named by its file there: `claude-hunt-deep.md` is "claude-deep", `claude-hunt-second-strongest-model.md` is "claude-second", `codex-hunt-deep.md` is "codex-deep", `codex-hunt-second-strongest-model.md` is "codex-second", `agy-hunt-gemini-4-argon-high.md` is "agy", the two `-terminology-deep.md` files are "claude-term" and "codex-term", and `question-4-what-should-be-code-answer.md` is "Q4". A number after a report's name is the number of the finding in it.
 
 Why it matters: the skill runs every time an agent files, edits or closes a GitHub issue in this project. Where its text contradicts itself, or describes `scripts/ghi-issue-write.py` wrongly, two agents following it will route the same material in different ways, or will wait for a step the program never takes.
 
@@ -30,7 +30,7 @@ Already covered elsewhere, and so not listed here: the skill's account of one GH
 9. Bullet 2 ("too big to explain in one commit message or pull request description") and bullet 3 ("Work that one commit message or pull request description explains") disagree about work that a pull request description can explain but one commit message cannot. Report: claude-deep 10.
 10. "records its outcome with the edit that closes it" is literally wrong: no edit closes an issue; step 3 and the Close bullet close it with `gh issue close` after the edit merges. Reports: claude-deep 11, claude-second 9, claude-term 8.
 11. "Every GHI is a link-only-GHI: its text is its one GHI-MD, and its body is the links …" defines link-only-GHI again, where the glossary already does, and does not hold for an issue between create-GHI's first run and its rerun, whose body is a placeholder. Reports: codex-deep 4, codex-second 3, codex-term 6, claude-term 9.
-12. "a bare MD at its canonical location" uses "bare MD", which no glossary defines, and does not say what makes a wiki page "finished" rather than wiki-bound doctrine for `docs/nedschorus-wiki/queue/`. Reports: claude-deep 13, agy 9, claude-term 6.
+12. "a bare MD at its canonical location" uses "bare MD", which no glossary defines, and does not say what makes a wiki page "finished" rather than wiki-bound doctrine for `docs/nedsnodes-wiki/queue/`. Reports: claude-deep 13, agy 9, claude-term 6.
 13. The `TaskCreate` tool that step 2 names for the task list is not available to a Codex agent, and the skill names no equivalent. Reports: codex-deep 6, codex-second 4.
 
 ### Step 3, revising
@@ -49,7 +49,7 @@ Already covered elsewhere, and so not listed here: the skill's account of one GH
 
 ### Step 5, references and claims
 
-22. "full URLs for anything outside this repository" conflicts with the root `CLAUDE.md` form for a log-store file, `nedlern@ned-box:/home/nedlern/nedschorus-logs/<path>`, which is not a URL. Reports: claude-deep 25, agy 16, claude-second 17.
+22. "full URLs for anything outside this repository" conflicts with the root `CLAUDE.md` form for a log-store file, `nedlern@ned-box:/home/nedlern/nedsnodes-logs/<path>`, which is not a URL. Reports: claude-deep 25, agy 16, claude-second 17.
 23. "in-repo paths verified present on main before citing" rules out a design naming the files it will create. "the reader's seat" can be read as agent-seat or as a machine. Reports: claude-deep 26, codex-deep 10, claude-second 18, codex-term 9, claude-term 17 and 18.
 24. "a claim you have not checked … ends with "(unverified)"" cannot sensibly apply to a design's statements of what will be built. Report: claude-deep 24.
 
@@ -67,7 +67,7 @@ Already covered elsewhere, and so not listed here: the skill's account of one GH
 34. Close with `--reason "duplicate"` names no issue it duplicates; the hook already allows `--duplicate-of`. Reports: claude-deep 35, claude-second 24.
 35. The skill's "Queue routing:" bullet: "its destination directory" can be read as the queue or as the final destination, and nothing says the queue file must reach main through a pull request. "add the `queue-drain-candidate` label to the issue" names no issue. Reports: claude-deep 36, agy 22, codex-second 13, claude-second 25, claude-term 22.
 36. The hook bullet's list of refused commands differs from what `.claude/guard-hooks/ghi-issue-write-hand-typed-gh-command-refusal.py` refuses. Reports: agy 21, codex-deep 19, codex-second 12.
-37. The routing doctrine the skill cites, `docs/nedschorus-wiki/nedschorus-ai-native-software-development-objective.md` § Project organization, contradicts the skill on comments, on what queues hold, and on which queue directories exist, and the skill does not say which wins. Reports: claude-deep 37, claude-second 26.
+37. The routing doctrine the skill cites, `docs/nedsnodes-wiki/nedsnodes-ai-native-software-development-objective.md` § Project organization, contradicts the skill on comments, on what queues hold, and on which queue directories exist, and the skill does not say which wins. Reports: claude-deep 37, claude-second 26.
 38. The skill calls the same program "the ghi-write-tool", "the tool" and "the write tool". Reports: codex-term 12 and 13, claude-term 20.
 
 ### Steps that could be code

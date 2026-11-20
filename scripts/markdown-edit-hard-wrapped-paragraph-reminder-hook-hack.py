@@ -31,7 +31,7 @@ paragraph it wrote, and to write later Markdown files the same way.
 Which lines form a paragraph is decided by markdown-it-py's CommonMark parser, not
 by this file: a paragraph, in a list item or at the top level, is broken when its
 inline content holds a soft line break. markdown-it-py is pinned in
-nc-systems/general-tools/python-libraries-pinned-requirements.txt; when it is
+nn-systems/general-tools/python-libraries-pinned-requirements.txt; when it is
 missing, the shared Markdown parser module installs the pinned file through the
 shared install module, for the python3 the hooks run. When that install fails, the hook writes to
 stderr what failed, what the install printed and the command that installs it
@@ -104,7 +104,7 @@ def markdown_commonmark_parser_with_tables_common():
     """Return the shared Markdown parser module, loaded by path when first needed."""
     specification = importlib.util.spec_from_file_location(
         "markdown_commonmark_parser_with_tables_common",
-        Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+        Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
         / "markdown-commonmark-parser-with-tables-common.py")
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
@@ -129,7 +129,7 @@ def _load_edited_file_path_within_checkout_root_and_git_check_ignore():
     """Return the shared checkout and git-tracking helpers, loaded by path; raises when they will not load."""
     specification = importlib.util.spec_from_file_location(
         "edited_file_path_within_checkout_root_and_git_check_ignore_common",
-        Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+        Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
         / "edited-file-path-within-checkout-root-and-git-check-ignore-common.py")
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)

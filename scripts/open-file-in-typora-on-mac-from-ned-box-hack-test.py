@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Tests for open-file-in-typora-on-mac-from-ned-box-hack.py.
 
-ssh is replaced by a stub (NEDSCHORUS_SSH_PROGRAM) that records its arguments
+ssh is replaced by a stub (NEDSNODES_SSH_PROGRAM) that records its arguments
 and answers as told, so no test connects to the Mac. ned-box's home is a
-scratch directory (NEDSCHORUS_NED_BOX_HOME). The round-trip cases make the stub
+scratch directory (NEDSNODES_NED_BOX_HOME). The round-trip cases make the stub
 play sshd: it runs the Mac's forced command with SSH_ORIGINAL_COMMAND set to
 the request, ned-box's home and the Mac's mount both set to one real mount
 point, and a stub `open` that records what it was asked to open.
@@ -44,16 +44,16 @@ def run_caller(arguments, home, ssh_body=None, play_sshd_with_mount=None, timeou
         open_stub.write_text(f"""#!/bin/sh\npython3 -c 'import json,sys; json.dump(sys.argv[1:], open("{open_record}","w"))' "$@"\n""")
         open_stub.chmod(0o755)
         lines.append('for last; do :; done')
-        lines.append(f'SSH_ORIGINAL_COMMAND="$last" NEDSCHORUS_MAC_OPEN_PROGRAM="{open_stub}" NEDSCHORUS_NED_BOX_HOME="{play_sshd_with_mount}" '
-                     f'NEDSCHORUS_MAC_NED_BOX_HOME_MOUNT="{play_sshd_with_mount}" HOME="{scratch}" exec "{sys.executable}" "{FORCED_COMMAND_PATH}"')
+        lines.append(f'SSH_ORIGINAL_COMMAND="$last" NEDSNODES_MAC_OPEN_PROGRAM="{open_stub}" NEDSNODES_NED_BOX_HOME="{play_sshd_with_mount}" '
+                     f'NEDSNODES_MAC_NED_BOX_HOME_MOUNT="{play_sshd_with_mount}" HOME="{scratch}" exec "{sys.executable}" "{FORCED_COMMAND_PATH}"')
     else:
         lines.append(ssh_body or "exit 0")
     stub.write_text("\n".join(lines) + "\n")
     stub.chmod(0o755)
-    environment = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(scratch), "NEDSCHORUS_SSH_PROGRAM": str(stub),
-                   "NEDSCHORUS_NED_BOX_HOME": str(home)}
+    environment = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(scratch), "NEDSNODES_SSH_PROGRAM": str(stub),
+                   "NEDSNODES_NED_BOX_HOME": str(home)}
     if timeout_seconds:
-        environment["NEDSCHORUS_MAC_SSH_TIMEOUT_SECONDS"] = str(timeout_seconds)
+        environment["NEDSNODES_MAC_SSH_TIMEOUT_SECONDS"] = str(timeout_seconds)
     result = subprocess.run([sys.executable, str(CALLER_PATH), *arguments], capture_output=True, text=True, env=environment,
                             cwd=cwd)
     sent = json.loads(record.read_text()) if record.exists() else None
