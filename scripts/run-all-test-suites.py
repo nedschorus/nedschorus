@@ -924,7 +924,7 @@ TEST_SANDBOX_HOME_PATHS_SHOWN_READ_ONLY = {
     ".claude/projects": "Claude Code's session transcripts, against the five largest of which "
                         "scripts/claude-code-session-transcript-records-read-backward-common-test.py "
                         "checks the transcript reader; a transcript can hold a secret the user pasted",
-    "nedschorus-logs/seats/ned-box-helper/absence-claim-trigger-phrases-2026-10-05/out/"
+    "nedsnodes-logs/seats/ned-box-helper/absence-claim-trigger-phrases-2026-10-05/out/"
     "precision/labels.csv": "the labelled replies scripts/absence-claim-locator-reminder-"
                             "hook-test.py measures the reminder's precision against",
 }
