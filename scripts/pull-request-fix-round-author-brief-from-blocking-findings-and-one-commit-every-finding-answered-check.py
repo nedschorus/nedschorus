@@ -720,7 +720,7 @@ def instruction_file_guard_walk_approved_marker_file_path_for_nearest_claude_par
     runs in, which is the checkout the agent-session started in. None when that cannot be read."""
     snapshots_spec = importlib.util.spec_from_file_location(
         "uncommitted_work_snapshots",
-        Path(__file__).resolve().parents[1] / "nc-systems" / "handoff" / "uncommitted-work-snapshots.py")
+        Path(__file__).resolve().parents[1] / "nn-systems" / "handoff" / "uncommitted-work-snapshots.py")
     snapshots = importlib.util.module_from_spec(snapshots_spec)
     snapshots_spec.loader.exec_module(snapshots)
     try:
