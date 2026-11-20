@@ -1488,7 +1488,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
                   (code, suites_started, printed[-1500:]))
         check("this runner lists the trial against the installed Claude Code among the suites that "
               "run the real claude",
-              "nc-systems/general-tools/tests/agent-seat-worktree-create-with-owner-file-claude-code-"
+              "nn-systems/general-tools/tests/agent-seat-worktree-create-with-owner-file-claude-code-"
               "worktree-create-hook-real-claude-code-test.py" in runner.SUITES_THAT_RUN_THE_REAL_CLAUDE_CLI)
 
         two_suites = scratch / "two-suites-repository"

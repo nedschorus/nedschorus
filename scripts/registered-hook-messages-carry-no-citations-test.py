@@ -9,7 +9,7 @@ and a citation only says who decided and when. The suite reads the hooks
 constant, or tuple or list of strings, whose name is in capitals, whatever the
 name ends in: a hook's message reaches the agent whether or not its name ends
 in one of the suffixes the tool-message-to-agent collector recognizes,
-nc-systems/general-tools/python-source-tool-message-to-agent-string-collector-common.py.
+nn-systems/general-tools/python-source-tool-message-to-agent-string-collector-common.py.
 It reads only registered hooks: across all programs and tests a citation
 pattern also matches dates and issue numbers that are data, while in hook
 constants every match so far was a citation.
@@ -35,13 +35,13 @@ SETTINGS = REPOSITORY / ".claude" / "settings.json"
 
 _collector_spec = importlib.util.spec_from_file_location(
     "python_source_tool_message_to_agent_string_collector_common",
-    REPOSITORY / "nc-systems" / "general-tools" / "python-source-tool-message-to-agent-string-collector-common.py")
+    REPOSITORY / "nn-systems" / "general-tools" / "python-source-tool-message-to-agent-string-collector-common.py")
 collector = importlib.util.module_from_spec(_collector_spec)
 _collector_spec.loader.exec_module(collector)
 
 _rule_ids_spec = importlib.util.spec_from_file_location(
     "claude_code_registered_hook_rule_id_pattern_hook_files_list_and_source_scan_common",
-    REPOSITORY / "nc-systems" / "general-tools"
+    REPOSITORY / "nn-systems" / "general-tools"
     / "claude-code-registered-hook-rule-id-pattern-hook-files-list-and-source-scan-common.py")
 rule_ids = importlib.util.module_from_spec(_rule_ids_spec)
 _rule_ids_spec.loader.exec_module(rule_ids)

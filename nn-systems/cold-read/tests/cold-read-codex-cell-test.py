@@ -1,0 +1,498 @@
+#!/usr/bin/env python3
+"""Tests for cold-read-codex-cell.py — its exit codes, and the one text of
+the codex agent-binary it recognises.
+
+WHY THIS SEAM. Until 2026-08-23 the cell used 2 for its own refusals and
+passed `codex exec`'s exit code through when codex failed, and codex exits 2
+as well (measured on codex-cli 0.147.0 that day: a command line codex rejects
+exits 2, every non-parsing failure exits 1). One number meant both "the caller
+invoked this cell wrongly" and "this cell invoked codex wrongly", and only the
+second is a defect in this repository. The cell's own refusals moved to 64 —
+sysexits.h's EX_USAGE, chosen because it sits outside every band codex
+plausibly returns.
+
+WHAT CHANGED SINCE THAT FIX, and why half of this file was rewritten. The
+cell no longer passes codex's exit code through, so the passthrough cases
+that pinned it have nothing left to pin. The reviewer now writes its findings
+to --report rather than answering in chat, and the cell hands its models to
+the chain runner in nn-systems/cold-read/cold-read-cell-common.py: a model that fails is a
+model the chain falls back from, and the caller is told whether ANY model
+produced a review — 1 when none did, however each of them failed. The old
+cases are replaced by what the chain actually does when codex exits 2 or 7,
+which is the same thing in both cases and is the point: the code no longer
+selects the cell's own. It is not lost, either. The two replacement cases
+check that codex's code and codex's own words still reach stderr, which is
+where a defect in the command this cell composes is diagnosed, and which the
+grid keeps whenever a cell fails.
+
+So what is pinned here is the seam from both sides: a caller's bad invocation
+comes back as 64 and never launches codex; a codex that fails comes back as
+1, with its own code visible on stderr and no report left behind; and a codex
+that succeeds comes back as 0 with the report written to --report and nothing
+at all on stdout. --prompt-file, added so a draft prompt can be trialled
+through this launcher (24 trial cells exited 64 on 2026-09-04 for lack of
+it), joins the seam on both sides: a path naming no file is the cell's own
+refusal, 64 before codex runs, and a file that exists runs the cell to 0
+with the file's path in the stamp.
+
+The argparse cases are in the set deliberately, not for completeness:
+argparse's own default is also 2, so moving only the hand-written checks
+would have left the collision standing for the commonest bad invocation there
+is, a mistyped flag.
+
+The one recognised text (nedschorus#413) is pinned from both sides too: the
+launcher's list holds the logged-out text alone, and a codex whose stderr
+carries the captured 401 line leaves the cell naming `cause: logged-out` in
+its own stderr, the line the grid lifts.
+
+Everything else about this cell — the model and effort pins, the memory store
+being off for the launch, the stray-write detector, the provenance stamp's
+fields — is NOT covered here; this file was written for the exit-code seam
+and does not stand in for a full suite. The shared module's own behaviour is
+covered in nn-systems/cold-read/tests/cold-read-cell-common-test.py.
+
+Every case runs the cell with a stub `codex` first on PATH, so no model is
+ever called: the stub is the seam that lets the cell's own logic be tested
+without the model, the money, or the wait. Every case also runs it with HOME
+at a scratch home, so the permission profile it hands codex names no path
+in the real home (checked on the successful
+path, from the argv the stub was given).
+
+Every case runs a copy of the cell outside this checkout, most of them from
+the scratch git repository that cold-read-scratch-repository-test-fixture.py
+builds, as the other cold-read cell suites do. The cell takes its repository
+root from its own path and runs `git status` over that root, so a cell run
+from this checkout would make every tracked file an input of this suite to
+scripts/run-all-test-suites.py.
+
+Run: python3 nn-systems/cold-read/tests/cold-read-codex-cell-test.py
+"""
+
+import importlib.util
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
+REPO_ROOT = SYSTEM_DIRECTORY.parent.parent
+PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
+CELL_RELATIVE_PATH = "nn-systems/cold-read/cold-read-codex-cell.py"
+# The shared cell module, whose own suite pins its wording; the cases here take that wording from it.
+_cell_common_spec = importlib.util.spec_from_file_location(
+    "cold_read_cell_common", SYSTEM_DIRECTORY / "cold-read-cell-common.py")
+cell_common = importlib.util.module_from_spec(_cell_common_spec)
+_cell_common_spec.loader.exec_module(cell_common)
+
+_scratch_repository_fixture_spec = importlib.util.spec_from_file_location(
+    "cold_read_scratch_repository_test_fixture",
+    SYSTEM_DIRECTORY / "tests" / "cold-read-scratch-repository-test-fixture.py")
+scratch_repository_fixture = importlib.util.module_from_spec(_scratch_repository_fixture_spec)
+_scratch_repository_fixture_spec.loader.exec_module(scratch_repository_fixture)
+
+
+def build_scratch_repository(scratch):
+    """A git repository holding the prompt templates and a copy of nn-systems/cold-read/."""
+    repository = scratch / "scratch-checkout"
+    scratch_prompts = repository / ".claude" / "skills" / "cold-read" / "prompts"
+    scratch_prompts.mkdir(parents=True)
+    # The terminology cell's answer schema is a .json file beside the prompts.
+    for prompt_path in PROMPTS_DIR.glob("*"):
+        shutil.copy2(prompt_path, scratch_prompts / prompt_path.name)
+    return scratch_repository_fixture.commit_seeded_cold_read_scratch_repository(repository)
+
+# The Codex logged-out line, captured 2026-09-18 on ned-box (codex-cli
+# 0.153.4) from a scratch directory outside any checkout with an empty
+# CODEX_HOME: `CODEX_HOME=$(mktemp -d) codex exec --sandbox read-only
+# --skip-git-repo-check "say hi"`, exit 1, this line on stderr. Its source
+# is recorded beside recognised_failure_texts_for_model in the cell.
+CODEX_LOGGED_OUT_LINE = (
+    "2026-09-18T19:37:41.140816Z ERROR codex_api::endpoint::responses_websocket: "
+    "failed to connect to websocket: HTTP error: 401 Unauthorized, "
+    "url: wss://api.openai.com/v1/responses")
+
+# A stub codex that writes the report the cell is waiting for, then exits 0 —
+# the successful-cell path. The path arrives by environment: the cell puts it
+# in the prompt, and a stub that parsed the prompt for it would fail for a
+# reason having nothing to do with exit codes the next time a template is
+# reworded.
+STUB_CODEX_WRITES_REPORT = """#!/usr/bin/env python3
+import os, sys
+if os.environ.get("COLD_READ_CODEX_CELL_TEST_STUB_ARGV_PATH"):
+    import json
+    with open(os.environ["COLD_READ_CODEX_CELL_TEST_STUB_ARGV_PATH"], "w",
+              encoding="utf-8") as argv_handle:
+        json.dump(sys.argv, argv_handle)
+report_path = os.environ["COLD_READ_CODEX_CELL_TEST_STUB_REPORT_PATH"]
+# A report outside the checkout is written into the directory the cell adds.
+if "--add-dir" in sys.argv:
+    added_directory = sys.argv[sys.argv.index("--add-dir") + 1]
+    if os.environ.get("COLD_READ_CODEX_CELL_TEST_STUB_ADDED_LISTING_PATH"):
+        import json
+        with open(os.environ["COLD_READ_CODEX_CELL_TEST_STUB_ADDED_LISTING_PATH"], "w",
+                  encoding="utf-8") as listing_handle:
+            json.dump(sorted(os.listdir(added_directory)), listing_handle)
+    report_path = os.path.join(added_directory, os.path.basename(report_path))
+with open(report_path, "w", encoding="utf-8") as handle:
+    handle.write("STUB CODEX CELL REPORT\\n")
+sys.exit(0)
+"""
+
+
+def stub_codex_exits(code, stderr_line="stub codex: simulated failure"):
+    """A stub codex that fails with `code` after printing `stderr_line` to
+    stderr, writing nothing."""
+    return (
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        f"sys.stderr.write({stderr_line + chr(10)!r})\n"
+        f"sys.exit({code})\n"
+    )
+
+
+failures = []
+
+
+def check(case_name, condition, detail=""):
+    if condition:
+        print(f"PASS  {case_name}")
+    else:
+        print(f"FAIL  {case_name}: {detail}")
+        failures.append(case_name)
+
+
+def run_cell(stub_directory, stub_body, report_path, *arguments, argv_path=None,
+             added_listing_path=None):
+    """Run the cell as a subprocess with a stub codex first on PATH.
+
+    A subprocess, not an import of main(): the exit code is the subject
+    here, and a thrown failure has to show up as a code and a traceback on
+    stderr rather than aborting this file.
+    """
+    stub_directory.mkdir(parents=True, exist_ok=True)
+    stub = stub_directory / "codex"
+    stub.write_text(stub_body, encoding="utf-8")
+    stub.chmod(0o755)
+    scratch_home = stub_directory.parent / "scratch-home"
+    scratch_home.mkdir(parents=True, exist_ok=True)
+    environment = dict(os.environ)
+    environment["HOME"] = str(scratch_home)
+    environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
+    environment["COLD_READ_CODEX_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)
+    if argv_path is not None:
+        environment["COLD_READ_CODEX_CELL_TEST_STUB_ARGV_PATH"] = str(argv_path)
+    if added_listing_path is not None:
+        environment["COLD_READ_CODEX_CELL_TEST_STUB_ADDED_LISTING_PATH"] = str(added_listing_path)
+    return subprocess.run(
+        [sys.executable, str(CELL_SCRIPT), "--report", str(report_path), *arguments],
+        capture_output=True, text=True, check=False, env=environment,
+    )
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    # Resolved because the cell resolves its own path, and a temporary directory
+    # can sit under a symlink, as /var/folders does under /private on the Mac.
+    scratch = Path(scratch).resolve()
+    SCRATCH_REPOSITORY = build_scratch_repository(scratch)
+    CELL_SCRIPT = SCRATCH_REPOSITORY / CELL_RELATIVE_PATH
+    stubs = scratch / "stub-bin"
+    target = scratch / "a-document.md"
+    target.write_text("# a document for the cell to be pointed at\n", encoding="utf-8")
+    report = scratch / "a-report.md"
+
+    # --- The cell's own refusals ------------------------------------------
+    result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
+                      "--cell", "defect-hunt", "--tier", "deep",
+                      "--target", str(scratch / "no-such-document.md"))
+    check("a --target that is not a file exits 64",
+          result.returncode == 64, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("a --target that is not a file says so on stderr",
+          "target not found" in result.stderr, repr(result.stderr))
+    check("a --target that is not a file does not raise",
+          "Traceback" not in result.stderr, repr(result.stderr))
+
+    # The refusal the report file brought with it, which leaves by the same
+    # door: a --report naming something that is not a file at all.
+    existing_directory = scratch / "a-directory-as-report"
+    existing_directory.mkdir()
+    result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, existing_directory,
+                      "--cell", "defect-hunt", "--tier", "deep", "--target", str(target))
+    check("a --report naming an existing directory exits 64",
+          result.returncode == 64, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("a --report naming an existing directory says so on stderr",
+          "report path is not a file" in result.stderr, repr(result.stderr))
+
+    # argparse's route into the same channel.
+    result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
+                      "--cell", "defect-hunt", "--target", str(target))
+    check("a missing required option exits 64",
+          result.returncode == 64, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("a missing required option still prints argparse's usage text",
+          "usage:" in result.stderr, repr(result.stderr))
+
+    result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
+                      "--cell", "defect-hunt", "--tier", "deep",
+                      "--target", str(target), "--no-such-flag")
+    check("an unrecognized option exits 64",
+          result.returncode == 64, f"exit {result.returncode}; stderr={result.stderr!r}")
+
+    # --- A codex that fails is a chain that produced no report -------------
+    # These two codes are the ones the passthrough used to carry out, and 2 is
+    # the code the cell's own refusals were moved off. Both now come back as
+    # 1, which is what "no model in this tier's chain produced a review" is
+    # spelled as — and both must still show codex's own code on stderr, or the
+    # move would have thrown away the diagnosis along with the collision.
+    for codex_exit_code in (2, 7):
+        report.unlink(missing_ok=True)
+        result = run_cell(stubs, stub_codex_exits(codex_exit_code), report,
+                          "--cell", "defect-hunt", "--tier", "deep", "--target", str(target))
+        check(f"a codex that exits {codex_exit_code} leaves the cell exiting 1",
+              result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
+        check(f"a codex that exits {codex_exit_code} is reported, not thrown",
+              "Traceback" not in result.stderr, repr(result.stderr))
+        check(f"codex's own exit code {codex_exit_code} still reaches stderr",
+              f"(exit {codex_exit_code})" in result.stderr, repr(result.stderr))
+        check(f"a codex that exits {codex_exit_code} leaves no report behind",
+              not report.exists(),
+              "a report survived a run that produced no review")
+
+    # --- The captured 401 line names the attempt's cause: logged-out --------
+    # From the launcher's side: the list holds one text, the logged-out one,
+    # and the shared classifier names the captured line through it, after
+    # the tracing logger's timestamp. From the cell's side: a codex whose
+    # stderr is that line leaves the cell's own cause line in its stderr,
+    # with the line after its timestamp as the detail.
+    codex_spec = importlib.util.spec_from_file_location(
+        "cold_read_codex_cell_under_test", CELL_SCRIPT)
+    codex_module = importlib.util.module_from_spec(codex_spec)
+    codex_spec.loader.exec_module(codex_module)
+    recognised = codex_module.recognised_failure_texts_for_model("gpt-5-codex")
+    check("the launcher recognises one text, and it is logged-out",
+          [text.cause_class for text in recognised] == ["logged-out"],
+          repr(recognised))
+    classified = codex_module.common.classify_failed_attempt(
+        stdout="", stderr=CODEX_LOGGED_OUT_LINE + "\n", exit_code=1,
+        recognised_texts=recognised)
+    check("the classifier names the captured 401 line logged-out through that text",
+          classified == ("logged-out", CODEX_LOGGED_OUT_LINE.split(" ", 1)[1]),
+          repr(classified))
+    report.unlink(missing_ok=True)
+    result = run_cell(stubs, stub_codex_exits(1, CODEX_LOGGED_OUT_LINE), report,
+                      "--cell", "defect-hunt", "--tier", "deep", "--target", str(target))
+    check("a codex that prints the captured 401 line leaves the cell exiting 1",
+          result.returncode == 1 and not report.exists(),
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("that cell's stderr names the cause logged-out, the line after its timestamp",
+          "cold-read-codex-cell: cause: logged-out — "
+          + CODEX_LOGGED_OUT_LINE.split(" ", 1)[1] in result.stderr,
+          repr(result.stderr))
+
+    # --- A --cell outside the list, without --prompt-file, is a refusal ----
+    # The check left argparse (it depends on --prompt-file, which argparse
+    # cannot see while validating --cell) and must still exit by the same
+    # door, before codex runs.
+    report.unlink(missing_ok=True)
+    result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
+                      "--cell", "terminology-v9", "--tier", "deep",
+                      "--target", str(target))
+    check("a --cell outside the list without --prompt-file exits 64",
+          result.returncode == 64 and not report.exists(),
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("that refusal names the flag that would let the name run",
+          "runs only with --prompt-file" in result.stderr
+          and "Traceback" not in result.stderr, repr(result.stderr))
+
+    # --- A --prompt-file naming no file is the cell's refusal --------------
+    # The stub writes the report the moment it is launched, so an absent
+    # report proves codex was never run.
+    report.unlink(missing_ok=True)
+    result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
+                      "--cell", "defect-hunt", "--tier", "deep", "--target", str(target),
+                      "--prompt-file", str(scratch / "no-such-draft-prompt.md"))
+    check("a --prompt-file naming no file exits 64",
+          result.returncode == 64, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("a --prompt-file naming no file says so on stderr, with the path",
+          "prompt file not found" in result.stderr
+          and "no-such-draft-prompt.md" in result.stderr, repr(result.stderr))
+    check("a --prompt-file naming no file does not raise",
+          "Traceback" not in result.stderr, repr(result.stderr))
+    check("a --prompt-file naming no file never launches codex",
+          not report.exists(), "the stub codex ran and wrote the report")
+
+    # --- A --prompt-file that exists runs the cell and is stamped ----------
+    draft_prompt = scratch / "a-draft-prompt.md"
+    draft_prompt.write_text("Read {TARGET_PATH}; write to {REPORT_PATH}.\n",
+                            encoding="utf-8")
+    report.unlink(missing_ok=True)
+    result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
+                      "--cell", "defect-hunt", "--tier", "deep", "--target", str(target),
+                      "--prompt-file", str(draft_prompt))
+    check("a cell given a --prompt-file that exists exits 0",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    report_text = report.read_text(encoding="utf-8") if report.is_file() else ""
+    check("the stamp of a --prompt-file run names the file",
+          report_text.startswith("<!-- provenance: runtime=codex")
+          and f"prompt_file={draft_prompt} " in report_text.splitlines()[0],
+          repr(report_text[:300]))
+
+    # --- The successful path, which must keep working ----------------------
+    report.unlink(missing_ok=True)
+    argv_dump = scratch / "successful-cell-argv.json"
+    added_listing_dump = scratch / "successful-cell-added-directory-listing.json"
+    result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
+                      "--cell", "defect-hunt", "--tier", "deep", "--target", str(target),
+                      argv_path=argv_dump, added_listing_path=added_listing_dump)
+    check("a cell whose codex succeeds exits 0",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    report_text = report.read_text(encoding="utf-8") if report.is_file() else ""
+    check("the report is written to --report under its provenance stamp",
+          report_text.startswith("<!-- provenance: runtime=codex")
+          and "STUB CODEX CELL REPORT" in report_text, repr(report_text[:200]))
+    check("the successful cell prints nothing to stdout",
+          result.stdout == "", repr(result.stdout[:200]))
+    # Run with the real HOME, the permission profile names the real home's
+    # credential directories; run with the scratch home it names nothing
+    # there. Paths inside the repository are left out of the comparison.
+    received_argv = (json.loads(argv_dump.read_text(encoding="utf-8"))
+                     if argv_dump.is_file() else [])
+    profile_table = next((argument for argument in received_argv
+                          if ".filesystem=" in argument), "")
+    real_home = Path.home().resolve()
+    repository_root = SCRATCH_REPOSITORY
+    profile_keys = re.findall(r'"([^"]+)"=', profile_table)
+    real_home_paths = [
+        path for path in profile_keys
+        if not path.startswith(":") and not path.startswith("/**")
+        and (Path(path) == real_home or real_home in Path(path).parents)
+        and repository_root not in Path(path).parents]
+    codex_directories = [received_argv[index + 1]
+                         for index, argument in enumerate(received_argv[:-1]) if argument == "-C"]
+    check("the cell runs codex, and its git status, in the scratch repository, not this checkout",
+          [Path(directory).resolve() for directory in codex_directories] == [SCRATCH_REPOSITORY],
+          repr(codex_directories))
+    check("the cell's permission profile reached codex",
+          bool(profile_table) and bool(profile_keys), repr(received_argv[:6]))
+    check("the permission profile names no path in the real home",
+          not real_home_paths, repr(real_home_paths))
+    # The reviewer fetches the pages a document links to, and Codex's web
+    # tool answers from a cache unless told otherwise; see the cell's
+    # docstring.
+    web_search_settings = [received_argv[index + 1]
+                           for index, argument in enumerate(received_argv[:-1])
+                           if argument == "-c"
+                           and received_argv[index + 1].startswith("web_search=")]
+    check("the cell asks codex for live web search",
+          web_search_settings == ['web_search="live"'], repr(web_search_settings))
+    # The scratch report lies outside the checkout, so the reviewer writes it
+    # into a fresh, empty temporary directory and the cell moves it; the
+    # report's own directory, with whatever sits beside the report, is never
+    # made writable.
+    added_directories = [received_argv[index + 1]
+                         for index, argument in enumerate(received_argv[:-1])
+                         if argument == "--add-dir"]
+    check("the cell adds one directory with --add-dir, not the report's own",
+          len(added_directories) == 1
+          and Path(added_directories[0]).resolve() != report.parent.resolve(),
+          repr(added_directories))
+    added_listing = (json.loads(added_listing_dump.read_text(encoding="utf-8"))
+                     if added_listing_dump.is_file() else None)
+    check("the added directory is empty when codex starts",
+          added_listing == [], repr(added_listing))
+    check("the added directory is removed after the report is moved",
+          bool(added_directories) and not Path(added_directories[0]).exists(),
+          repr(added_directories))
+
+    # --- A report that cannot be moved to its destination fails the cell ----
+    locked_directory = scratch / "a-directory-the-cell-cannot-write"
+    locked_directory.mkdir()
+    locked_report = locked_directory / "a-report.md"
+    locked_directory.chmod(0o555)
+    try:
+        argv_dump.unlink(missing_ok=True)
+        result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, locked_report,
+                          "--cell", "defect-hunt", "--tier", "deep", "--target", str(target),
+                          argv_path=argv_dump)
+    finally:
+        locked_directory.chmod(0o755)
+    received_argv = (json.loads(argv_dump.read_text(encoding="utf-8"))
+                     if argv_dump.is_file() else [])
+    staged_report = (Path(received_argv[received_argv.index("--add-dir") + 1])
+                     / locked_report.name if "--add-dir" in received_argv else None)
+    check("a report that cannot be moved leaves the cell exiting 1",
+          result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("the cell says the report could not be moved, and where it was left",
+          "the report could not be moved" in result.stderr
+          and staged_report is not None and f"it is left at {staged_report}" in result.stderr,
+          repr(result.stderr[-600:]))
+    check("the report that could not be moved is kept where the message says",
+          staged_report is not None and staged_report.is_file(), repr(staged_report))
+    if staged_report is not None:
+        shutil.rmtree(staged_report.parent.parent, ignore_errors=True)
+
+    # --- A reviewer that exits 0 without a report says why ------------------
+    report.unlink(missing_ok=True)
+    refused_write_line = ("I could not write the report: PermissionError: "
+                          "[Errno 1] Operation not permitted")
+    stub_explains_no_report = (
+        "#!/usr/bin/env python3\n"
+        f"print({refused_write_line!r})\n"
+        "raise SystemExit(0)\n")
+    result = run_cell(stubs, stub_explains_no_report, report,
+                      "--cell", "defect-hunt", "--tier", "deep", "--target", str(target))
+    check("a codex that exits 0 without a report leaves the cell exiting 1",
+          result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("its cause line carries the reviewer's last line",
+          cell_common.cause_line("cold-read-codex-cell", *cell_common.classify_failed_attempt(
+              stdout=refused_write_line + "\n", stderr="", exit_code=0, recognised_texts=()))
+          in result.stderr, repr(result.stderr[-600:]))
+
+    # --- A refusal leaves no staging directory behind ----------------------
+    # The last refusal a cell can make is a missing prompt template. A copy of
+    # the cell whose checkout has no prompts directory makes that refusal for a
+    # report outside its checkout; with the staging directory made after every
+    # refusal, the temporary directory stays empty.
+    copied_checkout = scratch / "a-checkout-with-no-prompt-templates"
+    for relative_path in (
+            "nc-systems/cold-read/cold-read-codex-cell.py",
+            "nc-systems/cold-read/cold-read-cell-common.py",
+            "nc-systems/cold-read/cold-read-record-names-common.py",
+            "nc-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py",
+            "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py",
+            "nc-systems/cold-read/cold-read-terminology-answer-rules-check-glossary-lookups-and-report-render-common.py",
+            "nc-systems/general-tools/json-schema-keyword-subset-answer-check-common.py",
+            "nc-systems/general-tools/glossary-entries-of-project-and-system-glossaries-read-common.py"):
+        (copied_checkout / relative_path).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO_ROOT / relative_path, copied_checkout / relative_path)
+    copied_temporary_directory = scratch / "a-temporary-directory"
+    copied_temporary_directory.mkdir()
+    stubs.mkdir(parents=True, exist_ok=True)
+    (stubs / "codex").write_text(STUB_CODEX_WRITES_REPORT, encoding="utf-8")
+    (stubs / "codex").chmod(0o755)
+    environment = dict(os.environ)
+    environment["HOME"] = str(scratch / "scratch-home")
+    environment["PATH"] = f"{stubs}{os.pathsep}{environment.get('PATH', '')}"
+    environment["COLD_READ_CODEX_CELL_TEST_STUB_REPORT_PATH"] = str(report)
+    environment["TMPDIR"] = str(copied_temporary_directory)
+    result = subprocess.run(
+        [sys.executable,
+         str(copied_checkout / "nn-systems/cold-read/cold-read-codex-cell.py"),
+         "--report", str(report), "--cell", "defect-hunt", "--tier", "deep",
+         "--target", str(target)],
+        capture_output=True, text=True, check=False, env=environment)
+    check("a missing prompt template refuses the cell",
+          result.returncode == 64 and "no cold-read-cell to run" in result.stderr
+          and "that directory holds no *-prompt.md file" in result.stderr
+          and "defect-hunt is the choice for defect-hunt-prompt.md" in result.stderr,
+          f"exit {result.returncode}; stderr={result.stderr[-600:]!r}")
+    leftover = sorted(path.name for path in copied_temporary_directory.iterdir())
+    check("a refusal leaves no staging directory behind", leftover == [], repr(leftover))
+
+print()
+if failures:
+    print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
+    sys.exit(1)
+print("all cases passed")
