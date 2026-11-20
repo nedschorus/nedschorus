@@ -16,7 +16,7 @@ from pathlib import Path
 MARKER_LINE = b"<<PR-REVIEWER-INSTRUCTIONS>>"
 NUMBER_PLACEHOLDER = b"<N>"
 DEFAULT_INSTRUCTIONS_FILE = Path(
-    "/Users/el/Projects/nedschorus/docs/agents/pr-reviewer-instructions.md")
+    "/Users/el/Projects/nedsnodes/docs/agents/pr-reviewer-instructions.md")
 
 EXIT_COMPOSED = 0
 EXIT_REFUSED = 1

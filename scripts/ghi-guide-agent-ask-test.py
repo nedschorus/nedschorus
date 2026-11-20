@@ -493,7 +493,7 @@ check("the remote command carries NO path from this machine",
 check("the seat is resolved box-side at the launcher's fixed box root, $HOME/agents",
       'seat="$HOME/agents/ghi-guide-agent"' in command, command)
 check("the seat path reads no agents-root variable (launch-claude-ubuntu reads none)",
-      "NEDSCHORUS_AGENTS_ROOT" not in command, command)
+      "NEDSNODES_AGENTS_ROOT" not in command, command)
 check("the box-side run is pinned to --seat-dir \"$PWD\", so it runs in the "
       "seat the shell entered",
       '--seat-dir "$PWD"' in command, command)
@@ -821,7 +821,7 @@ try:
                                 if recorded_keyword_arguments else {})
         check("run_claude: claude's environment tells the handoff hook this script "
               "reincarnates the session",
-              launched_environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
+              launched_environment.get("NEDSNODES_SESSION_REINCARNATION_OWNED_BY_CALLER")
               and launched_environment.get("PATH") == os.environ.get("PATH"),
               recorded_keyword_arguments)
         launched_command = recorded_commands[0] if recorded_commands else []
@@ -1328,7 +1328,7 @@ with tempfile.TemporaryDirectory() as temporary:
         # It is given as `ssh nedlern@ned-box '<shell command>'`, so it runs on
         # ned-box from either machine; the shell command inside is what runs here.
         given_commands = re.findall(
-            r"`ssh nedlern@ned-box '(git -C ~/Projects/nedschorus [^'`]+)'`", said)
+            r"`ssh nedlern@ned-box '(git -C ~/Projects/nedsnodes [^'`]+)'`", said)
         import subprocess as real_subprocess
         patch_module_function(real_subprocess, "run", subprocess_run_orig)
         git_environment = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
@@ -1349,7 +1349,7 @@ with tempfile.TemporaryDirectory() as temporary:
                 run_git("-C", str(projects_repository), "branch", "ghi-guide-agent")
             command = given_commands[0] if len(given_commands) == 1 else "false"
             created = real_subprocess.run(
-                ["sh", "-c", command.replace("~/Projects/nedschorus", str(projects_repository))],
+                ["sh", "-c", command.replace("~/Projects/nedsnodes", str(projects_repository))],
                 capture_output=True, text=True, env=git_environment, check=False)
             git_directory = run_git("-C", str(missing_seat), "rev-parse",
                                     "--absolute-git-dir").stdout.strip()
@@ -1375,7 +1375,7 @@ import subprocess as real_subprocess
 
 with tempfile.TemporaryDirectory() as home:
     environment = {key: value for key, value in os.environ.items()
-                   if key != "NEDSCHORUS_AGENTS_ROOT"}
+                   if key != "NEDSNODES_AGENTS_ROOT"}
     environment["HOME"] = home
     import_and_print_default_seat_dir = (
         "import importlib.util, sys\n"

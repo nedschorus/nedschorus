@@ -40,13 +40,13 @@ THIS_SCRIPT = "scripts/glossary-term-agent-facing-message-replaced-by-tool-messa
 # script cites a path the rename removes: branch-leaves-no-citations-of-removed-paths-test.py
 # fails on such a citation.
 MOVED_FILES_NEW_PATHS = (
-    "docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md",
-    "nc-systems/general-tools/failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py",
-    "nc-systems/general-tools/tests/failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common-test.py",
-    "nc-systems/general-tools/python-edit-changed-tool-message-to-agent-strings-check-reminder-hook.py",
-    "nc-systems/general-tools/tests/python-edit-changed-tool-message-to-agent-strings-check-reminder-hook-test.py",
-    "nc-systems/general-tools/python-source-tool-message-to-agent-string-collector-common.py",
-    "nc-systems/general-tools/tests/python-source-tool-message-to-agent-string-collector-common-test.py",
+    "docs/nedsnodes-wiki/nedsnodes-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md",
+    "nn-systems/general-tools/failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common.py",
+    "nn-systems/general-tools/tests/failed-command-tool-message-to-agent-rerun-once-then-stop-and-report-lines-common-test.py",
+    "nn-systems/general-tools/python-edit-changed-tool-message-to-agent-strings-check-reminder-hook.py",
+    "nn-systems/general-tools/tests/python-edit-changed-tool-message-to-agent-strings-check-reminder-hook-test.py",
+    "nn-systems/general-tools/python-source-tool-message-to-agent-string-collector-common.py",
+    "nn-systems/general-tools/tests/python-source-tool-message-to-agent-string-collector-common-test.py",
     "scripts/tool-message-to-agent-ask-two-fresh-agents-next-step-and-check-named-script-flags.py",
     "scripts/tool-message-to-agent-ask-two-fresh-agents-next-step-and-check-named-script-flags-test.py",
 )
@@ -62,7 +62,7 @@ OLD_NAME_PARTS = (
 HISTORY_FILES = (
     THIS_SCRIPT,
     "docs/issues/9-neds-notes.md",
-    "nc-queue/archived/",
+    "nn-queue/archived/",
     "scripts/merge-gate-test-captured-github-responses/",
     "scripts/handoff-context-threshold-hook-recorded-handoff-deferrals-replay-test-fixtures/",
 )
@@ -106,7 +106,7 @@ REWRITES = (
     (r"AGENT_FACING_MESSAGE", "TOOL_MESSAGE_TO_AGENT"),
     (r"AGENT_FACING", "TOOL_MESSAGE_TO_AGENT"),
 )
-GLOSSARY = "docs/nedschorus-wiki/nedschorus-glossary.md"
+GLOSSARY = "docs/nedsnodes-wiki/nedsnodes-glossary.md"
 GLOSSARY_ENTRY_START = "- **tool-message-to-agent**"
 # The glossary is in alphabetical order, word by word; the renamed entry goes just above this one.
 GLOSSARY_ENTRY_AFTER_START = "- **topic-worktree**"

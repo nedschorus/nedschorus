@@ -4,7 +4,7 @@ or when two hooks share one rule ID.
 
 Each message a hook in .claude/settings.json prints for a rule, a refusal, a
 warning or a reminder, starts with `[rule <id>]`, as
-nc-systems/general-tools/claude-code-registered-hook-rule-id-pattern-hook-files-list-and-source-scan-common.py says, so
+nn-systems/general-tools/claude-code-registered-hook-rule-id-pattern-hook-files-list-and-source-scan-common.py says, so
 the weekly count of each ID in the transcripts can name the rules that never
 fire.
 
@@ -44,10 +44,10 @@ def load_by_path(name, path):
 
 
 rule_ids = load_by_path("claude_code_registered_hook_rule_id_pattern_hook_files_list_and_source_scan_common",
-                        REPOSITORY / "nc-systems" / "general-tools" / "claude-code-registered-hook-rule-id-pattern-hook-files-list-and-source-scan-common.py")
+                        REPOSITORY / "nn-systems" / "general-tools" / "claude-code-registered-hook-rule-id-pattern-hook-files-list-and-source-scan-common.py")
 collector = load_by_path(
     "python_source_tool_message_to_agent_string_collector_common",
-    REPOSITORY / "nc-systems" / "general-tools" / "python-source-tool-message-to-agent-string-collector-common.py")
+    REPOSITORY / "nn-systems" / "general-tools" / "python-source-tool-message-to-agent-string-collector-common.py")
 
 LATER_PART = "a later part of a message, after the opening that carries its rule's ID"
 HOOK_FAILED = "says the hook failed or could not check, and lets the act through"
@@ -266,7 +266,7 @@ CONSTANTS_THAT_OPEN_NO_RULE_MESSAGE = {
 
 # Hook path: why the hook prints no message for a rule.
 HOOKS_THAT_PRINT_NO_RULE_MESSAGE = {
-    "nc-systems/general-tools/agent-seat-worktree-create-with-owner-file-claude-code-worktree-create-hook.py": "prints only the worktree path Claude Code reads, or its own failure",
+    "nn-systems/general-tools/agent-seat-worktree-create-with-owner-file-claude-code-worktree-create-hook.py": "prints only the worktree path Claude Code reads, or its own failure",
     "scripts/uncommitted-work-snapshot-hook.py": "it speaks only when it could not keep a work-snapshot or write a worktree's owner file, which reports its own failure",
 }
 
@@ -286,10 +286,10 @@ MESSAGE_VARIANTS_OF_ONE_RULE = {
     (".claude/guard-hooks/session-location-write-guard.py", "write-guard-checkout-without-branch"): {"DETACHED_DENY_MESSAGE", "UNBORN_DENY_MESSAGE"},
     (".claude/guard-hooks/session-location-write-guard.py", "write-guard-reference-checkout-write"): {"CROSS_REFERENCE_DENY_MESSAGE", "REFERENCE_DENY_MESSAGE"},
     (".claude/guard-hooks/synthetic-keystroke-guard-hook.py", "bash-guard-tmux-keys-into-attached-session"): {"ATTACHED_REASON", "NESTED_SSH_REASON", "NO_TARGET_REASON", "UNRESOLVED_TARGET_REASON", "UNVERIFIED_REASON"},
-    ("nc-systems/general-tools/pull-request-follow-up-request-from-merge-lane-2-message-save-and-forked-subagent-brief-hand-over-user-prompt-submit-hook.py", "pull-request-follow-up-request-brief-handed-to-author"): {"FOLLOW_UP_BRIEF_OPENING_LINE", "UNREADABLE_BLOCK_LINES"},
-    ("nc-systems/skills/emergency-stop/emergency-stop-file-shown-and-push-and-merge-refusal-hook.py", "emergency-stop-state-shown-to-every-agent-session"): {"IN_FORCE_RULES_NOTICE", "LIFTED_NOTICE"},
-    ("nc-systems/skills/walk-me-through/walk-me-through-agent-reply-to-user-not-ending-with-waiting-item-closing-line-refusal-stop-hook.py", "walk-me-through-reply-ends-with-waiting-item-closing-line"): {"REPLY_LACKS_CLOSING_LINE_OPENING_TEMPLATE", "UNPUBLISHED_OPENING_TEMPLATE", "UNUSABLE_OPENING_TEMPLATE"},
-    ("nc-systems/skills/walk-me-through/walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-user-prompt-submit-hook.py", "walk-me-through-short-answer-expanded-into-instructions"): {"NO_WALK_OPENING_LINE", "OPEN_WALK_OPENING_LINE", "WALK_UNKNOWN_OPENING_LINE"},
+    ("nn-systems/general-tools/pull-request-follow-up-request-from-merge-lane-2-message-save-and-forked-subagent-brief-hand-over-user-prompt-submit-hook.py", "pull-request-follow-up-request-brief-handed-to-author"): {"FOLLOW_UP_BRIEF_OPENING_LINE", "UNREADABLE_BLOCK_LINES"},
+    ("nn-systems/skills/emergency-stop/emergency-stop-file-shown-and-push-and-merge-refusal-hook.py", "emergency-stop-state-shown-to-every-agent-session"): {"IN_FORCE_RULES_NOTICE", "LIFTED_NOTICE"},
+    ("nn-systems/skills/walk-me-through/walk-me-through-agent-reply-to-user-not-ending-with-waiting-item-closing-line-refusal-stop-hook.py", "walk-me-through-reply-ends-with-waiting-item-closing-line"): {"REPLY_LACKS_CLOSING_LINE_OPENING_TEMPLATE", "UNPUBLISHED_OPENING_TEMPLATE", "UNUSABLE_OPENING_TEMPLATE"},
+    ("nn-systems/skills/walk-me-through/walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-user-prompt-submit-hook.py", "walk-me-through-short-answer-expanded-into-instructions"): {"NO_WALK_OPENING_LINE", "OPEN_WALK_OPENING_LINE", "WALK_UNKNOWN_OPENING_LINE"},
     ("scripts/absence-claim-locator-reminder-hook.py", "absence-claim-run-locator-before-saying-missing"): {"REMINDER_TEMPLATE", "SUBAGENT_REMINDER_TEMPLATE"},
     ("scripts/bare-number-citation-in-markdown-and-agent-reply-warning-hook.py", "bare-number-pull-request-ghi-or-task-citation-in-markdown-and-reply-warning"): {"MARKDOWN_OPENING_LINES", "PREVIOUS_REPLY_OPENING_LINES", "PREVIOUS_REPLY_SHORT_OPENING_LINES"},
     ("scripts/bare-number-citation-in-markdown-and-agent-reply-warning-hook.py", "github-link-text-not-matching-item-title-warning"): {"MARKDOWN_TITLE_OPENING_LINES", "PREVIOUS_REPLY_TITLE_OPENING_LINES"},

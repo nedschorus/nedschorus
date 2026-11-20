@@ -11,7 +11,7 @@ An agent on ned-box cannot read the task lists of the agent-seats that run on th
 
 That gap now matters for citations. A rule the user is approving for design-to-main designs lets a deferred line name the event it waits on, and one kind of event is another agent-seat's task, cited by agent-seat, number and subject and found with `scripts/seat-task-list-read-hack.py`. An agent on ned-box must be able to open such a citation when the task belongs to a Mac agent-seat.
 
-The copy of the Mac's task lists that `scripts/transcript-mirror-to-log-store.py` keeps on ned-box, `/home/nedlern/nedschorus-logs/transcripts/mac/tasks/`, is not the answer: the user asked for the task lists themselves, not a copy, so that a citation shows a task as it stands.
+The copy of the Mac's task lists that `scripts/transcript-mirror-to-log-store.py` keeps on ned-box, `/home/nedlern/nedsnodes-logs/transcripts/mac/tasks/`, is not the answer: the user asked for the task lists themselves, not a copy, so that a citation shows a task as it stands.
 
 ## What exists
 

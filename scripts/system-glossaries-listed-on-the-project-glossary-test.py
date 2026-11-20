@@ -2,7 +2,7 @@
 """Every system glossary git tracks is listed on the project glossary, and
 every glossary path the project glossary names is one git tracks.
 
-The project glossary, docs/nedschorus-wiki/nedschorus-glossary.md, carries a
+The project glossary, docs/nedsnodes-wiki/nedsnodes-glossary.md, carries a
 paragraph above its entries naming each system glossary, so a reader of that
 one page sees the whole vocabulary of the project and knows where the rest of
 it lives. The user ruled the paragraph on 2026-09-22, at item 3 of the walk
@@ -40,7 +40,7 @@ https://github.com/nedsnodes/nedsnodes/pull/633, raised and reproduced
 independently). The first version of this test walked the checkout with
 rglob, so a checkout holding an agent worktree at `.claude/worktrees/<name>/`
 -- the project's documented home for them, see
-docs/nedschorus-wiki/nedschorus-mac-and-ned-box-machine-setup.md --
+docs/nedsnodes-wiki/nedsnodes-mac-and-ned-box-machine-setup.md --
 failed, reporting that worktree's copies of all three glossaries as unlisted
 and instructing the agent to add those worktree paths to the page; once the
 worktree was removed those same paths failed the other direction. The check
@@ -111,12 +111,12 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _rule_failure_lines_spec = importlib.util.spec_from_file_location(
     "rule_enforcing_nc_test_suite_failure_message_closing_lines_text_common",
-    REPO_ROOT / "nc-systems" / "general-tools"
+    REPO_ROOT / "nn-systems" / "general-tools"
     / "rule-enforcing-nc-test-suite-failure-message-closing-lines-text-common.py")
 RULE_FAILURE_LINES = importlib.util.module_from_spec(_rule_failure_lines_spec)
 _rule_failure_lines_spec.loader.exec_module(RULE_FAILURE_LINES)
 THIS_SUITE_RELATIVE_PATH = "scripts/" + Path(__file__).name
-PROJECT_GLOSSARY_RELATIVE_PATH = "docs/nedschorus-wiki/nedschorus-glossary.md"
+PROJECT_GLOSSARY_RELATIVE_PATH = "docs/nedsnodes-wiki/nedsnodes-glossary.md"
 PROJECT_GLOSSARY_DIRECTORY = posixpath.dirname(PROJECT_GLOSSARY_RELATIVE_PATH)
 GLOSSARY_SUFFIX = "-glossary.md"
 GLOSSARY_PATHSPEC = "*" + GLOSSARY_SUFFIX
@@ -369,7 +369,7 @@ def scratch_project_glossary_page(listing_sentence, entries=""):
 
 SCRATCH_SKILLS_GLOSSARY = ".claude/skills/skills-glossary.md"
 SCRATCH_DESIGN_TO_MAIN_GLOSSARY = "docs/design-to-main/design-to-main-glossary.md"
-SCRATCH_HANDOFF_GLOSSARY = "nc-systems/handoff/handoff-glossary.md"
+SCRATCH_HANDOFF_GLOSSARY = "nn-systems/handoff/handoff-glossary.md"
 
 
 if __name__ == "__main__":
