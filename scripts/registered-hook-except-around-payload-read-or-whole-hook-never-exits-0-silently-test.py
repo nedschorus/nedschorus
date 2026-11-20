@@ -9,7 +9,7 @@ says a hook never turns its own failure into a silent 0, and says what it does i
 
 The hooks read are the Python files .claude/settings.json registers, found as
 nn-systems/general-tools/claude-code-registered-hook-rule-id-pattern-hook-files-list-and-source-scan-common.py
-finds them, and every file in .claude/guard-hooks/ that is not a `-test.py` or `-common.py`.
+finds them; a file settings.json does not register is never run as a hook.
 
 Each hook's syntax tree is read, not run. A `try` is checked when its body reads stdin, as
 `sys.stdin` or a name `stdin`, or when it sits at module level, outside every function, and its
@@ -18,7 +18,10 @@ when its body makes no call but `sys.exit`, `exit`, `quit`, `os._exit` or `Syste
 nothing, raises nothing but such a `SystemExit`, and returns no nonzero whole number. Whatever
 else it does, such as `return 0`, `return {}` or `payload = {}`, leaves the hook to carry on with
 nothing to check. A body that makes any other call is taken to report, so the tree cannot see an
-`except` whose call prints nothing, nor one that sets a flag the hook prints later.
+`except` whose call prints nothing, nor one that sets a flag the hook prints later. Two more
+cases it does not handle: an `except` that defines a local function which prints but is never
+called, then returns 0, is taken to report; and an allowlist entry, keyed by hook and exception,
+also excuses a second silent `except` for the same exception in the same hook.
 
 Run: python3 scripts/registered-hook-except-around-payload-read-or-whole-hook-never-exits-0-silently-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -32,7 +35,6 @@ from pathlib import Path
 REPOSITORY = Path(__file__).resolve().parent.parent
 SUITE = "scripts/" + Path(__file__).name
 SETTINGS = REPOSITORY / ".claude" / "settings.json"
-GUARD_HOOKS_DIRECTORY = ".claude/guard-hooks"
 EXIT_CODE_PAGE = (
     "docs/nedsnodes-wiki/nedsnodes-how-a-program-reports-success-failure-and-findings-with-its-exit-code.md")
 
@@ -107,11 +109,7 @@ def check(case_name, condition, detail=""):
 
 def hook_paths():
     """Repository-relative paths of the hooks this suite reads, sorted."""
-    paths = set(rule_ids.registered_hook_paths(SETTINGS))
-    for path in (REPOSITORY / GUARD_HOOKS_DIRECTORY).glob("*.py"):
-        if not path.name.endswith(("-test.py", "-common.py")):
-            paths.add(f"{GUARD_HOOKS_DIRECTORY}/{path.name}")
-    return sorted(paths)
+    return sorted(set(rule_ids.registered_hook_paths(SETTINGS)))
 
 
 def nodes_outside_nested_scopes(statements):
@@ -307,6 +305,26 @@ try:
 except ValueError:
     sys.exit(1)
 """
+RERAISING_HOOK = """\
+import json, sys
+try:
+    payload = json.load(sys.stdin)
+except ValueError:
+    raise
+"""
+RETURN_1_HOOK = """\
+import json, sys
+
+def main():
+    try:
+        payload = json.load(sys.stdin)
+    except ValueError:
+        return 1
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
+"""
 MODULE_LEVEL_IMPORT_FALLBACK = """\
 try:
     import yaml
@@ -342,6 +360,10 @@ check("an `except` that hands back an empty payload, with no word, fails",
       silent_exit_0_excepts(EMPTY_PAYLOAD_SUBSTITUTED_HOOK))
 check("an `except` around the payload read that exits nonzero passes",
       silent_exit_0_excepts(NONZERO_EXIT_HOOK) == [], silent_exit_0_excepts(NONZERO_EXIT_HOOK))
+check("an `except` around the payload read that re-raises, so the hook crashes nonzero, passes",
+      silent_exit_0_excepts(RERAISING_HOOK) == [], silent_exit_0_excepts(RERAISING_HOOK))
+check("an `except` around the payload read that returns 1 to sys.exit, printing nothing, passes",
+      silent_exit_0_excepts(RETURN_1_HOOK) == [], silent_exit_0_excepts(RETURN_1_HOOK))
 check("a module-level `try` around an import, which calls nothing, is not read as the whole hook",
       silent_exit_0_excepts(MODULE_LEVEL_IMPORT_FALLBACK) == [],
       silent_exit_0_excepts(MODULE_LEVEL_IMPORT_FALLBACK))
@@ -372,7 +394,7 @@ check("a finding in a file the instruction-file guard protects says how its fix 
 # --- the rule, against the hooks of this checkout ---
 
 HOOK_PATHS = hook_paths()
-check("the hooks read include registered hooks from scripts/, nn-systems/ and .claude/guard-hooks/",
+check("the registered hooks read include hooks from scripts/, nn-systems/ and .claude/guard-hooks/",
       {"scripts/handoff-context-threshold-hook.py",
        "nn-systems/skills/emergency-stop/emergency-stop-file-shown-and-push-and-merge-refusal-hook.py",
        ".claude/guard-hooks/instruction-file-guard.py"} <= set(HOOK_PATHS), HOOK_PATHS)
