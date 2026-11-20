@@ -979,3 +979,14 @@ The claim check's evidence:
 >   - the post-checkout program writes owner files (git-client-side-hooks-post-checkout-new-worktree-owner-file-write.py:125);
 >   - the first-prompt list reads them through cleaner.owner_file (first-prompt list:220).
 State: open
+
+## E83 — possible problem: an assertion of the overview is contradicted
+
+Claim: When the reference-checkout will not fast-forward, the handoff-supervisor first runs `put_reference_checkout_back_on_main` itself, which pushes the leftovers to a branch and puts the checkout on main, telling neither the successor nor the user of that branch.
+Found by: the overview claim check of 2026-11-20 against commit 47b7f0bb3e3416391f4f8a5b8145fe577bf12443; its report is /home/nedlern/nedsnodes-logs/overview-write-architecture-overview-claim-check-reports/nedsnodes-handoff-architecture-overview/647886af1c9d2fa3397ba77e449e9e8a4b7a0592-2026-11-20T21-10-19-612538Z.md.
+Fixed by: regular maintenance, in the overview.
+Goes wrong when: a reader takes the assertion as exact.
+The claim check's evidence:
+> - Contradicting line: nn-systems/handoff/handoff-supervisor.py:2550-2552 `print("handoff-supervisor: " + reference_checkout_back_on_main.reference_checkout_back_on_main_success_line_build(REFERENCE_CHECKOUT, main_commit, leftovers_branches))`. The builder at nn-systems/handoff/handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py:252 writes `saved = (f"its leftovers are saved on {', '.join(pushed)}, pushed to origin" if pushed`. So the branch is named on the handoff-supervisor's console, the agent-seat's tmux pane in the user's window.
+> - The rest holds (handoff-supervisor.py:2537-2543). The supervisor's docstring at :34-35 says the same as the overview (`neither the successor nor the user is told of such a branch`), and the successor's prompt does leave the branch out. Suggested wording: "telling the successor nothing of that branch, and naming it only on its console".
+State: open
