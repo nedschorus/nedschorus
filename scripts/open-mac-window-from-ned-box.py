@@ -18,8 +18,8 @@ request word by word before anything runs. This program checks the words with
 that same function first, so a request the Mac would refuse is refused here,
 with the same reason, before any connection is made.
 
-NEDSCHORUS_MAC_SSH_DESTINATION overrides the Mac's address; NEDSCHORUS_SSH_PROGRAM
-overrides the ssh program and NEDSCHORUS_MAC_SSH_TIMEOUT_SECONDS the time limit,
+NEDSNODES_MAC_SSH_DESTINATION overrides the Mac's address; NEDSNODES_SSH_PROGRAM
+overrides the ssh program and NEDSNODES_MAC_SSH_TIMEOUT_SECONDS the time limit,
 the seams the nc-test-suite uses.
 """
 
@@ -82,9 +82,9 @@ def send_request_to_mac(request, forced_command, program=PROGRAM, not_done="no w
                         may_not_have_happened="the window may not have opened",
                         timeout_fallback="the command you wanted shown"):
     """Send one checked request to the Mac's forced command; return this program's exit status."""
-    destination = os.environ.get("NEDSCHORUS_MAC_SSH_DESTINATION") or DEFAULT_MAC_SSH_DESTINATION
-    ssh_program = os.environ.get("NEDSCHORUS_SSH_PROGRAM") or "ssh"
-    timeout_seconds = float(os.environ.get("NEDSCHORUS_MAC_SSH_TIMEOUT_SECONDS") or SSH_TIMEOUT_SECONDS)
+    destination = os.environ.get("NEDSNODES_MAC_SSH_DESTINATION") or DEFAULT_MAC_SSH_DESTINATION
+    ssh_program = os.environ.get("NEDSNODES_SSH_PROGRAM") or "ssh"
+    timeout_seconds = float(os.environ.get("NEDSNODES_MAC_SSH_TIMEOUT_SECONDS") or SSH_TIMEOUT_SECONDS)
     try:
         result = subprocess.run(ssh_command(request, destination, ssh_program), capture_output=True, text=True,
                                 timeout=timeout_seconds)

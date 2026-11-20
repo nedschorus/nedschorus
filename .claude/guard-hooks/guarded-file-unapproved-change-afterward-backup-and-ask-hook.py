@@ -58,9 +58,9 @@ GUARD_HOOKS_DIRECTORY = CLONE_ROOT / ".claude" / "guard-hooks"
 HOOK_NAME = HOOK_PATH.stem
 
 LOG_STORE_KIND = "guarded-file-versions-and-approvals"
-NED_BOX_STORE = Path("/home/nedlern/nedschorus-logs") / LOG_STORE_KIND / "ned-box"
+NED_BOX_STORE = Path("/home/nedlern/nedsnodes-logs") / LOG_STORE_KIND / "ned-box"
 MAC_MOUNT_POINT = Path("/Volumes/nedhome")
-MAC_STORE = MAC_MOUNT_POINT / "nedschorus-logs" / LOG_STORE_KIND / "mac"
+MAC_STORE = MAC_MOUNT_POINT / "nedsnodes-logs" / LOG_STORE_KIND / "mac"
 LOG_STORE_HOSTNAME = "ned-box"
 MAC_MOUNT_FILESYSTEM_TYPE = "smbfs"
 
@@ -270,7 +270,7 @@ def guard():
 
 def snapshots():
     return loaded("uncommitted_work_snapshots",
-                  CLONE_ROOT / "nc-systems" / "handoff" / "uncommitted-work-snapshots.py")
+                  CLONE_ROOT / "nn-systems" / "handoff" / "uncommitted-work-snapshots.py")
 
 
 # ---------------------------------------------------------------- hashes and checked lines
