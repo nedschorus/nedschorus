@@ -48,10 +48,11 @@ The item after has no link yet when this item's first page is built, so that pag
 same invocation of the program; on a whole item's first page, built without --version, the program prints the command that builds
 the item before's page again, with --version set to that item's next version, to run once this item's page is
 published and its `#item_page` line recorded; that page then gets its Next link to this one. An item's next version is
-one more than the highest version its `#item_page` lines with a link reach, read in order: a line that states its version
-has that version, and a line that states none has one more than the line before it. A stated version can skip ahead,
-because an agent may republish a page without recording a line for it, as when `#item_page item 2 of 19 <link>
-(version 4)` follows a single earlier line for item 2; a bare line after it is then version 5. A page built with --version names the link it is to be published to, its
+one more than the version of its last `#item_page` line with a link. Read in order, the first such line is version 1,
+and each later one is one more than the line before it; a line that states a higher version has that version instead.
+A stated version can skip ahead, because an agent may republish a page without recording a line for it, as when
+`#item_page item 2 of 19 <link> (version 4)` follows a single earlier line for item 2; a bare line after it is then
+version 5, and the item's next version 6. A page built with --version names the link it is to be published to, its
 item's newest `#item_page` link.
 
 It does not copy the files an item links into the page: each link stays as the walk-document writes it, so a
@@ -158,12 +159,11 @@ def whole_item_links(item_page_lines, walk_finder):
 
 def next_version(item_page_lines, walk_finder, number):
     """Return the version the next republish of whole item number's page gets, as the module docstring says."""
-    version = highest = 0
+    version = 0
     for each, link, stated in item_page_lines:
         if each == str(number) and link != walk_finder.ITEM_PAGE_PUBLISH_FAILED:
-            version = stated or version + 1
-            highest = max(highest, version)
-    return highest + 1
+            version = max(stated or 0, version + 1)
+    return version + 1
 
 
 def neighbour_links(links, number):
