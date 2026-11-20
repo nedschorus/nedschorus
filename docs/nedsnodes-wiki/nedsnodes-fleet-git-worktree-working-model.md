@@ -314,12 +314,12 @@ clean and conflict-free — an
 agent-seat that lags says so on its status line rather than silently. **Who
 hears it** (ruled 2026-08-17): exactly one state forces an agent turn — a
 conflict whose cleanup failed, leaving the tree mid-merge; routine events
-stay display-plus-stamp. **Known structural finding, candidate fix
-unruled:** the atomic-PR lane reliably produces add/add conflicts on files
+stay display-plus-stamp. **Known structural finding:** the atomic-PR lane reliably produces add/add conflicts on files
 a cherry-picked topic *created*. Manual remedy: `git status` to list,
 `git checkout --theirs <file>` to take main's canonical version, `git
 add`, commit. The candidate launch-reset of fully-merged seat-branches
-stays unruled (cherry-picks break ancestry, so the predicate needs care).
+no longer applies: an agent-home rests on a detached HEAD at `origin/main`
+and has no seat-branch to reset.
 
 **R16. Binary updates at launch, never in background — built-live
 (accreted, no single PR).** Both launchers update the binary at launch,
@@ -519,7 +519,7 @@ pull request.
    `claude update`.) See R16 for the mechanism's history.
 
 Recorded candidates, unruled — an incident or a user pick is the trigger:
-the supervisor launch-reset of fully-merged seat-branches (R15); R24's
+R24's
 logic encoded into R22's future cleanup script; R8's session detector;
 machine-suffixed agent-seat names (rider 5); other-seat-home write blocking
 (R6's recorded-unbuilt half).

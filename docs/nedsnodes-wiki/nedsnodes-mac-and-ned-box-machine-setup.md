@@ -1,6 +1,6 @@
 ---
 status: reference
-verified-as-of: 2026-08-13
+verified-as-of: 2026-09-14
 ---
 
 # Fleet machine paths and checkouts
