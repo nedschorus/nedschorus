@@ -1631,9 +1631,9 @@ with tempfile.TemporaryDirectory() as workspace:
               "(subagent a2573a7737ae643dc)" in result.stderr, result.stderr[:600])
         check("the instruction on new work says the handoff writer, not the agent, adds stopped work to the session-handoff",
               "When you run the handoff writer script, nn-systems/handoff/handoff-write-and-check-supervisor.py,"
-              " before this agent-session ends, it names in your session-handoff each subagent still working,"
-              " whenever it started, and each background Bash task that started since this handoff-deferral"
-              " began and is still running, so you need not add that work to your task list"
+              " before this agent-session ends, it names in your session-handoff each subagent still working"
+              " and each background Bash task still running, whenever it started, so you need not add that"
+              " work to your task list"
               in hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION,
               hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION)
         check("the instruction on new work limits the subagent, background or detached rule to work left running at the turn's end",
@@ -1642,12 +1642,6 @@ with tempfile.TemporaryDirectory() as workspace:
               " its result to a file; name that file in your next-step file, since the handoff writer script"
               " cannot name that process. A command or an edit that finishes within your turn needs none of"
               " these." in hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION,
-              hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION)
-        check("the instruction on new work says what to do with a background Bash task started before the deferral",
-              "A background Bash task started before the deferral and still running is named, with its"
-              " command, in the next-step file when the successor must run it again; otherwise it is"
-              " stopped at the session-handoff."
-              in hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION,
               hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION)
         writer_script = "nn-systems/handoff/handoff-write-and-check-supervisor.py"
         check("the instruction on new work says unlisted work means running the writer again with a new next-step file",
