@@ -4,7 +4,9 @@
 Each case runs the program in a scratch git repository with a fake `gh` first on PATH. The fake
 answers from a routes file the case writes, keyed by its arguments joined with spaces, or by a
 prefix of them when the key ends with "*"; it exits 1 on an unarranged call, and appends each
-call's arguments to the calls file.
+call's arguments to the calls file. A fake `git` beside it answers `git ls-remote` with FAKE_GIT_LS_REMOTE_STDOUT,
+FAKE_GIT_LS_REMOTE_STDERR and FAKE_GIT_LS_REMOTE_EXIT, by default origin's branch at the head and branch the case's gh pr view route
+names, and hands every other git command to the real git.
 
 Run: python3 scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check-test.py
 """
@@ -13,6 +15,7 @@ import datetime
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -65,11 +68,24 @@ sys.stderr.write(route.get("stderr", ""))
 sys.exit(route.get("exit", 0))
 '''
 
+FAKE_GIT = r'''#!/bin/sh
+for argument in "$@"; do
+    if [ "$argument" = ls-remote ]; then
+        printf '%s\n' "$*" >> "$FAKE_GIT_LS_REMOTE_CALLS"
+        printf '%s' "$FAKE_GIT_LS_REMOTE_STDOUT"
+        printf '%s' "$FAKE_GIT_LS_REMOTE_STDERR" >&2
+        exit "${FAKE_GIT_LS_REMOTE_EXIT:-0}"
+    fi
+done
+exec REAL_GIT "$@"
+'''
+
 # Stands in for scripts/run-all-test-suites.py in every scratch repository's base commit. The suites that
 # fail are those failing-suites.txt names in the checkout the fake sits in, so each commit decides its own;
 # --only-suites-named narrows them. FAKE_RUNNER_EXIT makes it stop without a verdict. FAKE_RUNNER_NOT_RUN names
-# the suites printed NOT RUN, space-separated, and FAKE_RUNNER_STOPPED prints the runner's "not run to the end" line; the exit
-# code stays the real runner's, 1 when a suite failed.
+# the suites printed NOT RUN, space-separated, and FAKE_RUNNER_STOPPED prints the runner's "not run to the end" line, opening
+# with FAKE_RUNNER_OPENER when set, as a runner from before the file-path opener does; the exit code stays the real
+# runner's, 1 when a suite failed.
 FAKE_SUITE_RUNNER = r'''import json, os, sys
 from pathlib import Path
 checkout = Path(__file__).resolve().parents[1]
@@ -78,7 +94,7 @@ if os.environ.get("FAKE_RUNNER_CALLS"):
     with open(os.environ["FAKE_RUNNER_CALLS"], "a") as calls:
         calls.write(json.dumps({"checkout": str(checkout), "arguments": arguments}) + "\n")
 if os.environ.get("FAKE_RUNNER_EXIT"):
-    print("run-all-test-suites: could not run")
+    print("scripts/run-all-test-suites.py: could not run")
     sys.exit(int(os.environ["FAKE_RUNNER_EXIT"]))
 listed = checkout / "failing-suites.txt"
 failing = listed.read_text().split() if listed.exists() else []
@@ -87,14 +103,15 @@ if "--only-suites-named" in arguments:
 for suite in failing:
     print(f"FAIL {suite} exit 1 (0.1s)")
 if os.environ.get("FAKE_RUNNER_STOPPED"):
-    print("run-all-test-suites: not run to the end — stopped by SIGTERM.")
+    opener = os.environ.get("FAKE_RUNNER_OPENER", "scripts/run-all-test-suites.py")
+    print(f"{opener}: not run to the end — stopped by SIGTERM.")
     sys.exit(1 if failing else 2)
 print(f"{len(failing)} failed:")
 for suite in failing:
     print(f"FAIL {suite} exit 1 \u2014 log /logs/{suite}.log")
 not_run = os.environ.get("FAKE_RUNNER_NOT_RUN", "").split()
 if not_run:
-    print(f"{len(not_run)} not run, because bwrap could not build the nc-test-sandbox; each log says why and what to do:")
+    print(f"{len(not_run)} not run; each line says why, and each log what to do:")
     for suite in not_run:
         print(f"NOT RUN {suite} did not start: bwrap failed — log /logs/{suite}.log")
 print(f"SUMMARY: {len(failing)} failed")
@@ -103,7 +120,9 @@ sys.exit(1 if failing else 2 if not_run else 0)
 
 # Stands in for scripts/branch-conflict-check.py in every scratch repository's base commit. FAKE_CONFLICT_CHECK
 # picks its report: unset or "clean" for no conflict, "replace" or "rebase" for a conflict with that answer,
-# "fail" for a run that could not answer, and "killed" for a run a signal ended before it printed anything. FAKE_CONFLICT_CHECK_CALLS records its arguments.
+# "fail" for a run that could not answer, "crash" for an uncaught exception, which Python ends with exit 1 and no
+# verdict, "killed" for a run a signal ended before it printed anything, and "replace-then-exit-2" and
+# "replace-then-killed" for a run that printed a replace answer and then failed. FAKE_CONFLICT_CHECK_CALLS records its arguments.
 FAKE_CONFLICT_CHECK = r'''import json, os, sys
 if os.environ.get("FAKE_CONFLICT_CHECK_CALLS"):
     with open(os.environ["FAKE_CONFLICT_CHECK_CALLS"], "a") as calls:
@@ -115,12 +134,19 @@ if kind == "clean":
 if kind == "fail":
     print("UNFETCHED: git fetch origin failed; do not act on any conflict answer until a run succeeds.")
     sys.exit(2)
+if kind == "crash":
+    raise RuntimeError("the fake conflict check crashed")
 if kind == "killed":
     import signal
     os.kill(os.getpid(), signal.SIGTERM)
 print("VERDICT: CONFLICT -- abc conflicts with origin/main.")
 print("ANSWER: %s -- the fake's answer." % kind)
-print("Cut a new nc-topic-branch from current origin/main.")
+print("Cut a new nc-topic-branch from current origin/main.", flush=True)
+if kind == "replace-then-exit-2":
+    sys.exit(2)
+if kind == "replace-then-killed":
+    import signal
+    os.kill(os.getpid(), signal.SIGTERM)
 sys.exit(1)
 '''
 
@@ -236,15 +262,31 @@ def routes_for(head, reviews, comments=BLOCKING_COMMENTS, review_id=11):
     }
 
 
+def origin_branch_line_of_pull_request_view_route(routes):
+    """git ls-remote's line for the head and branch the gh pr view route names, or "" when it names none."""
+    try:
+        facts = json.loads(routes.get(PR_VIEW, {}).get("stdout", ""))
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(facts, dict) or not facts.get("headRefOid") or not facts.get("headRefName"):
+        return ""
+    return f"{facts['headRefOid']}\trefs/heads/{facts['headRefName']}\n"
+
+
 def run(root, repository, routes, *arguments, path_has_gh=True, environment_extra=None):
     bin_directory = root / "bin"
     bin_directory.mkdir(exist_ok=True)
     (bin_directory / "gh").write_text(FAKE_GH)
     (bin_directory / "gh").chmod(0o755)
+    (bin_directory / "git").write_text(FAKE_GIT.replace("REAL_GIT", shlex.quote(shutil.which("git"))))
+    (bin_directory / "git").chmod(0o755)
     (root / "routes.json").write_text(json.dumps(routes))
     (root / "calls.jsonl").write_text("")
+    (root / "ls-remote-calls.txt").write_text("")
     environment = dict(os.environ, FAKE_GH_ROUTES=str(root / "routes.json"),
-                       FAKE_GH_CALLS=str(root / "calls.jsonl"))
+                       FAKE_GH_CALLS=str(root / "calls.jsonl"),
+                       FAKE_GIT_LS_REMOTE_CALLS=str(root / "ls-remote-calls.txt"),
+                       FAKE_GIT_LS_REMOTE_STDOUT=origin_branch_line_of_pull_request_view_route(routes))
     git_only_directory = root / "git-only-bin"
     if not git_only_directory.exists():
         git_only_directory.mkdir()
@@ -780,46 +822,26 @@ def check_cases(root, repository, base, frozen_head):
     second = commit_file(repository, "hook.py", "three\n", "second")
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                          "--check", "--answers", answers)
-    check("check: two commits refuse with exit 1, each described with one parent",
+    check("check: two commits refuse with exit 1, each named by its 12-character sha with one parent",
           code == 1 and "has 2 commits" in err and "squash them" in err
-          and "(1 parent)" in err and "1 parents" not in err, err)
+          and f"{amended[:12]} (1 parent), {second[:12]} (1 parent)" in err and "1 parents" not in err, err)
 
     git(repository, "reset", "-q", "--hard", frozen_head)
     git(repository, "merge", "-q", "--no-edit", "origin/main")
     merge = git(repository, "rev-parse", "HEAD")
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                          "--check", "--answers", answers)
-    check("check: a merge without --after-conflict-merge refuses", code == 1
-          and "one non-merge commit" in err, err)
-    code, out, err = run(root, repository, routes_for(merge, reviews),
-                         "--check", "--answers", answers, "--after-conflict-merge")
-    check("check: a merge of origin/main alone passes with --after-conflict-merge",
-          code == 0 and f"New head {merge}" in out, out + err)
+    check("check: a merge of origin/main refuses, and says to drop it", code == 1
+          and "one non-merge commit" in err and "drop any merge of main" in err
+          and "(2 parents)" in err, err)
     after_merge = commit_file(repository, "hook.py", "four\n", "fix after merge")
-    code, out, err = run(root, repository, routes_for(after_merge, reviews),
-                         "--check", "--answers", answers, "--after-conflict-merge")
-    check("check: a merge of origin/main and one commit pass with --after-conflict-merge, "
-          "and main's files are not listed", code == 0 and "main.txt" not in out, out + err)
-    commit_file(repository, "hook.py", "five\n", "a third commit")
+    code, out, err = run(root, repository, routes_for(after_merge, reviews), "--check", "--answers", answers)
+    check("check: a merge of origin/main and one commit refuse", code == 1
+          and "has 2 commits" in err, err)
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                          "--check", "--answers", answers, "--after-conflict-merge")
-    check("check: a merge and two commits refuse", code == 1 and "has 3 commits" in err, err)
-
-    git(repository, "reset", "-q", "--hard", frozen_head)
-    git(repository, "checkout", "-q", "-b", "elsewhere", base)
-    stray = commit_file(repository, "stray.txt", "s\n", "not on main")
-    git(repository, "checkout", "-q", BRANCH)
-    git(repository, "merge", "-q", "--no-edit", stray)
-    code, out, err = run(root, repository, routes_for(frozen_head, reviews),
-                         "--check", "--answers", answers, "--after-conflict-merge")
-    check("check: a merge of a commit not on origin/main refuses", code == 1
-          and "not on origin/main" in err, err)
-
-    git(repository, "update-ref", "-d", "refs/remotes/origin/main")
-    code, out, err = run(root, repository, routes_for(frozen_head, reviews),
-                         "--check", "--answers", answers, "--after-conflict-merge")
-    check("check: a missing origin/main fails with exit 2", code == 2
-          and "merge-base --is-ancestor" in err, err)
+    check("check: --after-conflict-merge is no longer accepted", code == 2
+          and "--after-conflict-merge" in err, err)
 
     git(repository, "reset", "-q", "--hard", base)
     rewritten = commit_file(repository, "hook.py", "rewritten\n", "rewritten")
@@ -916,40 +938,23 @@ def check_cases(root, repository, base, frozen_head):
           code == 1 and ANSWERS_NAME in err and "git rm --cached" in err, out + err)
     git(repository, "rm", "-q", "--cached", ANSWERS_NAME)
     git(repository, "commit", "-q", "--amend", "--no-edit")
-    # origin/main was deleted above, so the new shared names cannot be listed.
+    git(repository, "update-ref", "-d", "refs/remotes/origin/main")
     code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews), "--check")
     check("check: a round's commit whose new shared names git cannot list fails with exit 2, before any suite runs",
           code == 2 and "the new shared names the round's commit adds could not be listed: git rev-parse exited 128"
           in err and "Not pushed yet" not in out, out + err)
+    git(repository, "update-ref", "refs/remotes/origin/main", "main-line")
     code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews), "--check",
                          CONFIRMED)
     check("check: the same fix without the answers file passes", code == 0 and "Not pushed yet" in out,
           out + err)
     git(repository, "reset", "-q", "--hard", unignored_head)
     git(repository, "update-ref", "refs/remotes/origin/main", "main-line")
-    git(repository, "merge", "-q", "--no-edit", "origin/main")
     (repository / "other-answers").mkdir()
     commit_file(repository, "other-answers/fix-round-answers-pull-request-1901.md", "1. x\n", "fix")
-    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews),
-                         "--check", "--after-conflict-merge")
-    check("check: after a conflict merge, any pull request's answers file in a subdirectory refuses",
+    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews), "--check")
+    check("check: any pull request's answers file in a subdirectory refuses",
           code == 1 and "other-answers/fix-round-answers-pull-request-1901.md" in err, out + err)
-
-    git(repository, "reset", "-q", "--hard", unignored_head)
-    git(repository, "merge", "-q", "--no-ff", "--no-commit", "origin/main")
-    (repository / "other-answers").mkdir(exist_ok=True)
-    (repository / "other-answers/fix-round-answers-pull-request-1899.md").write_text("1. x\n")
-    git(repository, "add", "other-answers/fix-round-answers-pull-request-1899.md")
-    git(repository, "commit", "-q", "--no-edit")
-    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews),
-                         "--check", "--after-conflict-merge")
-    check("check: an answers file added in the conflict merge's own commit refuses",
-          code == 1 and "other-answers/fix-round-answers-pull-request-1899.md" in err, out + err)
-    commit_file(repository, "hook.py", "fixed after merge\n", "fix after the merge")
-    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews),
-                         "--check", "--after-conflict-merge")
-    check("check: an answers file the conflict merge adds refuses when a fix commit sits on top",
-          code == 1 and "other-answers/fix-round-answers-pull-request-1899.md" in err, out + err)
 
     git(repository, "reset", "-q", "--hard", unignored_head)
     held = commit_file(repository, "fix-round-answers-pull-request-1900.md", "1. x\n",
@@ -974,6 +979,17 @@ def check_cases(root, repository, base, frozen_head):
                          "--check", "--answers", answers_file(root, GOOD_ANSWERS), "--commit", "no-such-ref")
     check("check: an unknown --commit fails with exit 2", code == 2 and "rev-parse" in err, err)
     del rewritten, second
+
+
+def history_git_cannot_walk_case(root, repository, _base, frozen_head):
+    middle = commit_file(repository, "hook.py", "two\n", "middle")
+    last = commit_file(repository, "hook.py", "three\n", "last")
+    # A missing commit between the frozen-head and the checked commit makes git merge-base --is-ancestor exit 128.
+    (repository / ".git" / "objects" / middle[:2] / middle[2:]).unlink()
+    code, out, err = run(root, repository, routes_for(frozen_head, [review(commit_id=frozen_head)]),
+                         "--check", "--answers", answers_file(root, GOOD_ANSWERS), "--commit", last)
+    check("check: a history git cannot walk from the checked commit to the frozen-head fails with exit 2",
+          code == 2 and "merge-base --is-ancestor" in err and "exited 128" in err, out + err)
 
 
 def pull_request_2213_review(review_id, login, state, commit_id, body):
@@ -1205,7 +1221,7 @@ def rounds_on_one_head_cases(root, repository, base, frozen_head):
 PULL_REQUEST_2620_MAC_CLAUDE_REVIEW = {
     "id": 5779061216, "user": {"login": 'mac-claude'}, "state": 'COMMENTED',
     "commit_id": 'dc0950712c83b79f47fecd3a2d7cf750dcb99b79',
-    "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#pullrequestreview-5779061216',
+    "html_url": 'https://github.com/nedsnodes/nedsnodes/pull/2620#pullrequestreview-5779061216',
     "body": ('APPROVE\n'
             '\n'
             'Reviewed the whole PR at head dc0950712 (first round). Merge base e7ab8b286 is the same as `git merge-base origin/main HEAD`. Environment: Python 3.14.4 at /usr/bin/python3, on ned-box.\n'
@@ -1273,7 +1289,7 @@ PULL_REQUEST_2620_MAC_CLAUDE_REVIEW = {
             '- The full test run was not run; merge-lane-2 runs it.')}
 PULL_REQUEST_2620_MAC_CLAUDE_COMMENTS = [
     {"id": 4475925026, "path": 'scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py', "line": None, "original_line": None,
-     "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#discussion_r4475925026',
+     "html_url": 'https://github.com/nedsnodes/nedsnodes/pull/2620#discussion_r4475925026',
      "body": ('Surviving mutant: the line that joins a moved comment\'s continuation lines (`elif comments: comments[-1]["body"] += "\\n" + line`) has no test.\n'
               '\n'
               '- **Mutation:** I replaced it with `elif False: pass`. Both test files still pass: posting test exit 0, follow-up test exit 0.\n'
@@ -1282,7 +1298,7 @@ PULL_REQUEST_2620_MAC_CLAUDE_COMMENTS = [
               '\n'
               'A round-trip case with a multi-line comment on a line outside the diff would kill this mutant.')},
     {"id": 4475925031, "path": 'scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py', "line": None, "original_line": None,
-     "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#discussion_r4475925031',
+     "html_url": 'https://github.com/nedsnodes/nedsnodes/pull/2620#discussion_r4475925031',
      "body": ('A comment moved into the review body is read back as several comments when a continuation line of its text has the moved-comment form `- `<path>:<line>`: ...`. Reviewers often cite other places in exactly that form.\n'
               '\n'
               '**Reproduced at head:** I ran `with_finding_category_marks` then `with_outside_comments_in_body` (with no commentable lines) on one fix-in-maintenance comment on `x.py:5`, with this text:\n'
@@ -1306,7 +1322,7 @@ PULL_REQUEST_2620_MAC_CLAUDE_COMMENTS = [
 PULL_REQUEST_2620_MERGE_LANE_2_REVIEW = {
     "id": 5779070233, "user": {"login": 'ned-review-merge'}, "state": 'CHANGES_REQUESTED',
     "commit_id": 'dc0950712c83b79f47fecd3a2d7cf750dcb99b79',
-    "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#pullrequestreview-5779070233',
+    "html_url": 'https://github.com/nedsnodes/nedsnodes/pull/2620#pullrequestreview-5779070233',
     "body": ('REQUEST_CHANGES\n'
             '\n'
             '**Blocking: 1**\n'
@@ -1331,10 +1347,10 @@ PULL_REQUEST_2620_MERGE_LANE_2_REVIEW = {
             "For each finding you fix, say in the fix commit's message whether the finding is one case of a wider pattern; if it is, name the pattern. Fix the other cases in this pull request when they run the same test suites or a reviewer would check them the same way; list in the commit message any you leave for a follow-up pull request. After the merge, merge-lane-2 sends you that list, as it does non-blocking findings, and you open a follow-up pull request for them or tell merge-lane-2 why not.")}
 PULL_REQUEST_2620_MERGE_LANE_2_COMMENTS = [
     {"id": 4475930572, "path": 'scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py', "line": None, "original_line": None,
-     "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#discussion_r4475930572',
+     "html_url": 'https://github.com/nedsnodes/nedsnodes/pull/2620#discussion_r4475930572',
      "body": ('**Blocks** A comment moved into the review body is read back as several comments when a continuation line of its text has the moved-comment form `- `<path>:<line>`: ...` (reproduced by mac-claude at head, also Codex P2). When such a line carries a category mark after the `: `, `print-follow-up-request-block-from-merge-lane-2-reviews` prints a truncated finding plus one merge-lane-2 never made, and exits 0. Fix: make the read-back detect this, for example by having the posting program check that the moved comments read back exactly as posted and refuse otherwise, or by a line format the text cannot reproduce; add a round-trip case with such a continuation line.')},
     {"id": 4475930574, "path": 'scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py', "line": None, "original_line": None,
-     "html_url": 'https://github.com/nedschorus/nedschorus/pull/2620#discussion_r4475930574',
+     "html_url": 'https://github.com/nedsnodes/nedsnodes/pull/2620#discussion_r4475930574',
      "body": ('The continuation-join line `elif comments: comments[-1]["body"] += "\\n" + line` has no test: replacing it with `elif False: pass` leaves both test files passing (mac-claude, mutant M4). A round-trip case with a multi-line comment on a line outside the diff would kill it.')}]
 
 
@@ -1378,6 +1394,20 @@ def moved_into_body_cases(root, repository, base, frozen_head):
                                                 **comments_route(20, [])})
         check(f"in an ungraded round, a Block in the moved-comment section of {login}'s review body is not briefed",
               code == 0 and "Blocking findings (2)" in out and "another account's moved finding" not in out, err + out)
+
+    read_back = load_program().outside_the_diff_comments_read_back_from_review_body(
+        "REQUEST_CHANGES\n- `quoted.py:1`: **Blocks** a line above the heading.\n"
+        "Comments on lines outside this pull request's diff:\n- `setup.py:3`: **Blocks** the moved finding.")
+    check("a line in the moved-comment form above the moved-comment heading is not read back as a moved comment",
+          read_back == [{"path": "setup.py", "line": 3, "body": "**Blocks** the moved finding."}], repr(read_back))
+
+    read_back = load_program().outside_the_diff_comments_read_back_from_review_body(
+        "Comments on lines outside this pull request's diff:\n  an indented line before any moved comment\n"
+        "- `setup.py:3`: **Blocks** the moved finding.\n  its continuation.\n\nA closing paragraph.")
+    check("only an indented line after a moved comment continues it: an indented line before the first one, "
+          "a blank line and an unindented paragraph after it are not read back",
+          read_back == [{"path": "setup.py", "line": 3, "body": "**Blocks** the moved finding.\nits continuation."}],
+          repr(read_back))
     del base
 
 
@@ -1679,7 +1709,8 @@ def move_cases(root, _repository, _base, _frozen_head):
     corrupt_entry = answers_file(root, "1. Fixed.\n2. Moved to pull request #42\n")
     code, out, err = run(root, repository, corrupt_routes, "--check", "--answers", corrupt_entry)
     check("check: a moved pull request's patch git cannot parse fails with exit 2, not a pass",
-          code == 2 and "on pull request 42's patch: error: corrupt patch at line 5" in err and "PASS" not in out, out + err)
+          # git 2.56 names the patch file and line where git 2.53 says "line 5".
+          code == 2 and "on pull request 42's patch: error: corrupt patch at " in err and "PASS" not in out, out + err)
     moved_entry = answers_file(root, "1. Fixed.\n2. Moved to pull request #41\n")
     for name, moved_kept_here, partly_text, expected in (
             ("a whole moved file", True, PARTLY_KEPT_ONLY, "moved.py"),
@@ -1964,6 +1995,8 @@ def suite_cases(root, repository, _base, _frozen_head):
     check("suites: a suite failing at the round's commit and passing at the frozen-head refuses, naming it, "
           "and a suite the frozen-head lacks counts as the round's",
           code == 1 and "so the round's change broke them: b-test.py, c-test.py." in err
+          and f"at the round's commit {broken[:12]} and not at the frozen-head {frozen_head[:12]}, so the round's "
+          "change broke them" in err
           and "These fail at the frozen-head too, so they are not the round's doing: a-test.py." in err
           and "Not pushed yet" not in out, out + err)
     check("suites: the round's commit runs the suites the ready command runs, and the frozen-head only its "
@@ -1988,7 +2021,7 @@ def suite_cases(root, repository, _base, _frozen_head):
     code, out, err = check_with_head(frozen_head, {"FAKE_RUNNER_NOT_RUN": "b-test.py c-test.py"})
     check("suites: suites NOT RUN beside a failure the frozen-head shares fail the check with exit 2, "
           "before any push, and the refusal quotes every NOT RUN line",
-          code == 2 and "did not judge every suite: it printed\n  NOT RUN b-test.py" in err
+          code == 2 and f"run on {fixed[:12]}, did not judge every suite: it printed\n  NOT RUN b-test.py" in err
           and "\n  NOT RUN c-test.py did not start" in err
           and "Not pushed yet" not in out and len(git(repository, "worktree", "list").splitlines()) == 1,
           out + err)
@@ -1996,6 +2029,16 @@ def suite_cases(root, repository, _base, _frozen_head):
     code, out, err = check_with_head(frozen_head, {"FAKE_RUNNER_STOPPED": "1"})
     check("suites: a run stopped before its end beside a failure the frozen-head shares fails the check "
           "with exit 2, before any push",
+          code == 2 and "did not judge every suite: it printed\n  scripts/run-all-test-suites.py: not run to the end" in err
+          and "Not pushed yet" not in out, out + err)
+    check("suites: the refusal for a run stopped before its end names both openers a stopped runner prints",
+          "'scripts/run-all-test-suites.py: not run to the end' or 'run-all-test-suites: not run to the end', "
+          "tell merge-lane-2" in err, err)
+    runner_calls(root)
+    code, out, err = check_with_head(frozen_head, {"FAKE_RUNNER_STOPPED": "1",
+                                                   "FAKE_RUNNER_OPENER": "run-all-test-suites"})
+    check("suites: a run stopped before its end by a runner from before the file-path opener, as a frozen-head "
+          "runs, fails the check with exit 2 too, before any push",
           code == 2 and "did not judge every suite: it printed\n  run-all-test-suites: not run to the end" in err
           and "Not pushed yet" not in out, out + err)
     runner_calls(root)
@@ -2005,6 +2048,12 @@ def suite_cases(root, repository, _base, _frozen_head):
           "new shared names are not listed again",
           code == 0 and "nc-test-suites that fail at the frozen-head too, so not because of this round: "
           "a-test.py." in out and runner_calls(root) == [], out + err)
+    code, out, err = run(root, repository, routes_for(fixed, [review(commit_id=fixed)]), "--check", "--answers",
+                         answers, environment_extra=environment)
+    check("suites: a later round on that pushed commit, now its frozen-head, with no commit of its own, names no "
+          "suite from the earlier round's record",
+          code == 0 and "Nothing pushed; the head stays the frozen-head" in out
+          and "fail at the frozen-head too" not in out and runner_calls(root) == [], out + err)
 
     (repository / "other.txt").write_text("other\n")
     git(repository, "add", "other.txt")
@@ -2032,6 +2081,139 @@ def suite_cases(root, repository, _base, _frozen_head):
           code == 2 and "ended with exit 2 and named no failing suite" in err and "Not pushed yet" not in out
           and len(git(repository, "worktree", "list").splitlines()) == 1, out + err)
     runner_calls(root)
+
+
+DEMO_OVERVIEW = "docs/nedschorus-wiki/nedschorus-demo-architecture-overview.md"
+
+
+def demo_overview_text(checked_against, extra=""):
+    return (f"# Demo\n\n## Components\n\n- `nc-systems/demo/demo.py` runs the demo.\n{extra}\n"
+            f"**Checked against:** commit [{checked_against}](https://github.com/nedsnodes/nedsnodes/commit/"
+            f"{checked_against})\n")
+
+
+def write_claim_check_report(report_directory, repository, revision, result="no must-fix claim remains"):
+    blob = git(repository, "rev-parse", f"{revision}:{DEMO_OVERVIEW}")
+    directory = report_directory / Path(DEMO_OVERVIEW).stem
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{blob}-20261114T000000Z.md").write_text(f"result: {result}\n\nclaims\n")
+
+
+def architecture_overview_cases(root, repository, _base, _frozen_head):
+    """PRs 3571 and 3591: the pull request changes the demo overview, and the round changes code it describes."""
+    (repository / "nc-systems" / "demo").mkdir(parents=True)
+    described = commit_file(repository, "nc-systems/demo/demo.py", "one\n", "demo code")
+    (repository / "docs" / "nedschorus-wiki").mkdir(parents=True)
+    frozen_head = commit_file(repository, DEMO_OVERVIEW, demo_overview_text(described), "demo overview")
+    reviews = [review(commit_id=frozen_head)]
+    answers = answers_file(root, GOOD_ANSWERS)
+    report_directory = root / "claim-check-reports"
+    write_claim_check_report(report_directory, repository, frozen_head)
+    environment = {"FAKE_RUNNER_CALLS": str(root / "runner-calls.jsonl")}
+
+    def check_round_at(head):
+        return run(root, repository, routes_for(head, reviews), "--check", "--answers", answers, CONFIRMED,
+                   "--overview-write-architecture-overview-claim-check-report-directory", str(report_directory),
+                   environment_extra=environment)
+
+    commit_file(repository, "hook.py", "fixed\n", "round changes no described code")
+    code, out, err = check_round_at(frozen_head)
+    check("overview: a round that changes no code an overview describes passes",
+          code == 0 and "Not pushed yet" in out, out + err)
+    runner_calls(root)
+
+    git(repository, "reset", "-q", "--hard", frozen_head)
+    fix = commit_file(repository, "nc-systems/demo/demo.py", "two\n", "round changes described code")
+    code, out, err = check_round_at(frozen_head)
+    check("overview: a round whose commit changes code the overview describes, while its **Checked against:** "
+          "names an earlier commit, refuses with exit 1 before the suites and the push, naming the overview, the "
+          "code and the claim check",
+          code == 1 and "Not pushed yet" not in out and runner_calls(root) == []
+          and f"{DEMO_OVERVIEW} names commit {described}, and later commits of the pull request change code the "
+          "overview describes: nc-systems/demo/demo.py." in err
+          and "set each one's **Checked against:** line to name the fix commit's full id" in err
+          and f"overview-write-architecture-overview-claim-check-by-fresh-agent.py --overview {DEMO_OVERVIEW}" in err
+          and "so pushing it would cost a second push under review" in err, out + err)
+
+    overview_commit = commit_file(repository, DEMO_OVERVIEW, demo_overview_text(fix), "overview checked against the fix")
+    code, out, err = check_round_at(frozen_head)
+    check("overview: an overview commit naming the fix commit, with no claim-check report on its text, refuses "
+          "with exit 1 naming where it looked",
+          code == 1 and "no claim-check report on the overview's text at the round's commit" in err
+          and str(report_directory / Path(DEMO_OVERVIEW).stem) in err and runner_calls(root) == [], out + err)
+
+    write_claim_check_report(report_directory, repository, overview_commit)
+    code, out, err = check_round_at(frozen_head)
+    check("overview: the fix commit and one overview-only commit naming it, with a clean claim-check report, pass "
+          "and run the suites", code == 0 and "Not pushed yet" in out and len(runner_calls(root)) == 1, out + err)
+    code, out, err = check_round_at(overview_commit)
+    check("overview: after the push, the message for merge-lane-2 counts the round's two commits",
+          code == 0 and f"New head {overview_commit}, the round's 2 commits on top of the frozen-head" in out, out + err)
+
+    commit_file(repository, "hook.py", "third\n", "a third commit")
+    code, out, err = check_round_at(frozen_head)
+    check("overview: a third commit after the overview commit refuses as a round of too many commits",
+          code == 1 and "The round has 3 commits" in err, out + err)
+    git(repository, "reset", "-q", "--hard", fix)
+    (repository / DEMO_OVERVIEW).write_text(demo_overview_text(fix))
+    commit_file(repository, "hook.py", "also\n", "overview and other code in the second commit")
+    code, out, err = check_round_at(frozen_head)
+    check("overview: a second commit that changes more than nc-architecture-overview pages refuses",
+          code == 1 and "The round has 2 commits" in err and "changes only nc-architecture-overview pages" in err,
+          out + err)
+
+
+def architecture_overview_check_cannot_read_case(_root, repository, _base, frozen_head):
+    program = load_program()
+
+    def refuse(*_arguments):
+        raise program.review_plan.ReviewPlanRefusal("git could not read changed files")
+
+    program.review_plan.changed_file_statuses_and_paths = refuse
+    original_directory = os.getcwd()
+    os.chdir(repository)
+    try:
+        program.refuse_fix_round_commit_whose_architecture_overviews_the_review_plan_would_refuse(NUMBER, frozen_head, repository)
+        raised = None
+    except Exception as error:
+        raised = error
+    finally:
+        os.chdir(original_directory)
+    check("overview: a review plan check that cannot read the round's commit raises StepFailed naming it",
+          isinstance(raised, program.StepFailed) and "could not read the round's commit" in str(raised)
+          and "git could not read changed files" in str(raised), repr(raised))
+
+
+def pushed_head_read_from_origin_cases(root, repository, _base, frozen_head):
+    """GitHub's headRefOid can still name the frozen-head for seconds after the push moved origin's branch."""
+    reviews = [review(commit_id=frozen_head)]
+    answers = answers_file(root, GOOD_ANSWERS)
+    fix = commit_file(repository, "hook.py", "two\n", "fix")
+    stale_github = routes_for(frozen_head, reviews)
+
+    def check_with_origin(stdout, exit_code="0", stderr=""):
+        return run(root, repository, stale_github, "--check", "--answers", answers, environment_extra={
+            "FAKE_RUNNER_CALLS": str(root / "runner-calls.jsonl"), "FAKE_GIT_LS_REMOTE_STDOUT": stdout,
+            "FAKE_GIT_LS_REMOTE_STDERR": stderr, "FAKE_GIT_LS_REMOTE_EXIT": exit_code})
+
+    code, out, err = check_with_origin(f"{fix}\trefs/heads/{BRANCH}\n")
+    check("pushed head: origin's branch at the round's commit while GitHub's head is still the frozen-head is "
+          "pushed: the message for merge-lane-2, and no suite run",
+          code == 0 and f"New head {fix}" in out and "Not pushed yet" not in out and runner_calls(root) == []
+          and (root / "ls-remote-calls.txt").read_text() == f"-C . ls-remote origin refs/heads/{BRANCH}\n",
+          out + err)
+
+    code, out, err = check_with_origin(f"{fix}\trefs/heads/other/refs/heads/{BRANCH}\n")
+    check("pushed head: origin without the pull request's branch, only one whose name ends the same, fails with "
+          "exit 2, naming the branch",
+          code == 2 and out == "" and f"found no branch {BRANCH} on origin" in err
+          and f"\"The fix-round check of {URL} found no branch {BRANCH} on origin, so the round's commit is not "
+          "pushed.\"" in err, err + out)
+
+    code, out, err = check_with_origin("", exit_code="128", stderr="fatal: Could not read from remote repository.\n")
+    check("pushed head: git ls-remote that fails fails the check with exit 2, passing git's message on",
+          code == 2 and out == "" and f"git ls-remote origin refs/heads/{BRANCH} failed: fatal: Could not read "
+          "from remote repository." in err, err + out)
 
 
 def nit_cases(root, repository, base, frozen_head):
@@ -2310,6 +2492,19 @@ def conflict_check_cases(root, repository, _base, frozen_head):
           code == 2 and err.startswith("FAILED: ") and "exited 2, so whether this pull request conflicts with main "
           "is not known" in err and "UNFETCHED: git fetch origin failed" in err and out == "", err + out)
 
+    code, out, err = run(root, repository, routes, environment_extra={"FAKE_CONFLICT_CHECK": "crash"})
+    check("conflict check: a check that crashes with exit 1 and no conflict verdict fails with exit 2, "
+          "its traceback quoted, and prints no brief",
+          code == 2 and err.startswith("FAILED: ") and "exited 1, so whether this pull request conflicts with main "
+          "is not known" in err and "RuntimeError: the fake conflict check crashed" in err and out == "", err + out)
+
+    for kind, exit_text in (("replace-then-exit-2", "exited 2"), ("replace-then-killed", "exited -15")):
+        code, out, err = run(root, repository, routes, environment_extra={"FAKE_CONFLICT_CHECK": kind})
+        check(f"conflict check: a check that prints a replace answer and then {exit_text} fails with exit 2 "
+              "and prints neither the replace steps nor the brief",
+              code == 2 and err.startswith("FAILED: ") and exit_text in err and "ANSWER: replace" in err
+              and out == "", err + out)
+
     code, out, err = run(root, repository, routes, environment_extra={"FAKE_CONFLICT_CHECK": "killed"})
     check("conflict check: a check a signal ended fails with exit 2 and prints no brief",
           code == 2 and err.startswith("FAILED: ") and "exited -15" in err and out == "", err + out)
@@ -2330,6 +2525,8 @@ def conflict_check_cases(root, repository, _base, frozen_head):
 
 gh_timeout_case()
 case("suites", suite_cases)
+case("architecture overview", architecture_overview_cases)
+case("architecture overview check cannot read", architecture_overview_check_cannot_read_case)
 case("nits", nit_cases)
 case("move", move_cases)
 case("move hand commit", move_hand_commit_cases)
@@ -2340,6 +2537,8 @@ case("brief", brief_cases)
 case("topic-worktree", topic_worktree_cases)
 case("conflict check", conflict_check_cases)
 case("check", check_cases)
+case("pushed head read from origin", pushed_head_read_from_origin_cases)
+case("history git cannot walk", history_git_cannot_walk_case)
 case("commissioned reviewer", commissioned_reviewer_cases)
 case("split review", split_review_cases)
 case("rounds on one head", rounds_on_one_head_cases)

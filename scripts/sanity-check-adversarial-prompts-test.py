@@ -1312,7 +1312,7 @@ def main():
     check("and prints the shipper's line as `record:`",
           said.splitlines()[0] == "record: shipped: fine", said.splitlines()[:1])
     check("the closing line names the shipper for the dispositions round",
-          "scripts/sanity-check-record-ship.py" in said and "finding-dispositions.md" in said,
+          "scripts/sanity-check-record-ship.py" in said and "sanity-check-finding-dispositions.md" in said,
           said)
     check("and says the record is kept, not deleted",
           "not deleted" in said and "Delete the record directory" not in said, said)
@@ -1909,7 +1909,7 @@ def main():
         return (f"When a run of this sanity-check saved cut-adversarial-prompt-{other}'s report, "
                 f"triage the cut-adversarial-prompt from that report.\n"
                 f"When no run of this sanity-check saved a report of the "
-                f"cut-adversarial-prompt, write in finding-dispositions.md that the "
+                f"cut-adversarial-prompt, write in sanity-check-finding-dispositions.md that the "
                 f"cut-adversarial-prompt is unreviewed.\n")
 
     runner_relaunch = load_runner()
@@ -3863,10 +3863,19 @@ sys.exit(module.main())
           exit_code == 2 and "a git failure this case made" in errors.getvalue()
           and runner_git_main.git_failure_next_step_lines(shlex.join(
               [str(RUNNER_SCRIPT.resolve()), *sys_argv_of_the_baseline_case[1:]]),
-              runner_git_main.STOPPED_BEFORE_LAUNCH_AGAIN)
+              runner_git_main.STOPPED_BEFORE_LAUNCH_AGAIN, "a git failure this case made")
           in errors.getvalue()
           and claimed == [],
           f"exit {exit_code}, stderr {errors.getvalue()!r}, records {claimed}")
+    lock_steps = runner_git_main.git_failure_next_step_lines(
+        "`rerun`", runner_git_main.STOPPED_BEFORE_LAUNCH_AGAIN,
+        runner_git_main.git_output.GitCommandFailed(
+            ["status"], "/review-copy", 128,
+            "fatal: Unable to create '/review-copy/.git/index.lock': File exists.\n"))
+    check("the runner's next steps for a git error naming a lock file wait for that lock file "
+          "instead of offering the misspelt-name step",
+          "Git's error names the lock file /review-copy/.git/index.lock: " in lock_steps
+          and "is misspelt" not in lock_steps, lock_steps)
 
     # A git failure in a cell's thread, once its agent has finished: the report
     # is saved, the failure is printed, the provenance line says the commit was
@@ -3910,7 +3919,8 @@ sys.exit(module.main())
               and runner_cell_git.git_failure_next_step_lines(
                   runner_cell_git.rerun_command_for_cell(
                       "cut", "claude", "docs/agents/sanity-checker-cut-adversarial-prompt.md",
-                      [], None), runner_cell_git.CELL_GIT_CHECK_FAILED_AGAIN) in printed.getvalue()
+                      [], None), runner_cell_git.CELL_GIT_CHECK_FAILED_AGAIN,
+                  "a git failure this case made") in printed.getvalue()
               and "a git failure this case made" in printed.getvalue(),
               f"exit {exit_code}, report {report_text[:200]!r}, output {printed.getvalue()!r}")
 

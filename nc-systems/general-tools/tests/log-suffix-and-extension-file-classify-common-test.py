@@ -75,7 +75,7 @@ CASES = {
     "plain-notes.md": classify.NOT_A_LOG,
     "run-log-notes.md": classify.NOT_A_LOG,
     "catalog.md": classify.NOT_A_LOG,
-    "run-nbd.md": classify.NOT_A_LOG,
+    "run-hack.md": classify.NOT_A_LOG,
     "docs/issues/142-draft-md-prompt-research-report.md": classify.LOG,
     "a.b-log.json": classify.LOG,
     "run-report.csv": classify.UNLISTED,

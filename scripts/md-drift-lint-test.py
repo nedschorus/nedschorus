@@ -356,7 +356,7 @@ with tempfile.TemporaryDirectory() as workspace:
     # findings on main were this. The first case is the repository's own text,
     # from docs/design-to-main/design-to-main-state-machine-design.md:521.
     findings = problems_for(
-        "| `<component's directory>/design-to-main-record/user-rulings.md` | every ruling |",
+        "| `<component's directory>/design-to-main-record/design-to-main-component-user-rulings-log.md` | every ruling |",
         root)
     check("a placeholder containing a space is not checked as a path",
           findings == [], str(findings))
@@ -731,7 +731,7 @@ with tempfile.TemporaryDirectory() as overview_workspace:
 
     lint.github_issue_states_and_titles = answering_query
     try:
-        url = "https://github.com/nedschorus/nedschorus/issues/"
+        url = "https://github.com/nedsnodes/nedsnodes/issues/"
         findings = problems_for(
             "# Demo\n\n## Planned work\n\n"
             f"- GHI [Open one]({url}1)\n"
@@ -808,7 +808,7 @@ def run_lint_with_fake_gh(gh_source):
         (root / "nc-systems" / "demo" / "unnamed-program.py").write_text("", encoding="utf-8")
         (root / OVERVIEW_NAME).write_text(
             "## Planned work\n\n"
-            "- GHI [Open one](https://github.com/nedschorus/nedschorus/issues/1)\n",
+            "- GHI [Open one](https://github.com/nedsnodes/nedsnodes/issues/1)\n",
             encoding="utf-8")
         fake_bin = root / "fake-bin"
         fake_bin.mkdir()
@@ -860,6 +860,11 @@ check("a GHI GitHub reports NOT_FOUND is a finding, not a stopped check",
       returncode == 1 and f"{OVERVIEW_NAME}:3: GHI 1 does not exist on GitHub" in stdout,
       f"{returncode} {stdout!r} {stderr!r}")
 
+
+old_name_line = lint.PLANNED_WORK_GHI_LINE.fullmatch(
+    f"- GHI [A title](https://github.com/{lint.OLD_REPOSITORY}/issues/12)")
+check("a Planned work line linking with the repository's old name, which GitHub redirects, is read",
+      old_name_line is not None and old_name_line.group("number") == "12", repr(old_name_line))
 
 print()
 if failures:

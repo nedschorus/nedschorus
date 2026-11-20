@@ -692,6 +692,16 @@ def run_agent_text_cases(fixture):
     fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
     plan = fixture.read_review_plan()
     check("reflowed identical messages are omitted", plan["tool_message_to_agent_text_delta"] == [], plan)
+    # The collector builds each side's placeholder tuple separately, so equal tuples are distinct objects.
+    fixture.reset_fixture_to_base()
+    fixture.write_fixture_file("scripts/scoped-messages.py", 'print(\n    f"same moved message for {name}")\n')
+    earlier = fixture.commit_fixture_changes("multiline f-string message")
+    fixture.write_fixture_file("scripts/scoped-messages.py", 'print(f"same moved message for {name}")\n')
+    head = fixture.commit_fixture_changes("reflow f-string message")
+    fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
+    plan = fixture.read_review_plan()
+    check("reflowed identical f-string messages with equal placeholders are omitted",
+          plan["tool_message_to_agent_text_delta"] == [], plan)
     # Modelled on pull request 2119, which changed only the recovery note that
     # IgnitionPlanWithoutConversationTail.compose() builds in a local name and returns in its prompt.
     compose_before = ('class IgnitionPlan:\n    def compose(self):\n        if self.transcript_path is None:\n'
@@ -954,6 +964,7 @@ def run_named_cold_read_record_cases(fixture):
     fixture.reset_fixture_to_base()
     fixture.write_fixture_file("scripts/sibling-program.py", 'print("Sibling message to reuse")\n')
     fixture.write_fixture_file("scripts/nested-program.py", 'print("Nested message kept")\n')
+    fixture.write_fixture_file("scripts/unnamed-program.py", 'print("Message no record holds")\n')
     head = fixture.commit_fixture_changes("messages with named records")
     fixture.configure_github_answers(head, description=description)
     plan = fixture.read_review_plan()
@@ -967,6 +978,11 @@ def run_named_cold_read_record_cases(fixture):
           and sibling.get("fast_read_target_error") is None and not sibling_target.exists(), sibling)
     check("a string that is only part of a named record's target file, or matches only a record with no report, keeps its command",
           nested.get("cold_read_record") is None and bool(nested.get("fast_read_command")), nested)
+    unnamed = entries.get("scripts/unnamed-program.py", {})
+    check("a string listed after one its named record covers still gets its own command",
+          [path for path in entries if path in ("scripts/sibling-program.py", "scripts/unnamed-program.py")]
+          == ["scripts/sibling-program.py", "scripts/unnamed-program.py"]
+          and unnamed.get("cold_read_record") is None and bool(unnamed.get("fast_read_command")), unnamed)
     problems = {record["path"]: record["problem"] for record in plan["named_cold_read_records"]}
     check("each named record is read once, its path cut at the backtick, slash, colon, comma, semicolon, bracket or full stop "
           "that follows it, and an abbreviated path is not read",
@@ -1325,7 +1341,7 @@ def run_architecture_overview_checked_against_commit_cases(fixture):
     flag = ["--overview-write-architecture-overview-claim-check-report-directory", str(report_directory)]
 
     def write_overview_with_report(named, path=FIXTURE_OVERVIEW_PATH):
-        last_line = f"**Checked against:** commit [{named}](https://github.com/nedschorus/nedschorus/commit/{named})\n" if named else ""
+        last_line = f"**Checked against:** commit [{named}](https://github.com/nedsnodes/nedsnodes/commit/{named})\n" if named else ""
         text = ("# Example overview\n\nIt is not `scripts/sibling-program.py`.\n\n## Components\n\n"
                 "- `nc-systems/example/parent-program.py`: the program.\n"
                 "- `scripts/example-program.py`: a shared script.\n- `config`: its settings.\n"

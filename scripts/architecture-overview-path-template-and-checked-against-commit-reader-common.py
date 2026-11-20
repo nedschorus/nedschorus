@@ -13,7 +13,7 @@ CHECKED_AGAINST_PREFIX = "**Checked against:** commit ["
 
 CHECKED_AGAINST_LINE_TEMPLATE = (
     CHECKED_AGAINST_PREFIX
-    + "{commit}](https://github.com/nedschorus/nedschorus/commit/{commit})")
+    + "{commit}](https://github.com/nedsnodes/nedsnodes/commit/{commit})")
 
 _CHECKED_AGAINST_COMMIT = re.compile(
     re.escape(CHECKED_AGAINST_PREFIX) + r"([0-9a-f]{7,40})\]")

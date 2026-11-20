@@ -314,6 +314,36 @@ def main():
            "and a block that is not a dict, is reported",
            case.run_on_written_transcript(), [document])
 
+    def written_transcript_with_reply(records):
+        write_transcript(case.transcript, records + [
+            {"type": "assistant", "message": {"id": "msg_1", "role": "assistant", "content": [
+                {"type": "text", "text": "I wrote docs/plan-of-record.md for you."}]}}])
+
+    case = Case()
+    document = case.document("docs/plan-of-record.md")
+    records = file_writing_tool_call_records([document])
+    written_transcript_with_reply(records)
+    expect("the write the cases below alter, as Claude Code records it, is reported",
+           case.run_on_written_transcript(), [document])
+    records[1]["type"] = "user"
+    written_transcript_with_reply(records)
+    expect("a Write tool_use block in a record that is not the assistant's is no call, so its document is silent",
+           case.run_on_written_transcript(), None)
+    records = file_writing_tool_call_records([document])
+    records[1]["message"]["content"][0]["type"] = "text"
+    written_transcript_with_reply(records)
+    expect("a block that names Write and a file_path but is not a tool_use block is no call, so its document is silent",
+           case.run_on_written_transcript(), None)
+    records = file_writing_tool_call_records([document])
+    del records[2]["message"]["content"][0]["is_error"]
+    written_transcript_with_reply(records)
+    expect("a write whose result has no is_error, as a successful result can be recorded, is reported",
+           case.run_on_written_transcript(), [document])
+    records[2]["message"]["content"][0]["is_error"] = 1
+    written_transcript_with_reply(records)
+    expect("a write whose result's is_error is 1, not the JSON true a refusal carries, is reported",
+           case.run_on_written_transcript(), [document])
+
     case = Case()
     case.document("docs/cited-only.md")
     document = case.document("docs/plan-of-record.md")
@@ -341,9 +371,9 @@ def main():
 
     case = Case()
     document = case.document("docs/plan-of-record.md", modified=3_000_000,
-                             text="See file:///Volumes/nedhome/agents/x/log.md.\n")
+                             text="See [the log](file:///Volumes/nedhome/agents/x/log.md).\n")
     case.record("plan-of-record-2026-10-08", 2_000_000, "docs/plan-of-record.md",
-                "See /home/nedlern/agents/x/log.md.\n")
+                "See [the log](/home/nedlern/agents/x/log.md).\n")
     expect("a frozen copy whose Mac links a cold read on ned-box rewrote matches its document despite file times",
            case.run("Updated docs/plan-of-record.md."), None)
 
