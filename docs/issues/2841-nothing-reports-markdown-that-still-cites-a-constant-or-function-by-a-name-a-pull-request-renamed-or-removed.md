@@ -42,7 +42,7 @@ Recommendation: option 1, because the harm condition of CLAUDE.md's rule is not 
 
 ## What the user ruled, 2026-11-08
 
-The user chose option 1, build nothing now, answering "A" at 2026-11-08 19:10 to item 4 of 5 of the approval-walk whose minutes are `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/memory-refusal-only-the-callers-lines-and-restored-branch-task-rebase-gap-approval-walk-2026-11-08-minutes.md`, which `scripts/walk-files-ship.py` puts there when the walk closes; on 2026-11-08 the walk was still open and the file was there only in the walk's checkout, under `docs/walk/`. The one case did no harm: a pull request reviewer found the six lines and PR 2829 fixed them, so the harm condition of CLAUDE.md's rule on proposing a guard or a validation is not met. The issue closes as not planned, until a second case shows harm.
+The user chose option 1, build nothing now, answering "A" at 2026-11-08 19:10 to item 4 of 5 of the approval-walk whose minutes are `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/memory-refusal-only-the-callers-lines-and-restored-branch-task-rebase-gap-approval-walk-2026-11-08-minutes.md`, which `scripts/walk-files-ship.py` puts there when the walk closes; on 2026-11-08 the walk was still open and the file was there only in the walk's checkout, under `docs/walk/`. The one case did no harm: a pull request reviewer found the six lines and PR 2829 fixed them, so the harm condition of CLAUDE.md's rule on proposing a guard or a validation is not met. The issue closes as not planned, until a second case shows harm.
 
 ## Next action
 

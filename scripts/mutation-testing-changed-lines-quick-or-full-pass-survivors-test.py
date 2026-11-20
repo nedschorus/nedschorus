@@ -2996,7 +2996,7 @@ def run_cases():
               f"err={completed.stderr}")
         home = Path(scratch_name) / "home"
         home.mkdir()
-        default_venv = home / ".local" / "share" / "nedschorus" / "cosmic-ray-venv"
+        default_venv = home / ".local" / "share" / "nedsnodes" / "cosmic-ray-venv"
         completed = run_script(repository, control, "--head", head, "--base", base,
                                extra_environment={"HOME": str(home)})
         check("no venv given, and none in the home directory: exit 2, saying how to build the "
