@@ -2273,7 +2273,7 @@ def architecture_overview_cases(root, repository, _base, _frozen_head):
     git(repository, "reset", "-q", "--hard", frozen_head)
     git(repository, "merge", "-q", "--no-edit", "origin/main")
     merge = git(repository, "rev-parse", "HEAD")
-    merge_fix = commit_file(repository, "nc-systems/demo/demo.py", "three\n", "round changes described code after the merge")
+    merge_fix = commit_file(repository, "nn-systems/demo/demo.py", "three\n", "round changes described code after the merge")
     merge_overview = commit_file(repository, DEMO_OVERVIEW, demo_overview_text(merge_fix), "overview checked against that fix")
     write_claim_check_report(report_directory, repository, merge_overview)
     code, out, err = check_round_at(frozen_head)
