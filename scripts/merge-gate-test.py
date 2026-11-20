@@ -1667,11 +1667,11 @@ def case_description_unparsable(gate):
 PR_3881_REVIEWS = "nedsnodes-nedsnodes-3881-reviews-channel-paginated.json"
 
 
-def pr_3881_routes():
+def pr_3881_routes(head=None):
     approval = review(PR_3881_REVIEWS, 5950181743)
     routes = {"state": {"stdout_file": str(arranged_state(
         "nedschorus-nedschorus-667-pr-view-state.json",
-        headRefOid=approval["commit_id"], mergeStateStatus=CLEAN))}}
+        headRefOid=head or approval["commit_id"], mergeStateStatus=CLEAN))}}
     routes.update(captured_channel_routes("reviews", "nedsnodes-nedsnodes-3881-reviews-channel"))
     routes.update(QUIET_INLINE)
     routes.update(QUIET_ISSUE)
@@ -1693,6 +1693,24 @@ def case_marks_hand_typed_approval_refused(gate):
         "\nPost it with: python3 scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py "
         f"--pull-request 3881 --head-commit {approval['commit_id']} --github-account ned-review-merge <review file>\n",
         f"\nThen run the gate again: scripts/merge-gate.sh 3881 {approval['commit_id']} <submitted_at>, "), run.summary()
+
+
+# A commit pushed after the hand-typed approval: the approval covers an older commit than the head.
+LATER_HEAD = "b" * 40
+
+
+def case_marks_hand_typed_approval_of_older_commit_asks_for_review_of_head(gate):
+    approval, routes = pr_3881_routes(head=LATER_HEAD)
+    run = run_gate(gate, "3881", LATER_HEAD, approval["submitted_at"], routes)
+    passed = refused_with(
+        run, "3881",
+        "https://github.com/nedsnodes/nedsnodes/pull/3881#pullrequestreview-5950181743 (APPROVED), lacks the marks",
+        f"\nThat review covers {approval['commit_id']}, and the nc-head-commit is now {LATER_HEAD}, so do not post "
+        f"its verdict again: a review posted now is recorded on {LATER_HEAD}, which no one has reviewed.\n",
+        f"\nHave {LATER_HEAD} reviewed, and post that review with: python3 "
+        "scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py --pull-request 3881 "
+        f"--head-commit {LATER_HEAD} --github-account ned-review-merge <review file>\n")
+    return passed and f"--head-commit {approval['commit_id']}" not in run.stdout + run.stderr, run.summary()
 
 
 def pr_636_request_routes(changed_fields, comments_routes):
@@ -1862,6 +1880,8 @@ CASES = [
     ("G3 a description jq cannot read could not run", case_description_unparsable),
     ("G3 the description reader failing could not run", case_description_reader_fails),
     ("MARKS a hand-typed approval by the merge account refuses", case_marks_hand_typed_approval_refused),
+    ("MARKS a hand-typed approval of an older commit than the head asks for a review of the head",
+     case_marks_hand_typed_approval_of_older_commit_asks_for_review_of_head),
     ("MARKS a hand-typed request for changes by the merge account refuses",
      case_marks_hand_typed_request_for_changes_refused),
     ("MARKS a request for changes with fewer Blocks comments than its count refuses",
@@ -1950,9 +1970,12 @@ SINCE_REAL_TIME_CHECK = """jq -n --arg since "$SINCE" '$since | fromdateiso8601'
 
 MUTATIONS = [
     ("without the verdict review marks refusal",
-     [("       fail \"$MERGE_ACCOUNT's latest review with a verdict", "       : \"$MERGE_ACCOUNT's latest review with a verdict")],
-     [case_marks_hand_typed_approval_refused, case_marks_hand_typed_request_for_changes_refused,
+     [('fail "$marks_refused"', ': "$marks_refused"')],
+     [case_marks_hand_typed_approval_refused, case_marks_hand_typed_approval_of_older_commit_asks_for_review_of_head, case_marks_hand_typed_request_for_changes_refused,
       case_marks_request_for_changes_with_fewer_blocks_than_its_count_refused]),
+    ("an older commit's verdict reposted on the head",
+     [('if [ "$verdict_review_commit" = "$head" ]; then', 'if true; then')],
+     [case_marks_hand_typed_approval_of_older_commit_asks_for_review_of_head]),
     ("a request for changes checked without its comments",
      [('if [ "$verdict_review_state" = "CHANGES_REQUESTED" ]; then', 'if false; then')],
      [case_b6_merge_accounts_later_findings, case_marks_review_comments_read_fails]),
