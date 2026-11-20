@@ -3,7 +3,13 @@
 
 Usage (git runs it from scripts/git-client-side-hooks/post-merge, in the
 checkout's top directory, after every merge, a fast-forward included):
-  nn-systems/general-tools/install-scheduled-jobs-on-this-machine-after-reference-checkout-merge-and-report-install-failure-as-task-for-installer-owner-agent-seat.py
+  nn-systems/general-tools/install-scheduled-jobs-on-this-machine-after-reference-checkout-merge-and-report-install-failure-as-task-for-installer-owner-agent-seat.py [--print-outcome]
+
+The hook gives no option and the program prints only FAILED messages. An agent
+or the user who reruns it by hand, as its messages say to, gives
+--print-outcome, and the program then also prints one line saying how the run
+ended: not a reference-checkout, both steps exited 0 with the tasks marked
+completed, or the step that failed again with the task that now holds it.
 
 Every checkout of the clone runs the same post-merge hook, because
 core.hooksPath names the reference-checkout's hook directory. In any checkout
@@ -32,9 +38,10 @@ program prints a FAILED message, as the paragraph after next says.
 
 When both steps exit 0, each open task is marked completed, and nothing is
 printed. When marking one completed fails, it and the open tasks after it
-stay open, the failure is not reported, and the exit is still 0: an open task
-tells its reader to rerun both steps, which then shows they work, and the
-next pull at which both succeed marks them completed.
+stay open, the hook's run does not report it, and the exit is still 0: an
+open task tells its reader to rerun this program with --print-outcome, which
+reports the failed marking, and the next pull at which both succeed marks
+them completed.
 
 When the task cannot be written, or a step failed on the Mac, where
 OWNING_AGENT_SEAT's task list is not, a FAILED message holding the failed
@@ -67,7 +74,6 @@ which runs no real install:
 # Messages here follow docs/nedsnodes-wiki/nedsnodes-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 
 import argparse
-import contextlib
 import importlib.util
 import json
 import os
@@ -121,6 +127,8 @@ INSTALL = "--install"
 REMOVE_NOT_IN_TABLE = "--remove-not-in-table"
 INSTALLER_STEPS = (INSTALL, REMOVE_NOT_IN_TABLE)
 SCHEDULED_JOBS_TABLE = "nn-systems/general-tools/scheduled-jobs-on-each-machine.json"
+BOTH_INSTALLER_STEPS = f"both installer steps, `{INSTALL}` and then `{REMOVE_NOT_IN_TABLE}`,"
+PRINT_OUTCOME_OPTION = "--print-outcome"
 WHAT_A_FAILED_STEP_MAY_LEAVE_ON_THE_MACHINE = {
     INSTALL: f"may not run every job that {SCHEDULED_JOBS_TABLE} gives it",
     REMOVE_NOT_IN_TABLE: f"may still run a job that {SCHEDULED_JOBS_TABLE} does not give it",
@@ -132,8 +140,8 @@ def step_command_text(reference_checkout, step):
             f"{SCHEDULED_JOBS_INSTALLER_PATH_RELATIVE_TO_CLONE_TOP_DIRECTORY} {step}")
 
 
-def every_step_command_text(reference_checkout):
-    return " && ".join(step_command_text(reference_checkout, step) for step in INSTALLER_STEPS)
+def rerun_command_text(reference_checkout):
+    return f"cd {reference_checkout} && python3 {PROGRAM} {PRINT_OUTCOME_OPTION}"
 
 
 def failed_step_sentence(machine, reference_checkout, step, exit_code):
@@ -155,34 +163,55 @@ def kept_line_instruction(machine, condition, step):
             f"{machine}'s crontab, keeping the job that is not the clone's.\n")
 
 
+def find_and_fix_cause_instruction(condition, machine):
+    return (f"{condition}, find the cause from the installer's lines at the end of this text and "
+            f"fix it: in a pull request when the cause is in the installer or the table, or on "
+            f"{machine} when it is in {machine}'s own state, such as its crontab.\n")
+
+
+def rerun_instruction(condition, machine, reference_checkout):
+    rerun = rerun_command_text(reference_checkout)
+    what_it_does = (f"it runs {BOTH_INSTALLER_STEPS} again and prints how they ended")
+    if machine == NED_BOX:
+        return f"{condition}, then run `{rerun}` on ned-box: {what_it_does}.\n"
+    return (f"{condition}, then ask the user to run `{rerun}` in a Terminal on {machine}, which "
+            f"ned-box cannot run commands on, and to paste what it prints into your session: "
+            f"{what_it_does}.\n")
+
+
+def user_only_fix_instruction(condition):
+    return (f"{condition}the fix needs something only the user can do, tell the user what "
+            f"failed, quoting the installer's lines, and what to do.\n")
+
+
 def failed_step_task_description(reference_checkout, step, exit_code, output):
     sentence = failed_step_sentence(NED_BOX, reference_checkout, step, exit_code)
+    rerun = rerun_command_text(reference_checkout)
     return (
-        f"{sentence[0].upper()}{sentence[1:]} The installer printed:\n{output}\n"
-        f"Find the cause from the installer's FAILED, KEPT or \"not run\" lines above.\n"
-        f"When the cause is in the installer or the table, fix it in a pull request.\n"
-        f"When the cause is in ned-box's own state, such as its crontab, put it right on "
-        f"ned-box, then run `{every_step_command_text(reference_checkout)}` on ned-box to "
-        f"confirm that both exit 0.\n"
-        f"{kept_line_instruction(NED_BOX, 'When the installer printed a KEPT line', step)}"
-        f"When the fix needs something only the user can do, tell the user what failed, "
-        f"quoting the installer's lines, and what he must do.\n"
-        f"The post-merge hook runs both steps at every pull into the reference-checkout: while "
-        f"either fails, it replaces this description with the latest failure, and once both "
-        f"exit 0 it marks this task completed. You may mark it completed yourself once the "
-        f"commands above both exit 0.")
+        f"{sentence[0].upper()}{sentence[1:]}\n"
+        + find_and_fix_cause_instruction("Before anything else", NED_BOX)
+        + kept_line_instruction(NED_BOX, "When the installer printed a KEPT line", step)
+        + f"Then run `{rerun}` on ned-box: it runs {BOTH_INSTALLER_STEPS} again, marks this "
+        f"task completed when both exit 0 or rewrites this description with the new failure, "
+        f"and prints which it did.\n"
+        + user_only_fix_instruction("When ")
+        + f"The post-merge hook does the same at every pull into the reference-checkout, without "
+        f"printing.\n"
+        f"The installer printed:\n{output}")
 
 
-def failed_message(machine, reference_checkout, step, exit_code, output, why_no_task):
+def failed_message(machine, reference_checkout, step, exit_code, output, why_no_task,
+                   owner_instructions=""):
+    owner = f"If you are {OWNING_AGENT_SEAT}"
     return (
         f"{PROGRAM}: FAILED — {failed_step_sentence(machine, reference_checkout, step, exit_code)} "
         f"The agent-seat {OWNING_AGENT_SEAT} on ned-box owns the installer and fixes its "
         f"failures, and this failure was not handed to it: {why_no_task}\n"
-        f"If you are {OWNING_AGENT_SEAT}, find the cause from the installer's lines below, fix "
-        f"it, and have `{every_step_command_text(reference_checkout)}` run on {machine} to "
-        f"confirm that both exit 0.\n"
-        + kept_line_instruction(
-            machine, f"If you are {OWNING_AGENT_SEAT} and the installer printed a KEPT line", step)
+        + find_and_fix_cause_instruction(owner, machine)
+        + kept_line_instruction(machine, f"{owner} and the installer printed a KEPT line", step)
+        + owner_instructions
+        + rerun_instruction(owner, machine, reference_checkout)
+        + user_only_fix_instruction(f"{owner} and ")
         + f"If you are a subagent, give this whole message to the agent that dispatched you.\n"
         f"If you are any other agent, send this whole message to {OWNING_AGENT_SEAT} with "
         f"Claude Code's SendMessage tool, addressed to {OWNING_AGENT_SEAT}; if "
@@ -190,6 +219,13 @@ def failed_message(machine, reference_checkout, step, exit_code, output, why_no_
         f"installer's {step} step failed on {machine}, quoting this whole message.\n"
         f"If you are the user, paste this whole message into {OWNING_AGENT_SEAT}'s session.\n"
         f"The installer printed:\n{output}")
+
+
+def write_failure_owner_instructions(list_directory):
+    return (
+        f"If you are {OWNING_AGENT_SEAT}, also put right, on ned-box, what stopped the task "
+        f"write, such as the permissions of {list_directory} or a file where that directory "
+        f"should be.\n")
 
 
 def open_tasks_with_subject(list_directory, subject):
@@ -217,10 +253,18 @@ def first_failed_installer_step(installer):
 
 
 def main(environment=None, argv=None):
-    argparse.ArgumentParser(
+    parser = argparse.ArgumentParser(
         description=__doc__.split("\n\n")[0],
-        epilog="Git runs this from scripts/git-client-side-hooks/post-merge after every merge; "
-               "it takes no options.").parse_args(argv)
+        epilog="Git runs this from scripts/git-client-side-hooks/post-merge after every merge, "
+               "with no options.")
+    parser.add_argument(PRINT_OUTCOME_OPTION, action="store_true",
+                        help="for a run by hand: print one line saying how the run ended, "
+                             "where the hook's run prints nothing")
+    print_outcome = parser.parse_args(argv).print_outcome
+
+    def outcome(line):
+        if print_outcome:
+            print(line)
     environment = os.environ if environment is None else environment
     reference_checkouts = dict(REFERENCE_CHECKOUT_PATH_BY_MACHINE_NAME)
     if environment.get(NED_BOX_REFERENCE_CHECKOUT_PATH_TEST_OVERRIDE_ENVIRONMENT_VARIABLE):
@@ -233,6 +277,9 @@ def main(environment=None, argv=None):
     machine = next((name for name, path in reference_checkouts.items()
                     if os.path.realpath(path) == checkout), None)
     if machine is None:
+        outcome(f"{checkout} is not a reference-checkout, so nothing was run; run this in "
+                f"{reference_checkouts[NED_BOX]} on ned-box or {reference_checkouts[MAC]} on the "
+                f"Mac.")
         return EXIT_DONE
     reference_checkout = reference_checkouts[machine]
     installer = environment.get(SCHEDULED_JOBS_INSTALLER_PATH_TEST_OVERRIDE_ENVIRONMENT_VARIABLE) \
@@ -240,6 +287,8 @@ def main(environment=None, argv=None):
     failed = first_failed_installer_step(installer)
     if machine != NED_BOX:
         if failed is None:
+            outcome(f"Both installer steps, {INSTALL} and then {REMOVE_NOT_IN_TABLE}, exited 0 "
+                    f"on {machine}.")
             return EXIT_DONE
         print(failed_message(machine, reference_checkout, *failed,
                              f"{OWNING_AGENT_SEAT}'s task list is on ned-box, and this program "
@@ -251,11 +300,22 @@ def main(environment=None, argv=None):
     list_directory = task_lists_directory / f"nedsnodes-{OWNING_AGENT_SEAT}-tasks"
     subject = SCHEDULED_JOBS_INSTALLER_FAILURE_TASK_SUBJECT_FOR_OWNING_AGENT_SEAT_TASK_LIST
     if failed is None:
-        if list_directory.is_dir():
-            with contextlib.suppress(OSError):
+        marked = []
+        try:
+            if list_directory.is_dir():
                 for path, task in open_tasks_with_subject(list_directory, subject):
                     agent_seat_task_file.agent_seat_task_list_task_file_rewrite(
                         path, {**task, "status": "completed"})
+                    marked.append(path.name)
+        except OSError as error:
+            # The hook's run leaves this unreported: the open task's rerun shows the steps work.
+            outcome(f"Both installer steps, {INSTALL} and then {REMOVE_NOT_IN_TABLE}, exited 0 "
+                    f"on ned-box, but marking the open task completed failed: "
+                    f"{type(error).__name__}: {error}. Put right what stopped it and run this "
+                    f"again.")
+            return EXIT_DONE
+        outcome(f"Both installer steps, {INSTALL} and then {REMOVE_NOT_IN_TABLE}, exited 0 on "
+                f"ned-box; open tasks marked completed: {', '.join(marked) or 'none'}.")
         return EXIT_DONE
     description = failed_step_task_description(reference_checkout, *failed)
     try:
@@ -270,20 +330,12 @@ def main(environment=None, argv=None):
     except OSError as error:
         print(failed_message(machine, reference_checkout, *failed,
                              f"writing the task into the task list directory {list_directory} "
-                             f"failed: {type(error).__name__}: {error}\n"
-                             f"If you are {OWNING_AGENT_SEAT}, put right, on ned-box, what "
-                             f"stopped that write, such as the permissions of {list_directory} "
-                             f"or a file where that directory should be. Then run `cd "
-                             f"{reference_checkout} && python3 {PROGRAM}` on ned-box, which runs "
-                             f"both steps again.\n"
-                             f"If a step fails again, the program writes the failure as a "
-                             f"task on your task list and exits 0 with nothing printed; if it "
-                             f"prints a FAILED message naming the task list directory and exits 1, "
-                             f"the write still fails, so find what else stops it.\n"
-                             f"If both steps exit 0, the program prints nothing, writes no task "
-                             f"and exits 0, and nothing needs a task."),
+                             f"failed: {type(error).__name__}: {error}",
+                             write_failure_owner_instructions(list_directory)),
               file=sys.stderr)
         return EXIT_FAILED
+    outcome(f"The {failed[0]} step failed again on ned-box (exit {failed[1]}); its output is in "
+            f"the open task with the subject \"{subject}\" in {list_directory}.")
     return EXIT_DONE
 
 
