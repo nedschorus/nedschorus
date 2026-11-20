@@ -89,16 +89,33 @@ CREDENTIAL_READ_DENY_RULES = (
     + [f"Read(/{path})" for path in common.reviewer_program_login_files()]
 )
 SETTINGS = {"disableAllHooks": True, "permissions": {"deny": CREDENTIAL_READ_DENY_RULES}}
+PROMPT_CACHE_FIVE_MINUTE_TTL_SETTINGS = {"promptCacheTtl": "5m"}
 
 
-def invocation_builder(effort: str):
+def cold_read_cell_launcher_own_command_line_options_adder(parser):
+    parser.add_argument(
+        "--prompt-cache-five-minute-ttl", action="store_true",
+        help='add "promptCacheTtl": "5m" to the run\'s Claude Code settings, so '
+             "the run writes 5-minute prompt cache instead of the default 1-hour cache",
+    )
+
+
+def claude_code_session_settings(parsed_arguments) -> dict:
+    return (
+        {**SETTINGS, **PROMPT_CACHE_FIVE_MINUTE_TTL_SETTINGS}
+        if parsed_arguments is not None and parsed_arguments.prompt_cache_five_minute_ttl
+        else SETTINGS)
+
+
+def invocation_builder(effort: str, parsed_arguments=None):
     """Return a callback yielding model argv and prompt input for the shared runner."""
+    settings = claude_code_session_settings(parsed_arguments)
     # Pass the prompt on stdin: variadic --allowedTools can swallow a trailing positional argument.
     def build_invocation(model: str, prompt: str):
         # dontAsk: a tool call ALLOWED_TOOLS does not allow is refused, with no one to ask.
         command = [
             *command_line_prefix.claude_code_headless_run_command_line_prefix_build(
-                "dontAsk", caller_claude_code_session_settings=SETTINGS),
+                "dontAsk", caller_claude_code_session_settings=settings),
             "--model", model,
             "--effort", effort,
             "--output-format", "text",
@@ -114,15 +131,16 @@ STRUCTURED_ANSWER_ALLOWED_TOOLS = "Read,Grep,Glob,WebFetch"
 
 
 def structured_answer_invocation_builder(effort: str, schema_path: pathlib.Path,
-                                         answer_file: pathlib.Path):
+                                         answer_file: pathlib.Path, parsed_arguments=None):
     """Return a callback yielding argv and prompt input that ask claude for an answer to schema_path."""
     del answer_file  # claude prints its answer on stdout
     schema_text = schema_path.read_text(encoding="utf-8")
+    settings = claude_code_session_settings(parsed_arguments)
 
     def build_invocation(model: str, prompt: str):
         command = [
             *command_line_prefix.claude_code_headless_run_command_line_prefix_build(
-                "dontAsk", caller_claude_code_session_settings=SETTINGS),
+                "dontAsk", caller_claude_code_session_settings=settings),
             "--model", model,
             "--effort", effort,
             "--output-format", "json",
@@ -182,6 +200,7 @@ def main() -> int:
         recognised_failure_texts_for_model=recognised_failure_texts_for_model,
         structured_answer_support=common.StructuredAnswerSupport(
             structured_answer_invocation_builder, structured_answer_from_run),
+        cold_read_cell_launcher_own_command_line_options_adder=cold_read_cell_launcher_own_command_line_options_adder,
     )
 
 

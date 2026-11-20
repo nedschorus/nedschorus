@@ -131,7 +131,7 @@ store's listing, and the copy takes seconds over ssh; a second shipment of the
 same walk landing a file in those seconds was overwritten without a word, and
 both printed shipped: (GHI "Two shipments of one cold-read-record name at the
 same moment can lose a report while both say it shipped",
-https://github.com/nedschorus/nedschorus/issues/910, measured for the record
+https://github.com/nedsnodes/nedsnodes/issues/910, measured for the record
 shipper). So the files are copied into a staging directory in walk/
 (`.ship-staging-<name>-<random>`, removed once they are in place) and put in
 place by the record shipper's two steps: an add-only file by hard link, which
@@ -707,7 +707,7 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
         listed, revised_numbers = approval_walk_document_revised_copy_numbers_from_log_store_directory_listing(
             destination.copy_host, destination.walk_path, name)
         if revised_numbers is None:
-            reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+            reason = shipper.failed_log_store_step_reason_text_build_from_local_stdout_or_log_store_host_unreachable_or_ssh_exit(
                 destination.copy_host, listed)
             print(f"FAILED: {name} — {reason}; the walk's files stay on disk, unshipped.")
             sys.stderr.write(listed.stderr)
@@ -719,7 +719,7 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
                                              list(targets.values())
                                              + list(revised_targets.values()))
     if stored is None:
-        reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+        reason = shipper.failed_log_store_step_reason_text_build_from_local_stdout_or_log_store_host_unreachable_or_ssh_exit(
             destination.copy_host, listed)
         print(f"FAILED: {name} — {reason}; the walk's files stay on disk, unshipped.")
         sys.stderr.write(listed.stderr)
@@ -790,9 +790,8 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
                              staging_dir)
         if copied.returncode != 0:
             why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
-            reason = ("ned-box unreachable"
-                      if copied.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED
-                      else f"rsync exit {copied.returncode}")
+            reason = shipper.failed_log_store_rsync_step_reason_text_build_from_log_store_host_unreachable_or_rsync_exit(
+                destination.copy_host, copied)
             print(walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_builder(
                 destination.copy_host, name, directory, staging_dir,
                 f"{reason} during the copy", why))
@@ -816,7 +815,7 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
                 return EXIT_FAILED
             if outcomes is None:
                 why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
-                reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+                reason = shipper.failed_log_store_step_reason_text_build_from_local_stdout_or_log_store_host_unreachable_or_ssh_exit(
                     destination.copy_host, renamed)
                 print(walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_builder(
                     destination.copy_host, name, directory, staging_dir,
@@ -856,7 +855,7 @@ def ship_walk_with_revised_copies_directory(destination: WalkStoreDestination,
                 [source.name for source in to_place])
             if after is None:
                 why = shipper.remove_staging_directory(destination.copy_host, staging_dir)
-                reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+                reason = shipper.failed_log_store_step_reason_text_build_from_local_stdout_or_log_store_host_unreachable_or_ssh_exit(
                     destination.copy_host, placed)
                 print(walk_files_ship_copy_or_place_step_failed_line_with_shipment_rerun_command_builder(
                     destination.copy_host, name, directory, staging_dir,

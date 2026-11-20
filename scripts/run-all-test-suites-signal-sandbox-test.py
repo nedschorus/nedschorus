@@ -562,7 +562,7 @@ if linux_only_cases_run_here("the report's sandbox lines"):
                           for line in report.splitlines())
                   and any(line.startswith(f"NOT RUN {unstartable} did not start: ")
                           and " — log " in line for line in report.splitlines())
-                  and "1 not run, because bwrap could not build the nc-test-sandbox" in report
+                  and "1 not run; each line says why, and each log what to do:" in report
                   and not any(line.startswith(f"FAIL {unstartable}")
                               for line in report.splitlines())
                   and summary in report
@@ -765,9 +765,10 @@ with tempfile.TemporaryDirectory() as scratch_name:
           in_sandbox["log"].read_text().strip() == str(os.environ.get("TMPDIR")),
           in_sandbox["log"].read_text())
 
-for suite in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX:
-    check(f"the suite listed to run outside the sandbox exists: {suite}",
-          (SCRIPTS_DIR.parent / suite).is_file())
+for list_name in runner.SUITE_SANDBOX_LIST_NAMES_READ_FROM_CHECKOUT_UNDER_TEST:
+    for suite in getattr(runner, list_name):
+        check(f"the suite listed in {list_name} exists: {suite}",
+              (SCRIPTS_DIR.parent / suite).is_file())
 
 # Each of these starts the real bwrap, which cannot start inside bwrap.
 for suite in ("nc-systems/cold-read/tests/cold-read-agy-cell-real-sandbox-test.py",

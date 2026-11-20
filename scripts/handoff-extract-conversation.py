@@ -36,8 +36,8 @@ Kept as a third voice, Subagent: for each subagent the session dispatched,
 what it was asked and what it reported, never its own records. These subagent
 turns have the voice "subagent" even when the session's agent wrote them, as
 it wrote each task. The subagent tracker,
-scripts/handoff-extract-conversation-subagent-tracker-nbd.py, finds them and
-says which records it reads. The tracker is nice-but-dirty: when it cannot be
+scripts/handoff-extract-conversation-subagent-tracker-hack.py, finds them and
+says which records it reads. The tracker is nn-hack: when it cannot be
 loaded or raises, the subagent turns are left out, and one note says so and
 why: as a line in the header of the conversation-tail, which is also what
 stdout gets; as a section of its own, "Subagent tasks and reports left out",
@@ -106,7 +106,7 @@ INJECTED_TEXT_PREFIXES = (
 MAXIMUM_ACKNOWLEDGEMENT_WORDS = 60
 
 SUBAGENT_VOICE = "subagent"
-SUBAGENT_TRACKER_MODULE_FILE_NAME = "handoff-extract-conversation-subagent-tracker-nbd.py"
+SUBAGENT_TRACKER_MODULE_FILE_NAME = "handoff-extract-conversation-subagent-tracker-hack.py"
 # The kind of the one turn that says the subagent turns were left out; it is not a subagent turn.
 SUBAGENT_TURNS_LEFT_OUT_KIND = "left-out"
 
@@ -268,7 +268,7 @@ def new_subagent_tracker():
     global _subagent_tracker_module
     if _subagent_tracker_module is None:
         specification = importlib.util.spec_from_file_location(
-            "handoff_extract_conversation_subagent_tracker_nbd", subagent_tracker_module_path())
+            "handoff_extract_conversation_subagent_tracker_hack", subagent_tracker_module_path())
         module = importlib.util.module_from_spec(specification)
         specification.loader.exec_module(module)
         if module.SUBAGENT_VOICE != SUBAGENT_VOICE:

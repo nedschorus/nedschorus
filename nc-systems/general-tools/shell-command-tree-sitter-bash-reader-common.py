@@ -563,10 +563,11 @@ def parser_unavailable_hook_output(guard_name, error, next_step_lines, environme
                 f"{COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION}, then say whether it did what "
                 f"{guard_name} exists to stop.",
                 environment))
-        return json.dumps({"hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "additionalContext": message,
-        }})
+        user_notice = (
+            f"{guard_name} let a command through unchecked on {host}, because the shell command "
+            f"reader failed on it ({error.install_output}). The agent has been told to check "
+            f"what the command did.")
+        return _parser_unavailable_hook_output_json(message, user_notice)
     message = (
         f"{guard_name} let this command through without checking it, and the command has run: "
         f"the shell parser tree-sitter-bash is missing on {host}, and installing it failed.\n"
@@ -581,10 +582,19 @@ def parser_unavailable_hook_output(guard_name, error, next_step_lines, environme
             + f"\nThen {COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION}, and say whether it did what "
             f"{guard_name} exists to stop.",
             environment))
-    return json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "additionalContext": message,
-    }})
+    user_notice = (
+        f"{guard_name} let a command through unchecked on {host}: tree-sitter-bash is missing "
+        f"there and installing it failed ({error.install_output}). The agent has been told to "
+        f"check what the command did and how to install it by hand.")
+    return _parser_unavailable_hook_output_json(message, user_notice)
+
+
+def _parser_unavailable_hook_output_json(agent_notice, user_notice):
+    """Return the PreToolUse JSON giving agent_notice to the agent and user_notice to the user."""
+    return json.dumps({
+        "hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": agent_notice},
+        "systemMessage": user_notice,
+    })
 
 
 def report_to_user_or_dispatching_agent_instruction_build(words, environment=os.environ):
@@ -1021,6 +1031,12 @@ def _descriptor_written_before(node, source):
     return ""
 
 
+def _is_braced_expansion(node):
+    """Return whether node is a ${ } expansion, including one tree-sitter-bash reads as an ERROR."""
+    return node.type == "expansion" or (
+        node.type == "ERROR" and [child.type for child in node.children[:1]] == ["${"])
+
+
 class _Collector:
     def __init__(self, glob_markers, source, heredocs_taken_out, restored=None):
         self.glob_markers = glob_markers
@@ -1058,15 +1074,19 @@ class _Collector:
                     for command in self.commands[first:]:
                         command.in_while_or_until_loop_condition = True
             return
-        if kind == "expansion":
-            for child in node.children:
-                if child.type == "word" and any(mark in _text(child) for mark in ("`", "<(", ">(")):
-                    # tree-sitter-bash leaves a backtick or a process substitution in a
-                    # ${name:-...} default as one word; bash runs it.
-                    found = simple_commands("echo " + _text_restored(child, self.restored),
-                                            self.glob_markers)
-                    self.adopt([command for command in found if command.inside_substitution()],
-                               child_shell + (ChildShell(child.start_byte, SUBSTITUTION),))
+        if _is_braced_expansion(node) and any(mark in _text(node) for mark in ("`", "<(", ">(")):
+            # tree-sitter-bash splits a backticked command or a process substitution
+            # inside ${ } into text, ERROR and substitution pieces, so the text inside
+            # the braces is read again whole, in the quoting it is written in.
+            quote = '"' if node.parent is not None and node.parent.type in ("string", "heredoc_body") \
+                else ""
+            # Inside ${ } a # after a blank starts no comment, so the second read gets it escaped.
+            inner = re.sub(r"(^|\s)#", r"\1\\#", _text_restored(node, self.restored)[2:-1])
+            found = simple_commands("echo " + quote + inner + quote, self.glob_markers)
+            # The offsets of the second read count from its own text, so the ${ } holds them.
+            self.adopt([command for command in found if command.inside_substitution()],
+                       child_shell + (ChildShell(node.start_byte, SUBSTITUTION),))
+            return
         for child in node.children:
             self.visit(child, child_shell, heredocs)
 
@@ -1631,11 +1651,8 @@ def _heredoc_body_substitution_commands(body, glob_markers):
     index = start
     while index < end:
         node = expansions.get(index)
-        if node is not None and not (node.type == "expansion" and b"`" in node.text):
+        if node is not None:
             index = node.end_byte
-        elif node is not None:
-            # tree-sitter-bash splits a backticked command inside ${ }; the walk reads it there.
-            index += 1
         elif source[index:index + 1] == b"\\":
             index += 2
         elif source[index:index + 1] == b"`":

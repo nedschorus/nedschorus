@@ -10,6 +10,7 @@ Run: python3 nc-systems/general-tools/tests/bash-guards-verdict-changes-between-
 Prints one line per case and exits non-zero if any case fails.
 """
 
+import argparse
 import contextlib
 import importlib.util
 import io
@@ -230,6 +231,11 @@ def head_ref_cut_from_base(head_ref, base_ref, head_cut_from_base):
     with head_ref's tree parented on the base."""
     return commit_with_tree_of_parented_on(head_ref, base_ref) \
         if head_cut_from_base and base_ref != "HEAD" and head_ref != base_ref else head_ref
+
+
+def printed_rerun_command(err, after):
+    """The rest of the line of err that follows after, or "" when no line holds it."""
+    return next((line.split(after, 1)[1] for line in err.splitlines() if after in line), "")
 
 
 def run_replay(head_ref, scratch, *extra, base_ref="HEAD", scratch_directory=True, pairs=FIXTURE_PAIRS,
@@ -1494,21 +1500,33 @@ try:
         (directory / "locked").mkdir(parents=True)
         (directory / "locked" / "file").write_text("x")
         (directory / "locked").chmod(0o500)
+    (locked_run_logs / "verdicts-in-process-head.log").write_text("a step log")
+    removable_scratch = Path(scratch) / "removal-failures-removable-scratch"
+    removable_scratch.mkdir()
     try:
         after_exit_1 = replay.remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures(
             locked_scratch, locked_run_logs, 1)
         after_exit_0 = replay.remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures(
             locked_scratch, locked_run_logs, 0)
+        run_log_file_after_scratch_failure = (locked_run_logs / "verdicts-in-process-head.log").exists()
+        after_exit_0_scratch_removed = (
+            replay.remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures(
+                removable_scratch, locked_run_logs, 0))
     finally:
         for directory in (locked_scratch, locked_run_logs):
             (directory / "locked").chmod(0o700)
     check("a path that cannot be removed is returned with its reason: the scratch directory's after any exit, the "
-          "run log directory's only after an exit 0",
+          "run log directory's only after an exit 0 whose scratch directory was removed",
           any(str(locked_scratch / "locked" / "file") in line for line in after_exit_1)
           and not any(str(locked_run_logs) in line for line in after_exit_1)
           and any(str(locked_scratch / "locked" / "file") in line for line in after_exit_0)
-          and any(str(locked_run_logs / "locked" / "file") in line for line in after_exit_0),
-          f"after exit 1 {after_exit_1}; after exit 0 {after_exit_0}")
+          and not any(str(locked_run_logs) in line for line in after_exit_0)
+          and not removable_scratch.exists()
+          and any(str(locked_run_logs / "locked" / "file") in line for line in after_exit_0_scratch_removed),
+          f"after exit 1 {after_exit_1}; after exit 0 {after_exit_0}; "
+          f"after exit 0, scratch removed {after_exit_0_scratch_removed}")
+    check("the run log directory is kept after an exit 0 whose scratch directory could not be removed, since the "
+          "replay then exits 2", run_log_file_after_scratch_failure, f"after exit 0 {after_exit_0}")
 
     pairs_file = Path(scratch) / "fixture-pairs.json"
     pairs_file.write_text(json.dumps(FIXTURE_PAIRS))
@@ -1553,15 +1571,38 @@ try:
     git("worktree", "lock", str(locked))
     check("a checkout the test made is registered in the test's own repository",
           worktrees_registered_under(locked), worktrees_registered_under(locked))
-    not_removed = replay.remove_checkouts(str(TEST_REPOSITORY), [locked])
+    real_git = subprocess.run(["sh", "-c", "command -v git"], capture_output=True, text=True).stdout.strip()
+    remove_failing_git_directory = Path(scratch) / "remove-failing-git"
+    remove_failing_git_directory.mkdir()
+    (remove_failing_git_directory / "git").write_text(
+        f'#!/bin/sh\ncase "$*" in *"worktree remove"*) echo refused >&2; exit 1;; esac\nexec {real_git} "$@"\n')
+    (remove_failing_git_directory / "git").chmod(0o755)
+
+    # The replay removes even a locked checkout, so a git whose worktree remove fails stands in for any refusal.
+    @contextlib.contextmanager
+    def git_worktree_remove_failing():
+        path_as_set = os.environ["PATH"]
+        os.environ["PATH"] = f"{remove_failing_git_directory}:{path_as_set}"
+        try:
+            yield
+        finally:
+            os.environ["PATH"] = path_as_set
+    with git_worktree_remove_failing():
+        not_removed = replay.remove_checkouts(str(TEST_REPOSITORY), [locked])
     check("a checkout git cannot remove is reported, with git's reason",
-          len(not_removed) == 1 and str(locked) in not_removed[0] and "exited" in not_removed[0], not_removed)
+          len(not_removed) == 1 and str(locked) in not_removed[0] and "exited 1: refused" in not_removed[0],
+          not_removed)
     remedy = not_removed[0].rsplit("; run ", 1)[-1] if not_removed else ""
     remedy_ran = subprocess.run(remedy, shell=True, capture_output=True, text=True)
     check("a locked checkout's line ends with the command that removes it, and that command removes it",
           remedy == f"git -C {TEST_REPOSITORY} worktree remove --force --force {locked}"
           and remedy_ran.returncode == 0 and not worktrees_registered_under(locked),
           f"{not_removed}\n{remedy_ran.stderr}")
+    git("worktree", "add", "--detach", str(locked), "HEAD")
+    git("worktree", "lock", str(locked))
+    not_removed = replay.remove_checkouts(str(TEST_REPOSITORY), [locked])
+    check("a locked checkout is removed, lock and all, since the replay's checkouts are locked by no one else",
+          not_removed == [] and not worktrees_registered_under(locked), not_removed)
 
     undeletable = Path(scratch) / "unregistered-undeletable-checkout"
     (undeletable / "inside").mkdir(parents=True)
@@ -1579,7 +1620,6 @@ try:
           and remedy.startswith(f"rm -rf {undeletable},") and remedy_ran.returncode == 0 and not undeletable.exists(),
           f"{not_removed}\n{remedy_ran.stderr}")
 
-    real_git = subprocess.run(["sh", "-c", "command -v git"], capture_output=True, text=True).stdout.strip()
     failing_git_directory = Path(scratch) / "failing-git"
     failing_git_directory.mkdir()
     listed_checkout = Path(scratch) / "checkout-git-did-not-list"
@@ -1611,10 +1651,30 @@ try:
     (existing_scratch / "checkout-base").mkdir(parents=True)
     (existing_scratch / "checkout-base" / "kept").write_text("not made by the replay")
     status, out, err = run_replay("HEAD", scratch, "--scratch-directory", str(existing_scratch))
-    check("a checkout path that already exists in a reused --scratch-directory: exit 2, the path named, and what it "
-          "holds left as it was",
+    check("a checkout path that already exists in a reused --scratch-directory: exit 2, the path and the scratch "
+          "directory named, and what it holds left as it was",
           status == 2 and f"{existing_scratch / 'checkout-base'} already exists, and git does not list it" in err
+          and f"The path is inside the --scratch-directory, {existing_scratch}." in err
           and (existing_scratch / "checkout-base" / "kept").exists(), f"status {status}\n{out}\n{err}")
+    fresh_rerun = printed_rerun_command(err, "this command already names one: ")
+    fresh_ran = subprocess.run(fresh_rerun, shell=True, capture_output=True, text=True)
+    check("the command the message gives runs the same replay in a scratch directory that did not exist, and "
+          "leaves the reused one as it was",
+          f"--scratch-directory={existing_scratch}-2 " in fresh_rerun and fresh_ran.returncode == 0
+          and (existing_scratch / "checkout-base" / "kept").exists(),
+          f"{fresh_rerun}\n{fresh_ran.returncode}\n{fresh_ran.stdout[-2000:]}\n{fresh_ran.stderr[-2000:]}")
+    Path(f"{existing_scratch}-3").mkdir()
+    status, out, err = run_replay("HEAD", scratch, "--scratch-directory", str(existing_scratch))
+    next_free_rerun = printed_rerun_command(err, "this command already names one: ")
+    check("when <scratch>-2, which the run above made, and <scratch>-3 both exist, the command names <scratch>-4, "
+          "the next path that does not exist",
+          status == 2 and f"--scratch-directory={existing_scratch}-4 " in next_free_rerun,
+          f"status {status}\n{next_free_rerun}\n{err}")
+    dash_value = replay.rerun_command(argparse.Namespace(pairs_file="-pairs.json", scratch_directory=None))
+    dash_words = shlex.split(dash_value.split(" && ", 1)[1])
+    check("the rerun command runs the Python this replay runs under, and writes a value beginning with - as "
+          "--name=value, which argparse reads as the option's value",
+          dash_words[0] == sys.executable and "--pairs-file=-pairs.json" in dash_words, dash_value)
     left_scratch = Path(scratch).resolve() / "run-registered-checkout-base-exists"
     git("worktree", "add", "--detach", str(left_scratch / "checkout-base"), "HEAD")
     replay_arguments = ("--scratch-directory", str(left_scratch))
@@ -1623,12 +1683,15 @@ try:
     remove_command = (f"git -C {Path(TEST_REPOSITORY).resolve()} worktree remove --force --force "
                       f"{left_scratch / 'checkout-base'}")
     removed = subprocess.run(remove_command, shell=True, capture_output=True, text=True)
-    status_again, out_again, err_again = run_replay("HEAD", scratch, *replay_arguments)
-    check("a checkout an earlier replay left at a checkout path: exit 2, and the command the message gives removes "
-          "it, so the same replay then runs",
+    rerun = printed_rerun_command(err, "once that succeeds, run the replay again: ")
+    ran_again = subprocess.run(rerun, shell=True, capture_output=True, text=True)
+    check("a checkout an earlier replay left at a checkout path: exit 2, and the commands the message gives remove "
+          "it and then run the same replay in the same scratch directory",
           status == 2 and "already exists, and git lists it as a worktree" in err and remove_command in err
-          and removed.returncode == 0 and status_again == 0,
-          f"status {status}\n{err}\n{removed.stderr}\nagain {status_again}\n{out_again}\n{err_again}")
+          and removed.returncode == 0 and f"--scratch-directory={left_scratch} " in rerun
+          and ran_again.returncode == 0,
+          f"status {status}\n{err}\n{removed.stderr}\n{rerun}\nagain {ran_again.returncode}\n"
+          f"{ran_again.stdout[-2000:]}\n{ran_again.stderr[-2000:]}")
     both_scratch = Path(scratch).resolve() / "run-both-checkout-paths-exist"
     git("worktree", "add", "--detach", str(both_scratch / "checkout-base"), "HEAD")
     (both_scratch / "checkout-head").mkdir(parents=True)
@@ -1661,7 +1724,8 @@ try:
     locked_odd = odd_scratch / "locked worktree a;b"
     git("worktree", "add", "--detach", str(locked_odd), "HEAD")
     git("worktree", "lock", str(locked_odd))
-    not_removed = replay.remove_checkouts(str(TEST_REPOSITORY), [locked_odd])
+    with git_worktree_remove_failing():
+        not_removed = replay.remove_checkouts(str(TEST_REPOSITORY), [locked_odd])
     remedy = not_removed[0].rsplit("; run ", 1)[-1] if len(not_removed) == 1 else ""
     remedy_ran = subprocess.run(remedy, shell=True, capture_output=True, text=True)
     check("a locked worktree whose path holds a space and a ;: its command names exactly that path and removes it",
@@ -1683,7 +1747,7 @@ try:
     odd_run_scratch = odd_scratch / "run a;b"
     git("worktree", "add", "--detach", str(odd_run_scratch / "checkout-base"), "HEAD")
     status, out, err = run_replay("HEAD", scratch, "--scratch-directory", str(odd_run_scratch))
-    remove_command = err.partition("Remove it with ")[2].partition(", then run the replay again")[0]
+    remove_command = err.partition("Remove it with ")[2].partition("; once that succeeds, run the replay again")[0]
     removed = subprocess.run(remove_command, shell=True, capture_output=True, text=True)
     check("a worktree an earlier replay left in a --scratch-directory whose path holds a space and a ;: exit 2, and "
           "the command the refusal gives names exactly that worktree and removes it",
@@ -1699,7 +1763,8 @@ try:
     locked_through_symlink = through_symlink / "locked-checkout-named-through-a-symlink"
     git("worktree", "add", "--detach", str(locked_through_symlink), "HEAD")
     git("worktree", "lock", str(locked_through_symlink))
-    not_removed = replay.remove_checkouts(str(TEST_REPOSITORY), [locked_through_symlink])
+    with git_worktree_remove_failing():
+        not_removed = replay.remove_checkouts(str(TEST_REPOSITORY), [locked_through_symlink])
     git("worktree", "unlock", str(locked_through_symlink))
     check("a checkout named through a symlink that git cannot remove is reported, with git's reason",
           len(not_removed) == 1 and str(locked_through_symlink) in not_removed[0] and "exited" in not_removed[0],

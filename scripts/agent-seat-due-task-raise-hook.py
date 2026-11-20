@@ -20,7 +20,7 @@ WHAT MAKES A TASK DUE. One optional key in a task's `metadata`:
 
   prerequisites  a non-empty list of conditions, each {"pr_merged": <number>}
                  or {"issue_closed": <number>} on the repository
-                 nedschorus/nedschorus, or
+                 nedsnodes/nedsnodes, or
                  {"approval_walk_item_decided": {"approval_walk_minutes_file_path":
                  <absolute path of a docs/walk/<name>-minutes.md file>,
                  "approval_walk_item_heading":
@@ -36,12 +36,12 @@ count can change while the walk runs. The walk-document is the walk-minutes'
 path with `-minutes.md` replaced by `.md`. Its item headings are compared with
 the given heading as the answer program's heading_title reads both, so a
 running count, a deferred note, backticks, spaces and case do not matter. The
-item is decided when the answer program's minutes_record counts its number as
-decided: approved, disapproved, already decided or moved on, but not deferred
-or held. An item whose sub-steps, as 3.1 and 3.2 are of 3, are all decided is
-decided too, because the walk decides such an item only through them. A
-walk-minutes file that does not exist is not decided, since the walk may not
-have written it yet; nor is an item not yet numbered. A walk-document that
+item is decided when the answer program's
+approval_walk_minutes_read_returning_decided_item_numbers counts its number
+as decided; the hook asks that function rather than keeping a rule of its own,
+so it never disagrees with the walk. A walk-minutes file that does not exist
+is not decided, since the walk may not have written it yet; nor is an item not
+yet numbered. A walk-document that
 does not exist, or that holds no item with the heading, or more than one, is
 a fault the hook names as it names an unreadable list: the walk-document
 holds the item before its heading can be named, so its absence means a wrong
@@ -217,7 +217,7 @@ STATE_DIRECTORY_UNDER_HOME = (Path(".local") / "state" / "claude"
 OPEN_TASK_STATUSES = ("pending", "in_progress")
 COMPLETED_TASK_STATUS = "completed"
 
-GITHUB_REPOSITORY = "nedschorus/nedschorus"
+GITHUB_REPOSITORY = "nedsnodes/nedsnodes"
 CONDITION_RECHECK_INTERVAL_SECONDS = 300
 GH_CALL_TIMEOUT_SECONDS = 8
 GH_CALLS_TOTAL_BUDGET_SECONDS = 20
@@ -240,13 +240,15 @@ PREREQUISITE_FORMS = (
     + '": {"' + WALK_MINUTES_FIELD + '": "<absolute path of the walk-minutes file>", "'
     + ITEM_HEADING_FIELD + '": "<the item\'s heading in the walk-document>"}}')
 
+RAISE_LINE_TEMPLATE = ('[rule due-task-raise-when-prerequisites-met] Act on task {task_id} "{subject}" '
+                       "now: {reasons}.")
 DEFER_INSTRUCTION = (
     "If a task above cannot be acted on yet, record what it now waits on with TaskUpdate "
     "instead: a pull request, a GHI or an approval-walk item in a new "
     "metadata.prerequisites, or a task with addBlockedBy."
 )
 PREREQUISITES_PROBLEM_LINE_TEMPLATE = (
-    'Task {task_id} "{subject}" is never raised as its metadata.prerequisites stand, because '
+    '[rule due-task-prerequisites-unusable-correct-them] Task {task_id} "{subject}" is never raised as its metadata.prerequisites stand, because '
     "{problem}.")
 PREREQUISITES_CORRECTION_INSTRUCTION = (
     'Correct the task with TaskUpdate, giving its metadata a "prerequisites" list whose entries '
@@ -272,11 +274,17 @@ def state_file_path(home: Path, list_id: str) -> Path:
 
 
 def read_tasks(directory: Path, unreadable: "list | None" = None) -> dict:
-    """Every readable task in the list, by id; a missing directory holds none.
+    """Every readable task in the list, by id; a missing directory holds none, and one that
+    exists but cannot be listed raises OSError.
 
     A malformed file is skipped, and its path is appended to `unreadable` when one is given."""
+    # Not Path.glob: it answers a directory it cannot list, even on EIO, as an empty one.
+    try:
+        names = os.listdir(directory)
+    except FileNotFoundError:
+        return {}
     tasks = {}
-    for path in sorted(directory.glob("*.json")):
+    for path in sorted(directory / name for name in names if name.endswith(".json")):
         try:
             task = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -403,14 +411,8 @@ def approval_walk_item_decided_or_problem(condition: dict) -> dict:
     numbers = matching[0][0]
     if not numbers or not minutes.exists():
         return {"met": False}
-    decided, _ = answer_program.minutes_record(
-        walk_finder, minutes.read_text(encoding="utf-8"), parser)
-
-    def decided_through_itself_or_sub_steps(number):
-        sub_steps = [other for unit in units for other in unit[0] if other.startswith(number + ".")]
-        return number in decided or (bool(sub_steps) and all(step in decided for step in sub_steps))
-
-    return {"met": all(decided_through_itself_or_sub_steps(number) for number in numbers)}
+    decided = answer_program.approval_walk_minutes_read_returning_decided_item_numbers(walk_finder, minutes, parser)
+    return {"met": all(number in decided for number in numbers)}
 
 
 def condition_answer(kind: str, condition, checker) -> dict:
@@ -575,8 +577,8 @@ def raise_line(task: dict, met_citations, done_blockers=None) -> str:
     if done_blockers is not None:
         reasons.append("the tasks it waited on are completed: "
                        + ", ".join(f"task {single_line(blocker)}" for blocker in done_blockers))
-    return (f'Act on task {task["id"]} "{single_line(task.get("subject", ""))}" '
-            f"now: {', and '.join(reasons)}.")
+    return RAISE_LINE_TEMPLATE.format(task_id=task["id"], subject=single_line(task.get("subject", "")),
+                                      reasons=", and ".join(reasons))
 
 
 def due_task_lines(tasks: dict, directory: Path, state: dict,
@@ -688,7 +690,8 @@ NEXT_ACTION_LISTED_OPEN_ITEMS_LIMIT = 15
 NEXT_ACTION_LISTED_LINE_CHARACTERS = 160
 
 NEXT_ACTION_INSTRUCTIONS = (
-    "No approval-walk is open and none of your work is running, so do not stop here.",
+    "[rule due-task-idle-agent-seat-start-ready-tasks-and-next-approval-walk] No approval-walk is open and none of "
+    "your work is running, so do not stop here.",
     "Tell the user in one line that you are building a new approval-walk.",
     "Start subagents now on every ready task that needs no review or approval from the user.",
     "Build an approval-walk of 8 to 16 items, more than 16 only for one large thing with many "

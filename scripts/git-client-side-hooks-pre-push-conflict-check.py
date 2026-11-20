@@ -221,7 +221,9 @@ def revert_after_hand_conflict_check_line(branch, object_id):
 
 def say_branch_not_checked(stream, branch, because):
     """The first line of each per-branch skip message. It does not say whether the push goes
-    ahead, since a later branch can still refuse it; main() says that once, at the end."""
+    ahead, since a later branch can still refuse it; once every branch is checked, main()
+    says so in at most one line for a push that goes ahead, and in one "this push is
+    refused" line for each branch that refuses it."""
     say(stream, MESSAGE_PREFIX + "branch %s was not checked for conflicts with %s, because %s."
         % (branch, BASE_NAME_FOR_MESSAGES, because))
 

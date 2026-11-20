@@ -14,7 +14,7 @@ The design has a test-design for each component that design-to-main builds, but 
 
 1. A test-design for the design-to-main machine and its per-state agent-instructions: its test-requirements, and what runs the tests that need a real agent, which today's scripted launcher cannot; it starts from the sixteen candidate tests T1 to T16 in `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/prime-intellect/design-to-main-lessons-from-current-system-2026-10-14.md`, section 1.
 2. A review of the design against what the current path learned, with each finding proposed to the user as a change to the design or as a deferred line. The starting list:
-   - The twelve gaps G1 to G12 in section 2 of the same file, among them review depth by change kind, root-cause lines in fix pull requests, resource limits and hangs, concurrency with the fleet's hooks, what a launched agent may write or reach, nice-but-dirty files, where the run record lives, and who restarts the machine after a crash.
+   - The twelve gaps G1 to G12 in section 2 of the same file, among them review depth by change kind, root-cause lines in fix pull requests, resource limits and hangs, concurrency with the fleet's hooks, what a launched agent may write or reach, nn-hack files, where the run record lives, and who restarts the machine after a crash.
    - States with no state-exit for stopping when they cannot proceed: `design-writing` has one verdict, `emitted`, so a run cannot stop or park itself from inside the design conversation when the user will neither settle nor defer a line; `implementation-writing` and `test-writing` have no `escalate-to-user`.
    - Section 3 of the same file: what design-to-main makes unnecessary, so the review also proposes what the design can drop.
 

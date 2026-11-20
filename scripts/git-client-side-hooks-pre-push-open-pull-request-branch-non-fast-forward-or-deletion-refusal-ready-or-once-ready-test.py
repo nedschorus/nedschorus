@@ -96,7 +96,7 @@ class FakeRunner:
 def run(pushed_refs, runner):
     printed = io.StringIO()
     try:
-        status = check_module.main(["origin", "url"], pushed_refs, printed, {}, runner)
+        status = check_module.main(["origin", "url"], pushed_refs, printed, runner)
     except Exception as error:  # A crash is this case's failure, not the suite's.
         status = repr(error)
     return status, printed.getvalue()
@@ -220,7 +220,7 @@ def main():
         runner = FakeRunner([pull_request(isDraft=True)], behaviour)
         status, printed = run(REWRITE_REFS, runner)
         check(f"when the timeline lookup fails because {label}, the rewrite is refused, saying "
-              f"what failed, to tell the user, and how merge-lane-2 lets it through",
+              f"what failed and to tell the user, and offers no way past the refusal",
               status == check_module.EXIT_REFUSE_PUSH
               and "pre-push: this push is refused, because it forces an update to branch clean "
               f"on origin, the head of draft pull request #4242 ({PULL_REQUEST_URL}), and "
@@ -231,7 +231,7 @@ def main():
               "may hold its pushed commits, and the update would replace them." in printed
               and "Tell the user this whole message, and do not push clean again until he "
               "answers." in printed
-              and check_module.ESCAPE_HATCH_ASSIGNMENT in printed, (status, printed))
+              and "CLAUDE_MERGE_LANE_ASKED_FOR_THIS_REWRITE" not in printed, (status, printed))
 
     # A failed timeline lookup for one branch does not stop the check of the others: a rewrite
     # of a ready pull request's head later in the same push is refused as a rewrite.

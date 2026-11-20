@@ -53,7 +53,7 @@ _scratch_directory_common_spec = importlib.util.spec_from_file_location(
     / "test-scratch-directory-whose-earlier-killed-runs-leftovers-are-removed-first-common.py")
 _scratch_directory_common = importlib.util.module_from_spec(_scratch_directory_common_spec)
 _scratch_directory_common_spec.loader.exec_module(_scratch_directory_common)
-SUITE_ROOT = _scratch_directory_common.scratch_directory_after_removing_ones_killed_runs_left(
+SUITE_ROOT = _scratch_directory_common.make_test_scratch_directory_after_removing_killed_runs_leftovers(
     "answer-added-texts-fast-read-check-test-")
 WALK_NAME = "poem-page-2026-10-12"
 FAILURE_PREFIX = "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close "
@@ -924,6 +924,520 @@ def test_the_waiting_item_read_step_leaves_out_an_older_version_sub_step_of_the_
     result = case.run(WAITING_ITEM_READ_STEP_NAME)
     check("with `#next_to_present item 3 of 10`, an older `3.1 of 9` of 320 words elsewhere is not counted",
           result.returncode == 0 and "had to be run now" in result.stdout, described(result))
+
+
+def decided_item_numbers_of(name, document, approved):
+    """The decided set approval_walk_minutes_read_returning_decided_item_numbers returns for document, with the
+    walk-minutes approving each item of approved."""
+    program = load_program()
+    walk_finder = program.load_walk_finder()
+    directory = SUITE_ROOT / f"decided-set-{name}"
+    directory.mkdir(parents=True)
+    (directory / "a-walk.md").write_text(document)
+    minutes = directory / ("a-walk" + walk_finder.MINUTES_SUFFIX)
+    minutes.write_text("# Minutes\n\n" + "".join(approved_line(item) for item in approved))
+    return program.approval_walk_minutes_read_returning_decided_item_numbers(
+        walk_finder, minutes, walk_finder.markdown_parser())
+
+
+def test_the_decided_set_reads_a_reused_number_s_sub_steps_from_the_unit_the_minutes_last_presented():
+    program = load_program()
+    walk_finder = program.load_walk_finder()
+    document = ("# A walk\n\n## Item 3 of 9: three\n\nA.\n\n### Item 3.1 of 9: the first half\n\nB.\n\n"
+                "## Item 3 of 12: a later item reusing 3\n\nC.\n\n### Item 3.1 of 12: its first half\n\nD.\n\n"
+                "#### Item 3.1.1 of 12: its first part\n\nE.\n")
+    decided = {}
+    for presented in ("9", "12"):
+        directory = SUITE_ROOT / f"decided-set-reused-number-presented-of-{presented}"
+        directory.mkdir(parents=True)
+        (directory / "a-walk.md").write_text(document)
+        minutes = directory / ("a-walk" + walk_finder.MINUTES_SUFFIX)
+        minutes.write_text(f"# Minutes\n\n#next_to_present item 3 of {presented}\n\n"
+                           f"#next_to_present item 3.1 of {presented}\n\n" + approved_line("item 3.1.1 of 12"))
+        decided[presented] = program.approval_walk_minutes_read_returning_decided_item_numbers(
+            walk_finder, minutes, walk_finder.markdown_parser())
+    check("approving the 3.1.1 of `3.1 of 12` decides neither 3.1 nor 3 when the minutes last presented `3.1 of 9`, "
+          "which has no sub-steps, and decides both when they last presented `3.1 of 12` and `3 of 12`",
+          decided == {"9": {"3.1.1"}, "12": {"3.1.1", "3.1", "3"}}, repr(decided))
+
+
+REUSED_ITEM_NUMBER_WITH_SUB_STEPS_DOCUMENT = (
+    "# A walk\n\n## Item 3 of 9: three\n\nA.\n\n#case_against weak: a.\n\nRecommendation: a.\n\n"
+    "### Item 3.1 of 9: the first half\n\nB.\n\n#case_against weak: b.\n\nRecommendation: b.\n\n"
+    "## Item 3 of 12: a later item reusing 3\n\nC.\n\n"
+    "### Item 3.1 of 12: its first half\n\nD.\n\n"
+    "#### Item 3.1.1 of 12: its first part\n\nE.\n\n#case_against weak: e.\n\nRecommendation: e.\n\n"
+    "#### Item 3.1.2 of 12: its second part\n\nF.\n\n#case_against weak: f.\n\nRecommendation: f.\n\n"
+    "### Item 3.2 of 12: its second half\n\nG.\n\n#case_against weak: g.\n\nRecommendation: g.\n")
+
+
+def test_close_does_not_decide_a_reused_number_through_an_older_unit_the_read_step_descended_past():
+    pull_requests = held_pull_requests((501, [f"#held_on_ruling {WALK_NAME} item 3.1"]),
+                                       (502, [f"#held_on_ruling {WALK_NAME} item 3"]))
+    # The older `3.1 of 9` has a 3.1.1 of its own, so approving 3.1.1 would complete it.
+    document = REUSED_ITEM_NUMBER_WITH_SUB_STEPS_DOCUMENT.replace(
+        "## Item 3 of 12:", "#### Item 3.1.1 of 9: its only part\n\nB1.\n\n## Item 3 of 12:", 1)
+    case = Case(next_to_present="item 3.1.1 of 12", document=document)
+    case.minutes.write_text("# Minutes\n\n#next_to_present item 3.1 of 9\n\n#next_to_present item 3 of 12\n\n"
+                            "#next_to_present item 3.1.1 of 12\n")
+    case.run("check")
+    closed = case.run("close", environment=gh_environment(pull_requests))
+    check("with the minutes presenting `3.1 of 9`, then `3 of 12`, whose read descends to `3.1.1 of 12`, approving "
+          "3.1.1 decides neither 3.1 nor 3 while `3.1 of 12`'s 3.1.2 is unanswered, and close names 3.1.2",
+          closed.returncode == 0 and case.gh_comments() == []
+          and marker(case).rsplit(" of ", 1)[0] == "#next_to_present item 3.1.2",
+          described(closed) + case.minutes.read_text() + repr(case.gh_comments()))
+
+
+def test_close_posts_the_ruling_on_a_reused_number_decided_through_the_sub_steps_of_the_unit_presented():
+    pull_requests = held_pull_requests((501, [f"#held_on_ruling {WALK_NAME} item 3.1"]))
+    case = Case(next_to_present="item 3.1.2 of 12", document=REUSED_ITEM_NUMBER_WITH_SUB_STEPS_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\n#next_to_present item 3.1 of 9\n\n#next_to_present item 3 of 12\n\n"
+                            "#next_to_present item 3.1.1 of 12\n" + approved_line("item 3.1.1 of 12")
+                            + "#next_to_present item 3.1.2 of 12\n")
+    case.run("check")
+    closed = case.run("close", environment=gh_environment(pull_requests))
+    check("approving 3.1.2 of 12 after 3.1.1 of 12 decides the reused 3.1 through `3.1 of 12`, the unit the read step "
+          "descended through, and close posts its ruling",
+          closed.returncode == 0 and case.gh_comments() == [("501", f"#ruling_given {WALK_NAME} item 3.1 approved")],
+          described(closed) + case.minutes.read_text() + repr(case.gh_comments()))
+
+
+def test_close_names_a_reused_number_with_the_total_of_the_heading_the_presented_items_sit_under():
+    case = Case(next_to_present="item 3.2 of 12", document=REUSED_ITEM_NUMBER_WITH_SUB_STEPS_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\n#next_to_present item 3.2 of 12\n")
+    case.run("check")
+    closed = case.run("close")
+    after_close = marker(case)
+    read = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("after 3.2 of 12 is approved, close names the undecided item 3 by its heading `3 of 12`, not by the "
+          "walk-document's count of 1, and the read step then descends to 3.1.1 of 12",
+          closed.returncode == 0 and read.returncode == 0 and after_close == "#next_to_present item 3 of 12"
+          and marker(case) == "#next_to_present item 3.1.1 of 12",
+          described(closed) + described(read) + case.minutes.read_text())
+
+
+def test_close_skips_a_next_to_present_line_in_a_code_span_when_it_picks_a_reused_number_s_unit():
+    document = REUSED_ITEM_NUMBER_WITH_SUB_STEPS_DOCUMENT + (
+        "\n## Item 4 of 12: four\n\nH.\n\n#case_against weak: h.\n\nRecommendation: h.\n")
+    case = Case(next_to_present="item 4 of 12", document=document)
+    case.minutes.write_text("# Minutes\n\n#next_to_present item 3.1 of 9\n\n" + approved_line("item 3.1.1 of 12")
+                            + approved_line("item 3.1.2 of 12")
+                            + "A note quoting `#next_to_present item 3 of 12` in a code span.\n\n"
+                            + "#next_to_present item 4 of 12\n")
+    case.run("check")
+    closed = case.run("close")
+    check("a `#next_to_present item 3 of 12` inside a code span does not present `3 of 12`: 3 stays the `3 of 9` "
+          "above the presented `3.1 of 9`, and close names it by that heading's total",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 3 of 9",
+          described(closed) + case.minutes.read_text())
+
+
+SHARED_PARENT_HEADING_REUSED_NUMBER_DOCUMENT = (
+    "# A walk\n\n## Item 3 of 9: three\n\nA.\n\n"
+    "### Item 3.1 of 9: the first half\n\nB.\n\n#case_against weak: b.\n\nRecommendation: b.\n\n"
+    "## Items 3 and 3.1 of 12: a later item reusing 3, with its first half\n\nC.\n\n"
+    "### Item 3.1.1 of 12: the first half's part\n\nD.\n\n#case_against weak: d.\n\nRecommendation: d.\n\n"
+    "### Item 3.2 of 12: its second half\n\nE.\n\n#case_against weak: e.\n\nRecommendation: e.\n\n"
+    "## Item 4 of 12: four\n\nF.\n\n#case_against weak: f.\n\nRecommendation: f.\n")
+
+
+def test_close_decides_a_reused_number_that_shares_its_parent_s_heading_through_its_own_sub_steps():
+    pull_requests = held_pull_requests((501, [f"#held_on_ruling {WALK_NAME} item 3"]))
+    case = Case(next_to_present="item 3.2 of 12", document=SHARED_PARENT_HEADING_REUSED_NUMBER_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\n#next_to_present item 3.1 of 9\n\n#next_to_present item 3.1.1 of 12\n"
+                            + approved_line("item 3.1.1 of 12") + "#next_to_present item 3.2 of 12\n")
+    case.run("check")
+    closed = case.run("close", environment=gh_environment(pull_requests))
+    check("with 3.1 sharing the heading `Items 3 and 3.1 of 12` with its parent, presenting 3.2 of 12 keeps 3.1 in "
+          "that unit, so approving 3.2 after 3.1.1 decides 3.1 and 3, and close posts 3's ruling and names item 4",
+          closed.returncode == 0 and case.gh_comments() == [("501", f"#ruling_given {WALK_NAME} item 3 approved")]
+          and marker(case).rsplit(" of ", 1)[0] == "#next_to_present item 4",
+          described(closed) + case.minutes.read_text() + repr(case.gh_comments()))
+
+
+def test_close_resolves_a_reused_number_to_its_parent_s_shared_heading_after_an_older_version_was_presented():
+    for minutes, presented in [
+            ("#next_to_present item 3.1.1 of 12\n" + approved_line("item 3.1.1 of 12")
+             + "#next_to_present item 3.1 of 9\n\n#next_to_present item 3.2 of 12\n", "3.1.1 of 12, 3.1 of 9, 3.2 of 12"),
+            (approved_line("item 3.1.1 of 12") + "#next_to_present item 3.2 of 12\n", "only 3.2 of 12")]:
+        pull_requests = held_pull_requests((501, [f"#held_on_ruling {WALK_NAME} item 3"]))
+        case = Case(next_to_present="item 3.2 of 12", document=SHARED_PARENT_HEADING_REUSED_NUMBER_DOCUMENT)
+        case.minutes.write_text("# Minutes\n\n" + minutes)
+        case.run("check")
+        closed = case.run("close", environment=gh_environment(pull_requests))
+        check(f"with minutes presenting {presented}, 3.1 resolves to the presented `Items 3 and 3.1 of 12` itself, so "
+              "approving 3.2 after 3.1.1 decides 3.1 and 3, and close posts 3's ruling and names item 4",
+              closed.returncode == 0 and case.gh_comments() == [("501", f"#ruling_given {WALK_NAME} item 3 approved")]
+              and marker(case).rsplit(" of ", 1)[0] == "#next_to_present item 4",
+              described(closed) + case.minutes.read_text() + repr(case.gh_comments()))
+
+
+def test_the_decided_set_takes_the_shared_heading_presented_for_a_reused_sub_step_as_its_parent_s_unit_too():
+    program = load_program()
+    walk_finder = program.load_walk_finder()
+    directory = SUITE_ROOT / "decided-set-shared-heading-presented-for-a-reused-sub-step"
+    directory.mkdir(parents=True)
+    (directory / "a-walk.md").write_text(SHARED_PARENT_HEADING_REUSED_NUMBER_DOCUMENT)
+    minutes = directory / ("a-walk" + walk_finder.MINUTES_SUFFIX)
+    minutes.write_text("# Minutes\n\n#next_to_present item 3 of 9\n\n#next_to_present item 3.1 of 9\n\n"
+                       "#next_to_present item 3.1 of 12\n\n" + approved_line("item 3.1.1 of 12"))
+    decided = program.approval_walk_minutes_read_returning_decided_item_numbers(
+        walk_finder, minutes, walk_finder.markdown_parser())
+    check("presenting 3.1 of the shared heading `Items 3 and 3.1 of 12` presents 3 in that unit too, not the older "
+          "`3 of 9`, so approving 3.1.1 decides 3.1 but not 3 while 3.2 of 12 is unanswered",
+          decided == {"3.1.1", "3.1"}, repr(decided))
+
+
+def test_close_drops_a_reused_number_s_older_unit_once_its_parent_is_presented_again():
+    pull_requests = held_pull_requests((501, [f"#held_on_ruling {WALK_NAME} item 3.1"]))
+    document = ("# A walk\n\n## Item 3 of 9: three\n\nA.\n\n### Item 3.1 of 9: the first half\n\nB.\n\n"
+                "#### Item 3.1.1 of 9: its only part\n\nB1.\n\n#case_against weak: b.\n\nRecommendation: b.\n\n"
+                "## Item 3 of 12: a later item reusing 3\n\nC.\n\n"
+                "### Item 3.1 of 12: its first half\n\nD.\n\n#case_against weak: d.\n\nRecommendation: d.\n\n"
+                "### Item 3.2 of 12: its second half\n\nE.\n\n#case_against weak: e.\n\nRecommendation: e.\n")
+    case = Case(next_to_present="item 3.2 of 12", document=document)
+    case.minutes.write_text("# Minutes\n\n#next_to_present item 3.1.1 of 9\n" + approved_line("item 3.1.1 of 9")
+                            + "#next_to_present item 3 of 12\n\n#next_to_present item 3.2 of 12\n")
+    case.run("check")
+    closed = case.run("close", environment=gh_environment(pull_requests))
+    read = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("once `3 of 12` is presented, the 3.1 last presented under `3 of 9` is dropped, so approving 3.2 of 12 does "
+          "not decide 3.1 through `3.1 of 9`'s approved 3.1.1, and the read step then presents the unanswered 3.1 of 12",
+          closed.returncode == 0 and read.returncode == 0 and case.gh_comments() == []
+          and marker(case) == "#next_to_present item 3.1 of 12",
+          described(closed) + described(read) + case.minutes.read_text() + repr(case.gh_comments()))
+
+
+def test_close_names_a_reused_number_never_presented_by_the_total_of_its_presented_parent():
+    document = ("# A walk\n\n## Item 3 of 9: three\n\nA.\n\n"
+                "### Item 3.1 of 9: the first half\n\nB.\n\n#case_against weak: b.\n\nRecommendation: b.\n\n"
+                "### Item 3.2 of 9: the second half\n\nC.\n\n#case_against weak: c.\n\nRecommendation: c.\n\n"
+                "## Item 3 of 12: a later item reusing 3\n\nD.\n\n"
+                "### Item 3.1 of 12: its first half\n\nE.\n\n#case_against weak: e.\n\nRecommendation: e.\n\n"
+                "### Item 3.2 of 12: its second half\n\nF.\n\n#case_against weak: f.\n\nRecommendation: f.\n")
+    case = Case(next_to_present="item 3.1 of 12", document=document)
+    case.minutes.write_text("# Minutes\n\n#next_to_present item 3.1 of 12\n")
+    case.run("check")
+    closed = case.run("close")
+    after_close = marker(case)
+    read = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("after 3.1 of 12 is approved, close names 3.2, never presented, by the total of its presented parent "
+          "`3 of 12`, not by the walk-document's count of 1, and the read step accepts it",
+          closed.returncode == 0 and read.returncode == 0 and after_close == "#next_to_present item 3.2 of 12",
+          described(closed) + described(read) + case.minutes.read_text())
+
+
+def test_the_decided_set_finds_an_item_s_sub_steps_wherever_they_sit_in_the_walk_document():
+    alert_between = ("# A walk\n\n## Item 1 of 10: one\n\nA.\n\n## Item 3 of 10: three\n\nB.\n\n"
+                     "### Item 3.1 of 10: the first half\n\nC.\n\n#### Item 3.1.1 of 10: its first part\n\nD.\n\n"
+                     "## merge-lane-2 has been idle 41 minutes\n\n#approval_walk_item_in_category_fix_next\n\nE.\n\n"
+                     "#### Item 3.1.2 of 10: its second part\n\nF.\n\n### Item 3.2 of 10: the second half\n\nG.\n")
+    decided = decided_item_numbers_of("alert-between", alert_between, ["item 1 of 10", "item 3.1.1 of 10"])
+    check("with a user-alert inserted between sub-steps 3.1.1 and 3.1.2, deciding 3.1.1 decides neither 3.1 nor 3",
+          {"3", "3.1"}.isdisjoint(decided) and {"1", "3.1.1"} <= set(decided), repr(sorted(map(str, decided))))
+    after_later_item = ("# A walk\n\n## Item 14 of 18: fourteen\n\nA.\n\n## Item 15 of 18: fifteen\n\nB.\n\n"
+                        "## Item 14.1 of 18: its first part\n\nC.\n\n## Item 14.2 of 18: its second part\n\nD.\n")
+    decided = decided_item_numbers_of("after-later-item", after_later_item, ["item 14.1 of 18", "item 14.2 of 18"])
+    check("sub-steps 14.1 and 14.2 placed after item 15, both decided, decide item 14",
+          "14" in decided, repr(sorted(map(str, decided))))
+    decided = decided_item_numbers_of("after-later-item-half", after_later_item, ["item 14.1 of 18"])
+    check("with only 14.1 of the sub-steps placed after item 15 decided, item 14 stays undecided",
+          "14" not in decided, repr(sorted(map(str, decided))))
+    mixed = ("# A walk\n\n## Items 3 to 3.2 of 10: three and its parts\n\nA.\n\n## Item 4 of 10: four\n\nB.\n")
+    decided = decided_item_numbers_of("mixed-unit", mixed, ["item 3.1 of 10", "item 3.2 of 10"])
+    check("in one unit `Items 3 to 3.2`, deciding 3.1 and 3.2 decides 3",
+          "3" in decided, repr(sorted(map(str, decided))))
+    older_inside = ("# A walk\n\n## Item 3 of 10: three\n\nA.\n\n### Item 3.1 of 10: the first half\n\nB.\n\n"
+                    "#### Item 3.1.1 of 10: its first part\n\nC.\n\n#### Item 3.1.3 of 9: an older part\n\nD.\n\n"
+                    "#### Item 3.1.2 of 10: its second part\n\nE.\n")
+    decided = decided_item_numbers_of("older-inside", older_inside, ["item 3.1.1 of 10", "item 3.1.2 of 10"])
+    check("an older `3.1.3 of 9` that no Withdrawn or revised heading retires keeps 3.1 undecided, so the item is "
+          "never decided early", "3.1" not in decided, repr(sorted(map(str, decided))))
+
+
+REUSED_OLDER_SUB_STEP_NUMBER_DOCUMENT = (
+    "# A walk\n\n## Item 1 of 10: an older item\n\nOld.\n\n#### Item 3.1.1 of 9: an older version's part\n\nOlder.\n\n"
+    "## Item 3 of 10: the opening sentence\n\n### Item 3.1 of 10: the first half\n\n"
+    "#### Item 3.1.1 of 10: its first part\n\nOne.\n\n#case_against weak: a.\n\nRecommendation: a.\n\n"
+    "#### Item 3.1.2 of 10: its second part\n\nTwo.\n\n#case_against weak: b.\n\nRecommendation: b.\n\n"
+    "### Item 3.2 of 10: the second half\n\nThree.\n\n#case_against weak: c.\n\nRecommendation: c.\n")
+
+
+def test_an_older_heading_reusing_a_sub_step_number_leaves_close_and_the_read_step_naming_the_same_sub_step():
+    case = Case(next_to_present="item 3.1.2 of 10", document=REUSED_OLDER_SUB_STEP_NUMBER_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\n" + approved_line("item 1 of 10") + approved_line("item 3.1.1 of 10")
+                            + "#next_to_present item 3.1.2 of 10\n")
+    case.run("check")
+    closed = case.run("close")
+    after_close = marker(case).rsplit(" of ", 1)[0]
+    case.minutes.write_text(case.minutes.read_text() + "#next_to_present item 3 of 10\n")
+    read = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("with an older `3.1.1 of 9` below item 1 and 3.1.1 and 3.1.2 of 10 decided, close and the read step both "
+          "count 3.1 decided and name sub-step 3.2",
+          closed.returncode == 0 and read.returncode == 0 and after_close == "#next_to_present item 3.2"
+          and marker(case) == "#next_to_present item 3.2 of 10", described(closed) + described(read))
+
+
+def test_an_unshown_item_written_between_sub_steps_comes_after_them_in_close_and_the_read_step():
+    """An unshown item written right after the waiting sub-step, where the walk-me-through skill's Re-planning
+    section puts an item added by hand, stands between item 2's sub-steps."""
+    document = ("# A walk in which code picks the order\n\n" + numbered_item(1, "one")
+                + "## Item 2 of 9: two\n\nIts parts.\n\n"
+                + "### Item 2.1 of 9: the first part\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+                + unshown_item("urgent", f"{CATEGORY_TAG}must_fix_now")
+                + "### Item 2.2 of 9: the second part\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+                + "#### Withdrawn version 1 of item 2.2\n\nAn earlier second part.\n\n"
+                + numbered_item(3, "three") + "## Summary\n\nThe walk in short.\n")
+    case = Case(next_to_present="item 2.1 of 9", document=document)
+    case.run("check")
+    case.run("close")
+    after_close = marker(case).rsplit(" of ", 1)[0]
+    case.minutes.write_text(case.minutes.read_text() + "#next_to_present item 2 of 9\n")
+    read = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("with an unshown item between sub-steps 2.1 and 2.2, close and the read step both name 2.2 once 2.1 is "
+          "answered, not the unshown item and not the answered item 2",
+          after_close == "#next_to_present item 2.2" and read.returncode == 0
+          and marker(case) == "#next_to_present item 2.2 of 9", f"{after_close}\n{described(read)}")
+    case = Case(next_to_present="item 2.1 of 9", document=document)
+    shown = titles_shown_in_turn(case)
+    text = walk_document(case)
+    check("the unshown item comes after item 2's last sub-step, and is moved below it, so items stand in the order "
+          "they were shown", shown == ["the second part", "urgent", "three", "Summary"]
+          and text.index("### Item 2.2 of 9") < text.index(": urgent\n") < text.index("## Item 3 of 9: three"),
+          f"{shown}\n{text}")
+
+
+def test_a_held_new_item_numbered_between_sub_steps_does_not_end_them_for_close_or_the_read_step():
+    """close --hold-answer-until-new-item-answered numbers the new item where it stands, right after the answered
+    sub-step 2.1, so a numbered item stands between 2.1 and 2.2."""
+    document = ("# A walk in which code picks the order\n\n" + numbered_item(1, "one")
+                + "## Item 2 of 9: two\n\nIts parts.\n\n"
+                + "### Item 2.1 of 9: the first part\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+                + unshown_item("the change a finding raised", FIX_NEXT_LINE)
+                + "### Item 2.2 of 9: the second part\n\n#case_against none.\n\nRecommendation: approve.\n\n"
+                + numbered_item(3, "three") + "## Summary\n\nThe walk in short.\n")
+    case = Case(next_to_present="item 2.1 of 9", document=document)
+    case.run("check")
+    held = case.run("close", "--hold-answer-until-new-item-answered")
+    numbered = marker(case)
+    case.run("check")
+    closed = case.run("close")
+    after_close = marker(case).rsplit(" of ", 1)[0]
+    case.minutes.write_text(case.minutes.read_text() + "#next_to_present item 2 of 9\n")
+    read = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("with the held new item numbered between sub-steps 2.1 and 2.2, close and the read step handed item 2 both "
+          "name 2.2 once the new item is answered",
+          held.returncode == 0 and numbered == "#next_to_present item 4 of 5" and closed.returncode == 0
+          and after_close == "#next_to_present item 2.2" and read.returncode == 0
+          and marker(case) == "#next_to_present item 2.2 of 9",
+          f"{numbered}\n{after_close}\n{described(read)}\n{walk_document(case)}")
+
+
+def read_step_handed_item_3_marker(document, answered):
+    """The `#next_to_present` line the read step writes when handed item 3 of 10 of document, with the walk-minutes
+    approving each item of answered."""
+    case = Case(next_to_present="item 3 of 10", document=document)
+    case.minutes.write_text("# Minutes\n\n" + "".join(approved_line(item) for item in answered)
+                            + "#next_to_present item 3 of 10\n")
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    return marker(case), described(result)
+
+
+def test_the_waiting_item_read_step_finds_a_sub_step_past_a_numbered_item_under_a_heading_shared_with_the_first():
+    document = ("# A walk\n\n## Items 3 to 3.1 of 10: the opening sentence and its first half\n\nOne.\n\n"
+                "#case_against weak: a.\n\nRecommendation: a.\n\n## Item 5 of 11: an item the hold path numbered\n\n"
+                "Five.\n\n### Item 3.2 of 10: the second half\n\nTwo.\n\n#case_against weak: b.\n\n"
+                "Recommendation: b.\n\n## Item 4 of 11: the next item\n\nFour.\n")
+    named, result = read_step_handed_item_3_marker(document, ["item 3.1 of 10", "item 5 of 11"])
+    check("under `Items 3 to 3.1 of 10`, with 3.1 decided and a numbered item before 3.2, the read step handed "
+          "item 3 names 3.2", named == "#next_to_present item 3.2 of 10", named + "\n" + result)
+
+
+def test_the_waiting_item_read_step_takes_a_sub_step_of_a_newer_m_right_after_one_past_a_numbered_item():
+    document = ("# A walk\n\n## Item 3 of 10: the opening sentence\n\nNew.\n\n### Item 3.1 of 10: the first half\n\n"
+                "One.\n\n#case_against weak: a.\n\nRecommendation: a.\n\n"
+                "## Item 5 of 11: an item the hold path numbered\n\nFive.\n\n"
+                "### Item 3.2 of 10: the second half\n\nTwo.\n\n#case_against weak: b.\n\nRecommendation: b.\n\n"
+                "### Item 3.3 of 11: the third part\n\nThree.\n\n#case_against weak: c.\n\nRecommendation: c.\n\n"
+                "## Item 4 of 11: the next item\n\nFour.\n")
+    named, result = read_step_handed_item_3_marker(document, ["item 3.1 of 10", "item 5 of 11", "item 3.2 of 10"])
+    check("with 3.1 and 3.2 of 10 decided past a numbered item, the read step handed item 3 names 3.3, whose "
+          "heading, right after 3.2, gives M 11", named == "#next_to_present item 3.3 of 10", named + "\n" + result)
+
+
+def test_an_item_s_sub_steps_end_at_a_later_heading_that_reuses_its_number():
+    program = load_program()
+    walk_finder = program.load_walk_finder()
+    document = ("# A walk\n\n## Item 3 of 9: three\n\nA.\n\n## Item 4 of 9: four\n\nB.\n\n"
+                "### Item 3.1 of 9: the first half\n\nC.\n\n## Item 3 of 12: a later item reusing the number\n\nD.\n\n"
+                "### Item 3.2 of 9: past the reused number\n\nE.\n")
+    units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+    item_3 = next(unit for unit in units if unit[0] == ["3"] and unit[1] == "9")
+    found = [unit[0] for unit in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(units, item_3)]
+    check("item 3 of 9 takes its `3.1 of 9` below item 4, and no sub-step past the later `Item 3 of 12`",
+          found == [["3.1"]], repr(found))
+
+
+def sub_step_numbers_found(document, item, total):
+    """The numbers of each unit the walk finder takes as sub-steps of the unit that names item with M total."""
+    walk_finder = load_program().load_walk_finder()
+    units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+    unit = next(unit for unit in units if item in unit[0] and unit[1] == total)
+    return [each[0] for each in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(units, unit)]
+
+
+def test_an_unnumbered_item_between_sub_steps_does_not_stop_a_later_sub_step_of_a_raised_m():
+    document = ("# A walk\n\n## Item 3 of 9: three\n\nA.\n\n### Item 3.1 of 9: the first half\n\nB.\n\n"
+                "## an item added by hand\n\nC.\n\n### Item 3.2 of 10: written after a re-plan raised M\n\nD.\n")
+    found = sub_step_numbers_found(document, "3", "9")
+    check("item 3 of 9 takes 3.2 of 10 past the unnumbered item that stands right after 3.1",
+          found == [["3.1"], ["3.2"]], repr(found))
+
+
+def test_the_waiting_item_read_step_finds_a_sub_step_past_a_reuse_of_the_number_of_another_item_of_its_heading():
+    document = ("# A walk\n\n## Items 3 and 4 of 10: two items\n\n**Item 3:** three.\n\nA.\n\n**Item 4:** four.\n\n"
+                "B.\n\n### Item 3.1 of 10: the first half\n\nC.\n\n#case_against weak: a.\n\nRecommendation: a.\n\n"
+                "## Item 4 of 12: a later item reusing 4\n\nD.\n\n### Item 3.2 of 10: the second half\n\nE.\n\n"
+                "#case_against weak: b.\n\nRecommendation: b.\n")
+    named, result = read_step_handed_item_3_marker(document, ["item 3.1 of 10"])
+    check("under `Items 3 and 4 of 10`, with 3.1 decided and a later `Item 4 of 12` before 3.2, the read step "
+          "handed item 3 names 3.2, since 3 was never reused", named == "#next_to_present item 3.2 of 10",
+          named + "\n" + result)
+
+
+def test_a_sub_step_s_own_sub_steps_end_where_its_parent_s_number_is_reused():
+    document = ("# A walk\n\n## Item 3 of 9: three\n\nA.\n\n### Item 3.1 of 9: the first half\n\nB.\n\n"
+                "## Item 3 of 12: a later item reusing 3\n\nC.\n\n#### Item 3.1.1 of 9: past the reused number\n\nD.\n")
+    found = sub_step_numbers_found(document, "3.1", "9")
+    check("sub-step 3.1 of 9 takes no 3.1.1 past the later `Item 3 of 12`", found == [], repr(found))
+
+
+def test_a_sub_step_under_a_withdrawn_item_heading_is_no_live_item_s_sub_step():
+    document = ("# A walk\n\n## Item 3 of 10: three\n\nA.\n\n"
+                "## Withdrawn: Item 3 of 10: the older three\n\nC.\n\n### Item 3.1 of 10: the older first half\n\nD.\n\n"
+                "## Item 5 of 10: five\n\nE.\n\n### Item 5.1 of 10: five's first part\n\nF.\n\n"
+                "#### Withdrawn version 1 of item 5.1\n\nG.\n\n### Item 5.2 of 10: five's second part\n\nH.\n")
+    withdrawn = sub_step_numbers_found(document, "3", "10")
+    live = sub_step_numbers_found(document, "5", "10")
+    check("a `3.1 of 10` under `## Withdrawn: Item 3 of 10` is not the live item 3's, while 5.2 after a deeper "
+          "`#### Withdrawn version` of 5.1 still is item 5's", withdrawn == [] and live == [["5.1"], ["5.2"]],
+          f"{withdrawn!r} {live!r}")
+
+
+def test_close_order_moves_an_unnumbered_item_past_a_sub_step_the_finder_gives_an_earlier_item():
+    program = load_program()
+    walk_finder = program.load_walk_finder()
+    document = ("# A walk\n\n## Item 3 of 9: three\n\nA.\n\n## Item 4 of 9: four\n\nB.\n\n"
+                "## an item added by hand\n\nC.\n\n### Item 3.1 of 9: item 3's first half\n\nD.\n")
+    units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+    order = [unit[0] or "unnumbered" for unit in
+             program.approval_walk_unnumbered_items_moved_past_the_sub_steps_they_split(walk_finder, units)]
+    check("with 3, 4, an unnumbered item, then 3.1, which the finder gives item 3, close puts the unnumbered item "
+          "after 3.1", order == [["3"], ["4"], ["3.1"], "unnumbered"], repr(order))
+
+
+def test_close_order_moves_an_unnumbered_item_past_a_sub_step_of_one_item_of_a_shared_heading():
+    program = load_program()
+    walk_finder = program.load_walk_finder()
+    document = ("# A walk\n\n## Items 3 and 4 of 9: two items\n\n**Item 3 of 9:** three.\n\nA.\n\n"
+                "**Item 4 of 9:** four.\n\nB.\n\n## Item 4 of 12: a later item reusing 4\n\nC.\n\n"
+                "## an item added by hand\n\nD.\n\n### Item 3.1 of 9: item 3's first half\n\nE.\n")
+    units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+    order = [unit[0] or "unnumbered" for unit in
+             program.approval_walk_unnumbered_items_moved_past_the_sub_steps_they_split(walk_finder, units)]
+    check("with items 3 and 4 sharing a heading, a later `Item 4 of 12`, an unnumbered item, then 3.1, close puts the "
+          "unnumbered item after 3.1, which a later reuse of 4 does not take from item 3",
+          order == [["3", "4"], ["4"], ["3.1"], "unnumbered"], repr(order))
+
+
+def test_an_item_added_after_a_shared_heading_goes_above_a_later_heading_naming_one_of_its_items_undotted():
+    walk_finder = load_program().load_walk_finder()
+    document = ("# A walk\n\n## Items 4 and 5 of 9: two items\n\n**Item 4 of 9:** four.\n\nA.\n\n"
+                "**Item 5 of 9:** five.\n\nB.\n\n### Items 4.1 and 5 of 9: item 4's first half beside a reuse of 5\n\n"
+                "C.\n\n## Item 6 of 9: six\n\nD.\n")
+    lines = document.split("\n")
+    units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+    insert = walk_finder.approval_walk_document_new_item_insert_line_number_past_whole_item_sub_steps_and_withdrawn_versions(
+        units, units[0], len(lines))
+    check("an item added after `Items 4 and 5 of 9` goes above `Items 4.1 and 5 of 9`, which names 5 undotted and so "
+          "is no sub-step of either item, though the finder gives it item 4",
+          lines[insert].startswith("### Items 4.1 and 5 of 9"), repr(lines[insert]))
+
+
+def test_an_item_added_while_a_sub_step_waits_goes_past_a_later_sub_step_heading_it_shares_with_another_item():
+    walk_finder = load_program().load_walk_finder()
+    document = ("# A walk\n\n## Items 4 and 5 of 9: two items\n\n### Item 4.1 of 9: item 4's first half\n\nA.\n\n"
+                "### Items 4.2 and 5.1 of 9: item 4's second half and item 5's first\n\nB.\n\n## Item 6 of 9: six\n\nC.\n")
+    lines = document.split("\n")
+    units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+    waiting = next(unit for unit in units if unit[0] == ["4.1"])
+    insert = walk_finder.approval_walk_document_new_item_insert_line_number_past_whole_item_sub_steps_and_withdrawn_versions(
+        units, waiting, len(lines))
+    check("while 4.1 waits, an item added after the whole of item 4 goes past `Items 4.2 and 5.1 of 9`, which holds "
+          "item 4's 4.2, and above item 6",
+          lines[insert].startswith("## Item 6 of 9"), repr(lines[insert]))
+
+
+def test_a_sub_step_heading_shared_by_two_items_is_a_sub_step_of_each():
+    walk_finder = load_program().load_walk_finder()
+    document = ("# A walk\n\n## Items 3 and 4 of 9: two items\n\n**Item 3 of 9:** three.\n\nA.\n\n"
+                "**Item 4 of 9:** four.\n\nB.\n\n### Items 3.1 and 4.1 of 9: both first halves\n\nC.\n")
+    units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+    found = [[each[0] for each in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(
+        units, units[0], [number])] for number in ("3", "4")]
+    check("`Items 3.1 and 4.1 of 9` is a sub-step of item 3 searched alone, and of item 4",
+          found == [[["3.1", "4.1"]], [["3.1", "4.1"]]], repr(found))
+
+
+def test_an_item_of_a_shared_heading_searched_alone_passes_over_its_sibling_s_sub_step_of_another_m():
+    walk_finder = load_program().load_walk_finder()
+    document = ("# A walk\n\n## Items 3 and 4 of 9: two items\n\n**Item 3 of 9:** three.\n\nA.\n\n"
+                "**Item 4 of 9:** four.\n\nB.\n\n### Item 4.1 of 10: four's first half\n\nC.\n\n"
+                "### Item 3.1 of 10: three's first half\n\nD.\n")
+    units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+    found = [each[0] for each in walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(
+        units, units[0], ["3"])]
+    check("under `Items 3 and 4 of 9`, item 3 searched alone passes over its sibling's `4.1 of 10` and takes the "
+          "`3.1 of 10` right after it, as it would were 3.1 at the head", found == [["3.1"]], repr(found))
+
+
+def test_an_item_page_takes_only_its_own_lines_of_a_sub_step_heading_shared_with_another_item():
+    walk_finder = load_program().load_walk_finder()
+    parser = walk_finder.markdown_parser()
+    document = ("# A walk\n\n## Items 3 and 4 of 9: two items\n\n**Item 3 of 9:** three.\n\nA.\n\n"
+                "**Item 4 of 9:** four.\n\nB.\n\n### Items 3.1 and 4.1 of 9: both first halves\n\n"
+                "**Item 3.1 of 9:** three's half.\n\nC.\n\n**Item 4.1 of 9:** four's half.\n\nD.\n")
+    units = walk_finder.item_unit_spans(document, parser)
+    bodies = {number: "\n".join(walk_finder.approval_walk_item_heading_and_item_page_body_lines(
+        document, parser, units, units[0], number)[1]) for number in ("3", "4")}
+    check("item 3's page carries the shared `Items 3.1 and 4.1 of 9` heading with 3.1's lines and not 4.1's, and "
+          "item 4's page with 4.1's and not 3.1's",
+          all("### Items 3.1 and 4.1 of 9" in body for body in bodies.values())
+          and "C." in bodies["3"] and "D." not in bodies["3"] and "D." in bodies["4"] and "C." not in bodies["4"],
+          repr(bodies))
+
+
+def test_items_after_a_setext_withdrawn_heading_are_still_found():
+    walk_finder = load_program().load_walk_finder()
+    document = ("# A walk\n\n## Item 3 of 9: three\n\nA.\n\nWithdrawn: Item 3 of 9: the older three\n"
+                "---\n\nB.\n\n## Item 4 of 9: four\n\nC.\n")
+    numbers = [unit[0] for unit in walk_finder.item_unit_spans(document, walk_finder.markdown_parser())]
+    check("an `## Item 4 of 9` after a Withdrawn heading underlined with `---`, a level-two heading, is an item",
+          numbers == [["3"], ["4"]], repr(numbers))
+
+
+def test_an_item_is_not_decided_through_a_sub_step_past_a_later_reuse_of_its_parent_s_number():
+    program = load_program()
+    walk_finder = program.load_walk_finder()
+    document = ("# A walk\n\n## Item 3 of 9: three\n\nA.\n\n### Item 3.1 of 9: the first half\n\nB.\n\n"
+                "## Item 3 of 12: a later item reusing 3\n\nC.\n\n#### Item 3.1.1 of 9: past the reused number\n\nD.\n")
+    units = walk_finder.item_unit_spans(document, walk_finder.markdown_parser())
+    items = [number for unit in units for number in unit[0]]
+    inferred = program.items_decided_through_sub_steps(
+        items, {"3.1.1": "approved"}, program.approval_walk_map_each_item_number_to_direct_sub_steps_found_by_walk_document_item_finder(walk_finder, units, {}))
+    check("approving a 3.1.1 that stands past a later `Item 3 of 12` decides neither 3.1 nor 3", inferred == {},
+          repr(inferred))
 
 
 def test_the_waiting_item_read_step_leaves_out_an_older_sub_step_below_a_later_item():
@@ -2386,7 +2900,8 @@ def test_a_later_close_does_not_post_again_the_ruling_on_an_item_decided_through
 def test_an_item_is_decided_through_a_sub_step_that_is_itself_decided_through_its_sub_steps():
     program = load_program()
     inferred = program.items_decided_through_sub_steps(
-        ["5", "5.1", "5.2", "5.2.1"], {"5.1": "approved", "5.2.1": "approved"})
+        ["5", "5.1", "5.2", "5.2.1"], {"5.1": "approved", "5.2.1": "approved"},
+        {"5": ["5.1", "5.2"], "5.2": ["5.2.1"]})
     check("in a three-level walk, 5.2 is decided through 5.2.1, and then 5 through 5.1 and 5.2, so item 5 is not named "
           "again",
           inferred == {"5.2": "approved", "5": "approved"}, repr(inferred))
@@ -2504,7 +3019,7 @@ def test_a_note_naming_later_items_with_approved_as_a_modifier_does_not_skip_the
           described(closed) + case.minutes.read_text())
 
 
-# Item 5.2.2, once deferred, sits just before the summary item, as the walk-runner moves a deferred item. Its
+# Item 5.2.2, once deferred, sits just before the summary item, as the walk check program moves a deferred item. Its
 # headings say `of 24`; close counts M as 3, the whole numbers 5, 6 and 7, as it does for every dotted walk below.
 SUB_ITEMS_DOCUMENT = """# A walk whose item 5.2 has sub-items
 
@@ -3317,6 +3832,19 @@ def test_a_weak_ground_value_for_an_item_of_no_kind_rated_none_writes_nothing_an
               and case.minutes.read_text() == before and case.calls.read_text() == "", described(result))
 
 
+def test_a_weak_ground_value_for_an_item_of_no_kind_rated_medium_is_refused_for_its_rating_not_sent_to_none():
+    # "medium" sorts before "none", so this tells an equality test on the rating from an ordering test.
+    case = rated_none_case(rating="medium: the option adds a check.")
+    before = case.minutes.read_text()
+    result = case.run("check", "--not-asked", "weak-cost-only")
+    check("`--not-asked weak-cost-only` on an item rated medium is refused for its rating, not told to use none",
+          result.returncode == 1
+          and "cannot be settled without asking the user as case against weak, cost only, because:" in result.stderr
+          and "rates the case against medium" in result.stderr
+          and "rates the case against none" not in result.stderr
+          and case.minutes.read_text() == before and case.calls.read_text() == "", described(result))
+
+
 # Lines as the walk check program wrote them for an item of no kind rated weak before the agent named the ground,
 # when `--not-asked none` settled it and the minutes always said cost only.
 WALK_MINUTES_CHECK_LINE_BEFORE_THE_GROUND_WAS_NAMED = (
@@ -3690,6 +4218,20 @@ def test_an_item_with_parts_options_or_a_new_if_d_text_is_not_settled_as_now_ove
               and case.minutes.read_text() == before and case.calls.read_text() == "", described(refused))
 
 
+def test_a_new_if_d_line_inside_a_multi_line_html_comment_does_not_stop_now_over_later():
+    document = NOW_OVER_LATER_DOCUMENT.replace(
+        "Recommendation: change the sentence.\n",
+        '<!-- a note the user is not shown:\n#new_if_d "Nothing changes."\n-->\n\n'
+        "Recommendation: change the sentence.\n", 1)
+    case = Case(document=document)
+    checked = case.run("check", NOW_OVER_LATER)
+    check("check --now-over-later-already-decided reads the item's lines with HTML comments cut, so a `#new_if_d` "
+          "line inside a multi-line comment does not refuse the item",
+          document != NOW_OVER_LATER_DOCUMENT and checked.returncode == 0
+          and "\nitem 3 of 9: settled without asking the user, already decided by " in case.minutes.read_text(),
+          described(checked) + case.minutes.read_text())
+
+
 def test_now_over_later_takes_no_reply_no_other_answer_and_its_rerun_command_repeats_it():
     case = Case(document=NOW_OVER_LATER_DOCUMENT)
     before = case.minutes.read_text()
@@ -3705,6 +4247,18 @@ def test_now_over_later_takes_no_reply_no_other_answer_and_its_rerun_command_rep
     check("a refusal's rerun command repeats --now-over-later-already-decided, not the citation it supplies",
           rerun.returncode == 1 and f"check {NOW_OVER_LATER}` again" in rerun.stderr
           and "--already-decided" not in rerun.stderr.replace(NOW_OVER_LATER, ""), described(rerun))
+
+
+def test_now_over_later_refusal_names_a_new_if_d_text_on_an_even_line_by_its_own_line_number():
+    document = WALK_DOCUMENT.replace("If the sentence stays, a note follows it:\n",
+                                     "If the sentence stays,\na note follows it:\n", 1)
+    line = walk_document_line(document, '#new_if_d "A note says why the sentence stays."')
+    case = Case(document=document)
+    refused = case.run("check", NOW_OVER_LATER)
+    check("check --now-over-later-already-decided names a `#new_if_d` text on an even line by that line's number",
+          document != WALK_DOCUMENT and line % 2 == 0 and refused.returncode == 1
+          and f"\n- a `#new_if_d` text, what his disapproval would do instead, on line {line}\n" in refused.stderr,
+          described(refused))
 
 
 def test_an_item_the_walk_moves_on_from_is_recorded_without_a_fast_read_and_not_shown():
@@ -3948,6 +4502,13 @@ def test_moving_on_is_refused_when_a_comment_opening_inside_a_tag_hides_a_recomm
               in checked.stderr
               and "check --moved-on-no-decision --user-reply-as-typed next` again." in checked.stderr,
               described(checked))
+        deferred_case = Case(next_to_present="item 1.2 of 2", document=plain.format(line=line))
+        deferred_case.minutes.write_text("# Minutes\n\n#next_to_present item 1.2 of 2\n")
+        deferred = deferred_case.run("check", "--deferred")
+        check(f"check --deferred records the deferral although `<!--` in an attribute hides the recommendation and "
+              f"{why}: {line!r}",
+              deferred.returncode == 0 and "item 1.2 of 2: the user answered deferred" in deferred_case.minutes.read_text()
+              and "opens no comment" not in deferred.stderr, described(deferred))
 
 
 def test_moving_on_is_not_refused_when_a_stray_less_than_sign_comes_before_a_hidden_note_in_a_real_comment():
@@ -4270,6 +4831,18 @@ def test_the_last_item_and_a_closed_walk_start_no_read_ahead():
           and times_read(case, "## Item") == 1, described(closed) + case.calls.read_text())
 
 
+def test_the_read_step_of_an_item_the_minutes_already_decide_reads_ahead_the_item_after_it():
+    recorded = approved_line("item 1 of 5") + approved_line("item 2 of 5")
+    case = summary_case(next_to_present="item 2 of 5", recorded=recorded)
+    result = case.run(WAITING_ITEM_READ)
+    check("the read step of a waiting item the minutes already decide reads it now and reads ahead the item after it",
+          result.returncode == 0
+          and result.stdout.startswith("item 2 of 5: its cold-read-fast-read, of its text as it stands, had to be run "
+                                       "now: ")
+          and times_read(case, "## Item 2 of 5: two") == 1 and times_read(case, "## Item 3 of 5: three") == 1,
+          described(result) + case.calls.read_text())
+
+
 def after_fixes_case(old, new):
     """A case whose item 3 was read, then changed from old to new in the walk-document."""
     case = item_read_case()
@@ -4293,15 +4866,24 @@ ITEM_3_HEADING = "## Item 3 of 5: three\n"
 
 def test_a_fix_that_touches_no_fact_is_not_read_again():
     case, result = after_fixes_case(ITEM_3_HEADING, ITEM_3_HEADING + "\nThis item, e.g. this one, asks little.\n")
-    check(f"{AFTER_FIXES} after a wording fix runs no read and says to present the item",
+    check(f"{AFTER_FIXES} after a wording fix runs no read and says to present the item, or to settle it as now "
+          "over later",
           result.returncode == 0
           and without_kept_lines(result.stdout).startswith(
               "item 3 of 5: no new cold-read-fast-read: your changes since its last one (")
-          and result.stdout.rstrip("\n").split("\n")[-1] == "Present item 3 of 5."
+          and result.stdout.rstrip("\n").split("\n")[-1] == (
+              "Present item 3 of 5, unless its only choice is whether to build something now or later and it "
+              f"recommends now: then run `python3 {PROGRAM} check --now-over-later-already-decided --cwd "
+              f"{shlex.quote(str(case.checkout))}`, then the close command it prints.")
           and times_read(case, ITEM_3_HEADING) == 1, described(result))
     second = case.run(WAITING_ITEM_READ, AFTER_FIXES)
     check(f"a second {AFTER_FIXES} compares with the text last read, not the text it let pass",
           second.returncode == 0 and "no new cold-read-fast-read" in second.stdout, described(second))
+    settled = case.run("check", NOW_OVER_LATER)
+    check(f"the check --now-over-later-already-decided that {AFTER_FIXES} names after a wording fix settles the item",
+          settled.returncode == 0
+          and "\nitem 3 of 5: settled without asking the user, already decided by " in case.minutes.read_text(),
+          described(settled) + case.minutes.read_text())
 
 
 def test_a_fix_is_compared_with_the_items_own_read_not_a_newer_read_of_another_item():
@@ -4582,6 +5164,18 @@ def test_a_read_ahead_the_read_step_has_not_used_is_no_items_latest_read():
           latest is not None and latest[0] == "a", repr(latest))
 
 
+def test_a_newer_failed_read_is_no_items_latest_read():
+    program = load_program()
+    reads = SUITE_ROOT / "latest-read-failed"
+    reads.mkdir(parents=True, exist_ok=True)
+    program.write_json(reads / "a-outcome.json", {"status": program.READ_DONE, "item": "item 3 of 4", "finished": 1})
+    program.write_json(reads / "b-outcome.json", {"status": program.READ_FAILED, "item": "item 3 of 4", "finished": 2,
+                                                  "failed": "the fast read exited 1"})
+    latest = program.latest_read(reads, "item 3 of 4")
+    check("the latest read of an item leaves out a newer read that failed",
+          latest is not None and latest[0] == "a", repr(latest))
+
+
 def test_two_earlier_texts_kept_in_one_run_both_land_below_the_item_and_the_next_item_stays_whole():
     case = item_read_case()
     answered_and_closed(case)
@@ -4800,7 +5394,7 @@ def titles_shown_in_turn(case, answers=None):
         named = re.search(r"#next_to_present item ([\d.]+) of", marker(case))
         if not named:
             return shown
-        heading = re.search(rf"^## Item {re.escape(named[1])} of \d+(?: \(deferred[^)]*\))?: (.*)$",
+        heading = re.search(rf"^##+ Item {re.escape(named[1])} of \d+(?: \(deferred[^)]*\))?: (.*)$",
                             walk_document(case), re.M)
         shown.append(heading[1] if heading else f"no heading for item {named[1]}")
         if shown[-1] == "Summary":
@@ -4927,6 +5521,20 @@ def test_gathering_puts_an_unshown_item_standing_above_answered_items_after_the_
           "answered one, so items stand in the order they were shown",
           shown[:2] == ["three", "above"] and re.search(r"^## Item 4 of \d+: above$", text, re.M) is not None
           and text.index("## Item 2 of 9: two") < text.index("## Item 3 of 9: three") < text.index(": above\n"),
+          f"{shown}\n{text}")
+
+
+def test_gathering_puts_an_unshown_item_after_the_withdrawn_versions_of_the_last_answered_item():
+    document = ("# A walk in which code picks the order\n\n" + numbered_item(1, "one")
+                + unshown_item("above", f"{CATEGORY_TAG}must_fix_now") + numbered_item(2, "two")
+                + numbered_item(3, "three") + "#### Withdrawn version 1 of item 3\n\nAn older three.\n\n"
+                + "## Summary\n\nThe walk in short.\n")
+    case = Case(next_to_present="item 2 of 9", document=document)
+    shown = titles_shown_in_turn(case)
+    text = walk_document(case)
+    check("an unshown item gathered behind the last answered item goes after that item's withdrawn versions, not "
+          "between the item and them",
+          shown[:2] == ["three", "above"] and text.index("An older three.") < text.index(": above\n"),
           f"{shown}\n{text}")
 
 
