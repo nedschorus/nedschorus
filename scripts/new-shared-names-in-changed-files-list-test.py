@@ -31,7 +31,7 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 LISTER_PATH = Path(__file__).with_name("new-shared-names-in-changed-files-list.py")
 HOOK_PATH = Path(__file__).with_name("new-shared-names-reminder-hook.py")
-EXCEPTION_LIST_PATH = "docs/nedschorus-wiki/nedschorus-ordinary-hyphenated-words-list.md"
+EXCEPTION_LIST_PATH = "docs/nedsnodes-wiki/nedsnodes-ordinary-hyphenated-words-list.md"
 
 FAILURES = []
 

@@ -15,13 +15,13 @@ Run these steps from an agent-session on either machine. The launcher reaches ne
 4. **Launch.** On the Mac:
 
    ```
-   /Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu <name> --no-attach --first-prompt-file /home/nedlern/<name>-first-prompt.md
+   /Users/el/Projects/nedsnodes/scripts/launch-claude-ubuntu <name> --no-attach --first-prompt-file /home/nedlern/<name>-first-prompt.md
    ```
 
    On ned-box, set the box's address first, because the launcher's default address `ned` resolves only on the Mac:
 
    ```
-   NEDSCHORUS_AGENT_BOX=nedlern@ned-box ~/Projects/nedschorus/scripts/launch-claude-ubuntu <name> --no-attach --first-prompt-file /home/nedlern/<name>-first-prompt.md
+   NEDSNODES_AGENT_BOX=nedlern@ned-box ~/Projects/nedsnodes/scripts/launch-claude-ubuntu <name> --no-attach --first-prompt-file /home/nedlern/<name>-first-prompt.md
    ```
 
    The launcher updates Claude Code, creates the agent-seat's agent-home `~/agents/<name>` on ned-box as a worktree on a detached HEAD at `origin/main`, marked so that git refuses commits in it, and starts the agent-seat's handoff-supervisor inside the agent-seat's own tmux server, `tmux -L <name>`. Because of `--no-attach`, the tmux session closes when the handoff-supervisor exits, with no shell left in it; running the launcher again brings the agent-seat back. If the launcher prints that the worktree could not be created, stop and tell the user what it printed.
@@ -31,4 +31,4 @@ Run these steps from an agent-session on either machine. The launcher reaches ne
    ssh nedlern@ned-box 'tmux -L <name> ls && for i in $(seq 1 60); do [ -f ~/agents/<name>/CLAUDE.local.md ] && break; sleep 5; done; cat ~/agents/<name>/CLAUDE.local.md'
    ```
 
-   Compare the printed file with the approved text. If the file never appears, show the user the last lines of `ssh nedlern@ned-box 'tmux -L <name> capture-pane -p'`. When it appears, move both files from step 3 into `/home/nedlern/nedschorus-logs/seats/<name>/` and tell the user the agent-seat is running and that `launch-claude-ubuntu <name>`, typed in a terminal on his Mac, attaches that terminal to the agent-seat's session.
+   Compare the printed file with the approved text. If the file never appears, show the user the last lines of `ssh nedlern@ned-box 'tmux -L <name> capture-pane -p'`. When it appears, move both files from step 3 into `/home/nedlern/nedsnodes-logs/seats/<name>/` and tell the user the agent-seat is running and that `launch-claude-ubuntu <name>`, typed in a terminal on his Mac, attaches that terminal to the agent-seat's session.

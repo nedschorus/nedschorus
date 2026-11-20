@@ -5,11 +5,11 @@ kind: design
 
 # Part two: the messages of the git hooks that run at commit and push
 
-This document is part two of GHI [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956). The GHI's GHI-MD, `docs/issues/956-every-refusal-and-warning-a-program-hands-an.md`, is part one, and its section "Later parts" lists the five parts after it, this one first. This part covers the messages of the git hooks that run when an agent commits or pushes. It shows each message that leaves the agent a question open, as the agent sees the message, and proposes the exact words to replace it, with the code changes the new words need. The user approved every proposed text and code change below in the approval-walk 956-part-two-the-git-hooks-messages-2026-10-04, whose minutes are at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/956-part-two-the-git-hooks-messages-2026-10-04-minutes.md`. Part two is built: see "Outcome" at the end.
+This document is part two of GHI [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956). The GHI's GHI-MD, `docs/issues/956-every-refusal-and-warning-a-program-hands-an.md`, is part one, and its section "Later parts" lists the five parts after it, this one first. This part covers the messages of the git hooks that run when an agent commits or pushes. It shows each message that leaves the agent a question open, as the agent sees the message, and proposes the exact words to replace it, with the code changes the new words need. The user approved every proposed text and code change below in the approval-walk 956-part-two-the-git-hooks-messages-2026-10-04, whose minutes are at `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/956-part-two-the-git-hooks-messages-2026-10-04-minutes.md`. Part two is built: see "Outcome" at the end.
 
 ## What a reader needs first
 
-**Where the hooks run from.** Each machine's clone sets `core.hooksPath` to `scripts/git-client-side-hooks/` inside the clone's main checkout: `/Users/el/Projects/nedschorus` on the Mac and `/home/nedlern/Projects/nedschorus` on ned-box. That checkout stays on main, so every agent-seat's worktree on the machine runs main's copy of the hooks. The agent's own worktree has its own copy of every script, at the same relative paths, from whatever commit the worktree has checked out.
+**Where the hooks run from.** Each machine's clone sets `core.hooksPath` to `scripts/git-client-side-hooks/` inside the clone's main checkout: `/Users/el/Projects/nedsnodes` on the Mac and `/home/nedlern/Projects/nedsnodes` on ned-box. That checkout stays on main, so every agent-seat's worktree on the machine runs main's copy of the hooks. The agent's own worktree has its own copy of every script, at the same relative paths, from whatever commit the worktree has checked out.
 
 **The hooks.** The directory holds four hooks:
 
@@ -29,7 +29,7 @@ A git hook's message is what the hook prints to stderr. An agent that runs `git 
 3. What to do instead, as an instruction.
 4. Under which condition each instruction applies, when the message gives more than one.
 
-**Where the list comes from.** Part one's audit put these four questions to 139 messages printed by this repository's programs; its report is `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/MD-skills/refusal-and-warning-message-audit-2026-10-01.md`. For the git hooks it found that seven pre-push messages give no instruction and that the trailer message gives no reason. A message the audit did not flag, the one for a check that gave no answer, is added here because the new texts would otherwise disagree with it in one push's output. Every message below was read again from main at the commit [Merge pull request #1025 from nedschorus/skill-start-new-agent-seat-on-ned-box](https://github.com/nedschorus/nedschorus/commit/1a23e5ef), and the line numbers are main's at that commit.
+**Where the list comes from.** Part one's audit put these four questions to 139 messages printed by this repository's programs; its report is `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/MD-skills/refusal-and-warning-message-audit-2026-10-01.md`. For the git hooks it found that seven pre-push messages give no instruction and that the trailer message gives no reason. A message the audit did not flag, the one for a check that gave no answer, is added here because the new texts would otherwise disagree with it in one push's output. Every message below was read again from main at the commit [Merge pull request #1025 from nedschorus/skill-start-new-agent-seat-on-ned-box](https://github.com/nedschorus/nedschorus/commit/1a23e5ef), and the line numbers are main's at that commit.
 
 ## What every unchecked push should tell the agent
 
@@ -74,7 +74,7 @@ Tell the user this whole message, including any error printed just above it: the
 **What the agent is told today** (`scripts/git-client-side-hooks/pre-push:36`; the hook fills in the path):
 
 ```
-pre-push: the conflict check did not run (/Users/el/Projects/nedschorus/scripts/git-client-side-hooks/../git-client-side-hooks-pre-push-conflict-check.py is missing); the push goes ahead unchecked.
+pre-push: the conflict check did not run (/Users/el/Projects/nedsnodes/scripts/git-client-side-hooks/../git-client-side-hooks-pre-push-conflict-check.py is missing); the push goes ahead unchecked.
 ```
 
 **What the agent cannot tell from the text.** Which branches went unchecked, what to do, and whether to tell anyone.
@@ -114,7 +114,7 @@ pre-push: the pre-push conflict check exited with status {status}, so this push 
 **What the agent is told today** (`scripts/git-client-side-hooks-pre-push-conflict-check.py:151`):
 
 ```
-pre-push: the conflict check did not run (/Users/el/Projects/nedschorus/scripts/branch-conflict-check.py is missing); the push goes ahead unchecked.
+pre-push: the conflict check did not run (/Users/el/Projects/nedsnodes/scripts/branch-conflict-check.py is missing); the push goes ahead unchecked.
 ```
 
 **What the agent cannot tell from the text.** Which branches went unchecked, what to do, and whether to tell anyone. The agent's own worktree has its own copy of the file, so the agent can still run the check by hand.
@@ -129,7 +129,7 @@ pre-push: the pre-push conflict check did not run, because {path} is missing, so
 
 ### 5. The time budget ran out before a branch's turn
 
-**When an agent sees this.** One push carries several branches, and the checks of the earlier branches used up the hook's time budget before this branch's turn. The budget is 60 seconds, or the number of seconds in `NEDSCHORUS_PRE_PUSH_CONFLICT_CHECK_SECONDS` when that is a positive number.
+**When an agent sees this.** One push carries several branches, and the checks of the earlier branches used up the hook's time budget before this branch's turn. The budget is 60 seconds, or the number of seconds in `NEDSNODES_PRE_PUSH_CONFLICT_CHECK_SECONDS` when that is a positive number.
 
 **What the agent is told today** (`scripts/git-client-side-hooks-pre-push-conflict-check.py:161`):
 
