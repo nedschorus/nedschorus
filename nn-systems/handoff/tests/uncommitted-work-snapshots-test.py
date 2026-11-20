@@ -2,7 +2,7 @@
 """Tests for work-snapshots: the hook, the shared module, the cleaner's step,
 and the handoff-supervisor's first-prompt list.
 
-Design: nn-systems/handoff/handoff-uncommitted-work-snapshots-across-crashes-design.md;
+Design: nn-systems/handoff/handoff-uncommitted-work-snapshots-across-crashes.tool.design.md;
 each section below is one bullet of its "How it will be tested".
 
 Every case works in a scratch clone with the programs copied into it, so the

@@ -2209,16 +2209,16 @@ check("so is one in its queue, which becomes such a file",
 check("a wiki file is in the class",
       class_of(root / "docs/nedsnodes-wiki/nedsnodes-glossary.md") == "a wiki file")
 check("a design is recognised by its name, wherever it sits",
-      class_of(root / "nn-systems/main-gatekeeper/main-gatekeeper-design.md") == "a design"
-      and class_of(root / "docs/issues/46-ghi-guide-agent-design.md") == "a design")
+      class_of(root / "nn-systems/main-gatekeeper/main-gatekeeper.system.design.md") == "a design"
+      and class_of(root / "docs/issues/46-ghi-guide-agent.system.design.md") == "a design")
 check("a test design and a design-contract have their own names",
-      class_of(root / "docs/issues/x-test-design.md") == "a test design"
-      and class_of(root / "docs/designs/queue/x-contract.md") == "a design-contract")
+      class_of(root / "docs/issues/x.tool.test-design.md") == "a test design"
+      and class_of(root / "docs/designs/queue/x.tool.contract.md") == "a design-contract")
 check("a design-contract is named as the state-machine design names it",
-      class_of(root / "docs/design-to-main/some-component-contract.md")
+      class_of(root / "docs/design-to-main/some-component.system.contract.md")
       == "a design-contract")
 check("a design in docs/design-to-main/ is a design, by its name",
-      class_of(root / "docs/design-to-main/design-to-main-state-machine-design.md")
+      class_of(root / "docs/design-to-main/design-to-main-state-machine.system.design.md")
       == "a design")
 check("a design's glossary is not in step 2's list, so it is not called a design",
       class_of(root / "docs/design-to-main/design-to-main-glossary.md") is None)

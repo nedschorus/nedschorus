@@ -467,19 +467,18 @@ FULL_RUN_DIRECTORIES_RELATIVE = (
     (pathlib.Path("docs") / "agents", "a file under docs/agents/"),
     (pathlib.Path("docs") / "nedsnodes-wiki", "a wiki file"),
 )
-# Designs, test designs and design-contracts are named, not placed: this
-# project's designs live beside the issues, the cross-project specs and in
-# docs/design-to-main/, and the state-machine design names all three files
-# `<component>-design.md`, `<component>-contract.md` and
-# `<component>-test-design.md` (its section on where artifacts land). Step 2
-# and this program both use the glossary's term, design-contract. No
-# directory is a design class: docs/design-to-main/ also holds that system's
-# glossary, which is not in step 2's list. The suffixes are matched whole, so
-# `-design-notes.md` -- notes about a design, not the design -- is not one.
+# Designs, test designs and design-contracts are named, not placed: the
+# file-naming page names a design `<name>.<kind>.design.md`, its test design
+# `<name>.<kind>.test-design.md` and its design-contract
+# `<name>.<kind>.contract.md`, wherever they sit. Step 2 and this program both
+# use the glossary's term, design-contract. No directory is a design class:
+# docs/design-to-main/ also holds that system's glossary, which is not in step
+# 2's list. The suffixes are matched whole, so `-design-notes.md` -- notes
+# about a design, not the design -- is not one.
 FULL_RUN_NAME_SUFFIXES = (
-    ("-test-design.md", "a test design"),
-    ("-contract.md", "a design-contract"),
-    ("-design.md", "a design"),
+    (".test-design.md", "a test design"),
+    (".contract.md", "a design-contract"),
+    (".design.md", "a design"),
 )
 # Step 2's own exceptions, which beat the classes above: a walk file, a
 # handoff, a pull request description and an issue body take the fast read and
