@@ -7,7 +7,7 @@ The naming and location standards for this project's files. Where a tool this pr
 `docs/nedsnodes-wiki/nedsnodes-glossary.md` defines the project-terms. `.claude/skills/skills-glossary.md`, `docs/design-to-main/design-to-main-glossary.md` and `nn-systems/main-gatekeeper/main-gatekeeper-glossary.md` define the system-terms of the skills, of design-to-main and of the main-gatekeeper. We avoid spaces in directory and file names, using a hyphen, `-`, instead.
 
 - **stem**: a filename without its extension.
-- **suffix**: the closing part of a filename stem that marks the file's kind, written with its leading hyphen or dot and without the extension, such as `-draft`, `.test-design` or `-hack`; a stem need not have one.
+- **suffix**: the closing part of a filename stem that marks the file's kind, written with its leading hyphen or dot and without the extension, such as `-draft` or `-hack`; a design's `.<kind>.design`, a test-design's `.<kind>.test-design` and a design-contract's `.<kind>.contract` take dots; a stem need not have one.
 
 ## Desired locations or file names for various components
 
@@ -38,7 +38,7 @@ A file in a queue directory is named as it will be in its final location, apart 
   - **Naming:** `<issue number>-<multi-part-name>.md`
 - **Design document, including a GHI-MD that is a design**
   - **Location:** Before its GHI is filed, `docs/issues/queue/`. Once its GHI is filed, `docs/issues/`, where it is refined in place until its code lands; from then it is revised only to fix a flaw found in it, and only after human review, and each merge appends a `**Pinned to what landed:** commit [<sha>]` line naming its commit. When its GHI closes, the design moves, with its test-design and design-contract where it has them, to the `docs/` subdirectory of the directory its code is in, `nn-systems/<system-name>/docs/` or `nn-systems/general-tools/docs/`, and the GHI's link is updated.
-  - **Naming:** `<multi-part-name>.<kind>.design.md` before its GHI is filed; `<issue number>-<multi-part-name>.<kind>.design.md` once it is filed; `<multi-part-name>.<kind>.design.md` again once it moves to its code's `docs/`. The `.design` suffix stays in all three, though not every GHI has a design. A new design's name ends `.tool.design.md` for one program or `.system.design.md` for a system, before its GHI is filed, once it is filed, and once it moves beside its code.
+  - **Naming:** `<multi-part-name>.<kind>.design.md` before its GHI is filed; `<issue number>-<multi-part-name>.<kind>.design.md` once it is filed; `<multi-part-name>.<kind>.design.md` again once it moves to its code's `docs/`. The `.<kind>.design` ending stays in all three, though not every GHI has a design. A design's name ends `.tool.design.md` for one program or `.system.design.md` for a system, before its GHI is filed, once it is filed, and once it moves beside its code.
 - **Other system or subsystem MDs**
   - **Location:** `nn-systems/<system-name>/docs/`, beside the system's `tests/`. A subsystem, which has a subdirectory of its system's directory, keeps its MDs in that subdirectory's `docs/`. A skill keeps only its `SKILL.md` in `.claude/skills/<skill name>/`; the rest of it lives in `nn-systems/skills/<skill name>/`, its MDs other than its prompts in that directory's `docs/`. A document that belongs to no one system stays in the top-level `docs/`, unless it is a design or data for a program in `nn-systems/general-tools/`, which keeps it in that directory's `docs/`.
   - **Naming:** `<system-name>-<subject>.md`; for a skill, `<skill name>-<subject>.md`
