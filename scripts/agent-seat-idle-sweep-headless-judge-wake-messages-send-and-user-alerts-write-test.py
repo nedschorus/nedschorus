@@ -1363,6 +1363,25 @@ check("a rule 2 judge at a usage limit with a reset time ahead: after the reset,
       code == 0 and [item["sentence"] for item in judge_facts.get("sentences", [])] == [ANNOUNCED]
       and len(calls) == 2 and len(machine.events("message_sent")) == 1, (code, calls))
 
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(PROMISE), turn_end()])
+machine.script(sent_ok())
+machine.run(0)
+machine.script(sent_ok())
+machine.run(16)
+machine.seat("beta", DONE_TURN)
+machine.task("beta", "1")
+machine.script(usage_limit_exit_with_transcript(RESET_IN_AN_HOUR))
+machine.run(20)
+machine.script()
+machine.run(32)
+check("a pause holds over a stuck wait: the user is still told, and no headless agent-session starts",
+      len(machine.events("headless_usage_limit_pause")) == 1
+      and [event["step"] for event in machine.events("wait_step")] == ["nudge", "escalate", "tell_user"]
+      and any("after a nudge and an escalation" in alert["title"] for alert in machine.alerts())
+      and not machine.claude_calls(),
+      (machine.events("wait_step"), machine.alerts(), machine.claude_calls()))
+
 for case, resets_at in (("carries no reset time", None),
                         ("carries a reset time already passed", int(START.timestamp()) - 60)):
     machine = two_seats_with_open_tasks()

@@ -19,8 +19,8 @@ Each invocation, under a lock that keeps two from overlapping:
    agent-session; for an agent-seat idle at a usage limit, that notice is its limit wake.
 4. Looks, a minute or more after each send, for the message in the agent-seat's transcript, once
    the agent-seat's turn has ended, and gives OWNING_AGENT_SEAT a task when it is not there.
-5. For each idle agent-seat, unless a headless usage-limit pause holds, as "How it fails" below says,
-   applies the verdict's rule: rule 1 wakes it once its limit has ended;
+5. For each idle agent-seat, applies the verdict's rule, skipping each step that starts a headless
+   agent-session while a headless usage-limit pause holds, as "How it fails" below says: rule 1 wakes it once its limit has ended;
    rule 2 has unbacked promises and announced actions judged and named to it; rule 3 sends the
    handoff text; rule 4 ends a wait no rule 2 message was sent on; rule 5 has the judge
    decide whether to message it, and write the message. A wait whose rule 2 messages named only
@@ -898,6 +898,10 @@ class Sweep:
     # --- One idle agent-seat ---
 
     def handle_seat(self, seat, verdict, transcript_read_at):
+        # Checked for each agent-seat: a judge earlier in this invocation may have started it.
+        # During it, only the steps that start no headless agent-session run; the others are not
+        # logged, so they run after it.
+        paused = self.headless_usage_limit_pause_holds()
         session = verdict[fields.SESSION_ID]
         stretch = (verdict.get(fields.LAST_ACTIVITY) or {}).get("time")
         wait = self.log.open_wait(seat)
@@ -909,6 +913,8 @@ class Sweep:
                             and check["last_activity"] == stretch)
         rule, text = verdict[fields.RULE], verdict.get(fields.TEXT)
         if rule == 1:
+            if paused:
+                return
             self.checked(seat, verdict, transcript_read_at, check_is_new)
             if wait:
                 self.end_wait(seat, "a usage limit")
@@ -935,6 +941,10 @@ class Sweep:
             self.end_wait(seat, "it spent tokens after the user was told")
             wait = None
         promise_text = None
+        if rule == 2 and paused:
+            if wait:
+                self.due_step(seat, verdict, wait, paused)
+            return
         if rule == 2:
             outcome, promise = self.sentences(seat, verdict)
             if outcome == "paused":
@@ -954,7 +964,9 @@ class Sweep:
             self.end_wait(seat, "nothing to do")
             wait = None
         if wait:
-            self.due_step(seat, verdict, wait)
+            self.due_step(seat, verdict, wait, paused)
+        if paused:
+            return
         if promise_text:
             # A promise given in answer to a message goes on the open wait, so that repeated
             # promises cannot put off its escalation and the user-alert.
@@ -976,9 +988,10 @@ class Sweep:
                      "session_id": verdict[fields.SESSION_ID], "first_idle_at": stretch,
                      "text": step_text})
 
-    def due_step(self, seat, verdict, wait):
+    def due_step(self, seat, verdict, wait, paused):
         """The step of an open wait that is due: the escalation 15 minutes after the nudge, then
-        the user-alert 15 minutes after the escalation; after that, none."""
+        the user-alert 15 minutes after the escalation; after that, none. The escalation is a
+        send, so a headless usage-limit pause holds it."""
         if TELL_USER in wait:
             return
         minutes = int(seconds_between(wait["first_idle_at"] or wait[NUDGE], self.now) // 60)
@@ -995,7 +1008,7 @@ class Sweep:
                            f"{seat} to see why it stopped, and message it with SendMessage; the "
                            "user may want to look at it himself.", failure=False)
             return
-        if seconds_between(wait[NUDGE], self.now) >= WAIT_STEP_SECONDS:
+        if not paused and seconds_between(wait[NUDGE], self.now) >= WAIT_STEP_SECONDS:
             text = ESCALATION_TEXT.format(
                 minutes=minutes, nudge_time=parse_time(wait[NUDGE]).strftime("%Y-%m-%d %H:%MZ"),
                 quoted_nudge="\n".join(f"> {line}" for line in wait["nudge_text"].split("\n")))
@@ -1231,9 +1244,6 @@ def sweep(arguments, now):
         for error in verdict.get(fields.ERRORS, []):
             run.read_failure(seat, error)
         if verdict.get(fields.ERRORS) or not verdict.get(fields.IDLE) or verdict.get(fields.RULE) is None:
-            continue
-        # Checked for each agent-seat: a judge earlier in this invocation may have started it.
-        if run.headless_usage_limit_pause_holds():
             continue
         run.handle_seat(seat, verdict, read_times[seat])
     run.read_failures_end()
