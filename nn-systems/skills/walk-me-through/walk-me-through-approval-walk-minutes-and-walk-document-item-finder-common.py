@@ -102,9 +102,11 @@ answer.
 
 AN ITEM'S TEXT. approval_walk_item_heading_and_item_page_body_lines gives the
 lines of an item that the item page builder puts on its page.
-approval_walk_item_text_as_shown_to_user gives the text the user must have been
-shown before his answer to the item counts: the same lines without the
-`#approval_walk_item_` lines, which the check program writes for agents. The
+approval_walk_item_text_as_shown_to_user gives the item's text as the user is
+shown it, from which the short-answer hook reads the decision-bearing lines
+the user must have been shown before his answer to the item counts: the same
+lines without the `#approval_walk_item_` lines, which the check program writes
+for agents. The
 short-answer hook drops each running count's `of M` only when it compares,
 because M changes when items are added to the walk.
 
@@ -112,11 +114,15 @@ ITEM PAGES. The walk-me-through skill publishes each item as a page before
 any message shows it, and records the page's link in the walk-minutes as a
 line `#item_page item N of M <link>`, or, when the publish failed, as
 `#item_page item N of M publish failed: <reason>`.
-newest_item_page_link_per_item_from_walk_minutes reads both forms, each on one
+A republish may be recorded with its version before the link, as in
+`#item_page item N of M version 2 <link>`, and any line with a link may end
+with a note in parentheses, as in `<link> (version 3: revised)`.
+approval_walk_item_page_link_lines_oldest_first_from_walk_minutes reads every such line, each on one
 line and at the line's start, outside code and HTML comments; a publish-failed
-line with no reason is not read. The newest line for an item number counts,
-whatever its `of M`, because a re-planned walk keeps an item's page while its
-total changes.
+line with no reason is not read.
+newest_item_page_link_per_item_from_walk_minutes gives each item number's
+newest line, whatever its `of M`, because a re-planned walk keeps an item's
+page while its total changes.
 
 CLOSING LINES. approval_walk_closing_line_read is the one reader of the line
 the walk-me-through skill ends every message of an open walk with, so the
@@ -201,10 +207,13 @@ UNNUMBERED_ITEM_HEADING_MARKUP = "##"
 APPROVAL_WALK_DEFERRED_ITEM_HEADING_NOTE_AFTER_RUNNING_COUNT = "(deferred: moved to just before the summary item)"
 NUMBER_OR_JOINER = re.compile(rf"{NUMBER}|\bto\b|-|\u2013", re.I)
 # A link is one run of non-space characters, so `publish failed: <reason>` can never be read as a link. Spaces
-# only, never a newline, so a line that ends short is not completed by the line below it.
+# only, never a newline, so a line that ends short is not completed by the line below it. Groups: the item number,
+# the failed publish's text, the version written before the link, the link, the note in parentheses after it.
 ITEM_PAGE_LINE_PATTERN = re.compile(
-    rf"^#item_page[ \t]+item[ \t]+({NUMBER})[ \t]+of[ \t]+\d+[ \t]+(?:(publish failed:[ \t]*\S.*?)|(\S+))[ \t]*$",
+    rf"^#item_page[ \t]+item[ \t]+({NUMBER})[ \t]+of[ \t]+\d+[ \t]+"
+    rf"(?:(publish failed:[ \t]*\S.*?)|(?:version[ \t]+(\d+)[ \t]+)?(\S+)(?:[ \t]+\(([^\n]*)\))?)[ \t]*$",
     re.I | re.M)
+ITEM_PAGE_NOTE_VERSION = re.compile(r"\bversion[ \t]+(\d+)", re.I)
 # A link has no space in it, so no link can equal this value.
 ITEM_PAGE_PUBLISH_FAILED = "publish failed"
 NOT_A_FORM_PROBLEM = (
@@ -400,11 +409,23 @@ def text_wrapped_as_markdown_code_span(text):
     return f"{delimiter}{padding}{text}{padding}{delimiter}"
 
 
+def approval_walk_item_page_link_lines_oldest_first_from_walk_minutes(minutes_text, parser):
+    """Return [(item number, the line's link or ITEM_PAGE_PUBLISH_FAILED, the version the line states or None)] for
+    every `#item_page` line of the minutes, oldest first; the version is the one written before the link, else the
+    first `version K` in the note after it."""
+    lines = []
+    for number, failed, version, link, note in ITEM_PAGE_LINE_PATTERN.findall(
+            "\n".join(prose_lines(minutes_text, parser))):
+        noted = ITEM_PAGE_NOTE_VERSION.search(note)
+        stated = version or (noted[1] if noted else None)
+        lines.append((number, ITEM_PAGE_PUBLISH_FAILED if failed else link, int(stated) if stated else None))
+    return lines
+
+
 def newest_item_page_link_per_item_from_walk_minutes(minutes_text, parser):
     """Return {item number: the link of its newest `#item_page` line, or ITEM_PAGE_PUBLISH_FAILED when that line
     records a failed publish}."""
-    return {number: ITEM_PAGE_PUBLISH_FAILED if failed else link
-            for number, failed, link in ITEM_PAGE_LINE_PATTERN.findall("\n".join(prose_lines(minutes_text, parser)))}
+    return {number: link for number, link, _ in approval_walk_item_page_link_lines_oldest_first_from_walk_minutes(minutes_text, parser)}
 
 
 def approval_walk_closing_line_read(line, parser, answer_letters):
@@ -784,9 +805,9 @@ def approval_walk_text_with_running_count_totals_removed(text):
 
 
 def approval_walk_item_text_as_shown_to_user(text, parser, all_units, unit, number):
-    """Return the Markdown the user must be shown for item number of the walk-document text, as the short-answer
-    hook compares it with the agent's message: approval_walk_item_heading_and_item_page_body_lines' heading and lines, without
-    the `#approval_walk_item_` lines."""
+    """Return the Markdown the user is shown for item number of the walk-document text, from which the short-answer
+    hook reads the heading and the decision-bearing lines it looks for in the agent's message:
+    approval_walk_item_heading_and_item_page_body_lines' heading and lines, without the `#approval_walk_item_` lines."""
     heading, body = approval_walk_item_heading_and_item_page_body_lines(text, parser, all_units, unit, number)
     shown = heading + "\n" + "\n".join(body)
     # A tag line removed leaves the blank lines around it, so blank lines are squeezed to one.

@@ -1,12 +1,20 @@
 ---
-issue: "[Seat mailboxes across machines and runtimes](https://github.com/nedschorus/nedschorus/issues/749)"
-status: draft (2026-09-22) — no code written, nothing built. Revised 2026-09-22T19:50Z after the user put every seat on one account: the original justification (two accounts, per-account discovery) is dead and is replaced by a measured one (liveness — an offline seat receives nothing, whatever the account). See "Why the fleet needs it"; two additions in §9 and §10.6. Filed as its own issue on 2026-09-28, with §10.7 added; measurements below are as of 2026-09-22.
+issue: "[Seat mailboxes across machines and runtimes](https://github.com/nedsnodes/nedsnodes/issues/749)"
+status: closed as not planned (2026-11-20), unbuilt; see "Outcome". draft (2026-09-22) — no code written, nothing built. Revised 2026-09-22T19:50Z after the user put every seat on one account: the original justification (two accounts, per-account discovery) is dead and is replaced by a measured one (liveness — an offline seat receives nothing, whatever the account). See "Why the fleet needs it"; two additions in §9 and §10.6. Filed as its own issue on 2026-09-28, with §10.7 added; measurements below are as of 2026-09-22.
 home: this issue. It was to reopen GHI [Claude turn/start and turn/steer equivalents](https://github.com/nedschorus/nedschorus/issues/37), the earlier request, closed with no GHI-MD; since PR 708 such an issue cannot be edited by hand, so the user approved filing the design as a new issue instead (merge-lane-2's meta-walk, item 10, "Y" at 2026-09-28T15:18:11Z).
-next action: the user walks this design with merge-lane-2, one open question of §10 at a time; nothing is built before that walk.
+next action: none; the issue is closed as not planned.
 kind: design
 ---
 
 # Seat mailboxes across machines and runtimes
+
+## Outcome
+
+Closed unbuilt: agent-seats message each other with Claude Code's SendMessage tool; 13 of 8,690 messages sent from ned-box in a month were held as offline, and none lost work.
+
+The user ruled to close this issue as not planned on 2026-11-20 at 23:53Z, answering "A" to item 3 of approval-walk merge-lane-2-idle-alerts-and-seat-mailboxes-ghi-approval-walk-2026-11-20; its minutes are at `nedlern@ned-box:/home/nedlern/agents/merge-lane-2/docs/walk/merge-lane-2-idle-alerts-and-seat-mailboxes-ghi-approval-walk-2026-11-20-minutes.md`.
+
+Earlier context: on 2026-11-05, in item 2 of walk ghi-1115-agent-seat-message-queue-design-2026-11-05, the user approved not building a message queue, after research found 13 "offline" replies in 8,690 sends from ned-box between 2026-10-05 and 2026-11-05, none of which lost work. Those minutes are at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/ghi-1115-agent-seat-message-queue-design-2026-11-05-minutes.md`, and the research at `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane-2/ghi-1115-lost-message-research-2026-11-05/`. The design below is kept as it stood and was never built.
 
 One agent-seat sends a message to another, on either machine, in either runtime, and the recipient acts on it without the user relaying anything. That is the whole job. This document extends [comms-bridge-spec.md](https://github.com/nedschorus/nedschorus/blob/295c9f35/docs/cross-project/comms-bridge-spec.md), the user's append-only log-pair design adopted verbatim 2026-07-20; everything below that is not marked NEW is that spec, applied to ten seats instead of two.
 

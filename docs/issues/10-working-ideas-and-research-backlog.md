@@ -417,7 +417,7 @@ Recoverable from git history. This shrinks walk item 17 cluster 6.
 
 DISPERSED 2026-07-27 (walk item 17 cluster 4, user-ruled per entry; marks in
 place below). Net result: two sentences captured (the one-coherent-change-set
-workflow rule on issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3);
+workflow rule on issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper.system.design.md)](https://github.com/nedschorus/nedschorus/issues/3);
 the reply-incapable-sender terminal-state requirement on
 issue [Founding program — boot up nedschorus (plan of record: docs/cross-project/nedschorus-founding-plan.md)](https://github.com/nedschorus/nedschorus/issues/1)); one entry
 answered directly by ruling (check-in composition — lifecycle bundling is
@@ -427,7 +427,7 @@ wake when the user gates an artifact class (the item-15 grow-back trigger).
 
 - Keep PRs atomic and independently mergeable.
   — processed 2026-07-27 → sentence on
-  issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3): the
+  issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper.system.design.md)](https://github.com/nedschorus/nedschorus/issues/3): the
   gatekeeper's CLAUDE.md workflow lines teach one coherent change set per
   check-in (NC has no pull requests).
 - Decide by change type whether code, tests, design, and test plans should be checked
@@ -490,7 +490,7 @@ the many-parts overview rule) written into § Draft document and directory
 structure with four duplicate bullets folded there; the steward ideal to
 issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26) as a
 candidate domain-expert duty; the scrub-duty enumeration to
-issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nn-systems/handoff/handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2); two
+issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nn-systems/handoff/handoff.system.design.md](https://github.com/nedschorus/nedschorus/issues/2); two
 entries recognized as landed (the artifact-lifecycle promote path; the
 no-junk-drawer disposal machinery); one already dispersed (memory-to-page
 pointing, issue [Runtime-behavior research bundle: instruction compression + deliberate scrub, instruction precedence, output styles, context clearing, names reviewer, memory maintenance](https://github.com/nedschorus/nedschorus/issues/29)
@@ -538,7 +538,7 @@ walk; the org-vs-artifact-rules distinction — enforced structurally).
   permanent junk drawer.
   — processed 2026-07-27 → landed (artifact-lifecycle no-stateless-piles +
   the handoff scrub step), PLUS a sentence on
-  issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nn-systems/handoff/handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2): the
+  issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nn-systems/handoff/handoff.system.design.md](https://github.com/nedschorus/nedschorus/issues/2): the
   scrub-step build enumerates its standing maintenance duties from the
   specs that name the scrub, so the set is explicit in the built skill.
 - Decide whether a memory should point to one general page or a specific system
@@ -753,7 +753,7 @@ conclusions are:
   public-links policy): links are judged on usefulness and reliability only;
   nothing is omitted from public artifacts on provenance grounds.
 - First bounded task — RESOLVED 2026-07-25 (walk item 15): the
-  main-gatekeeper build slice (main-gatekeeper-design.md § Build slice), boot
+  main-gatekeeper build slice (main-gatekeeper.system.design.md § Build slice), boot
   test first. Bounded, code-heavy, tests the founding skills and workflow end
   to end, imports no predecessor subsystem (the gatekeeper is authored
   natively; legacy contact is read-only reference under the rewrite policy).

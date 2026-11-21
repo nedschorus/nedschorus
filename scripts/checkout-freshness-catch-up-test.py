@@ -929,7 +929,7 @@ import importlib.util
 specification = importlib.util.spec_from_file_location("catch_up_module", SCRIPT_PATH)
 catch_up_module = importlib.util.module_from_spec(specification)
 specification.loader.exec_module(catch_up_module)
-import contextlib, io
+import contextlib
 
 # ---------------------------------------------------------------------------
 # PR #87's review: git's prose must be read in a stable locale
@@ -940,7 +940,6 @@ import contextlib, io
 # should abort the merge is skipped, and the seat's tree is left parked
 # mid-merge. A stub git reports the locale it was handed.
 import os as _os
-import shutil as _shutil
 import tempfile as _tempfile
 
 with _tempfile.TemporaryDirectory() as locale_scratch:
@@ -1330,17 +1329,17 @@ with tempfile.TemporaryDirectory() as naming_scratch:
     # design of record in one directory — so a change there is named as what
     # it is. Until 2026-09-22 the directory matched no category and fell to
     # the catch-all: observed live that day, when
-    # nn-systems/handoff/handoff-design.md moved on main and this hook
+    # nn-systems/handoff/handoff.system.design.md moved on main and this hook
     # reported it as "other files". The pair is a design AND a program, so the
     # case proves the category is decided by the path's prefix, not by the
     # extension; the catch-all still holds this scratch repository's Makefile
     # from the case above, so what is asserted is that nn-systems/ is not on
     # that line.
-    systems_listing = named(("nn-systems/handoff/handoff-design.md", "a design of record"),
+    systems_listing = named(("nn-systems/handoff/handoff.system.design.md", "a design of record"),
                             ("nn-systems/handoff/handoff-supervisor.py", "the system's code"))
     check("a system kept whole is named as one, its design of record and its code together",
           "systems you build on, code and design of record (2): "
-          "nn-systems/handoff/handoff-design.md, nn-systems/handoff/handoff-supervisor.py"
+          "nn-systems/handoff/handoff-supervisor.py, nn-systems/handoff/handoff.system.design.md"
           in systems_listing, systems_listing)
     catch_all_line = next((line for line in systems_listing.splitlines()
                            if line.lstrip().startswith("other files")), "")

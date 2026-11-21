@@ -13,7 +13,7 @@ When an agent-seat's earlier agent-session died with uncommitted work, the hando
 - it applies the rule that a work-snapshot taken during a merge, rebase, cherry-pick, revert or am is never restored, only deleted;
 - it deletes the ref with `git update-ref -d <ref>`, whether the work was kept or dropped, and leaves the ref in place when a command fails.
 
-At 78716fd58 the program's command line had one command, `list` (`main()` in the same file), and the design, `nn-systems/handoff/handoff-uncommitted-work-snapshots-across-crashes-design.md`, wrote these steps as instructions to the agent in its § 3, then titled "The restore steps, printed with the list"; § 3 is now "Restoring or discarding a leftover: the `restore` and `discard` commands, and the task a restore opens".
+At 78716fd58 the program's command line had one command, `list` (`main()` in the same file), and the design, `nn-systems/handoff/handoff-uncommitted-work-snapshots-across-crashes.tool.design.md`, wrote these steps as instructions to the agent in its § 3, then titled "The restore steps, printed with the list"; § 3 is now "Restoring or discarding a leftover: the `restore` and `discard` commands, and the task a restore opens".
 
 ## Why it matters
 

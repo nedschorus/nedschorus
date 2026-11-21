@@ -1,11 +1,11 @@
 ---
-issue: "[main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)"
+issue: "[main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper.system.design.md)](https://github.com/nedschorus/nedschorus/issues/3)"
 kind: design
 ---
 
 # main-gatekeeper build — slice plan
 
-Issue: issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)
+Issue: issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper.system.design.md)](https://github.com/nedschorus/nedschorus/issues/3)
 
 Working material for the build of `nn-systems/main-gatekeeper/main-gatekeeper.py`, the single
 program through which every change reaches `main` in nedschorus. This
@@ -14,7 +14,7 @@ one, and records the design points the specification deliberately leaves to
 the builder.
 
 **The specification is canonical, not this document.**
-[`nn-systems/main-gatekeeper/main-gatekeeper-design.md`](../../nn-systems/main-gatekeeper/main-gatekeeper-design.md)
+[`nn-systems/main-gatekeeper/main-gatekeeper.system.design.md`](../../nn-systems/main-gatekeeper/main-gatekeeper.system.design.md)
 (design-as-of 2026-07-24) states the contract; the build bindings in
 [`docs/issues/3-gatekeeper-build-bindings.md`](3-gatekeeper-build-bindings.md)
 (user-walked 2026-07-30) supplement it with B1–B6. This plan only says what
@@ -721,7 +721,7 @@ remains in git history at `4cadb46`.
 
 The approval-walk `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/complexity-sweep-findings-2026-10-02.md`, item 17, held on 2026-10-03 (walk-minutes: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/complexity-sweep-findings-2026-10-02-minutes.md`), asked whether build-slice 4's asynchronous machinery — `--no-wait`, the detached worker, `status` and `cancel` — should be removed, since no slow check has yet run at the main-gatekeeper. The user ruled to keep it: a main-gatekeeper run with its checks can take 20 minutes or more, and a run that long must outlive the agent-session that submitted it, which an agent-seat's session-handoff or crash can end at any time. A command run by an agent's harness as a background task belongs to that agent-session and is not built to outlive it; the detached worker, started in its own operating-system session, is, and so is what the worker leaves for `status`: a commit on main, or a refusal record in its workspace. Neither survives a reboot of the host, after which the request reads as abandoned and is resubmitted. The user also ruled that the machinery must be made robust before the main-gatekeeper is activated, and that the requirements are recorded here, because no agent-seat owns the main-gatekeeper (the agent-seat `gatekeeper` was retired on 2026-10-04), and this build-slice plan is where whoever builds the main-gatekeeper starts. The user approved the six requirements below in summary form; the detail under each is the recording agent's, and a builder who finds it wrong proposes a change to the user rather than building around it.
 
-The six are program work in `nn-systems/main-gatekeeper/main-gatekeeper.py`, where every function and constant named below lives, with their tests in `nn-systems/main-gatekeeper/tests/main-gatekeeper-test.py`. Each is a prerequisite of activation; requirement 5 is built with build-slice 7. None is built. They contradict specification text in `nn-systems/main-gatekeeper/main-gatekeeper-design.md`, so the pull request that builds each one amends every passage of the specification it contradicts, at least these: § The request and the reply (the instant `accepted` of a non-waiting caller, which requirement 2 changes, and the outcomes `status` returns, which requirements 1, 4 and 5 change); the error catalog in § States, crashes, cancel, and errors (requirement 2's new refusal); § States, crashes, cancel, and errors (the workspace's `main-gatekeeper-check-in-request-holder.pid`, liveness judged by the recorded process ID and start time, and `cancel`'s group rule, which requirement 3 changes); and the Records paragraph of § The job and the guarantee, "No side files, no separate logs" (requirements 1 and 4 add files to the workspace). The exact field names and wording of the new outcomes are the builder's, recorded in those amendments.
+The six are program work in `nn-systems/main-gatekeeper/main-gatekeeper.py`, where every function and constant named below lives, with their tests in `nn-systems/main-gatekeeper/tests/main-gatekeeper-test.py`. Each is a prerequisite of activation; requirement 5 is built with build-slice 7. None is built. They contradict specification text in `nn-systems/main-gatekeeper/main-gatekeeper.system.design.md`, so the pull request that builds each one amends every passage of the specification it contradicts, at least these: § The request and the reply (the instant `accepted` of a non-waiting caller, which requirement 2 changes, and the outcomes `status` returns, which requirements 1, 4 and 5 change); the error catalog in § States, crashes, cancel, and errors (requirement 2's new refusal); § States, crashes, cancel, and errors (the workspace's `main-gatekeeper-check-in-request-holder.pid`, liveness judged by the recorded process ID and start time, and `cancel`'s group rule, which requirement 3 changes); and the Records paragraph of § The job and the guarantee, "No side files, no separate logs" (requirements 1 and 4 add files to the workspace). The exact field names and wording of the new outcomes are the builder's, recorded in those amendments.
 
 In what follows, the main-gatekeeper-check-in-request-holder is the process that does a request's work: the detached worker of a `--no-wait` check-in, or, for a waiting check-in, the `check-in` process itself. The main-gatekeeper-worker-spawner is the `check-in --no-wait` process that creates the detached worker and answers `accepted`; the program's own comments call it the spawner. Both are defined in `nn-systems/main-gatekeeper/main-gatekeeper-glossary.md`. A main-gatekeeper-check-in-request-holder dies when it ends without finishing its work and without writing a refusal record.
 
@@ -732,7 +732,7 @@ In what follows, the main-gatekeeper-check-in-request-holder is the process that
 5. **The outcomes fit the gate's pull request (build-slice 7).** Today a main-gatekeeper-check-in-request-holder that succeeds deletes its workspace, and `status`, `cancel` and a twin `check-in` learn the result from main's history. Once build-slice 7 has the main-gatekeeper open a pull request instead of pushing to main, a finished request leaves no commit on main until the merge-lane merges the pull request, so `status` would answer `unknown`, `cancel` would answer `cancelled` while the pull request stays open, and a resubmission would open a second pull request. Required, built with build-slice 7: an outcome for a request whose pull request is open, naming the pull request, which `status`, `cancel` and `check-in` all honour. Build-slice 7 also decides where that outcome is kept, what removes it, what `status` answers once the pull request is closed without merging, and what a main-gatekeeper-check-in-request-holder that dies after opening the pull request but before recording it leaves behind.
 6. **A long run is tested.** No check slow enough to need the detached worker has run, because build-slice 9's check battery is not built, and the worker has no check step yet. Required: a test-only check step in the worker, inert unless a test enables it as the existing `worker_phase` pauses are, that blocks until the test releases it, with a deadline of its own so that a failed case ends in seconds rather than minutes. With it, the tests cover: a detached worker that keeps running after its caller's whole process group is killed, which a worker sharing that group would not survive; a worker killed with `SIGKILL`, and one whose `run_worker` raises outside its `try` block, each giving `abandoned` with requirement 1's content; a worker that dies before it is ready, and one that is slower than the readiness bound, each refused with its workspace removed (requirement 2); a twin submission while the main-gatekeeper-worker-spawner is still filling the workspace, which must read the request as live; `status` during the run, carrying the step (requirement 4); `cancel` during the run; `cancel` after the lock is free, which signals nothing; and a workspace older than `STALE_WORKSPACE_SECONDS` whose lock is held, which the sweep keeps.
 
-Item 10 of the same walk adds one more requirement, ruled by the user on 2026-10-04 after the build found that the sweep had missed half of what the read-once rule does. Today `status` returns a retained refusal record once and then deletes its workspace, and that deletion is also what lets the same work be resubmitted: a kept workspace makes `check-in` answer `in-progress` for the same digest. Required, built with the six requirements above: `status` returns a refusal record every time it is asked, until the record expires after `REFUSAL_RECORD_RETENTION_SECONDS`, 30 days; and a refusal record does not block a new `check-in` of identical work, which starts a fresh run. The pull request that builds it amends every passage that says a refusal is returned once: the specification, `nn-systems/main-gatekeeper/main-gatekeeper-design.md`, in its opening revision note, in § The request and the reply (twice, the `status` line included), and in § States, crashes, cancel, and errors; `docs/issues/3-gatekeeper-build-bindings.md`, ruling B4d; and this plan's own follow-up entry on claiming the record.
+Item 10 of the same walk adds one more requirement, ruled by the user on 2026-10-04 after the build found that the sweep had missed half of what the read-once rule does. Today `status` returns a retained refusal record once and then deletes its workspace, and that deletion is also what lets the same work be resubmitted: a kept workspace makes `check-in` answer `in-progress` for the same digest. Required, built with the six requirements above: `status` returns a refusal record every time it is asked, until the record expires after `REFUSAL_RECORD_RETENTION_SECONDS`, 30 days; and a refusal record does not block a new `check-in` of identical work, which starts a fresh run. The pull request that builds it amends every passage that says a refusal is returned once: the specification, `nn-systems/main-gatekeeper/main-gatekeeper.system.design.md`, in its opening revision note, in § The request and the reply (twice, the `status` line included), and in § States, crashes, cancel, and errors; `docs/issues/3-gatekeeper-build-bindings.md`, ruling B4d; and this plan's own follow-up entry on claiming the record.
 
 ## Design points this plan settles
 
@@ -803,7 +803,7 @@ The 2026-08-10 subtraction review proposed three cuts that the user rejected: it
 **Ruled 2026-09-14 at the merge-lane seat: shape 1.** Provenance, recorded
 exactly: merge-lane presented two shapes with a recommendation for shape 1;
 the user's whole reply was "shape 1". Every other word in this section is
-merge-lane's. Issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)'s body and the specification's Implementation status
+merge-lane's. Issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper.system.design.md)](https://github.com/nedschorus/nedschorus/issues/3)'s body and the specification's Implementation status
 paragraph each carry the ruling in one sentence; this section is its record.
 
 **Shape 1.** At activation the merge lane keeps reviewing and approving the
@@ -826,7 +826,7 @@ instead of pushing to main (specification § The credential and enforcement,
 the Branch protection bullet and the layout-amendment bullet). One
 consequence for a neighbouring design, stated so it is not rediscovered: the
 design-to-main state machine
-([`design-to-main-state-machine-design.md`](../design-to-main/design-to-main-state-machine-design.md)
+([`design-to-main-state-machine.system.design.md`](../design-to-main/design-to-main-state-machine.system.design.md)
 § 3.4, and its glossary's gate-rejection entry) assumes the gate returns a
 review verdict; under shape 1 that verdict is the merge lane's review of the
 gate's pull request.
@@ -849,7 +849,7 @@ exactly: merge-lane presented two shapes with a recommendation for shape A;
 the user's whole reply was "a". Every other word in this section is
 merge-lane's. The specification's Implementation status paragraph and the
 state machine's § 3.4 each carry the ruling in one sentence; this section
-is its record. The ghi-write split that makes room in issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)'s body for
+is its record. The ghi-write split that makes room in issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper.system.design.md)](https://github.com/nedschorus/nedschorus/issues/3)'s body for
 this ruling is § The per-file staleness report — slice 8's requirement:
 that requirement's substance lives here now, and the body keeps a summary
 and a pointer to it.
@@ -911,7 +911,7 @@ Found in the walk of the five seat-brief cold reads, 2026-09-16.
 
 ### The per-file staleness report — slice 8's requirement
 
-Moved here from issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)'s body by the ghi-write split: that body stood at
+Moved here from issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper.system.design.md)](https://github.com/nedschorus/nedschorus/issues/3)'s body by the ghi-write split: that body stood at
 1135 words, over the skill's 1000-word cap, and a body over the cap splits
 rather than being shortened. The requirement and the quoted words are the
 user's; the arrangement is merge-lane's. The body keeps the summary.
@@ -1011,7 +1011,7 @@ not redone:
    it. Neither does the specification, nor the build bindings: `git grep -icE
    'ruff|mypy|pytest|gitleaks|nc-checkin-quality-gate|check battery' main --`
    over `docs/issues/3-main-gatekeeper-build-slice-plan.md`,
-   `nn-systems/main-gatekeeper/main-gatekeeper-design.md` and
+   `nn-systems/main-gatekeeper/main-gatekeeper.system.design.md` and
    `docs/issues/3-gatekeeper-build-bindings.md` returns zero hits in
    all three; the same query over `nn-systems/main-gatekeeper/main-gatekeeper.py` also returns
    zero. Only the two toolchain documents name it. All five slices are
