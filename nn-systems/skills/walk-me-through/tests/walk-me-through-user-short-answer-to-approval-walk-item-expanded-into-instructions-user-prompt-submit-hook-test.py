@@ -2188,6 +2188,25 @@ def test_the_messages_own_heading_level_ends_its_copy_of_the_item():
           counted(lines) and not case.model_calls(), f"lines {lines!r}")
 
 
+def test_a_setext_heading_in_the_message_gives_its_copy_the_level_it_shows():
+    item = DECISION_ITEM.replace("## Item 4 of 9", "### Item 4 of 9")
+    shown = DECISION_ITEM.replace("## Item 4 of 9: a filter", "Item 4 of 9: a filter\n---").replace(
+        "#new Hide rows", "### Explanation\n\nOld rows confuse readers.\n\n#new Hide rows")
+    case = Case(next_to_present="item 4 of 9", document="# A walk\n\n## Filters\n\n" + item + "\n", model="changed")
+    lines = case.lines("a", case.transcript(f"{shown}\n\n{ITEM_4_CLOSING_LINE}"))
+    check("an answer counts with no model call when the message heads the item as a level-two setext heading and a "
+          "`### Explanation` heading sits inside the message's copy",
+          counted(lines) and not case.model_calls(), f"lines {lines!r}")
+
+
+def test_a_closing_line_with_no_blank_line_before_it_keeps_the_items_last_line():
+    case = Case(next_to_present="item 4 of 9", document="# A walk\n\n" + DECISION_ITEM + "\n", model="changed")
+    lines = case.lines("a", case.transcript(f"{DECISION_ITEM}\n{ITEM_4_CLOSING_LINE}"))
+    check("an answer counts with no model call when the closing line follows the recommendation with no blank line "
+          "between, so that Markdown makes the two one paragraph",
+          counted(lines) and not case.model_calls(), f"lines {lines!r}")
+
+
 def test_a_reworded_line_is_paired_with_the_shown_line_in_its_place_not_the_most_alike():
     item = DECISION_ITEM.replace("#new Hide rows older than a year.",
                                  "#new Enable request logging.\n\n#new Log every request.")
