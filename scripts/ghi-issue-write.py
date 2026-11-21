@@ -1851,12 +1851,19 @@ def create_pull_request_for_branch(repo: str, branch: str, number: int,
 DESIGN_KIND_ENDING = re.compile(r"(\.[a-z]+\.design)\.md$")
 
 
+def _landed_name_without_number(title: str, source_name: str) -> str:
+    """The landed file's stem after `<number>-`: the name a ruling question
+    raised before the issue has a number is saved under, so the lookup by the
+    landed name finds it."""
+    kind_ending = DESIGN_KIND_ENDING.search(source_name)
+    return f"{slug(title)}{kind_ending.group(1) if kind_ending else ''}"
+
+
 def create_ghi_landing_path_for_ghi_md(number, title: str, source_name: str) -> str:
     """Where create lands a GHI-MD: `docs/issues/<number>-<slug>.md`, or, for
     a source named `<name>.<kind>.design.md`, `<number>-<slug>.<kind>.design.md`."""
-    kind_ending = DESIGN_KIND_ENDING.search(source_name)
-    return (f"{GHI_MD_DIRECTORY}/{number}-{slug(title)}"
-            f"{kind_ending.group(1) if kind_ending else ''}.md")
+    return (f"{GHI_MD_DIRECTORY}/{number}-"
+            f"{_landed_name_without_number(title, source_name)}.md")
 
 
 def land_file(repo: str, number: int, title: str, source: Path,
@@ -2127,11 +2134,12 @@ def create(path: Path, repo: str, repository_root: Path, runner, report):
         refuse_if_already_landed_on_main(repo, text, title, repository_root,
                                          runner)
         refuse_heading_with_date(title)
-        if earlier_ruling_question(slug(title), text, runner, report) is None:
+        question_name = _landed_name_without_number(title, path.name)
+        if earlier_ruling_question(question_name, text, runner, report) is None:
             conflict = adjudicate(repo, title, text, repository_root, runner,
                                   report)
             if conflict is not None:
-                record_ruling_question(slug(title), repo, conflict, title,
+                record_ruling_question(question_name, repo, conflict, title,
                                        key, runner, report, "filed")
         number = file_issue(repo, title, key, runner, report)
 

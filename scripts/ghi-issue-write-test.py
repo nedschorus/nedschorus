@@ -1835,6 +1835,48 @@ def run_cases(scratch: Path):
             check(resumed_name, False,
                   f"{other!r}; {resumed_create.commands()}")
 
+        # A design's question is saved under the name the design lands
+        # under, `<slug>.tool.design`, so the run's last lines find it.
+        design_store = log_store_at(scratch / "design-question-store")
+        design_dir = scratch / "design-draft-dir"
+        design_dir.mkdir()
+        design_question_source = written(
+            design_dir, name="frozen-issue-reopened.tool.design.md",
+            text=conflicting_text)
+        design_create = StagedReader({
+            ASK: Completed("", returncode=3, stderr=ruling_stderr(
+                "#46 closed issues are frozen")),
+            "gh issue view 46": Completed("Closed issues are frozen\n"),
+            "gh issue list": Completed("[]"),
+            "gh issue create": Completed(
+                "https://github.com/nedsnodes/nedsnodes/issues/573\n"),
+            "git show": Completed("", returncode=1),
+            "git ls-remote": Completed(""),
+            "git ls-tree": Completed(""),
+            "gh pr create": Completed("https://github.com/x/y/pull/13\n"),
+        })
+        design_question_lines = []
+        design_question_name = ("create of a design with a ruling question "
+                                "saves it under the landed name and reports "
+                                "it in the run's last lines")
+        try:
+            tool.create(design_question_source, REPO, scratch, design_create,
+                        design_question_lines.append)
+            check(design_question_name,
+                  lambda: (sorted(design_create.staged)
+                  == [f"docs/issues/573-{draft_slug}.tool.design.md"]
+                  and sorted(item.name for item in design_store.iterdir())
+                  == [f"{draft_slug}.tool.design-proposed-improvements-or-"
+                      "changes-ghi-guide-agent-2026-10-03.md"]
+                  and design_question_lines[-1].startswith("Filed GHI 573.")
+                  and "Dispatch a forked subagent now"
+                  in design_question_lines[-1]),
+                  lambda: (sorted(item.name for item in design_store.iterdir()),
+                           design_question_lines[-1:]))
+        except Exception as other:                    # noqa: BLE001
+            check(design_question_name, False,
+                  f"{other!r}; {design_create.commands()}")
+
         # A first run that wrote the file and then failed to file the issue:
         # the rerun finds no issue, so it would adjudicate, but the log-store
         # holds ghi-guide-agent's question about this same text.
