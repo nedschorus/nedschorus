@@ -26,8 +26,8 @@ WHAT ONE RUN DOES, in order:
   1. Takes its own lock, the --state-file path with .lock added, without
      waiting; when another run holds it, exits 0.
   2. Reads the state file. A file that is missing or cannot be read counts as
-     having no passing commit and no last run, and the state this run writes
-     replaces it.
+     having no passing commit and no last run; a run that exits at step 5
+     leaves the file as it is.
   3. Runs `git fetch origin` in --clone and resolves refs/remotes/origin/main;
      when either fails, the run stops, recorded with commit null.
   4. Exits 0 when no run is due. A run is due when there is no last run, the
@@ -65,7 +65,7 @@ WHAT ONE RUN DOES, in order:
 THE STATE FILE, a JSON object written whole to a temporary file renamed into
 place, with these keys:
   passing_commit           the last commit whose run passed, or null; a run that
-                           stops keeps it
+                           fails or stops keeps it
   last_run.commit          the commit tested, or null when step 3 stopped the run
   last_run.compared_with   the passing commit the run was compared with, or null
   last_run.started, .ended times, UTC, as YYYY-MM-DDTHH:MM:SSZ
@@ -555,7 +555,8 @@ def record_follow_up_request_sent_under_lock(state_file):
         state = read_state(state_file)
     except StateUnreadable as error:
         print(f"{PROGRAM}: not recorded — {error}.\nThe next run of this program replaces "
-              f"the file; there is no run to record a follow-up for until then.",
+              f"the file, unless a no-sandbox suite is running then; until a run replaces "
+              f"the file, there is no run to record a follow-up for.",
               file=sys.stderr)
         return EXIT_REFUSED
     last = state.get("last_run")
