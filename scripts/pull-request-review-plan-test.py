@@ -262,6 +262,8 @@ def run_unit_cases():
          'print(allowed := command == "push")\n', '"push"', '"reset"'),
         ("a method's result compared inside a printed argument", 'print(x == "yes".upper())\n', '"yes"', '"no"'),
         ("a .format result compared inside a printed argument", 'print(x == "a {}".format(y))\n', '"a {}"', '"b {}"'),
+        ("a .startswith call on a string inside a printed argument", 'print("yes".startswith(x))\n', '"yes"', '"no"'),
+        ("a .count call on a string inside a printed argument", 'print("a,b".count(x))\n', '"a,b"', '"a;b"'),
         ("the test of a conditional expression in a printed argument", 'print("a" if c == "yes" else "b")\n', '"yes"', '"no"'),
     ]
     for case_name, source, old_text, new_text in behaviour_string_cases:
