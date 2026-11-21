@@ -19,8 +19,10 @@ succeed.
 
 On ned-box, the program keeps a failed step as a task on the task list of
 OWNING_AGENT_SEAT, the agent-seat that owns the installer, under the subject
-SCHEDULED_JOBS_INSTALLER_FAILURE_TASK_SUBJECT_FOR_OWNING_AGENT_SEAT_TASK_LIST.
-An open task is one of that subject not marked completed.
+SCHEDULED_JOBS_INSTALLER_FAILURE_TASK_SUBJECT_FOR_OWNING_AGENT_SEAT_TASK_LIST,
+with SCHEDULED_JOBS_INSTALLER_FAILURE_TASK_MARKER_METADATA_KEY set to true in its
+metadata. An open task is one carrying that key, whatever its subject, not
+marked completed: the subject names paths and options that a rename changes.
 
 When a step fails, each open task gets as its description the failed step's
 option, exit code and output, or, when none is open, a new task is written
@@ -117,6 +119,7 @@ REFERENCE_CHECKOUT_PATH_BY_MACHINE_NAME = {
 SCHEDULED_JOBS_INSTALLER_FAILURE_TASK_SUBJECT_FOR_OWNING_AGENT_SEAT_TASK_LIST = (
     "Scheduled jobs: nn-systems/general-tools/install-scheduled-jobs-on-this-machine.py "
     "--install or --remove-not-in-table failed after a pull into ned-box's reference-checkout")
+SCHEDULED_JOBS_INSTALLER_FAILURE_TASK_MARKER_METADATA_KEY = "is_scheduled_jobs_installer_failure_task"
 INSTALL = "--install"
 REMOVE_NOT_IN_TABLE = "--remove-not-in-table"
 INSTALLER_STEPS = (INSTALL, REMOVE_NOT_IN_TABLE)
@@ -192,15 +195,18 @@ def failed_message(machine, reference_checkout, step, exit_code, output, why_no_
         f"The installer printed:\n{output}")
 
 
-def open_tasks_with_subject(list_directory, subject):
-    """Return (path, task) for each task of the subject not marked completed."""
+def scheduled_jobs_installer_failure_tasks_still_pending_or_in_progress(task_list_directory):
+    """Return (path, task) for each task carrying the installer-failure metadata key and not
+    marked completed."""
     found = []
-    for path in sorted(list_directory.glob("*.json")):
+    for path in sorted(task_list_directory.glob("*.json")):
         try:
             task = json.loads(path.read_text(encoding="utf-8"))
         except ValueError:
             continue
-        if task.get("status") != "completed" and task.get("subject") == subject:
+        metadata = task.get("metadata")
+        if (task.get("status") != "completed" and isinstance(metadata, dict)
+                and metadata.get(SCHEDULED_JOBS_INSTALLER_FAILURE_TASK_MARKER_METADATA_KEY) is True):
             found.append((path, task))
     return found
 
@@ -249,24 +255,27 @@ def main(environment=None, argv=None):
         environment.get(AGENT_SEAT_TASK_LISTS_DIRECTORY_TEST_OVERRIDE_ENVIRONMENT_VARIABLE)
         or Path.home() / ".claude" / "tasks")
     list_directory = task_lists_directory / f"nedsnodes-{OWNING_AGENT_SEAT}-tasks"
-    subject = SCHEDULED_JOBS_INSTALLER_FAILURE_TASK_SUBJECT_FOR_OWNING_AGENT_SEAT_TASK_LIST
     if failed is None:
         if list_directory.is_dir():
             with contextlib.suppress(OSError):
-                for path, task in open_tasks_with_subject(list_directory, subject):
+                for path, task in scheduled_jobs_installer_failure_tasks_still_pending_or_in_progress(
+                        list_directory):
                     agent_seat_task_file.agent_seat_task_list_task_file_rewrite(
                         path, {**task, "status": "completed"})
         return EXIT_DONE
     description = failed_step_task_description(reference_checkout, *failed)
     try:
         list_directory.mkdir(parents=True, exist_ok=True)
-        open_tasks = open_tasks_with_subject(list_directory, subject)
+        open_tasks = scheduled_jobs_installer_failure_tasks_still_pending_or_in_progress(
+            list_directory)
         for path, task in open_tasks:
             agent_seat_task_file.agent_seat_task_list_task_file_rewrite(
                 path, {**task, "description": description})
         if not open_tasks:
             agent_seat_task_list.agent_seat_task_list_new_pending_task_write(
-                list_directory, subject, description)
+                list_directory,
+                SCHEDULED_JOBS_INSTALLER_FAILURE_TASK_SUBJECT_FOR_OWNING_AGENT_SEAT_TASK_LIST,
+                description, {SCHEDULED_JOBS_INSTALLER_FAILURE_TASK_MARKER_METADATA_KEY: True})
     except OSError as error:
         print(failed_message(machine, reference_checkout, *failed,
                              f"writing the task into the task list directory {list_directory} "
