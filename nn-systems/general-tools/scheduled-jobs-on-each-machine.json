@@ -213,6 +213,7 @@
     },
     {
       "name": "cold-read-fast-read-finding-outcomes-count-as-user-alert-once-14-days-after-own-first-cron-run",
+      "owner": "cold-read-improvement",
       "program": "nn-systems/cold-read/cold-read-fast-read-finding-outcomes-count-as-user-alert-once-14-days-after-own-first-cron-run.py",
       "arguments": [],
       "output": ".claude/cold-read-fast-read-finding-outcomes-count-as-user-alert-once-14-days-after-own-first-cron-run.log",
