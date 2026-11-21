@@ -1,5 +1,5 @@
 ---
-issue: "[The agent-crash-watcher puts a handoff-supervisor back on an unsupervised agent-seat whose session-handoff is waiting](https://github.com/nedschorus/nedschorus/issues/2541)"
+issue: "[The agent-crash-watcher puts a handoff-supervisor back on an unsupervised agent-seat whose session-handoff is waiting](https://github.com/nedsnodes/nedsnodes/issues/2541)"
 ---
 
 # The agent-crash-watcher puts a handoff-supervisor back on an unsupervised agent-seat whose session-handoff is waiting
@@ -47,6 +47,7 @@ The questions below came from a cold-read-fast-read of this GHI-MD on 2026-11-14
 - fleet-restart-at-login, 2026-11-14, on the open question of which reader decides that the session-handoff is waiting: the watcher imports `handoff_is_waiting()`, so that it agrees with `resupervise-seat.py`'s refusal by construction.
 - fleet-restart-at-login, 2026-11-14, on the open question of whether the watcher and the restart program share one function for steps 5 and 6: one shared function that both programs call, so that the watcher's steps cannot drift from the restart program's.
 - fleet-restart-at-login, 2026-11-14, on the open question of what keeps the watcher from acting on a session-handoff that asks the user before a restart: the watcher leaves such an agent-seat alone before it runs `--prepare-only`, as it already leaves alone the verdict `seat-asked-to-be-consulted`, and as the restart program stops before its step 4.
+- ned-box-helper, 2026-11-20, on what to build: item 7 of the Question 4 answer in the cold-read-full-run of `nn-systems/handoff/handoff.system.design.md`, `nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/handoff.system.design-2026-11-20-6/question-4-what-should-be-code-answer.md`, proposes this check in a broader form, from the design's Known holes, where the writer script reports that no handoff-supervisor is watching and gives the `scripts/resupervise-seat.py` command: the agent-crash-watcher detects a live agent-session with no live handoff-supervisor, whether or not a session-handoff is waiting, from the lock and heartbeat that `nn-systems/handoff/handoff-supervisor.py --check` reads, and, where `resupervise-seat.py` cannot run unattended, writes a task or a user-alert instead. That cold-read-record's `cold-read-triage.md` gives the finding the link of this GHI.
 
 ## Next action
 
