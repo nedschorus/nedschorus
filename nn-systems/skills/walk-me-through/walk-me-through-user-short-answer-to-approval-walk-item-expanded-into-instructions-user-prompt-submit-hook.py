@@ -1274,13 +1274,17 @@ def message_copy_of_item(heading_line, message_heading_line, after_heading, numb
     walk-document's, since a `### Explanation` ends a `###` item but not a `##` one."""
     walk_finder = load_walk_finder()
     parser = walk_finder.markdown_parser()
-    # The parsed token gives the level of a setext heading too, whose underline is after_heading's first line.
+    # The parsed token gives the level of a setext heading too, whose underline is the heading's last line.
     opening = parser.parse(f"{message_heading_line}\n{after_heading}", {})
     if opening and opening[0].type == "heading_open" and opening[0].map[0] == 0:
         marks = "#" * int(opening[0].tag[1])
         heading_line = (re.sub(r"^ {0,3}#{1,6}(?=[ \t]|$)", marks, heading_line, count=1)
                         if re.match(r" {0,3}#{1,6}(?=[ \t]|$)", heading_line) else f"{marks} {heading_line}")
-        after_heading = "\n".join(after_heading.split("\n")[opening[0].map[1] - 1:])
+        if opening[0].markup in ("=", "-"):
+            # Only the underline goes: a setext heading's further lines, such as a `#new_if_d` line, were shown to the
+            # user, and below an ATX heading_line they read as the item's first paragraph.
+            below = after_heading.split("\n")
+            after_heading = "\n".join(below[:opening[0].map[1] - 2] + below[opening[0].map[1] - 1:])
     text = f"{heading_line}\n{after_heading}"
     units = walk_finder.item_unit_spans(text, parser)
     pieces = [walk_finder.approval_walk_item_text_as_shown_to_user(text, parser, units, unit, number)
