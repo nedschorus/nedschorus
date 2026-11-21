@@ -234,7 +234,6 @@ def is_project_test_file(path: pathlib.Path, repository_root: pathlib.Path, lint
 
 def findings_for_file(path: pathlib.Path, changed: set, lint, root_directories: tuple):
     """Yield (line number, problem) for changed lines."""
-    relative = path.relative_to(REPOSITORY_ROOT)
     if lint.in_frozen_measured_data(path, REPOSITORY_ROOT):
         return
     # Skip test fixtures only forward; backward checks must still catch stale module citations.
