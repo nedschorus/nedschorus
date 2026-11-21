@@ -278,6 +278,16 @@ M the walk finder's count of the items shown and waiting, and names it with
 the same K and M. The line naming the next item gives that counted M,
 whatever M the walk-document's headings give.
 
+PREREQUISITE ENTRY. Last of what CLOSE prints when it names a next item, and
+last of what APPROVAL-WALK-WAITING-ITEM-COLD-READ-FAST-READ prints when it
+says to present the item, comes one line for each walk-document unit holding
+that item: the `approval_walk_item_decided` entry, as
+scripts/agent-seat-due-task-raise-hook.py reads it, that a task waiting on the
+user's decision on the item appends to its metadata.prerequisites, giving the
+walk-minutes' absolute path and the unit's heading line as the walk-document
+holds it then. It comes after the lines the agent must pass on to the user,
+so that it is not passed on.
+
 RULING GIVEN. Once CLOSE has written the minutes for an answer that is not
 held, it lists the open pull requests with `gh pr list`, run in the checkout,
 and, for each answered item and each item whose held answer it decides with
@@ -1138,6 +1148,11 @@ ITEM_READ_LINES = (
     "Then present {item}" + PRESENT_UNLESS_NOW_OVER_LATER_CLAUSE,
 )
 ITEM_READ_NOT_RUN_NEXT = "Present {item}" + PRESENT_UNLESS_NOW_OVER_LATER_CLAUSE
+# The form scripts/agent-seat-due-task-raise-hook.py's parse_prerequisites reads.
+WAITING_ON_ITEM_PREREQUISITE_LINE = ("If a task waits on the user's decision on {item}, append this entry to the "
+                                     "task's metadata.prerequisites list and give TaskUpdate the whole list, every "
+                                     "entry the list holds now kept, because TaskUpdate replaces "
+                                     "metadata.prerequisites whole: {entry}")
 ITEM_READ_FINDINGS_WITHOUT_OUTCOMES = (
     "{item} is not handed over to be presented yet: its cold-read-fast-read report {report} has findings with no "
     "recorded outcome, {missing} of {count}. The user is shown an item only once each finding of its latest "
@@ -2314,6 +2329,19 @@ def approval_walk_item_before_and_after_fixes_compare_for_changed_fact_words_nee
     return facts + [token for token in dict.fromkeys(changed) if is_fact(token, names)]
 
 
+def waiting_on_item_prerequisite_lines(walk_finder, minutes, numbers, total, parser):
+    """One WAITING_ON_ITEM_PREREQUISITE_LINE for each walk-document unit holding one of the items numbered, its
+    heading read from the walk-document as it is on disk now."""
+    document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
+    text = document.read_text(encoding="utf-8")
+    lines = text.split("\n")
+    return [WAITING_ON_ITEM_PREREQUISITE_LINE.format(
+        item=items_named(unit[0], total), entry=json.dumps({"approval_walk_item_decided": {
+            "approval_walk_minutes_file_path": str(minutes.resolve()),
+            "approval_walk_item_heading": lines[unit[3]].strip()}}, ensure_ascii=False))
+        for unit in walk_finder.item_unit_spans(text, parser) if set(unit[0]) & set(numbers)]
+
+
 def latest_read(reads, item):
     """Return (key, outcome) of the latest read of the item that wrote its report, or None; a read ahead that no read
     step has used is no item's read."""
@@ -2645,7 +2673,9 @@ def waiting_item_read(arguments, sub_step_of=None):
                     command)
                 print("\n".join([ITEM_READ_NOT_RUN.format(item=item, report=latest[1]["report"])]
                                  + (withheld or [ITEM_READ_NOT_RUN_NEXT.format(item=item, program=program,
-                                                                               top=shlex.quote(str(top)))])))
+                                                                               top=shlex.quote(str(top)))]
+                                    + waiting_on_item_prerequisite_lines(walk_finder, minutes, numbers, total,
+                                                                         parser))))
                 return 1 if withheld else 0
             why = ITEM_READ_RUN_FACTS.format(report=latest[1]["report"], facts=", ".join(facts[:FACTS_LISTED]))
         walk_name = minutes.name[:-len(walk_finder.MINUTES_SUFFIX)]
@@ -2668,7 +2698,7 @@ def waiting_item_read(arguments, sub_step_of=None):
                     + [line.format(item=item, document=document, command=command, program=program,
                                    top=shlex.quote(str(top)))
                        for line in (ITEM_READ_LINES[:1] if withheld else ITEM_READ_LINES)]
-                    + withheld))
+                    + (withheld or waiting_on_item_prerequisite_lines(walk_finder, minutes, numbers, total, parser))))
     return 1 if withheld else 0
 
 
@@ -3563,6 +3593,8 @@ def close(arguments):
         output += [not_started] if not_started else []
     output.append(CLOSE_READ_NEXT_ITEM.format(next_item=named, command=READ_STEP_COMMAND.format(
         program=Path(__file__).resolve(), flags="", top=shlex.quote(str(top)))) if numbers else CLOSE_NO_NEXT_ITEM)
+    # After the lines the agent must pass on to the user, so it is not passed on.
+    output += waiting_on_item_prerequisite_lines(walk_finder, minutes, numbers, count, parser) if numbers else []
     # Last, so a gh that fails or hangs cannot keep the answer or the next item out of the minutes.
     ruling_lines, ruling_failed = ruling_given_comments_posted(
         minutes.name[:-len(walk_finder.MINUTES_SUFFIX)], rulings, top, arguments.gh_program, arguments.gh_timeout)
