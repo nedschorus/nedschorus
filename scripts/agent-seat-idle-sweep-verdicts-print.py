@@ -191,8 +191,10 @@ RX_NEGATED_ACTION = re.compile(
     r"|\b(?:" + _VERBS + "|" + _GERUNDS + r")\s+(?:nothing|none|no\s+(?:more|other|new|further))\b"
     r"(?!\s+(?:else\s+)?(?:but|than)\b)",
     re.I)
-# Coordinated clauses share the sentence's subject: "I'll push no further changes and merge it now".
-RX_CLAUSE_BREAK = re.compile(r",\s*(?:and\s+)?then\s+|\s+and\s+(?:then\s+)?|;\s*", re.I)
+# A coordinated clause shares the sentence's subject: "I'll push no further changes and merge it
+# now". A clause after ";" or a contrastive ", but" stands alone and brings its own subject.
+RX_CLAUSE_BREAK = re.compile(r"(,\s*(?:and\s+)?then\s+|\s+and\s+(?:then\s+)?)"
+                             r"|(;\s*|,\s*(?:but|yet)\s+)", re.I)
 
 
 def clean_text(text):
@@ -237,14 +239,26 @@ def _announces(sentence):
     return bool(match and _gerund_announces(sentence, match))
 
 
+def _clauses(sentence):
+    """Yield each clause with whether it may share the sentence's subject."""
+    parts = RX_CLAUSE_BREAK.split(sentence)
+    yield parts[0], False
+    for coordinating, _independent, clause in zip(parts[1::3], parts[2::3], parts[3::3]):
+        yield clause, bool(coordinating)
+
+
 def _declines_every_action(sentence):
     """Whether a clause declines an action and no other clause announces one."""
-    clauses = RX_CLAUSE_BREAK.split(sentence)
-    if not any(RX_NEGATED_ACTION.search(clause) for clause in clauses):
+    clauses = list(_clauses(sentence))
+    if not any(RX_NEGATED_ACTION.search(clause) for clause, _ in clauses):
         return False
+    # A subject-less clause is an action only in the sentence's own verb form: in "I'm opening no
+    # new issues and pull requests", "pull requests" is a second object, not "I'm pull".
+    subject = ("I'm " if RX_PROGRESSIVE.search(sentence) and not RX_FUTURE.search(sentence)
+               else "I'll ")
     return not any(not RX_NEGATED_ACTION.search(clause)
-                   and (_announces(clause) or _announces("I'll " + clause))
-                   for clause in clauses)
+                   and (_announces(clause) or (shares_subject and _announces(subject + clause)))
+                   for clause, shares_subject in clauses)
 
 
 def sentence_kind(sentence):
