@@ -27,7 +27,7 @@ the agent is told through additionalContext that the worktree's uncommitted
 work is not protected; the hook always exits 0, since the tool call has
 already happened.
 
-Design: nn-systems/handoff/handoff-uncommitted-work-snapshots-across-crashes-design.md.
+Design: nn-systems/handoff/handoff-uncommitted-work-snapshots-across-crashes.tool.design.md.
 """
 
 import importlib.util

@@ -221,6 +221,8 @@ def main():
               and "event=APPROVE" in approval[0]
               and any(argument.startswith("body=") and "adding a \"Provisional additions"
                       in argument for argument in approval[0])
+              # The merge gate refuses the merge account's approval without the posting program's verdict line.
+              and any(argument.startswith("body=APPROVE\n\n") for argument in approval[0])
               and merges and merges[0][:3] == ["9", HEAD, SUBMITTED]
               and "merged: merge program last line" in output and scratch.messages() == [],
               f"exit {code}\n{output}\n{approval}\n{merges}")
@@ -304,10 +306,10 @@ def main():
                 ("an added link reference definition is named with the one it adds",
                  "See [x].\n\n" + HEADING + "\n- a\n",
                  "See [x].\n\n" + HEADING + "\n- a\n\n[x]: https://example.com\n",
-                 f"it adds, removes or changes a Markdown link reference definition, such as "
-                 f"\"[x]: https://example.com\", which renders as nothing and can change where "
-                 f"other links in the file point: definition 1 is 'none' at the merge base and "
-                 f"('X', 'https://example.com', '') at the nc-head-commit"),
+                 "it adds, removes or changes a Markdown link reference definition, such as "
+                 "\"[x]: https://example.com\", which renders as nothing and can change where "
+                 "other links in the file point: definition 1 is 'none' at the merge base and "
+                 "('X', 'https://example.com', '') at the nc-head-commit"),
                 ("a moved section is named with the line its heading moved from and to",
                  "## A\na\n\n" + HEADING + "\n- x\n\n## B\nb\n",
                  "## A\na\n\n## B\nb\n\n" + HEADING + "\n- x\n",

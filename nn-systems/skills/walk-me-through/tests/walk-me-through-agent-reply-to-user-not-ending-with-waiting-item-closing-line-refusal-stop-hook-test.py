@@ -1163,6 +1163,13 @@ def test_the_closing_line_link_must_be_the_item_page_the_walk_minutes_record():
     case.reply(ITEM_2_REPLY + "\n\n" + closing(2, link="file:///Volumes/nedhome/docs/walk/poem-page.md"))
     check_reminded("a closing line linking to a file instead of the item's page is sent back", case.run(),
                    "links to file:///Volumes/nedhome/docs/walk/poem-page.md")
+    noted = Case()
+    noted.walk_files(minutes="#next_to_present item 2 of 9.",
+                     pages=f"#item_page item 2 of 9 {page(2)}\n#item_page item 2 of 9 version 2 {page(2)}\n"
+                           f"#item_page item 2 of 9 {old_page} (republished after the account switch)\n")
+    noted.reply(ITEM_2_REPLY + "\n\n" + closing(2, link=page(2)))
+    check_reminded("an `#item_page` line with a version before its link or a note after it is read as the newest",
+                   noted.run(), f"the newest `#item_page` line for it in the walk-minutes gives {old_page}")
     case.reply(ITEM_2_REPLY + "\n\n" + closing(2, link=None))
     check_reminded("a closing line without its link, for an item that has a page, is sent back", case.run(),
                    f"the closing line for `Item 2 of 9` has no link, but the walk-minutes record its page as {page(2)}")
