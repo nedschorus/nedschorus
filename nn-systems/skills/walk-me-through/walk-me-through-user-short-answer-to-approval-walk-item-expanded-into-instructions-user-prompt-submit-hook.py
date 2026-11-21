@@ -139,12 +139,17 @@ the rest of its paragraph or else the block below it, such as a `>` quote;
 the text after a `#case_against` mark, its
 rating included, the text after each `The alternative:` and `Recommendation:`
 up to the next of those labels or the line's end, and, in an item that holds
-parts, the text after each `Part N.` opening a line. Each passes when its
-words, compared without punctuation, letter case or the marks `#new`,
-`#new_if_d`, `#case_against` and `[advisor]`, are those of a line of the
-same kind that the message holds after the heading's line and before any
-top-level heading or closing line that opens another item, read by the
-same rules; or, when the message holds no line of that kind and the line is no
+parts, the text after each `Part N.` opening a line; the message's copy is
+read as holding parts when it numbers parts of its own, so a part the item
+has since dropped is still read. The message's copy of the item is its text
+after the heading's line and before any top-level heading or closing line
+that opens another item, cut as the walk finder cuts the walk-document, so
+that under a heading several items share it holds only this item's own text.
+A mark is the same kind of line whatever its letter case. Each current line
+passes when its words, compared without punctuation, letter case or the
+marks `#new`, `#new_if_d`, `#case_against` and `[advisor]`, are those of an
+unused line of the same kind in the message's copy, read by the same rules;
+or, when the message holds no line of that kind and the line is no
 `Recommendation:` or `The alternative:` line, are the words a unit of the
 message ends with, as when the message dropped a `#new` mark or put "If
 you approve, the new text:" before the text. A unit is a paragraph, a visible
@@ -154,13 +159,16 @@ unit below the last, so that a `#new` and a `#new_if_d` text swapped in a
 message that dropped both marks do not pass. Words found elsewhere in the
 message do not count, because a recommendation and an alternative swapped
 would each still be found. A change anywhere else in the item, such as
-its explanation or an example, never refuses. Each line that does not pass is
-paired with the message unit most like it by its words, preferring one
-that names the same kind of line. The check also runs the other way: a
-decision-bearing line the message showed that no current line of the same
-kind has the words of, and that no line of that kind going to the model
-accounts for, is a line the item dropped, such as a third part removed after
-the item was shown; it is paired with the item's unit most like it. Every
+its explanation or an example, never refuses. Lines keep their places: each
+line that does not pass is paired with the first unused message line of its
+kind between the places its neighbours above and below took, and else with
+the message unit most like it by its words, preferring one that names the
+same kind of line. The check also runs the other way: a decision-bearing
+line of the message's copy that no current line took is a line the item
+dropped, such as a third part removed after the item was shown, and is
+paired with the item's unit most like it; a line below the place the item's
+last line took is not, since the item's copy has ended there and the
+agent's own words begin. Every
 pair of the answer goes to the
 model MODEL in one headless `claude -p` call, run with every hook disabled, no
 tools and no session file, which judges whether the line's meaning changed, or
@@ -183,7 +191,13 @@ pass with no model call, since each ends a unit in order; so does a current
 `#new Restart the workers.` against a shown "Do not restart the workers.",
 which ends with its words. Lines of the same kind are matched against one
 pool for the whole item, so the recommendations of sub-steps 4.1 and 4.2
-swapped pass with no model call too.
+swapped pass with no model call too. A `#new` and a `#new_if_d` text both
+shown without their marks and then swapped in the walk-document go to the
+model, but each is paired with the message unit most like it, which is the
+same sentence from the other place, so the model sees identical texts and
+the answer counts. An item whose last decision-bearing line was removed
+after it was shown has no place to end its copy, so a line of the agent's
+own after the item is then read as a line the item dropped.
 
 WHEN READING THE WALK STATE FAILS, such as a minutes file that is not UTF-8,
 the first line says so and why, and the text gives the answer's lines both for
