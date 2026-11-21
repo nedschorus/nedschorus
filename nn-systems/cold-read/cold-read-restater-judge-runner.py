@@ -28,14 +28,14 @@ THE RULED DESIGN THIS IMPLEMENTS (user-ruled 2026-09-05, "Opus max is the
 backup to Fable. y"), from item 5 of the walk
 docs/walk/fast-cold-read-perfect-test-cases.md at the cold-read-research seat,
 uncommitted there, which is why the ruling is written out here and in the
-cold-read-cell. One fresh Fable 5.1 instance at xhigh per restater class, given
+cold-read-cell. One fresh Fable 5.2 instance at xhigh per restater class, given
 the three rough drafts, the three perfect versions, the three defect lists and
 that restater's three restatements; it counts the problems the restatements
 caught, BY DEFECT NUMBER, and the places the restatement was stupid -- a
 sentence the perfect version keeps unchanged that the restatement misread --
 and reports one score weighted 80 percent caught and 20 percent stupid, with
 the raw counts beside the composite. TWO judge runs per restater, the two shown
-separately when they disagree. Opus 5 at max judges when Fable is unavailable,
+separately when they disagree. Opus 5.5 at max judges when Fable is unavailable,
 marked as such in the record. Problems a restatement caught that are not on the
 defect list go back to the scrub rather than being scored.
 
@@ -162,7 +162,7 @@ def build_runner_argument_parser():
     parser.add_argument(
         "--restater", required=True, metavar="CLASS",
         help="the restater class under judgment, named as the roster names "
-             "its models (gemini-3.8-flash-low, gpt-6.1-sol, claude-opus-5)")
+             "its models (gemini-3.8-flash-low, gpt-6.2-sol, claude-opus-5-5)")
     parser.add_argument(
         "--case", required=True, action="append", nargs=4,
         metavar=("DRAFT", "PERFECT", "DEFECT_LIST", "RESTATEMENT"),
@@ -462,7 +462,7 @@ def render_combined_result(
     lines.append("")
     lines.append(
         "The ruled restater score (user-ruled 2026-09-05): two judge runs, "
-        "Claude Fable 5.1 at xhigh with Claude Opus 5 at max as the backup "
+        "Claude Fable 5.2 at xhigh with Claude Opus 5.5 at max as the backup "
         "when Fable is unavailable, over one restater's restatements beside "
         "the rough drafts, the perfect versions and the defect lists. The "
         "judge reported items; this file's counts and composites were "

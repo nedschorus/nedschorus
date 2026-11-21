@@ -1248,7 +1248,7 @@ try:
     result = run_grid(
         repository, stubs,
         {"COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET": "1",
-         "COLD_READ_GRID_TEST_STUB_FAILING_MODEL": "claude-fable-5-1",
+         "COLD_READ_GRID_TEST_STUB_FAILING_MODEL": "claude-fable-5-2",
          **END_OF_RUN_COMPARISON_ONLY},
     )
     check("a run can lose a cell and its target at once: six saved, exit 3",

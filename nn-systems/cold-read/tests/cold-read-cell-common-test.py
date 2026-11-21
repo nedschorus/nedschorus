@@ -802,7 +802,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("an Opus failure fails the `deep`-tier cell",
           result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
     check("no other model is tried in Opus's place",
-          not report.exists() and "claude-fable-5-1" not in result.stderr
+          not report.exists() and "claude-fable-5-2" not in result.stderr
           and "fell back to" not in result.stderr,
           f"stderr={result.stderr!r}")
     check("the failure names the one attempt",
@@ -905,7 +905,7 @@ with tempfile.TemporaryDirectory() as scratch:
     PERMISSION_NOISE = ("Permission allow rule (/Users/el/.claude/settings.json): "
                         "Glob(//Users/el/agents/**) is not matched by file permission checks\n")
 
-    def classify(stdout="", stderr="", exit_code=1, model="claude-fable-5-1", start_error=""):
+    def classify(stdout="", stderr="", exit_code=1, model="claude-fable-5-2", start_error=""):
         return common_module.classify_failed_attempt(
             stdout=stdout, stderr=stderr, exit_code=exit_code,
             recognised_texts=claude_module.recognised_failure_texts_for_model(model),
@@ -932,8 +932,8 @@ with tempfile.TemporaryDirectory() as scratch:
           classify(stdout=PERMISSION_NOISE + FABLE_LIMIT_LINE + "\n") == ("model-limit", "Fable"),
           repr(classify(stdout=PERMISSION_NOISE + FABLE_LIMIT_LINE + "\n")))
     check("the same line on an Opus attempt is not that model's limit: exit-N",
-          classify(stdout=FABLE_LIMIT_LINE + "\n", model="claude-opus-5")[0] == "exit-1",
-          repr(classify(stdout=FABLE_LIMIT_LINE + "\n", model="claude-opus-5")))
+          classify(stdout=FABLE_LIMIT_LINE + "\n", model="claude-opus-5-5")[0] == "exit-1",
+          repr(classify(stdout=FABLE_LIMIT_LINE + "\n", model="claude-opus-5-5")))
     check("the logged-out capture is logged-out with the whole line as detail",
           classify(stdout=LOGGED_OUT_LINE + "\n") == ("logged-out", LOGGED_OUT_LINE),
           repr(classify(stdout=LOGGED_OUT_LINE + "\n")))
@@ -992,8 +992,8 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the Claude logged-out line still matches at column 0 with no timestamp",
           classify(stdout=LOGGED_OUT_LINE + "\n") == ("logged-out", LOGGED_OUT_LINE))
     check("the family name is the model id's second word, capitalised",
-          claude_module.model_family_name("claude-fable-5-1") == "Fable"
-          and claude_module.model_family_name("claude-opus-5") == "Opus")
+          claude_module.model_family_name("claude-fable-5-2") == "Fable"
+          and claude_module.model_family_name("claude-opus-5-5") == "Opus")
     check("a one-word alias such as haiku is capitalised too, as Claude's model-limit message spells it",
           claude_module.model_family_name("haiku") == "Haiku",
           repr(claude_module.model_family_name("haiku")))
@@ -1005,7 +1005,7 @@ with tempfile.TemporaryDirectory() as scratch:
     report = repository / "cold-read-records" / "run-cause-a" / "claude-defect-hunt-second-strongest-model.md"
     result = run_claude_cell(
         repository, stubs,
-        {"claude-fable-5-1": {"exit": 1, "stdout": FABLE_LIMIT_LINE + "\n"}},
+        {"claude-fable-5-2": {"exit": 1, "stdout": FABLE_LIMIT_LINE + "\n"}},
         report, "--tier", "second-strongest-model",
     )
     check("a Claude cell that hit the Fable limit prints cause: model-limit — Fable",

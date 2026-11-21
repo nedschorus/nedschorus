@@ -61,7 +61,7 @@ PROGRAM = "cold-read-claude-cell"
 # The fast tier is no such substitute: the fast read runs it only after its Gemini cell fails, and says so.
 TIER_TO_CLAUDE_MODEL_CHAIN = {
     "deep": ("claude-opus-5-5",),
-    "second-strongest-model": ("claude-fable-5-1",),
+    "second-strongest-model": ("claude-fable-5-2",),
     "fast": ("claude-sonnet-5-5",),
 }
 

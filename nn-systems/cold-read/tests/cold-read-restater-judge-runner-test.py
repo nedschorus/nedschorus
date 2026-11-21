@@ -367,7 +367,7 @@ with tempfile.TemporaryDirectory() as scratch:
                  ).read_text(encoding="utf-8")
     check("each run's report carries the judge's provenance stamp",
           run1_text.startswith("<!-- provenance: runtime=claude "
-                               "model=claude-fable-5-1 effort=xhigh "
+                               "model=claude-fable-5-2 effort=xhigh "
                                "cell=restater-judge tier=judge "),
           repr(run1_text[:160]))
     combined = combined_path.read_text(encoding="utf-8")
@@ -450,8 +450,8 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch)
     result = run_runner(
         repository, stubs,
-        {"run1": {"claude-fable-5-1": {"exit": 1},
-                  "claude-opus-5": {"report": RUN_REPORT_BASE}},
+        {"run1": {"claude-fable-5-2": {"exit": 1},
+                  "claude-opus-5-5": {"report": RUN_REPORT_BASE}},
          "run2": {"*": {"report": RUN_REPORT_AGREEING}}},
     )
     record_dir = record_directory_the_runner_reported(result)
@@ -461,8 +461,8 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and "| 1 | 1 | 3 | 2 | 2.00 |" in combined,
           f"exit {result.returncode}; stderr={result.stderr[-2000:]!r}")
     check("the combined result names the model that judged each run",
-          "| 1 | claude-opus-5 | max | claude-fable-5-1(exit1) |" in combined
-          and "| 2 | claude-fable-5-1 | xhigh | no fallback |" in combined,
+          "| 1 | claude-opus-5-5 | max | claude-fable-5-2(exit1) |" in combined
+          and "| 2 | claude-fable-5-2 | xhigh | no fallback |" in combined,
           repr(combined))
     check("the combined result says Fable was unavailable for that run",
           "FABLE WAS UNAVAILABLE for run 1" in combined, repr(combined))
@@ -471,7 +471,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the fallback is lifted onto the runner's own stderr, not left in a log",
           any(line.startswith("cold-read-restater-judge-runner: run 1 FELL BACK: "
                               "cold-read-restater-judge-cell: fell back to "
-                              "claude-opus-5")
+                              "claude-opus-5-5")
               for line in result.stderr.splitlines()),
           repr(result.stderr[-3000:]))
 
