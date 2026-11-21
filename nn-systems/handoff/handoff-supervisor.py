@@ -63,7 +63,9 @@ The cycle, per reincarnation:
      a count of the first prompts that have listed it, such as "(listed in 2
      first prompt(s))"; the branches the first-prompt list deleted go above
      the leftovers' opening sentence, under a line that opens with their
-     heading (launch_prompt_with_leftovers_before_the_next_step).
+     heading, and so does a part that lists no entry, so the sentence is
+     shown only when an entry follows it
+     (launch_prompt_with_leftovers_before_the_next_step).
   6. Keep the current and previous handoff and conversation-tail; delete older ones.
 
 The handoff file the agent writes (simple `key: value` lines):
@@ -1877,20 +1879,24 @@ def forget_leftover_prompt_listing_counts(counts_path: Path) -> None:
 def launch_prompt_with_leftovers_before_the_next_step(prompt: str, leftover_parts: tuple,
                                                       counts_path: Path) -> str:
     """The prompt with the leftovers between its opening and its next step, or after it when it
-    has no next step. Branches the list deleted go above the leftovers' opening sentence, which
-    asks the agent to act on each leftover below it, because they need nothing."""
+    has no next step. The leftovers' opening sentence asks the agent to act on each leftover
+    below it, so only parts that list an entry go below it; branches the list deleted, and parts
+    that list no entry, such as a failure that carries its own instruction or the line on what
+    open tasks hold, go above it."""
     heading_start = agent_seat_worktrees_and_branches_list.ALREADY_DELETED_HEADING_START
-    listed_parts, deleted_parts = [], []
+    listed_parts, deleted_parts, parts_with_no_entry = [], [], []
     for part in leftover_parts:
         # Only a line that opens with the heading starts the deleted block: an entry's commit
         # subject may quote the heading's words.
         found = re.search("^" + re.escape(heading_start), part, re.MULTILINE)
         listed = part[:found.start()] if found else part
-        if listed.strip():
+        if any(line.startswith(LEFTOVER_ENTRY_PREFIXES) for line in listed.split("\n")):
             listed_parts.append(listed.rstrip("\n"))
+        elif listed.strip():
+            parts_with_no_entry.append(listed.rstrip("\n"))
         if found:
             deleted_parts.append(part[found.start():])
-    blocks = deleted_parts
+    blocks = deleted_parts + parts_with_no_entry
     leftovers = "\n\n".join(listed_parts)
     if leftovers:
         blocks.append(LEFTOVERS_BEFORE_THE_NEXT_STEP_SENTENCE + "\n\n"
