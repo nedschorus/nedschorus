@@ -461,7 +461,9 @@ WALK_SUGGESTIONS_SUFFIX = "-cold-read-fast-read.md"
 # record. It is a warning, not a refusal -- the fast read is the full run's
 # first step, so running it here is right; merging on it alone is not.
 # CLAUDE.md is named, not placed: Claude Code loads one from any directory.
-FULL_RUN_NAMES = (("CLAUDE.md", "CLAUDE.md"),)
+# A seat-brief is an agent-seat's CLAUDE.local.md, which sits in the seat's own
+# checkout, so it too is known by its name.
+FULL_RUN_NAMES = (("CLAUDE.md", "CLAUDE.md"), ("CLAUDE.local.md", "a seat-brief"))
 FULL_RUN_DIRECTORIES_RELATIVE = (
     (pathlib.Path(".claude") / "skills", "a skill or a skill's prompt"),
     (pathlib.Path("docs") / "agents", "a file under docs/agents/"),
