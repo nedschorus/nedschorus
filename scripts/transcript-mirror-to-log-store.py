@@ -17,7 +17,7 @@ the seat-brief of each agent-seat, the `CLAUDE.local.md` at the root of each
 directory directly under `~/agents/`, skipping a directory that has none, such
 as a worktree; `~/.claude/CLAUDE.md`, the machine's global instructions;
 `~/.claude/agent-seat-terminal-captures/`, each agent-seat's terminal
-captures, which nc-systems/handoff/agent-seat-terminal-captures-common.py
+captures, which nn-systems/handoff/agent-seat-terminal-captures-common.py
 places there on the Mac only: on ned-box the handoff-supervisor writes them
 straight into the store's ned-box/agent-seat-terminal-captures/, so on
 ned-box this source is absent and has nothing to mirror; and
@@ -33,14 +33,14 @@ same way it is found locally, apart from the seat-briefs, which go to
 `seat-briefs/` because `~/.claude/agents/` is Claude Code's own directory of
 subagent definitions:
 
-  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/projects/<project-key>/<session-id>.jsonl
-  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/handoffs/<file>
-  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/tasks/<list-name>/<task-id>.json
-  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/seat-briefs/<seat>/CLAUDE.local.md
-  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/CLAUDE.md
-  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/<REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM>/<REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM>-decisions.jsonl
-  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/agent-seat-terminal-captures/<seat>/<file>
-  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/ned-box/projects/...
+  /home/nedlern/nedsnodes-logs/agent-session-files-by-machine/mac/projects/<project-key>/<session-id>.jsonl
+  /home/nedlern/nedsnodes-logs/agent-session-files-by-machine/mac/handoffs/<file>
+  /home/nedlern/nedsnodes-logs/agent-session-files-by-machine/mac/tasks/<list-name>/<task-id>.json
+  /home/nedlern/nedsnodes-logs/agent-session-files-by-machine/mac/seat-briefs/<seat>/CLAUDE.local.md
+  /home/nedlern/nedsnodes-logs/agent-session-files-by-machine/mac/CLAUDE.md
+  /home/nedlern/nedsnodes-logs/agent-session-files-by-machine/mac/<REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM>/<REMOTE_CONTROL_RECONNECT_WATCHER_PROGRAM>-decisions.jsonl
+  /home/nedlern/nedsnodes-logs/agent-session-files-by-machine/mac/agent-seat-terminal-captures/<seat>/<file>
+  /home/nedlern/nedsnodes-logs/agent-session-files-by-machine/ned-box/projects/...
 
 `mac` and `ned-box` are the names CLAUDE.md uses for the two machines; this
 program tells them apart by hostname. On ned-box the copy is local -- its
@@ -54,7 +54,7 @@ connect timeout from the Mac, never `--delete`: a transcript that vanishes
 locally stays in the store, and so does the seat-brief of a removed agent-seat.
 A terminal capture the Mac's daily deletion removes stays in the store until
 ned-box's own daily run of
-nc-systems/handoff/agent-seat-terminal-captures-older-than-seven-days-delete.py
+nn-systems/handoff/agent-seat-terminal-captures-older-than-seven-days-delete.py
 deletes the store's copy, which it does for every machine's copy.
 The seat-briefs and the global CLAUDE.md are single files picked out of a
 directory: the program lists them and hands rsync the list on its stdin
@@ -177,7 +177,7 @@ SOURCE_HOME_ENVIRONMENT_VARIABLE = "TRANSCRIPT_MIRROR_SOURCE_HOME"
 
 _agent_seat_terminal_captures_spec = importlib.util.spec_from_file_location(
     "agent_seat_terminal_captures_common",
-    pathlib.Path(__file__).resolve().parents[1] / "nc-systems" / "handoff"
+    pathlib.Path(__file__).resolve().parents[1] / "nn-systems" / "handoff"
     / "agent-seat-terminal-captures-common.py")
 agent_seat_terminal_captures = importlib.util.module_from_spec(_agent_seat_terminal_captures_spec)
 _agent_seat_terminal_captures_spec.loader.exec_module(agent_seat_terminal_captures)

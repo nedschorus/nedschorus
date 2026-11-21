@@ -7,7 +7,7 @@ The terminal captures are the files agent-seat-terminal-captures-common.py, besi
 says handoff-supervisor.py writes: <captures directory>/<agent-seat>/<UTC start>-<agent-seat>-terminal-capture.log.
 Which captures directories a run deletes from, unless --captures-directory replaces the list:
 - on ned-box, every machine's copy in the log-store,
-  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/*/agent-seat-terminal-captures,
+  /home/nedlern/nedsnodes-logs/agent-session-files-by-machine/*/agent-seat-terminal-captures,
   because the transcript mirror never deletes, so the Mac's copy there outlives the Mac's own;
 - elsewhere, which is the Mac, this machine's own, ~/.claude/agent-seat-terminal-captures.
 
@@ -22,15 +22,15 @@ captured there yet. A file or directory that cannot be deleted or read is a FAIL
 and the error; the run goes on with the rest and exits 1. Exit 0 otherwise.
 
 SCHEDULE. Once a day on each machine, installed by
-nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py from the table beside it,
+nn-systems/general-tools/install-scheduled-jobs-on-this-machine.py from the table beside it,
 scheduled-jobs-on-each-machine.json, where a change to the schedule is made: by cron on ned-box,
 and by launchd on the Mac, so a run missed while the Mac sleeps happens at its next wake.
 
   ned-box: one cron line.
 
-    45 5 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/agent-seat-terminal-captures-older-than-seven-days-delete.py >> /home/nedlern/.claude/agent-seat-terminal-captures-older-than-seven-days-delete.log 2>&1
+    45 5 * * * /usr/bin/python3 /home/nedlern/Projects/nedsnodes/nn-systems/handoff/agent-seat-terminal-captures-older-than-seven-days-delete.py >> /home/nedlern/.claude/agent-seat-terminal-captures-older-than-seven-days-delete.log 2>&1
 
-  Mac: the launchd job com.nedschorus.agent-seat-terminal-captures-older-than-seven-days-delete,
+  Mac: the launchd job com.nedsnodes.agent-seat-terminal-captures-older-than-seven-days-delete,
   at 05:45.
 """
 
@@ -49,7 +49,7 @@ _captures_spec.loader.exec_module(captures)
 
 PROGRAM = "agent-seat-terminal-captures-older-than-seven-days-delete"
 SECONDS_PER_DAY = 86_400
-# Messages follow docs/nedschorus-wiki/nedschorus-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
+# Messages follow docs/nedsnodes-wiki/nedsnodes-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 FAILED_PATH_KEPT_UNTIL_A_RUN_CAN_DELETE_IT_LINE = (
     "The path stays until a run can delete it; the run went on with the other captures. "
     "If the same path fails on the next day's run too, run `ls -ld` on the path and on its "

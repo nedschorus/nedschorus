@@ -13,7 +13,7 @@ It also checks that a suite run from an agent-seat's own tmux pane, as agents ru
 starts no pipe-pane on that pane: TMUX and TMUX_PANE are set, and a stub tmux that records its
 calls is first on PATH, before handoff-supervisor-test-fixture.py loads.
 
-Run: python3 nc-systems/handoff/tests/handoff-supervisor-terminal-capture-test.py
+Run: python3 nn-systems/handoff/tests/handoff-supervisor-terminal-capture-test.py
 (exit 0 = all passed)
 """
 
