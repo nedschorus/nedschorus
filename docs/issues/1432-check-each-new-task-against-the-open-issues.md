@@ -7,7 +7,7 @@ kind: design
 
 ## Why
 
-A task on an agent-seat's task list is a file only that agent-seat reads, `~/.claude/tasks/nedschorus-<agent-seat>-tasks/<id>.json` (described at `scripts/agent-seat-due-task-raise-hook.py:6-13`). Other agents never see it, so a task that belongs to an open issue is lost to that issue's builder. In a sweep on 2026-10-14, 63 of the 269 open tasks of 8 agent-seats belonged in an open issue's GHI-MD. The user then ruled on 2026-10-15, in the approval-walk cold-read-research-open-questions-and-skill-reviews-2026-10-14 of agent-seat cold-read-research: "I realized that as tasks are filed we should check them for overlap with GHIs, then daily maint can cover the odd case where the task came before teh GHI." He approved filing this issue on 2026-10-15, with "Y", in the same approval-walk.
+A task on an agent-seat's task list is a file only that agent-seat reads, `~/.claude/tasks/nedsnodes-<agent-seat>-tasks/<id>.json` (described at `scripts/agent-seat-due-task-raise-hook.py:6-13`). Other agents never see it, so a task that belongs to an open issue is lost to that issue's builder. In a sweep on 2026-10-14, 63 of the 269 open tasks of 8 agent-seats belonged in an open issue's GHI-MD. The user then ruled on 2026-10-15, in the approval-walk cold-read-research-open-questions-and-skill-reviews-2026-10-14 of agent-seat cold-read-research: "I realized that as tasks are filed we should check them for overlap with GHIs, then daily maint can cover the odd case where the task came before teh GHI." He approved filing this issue on 2026-10-15, with "Y", in the same approval-walk.
 
 ## What to build
 

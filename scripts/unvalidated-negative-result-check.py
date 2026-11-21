@@ -50,7 +50,7 @@ EXIT_A_CAUSE_COULD_NOT_BE_CHECKED = 3
 
 _shell_reader_spec = importlib.util.spec_from_file_location(
     "shell_command_tree_sitter_bash_reader_common",
-    pathlib.Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    pathlib.Path(__file__).resolve().parents[1] / "nn-systems" / "general-tools"
     / "shell-command-tree-sitter-bash-reader-common.py")
 shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
 _shell_reader_spec.loader.exec_module(shell_reader)

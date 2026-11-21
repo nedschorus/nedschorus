@@ -142,8 +142,8 @@ GATE = Path(__file__).with_name("merge-gate.sh")
 DESCRIPTION_DEFECT_LINE_READER = Path(__file__).with_name(
     "pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py")
 NO_SANDBOX_SUITES_PROGRAM = Path(__file__).with_name("no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py")
-GIT_REDIRECTING_ENVIRONMENT_COMMON = Path("nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py")
-GIT_MACHINE_READABLE_OUTPUT_COMMON = Path("nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
+GIT_REDIRECTING_ENVIRONMENT_COMMON = Path("nn-systems/general-tools/git-redirecting-environment-variables-removal-common.py")
+GIT_MACHINE_READABLE_OUTPUT_COMMON = Path("nn-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
 FIXTURES = Path(__file__).with_name("merge-gate-test-captured-github-responses")
 BASH = shutil.which("bash")
 TEST_TOKEN = "merge-gate-test-token-not-a-credential"
@@ -348,12 +348,12 @@ def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=
     case_dir = Path(tempfile.mkdtemp(dir=scratch))
     home = case_dir / "home"
     if no_sandbox_suites_state is not None:
-        state_file = (home / ".local" / "state" / "nedschorus"
+        state_file = (home / ".local" / "state" / "nedsnodes"
                       / "no-sandbox-test-suites-run-on-main-in-a-quiet-gap.json")
         state_file.parent.mkdir(parents=True)
         state_file.write_text(no_sandbox_suites_state if isinstance(no_sandbox_suites_state, str)
                               else json.dumps(no_sandbox_suites_state))
-    token_dir = home / ".config" / "nedschorus"
+    token_dir = home / ".config" / "nedsnodes"
     token_dir.mkdir(parents=True)
     if token is not None:
         (token_dir / "ned-review-merge.token").write_text(token)
@@ -479,7 +479,7 @@ def case_a1_pass_control(gate):
                    f"  gh pr merge {BASE_PR} --repo nedsnodes/nedsnodes --merge --delete-branch "
                    f"--match-head-commit {sha}\n")
     token_line = ("Run that command with GH_TOKEN set to the merge account's token, "
-                  f"{run.home}/.config/nedschorus/ned-review-merge.token, so the merge runs as "
+                  f"{run.home}/.config/nedsnodes/ned-review-merge.token, so the merge runs as "
                   "ned-review-merge.\n")
     return (passed_pinned_to(run, BASE_PR, sha) and merge_lines + token_line in run.stdout,
             run.summary())
@@ -491,9 +491,9 @@ NO_SANDBOX_FAILED_RUN = {
     "passing_commit": "a" * 40,
     "last_run": {"commit": "b" * 40, "compared_with": "a" * 40, "started": "2026-11-03T23:00:00Z",
                  "ended": "2026-11-03T23:05:00Z", "result": "failed", "reason": None,
-                 "failing_suites": [{"suite": "nc-systems/cold-read/tests/cold-read-grid-test.py",
-                                     "log": "/home/nedlern/nedschorus-logs/x.log"}],
-                 "record": "/home/nedlern/nedschorus-logs/x.txt", "follow_up_request_sent": None}}
+                 "failing_suites": [{"suite": "nn-systems/cold-read/tests/cold-read-grid-test.py",
+                                     "log": "/home/nedlern/nedsnodes-logs/x.log"}],
+                 "record": "/home/nedlern/nedsnodes-logs/x.txt", "follow_up_request_sent": None}}
 
 
 def no_sandbox_state(**last_run_fields):

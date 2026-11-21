@@ -56,14 +56,14 @@ def main():
 
 def run_cases(root):
     home = root / "home"
-    clone = home / "Projects" / "nedschorus"
+    clone = home / "Projects" / "nedsnodes"
     agents = home / "agents"
     handoffs = home / ".claude" / "handoffs"
     handoffs.mkdir(parents=True)
     for seat in ("seat", "seat-long"):
         (handoffs / f"{seat}-handoff.md").write_text("handoff\n")
     environment = {key: value for key, value in os.environ.items()
-                   if not key.startswith(("GIT_", "NEDSCHORUS_"))}
+                   if not key.startswith(("GIT_", "NEDSNODES_"))}
     environment.update(HOME=str(home), GIT_CONFIG_NOSYSTEM="1",
                        GIT_CONFIG_GLOBAL=str(root / "empty-gitconfig"))
     (root / "empty-gitconfig").write_text("")
