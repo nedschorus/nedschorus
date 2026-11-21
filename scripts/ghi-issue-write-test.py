@@ -1161,6 +1161,28 @@ def run_cases(scratch: Path):
           and not landed_on_main_before_rename.ran("gh pr create"),
           (land_lines, landed_on_main_before_rename.commands()))
 
+    # A design keeps its `.<kind>.design` ending once filed, whatever its
+    # heading says, so the guard and the fast read still class it as a design.
+    design_source = source.with_name("widget.tool.design.md")
+    design_source.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    design_title = "Widget design"
+    design_destination = "docs/issues/9001-widget-design.tool.design.md"
+    design_staged = tool.with_issue_frontmatter(design_source.read_text(encoding="utf-8"),
+                                                REPO, 9001, design_title)
+    design_lines = []
+    design_landed = Recorder({
+        f"git show origin/main:{design_destination}": Completed(design_staged),
+    })
+    design_returned = tool.land_file(REPO, 9001, design_title, design_source, scratch,
+                                     design_landed, design_lines.append)
+    check("create lands a design named <name>.tool.design.md under a name ending .tool.design.md",
+          design_returned == design_destination
+          and tool.create_ghi_landing_path_for_ghi_md(9001, "Widget.tool.design", "widget.system.design.md")
+          == "docs/issues/9001-widget-tool-design.system.design.md"
+          and tool.create_ghi_landing_path_for_ghi_md(570, land_title, "statusline-drops-branch.md") == land_destination,
+          (design_returned, design_lines))
+    design_source.unlink()
+
     # The comparison is computed under the number the PATH carries. The same
     # content landed under a different issue is a different file, and must
     # not stop this one being filed.
@@ -1812,6 +1834,48 @@ def run_cases(scratch: Path):
         except Exception as other:                    # noqa: BLE001
             check(resumed_name, False,
                   f"{other!r}; {resumed_create.commands()}")
+
+        # A design's question is saved under the name the design lands
+        # under, `<slug>.tool.design`, so the run's last lines find it.
+        design_store = log_store_at(scratch / "design-question-store")
+        design_dir = scratch / "design-draft-dir"
+        design_dir.mkdir()
+        design_question_source = written(
+            design_dir, name="frozen-issue-reopened.tool.design.md",
+            text=conflicting_text)
+        design_create = StagedReader({
+            ASK: Completed("", returncode=3, stderr=ruling_stderr(
+                "#46 closed issues are frozen")),
+            "gh issue view 46": Completed("Closed issues are frozen\n"),
+            "gh issue list": Completed("[]"),
+            "gh issue create": Completed(
+                "https://github.com/nedsnodes/nedsnodes/issues/573\n"),
+            "git show": Completed("", returncode=1),
+            "git ls-remote": Completed(""),
+            "git ls-tree": Completed(""),
+            "gh pr create": Completed("https://github.com/x/y/pull/13\n"),
+        })
+        design_question_lines = []
+        design_question_name = ("create of a design with a ruling question "
+                                "saves it under the landed name and reports "
+                                "it in the run's last lines")
+        try:
+            tool.create(design_question_source, REPO, scratch, design_create,
+                        design_question_lines.append)
+            check(design_question_name,
+                  lambda: (sorted(design_create.staged)
+                  == [f"docs/issues/573-{draft_slug}.tool.design.md"]
+                  and sorted(item.name for item in design_store.iterdir())
+                  == [f"{draft_slug}.tool.design-proposed-improvements-or-"
+                      "changes-ghi-guide-agent-2026-10-03.md"]
+                  and design_question_lines[-1].startswith("Filed GHI 573.")
+                  and "Dispatch a forked subagent now"
+                  in design_question_lines[-1]),
+                  lambda: (sorted(item.name for item in design_store.iterdir()),
+                           design_question_lines[-1:]))
+        except Exception as other:                    # noqa: BLE001
+            check(design_question_name, False,
+                  f"{other!r}; {design_create.commands()}")
 
         # A first run that wrote the file and then failed to file the issue:
         # the rerun finds no issue, so it would adjudicate, but the log-store
