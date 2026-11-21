@@ -43,7 +43,7 @@ time.sleep(answer.get("sleep", 0))
 def emit(event):
     print(json.dumps(event), flush=True)
 if "session_id" in answer:
-    emit({{"type": "system", "subtype": "init", "session_id": answer["session_id"]}})
+    emit({{"type": "system", "session_id": answer["session_id"]}})
 if "transcript" in answer:
     import re
     project = os.path.join(os.environ["FAKE_CLAUDE_PROJECTS"],
