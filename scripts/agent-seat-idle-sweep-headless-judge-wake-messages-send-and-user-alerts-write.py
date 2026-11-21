@@ -72,7 +72,8 @@ logged and not reported; a run that does not meet it again logs its end, so that
 later is dated from its return. A headless agent-session stopped at a usage limit whose reset
 time its own transcript carries opens no task: code logs a headless_usage_limit_pause event, and
 starts no headless agent-session, for any agent-seat, until that time passes or the logged-in
-account changes. A message step is logged before its send, so a failed send is not retried every
+account changes; a rule 2 judge stopped so logs neither the check nor its sentences, so that
+they are judged after the pause. A message step is logged before its send, so a failed send is not retried every
 minute: the wait goes on to its next step.
 The harm it can cause is an extra message to an agent-seat, which costs that agent-seat one turn.
 """
@@ -672,7 +673,8 @@ class Sweep:
     def headless_failed(self, seat, purpose, problem, kind, outcome=None):
         """problem is the failure's full text; kind names its cause in words code alone chose, so
         that a cause met at every invocation, such as a usage limit, opens one task. A usage limit
-        whose reset time is still ahead opens none: it pauses every headless agent-session."""
+        whose reset time is still ahead opens none: it pauses every headless agent-session, and
+        this returns True."""
         self.failed = True
         self.record({"event": "headless_failed", "agent_seat": seat, "purpose": purpose,
                      "problem": problem})
@@ -680,7 +682,7 @@ class Sweep:
         if resets_at is not None and resets_at > self.now.timestamp():
             self.record({"event": HEADLESS_USAGE_LIMIT_PAUSE, "agent_seat": seat,
                          "resets_at": iso(datetime.fromtimestamp(resets_at, timezone.utc))})
-            return
+            return True
         self.owning_agent_seat_task(
             f"Idle sweep: a headless agent-session failed: {kind}",
             f"The idle sweep, {PROGRAM_PATH_IN_REPOSITORY}, started a headless agent-session to "
@@ -688,6 +690,7 @@ class Sweep:
             f"Each such failure is a headless_failed event in the idle sweep's log, {self.log.path}. "
             "Find the cause and fix it; to see whether claude is logged out, run `claude -p` by hand "
             "on ned-box.\n" + OWNING_AGENT_SEAT_TASK_LAST_LINES)
+        return False
 
     def usage_limit_reset_time(self, outcome):
         """The reset time of the last usage-limit record in the headless agent-session's
@@ -902,13 +905,11 @@ class Sweep:
             self.end_wait(seat, "a new agent-session")
             wait = None
         check = self.log.last_check(seat)
-        if not (check and check["session_id"] == session and check["last_activity"] == stretch):
-            self.record({"event": "checked", "agent_seat": seat, "session_id": session,
-                         "transcript_read_at": iso(transcript_read_at),
-                         "last_activity": stretch, "rule": verdict[fields.RULE],
-                         "decision": verdict.get(fields.DECISION)})
+        check_is_new = not (check and check["session_id"] == session
+                            and check["last_activity"] == stretch)
         rule, text = verdict[fields.RULE], verdict.get(fields.TEXT)
         if rule == 1:
+            self.checked(seat, verdict, transcript_read_at, check_is_new)
             if wait:
                 self.end_wait(seat, "a usage limit")
             self.usage_limit(seat, verdict)
@@ -936,12 +937,17 @@ class Sweep:
         promise_text = None
         if rule == 2:
             outcome, promise = self.sentences(seat, verdict)
+            if outcome == "paused":
+                # The check is not logged, so that the next read after the reset still holds the
+                # sentences the judge could not judge.
+                return
             promise_text, promise_kinds, promise_sentences = promise or (None, None, None)
             fallback = verdict.get(fields.IF_EVERY_SENTENCE_BACKED)
             if outcome == "all backed" and fallback is not None:
                 rule, text = fallback[fields.RULE], fallback.get(fields.TEXT)
             elif not promise_text:
                 rule = None
+        self.checked(seat, verdict, transcript_read_at, check_is_new)
         # Nothing to do settles the open tasks a rule 3 or 5 message was about, but not a promise
         # a rule 2 message named, whatever message opened the wait it was sent on.
         if rule == 4 and wait and PROMISE not in wait:
@@ -1051,10 +1057,20 @@ class Sweep:
             self.start_wait(seat, verdict, stretch, answer["message"], 5)
             self.send(seat, verdict, answer["message"], NUDGE)
 
+    def checked(self, seat, verdict, transcript_read_at, check_is_new):
+        """Log the check, which moves where the next read of the agent-seat's transcript starts."""
+        if check_is_new:
+            self.record({"event": "checked", "agent_seat": seat, "session_id": verdict[fields.SESSION_ID],
+                         "transcript_read_at": iso(transcript_read_at),
+                         "last_activity": (verdict.get(fields.LAST_ACTIVITY) or {}).get("time"),
+                         "rule": verdict[fields.RULE], "decision": verdict.get(fields.DECISION)})
+
     def sentences(self, seat, verdict):
         """Rule 2: judge what code could not settle, and word one message naming every unbacked
         sentence. Returns ("unbacked", (the message, the sorted kinds of the sentences it names,
-        those sentences)), ("failed", None) or ("all backed", None)."""
+        those sentences)), ("failed", None), ("paused", None) or ("all backed", None). A judge
+        stopped by a headless usage-limit pause logs no sentence as checked, so that it is judged
+        after the reset."""
         checked = self.log.checked_sentences(seat)
         new_by_code_reading = fields.verdict_sentences_grouped_by_code_reading(
             item for item in verdict.get(fields.SENTENCES, [])
@@ -1079,12 +1095,14 @@ class Sweep:
             outcome = run_headless(prompt, SENTENCES_ANSWER_SCHEMA, "", self.working_directory,
                                    self.timeout_seconds)
             problem = outcome.error or sentence_answer_problem(outcome.answer, len(judged))
+            if problem and self.headless_failed(seat, "judge whether its promises are backed",
+                                                problem, outcome.error_kind or JUDGE_ANSWER_UNUSABLE,
+                                                outcome):
+                return "paused", None
             for item in new:
                 self.record({"event": "sentence_checked", "agent_seat": seat,
                              "record_uuid": item["record_uuid"], "sentence": item["sentence"]})
             if problem:
-                self.headless_failed(seat, "judge whether its promises are backed", problem,
-                                     outcome.error_kind or JUDGE_ANSWER_UNUSABLE, outcome)
                 return "failed", None
             for answer in outcome.answer["sentences"]:
                 backed[answer["index"]] = answer["backed"]

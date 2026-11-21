@@ -1348,6 +1348,21 @@ check("the account changed before the reset time: the pause ends, the notice is 
       code == 0 and len(calls) == 2 and "agent-seat beta has spent no tokens" in calls[1]["prompt"],
       (code, calls))
 
+machine = Machine()
+machine.seat("alpha", [user("go"), assistant(ANNOUNCED, when="2026-11-02T11:48:00Z"), turn_end()])
+machine.script(usage_limit_exit_with_transcript(RESET_IN_AN_HOUR))
+machine.run(0)
+machine.script({"answer": {"sentences": [{"index": 0, "backed": False, "reason": "no call"}]}},
+               sent_ok())
+code, _ = machine.run(60)
+calls = machine.claude_calls()
+prompt = calls[0]["prompt"] if calls else "\n{}"
+judge_facts = json.loads(prompt[prompt.rindex("\n{") + 1:])
+check("a rule 2 judge at a usage limit with a reset time ahead: after the reset, the same sentence "
+      "is judged and the agent-seat woken",
+      code == 0 and [item["sentence"] for item in judge_facts.get("sentences", [])] == [ANNOUNCED]
+      and len(calls) == 2 and len(machine.events("message_sent")) == 1, (code, calls))
+
 for case, resets_at in (("carries no reset time", None),
                         ("carries a reset time already passed", int(START.timestamp()) - 60)):
     machine = two_seats_with_open_tasks()
