@@ -157,7 +157,9 @@ with tempfile.TemporaryDirectory() as scratch:
 
     silent = socket.socket()
     silent.bind(("127.0.0.1", 0))
-    silent.listen(1)
+    # Nothing accepts, so each call's connection stays in the backlog; macOS lets no more
+    # connections in than the backlog, and a call that cannot connect sends nothing.
+    silent.listen(8)
     failure = failure_of(lambda: caller.nn_shared_database_service_http_request_single_attempt(
         "/agent-seats", service_url=f"http://127.0.0.1:{silent.getsockname()[1]}",
         token_file=token_file, timeout_seconds=0.2))
