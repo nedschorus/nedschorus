@@ -386,6 +386,12 @@ try:
         ("I'll merge it without waiting and push the tag.", "announced_action"),
         ("I'll run nothing but the failing test now.", "announced_action"),
         ("I'll open no more than five pull requests, then merge them.", "announced_action"),
+        # A coordinated gerund takes the sentence's own "I'm"; ", but" starts a clause of its own.
+        ("I'm starting no new reviews and finishing the reviews that are already running.",
+         "announced_action"),
+        ("I'll push no further changes, but I'll merge it now.", "announced_action"),
+        # A negation spanning two clauses declines nothing: no clause of this one declines.
+        ("Reading without delay and forking and the rest.", "announced_action"),
     ]
     machine = Machine()
     machine.seat("alpha", [user("go"), assistant("\n".join(s for s, _ in expected_kinds)), turn_end()])
@@ -409,7 +415,11 @@ try:
                      "I'll open no more pull requests today.",
                      "I'll push no other branches.",
                      "I'm starting no new reviews for now and the load is high.",
-                     "I'll file no further issues today."):
+                     "I'll file no further issues today.",
+                     # A second object after "and" is not a clause: not "I'm pull requests".
+                     "I'm opening no new issues and pull requests today.",
+                     "I'm starting no new build and test jobs until the load drops.",
+                     "I'm starting nothing else; merge queue is full."):
         machine = Machine()
         machine.seat("alpha", [user("go"), assistant(sentence), turn_end()])
         _, verdicts, _ = machine.run()
