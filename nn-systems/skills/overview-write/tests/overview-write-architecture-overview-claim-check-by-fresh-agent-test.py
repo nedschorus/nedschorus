@@ -252,7 +252,7 @@ ENTRIES_WITH_EACH_STATE = (
     "# Proposed improvements or changes: the example overview\n\nAn introduction.\n\n"
     "## E3 — possible problem: an assertion of the overview is contradicted\n\nClaim: the tool sets x, once\n"
     "The claim check's evidence:\n> tool.py:1\nState: open\n\n"
-    "## E4 — improvement: an entry an overview writer recorded\n\nState: open — needs the user\n\n"
+    "## E4 — improvement: an entry an overview writer recorded\n\nState: needs the user — a handler, 2026-11-20T10:00Z: decide x\n\n"
     "## E5 — possible problem: an assertion of the overview is unsupported\n\nClaim: a settled claim\n"
     "State: settled, not worth doing — a handler, 2026-11-20T10:00Z: the overview was fixed.\n\n"
     "## E6 — improvement: an entry with no State line\n\nIt only says something.\n")
@@ -260,7 +260,7 @@ ENTRIES_WITH_EACH_STATE = (
 
 def run_covering_judge_unit_cases():
     open_entries = claim_check.open_entries_in_proposed_improvements_or_changes_file(ENTRIES_WITH_EACH_STATE)
-    check("open entries are those whose State: line starts with open, each with its whole text up to the next entry",
+    check("open entries are those whose State: line is not settled, needs the user included, each with its whole text up to the next entry",
           sorted(open_entries) == [3, 4] and open_entries[3].startswith("## E3 ") and open_entries[3].endswith("State: open")
           and "## E4" not in open_entries[3], open_entries)
     claims = [claim_check.Claim(1, "contradicted", claim_check.RANK_FIX_LATER, "the  tool sets x,\tonce", ""),

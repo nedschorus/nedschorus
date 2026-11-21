@@ -37,8 +37,8 @@ a program so that no step depends on an agent remembering it:
    proposed-improvements-or-changes-file does not hold yet to that file in the
    checkout the program runs from, creating the file when it is missing. A
    claim the file holds word for word, in an entry of any state, is not
-   appended. When claims remain and the file has open entries, an entry whose
-   State: line starts with "open", one more fresh-agent, given no tools, judges
+   appended. When claims remain and the file has open entries, an entry with a
+   State: line that does not start with "settled", one more fresh-agent, given no tools, judges
    for each remaining claim whether an open entry covers it, that is, whether
    settling the entry would settle the claim however each is worded; a claim it
    says is covered is not appended, and the program prints which entry covers
@@ -182,8 +182,10 @@ PROPOSED_IMPROVEMENTS_OR_CHANGES_POINTER_LINE_TEMPLATE = (
 FIX_LATER_ENTRY_CLAIM_PREFIX = "Claim: "
 PROPOSED_IMPROVEMENTS_OR_CHANGES_ENTRY_NUMBER = re.compile(r"^## E(\d+) ", re.MULTILINE)
 PROPOSED_IMPROVEMENTS_OR_CHANGES_ENTRY = re.compile(r"^## E(\d+) .*?(?=^## E\d+ |\Z)", re.MULTILINE | re.DOTALL)
-# The handler that settles an entry rewrites its State: line; an open entry's line starts with "open".
-OPEN_ENTRY_STATE_LINE = re.compile(r"^State: open\b", re.MULTILINE)
+# The handler that settles an entry rewrites its State: line to start "State: settled"; an entry it cannot settle
+# alone reads "State: needs the user" and is still open.
+ENTRY_STATE_LINE = re.compile(r"^State: (.*)$", re.MULTILINE)
+SETTLED_ENTRY_STATE_PREFIX = "settled"
 COVERING_JUDGE_TOOLS = ""
 COVERING_JUDGE_ANSWER_LINE = re.compile(r"^CLAIM (\d+) (?:covered-by E(\d+)|new)[ \t]*$", re.MULTILINE)
 
@@ -416,9 +418,13 @@ def overview_pointer_line_to_proposed_improvements_or_changes_file(overview_path
 
 
 def open_entries_in_proposed_improvements_or_changes_file(text):
-    """Return {entry number: the entry's text} for each entry whose State: line says it is open."""
-    return {int(match.group(1)): match.group(0).strip() for match in PROPOSED_IMPROVEMENTS_OR_CHANGES_ENTRY.finditer(text)
-            if OPEN_ENTRY_STATE_LINE.search(match.group(0))}
+    """Return {entry number: the entry's text} for each entry whose first State: line does not say it is settled."""
+    entries = {}
+    for match in PROPOSED_IMPROVEMENTS_OR_CHANGES_ENTRY.finditer(text):
+        state = ENTRY_STATE_LINE.search(match.group(0))
+        if state and not state.group(1).startswith(SETTLED_ENTRY_STATE_PREFIX):
+            entries[int(match.group(1))] = match.group(0).strip()
+    return entries
 
 
 def fix_later_claims_not_held_word_for_word(text, claims):
