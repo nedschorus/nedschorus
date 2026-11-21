@@ -4,7 +4,7 @@
 Each case runs the program in a disposable git repository. A stand-in `claude`,
 first on PATH, logs the prompt it is given and prints a canned report, or, for
 a recheck prompt naming an assertion the case lists, that assertion's canned
-answer, or, for the prompt of the fresh-agent that judges whether an open
+answer, or, for the prompt of the fresh-agent that judges whether an unsettled
 entry covers a claim, the case's canned judge answer; the
 repository's own scripts/md-drift-lint.py is a stand-in that exits as the case
 asks. No case runs a model or touches the log-store.
@@ -55,7 +55,7 @@ answer = json.loads((control / "claude.json").read_text(encoding="utf-8"))
 for assertion, recheck in answer.get("rechecks", {{}}).items():
     if f"The assertion: {{assertion}}\\n" in prompt:
         answer = recheck
-if prompt.startswith({claim_check.COVERING_JUDGE_PROMPT_TEMPLATE[:60]!r}):
+if prompt.startswith({claim_check.UNSETTLED_ENTRY_COVERS_FIX_LATER_CLAIM_JUDGE_PROMPT_TEMPLATE[:60]!r}):
     answer = answer.get("covering_judge", {{"stdout": "no judge answer was given for this case\\n"}})
 __import__("time").sleep(answer.get("sleep_seconds", 0))
 sys.stdout.write(answer["stdout"])
@@ -259,10 +259,10 @@ ENTRIES_WITH_EACH_STATE = (
 
 
 def run_covering_judge_unit_cases():
-    open_entries = claim_check.open_entries_in_proposed_improvements_or_changes_file(ENTRIES_WITH_EACH_STATE)
-    check("open entries are those whose State: line is not settled, needs the user included, each with its whole text up to the next entry",
-          sorted(open_entries) == [3, 4] and open_entries[3].startswith("## E3 ") and open_entries[3].endswith("State: open")
-          and "## E4" not in open_entries[3], open_entries)
+    unsettled_entries = claim_check.unsettled_entries_in_proposed_improvements_or_changes_file(ENTRIES_WITH_EACH_STATE)
+    check("unsettled entries are those whose State: line is not settled, needs the user included, each with its whole text up to the next entry",
+          sorted(unsettled_entries) == [3, 4] and unsettled_entries[3].startswith("## E3 ") and unsettled_entries[3].endswith("State: open")
+          and "## E4" not in unsettled_entries[3], unsettled_entries)
     claims = [claim_check.Claim(1, "contradicted", claim_check.RANK_FIX_LATER, "the  tool sets x,\tonce", ""),
               claim_check.Claim(2, "contradicted", claim_check.RANK_FIX_LATER, "a settled claim", ""),
               claim_check.Claim(3, "unsupported", claim_check.RANK_FIX_LATER, "a new claim", ""),
@@ -270,11 +270,11 @@ def run_covering_judge_unit_cases():
               claim_check.Claim(5, "contradicted", claim_check.RANK_NIT, "a nit", "")]
     check("a fix-later claim held word for word in an entry of any state is not new; a repeated new claim is new once, "
           "and a nit is never new",
-          [claim.number for claim in claim_check.fix_later_claims_not_held_word_for_word(ENTRIES_WITH_EACH_STATE, claims)]
+          [claim.number for claim in claim_check.fix_later_claims_not_yet_in_proposed_improvements_or_changes_file(ENTRIES_WITH_EACH_STATE, claims)]
           == [3])
 
-    def judged(answer, claim_numbers=(1, 2), open_entry_numbers=frozenset({3, 4})):
-        return claim_check.covering_entries_from_judge_answer(answer, list(claim_numbers), set(open_entry_numbers))
+    def judged(answer, claim_numbers=(1, 2), unsettled_entry_numbers=frozenset({3, 4})):
+        return claim_check.claim_number_to_covering_unsettled_entry_number_from_judge_answer(answer, list(claim_numbers), set(unsettled_entry_numbers))
 
     check("a judge answer gives each covered claim its entry, leaves out new claims, and ignores other lines",
           judged("Here is my answer.\nCLAIM 1 covered-by E4\nCLAIM 2 new\n") == ({1: 4}, None))
@@ -284,10 +284,10 @@ def run_covering_judge_unit_cases():
           judged("CLAIM 1 new\nCLAIM 1 covered-by E3\nCLAIM 2 new\n") == (None, "it answers CLAIM 1 twice"))
     check("a judge answer about a claim it was not asked about is malformed",
           judged("CLAIM 1 new\nCLAIM 2 new\nCLAIM 9 new\n") == (None, "it answers CLAIM 9, which it was not asked about"))
-    check("a judge answer naming an entry that is not one of the open entries it was given, such as a settled one, is "
+    check("a judge answer naming an entry that is not one of the unsettled entries it was given, such as a settled one, is "
           "malformed",
           judged("CLAIM 1 covered-by E5\nCLAIM 2 new\n")
-          == (None, "it says E5 covers CLAIM 1, but E5 is not one of the open entries it was given"))
+          == (None, "it says E5 covers CLAIM 1, but E5 is not one of the unsettled entries it was given"))
 
 
 def last_stdout_line(result):
@@ -506,15 +506,15 @@ def run_covering_judge_cases(fixture):
     calls = fixture.claude_calls()
     judge_prompt = calls[1]["stdin"] if len(calls) == 2 else ""
     appended = (fixture.repository / PROPOSALS).read_text()
-    check("a claim the covering judge says an open entry covers is not appended, and the run says which entry covers it",
+    check("a claim the covering judge says an unsettled entry covers is not appended, and the run says which entry covers it",
           result.returncode == 0 and appended.startswith(ENTRIES_WITH_EACH_STATE.rstrip("\n"))
           and "Claim: the tool sets x once\n" not in appended and "Claim: the tool is fast" in appended
           and "## E7 — possible problem: an assertion of the overview is unsupported" in appended
-          and f"the claim of VERDICT 1, ranked fix later, is not appended: open entry E3 of {PROPOSALS} covers it"
+          and f"the claim of VERDICT 1, ranked fix later, is not appended: unsettled entry E3 of {PROPOSALS} covers it"
           in result.stdout, (result, appended))
     check("the covering judge is asked only about claims new word for word, with their evidence, is shown only the "
-          "open entries, and runs with no tools",
-          judge_prompt.startswith(claim_check.COVERING_JUDGE_PROMPT_TEMPLATE[:60])
+          "unsettled entries, and runs with no tools",
+          judge_prompt.startswith(claim_check.UNSETTLED_ENTRY_COVERS_FIX_LATER_CLAIM_JUDGE_PROMPT_TEMPLATE[:60])
           and "CLAIM 1: the tool sets x once\n  COVERED-CLAIM-EVIDENCE\n" in judge_prompt
           and "CLAIM 2: the tool is fast\n" in judge_prompt and "CLAIM 3" not in judge_prompt
           and "## E3 " in judge_prompt and "## E4 " in judge_prompt and "## E5 " not in judge_prompt
@@ -534,7 +534,7 @@ def run_covering_judge_cases(fixture):
             ("a covering judge whose answer skips a claim", {"stdout": "CLAIM 1 new\n"},
              "it gives no answer for CLAIM 2"),
             ("a covering judge that names an entry it was not given", {"stdout": "CLAIM 1 covered-by E5\nCLAIM 2 new\n"},
-             "E5 is not one of the open entries it was given")):
+             "E5 is not one of the unsettled entries it was given")):
         fixture.answer(claude_stdout=report, covering_judge=covering_judge)
         result = fixture.run()
         check(f"{case} exits 4 with why, writes no report, leaves the file as it was, and ends with the next action for "
