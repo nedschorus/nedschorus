@@ -20,7 +20,8 @@ The captures directory, agent_seat_terminal_captures_directory_on_this_machine_f
 - wherever AGENT_SEAT_TERMINAL_CAPTURES_DESTINATION names, when it is set, for tests.
 
 agent-seat-terminal-captures-older-than-seven-days-delete.py, beside this file, deletes each
-terminal capture whose last write is more than seven days old.
+terminal capture whose last write is more than seven days old, except each agent-seat's newest,
+which tmux may still be writing.
 
 The start never stops an agent-seat: when the terminal capture cannot start, because the
 supervisor is not in a tmux pane, the directory cannot be made, tmux fails, or the capture file

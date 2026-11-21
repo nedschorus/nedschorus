@@ -55,10 +55,12 @@ with tempfile.TemporaryDirectory() as scratch_name:
 
     # -- what is deleted and what is kept ---------------------------------------------------------
     store = scratch / "store"
-    old = capture_file(store, "MD-skills", "20261020T000000Z-MD-skills-terminal-capture.log", 8)
+    old = capture_file(store, "MD-skills", "20260801T000000Z-MD-skills-terminal-capture.log", 8)
     # Named for a start long ago but written today: a supervisor still running.
     still_written = capture_file(store, "MD-skills", "20260901T000000Z-MD-skills-terminal-capture.log", 0.1)
-    only_old = capture_file(store, "retired-seat", "20261001T000000Z-retired-seat-terminal-capture.log", 30)
+    only_old = capture_file(store, "retired-seat", "20260901T000000Z-retired-seat-terminal-capture.log", 40)
+    # Newest of its agent-seat, unwritten for 30 days: tmux may still hold it open.
+    newest_unwritten = capture_file(store, "retired-seat", "20261001T000000Z-retired-seat-terminal-capture.log", 30)
     just_inside = capture_file(store, "merge-lane-2", "20261029T000000Z-merge-lane-2-terminal-capture.log", 6.9)
     stray_top_level_file = store / "README.txt"
     stray_top_level_file.write_text("not a capture\n", encoding="utf-8")
@@ -76,8 +78,16 @@ with tempfile.TemporaryDirectory() as scratch_name:
           and "deleted 2 capture(s) older than 7 days from" in output, output)
     check("a file last written within seven days is kept, however old the start time in its name",
           still_written.exists() and just_inside.exists())
-    check("an agent-seat directory the run emptied is removed; one still holding a file is kept",
-          not (store / "retired-seat").exists() and (store / "MD-skills").is_dir())
+    check("an agent-seat's newest capture, by the start in its name, is kept however long ago it was "
+          "last written, since tmux may still be writing it",
+          newest_unwritten.exists())
+
+    lone_capture_store = scratch / "lone-capture-store"
+    lone_capture = capture_file(lone_capture_store, "a-seat", "20261001T000000Z-a-seat-terminal-capture.log", 30)
+    exit_code, output = run(["--captures-directory", str(lone_capture_store)])
+    check("an agent-seat directory is never removed, and its only capture is kept, since a "
+          "supervisor starting may be about to open its capture there",
+          exit_code == 0 and lone_capture.exists() and "deleted 0 capture(s)" in output, output)
     check("a file directly in the captures directory, not in an agent-seat's directory, is left alone",
           stray_top_level_file.exists())
 
@@ -120,6 +130,8 @@ with tempfile.TemporaryDirectory() as scratch_name:
     locked_store = scratch / "locked-store"
     undeletable = capture_file(locked_store, "a-locked-seat", "20261001T000000Z-a-locked-seat-terminal-capture.log", 30)
     deletable = capture_file(locked_store, "an-open-seat", "20261001T000000Z-an-open-seat-terminal-capture.log", 30)
+    for seat in ("a-locked-seat", "an-open-seat"):
+        capture_file(locked_store, seat, f"20261105T000000Z-{seat}-terminal-capture.log", 0.1)
     # Sorted first, so the agent-seat directories after it show the run went on past it.
     unlistable_seat = locked_store / "a-0-unlistable-seat"
     unlistable_seat.mkdir()
@@ -151,16 +163,6 @@ with tempfile.TemporaryDirectory() as scratch_name:
           exit_code == 1 and f"FAILED: could not list {unlistable_store} (" in output
           and str(store) in output.splitlines()[-1] and output.splitlines()[-1].endswith("; 1 FAILED")
           and "deleted 0 capture(s)" in output.splitlines()[-1],
-          output)
-
-    emptied_store = scratch / "emptied-store"
-    capture_file(emptied_store, "a-seat", "20261001T000000Z-a-seat-terminal-capture.log", 30)
-    with mock.patch.object(Path, "rmdir", side_effect=OSError("injected: Device or resource busy")):
-        exit_code, output = run(["--captures-directory", str(emptied_store)])
-    check("an emptied agent-seat directory that cannot be removed is a FAILED line naming it, exit 1",
-          exit_code == 1
-          and f"FAILED: could not remove the emptied directory {emptied_store / 'a-seat'} (" in output
-          and output.splitlines()[-1].endswith("; 1 FAILED"),
           output)
 
 print()
