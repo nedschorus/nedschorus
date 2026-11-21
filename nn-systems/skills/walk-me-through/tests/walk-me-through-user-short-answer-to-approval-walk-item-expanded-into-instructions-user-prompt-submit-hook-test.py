@@ -1712,15 +1712,16 @@ def changed_reason(*findings, minute=0, item="item 4 of 9"):
     """The refusal's reason when the message that showed the item, written at minute, did not show its decision-bearing
     lines as findings say."""
     return (f"Your last message that showed {item}, written at 2026-11-13T20:{minute:02}:00Z, did not show the user "
-            f"what the item now decides. {' '.join(findings)} The hook compares only the item's decision-bearing "
-            "lines: the text after a `#new` or `#new_if_d` mark, the `#case_against` line, the text after `The "
-            "alternative:` and after `Recommendation:`, and, in an item with parts, the text after each `Part N.`. A "
-            "line passes when a line of the same kind in the message holds the same words, ignoring punctuation, "
-            "letter case and the marks `#new`, `#new_if_d`, `#case_against` and `[advisor]`, or, for a line other "
-            "than a recommendation or an alternative that the message shows without its mark, when a paragraph, list "
-            "or quotation of the message ends with those words; for any other line a model judges whether the "
-            "message's "
-            "closest paragraph means the same, and for a line the message showed that the item no longer has, "
+            f"what the item now decides. {' '.join(findings)} The hook compares only decision-bearing lines, the "
+            "item's and those of the message's copy of it: the text after a `#new` or `#new_if_d` mark, the "
+            "`#case_against` line, the text after `The alternative:` and after `Recommendation:`, and, in an item "
+            "with parts, the text after each `Part N.`. A line passes when a line of the same kind in the message "
+            "holds the same words, ignoring punctuation, letter case and the marks `#new`, `#new_if_d`, "
+            "`#case_against` and `[advisor]`, or, for a line other than a recommendation or an alternative that the "
+            "message shows without its mark, when a paragraph, list or quotation of the message ends with those "
+            "words; for any other line a model judges whether the message's line of the same kind in the same place, "
+            "or else its closest paragraph, means the same, and for a line the message showed that the item no longer "
+            "has, "
             "whether the item's closest paragraph still says it, so a change made only for clarity passes, and so "
             "does any change outside those lines, such as in the explanation or an example.")
 
@@ -2120,6 +2121,75 @@ def test_new_and_new_if_d_texts_swapped_in_a_message_that_dropped_both_marks_go_
     check("an answer goes to the model and is refused when the item's `#new` and `#new_if_d` texts were swapped after "
           "a message that showed both without their marks",
           len(case.model_calls()) == 1 and lines is not None and not counted(lines), f"lines {lines!r}")
+
+
+def test_only_the_messages_copy_of_the_item_is_compared_not_another_items_lines_or_the_agents_own():
+    document = ("# A walk\n\n## Items 4 and 5 of 9: two filters\n\nItem 4 of 9 hides old rows. Recommendation: leave "
+                "the filter out.\n\nItem 5 of 9 hides empty rows. Recommendation: add the filter.\n")
+    case = Case(next_to_present="item 4 of 9", document=document, model="changed")
+    lines = case.lines("a")
+    check("an answer to item 4 under a heading item 5 shares counts with no model call when both were shown "
+          "unchanged, though item 5's recommendation follows item 4's", counted(lines) and not case.model_calls(),
+          f"lines {lines!r}")
+    case = decision_case(model="changed")
+    own = "Recommendation: whatever you choose, the filter can wait a week."
+    lines = case.lines("a", case.transcript(f"{DECISION_ITEM}\n\n{own}\n\n{ITEM_4_CLOSING_LINE}"))
+    check("an answer counts with no model call when the agent wrote a `Recommendation:` line of its own after the "
+          "item, shown unchanged", counted(lines) and not case.model_calls(), f"lines {lines!r}")
+
+
+def test_a_reworded_line_is_paired_with_the_shown_line_in_its_place_not_the_most_alike():
+    item = DECISION_ITEM.replace("#new Hide rows older than a year.",
+                                 "#new Enable request logging.\n\n#new Log every request.")
+    shown = item.replace("#new Log every request.", "#new Delete old backups.")
+    case = Case(next_to_present="item 4 of 9", document="# A walk\n\n" + item + "\n", model="same")
+    case.lines("a", case.transcript(f"{shown}\n\n{ITEM_4_CLOSING_LINE}"))
+    calls = case.model_calls()
+    check("the second `#new` line, reworded, goes to the model paired with the shown `#new` line in its place, "
+          "not with the first, which it is more like",
+          len(calls) == 1 and "Shown: #new Delete old backups.\nCurrent: Log every request." in calls[0]["stdin"]
+          and "Pair 2" not in calls[0]["stdin"], f"calls {calls!r}")
+
+
+def test_a_part_the_item_dropped_is_read_though_the_item_has_one_part_left():
+    item = DECISION_ITEM.replace("#new Hide rows older than a year.", "Part 1. Hide rows older than a year.")
+    shown = item.replace("Part 1. Hide rows older than a year.",
+                         "Part 1. Hide rows older than a year.\n\nPart 2. Hide empty rows.")
+    case = Case(next_to_present="item 4 of 9", document="# A walk\n\n" + item + "\n", model="changed")
+    lines = case.lines("a", case.transcript(f"{shown}\n\n{ITEM_4_CLOSING_LINE}"))
+    calls = case.model_calls()
+    check("an answer goes to the model and is refused when the message showed two parts and the item kept one",
+          len(calls) == 1 and "Pair 1, the item's `Part 2.` line, shown, then dropped.\nShown: Hide empty rows.\n"
+          in calls[0]["stdin"] and "Pair 2" not in calls[0]["stdin"] and not counted(lines),
+          f"lines {lines!r}, calls {calls!r}")
+
+
+def test_a_dropped_line_with_a_failed_model_call_or_no_text_to_compare_refuses_and_says_which():
+    three_parts = DECISION_ITEM.replace(
+        "#new Hide rows older than a year.",
+        "Part 1. Hide rows older than a year.\n\nPart 2. Hide empty rows.\n\nPart 3. Hide rows marked spam.")
+    two_parts = three_parts.replace("\n\nPart 3. Hide rows marked spam.", "")
+    case = Case(next_to_present="item 4 of 9", document="# A walk\n\n" + two_parts + "\n", model="fail")
+    lines = case.lines("a", case.transcript(f"{three_parts}\n\n{ITEM_4_CLOSING_LINE}"))
+    check("a dropped part whose model call fails refuses the answer, saying the call failed and what it asks",
+          lines is not None and not counted(lines)
+          and "The message showed a `Part 3.` line, \"Hide rows marked spam.\", which the item no longer has in those "
+              "words, and the hook's `claude -p` call failed; that call asks a model whether the item's closest "
+              "text, " in lines[2], f"lines {lines!r}")
+    case = Case(next_to_present="item 4 of 9", document="# A walk\n\n## Item 4 of 9: a filter\n", model="changed")
+    lines = case.lines("a", case.transcript(f"{DECISION_ITEM}\n\n{ITEM_4_CLOSING_LINE}"))
+    check("a line the message showed refuses the answer with no model call when the item has no paragraph left to "
+          "compare it with", lines is not None and not counted(lines) and not case.model_calls()
+          and "The message showed a `Recommendation:` line, \"leave the filter out.\", which the item no longer has, "
+              "and the item has no paragraph left to compare it with." in lines[2], f"lines {lines!r}")
+
+
+def test_a_mark_typed_in_capitals_in_the_message_is_the_same_kind_of_line():
+    case = decision_case(model="changed")
+    shown = DECISION_ITEM.replace("#new Hide", "#NEW Hide")
+    lines = case.lines("a", case.transcript(f"{shown}\n\n{ITEM_4_CLOSING_LINE}"))
+    check("an answer counts with no model call when the message wrote the `#new` mark as `#NEW`",
+          counted(lines) and not case.model_calls(), f"lines {lines!r}")
 
 
 def test_a_bare_new_mark_ending_a_paragraph_after_a_label_takes_the_block_below_it():
