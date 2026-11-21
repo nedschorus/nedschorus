@@ -79,6 +79,14 @@ refuses the checkout and the program stops. A review whose Codex cell runs
 from the same worktree at the same time may fail when the checkout moves
 files under it; such a review is run again.
 
+Last, once the pull request has merged, the program runs
+merge-lane-unreviewed-prs-count-then-next-agent-seat-go-ahead-to-open-surviving-mutant-test-prs.py,
+beside it, with the merge account's GH_TOKEN, and prints what it printed:
+`RELEASE <agent-seat>` with the message to send that agent-seat, or the count
+of pull requests waiting for a review. When it exits 2 or another code it does
+not document, the program prints that too; the exit code below never depends
+on it.
+
 Exit codes: 0 merged, with the review worktrees removed, and main's after-merge
 test run passed; 1 the gate refused,
 printed a merge command other than the expected one, or the pull request is
@@ -147,6 +155,10 @@ EXIT_MERGED_BUT_A_STEP_AFTER_THE_MERGE_NOT_DONE = 3
 EXIT_MERGE_OUTCOME_UNKNOWN = 4
 MERGE_GATE_DOCUMENTED_EXITS = (0, 1, 2)
 MERGE_GATE = Path("scripts") / "merge-gate.sh"
+SURVIVING_MUTANT_TEST_PRS_GO_AHEAD_PROGRAM = Path(__file__).resolve().with_name(
+    "merge-lane-unreviewed-prs-count-then-next-agent-seat-go-ahead-to-open-surviving-mutant-test-prs.py")
+# 0 named an agent-seat to release, 1 named none.
+SURVIVING_MUTANT_TEST_PRS_GO_AHEAD_ANSWERS = (0, 1)
 
 
 def parse_arguments(argv):
@@ -593,6 +605,22 @@ def after_merge_test_run(arguments, merge_commit):
     return exit_code
 
 
+def surviving_mutant_test_prs_go_ahead_printed(environment):
+    """Run the go-ahead program and print its output; its outcome never changes the exit code."""
+    program = SURVIVING_MUTANT_TEST_PRS_GO_AHEAD_PROGRAM
+    go_ahead = subprocess.run([sys.executable, str(program)], stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, text=True, env=environment,
+                              stdin=subprocess.DEVNULL)
+    print(go_ahead.stdout, end="" if go_ahead.stdout.endswith("\n") or not go_ahead.stdout
+          else "\n")
+    if go_ahead.returncode not in SURVIVING_MUTANT_TEST_PRS_GO_AHEAD_ANSWERS:
+        print(f"{program.name} exited {go_ahead.returncode}, so whether an agent-seat holding "
+              f"mutant-test tasks may open its pull requests was not decided; the merge is done "
+              f"all the same.\n"
+              f"Follow the instructions it printed above; when it printed none, run it once: "
+              f"python3 scripts/{program.name}", flush=True)
+
+
 def main(argv=None, wait=time.sleep):
     arguments = parse_arguments(argv)
     try:
@@ -686,6 +714,7 @@ def main(argv=None, wait=time.sleep):
         branch_exit = merged_branch_deleted(branch, environment)
     removal_exit = review_worktrees_remove(arguments)
     test_exit = after_merge_test_run(arguments, read.get("mc") or "")
+    surviving_mutant_test_prs_go_ahead_printed(environment)
     return next((code for code in (test_exit, removal_exit, branch_exit) if code != EXIT_MERGED),
                 EXIT_MERGED)
 
