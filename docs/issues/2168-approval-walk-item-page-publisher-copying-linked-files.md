@@ -31,7 +31,7 @@ The user, 2026-10-28, answering the first version of item 5.2.1.1: "I'm looking 
 As item 5.2.1.1 (version 2) proposed and the user approved:
 
 - It is one program that every agent runs to publish an approval-walk item. It is code alone: it needs no prompt.
-- In the walk-document, the agent writes a file in short form: its path in the repository or the log-store, such as `nn-systems/handoff/handoff-design.md`.
+- In the walk-document, the agent writes a file in short form: its path in the repository or the log-store, such as `nn-systems/handoff/handoff.system.design.md`.
 - The program finds each such file, refusing and naming any it cannot find.
 - It copies each file into the item page's artifact as a page of its own, and turns the short form into a link to that copy.
 - The walk-document and the walk-minutes keep the short form.
@@ -59,7 +59,7 @@ So this is his preference, which he has not finished looking into, and it settle
 Everything in this section is an agent's, not the user's; the items and the user's words above do not settle any of it. Questions 1 to 9 were added by ned-box-helper's subagent that filed this GHI; questions 10 to 12 were added on 2026-11-01 by agent-instructions-editor's subagent.
 
 1. **Which time the header shows.** The user's words name two times: "the time that the original file was created" and "when it was frozen". Should the header show the time the copy was made, the time the original file last changed, or both?
-2. **Which version of a repository file is copied.** The copy of `nn-systems/handoff/handoff-design.md` on item 5.2.1's page was taken from a branch, not main. Should the program copy a repository file from the publishing agent-seat's checkout, or from main?
+2. **Which version of a repository file is copied.** The copy of `nn-systems/handoff/handoff.system.design.md` on item 5.2.1's page was taken from a branch, not main. Should the program copy a repository file from the publishing agent-seat's checkout, or from main?
 3. **Who publishes the page.** Only an agent can call Claude Code's Artifact tool, so a program that is "code alone" cannot publish a claude.ai page by itself. Does the program build the page and its copied files, and the agent then publish them with the Artifact tool?
 4. **How the program recognises a short form.** The item gives a repository example only. How is a log-store path written in short form, and how does the program tell a file path from other text in backticks, such as a branch name or a command, so that it does not refuse on them?
 5. **Files that are not Markdown.** How is a copied Python script, JSON Lines transcript or other non-Markdown file shown as a page that reads well on an iPad?

@@ -505,9 +505,9 @@ def unknown_origin_next_steps(repository, rules, machine, rerun_command):
                          f"keeping its other uncommitted changes, which may be another edit's")
             else:
                 step += f", commit there and open a pull request, then undo the edit here with `{undo}`"
-            step += (f". The first run of this program after the pull request merges into main and main reaches "
-                     f"this checkout says who wrote the rule.\n  If the edit is not your work, leave it to whoever "
-                     f"is making it.")
+            step += (". The first run of this program after the pull request merges into main and main reaches "
+                     "this checkout says who wrote the rule.\n  If the edit is not your work, leave it to whoever "
+                     "is making it.")
         elif case == "detached":
             step = (f"the ID is in an edit to {named} not committed in this checkout, whose HEAD is detached, so a "
                     f"commit made here would be on no branch. If the edit is your work, put it on a branch with "

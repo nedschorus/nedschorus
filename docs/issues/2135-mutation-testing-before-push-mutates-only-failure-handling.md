@@ -15,7 +15,7 @@ Here a repository-wide check means a test suite that checks one rule across a wh
 - `scripts/edited-file-path-within-checkout-root-and-git-check-ignore-defined-once-test.py`
 - `scripts/every-repository-program-help-option-test.py`
 - `scripts/git-redirecting-environment-variables-defined-once-test.py`
-- `scripts/python-files-carry-no-try-except-pass-ruff-s110-test.py`
+- `scripts/python-files-pass-selected-ruff-rules-test.py`
 - `scripts/supervisor-file-names-defined-once-test.py`
 
 A seventh suite, `nn-systems/cold-read/tests/cold-read-codex-cell-test.py`, was selected for both modules too, although it checks no rule across files: its recording on ned-box, in `~/.cache/nedsnodes-test-suite-recorded-inputs/`, includes all 329 Python files git tracks, and why it reads them was not found. So a recording alone cannot tell a suite that tests a module from a suite that only reads it.
@@ -51,7 +51,7 @@ Seconds each suite of the alerts module's chain took on the unmutated code, run 
 | `edited-file-path-within-checkout-root-and-git-check-ignore-defined-once-test.py` | 0.76 |
 | `every-repository-program-help-option-test.py` | 3.32 |
 | `git-redirecting-environment-variables-defined-once-test.py` | 2.53 |
-| `python-files-carry-no-try-except-pass-ruff-s110-test.py` | 0.18 |
+| `python-files-pass-selected-ruff-rules-test.py` | 0.18 |
 | `supervisor-file-names-defined-once-test.py` | 1.09 |
 
 The whole chain took about 26.8 seconds; the six repository-wide checks took 22.5 of them. Multiplying these times by the mutant counts, a computation rather than a measurement, accounts for about 11.5 of the 13 minutes: 235 killed mutants at about 1.4 seconds each, `cold-read-codex-cell-test.py` and then the module's own test, about 5.6 minutes; and 13 surviving mutants at about 26.8 seconds each, about 5.8 minutes, of which the repository-wide checks took about 4.9. The rest is cosmic-ray's own work per mutant and the higher load during the invocation.

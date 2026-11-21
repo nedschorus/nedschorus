@@ -2,7 +2,7 @@
 
 Terms that belong to the design-to-main workflow alone, for agents working on the files in this directory. Terms used beyond design-to-main, such as design-contract and test-design, are in the project glossary, `docs/nedsnodes-wiki/nedsnodes-glossary.md`, and are used here as defined there. Only hyphenated phrases are defined; no common software-engineering word is redefined.
 
-The state names of the machine are in the design, `docs/design-to-main/design-to-main-state-machine-design.md`, §3.1, and are not repeated here.
+The state names of the machine are in the design, `docs/design-to-main/design-to-main-state-machine.system.design.md`, §3.1, and are not repeated here.
 
 - **acceptance-check** — a check of one finished artifact against its acceptance criteria, which passes or fails, made by a program, an agent or the user.
 - **can-not-be-tested** — a `no-tests` reason: no way to test the requirement here, by machine or by hand.

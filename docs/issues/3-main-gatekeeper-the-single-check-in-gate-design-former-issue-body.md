@@ -1,10 +1,10 @@
 ---
-issue: "[main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)"
+issue: "[main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper.system.design.md)](https://github.com/nedschorus/nedschorus/issues/3)"
 ---
 
-# main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper-design.md)
+# main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper.system.design.md)
 
-The MD half of this pair: `nn-systems/main-gatekeeper/main-gatekeeper-design.md` (canonical specification, design-as-of 2026-08-12) — the single-writer git-gatekeeper as nedschorus's permanent check-in architecture: one program holds the project's one main-capable credential; agents invoke it and never push to main themselves; for each request it checks the work in, or refuses and teaches the fix.
+The MD half of this pair: `nn-systems/main-gatekeeper/main-gatekeeper.system.design.md` (canonical specification, design-as-of 2026-08-12) — the single-writer git-gatekeeper as nedschorus's permanent check-in architecture: one program holds the project's one main-capable credential; agents invoke it and never push to main themselves; for each request it checks the work in, or refuses and teaches the fix.
 
 **Built** (`nn-systems/main-gatekeeper/main-gatekeeper.py` + `nn-systems/main-gatekeeper/tests/main-gatekeeper-test.py`, 150 cases green):
 - Slice 1 (2026-08-08): synchronous check-in end to end — screening, candidate built from the declaration, commit with the trailer block, atomic push.
