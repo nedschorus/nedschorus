@@ -392,7 +392,7 @@ The design:
 - **An unanswered question carries over, with no deadline.** A question the user has not answered stays queued, through a crash or close of the overseer too, and carries into the next night's continuation of the same approval-walk (item 9.3). So a question is never silently lost.
 - **A program changes a state file only under a file lock.** Two runs at the same moment therefore cannot both take the same job.
 - **Storage is a file with a lock.** The state may move into the agent-seat database of GHI [A small HTTP service with SQLite on ned-box keeps one record of every agent-seat on both machines](https://github.com/nedschorus/nedschorus/issues/972) if that database is built.
-- **It replaces the current marks.** For every job the daily step covers, this design replaces the "started" and "done" mark scripts used today, `nn-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py` and the overview refresh reminder's mark program, which has since been removed.
+- **It replaces the current marks.** For every job the daily step covers, this design replaces the "started" and "done" mark script used today, `nn-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py`. The overview refresh reminder's mark program, which this line also named when it was written, has since been removed, together with the step of showing the user an overview refresh, so the overview refresh reminder has no mark to replace.
 
 ## How a daily job reads the Mac (decided)
 
