@@ -115,8 +115,9 @@ def main():
               and "permissionDecision" not in shown, shown)
 
         refused = decoded(hook.output_for(payload("PreToolUse", "git push origin b"), environment))
-        check("in force: push by another agent-seat refused, saying merging resumes too and how to ask the coordinator",
+        check("in force: push by another agent-seat refused, naming the coordinating agent-seat, saying merging resumes too and how to ask the coordinator",
               refused and refused["permissionDecision"] == "deny" and "md-skills" in refused["permissionDecisionReason"]
+              and "coordinating agent-seat (reboot-test)" in refused["permissionDecisionReason"]
               and "pushing and merging resume" in refused["permissionDecisionReason"]
               and "SendMessage" in refused["permissionDecisionReason"], refused)
         refused = decoded(hook.output_for(payload("PreToolUse", "gh pr -R o/r merge 5"), environment))
@@ -146,8 +147,9 @@ def main():
         stop.write_bytes(b"\xff\xfe")
         refused = decoded(hook.output_for(payload("PreToolUse", "git push"),
                                           {**environment, "GIT_AUTHOR_NAME": "reboot-test"}))
-        check("unreadable file: treated as in force, every push refused",
-              refused and refused.get("permissionDecision") == "deny", refused)
+        check("unreadable file: treated as in force, every push refused, saying no coordinating agent-seat is named",
+              refused and refused.get("permissionDecision") == "deny"
+              and "coordinating agent-seat (none named)" in refused["permissionDecisionReason"], refused)
         shown = decoded(hook.output_for(payload(), environment))
         check("unreadable file: says why, and to tell the user",
               shown and "cannot be read" in shown["additionalContext"]
