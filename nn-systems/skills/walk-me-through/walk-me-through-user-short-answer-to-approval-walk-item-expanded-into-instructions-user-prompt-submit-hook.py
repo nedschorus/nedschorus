@@ -531,13 +531,13 @@ DECISION_LINE_MEANING_CHANGED_REASON = (
     "showed, \"{shown}\": {why}")
 DECISION_LINE_NOT_IN_MESSAGE_REASON = (
     "Its {line} now reads \"{current}\", and the message holds no paragraph after the item's heading to compare it with.")
-DECISION_LINE_DROPPED_REASON = (
+DECISION_LINE_SHOWN_TO_USER_THEN_REMOVED_FROM_APPROVAL_WALK_ITEM_NOT_RESTATED_REASON = (
     "The message showed a {line}, \"{shown}\", which the item no longer has, and the model judged that the item's "
     "closest text, \"{current}\", does not say the same: {why}")
-DECISION_LINE_DROPPED_NOTHING_LEFT_REASON = (
+DECISION_LINE_SHOWN_TO_USER_THEN_REMOVED_FROM_APPROVAL_WALK_ITEM_LEFT_WITH_NO_TEXT_TO_COMPARE_REASON = (
     "The message showed a {line}, \"{shown}\", which the item no longer has, and the item has no paragraph left to "
     "compare it with.")
-DECISION_LINE_DROPPED_CHECK_FAILED_REASON = (
+DECISION_LINE_SHOWN_TO_USER_THEN_REMOVED_FROM_APPROVAL_WALK_ITEM_COMPARISON_MODEL_CALL_FAILED_REASON = (
     "The message showed a {line}, \"{shown}\", which the item no longer has in those words, and the hook's "
     "`claude -p` call that has a model judge whether the item's closest text, \"{current}\", still says it failed, so "
     "the hook cannot tell whether the user saw what he answered: {why}. Showing the item's current text unchanged "
@@ -1374,16 +1374,19 @@ def unseen_item_lines(answer, walk, transcript_path):
             values = {"line": name, "current": text_quoted_shortened(current or "") if dropped else current,
                       "shown": shown if dropped else text_quoted_shortened(shown or "")}
             if None in (shown, current):
-                findings.append((DECISION_LINE_DROPPED_NOTHING_LEFT_REASON if dropped
-                                 else DECISION_LINE_NOT_IN_MESSAGE_REASON).format(**values))
+                findings.append((
+                    DECISION_LINE_SHOWN_TO_USER_THEN_REMOVED_FROM_APPROVAL_WALK_ITEM_LEFT_WITH_NO_TEXT_TO_COMPARE_REASON
+                    if dropped else DECISION_LINE_NOT_IN_MESSAGE_REASON).format(**values))
             elif failure:
-                findings.append((DECISION_LINE_DROPPED_CHECK_FAILED_REASON if dropped
-                                 else DECISION_LINE_CHECK_FAILED_REASON).format(**values, why=failure))
+                findings.append((
+                    DECISION_LINE_SHOWN_TO_USER_THEN_REMOVED_FROM_APPROVAL_WALK_ITEM_COMPARISON_MODEL_CALL_FAILED_REASON
+                    if dropped else DECISION_LINE_CHECK_FAILED_REASON).format(**values, why=failure))
             else:
                 changed, why = next(verdicts)
                 if changed:
-                    findings.append((DECISION_LINE_DROPPED_REASON if dropped
-                                     else DECISION_LINE_MEANING_CHANGED_REASON).format(**values, why=why))
+                    findings.append((
+                        DECISION_LINE_SHOWN_TO_USER_THEN_REMOVED_FROM_APPROVAL_WALK_ITEM_NOT_RESTATED_REASON
+                        if dropped else DECISION_LINE_MEANING_CHANGED_REASON).format(**values, why=why))
         if findings:
             reasons[number] = DECISION_LINES_CHANGED_REASON.format(
                 item=item_name(number, walk), timestamp=timestamp, findings=" ".join(findings))
