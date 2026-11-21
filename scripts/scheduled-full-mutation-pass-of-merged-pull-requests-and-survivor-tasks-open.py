@@ -91,9 +91,10 @@ WHAT ONE RUN DOES, in order.
      --mutants-run-at-most-shared-evenly-among-changed-files
      FIRST_PASS_MUTANTS_RUN_PER_MERGE_AT_MOST, 12 (THE TWO PASSES below). The
      worker count, read as each merge starts, is the machine's cores less its
-     load average over the last minute, at least 1; each worker has a
-     worktree of its own, and its suites still wait for the suite runner's
-     admission.
+     load average over the last minute, at least 1 and at most
+     MUTANT_WORKERS_AT_MOST, 4, a quarter of ned-box's 16 cores, which leaves
+     the rest for reviews and other work; each worker has a worktree of its
+     own, and its suites still wait for the suite runner's admission.
   7. Opens a survivor task for each line with surviving mutants (TASKS
      below), and one job failure task for the merge's ERRORED mutants (JOB
      FAILURE TASKS below), then records the commit as tested, and, when
@@ -390,6 +391,7 @@ UNTESTABLE_MERGES_STATE_KEY = "untestable_merges"
 MERGES_WITH_MUTANTS_NOT_RUN_STATE_KEY = "merges_with_mutants_not_run"
 ERRORED_MUTANT_KEYS_ALREADY_REPORTED_STATE_KEY = "errored_mutant_keys_already_reported"
 FIRST_PASS_MUTANTS_RUN_PER_MERGE_AT_MOST = 12
+MUTANT_WORKERS_AT_MOST = 4
 SCHEDULED_JOBS_ON_EACH_MACHINE_JSON_FILE = (
     REPOSITORY_ROOT / "nn-systems" / "general-tools" / "scheduled-jobs-on-each-machine.json")
 DEFAULT_SECOND_PASS_STOPS_STARTING_MUTANTS_SECONDS_BEFORE_NEXT_SCHEDULED_RUN = 30 * 60
@@ -746,8 +748,9 @@ def run_mutation_testing(arguments, merge, parent, json_file, workers, sessions_
 
 
 def mutant_worker_count_for_free_cores(cores, load):
-    """The cores less the load average, at least 1 and at most the cores."""
-    return max(1, min(cores, int(cores - load)))
+    """The cores less the load average, at least 1 and at most the cores and
+    MUTANT_WORKERS_AT_MOST."""
+    return max(1, min(cores, MUTANT_WORKERS_AT_MOST, int(cores - load)))
 
 
 def sessions_directory_of_merge(arguments, merge):
@@ -1109,8 +1112,9 @@ def test_one_merge(arguments, state, state_file, merge, record, record_citation,
     cores, load = os.cpu_count() or 1, os.getloadavg()[0]
     workers = mutant_worker_count_for_free_cores(cores, load)
     record.append(f"merge {merge[:12]}{', second pass' if in_second_pass else ''}: {workers} "
-                  f"mutant worker(s), from {cores} cores and a "
-                  f"load average over the last minute of {load:.1f}; {judged_before} mutant(s) "
+                  f"mutant worker(s), from {cores} cores, a "
+                  f"load average over the last minute of {load:.1f} and a cap of "
+                  f"{MUTANT_WORKERS_AT_MOST}; {judged_before} mutant(s) "
                   f"already judged in its kept sessions")
     exit_code, stdout, stderr = run_mutation_testing(
         arguments, merge, parent, json_file, workers, sessions_directory,

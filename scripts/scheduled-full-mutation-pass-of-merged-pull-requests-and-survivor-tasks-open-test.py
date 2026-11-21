@@ -733,11 +733,12 @@ def run_carry_on_and_job_failure_task_cases():
               "and counted, its skipped mutants left out",
               journal_left and count == 2, (journal_left, count))
 
-    # mutant_worker_count_for_free_cores: the cores less the load, from 1 to the cores.
+    # mutant_worker_count_for_free_cores: the cores less the load, from 1 to the cores and 4.
     counts = [job.mutant_worker_count_for_free_cores(cores, load)
-              for cores, load in ((16, 3.5), (16, 40.0), (16, 0.0), (1, 0.0))]
+              for cores, load in ((16, 13.5), (16, 40.0), (16, 0.0), (16, 3.5), (3, 0.0),
+                                  (1, 0.0))]
     check("the worker count is the cores less the 1-minute load average, at least 1, at most "
-          "the cores", counts == [12, 1, 16, 1], counts)
+          "the cores and at most 4", counts == [2, 1, 4, 4, 3, 1], counts)
 
 
 def errored_mutant(line, operator, reason, diff=""):
