@@ -307,12 +307,13 @@ STRAY_WRITE_NO_UNDO_ALREADY_CHANGED = (
     "one would also undo those. Read `git -C {repository} diff -- {path}` against the edits you know "
     "are your own, and ask the user about any change you did not make.")
 # A cell can move an already-edited file without git pairing the move as a rename (a plain
-# `mv`, or a `git mv` of a much-edited file), and can re-create the old name afterwards, so
-# no path can be shown to be free of those edits once any already-edited file has changed.
+# `mv`, or a `git mv` of a much-edited file), can re-create the old name afterwards, and can
+# move a file git tracks only as new or untracked out of git status altogether, so no path can
+# be shown to be free of those edits once any already-edited file has changed or gone.
 STRAY_WRITE_NO_UNDO_MAY_HOLD_MOVED_CHANGES = (
     "No undo command is given. A file with uncommitted changes from before the cells launched "
-    "has changed since: {touched}. Those changes may have been moved to this path, and an undo "
-    "would delete them. Read this path against the edits you know are your own, and ask "
+    "has changed or gone since: {touched}. A stopped cell may have moved it here, so an undo "
+    "could delete those changes. Read this path against the edits you know are your own, and ask "
     "the user about any change you did not make.")
 STOPPED_CELL_LINE = "{report}: stopped before it finished{deleted}."
 WORKING_TREE_SNAPSHOT_NOT_TAKEN_REASON = "its snapshot of the working tree before the cells launched failed ({error})"
@@ -966,13 +967,16 @@ def stopped_cells_write_check_lines(stopped_report_paths: list, baseline,
                                     baseline_failure_reason, already_reported: set) -> list:
     """Return a line per path changed since the baseline and not yet reported, each with
     its undo command, or, when no check can run, a line per stopped cell saying so.
-    A path that leaves the snapshot after the baseline is not detected, such as an
-    already-untracked file a stopped cell deletes, or a changed tracked file it resets to HEAD."""
+    A path that leaves the snapshot after the baseline gets no line of its own, such as an
+    already-untracked file a stopped cell deletes, or a changed tracked file it resets to HEAD;
+    it withholds every undo command instead. A gitignored file is in no snapshot, so a cell
+    that moves one to a path git does not ignore gets an undo command for that path."""
     reason = None if baseline is not None else (
         baseline_failure_reason or "no snapshot of the working tree was taken before the cells launched")
     if baseline is not None:
         try:
-            changed = sorted({name for name, _ in cell_common.working_tree_state() - baseline})
+            current = cell_common.working_tree_state()
+            changed = sorted({name for name, _ in current - baseline})
             entries = git_machine_readable_output.status_entries(
                 git_machine_readable_output.run_git(
                     cell_common.REPO_ROOT, ["status", "--porcelain", "-z", "--untracked-files=all"]))
@@ -986,7 +990,9 @@ def stopped_cells_write_check_lines(stopped_report_paths: list, baseline,
                 for path in stopped_report_paths]
     untracked = {entry.path for entry in entries if entry.code == "??"}
     changed_before = {name for name, _ in baseline}
-    touched = sorted(set(changed) & changed_before)
+    # Read from the launch side: a pre-launch path that is now different, gone or out
+    # of git status is in no current entry, and an undo could delete what it held.
+    touched = sorted({name for name, _ in baseline - current})
     cells = ", ".join(cell_name_of(path) for path in stopped_report_paths)
     repository = shlex.quote(str(cell_common.REPO_ROOT))
     lines = []

@@ -1707,11 +1707,51 @@ try:
         check(f"{case}: a file moved from one the agent had edited gets no undo command, and the "
               "edited file is named",
               len(destination_lines) == 1 and "No undo command is given" in destination_lines[0]
-              and "has changed since: agent-draft.md." in destination_lines[0]
+              and "has changed or gone since: agent-draft.md." in destination_lines[0]
               and "restore" not in destination_lines[0] and "rm -r" not in destination_lines[0],
               repr(lines_of_case))
         check(f"{case}: a path already listed is not listed again when later cells are stopped",
               later_lines_of_case == [], repr(later_lines_of_case))
+
+    # A stopped cell that moves a file the agent had created before launch, untracked or staged
+    # as new: the old name leaves git status altogether, so only the launch snapshot shows that
+    # the agent's file is gone, and the destination must get no undo command.
+    for case, staged_new in (("untracked-source-plain-mv", False), ("staged-new-source-git-mv", True)):
+        created_repository = (scratch / f"checkout-stopped-cell-moves-a-created-file-{case}").resolve()
+        created_repository.mkdir()
+
+        def created_git(*arguments):
+            return subprocess.run(["git", "-C", str(created_repository), "-c", "user.name=grid test",
+                                   "-c", "user.email=grid-test@example.invalid", *arguments],
+                                  check=True, capture_output=True, text=True).stdout
+
+        created_git("init", "--quiet")
+        (created_repository / "seed.md").write_text("Seed.\n", encoding="utf-8")
+        created_git("add", "seed.md")
+        created_git("commit", "--quiet", "-m", "seed")
+        (created_repository / "agent-new.md").write_text("The agent's new file.\n", encoding="utf-8")
+        if staged_new:
+            created_git("add", "agent-new.md")
+        with mock.patch.object(grid_module.cell_common, "REPO_ROOT", created_repository):
+            created_baseline = grid_module.cell_common.working_tree_state()
+            if staged_new:
+                created_git("mv", "agent-new.md", "moved-by-a-reviewer.md")
+            else:
+                (created_repository / "agent-new.md").rename(created_repository / "moved-by-a-reviewer.md")
+            created_status = created_git("status", "--porcelain", "--untracked-files=all")
+            created_lines = grid_module.stopped_cells_write_check_lines(
+                [scratch / "claude-hunt-deep.md"], created_baseline, None, set())
+        check(f"{case}: the agent's created file has left git status",
+              "agent-new.md" not in created_status and "moved-by-a-reviewer.md" in created_status,
+              repr(created_status))
+        created_destination_lines = [line for line in created_lines
+                                     if line.startswith("STRAY WRITE: moved-by-a-reviewer.md ")]
+        check(f"{case}: a file moved from one the agent created before launch gets no undo command",
+              len(created_destination_lines) == 1
+              and "has changed or gone since: agent-new.md." in created_destination_lines[0]
+              and "restore" not in created_destination_lines[0]
+              and "rm -r" not in created_destination_lines[0],
+              repr(created_lines))
 
     # A file the agent had already deleted before launch, and has not touched since, holds no
     # edits a stray write could carry away, so a reviewer's new file still gets its undo command.
@@ -1752,7 +1792,7 @@ try:
           and "rm -r" not in edited_file_lines[0] and "restore" not in edited_file_lines[0],
           repr(edited_lines))
     check("once a file already changed before the run has changed again, no other path gets an undo command",
-          len(other_lines) == 1 and "has changed since: agent-draft.md." in other_lines[0]
+          len(other_lines) == 1 and "has changed or gone since: agent-draft.md." in other_lines[0]
           and "rm -r" not in other_lines[0] and "restore" not in other_lines[0],
           repr(edited_lines))
     attempt = grid_module.start_attempt(
