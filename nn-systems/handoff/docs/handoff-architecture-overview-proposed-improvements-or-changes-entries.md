@@ -990,3 +990,13 @@ The claim check's evidence:
 > - Contradicting line: nn-systems/handoff/handoff-supervisor.py:2550-2552 `print("handoff-supervisor: " + reference_checkout_back_on_main.reference_checkout_back_on_main_success_line_build(REFERENCE_CHECKOUT, main_commit, leftovers_branches))`. The builder at nn-systems/handoff/handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py:252 writes `saved = (f"its leftovers are saved on {', '.join(pushed)}, pushed to origin" if pushed`. So the branch is named on the handoff-supervisor's console, the agent-seat's tmux pane in the user's window.
 > - The rest holds (handoff-supervisor.py:2537-2543). The supervisor's docstring at :34-35 says the same as the overview (`neither the successor nor the user is told of such a branch`), and the successor's prompt does leave the branch out. Suggested wording: "telling the successor nothing of that branch, and naming it only on its console".
 State: open
+
+## E84 — possible problem: an assertion of the overview is unsupported
+
+Claim: The `write` and `show` commands of `worktree-owner-file-read-and-write.py` are run by a person or a program that makes a worktree.
+Found by: the overview claim check of 2026-11-21 against commit c7649888100205e621797733c4b427f2d7780774; its report is /home/nedlern/nedsnodes-logs/overview-write-architecture-overview-claim-check-reports/nedsnodes-handoff-architecture-overview/0ae94a6ad31b71e3e070f208141221ca844ed9e5-2026-11-21T05-14-37-035894Z.md.
+Fixed by: regular maintenance, in the overview.
+Goes wrong when: a reader takes the assertion as exact.
+The claim check's evidence:
+> Files read: scripts/worktree-owner-file-read-and-write.py (usage :47-54), scripts/agent-seat-worktree-create-with-owner-file.py, scripts/git-client-side-hooks-post-checkout-new-worktree-owner-file-write.py, scripts/worktree-owner-file-one-time-backfill-for-existing-worktrees-with-none.py, nn-systems/handoff/uncommitted-work-snapshots.py. Searches: Grep `"write", "--agent-(seat|session)"|'write', '--agent` in *.py finds only the module and its test. Grep for `worktree-owner-file-read-and-write.py (write|show)` finds only text telling a person or agent to run `write` (post-checkout program :67, backfill :58, :254). Programs that make a worktree call the module's functions in-process (uncommitted-work-snapshot-hook.py:135, uncommitted-work-snapshots.py:906) rather than run the commands. So the commands' starters are a person or an agent that a failure message sends there, not a program.
+State: open
