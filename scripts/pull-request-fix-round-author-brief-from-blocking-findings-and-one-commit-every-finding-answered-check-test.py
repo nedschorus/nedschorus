@@ -2214,6 +2214,31 @@ def commit_tree(repository, tree_of, *parents, message="commit"):
                "-m", message)
 
 
+def parent_and_child_whose_id_sorts_after_it(make_parent, make_child):
+    """A fresh parent each attempt: a parent whose id sorts near the top would leave no child to sort after it,
+    while each fresh pair succeeds half the time."""
+    attempt = 0
+    while True:
+        parent = make_parent(attempt)
+        child = make_child(parent, attempt)
+        if child > parent:
+            return parent, child
+        attempt += 1
+
+
+def parent_and_child_ordering_takes_a_fresh_parent_case(_root, _repository, _base, _frozen_head):
+    made = iter([("f" * 40, "e" * 40), ("1" * 40, "2" * 40)])
+    pairs = {}
+
+    def make_parent(attempt):
+        pairs[attempt] = next(made)
+        return pairs[attempt][0]
+
+    pair = parent_and_child_whose_id_sorts_after_it(make_parent, lambda _parent, attempt: pairs[attempt][1])
+    check("round shape fixture: a parent whose id sorts above its child's is replaced, not kept",
+          pair == ("1" * 40, "2" * 40), repr(pair))
+
+
 def fix_commit_range_two_commit_round_cases(_root, repository, _base, _frozen_head):
     """The round of a fix commit and an overview-only commit, read from real history by fix_commit_range.
 
@@ -2221,13 +2246,13 @@ def fix_commit_range_two_commit_round_cases(_root, repository, _base, _frozen_he
     from an equality one."""
     program = load_program()
     (repository / "docs" / "nedsnodes-wiki").mkdir(parents=True)
-    parent = commit_file(repository, DEMO_OVERVIEW, demo_overview_text("0" * 40), "the frozen-head's parent")
+    first_parent = commit_file(repository, DEMO_OVERVIEW, demo_overview_text("0" * 40), "the frozen-head's parent")
+    grandparents = git(repository, "rev-list", "--parents", "-n", "1", first_parent).split()[1:]
     # The frozen-head's id must sort after its parent's, so that a merge whose first parent is that parent
     # sorts before [frozen_head].
-    for attempt in range(100):
-        frozen_head = commit_tree(repository, parent, parent, message=f"frozen-head {attempt}")
-        if frozen_head > parent:
-            break
+    parent, frozen_head = parent_and_child_whose_id_sorts_after_it(
+        lambda attempt: commit_tree(repository, first_parent, *grandparents, message=f"the frozen-head's parent {attempt}"),
+        lambda parent, attempt: commit_tree(repository, parent, parent, message=f"frozen-head {attempt}"))
     git(repository, "reset", "-q", "--hard", frozen_head)
     fix = commit_file(repository, "hook.py", "fixed\n", "fix")
     overview = commit_file(repository, DEMO_OVERVIEW, demo_overview_text(fix), "overview checked against the fix")
@@ -2626,6 +2651,7 @@ case("suites", suite_cases)
 case("architecture overview", architecture_overview_cases)
 case("architecture overview check cannot read", architecture_overview_check_cannot_read_case)
 case("fix commit range two-commit round", fix_commit_range_two_commit_round_cases)
+case("parent and child ordering takes a fresh parent", parent_and_child_ordering_takes_a_fresh_parent_case)
 case("nits", nit_cases)
 case("move", move_cases)
 case("move hand commit", move_hand_commit_cases)
