@@ -327,15 +327,9 @@ class WriteAndRulingCeilingsDrivenThroughTheMachine(
         self.assertEqual(run.current_state, T.TEST_REVIEWING)
 
     def test_past_both_ceilings_the_users_resume_buys_a_whole_automated_budget(self):
-        # The eighth walk, item 5 and the side ruling under item 6
-        # (user-ruled 2026-09-09), answering PR #295's reviewer: the test
-        # writer at its ceiling (3) and arbitrator-rulings at its (2), the
-        # third entry opens the investigation (row 65) without a charge.
-        # The user's resume zeroes the six per-version counters, so the
-        # held `reject tests` routes by row 62, below the ceiling, and the
-        # reviewer's next reject is a counted write again: each
-        # consultation buys a full automated budget, and the run reaches
-        # him next only when a whole one is spent (section 7).
+        # The resume zeroes the six per-version counters, so the returned
+        # arbitrator's `reject tests` routes by row 62, below the writer's
+        # ceiling, and the reviewer's next reject is a counted write again.
         script = fixture.prefix_to_test_writing()
         for _ in range(3):
             script += [fixture.test_write(),
@@ -351,21 +345,21 @@ class WriteAndRulingCeilingsDrivenThroughTheMachine(
         self.assertEqual(run.counters.value("arbitrator-rulings"), 2)
         self.assertEqual(run.writes_emitted_per_version[T.TEST_WRITING], 5)
         machine.launcher.script += [
-            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"held_ruling": T.V_REJECT_TESTS}),  # row 72: zeroes
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}),                                # row 72: zeroes
+            (T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS, {}),                        # row 62
             fixture.test_write(),                                                    # forced
             (T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_TESTS, {}),                      # row 49
             fixture.test_write(),                                                    # counted: 1
         ]
         fixture.drive(machine, run)
-        self.assertEqual(machine.held_rulings_applied[-1][0].row, "62")
-        self.assertEqual([r.row for r, _, _ in machine.routed][-4:], ["72", "42", "49", "42"])
+        self.assertEqual([r.row for r, _, _ in machine.routed][-5:], ["72", "62", "42", "49", "42"])
         self.assertEqual(run.writes_emitted_per_version[T.TEST_WRITING], 7)
         self.assertEqual(run.counters.value("test-writes"), 1)
-        self.assertEqual(run.counters.value("arbitrator-rulings"), 0)
+        self.assertEqual(run.counters.value("arbitrator-rulings"), 1)
         self.assertEqual(run.current_state, T.TEST_REVIEWING)
         self.assertEqual(machine.machine_errors, [])
         self.assertEqual(
-            sum(1 for p in machine.launcher.launched if p["state"] == T.TEST_SUITE_ARBITRATING), 2)
+            sum(1 for p in machine.launcher.launched if p["state"] == T.TEST_SUITE_ARBITRATING), 3)
 
     def test_a_write_the_users_discuss_forces_past_the_ceiling_is_counted_and_a_reject_of_it_goes_to_the_arbitrator(self):
         # The eighth walk, item 6 (user-ruled 2026-09-09): the user's

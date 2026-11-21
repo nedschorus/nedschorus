@@ -720,7 +720,7 @@ class TheStateExitFile(unittest.TestCase):
     instance's evidence directory, its fields spelled with hyphens —
     `state`, `verdict`, `package-commit`, `destination`, `input-named`,
     `investigation-focus`, `coverage-type`, `refusal-class`,
-    `held-ruling`, `named-files`, `rulings`. The reader parses it into
+    `named-files`, `rulings`. The reader parses it into
     the machine's StateExitRecord."""
 
     def setUp(self):
@@ -749,13 +749,11 @@ class TheStateExitFile(unittest.TestCase):
                          "scripts/widget-counter/tests/b-prompt-test.md")))
         path = self.write({
             "state": T.INVESTIGATE_WORKFLOW, "verdict": T.V_RESUME, "package-commit": "b" * 40,
-            "held-ruling": T.V_REJECT_TESTS,
             "rulings": [T.RULING_ZERO_ALL_RUN_COUNTERS_INCLUDING_REDESIGNS,
                         "the exit status of a refusal is 3"],
             "named-files": [],
         })
         record = M.state_exit_record_from_json_file(path)
-        self.assertEqual(record.held_ruling, T.V_REJECT_TESTS)
         self.assertEqual(record.rulings, (T.RULING_ZERO_ALL_RUN_COUNTERS_INCLUDING_REDESIGNS,
                                           "the exit status of a refusal is 3"))
         self.assertEqual(record.coverage_types, ())
@@ -785,6 +783,12 @@ class TheStateExitFile(unittest.TestCase):
         with self.assertRaises(M.MalformedStateExitFile) as refused:
             M.state_exit_record_from_json_file(path)
         self.assertIn("input_named", str(refused.exception))
+        path = self.write({"state": T.INVESTIGATE_WORKFLOW, "verdict": T.V_RESUME,
+                           "package-commit": "a" * 40, "held-ruling": T.V_REJECT_TESTS,
+                           "named-files": []})
+        with self.assertRaises(M.MalformedStateExitFile) as refused:
+            M.state_exit_record_from_json_file(path)
+        self.assertIn("held-ruling", str(refused.exception))
         path = self.write({"state": T.IMPLEMENTATION_WRITING, "package-commit": "a" * 40, "named-files": []})
         with self.assertRaises(M.MalformedStateExitFile) as refused:
             M.state_exit_record_from_json_file(path)

@@ -138,13 +138,10 @@ class TheArbitratorOverrulesAReviewer(unittest.TestCase):
 class ResumingFromTheArbitratorsThirdEntry(unittest.TestCase):
     """Section 6.6: an investigation the arbitrator's third entry opened
     (row 65), where the paused state is test-suite-arbitrating at its
-    ceiling. A resume may name a destination, or apply the ruling the
-    arbitrator held in its report — routed through
-    test-suite-arbitrating's rows without entering the state — or carry
-    neither, which returns to the same arbitrator: the resume has zeroed
-    its counter, so the return is the first entry of a fresh budget
-    rather than a fourth (user-ruled 2026-09-11, the ninth walk, item
-    4)."""
+    ceiling. A resume may name a destination, or name none, which
+    returns to the same arbitrator: the resume has zeroed its counter, so
+    the return is the first entry of a fresh budget rather than a
+    fourth."""
 
     def setUp(self):
         self.repository = fixture.ThrowawayRepository()
@@ -173,13 +170,6 @@ class ResumingFromTheArbitratorsThirdEntry(unittest.TestCase):
         return sum(1 for p in machine.launcher.launched if p["state"] == T.TEST_SUITE_ARBITRATING)
 
     def test_a_plain_resume_returns_to_the_same_arbitrator_on_a_fresh_budget(self):
-        # Section 6.6 after the ninth walk (item 4, user-ruled
-        # 2026-09-11), dropping the refusal the earlier rule carried: a
-        # resume that names no destination and carries no held ruling
-        # returns to the state that was paused, the arbitrator, whose
-        # counter the resume has zeroed — so the return is the first entry
-        # of a fresh budget rather than a fourth, and the third-entry rule
-        # does not fire again.
         machine, run, record = self.open_the_third_entry_investigation()
         machine.launcher.script += [
             (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}),                                # row 72
@@ -192,56 +182,18 @@ class ResumingFromTheArbitratorsThirdEntry(unittest.TestCase):
         self.assertEqual(self.arbitrator_launches(machine), 3)
         self.assertEqual(run.counters.value("arbitrator-rulings"), 1)
 
-    def test_a_resume_applies_the_ruling_the_arbitrator_held_in_its_report(self):
+    def test_a_plain_resume_after_the_user_edited_the_implementation_routes_on_the_edit(self):
+        # Section 6.6: the diff of the component's files decides, even in the
+        # investigation the arbitrator's third entry opened.
         machine, run, record = self.open_the_third_entry_investigation()
-        machine.launcher.script += [
-            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"held_ruling": T.V_REJECT_TESTS}),
-            fixture.test_write(),                                                # forced
-        ]
-        fixture.drive(machine, run)
-        self.assertEqual([row.row for row, _, _ in machine.routed][-2:], ["72", "42"])
-        # The resume zeroed the six per-version counters (section 7), so
-        # the held ruling routes by row 62; the write it orders is still
-        # the arbitrator's bucket, and test-writes stays at zero.
-        self.assertEqual(machine.held_rulings_applied[-1][0].row, "62")
-        self.assertEqual(self.arbitrator_launches(machine), 2)
-        self.assertEqual(run.counters.value("arbitrator-rulings"), 0)
-        self.assertEqual(run.counters.value("test-writes"), 0)
-        self.assertEqual(run.writing_state_entry_reason[T.TEST_WRITING], T.ENTRY_REASON_ARBITRATOR_RULING)
-        self.assertEqual(run.current_state, T.TEST_REVIEWING)
-        self.assertEqual(machine.machine_errors, [])
-
-    def test_a_held_escalate_to_user_is_refused_as_a_malformed_resume(self):
-        # Section 6.6 after the eighth walk (item 5): the held ruling is
-        # one of the arbitrator's six rulings, never escalate-to-user —
-        # the arbitrator is already talking to the user, and applying it
-        # would open a second investigation whose plain resume returns to
-        # the same ceiling. Refused like a resume naming `ended`: a
-        # machine error, the pause unchanged, the counters untouched, the
-        # next resume routed.
-        machine, run, record = self.open_the_third_entry_investigation()
-        opened_at = run.investigation_opened_at_commit
-        opening_commit = machine.routed[-1][2]
-        for held in (T.V_ESCALATE_TO_USER, "reject desgin"):
-            with self.subTest(held_ruling=held):
-                machine.launcher.script.append(
-                    (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"held_ruling": held}))
-                fixture.drive(machine, run)
-                self.assertIsNone(machine.routed[-1][0])
-                self.assertIn(held, run.machine_error)
-                self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
-                self.assertEqual(run.paused_state, T.TEST_SUITE_ARBITRATING)
-                self.assertEqual(run.investigation_opened_by_row, T.ROW_THE_ARBITRATORS_THIRD_ENTRY)
-                self.assertEqual(run.investigation_opened_at_commit, opened_at)
-                self.assertEqual(run.counters.value("arbitrator-rulings"), 2)
-                self.assertEqual(self.arbitrator_launches(machine), 2)
-        self.assertEqual(len(machine.machine_errors), 2)
-        self.assertEqual(len(record.commits_on_branch(since=opening_commit)), 2)
-        machine.launcher.script.append(
-            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"held_ruling": T.V_REJECT_TESTS}))
+        edited = record.absolute(fixture.COMPONENT_DIRECTORY + "/widget_counter.py")
+        edited.parent.mkdir(parents=True, exist_ok=True)
+        edited.write_text("# the implementation, edited by the user in the investigation\n")
+        machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
         fixture.drive(machine, run)
         self.assertEqual(machine.routed[-1][0].row, "72")
-        self.assertEqual(run.current_state, T.TEST_WRITING)
+        self.assertEqual(run.current_state, T.IMPLEMENTATION_REVIEWING)
+        self.assertEqual(self.arbitrator_launches(machine), 2)
 
     def test_a_resume_naming_a_destination_goes_there(self):
         machine, run, record = self.open_the_third_entry_investigation()

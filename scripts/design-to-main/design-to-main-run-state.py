@@ -121,7 +121,6 @@ class RunStateRecord:
         self.investigation_focus = None
         self.investigation_opened_at_commit = None
         self.investigation_opened_by = None
-        # A resume from the arbitrator's third entry may apply its held ruling.
         # A plain resume resets the budget before re-entry, so the return is a first entry.
         self.investigation_opened_by_row = None
         self.investigation_held_resume_destination = None
