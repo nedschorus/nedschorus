@@ -478,7 +478,7 @@ def passes_its_text_up(child, parent):
 
 STR_METHODS_THAT_RETURN_THE_TEXT = frozenset({
     "format", "strip", "lstrip", "rstrip", "upper", "lower", "casefold", "title", "capitalize",
-    "replace", "join", "center", "ljust", "rjust", "removeprefix", "removesuffix"})
+    "replace", "center", "ljust", "rjust", "removeprefix", "removesuffix"})
 
 
 def nearest_call_prints_its_argument(node, parents, helper_printers):
