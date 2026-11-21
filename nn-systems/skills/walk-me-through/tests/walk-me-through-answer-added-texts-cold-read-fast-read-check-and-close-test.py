@@ -649,6 +649,60 @@ def test_the_waiting_item_read_step_refuses_an_item_over_300_words_and_reads_it_
           again.returncode == 0 and "had to be run now" in again.stdout, described(again))
 
 
+def test_the_waiting_item_read_step_refuses_an_item_stating_a_system_status_until_the_agent_says_how_it_rechecked():
+    case = Case(document=marks_document("Task 421 is still on hold because cold-read-research is offline.\n"))
+    document = case.checkout / "docs" / "walk" / f"{WALK_NAME}.md"
+    before = document.read_text()
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    command = f"python3 {PROGRAM} {WAITING_ITEM_READ_STEP_NAME} --cwd {shlex.quote(str(case.checkout.resolve()))}"
+    flag = "--possibly-stale-system-status-claims-rechecked"
+    check("the read step refuses an item stating a status, before any read and leaving the item as it was, and "
+          "gives each line the agent acts on",
+          result.returncode == 1
+          and "item 3 of 9 was not given its cold-read-fast-read, on purpose, because its text in the walk-document"
+          in result.stderr
+          and 'outside the walk ("still on hold", "offline")' in result.stderr
+          and "\nIf the item states a status: check each one now with a command, such as `claude auth status`"
+          in result.stderr
+          and f"Then run `{command} {flag} '<each command you ran and the time" in result.stderr
+          and f"\nIf the matched words state no current status, as in a quotation or a description of what a "
+              f"program does: run `{command} {flag} 'no current status stated: <why>'`.\n" in result.stderr
+          and "\nFrom now on, check each status an item states with a command just before you present the item"
+          in result.stderr
+          and case.calls.read_text() == "" and not case.reads().exists() and document.read_text() == before,
+          described(result))
+    rechecked = "tmux -L cold-read-research ls at 14:02Z, session running"
+    again = case.run(WAITING_ITEM_READ_STEP_NAME, flag, rechecked)
+    check("given how the agent rechecked, the read step reads the item, prints the recheck, and repeats the flag in "
+          "the rerun command it prints",
+          again.returncode == 0 and "had to be run now" in again.stdout
+          and f'item 3 of 9: its status claims ("still on hold", "offline") rechecked, as the agent says: '
+              f"{rechecked}" in again.stdout
+          and f"{flag} {shlex.quote(rechecked)}" in again.stdout, described(again))
+    empty = case.run(WAITING_ITEM_READ_STEP_NAME, flag, " ")
+    check("an empty recheck value is refused, reading nothing",
+          empty.returncode == 1 and f"nothing read: {flag} was given an empty value" in empty.stderr,
+          described(empty))
+
+
+def test_the_waiting_item_read_step_reads_an_item_of_progress_talk_without_asking_for_a_recheck():
+    case = Case(document=marks_document("The tests are still running. I wrote the report to docs/report.md.\n"))
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("an item with no status claim is read as before",
+          result.returncode == 0 and "had to be run now" in result.stdout and "status claims" not in result.stdout,
+          described(result))
+
+
+def test_the_waiting_item_read_step_does_not_refuse_a_status_claim_in_an_item_settled_without_being_shown():
+    case = Case(document=marks_document("cold-read-research is offline.\n#not_asked_touches\n")
+                .replace("#case_against weak: the page grows.", "#case_against none."))
+    result = case.run(WAITING_ITEM_READ_STEP_NAME)
+    check("an item rated none, which the walk settles without showing it, is not refused for its status claim",
+          result.returncode == 0 and "check --not-asked none" in result.stdout
+          and "was not given its cold-read-fast-read, on purpose" not in result.stderr,
+          described(result))
+
+
 def test_the_waiting_item_read_step_names_and_reads_the_first_undecided_numbered_sub_step_of_the_item_named():
     case = Case(document=marks_document(words_of_body(300)))
     case.run(WAITING_ITEM_READ_STEP_NAME)
