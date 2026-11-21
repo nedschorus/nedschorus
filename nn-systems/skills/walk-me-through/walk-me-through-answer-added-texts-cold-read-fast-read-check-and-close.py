@@ -21,6 +21,7 @@ Usage, from the agent-session's checkout:
       [--hold-answer-until-new-item-answered]
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py approval-walk-waiting-item-cold-read-fast-read
       [--after-fixes-reread-only-when-facts-change]
+      [--possibly-stale-system-status-claims-rechecked WHAT_YOU_RAN_AND_WHEN]
 
 The answer is an approval, A, unless a flag says otherwise: --obvious for AO,
 --after-advisor for Aa, --disapproved for D, --deferred for Z, --option 2 or 3
@@ -381,7 +382,17 @@ as CHECK does and before it starts any read, an item with a `#new` or
 before any read, an item whose text up to its first `###` sub-step, or one of
 whose `###` sub-steps, holds more than 300 words, counting every run of
 characters between spaces that holds a letter or a digit, on every line but
-those opening `#approval_walk_item_`. When the line names one item that has
+those opening `#approval_walk_item_`. Then, for an item that is to be shown, it
+refuses, before any read, an item whose text states the
+current status of something outside the walk, such as an agent-seat offline,
+`claude` logged out, a machine down or work on hold, as
+nn-systems/general-tools/agent-text-possibly-stale-system-status-claim-phrases-match-common.py
+finds such claims, the list the Stop hook
+scripts/agent-reply-possibly-stale-system-status-claim-recheck-reminder-hook.py
+uses too, unless --possibly-stale-system-status-claims-rechecked says which
+commands the agent ran, and when, to recheck them; the step then prints that
+value beside the claims when it hands the item over, and repeats the flag in
+every command it prints. An empty value is refused. When the line names one item that has
 numbered sub-steps, such as `### Item 3.1 of 9`, the walk-minutes do not all
 decide, the step then adds a `#next_to_present` line naming the first of them
 the walk-minutes do not decide, since the user is shown such an item one sub-step at a time, and
@@ -1209,6 +1220,33 @@ APPROVAL_WALK_ITEM_OVER_WORD_LIMIT = (
     "long material broken into steps, not compressed.\n"
     "Then run `{command}` again.\n"
     "From now on, write each item and each sub-step within {limit} words when you write it into the walk-document.")
+
+SYSTEM_STATUS_CLAIM_PHRASES_FILE = (REPOSITORY_TOP / "nn-systems" / "general-tools"
+                                    / "agent-text-possibly-stale-system-status-claim-phrases-match-common.py")
+SYSTEM_STATUS_CLAIMS_RECHECKED_FLAG = "--possibly-stale-system-status-claims-rechecked"
+SYSTEM_STATUS_CLAIM_PHRASES_SHOWN = 3
+APPROVAL_WALK_ITEM_SYSTEM_STATUS_CLAIM_NOT_RECHECKED = (
+    "nothing read: {item} was not given its cold-read-fast-read, on purpose, because its text in the walk-document "
+    "{document} states the current status of something outside the walk ({matched}). A status changes without "
+    "notice: an agent-seat comes back online, the user logs `claude` back in, a job is restarted. The user acts on "
+    "what an item tells him, so a status that was true when the item was written can cost him a correction or a "
+    "wrong decision.\n"
+    "If the item states a status: check each one now with a command, such as `claude auth status` for the login on "
+    "this machine, `tmux -L <agent-seat> ls` on the agent-seat's machine, `crontab -l` for a scheduled job, or the "
+    "ListAgents tool for an agent-seat; correct the item where the status has changed, and write into the item the "
+    "time you checked. When a check fails or cannot reach the machine, say in the item that the status is "
+    "unchecked, and what the command printed. Then run `{command} " + SYSTEM_STATUS_CLAIMS_RECHECKED_FLAG
+    + " '<each command you ran, the time and what it showed, as in: tmux -L cold-read-research ls at 14:02Z, "
+    "session running>'`, naming in the value any matched phrase that states no status, and why.\n"
+    "If none of the matched words states a current status, as in a quotation or a description of what a program "
+    "does: run `{command} " + SYSTEM_STATUS_CLAIMS_RECHECKED_FLAG + " 'no current status stated: <why>'`.\n"
+    "From now on, check each status an item states with a command just before you present the item, and say in "
+    "the item when you checked.")
+SYSTEM_STATUS_CLAIMS_RECHECKED_EMPTY = (
+    "nothing read: " + SYSTEM_STATUS_CLAIMS_RECHECKED_FLAG + " was given an empty value, and the value is the record "
+    "of how the item's status claims were checked.\n"
+    "Run the step again with the value saying each command you ran and the time you ran it.")
+SYSTEM_STATUS_CLAIMS_RECHECKED_LINE = "{item}: its status claims ({matched}) rechecked, as the agent says: {rechecked}"
 
 
 class Failure(Exception):
@@ -2470,7 +2508,7 @@ def unclosed_last_answer(walk_finder, minutes, parser):
     return None
 
 
-def item_read_findings_without_outcomes_lines(item, report, outcome_file, fast_read_program, command, top):
+def item_read_findings_without_outcomes_lines(item, report, outcome_file, fast_read_program, command):
     """The lines that withhold item from being presented while the report of its latest cold-read-fast-read has
     findings with no recorded outcome; empty when every finding has one or the report has none. Raise Failure when
     the report or its outcomes file cannot be read."""
@@ -2481,8 +2519,7 @@ def item_read_findings_without_outcomes_lines(item, report, outcome_file, fast_r
     except (OSError, ValueError) as error:
         raise Failure(ITEM_READ_FINDING_OUTCOMES_UNREADABLE.format(
             item=item, report=report, error=error, record=record, outcome_file=outcome_file, command=command,
-            read_again=READ_STEP_COMMAND.format(program=Path(__file__).resolve(), flags="",
-                                                top=shlex.quote(str(top)))))
+            read_again=command.replace(" " + AFTER_FIXES_FLAG, "")))
     if not missing:
         return []
     findings = finding_outcomes.cold_read_fast_read_record_findings(record)
@@ -2495,6 +2532,23 @@ def item_read_findings_without_outcomes_lines(item, report, outcome_file, fast_r
                            outcomes_command=finding_outcomes.cold_read_fast_read_finding_outcomes_record_command(
                                Path(fast_read_program).resolve(), record, findings))
                for line in ITEM_READ_FINDING_OUTCOMES_COMMAND_LINES])
+
+
+def approval_walk_item_system_status_claims_not_rechecked_refused(text, item, document, command, rechecked):
+    """Raise Failure when the item's text states the current status of something outside the walk, as
+    agent-text-possibly-stale-system-status-claim-phrases-match-common.py finds such claims, and the agent has not
+    said, with SYSTEM_STATUS_CLAIMS_RECHECKED_FLAG, how it rechecked them; return the line recording that recheck,
+    or None when the text states no such status."""
+    claims = load_module("agent_text_possibly_stale_system_status_claim_phrases_match_common",
+                         SYSTEM_STATUS_CLAIM_PHRASES_FILE)
+    found = claims.possibly_stale_system_status_claim_phrases_find(text)
+    if not found:
+        return None
+    matched = ", ".join(f'"{phrase}"' for _, phrase in found[:SYSTEM_STATUS_CLAIM_PHRASES_SHOWN])
+    if rechecked is None:
+        raise Failure(APPROVAL_WALK_ITEM_SYSTEM_STATUS_CLAIM_NOT_RECHECKED.format(
+            item=item, document=document, matched=matched, command=command))
+    return SYSTEM_STATUS_CLAIMS_RECHECKED_LINE.format(item=item, matched=matched, rechecked=rechecked)
 
 
 def waiting_item_read(arguments, sub_step_of=None):
@@ -2512,8 +2566,14 @@ def waiting_item_read(arguments, sub_step_of=None):
     named, numbers, total = waiting_items(walk_finder, value, minutes)
     program = Path(__file__).resolve()
     reads = item_reads_directory(walk_finder, minutes)
+    rechecked = arguments.possibly_stale_system_status_claims_rechecked
+    if rechecked is not None and not rechecked.strip():
+        raise Failure(SYSTEM_STATUS_CLAIMS_RECHECKED_EMPTY)
+    # Repeated in every command the step prints, so a rerun it asks for is not refused again for the same claims.
+    rechecked_flag = f" {SYSTEM_STATUS_CLAIMS_RECHECKED_FLAG} {shlex.quote(rechecked)}" if rechecked else ""
     rerun = READ_STEP_COMMAND.format(
-        program=program, flags=" " + AFTER_FIXES_FLAG if arguments.after_fixes_reread_only_when_facts_change else "",
+        program=program,
+        flags=(" " + AFTER_FIXES_FLAG if arguments.after_fixes_reread_only_when_facts_change else "") + rechecked_flag,
         top=shlex.quote(str(top)))
     # Before walk_document_items, which can write: a missing copy refuses with nothing written.
     earlier = earlier_read_texts_of_item(walk_finder, minutes, value, numbers, total, parser, reads, rerun)
@@ -2521,7 +2581,8 @@ def waiting_item_read(arguments, sub_step_of=None):
                                                 WAITING_ITEM_READ_STEP, top)
     total = total or count
     item = items_named(numbers, total)
-    command = READ_STEP_COMMAND.format(program=program, flags=" " + AFTER_FIXES_FLAG, top=shlex.quote(str(top)))
+    command = READ_STEP_COMMAND.format(program=program, flags=" " + AFTER_FIXES_FLAG + rechecked_flag,
+                                       top=shlex.quote(str(top)))
     document, text = item_text(walk_finder, minutes, value, numbers, total, parser,
                                refused_unless_marks_read=(item, command))
     # Before the kept versions are written, so a refused item's document is left as it was.
@@ -2532,6 +2593,12 @@ def waiting_item_read(arguments, sub_step_of=None):
     if sub_step:
         return waiting_item_read(arguments, (items_named([sub_step], total), item,
                                              (sub_step_of[2] if sub_step_of else []) + [keep]))
+    # Before anything is written, so a refused item leaves the walk-minutes and the walk-document as they were; an
+    # item settled without being shown is not refused, since no status in it reaches the user.
+    recheck_line = None
+    if rated_none_item_not_to_be_shown(walk_finder, top, minutes, value, numbers, total, parser, named) is None:
+        recheck_line = approval_walk_item_system_status_claims_not_rechecked_refused(
+            text, item, document, rerun, rechecked)
     if sub_step_of:
         # An item read before it was split keeps that text, as an item revised after its read does.
         for above in sub_step_of[2]:
@@ -2571,9 +2638,11 @@ def waiting_item_read(arguments, sub_step_of=None):
             last_text = (reads / f"{latest[0]}.md").read_text(encoding="utf-8").rstrip("\n")
             facts = approval_walk_item_before_and_after_fixes_compare_for_changed_fact_words_needing_another_cold_read_fast_read(last_text, text, top)
             if not facts:
+                if recheck_line:
+                    print(recheck_line)
                 withheld = item_read_findings_without_outcomes_lines(
                     item, latest[1]["report"], reads / f"{latest[0]}-outcome.json", arguments.fast_read_program,
-                    command, top)
+                    command)
                 print("\n".join([ITEM_READ_NOT_RUN.format(item=item, report=latest[1]["report"])]
                                  + (withheld or [ITEM_READ_NOT_RUN_NEXT.format(item=item, program=program,
                                                                                top=shlex.quote(str(top)))])))
@@ -2590,9 +2659,11 @@ def waiting_item_read(arguments, sub_step_of=None):
                                for line in ITEM_READ_FAILED_LINES]))
             return 1
         how = ITEM_READ_HOW_RUN.format(why=why)
+    if recheck_line:
+        print(recheck_line)
     notes = "".join(STATUS_FAST_READ_NOTE.format(note=note) for note in outcome["notes"])
     withheld = item_read_findings_without_outcomes_lines(item, outcome["report"], reads / f"{key}-outcome.json",
-                                                         arguments.fast_read_program, command, top)
+                                                         arguments.fast_read_program, command)
     print("\n".join([ITEM_READ_USED.format(item=item, how=how, report=outcome["report"], notes=notes)]
                     + [line.format(item=item, document=document, command=command, program=program,
                                    top=shlex.quote(str(top)))
@@ -3547,6 +3618,9 @@ def main(argv=None):
     parser.add_argument(AFTER_FIXES_FLAG, action="store_true",
                         help=f"{WAITING_ITEM_READ_STEP}: you changed the item since its last cold-read-fast-read; "
                              "read it again only when the change touches a fact")
+    parser.add_argument(SYSTEM_STATUS_CLAIMS_RECHECKED_FLAG, metavar="WHAT_YOU_RAN_AND_WHEN",
+                        help=f"{WAITING_ITEM_READ_STEP}: the commands you ran, and when, to recheck each current "
+                             "status the waiting item states, such as an agent-seat offline")
     parser.add_argument("--text-file", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--item", help=argparse.SUPPRESS)
     parser.add_argument("--name", help=argparse.SUPPRESS)
