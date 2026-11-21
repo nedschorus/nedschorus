@@ -182,7 +182,7 @@ PROPOSED_IMPROVEMENTS_OR_CHANGES_POINTER_LINE_TEMPLATE = (
 FIX_LATER_ENTRY_CLAIM_PREFIX = "Claim: "
 PROPOSED_IMPROVEMENTS_OR_CHANGES_ENTRY_NUMBER = re.compile(r"^## E(\d+) ", re.MULTILINE)
 PROPOSED_IMPROVEMENTS_OR_CHANGES_ENTRY = re.compile(r"^## E(\d+) .*?(?=^## E\d+ |\Z)", re.MULTILINE | re.DOTALL)
-# The handler of GHI 1132 rewrites the State: line when it settles an entry; an open entry's line starts with "open".
+# The handler that settles an entry rewrites its State: line; an open entry's line starts with "open".
 OPEN_ENTRY_STATE_LINE = re.compile(r"^State: open\b", re.MULTILINE)
 COVERING_JUDGE_TOOLS = ""
 COVERING_JUDGE_ANSWER_LINE = re.compile(r"^CLAIM (\d+) (?:covered-by E(\d+)|new)[ \t]*$", re.MULTILINE)
