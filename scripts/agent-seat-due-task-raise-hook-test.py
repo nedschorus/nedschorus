@@ -1168,6 +1168,132 @@ unheld, held = hook.unheld_and_held_tasks(hook.read_tasks(seat.task_directory),
 check("approval-walk item not decided: the next-action list counts the task held",
       unheld == ["79"] and held == 1, (unheld, held))
 
+# --- an approval record: a ready pending task is started by a forked subagent ----
+APPROVAL = "walk item 5, approved 2026-10-26"
+
+
+def approval_text(task_id, subject, approval=APPROVAL):
+    return (f'[rule due-task-approved-ready-task-forked-subagent-dispatch-reminder] Task {task_id} "{subject}" is '
+            f"ready and needs no decision from the user ({approval}). Set it in_progress with "
+            f"TaskUpdate, then dispatch a forked subagent for it now, with the Agent tool's "
+            f'isolation "worktree", and mark the task completed when the subagent reports it done.')
+
+
+seat = Seat()
+seat.task("100", metadata={"approval": APPROVAL}, subject="Fix the\nreport")
+result = seat.run()
+check("approval, nothing to wait on: exit 0", result.returncode == 0, result)
+check("approval, nothing to wait on: the exact text, raised at once",
+      context_of(result) == f'{approval_text("100", "Fix the report")}\n{DEFER_LINE}',
+      repr(context_of(result)))
+check("approval, nothing to wait on: gh never asked", seat.gh_calls() == [], seat.gh_calls())
+check("approval, nothing to wait on: raised once, the next stop is silent", silent(seat.run()))
+CHANGED_APPROVAL = "the user's words in session 9, 2026-10-27"
+seat.task("100", metadata={"approval": CHANGED_APPROVAL}, subject="Fix the report")
+text = context_of(seat.run()) or ""
+check("approval changed: raised again with the new record",
+      text == f'{approval_text("100", "Fix the report", CHANGED_APPROVAL)}\n{DEFER_LINE}',
+      repr(text))
+
+seat = Seat()
+seat.task("101", metadata={**MET, "approval": APPROVAL})
+text = context_of(seat.run()) or ""
+check("approval, prerequisites met: the approval text in place of Act on",
+      text == f'{approval_text("101", "Subject of task 101")}\n{DEFER_LINE}', repr(text))
+check("approval, prerequisites met: raised once", silent(seat.run()))
+
+seat = Seat()
+seat.task("102", metadata={"prerequisites": [{"pr_merged": 902}], "approval": APPROVAL})
+seat.respond({"pr:902": {"state": "OPEN", "title": "T", "url": "https://x/902"}})
+check("approval, prerequisites not met: silent", silent(seat.run()))
+
+seat = Seat()
+seat.task("103", metadata={"approval": APPROVAL}, blocked_by=["104"])
+seat.task("104", status="in_progress")
+check("approval, blocker incomplete: silent", silent(seat.run()))
+seat.task("104", status="completed")
+text = context_of(seat.run()) or ""
+check("approval, blocker completed: the approval text",
+      text == f'{approval_text("103", "Subject of task 103")}\n{DEFER_LINE}', repr(text))
+check("approval, blocker completed: raised once", silent(seat.run()))
+seat.task("103", metadata={"approval": APPROVAL}, blocked_by=["104", "114"])
+seat.task("114", status="completed")
+text = context_of(seat.run()) or ""
+check("approval raised, then a new blocker completes: the approval text again, not Act on",
+      text == f'{approval_text("103", "Subject of task 103")}\n{DEFER_LINE}', repr(text))
+
+seat = Seat()
+seat.task("105", metadata={"prerequisites": [{"no_such_kind": 1}], "approval": APPROVAL})
+text = context_of(seat.run()) or ""
+check("approval, unreadable prerequisites: the fault named, never the approval text",
+      text.startswith("[rule due-task-prerequisites-unusable-correct-them] Task 105 ")
+      and "is ready" not in text, repr(text))
+
+seat = Seat()
+seat.task("115", metadata={"prerequisites": [], "approval": APPROVAL})
+text = context_of(seat.run()) or ""
+check("approval, empty prerequisites list: the fault named, never the approval text",
+      "it is an empty list" in text and "is ready" not in text, repr(text))
+
+seat = Seat()
+for task_id, approval in (("106", 5), ("107", ""), ("108", "   "), ("109", None)):
+    seat.task(task_id, metadata={"approval": approval})
+check("approval not a non-empty string: no record, silent", silent(seat.run()))
+
+seat = Seat()
+seat.task("110", status="in_progress", metadata={"approval": APPROVAL})
+seat.task("111", status="in_progress", metadata={**MET, "approval": APPROVAL})
+text = context_of(seat.run()) or ""
+check("approval on an in_progress task: raised with Act on, never told to dispatch",
+      "task 110 " not in text and "Act on task 111 " in text and "is ready" not in text,
+      repr(text))
+
+seat = Seat()
+seat.task("112", metadata=MET)
+check("no approval: Act on",
+      (context_of(seat.run()) or "").startswith(
+          '[rule due-task-raise-when-prerequisites-met] Act on task 112 '))
+seat.task("112", metadata={**MET, "approval": APPROVAL})
+text = context_of(seat.run()) or ""
+check("approval added after an Act on raise: raised again with the approval text",
+      text == f'{approval_text("112", "Subject of task 112")}\n{DEFER_LINE}', repr(text))
+check("approval added after an Act on raise: then silent", silent(seat.run()))
+check("approval added after an Act on raise: gh asked once in all",
+      len(seat.gh_calls()) == 1, seat.gh_calls())
+
+seat = Seat()
+seat.task("113", metadata={"approval": "approved\nby the user"})
+check("approval spread over lines: cited on one line",
+      (context_of(seat.run()) or "").startswith(
+          '[rule due-task-approved-ready-task-forked-subagent-dispatch-reminder] Task 113 "Subject of task 113" '
+          "is ready and needs no decision from the user (approved by the user)."))
+
+seat = WalkSeat()
+seat.task("116", metadata={"approval": APPROVAL, "prerequisites": [{"approval_walk_item_decided": {
+    "approval_walk_minutes_file_path": str(seat.minutes), "approval_walk_item_heading": ITEM_1}}]})
+seat.minutes_say("item 1 of 3: deferred; it moves to just before the summary item. <open>")
+check("approval, approval-walk item not decided: silent", silent(seat.run()))
+seat.minutes_say("item 1 of 3: approved; every text the change adds has had a fast read. <accepted>")
+text = context_of(seat.run()) or ""
+check("approval, approval-walk item decided: the approval text",
+      text == f'{approval_text("116", "Subject of task 116")}\n{DEFER_LINE}', repr(text))
+
+seat = WalkSeat()
+seat.task("117", metadata={"approval": APPROVAL, "prerequisites": [{"approval_walk_item_decided": {
+    "approval_walk_minutes_file_path": str(seat.minutes), "approval_walk_item_heading": ITEM_1}}]})
+seat.minutes_say("item 1 of 3: approved; every text the change adds has had a fast read. <accepted>")
+seat.document.unlink()
+text = context_of(seat.run()) or ""
+check("approval, approval-walk item's walk-document missing: the fault named, never the approval text",
+      text.startswith("[rule due-task-prerequisites-unusable-correct-them] Task 117 ")
+      and "is ready" not in text, repr(text))
+
+seat = IdleSeat()
+seat.task("118", metadata={"approval": APPROVAL})
+text = context_of(seat.stop()) or ""
+check("approval raise at an idle stop: the approval text, and no next-action prompt",
+      text == f'{approval_text("118", "Subject of task 118")}\n{DEFER_LINE}', repr(text))
+
 shutil.rmtree(SUITE_ROOT, ignore_errors=True)
 print()
 if failures:

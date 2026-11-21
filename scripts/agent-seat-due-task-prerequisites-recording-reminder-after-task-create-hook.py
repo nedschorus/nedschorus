@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """After each TaskCreate, tell the agent how to record what the new task waits
 on, so scripts/agent-seat-due-task-raise-hook.py can raise the task when that
-work is done, and the branches and worktrees it holds, so
+work is done, the branches and worktrees it holds, so
 nn-systems/handoff/agent-seat-worktrees-and-branches-with-no-pull-request-first-prompt-list.py
-leaves them out of the first prompt's list while the task is open.
+leaves them out of the first prompt's list while the task is open, and why the
+task needs no decision from the user, so the due-task hook can tell the agent
+to start it when it is ready.
 
 Wired as a PostToolUse hook with matcher TaskCreate in .claude/settings.json.
 The task has already been added; the hook never blocks or changes it.
@@ -12,9 +14,10 @@ OUTPUT: one JSON object on stdout, exit 0,
 {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": ...}},
 which Claude Code hands the agent beside the tool result. The text names the
 task's id when the payload's tool_response.task.id holds one, and otherwise is
-the same text without the id. The prerequisites format it gives is the one the
-due-task hook's docstring defines, and the branches format the one the list
-program's docstring defines.
+the same text without the id, in both places it would appear. The
+prerequisites and approval formats it gives are the ones the due-task hook's
+docstring defines, and the branches format the one the list program's
+docstring defines.
 
 A payload that is not a JSON object: one line on stderr naming the hook and
 the fault, nothing on stdout, exit 1, which Claude Code records as a
@@ -50,7 +53,12 @@ PREREQUISITES_RECORD_INSTRUCTION_TEMPLATE = (
     "is noise.\n"
     'If this task holds a branch or a worktree, now or once you make one, record each with TaskUpdate '
     'in the task\'s metadata, as "branches": ["<branch name>", "<worktree path>"]; the first prompt\'s '
-    "list of this agent-seat's worktrees and branches then leaves them out while the task is open."
+    "list of this agent-seat's worktrees and branches then leaves them out while the task is open.\n"
+    "If this task{task_id_clause} needs no decision from the user, record why with TaskUpdate in its metadata, as "
+    '"approval": "<the walk item or the user\'s words that approved it, with the date>", or as '
+    '"approval": "no approval needed: <the exception it falls under, or that it is on neither list, in the '
+    'words of docs/nedsnodes-wiki/nedsnodes-which-changes-need-the-users-approval.md>". Record nothing '
+    "when it needs a decision from the user."
 )
 TASK_ID_CLAUSE_TEMPLATE = " (id {task_id})"
 FAULT_LINE_TEMPLATE = ("{program}: the task was added, but this hook could not read it from the payload "
