@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for nn-systems/general-tools/rule-enforcing-nc-test-suite-failure-message-closing-lines-text-common.py.
 
-The rule-enforcing nc-test-suites print these lines through their own cases.
+The rule-enforcing nn-test-suites print these lines through their own cases.
 These cases pin the wording word for word, and check that no other test file
 keeps its own copy of it.
 

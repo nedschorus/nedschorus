@@ -2,7 +2,7 @@
 """Tests for the bwrap stand-in in cold-read-scratch-repository-test-fixture.py.
 
 The stand-in lets suites whose program starts bwrap run inside the
-nc-test-sandbox. It confines nothing, but it must apply the options that
+nn-test-sandbox. It confines nothing, but it must apply the options that
 change what the command sees, so a sandbox prefix that relies on one behaves
 under the stand-in as under the real bwrap. These cases pin the environment
 options: --clearenv empties the environment where it stands, a later

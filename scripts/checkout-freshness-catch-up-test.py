@@ -365,7 +365,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           merge_note.endswith("\n" + NOT_FOR_THE_USER_LINE), merge_note)
     check("and only once",
           "merge commit(s) from main" not in agent_text(run_catch_up(["--cwd", str(merge_seat)])))
-    # A merge of another nc-topic-branch is not the banned thing.
+    # A merge of another nn-topic-branch is not the banned thing.
     topic_seat = tmp / "topic-merge-worktree"
     git(["worktree", "add", "-q", "-b", "topic-a", str(topic_seat), "main"], reference)
     configure_identity(topic_seat)
@@ -377,7 +377,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     commit_file(other, "topic-b.txt", "b\n", "topic b work")
     git(["-c", "core.editor=true", "merge", "--no-ff", "--no-edit", "topic-b"], topic_seat)
     result = run_catch_up(["--cwd", str(topic_seat)])
-    check("a merge of another nc-topic-branch is NOT reported as a merge from main",
+    check("a merge of another nn-topic-branch is NOT reported as a merge from main",
           "merge commit(s) from main" not in agent_text(result), agent_text(result))
 
     # -----------------------------------------------------------------------
@@ -567,7 +567,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     detached_work_line = (
         "It holds work of its own.\n"
         "This checkout is an agent-home, so git refuses commits in it: carry that work to a "
-        "worktree of your own on an nc-topic-branch, as the refusal of `git commit` here says "
+        "worktree of your own on an nn-topic-branch, as the refusal of `git commit` here says "
         "how.")
     detached_bisect_line = (
         "A bisect is in progress: finish it or abort it; the next turn's end moves the "

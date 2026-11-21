@@ -26,7 +26,7 @@ and a stub agy stands in for the real one.
     temporary working directory on macOS and none on any other platform.
   - The Gemini launcher path the macOS branch loads names an existing file.
 
-The real bwrap cannot start inside the nc-test-sandbox. So the checks only
+The real bwrap cannot start inside the nn-test-sandbox. So the checks only
 it makes true, the home holding nothing but .gemini, the read-only mounts and
 the empty working directory, run only with --real-sandbox-cases-only, which
 nn-systems/general-tools/tests/agy-print-prompt-run-in-empty-home-sandbox-real-sandbox-test.py
@@ -129,7 +129,7 @@ FIELDS_ONLY_THE_REAL_SANDBOX_MAKES_TRUE = (9, 10, 12)
 # nn-systems/general-tools/tests/agy-print-prompt-run-in-empty-home-sandbox-real-sandbox-test.py
 # runs this suite so, and is listed in scripts/run-all-test-suites.py's
 # SUITES_RUN_WITHOUT_ANY_SANDBOX. Without it the other cases run with the cold-read
-# fixture's pass-through stand-in for bwrap, so this suite runs inside the nc-test-sandbox.
+# fixture's pass-through stand-in for bwrap, so this suite runs inside the nn-test-sandbox.
 REAL_SANDBOX_CASES_ONLY_FLAG = "--real-sandbox-cases-only"
 
 

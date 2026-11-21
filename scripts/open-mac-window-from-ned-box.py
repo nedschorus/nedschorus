@@ -20,7 +20,7 @@ with the same reason, before any connection is made.
 
 NEDSNODES_MAC_SSH_DESTINATION overrides the Mac's address; NEDSNODES_SSH_PROGRAM
 overrides the ssh program and NEDSNODES_MAC_SSH_TIMEOUT_SECONDS the time limit,
-the seams the nc-test-suite uses.
+the seams the nn-test-suite uses.
 """
 
 import importlib.util

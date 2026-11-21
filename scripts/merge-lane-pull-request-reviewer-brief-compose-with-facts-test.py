@@ -2,7 +2,7 @@
 """Tests for merge-lane-pull-request-reviewer-brief-compose-with-facts.py.
 
 Runs the program against real git in a scratch repository that serves as
---review-tools-worktree-at-main: main, a first nc-head-commit and a fix-round nc-head-commit, with a
+--review-tools-worktree-at-main: main, a first nn-head-commit and a fix-round nn-head-commit, with a
 copy of this directory's compose-pull-request-reviewer-brief.py and an
 instructions file committed on main. wt/pr7-merged is a worktree of that
 repository. The reviewer's scratch directories are made in their own directory
@@ -184,7 +184,7 @@ def main():
             "The ned-box addendum.\n\n"
             "## This pull request (facts from merge-lane-2)\n\n"
             f"- Pull request: #7, \"A title\", author `an author`.\n"
-            f"- nc-head-commit: `{first_head}`.\n"
+            f"- nn-head-commit: `{first_head}`.\n"
             f"- Merge base: `{main_commit}`.\n"
             f"- Main's tip when commissioned: `{main_commit}`.\n"
             f"- Merged tree (head merged onto main by merge-lane-2): `{merged_tree}`.\n"
@@ -192,7 +192,7 @@ def main():
             "Use it as `<your scratchpad>`.\n"
             "- Files the change touches: `scripts/thing.py` (+2/-0).\n"
             "- Test files the change touches: `scripts/thing-test.py`.\n"
-            "- First round: no nc-head-commit was reviewed before.\n"
+            "- First round: no nn-head-commit was reviewed before.\n"
             "- Other open pull requests changing the same files: none.\n"
             "- Merged pull requests whose not-fixed line links to an issue this pull request "
             "closes, or to this pull request: none.\n"
@@ -279,9 +279,9 @@ def main():
         brief = brief_file.read_text() if brief_file.exists() else ""
         detail = (f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}"
                   f"\n--- brief ---\n{brief}")
-        check("a fix-round brief names the nc-head-commit reviewed before and the answer",
+        check("a fix-round brief names the nn-head-commit reviewed before and the answer",
               completed.returncode == 0
-              and (f"- This nc-head-commit is a fix-round. nc-head-commit reviewed before: "
+              and (f"- This nn-head-commit is a fix-round. nn-head-commit reviewed before: "
                    f"`{first_head}` (review 1). One new commit.\n") in brief
               and "- The author's answer to each finding: fixed it\n" in brief, detail)
         check("a fix-round brief counts only the new commit's changes",

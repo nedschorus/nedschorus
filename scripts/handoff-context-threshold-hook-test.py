@@ -2189,7 +2189,7 @@ with tempfile.TemporaryDirectory() as workspace:
         # wait-limit, and one millisecond less.
         boundary_clock = clock.replace(microsecond=clock.microsecond // 1000 * 1000)
         for kind_name, command, limit_minutes in (
-                ("nc-mutation-testing",
+                ("nn-mutation-testing",
                  "python3 scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py", 105),
                 ("test-suite", "cd /tmp/x && python3 scripts/run-all-test-suites.py", 90),
                 ("a command no kind matches", "python3 nn-systems/cold-read/cold-read-grid.py", 75)):

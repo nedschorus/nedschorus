@@ -95,7 +95,7 @@ that compares the embedded template against the skill's prompt file: both of
 those files live in the real checkout, so it reads them there. A stub `agy`
 first on PATH stands in for the model, beside the fixture's pass-through
 stand-in for the sandbox program, so this suite runs inside the
-nc-test-sandbox, where the real bwrap cannot start. The stand-in confines
+nn-test-sandbox, where the real bwrap cannot start. The stand-in confines
 nothing; nn-systems/cold-read/tests/cold-read-agy-cell-test.py's
 real-sandbox case tests the confinement. The stub `agy` is driven by
 COLD_READ_AGY_CELL_TEST_STUB_PLAN the way nn-systems/cold-read/tests/cold-read-agy-cell-test.py

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The closing lines of a failure message from an nc-test-suite that checks a repository-wide rule.
+"""The closing lines of a failure message from an nn-test-suite that checks a repository-wide rule.
 
 Such a suite fails when the repository breaks a rule that spans files, such as
 two tracked files sharing a name, and the agent reading the failure often broke

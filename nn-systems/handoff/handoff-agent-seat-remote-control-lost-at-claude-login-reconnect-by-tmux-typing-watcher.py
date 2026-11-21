@@ -84,7 +84,7 @@ in MAC_TMUX_DIRECTORIES_CRON_PATH_LACKS after the PATH it was given.
 
 The environment variables named by the *_ENVIRONMENT_VARIABLE constants
 override where the log, the session records, the transcripts and the process
-table are read from: the seams the nc-test-suite uses.
+table are read from: the seams the nn-test-suite uses.
 """
 
 import argparse

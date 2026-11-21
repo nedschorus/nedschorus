@@ -61,7 +61,7 @@ def commit_file(directory, relative_path, text):
 
 
 def scratch_repository(root, with_citation_programs=True):
-    """A repository on branch base, with origin/main at its first commit and two nc-topic-branches."""
+    """A repository on branch base, with origin/main at its first commit and two nn-topic-branches."""
     repository = root / "checkout"
     repository.mkdir()
     git(repository, "init", "-q", "-b", "base")

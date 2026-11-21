@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Where a system's nc-architecture-overview lives, and the commit its last line names.
+"""Where a system's nn-architecture-overview lives, and the commit its last line names.
 
 docs/nedsnodes-wiki/nedsnodes-how-to-write-an-architecture-overview.md defines
 both; programs that find an overview or read its **Checked against:** line

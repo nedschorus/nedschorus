@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the signal sandbox scripts/run-all-test-suites.py puts each suite in, and on Linux for each suite's nc-test-sandbox.
+"""Tests for the signal sandbox scripts/run-all-test-suites.py puts each suite in, and on Linux for each suite's nn-test-sandbox.
 
 The isolation cases signal only a sleeper this file starts itself, never -1,
 0, 1 or any other process: if the sandbox did not work, the worst a case can
@@ -69,13 +69,13 @@ def check(case_name, condition, detail=""):
 def linux_only_cases_run_here(cases):
     """True on Linux; elsewhere prints why the cases are skipped and returns False.
 
-    Every case that builds or inspects an nc-test-sandbox, runs bwrap or reads /proc goes
+    Every case that builds or inspects an nn-test-sandbox, runs bwrap or reads /proc goes
     through this, since only Linux has them. The check at the end of this file runs this
     file and the other runner test files as if on a Mac, and fails a case that does not.
     """
     if sys.platform.startswith("linux"):
         return True
-    print(f"SKIP  [this machine cannot run it] {cases}: nc-test-sandboxes, bwrap and /proc exist only on Linux")
+    print(f"SKIP  [this machine cannot run it] {cases}: nn-test-sandboxes, bwrap and /proc exist only on Linux")
     return False
 
 
@@ -388,9 +388,9 @@ if linux_only_cases_run_here("the report's sandbox lines"):
         repository = scratch_checkout(scratch, ["a-test.py", OUTSIDE_SUITE])
         completed, report = run_runner(
             scratch, repository, f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
-        check("with the sandbox on, test-run-report.txt says each suite runs in its own nc-test-sandbox, named by the bwrap program",
+        check("with the sandbox on, test-run-report.txt says each suite runs in its own nn-test-sandbox, named by the bwrap program",
               completed.returncode == 0
-              and f"each suite runs in its own nc-test-sandbox: {fake_bin / 'bwrap'}" in report,
+              and f"each suite runs in its own nn-test-sandbox: {fake_bin / 'bwrap'}" in report,
               (completed.returncode, report[-600:]))
         check("with the sandbox on, test-run-report.txt names a suite that runs outside it, and why",
               f"{OUTSIDE_SUITE} runs WITHOUT the signal sandbox: "
@@ -558,7 +558,7 @@ if linux_only_cases_run_here("the report's sandbox lines"):
                   f"listed with its log under the suites not run, and counted as not run",
                   completed.returncode == expected_exit
                   and any(line.startswith(f"NOT RUN {unstartable} did not start: bwrap could "
-                                          f"not build its nc-test-sandbox (exit 1) (")
+                                          f"not build its nn-test-sandbox (exit 1) (")
                           for line in report.splitlines())
                   and any(line.startswith(f"NOT RUN {unstartable} did not start: ")
                           and " — log " in line for line in report.splitlines())
@@ -573,7 +573,7 @@ if linux_only_cases_run_here("the report's sandbox lines"):
 
 with tempfile.TemporaryDirectory() as scratch_name:
     scratch = pathlib.Path(scratch_name)
-    # A checkout, since an nc-test-sandbox keeps the checkout's git directory read-only.
+    # A checkout, since an nn-test-sandbox keeps the checkout's git directory read-only.
     subprocess.run(["git", "init", "-q"], cwd=scratch, check=True)
     (scratch / "dies-test.sh").write_text("kill -TERM $$\n")
     (scratch / "exits-143-test.sh").write_text("exit 143\n")
@@ -610,7 +610,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
           "PREFIXED" not in outside["log"].read_text()
           and "ran" in outside["log"].read_text(), outside["log"].read_text())
 
-# --- A suite outside an nc-test-sandbox leaves nothing in the shared temp directory ---
+# --- A suite outside an nn-test-sandbox leaves nothing in the shared temp directory ---
 
 with tempfile.TemporaryDirectory() as scratch_name:
     scratch = pathlib.Path(scratch_name)
@@ -637,9 +637,9 @@ with tempfile.TemporaryDirectory() as scratch_name:
     in_the_shared_temp_directory = (
         made is not None and made.parent.parent == pathlib.Path(tempfile.gettempdir())
         and made.parent.name.startswith(
-            runner.SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX))
+            runner.SUITE_OUTSIDE_NN_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX))
     if sys.platform.startswith("linux"):
-        check("a suite outside an nc-test-sandbox killed with SIGKILL leaves no directory it "
+        check("a suite outside an nn-test-sandbox killed with SIGKILL leaves no directory it "
               "made through TMPDIR, nor the TMPDIR it was given, and that TMPDIR is not the "
               "shared one",
               killed.get("stopped by") == "the test's stop" and in_the_shared_temp_directory
@@ -660,7 +660,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
     # On the Mac, restart-live-seats-at-login-test.py binds a socket at
     # <TMPDIR>/lstXXXXXXXX/tmux-501/fleet-anchor; with the Mac's 48-character temp directory the
     # path stays under macOS's 104-byte limit only while the runner adds at most 13 characters.
-    check("the TMPDIR given to a suite outside an nc-test-sandbox is at most 13 characters longer "
+    check("the TMPDIR given to a suite outside an nn-test-sandbox is at most 13 characters longer "
           "than the shared temp directory",
           made is not None
           and len(str(made.parent)) - len(str(pathlib.Path(tempfile.gettempdir()))) <= 13,
@@ -761,7 +761,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
     (scratch / "bwrap").chmod(0o755)
     in_sandbox = runner.run_one_suite(scratch, sys.executable, "prints-tmpdir-test.py", scratch,
                                       sandbox_prefix=(str(scratch / "bwrap"),), platform="darwin")
-    check("a suite in an nc-test-sandbox keeps the TMPDIR the sandbox gives it",
+    check("a suite in an nn-test-sandbox keeps the TMPDIR the sandbox gives it",
           in_sandbox["log"].read_text().strip() == str(os.environ.get("TMPDIR")),
           in_sandbox["log"].read_text())
 
@@ -798,7 +798,7 @@ def proc_net_unix_listing(paths):
     return "\n".join(rows) + "\n"
 
 
-if linux_only_cases_run_here("the covers over listening sockets, and an nc-test-sandbox that cannot start"):
+if linux_only_cases_run_here("the covers over listening sockets, and an nn-test-sandbox that cannot start"):
     with tempfile.TemporaryDirectory(dir=pathlib.Path.home()) as home_scratch_name, \
             tempfile.TemporaryDirectory() as scratch_name:
         home_scratch = pathlib.Path(home_scratch_name)
@@ -833,12 +833,12 @@ if linux_only_cases_run_here("the covers over listening sockets, and an nc-test-
                   line is not None and unreachable_path in line and vanished not in line
                   and "the run goes on" in line, line)
             check("one uncovered listening socket is named in the singular",
-                  line is not None and line.startswith("a listening socket that the nc-test-sandbox does not hide")
+                  line is not None and line.startswith("a listening socket that the nn-test-sandbox does not hide")
                   and "cannot reach it and" in line, line)
             listing.write_text(proc_net_unix_listing([unreachable_path, unreachable_path + "2"]))
             line = runner.uncovered_listening_sockets_report_line_or_none(str(listing))
             check("two uncovered listening sockets are named in the plural",
-                  line is not None and line.startswith("listening sockets that the nc-test-sandbox does not hide")
+                  line is not None and line.startswith("listening sockets that the nn-test-sandbox does not hide")
                   and "cannot reach them and" in line, line)
         else:
             print("SKIP  an unreachable socket: root can reach every path")
@@ -861,16 +861,16 @@ if linux_only_cases_run_here("the covers over listening sockets, and an nc-test-
                                       sandbox_prefix=(str(fake_bin / "bwrap"),),
                                       note_suite_process=lambda *arguments, **options: None)
         text = failed["log"].read_text()
-        check("a suite whose nc-test-sandbox could not start fails, with bwrap's message kept in its log",
+        check("a suite whose nn-test-sandbox could not start fails, with bwrap's message kept in its log",
               failed["exit"] != 0 and "Can't create file at /var/gone.sock" in text, text)
-        check("a suite whose nc-test-sandbox could not start says so plainly in its log, and what to do",
-              "the suite did not start: bwrap could not build its nc-test-sandbox" in text
+        check("a suite whose nn-test-sandbox could not start says so plainly in its log, and what to do",
+              "the suite did not start: bwrap could not build its nn-test-sandbox" in text
               and "run the suite again" in text, text)
         line = runner.suite_line({**failed, "admitted": False})
-        check("a suite whose nc-test-sandbox could not start says so on its NOT RUN line, which "
+        check("a suite whose nn-test-sandbox could not start says so on its NOT RUN line, which "
               "judges no suite failing",
               line.startswith("NOT RUN plain-test.sh did not start: bwrap could not build its "
-                              "nc-test-sandbox (exit 1)")
+                              "nn-test-sandbox (exit 1)")
               and not runner.run_all_test_suites_output_parse_whether_the_run_ended_with_a_suite_failed_by_its_exit_code_or_signal(line), line)
         # A sandbox program that names no suite process and still exits 0.
         (fake_bin / "bwrap").write_text("#!/bin/sh\nexit 0\n")
@@ -887,10 +887,10 @@ if linux_only_cases_run_here("the covers over listening sockets, and an nc-test-
 
 # Written out here, not read from the runner, so a runner that stops hiding one fails a case:
 # /mnt holds the backup drive's snapshots of the home directory, credentials included.
-if linux_only_cases_run_here("the fixed directories every nc-test-sandbox hides"):
+if linux_only_cases_run_here("the fixed directories every nn-test-sandbox hides"):
     fixed_pairs = list(zip(runner.TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE, runner.TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE[1:]))
     for directory in ("/mnt", "/media", "/var/snap"):
-        check(f"every nc-test-sandbox hides {directory} whole with an empty tmpfs",
+        check(f"every nn-test-sandbox hides {directory} whole with an empty tmpfs",
               ("--tmpfs", directory) in fixed_pairs, runner.TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE)
 
 # --- Hiding by default: writable directories, and sockets left visible ---------
@@ -959,7 +959,7 @@ def stub_interpreter(path, loaded, status=0):
     return str(path)
 
 
-if linux_only_cases_run_here("what a suite's nc-test-sandbox shows and hides"):
+if linux_only_cases_run_here("what a suite's nn-test-sandbox shows and hides"):
     with tempfile.TemporaryDirectory(
             dir=runner.REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX) as home_name:
         home_scratch = pathlib.Path(home_name).resolve()

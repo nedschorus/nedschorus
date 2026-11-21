@@ -94,7 +94,7 @@ needs-approval label, with needs_user_approval set in --json, including an added
 prompt and one the plan lists with no old text, such as a prompt moved into
 another string.
 
-Rule 4: a pull request that adds or changes an nc-architecture-overview, a
+Rule 4: a pull request that adds or changes an nn-architecture-overview, a
 file at the path scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py
 gives for a directory under nn-systems/ at the head, is refused, with exit 1
 and no plan, until the newest claim-check report for the overview's text at
@@ -933,11 +933,11 @@ def merged_tree_against_origin_main(repository, head):
 
 
 def changed_architecture_overview_paths_and_systems(repository, head, changed_files):
-    """(path, system) for each nc-architecture-overview the pull request adds or
+    """(path, system) for each nn-architecture-overview the pull request adds or
     changes whose system has a directory under nn-systems/ at head."""
     overviews = []
     for entry in changed_files:
-        system = overview_claim_check.nc_architecture_overview_described_system_name_from_page_path(entry["path"])
+        system = overview_claim_check.nn_architecture_overview_described_system_name_from_page_path(entry["path"])
         if entry["status"] == "D" or system is None:
             continue
         if not git_result_or_refuse(repository, "ls-tree", "-d", "--name-only", head, f"nn-systems/{system}").stdout.strip():
@@ -966,7 +966,7 @@ def path_is_architecture_overview_described_code(path, system, component_paths):
 
 
 def architecture_overview_checked_against_commit_problems(repository, head, changed_files):
-    """For each nc-architecture-overview the pull request adds or changes, why
+    """For each nn-architecture-overview the pull request adds or changes, why
     its **Checked against:** commit does not hold the code the overview
     describes at head; an empty list lets the plan go on."""
     problems = []
@@ -1014,7 +1014,7 @@ def architecture_overview_checked_against_commit_refusal_message_lines_one_per_o
 
 
 def architecture_overview_checked_against_commit_refusal_message(number, head, problems):
-    lines = [f"pull request {number} adds or changes {len(problems)} nc-architecture-overview(s) whose "
+    lines = [f"pull request {number} adds or changes {len(problems)} nn-architecture-overview(s) whose "
              "**Checked against:** commit does not hold the code the overview describes at "
              f"head {head[:12]}, so no plan was computed. The claim check read the code at that commit, so its "
              "report does not cover the code this pull request would merge."]
@@ -1034,7 +1034,7 @@ def architecture_overview_checked_against_commit_refusal_message(number, head, p
 
 
 def architecture_overview_claim_check_shortfalls(repository, head, changed_files, report_directory):
-    """For each nc-architecture-overview the pull request adds or changes, the
+    """For each nn-architecture-overview the pull request adds or changes, the
     newest claim-check report for the overview's text at head, when that report
     shows a must-fix claim remaining, or is missing or malformed; an empty list
     lets the plan go on."""
@@ -1062,7 +1062,7 @@ def architecture_overview_claim_check_refusal_message_lines_one_per_overview(sho
 
 
 def architecture_overview_claim_check_refusal_message(number, head, shortfalls, report_directory):
-    lines = [f"pull request {number} adds or changes {len(shortfalls)} nc-architecture-overview(s), and for each one "
+    lines = [f"pull request {number} adds or changes {len(shortfalls)} nn-architecture-overview(s), and for each one "
              f"listed below no claim-check report on the overview's text at head {head[:12]} shows that no "
              "must-fix claim remains, so no plan was computed."]
     lines.extend(architecture_overview_claim_check_refusal_message_lines_one_per_overview(shortfalls, report_directory))

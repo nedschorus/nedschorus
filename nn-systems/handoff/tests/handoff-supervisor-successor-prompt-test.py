@@ -1450,7 +1450,7 @@ def run_overview_refresh_due_cases(workspace: Path):
                 "2026-09-28 — the widget as it landed.")
 
     def checked_line(sha):
-        # As the page on writing an nc-architecture-overview spells it: the full sha twice.
+        # As the page on writing an nn-architecture-overview spells it: the full sha twice.
         return (f"**Checked against:** commit [{sha}]"
                 f"(https://github.com/nedsnodes/nedsnodes/commit/{sha})")
 

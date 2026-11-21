@@ -3,7 +3,7 @@
 
 Usage:
   scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py <pull request number>
-      <nc-head-commit, all 40 characters> <reviewed-since>
+      <nn-head-commit, all 40 characters> <reviewed-since>
       [--merge-lane-worktrees-and-outputs-directory DIR] [--merge-lane-review-worktrees-directory DIR] [--review-tools-worktree-at-main DIR]
 
 Runs --review-tools-worktree-at-main's scripts/merge-gate.sh, never the pull
@@ -39,7 +39,7 @@ worktrees and outputs directory, one test log per pr<n>-merged commit, named
 by its hash, the program takes each test log whose last record says it tested
 that commit and exited 0, and uses the one started last. When there is no
 such record, or a test log cannot be read, which the program prints, <since>
-is the nc-head-commit, which predates main's newer merges and so selects more
+is the nn-head-commit, which predates main's newer merges and so selects more
 suites, never fewer; the program prints that it fell back. The run's suite logs and test-run-report.txt go in
 <merge-lane-worktrees-and-outputs-directory>/pr<n>-after-merge-test-run-logs-<the
 merge commit's first 12 characters>. The program prints the run's SUMMARY line,
@@ -155,7 +155,7 @@ def parse_arguments(argv):
                     "open pull requests based on its branch, then run the merge command the "
                     "gate printed.")
     parser.add_argument("pull_request", help="the pull request's number")
-    parser.add_argument("head_commit", help="the nc-head-commit, all 40 characters")
+    parser.add_argument("head_commit", help="the nn-head-commit, all 40 characters")
     parser.add_argument("reviewed_since",
                         help="the reviewed-since time merge-gate.sh takes, YYYY-MM-DDTHH:MM:SSZ")
     common.add_directory_options(parser, "the after-merge test runs' logs")
@@ -462,12 +462,12 @@ def after_merge_test_run(arguments, merge_commit):
     since, why_not = head_test_run_passed_merged_commit(arguments)
     if since is None:
         since = arguments.head_commit
-        print(f"selecting the nc-test-suites whose recorded inputs changed since the head "
+        print(f"selecting the nn-test-suites whose recorded inputs changed since the head "
               f"commit {since[:12]}, which selects more suites than "
               f"the merge changed: {why_not}.\n"
               f"Nothing to do: this run still tests every suite the merge could have changed.")
     else:
-        print(f"selecting the nc-test-suites whose recorded inputs changed since "
+        print(f"selecting the nn-test-suites whose recorded inputs changed since "
               f"{since[:12]}, the commit the head test run passed on: "
               f"pull request {arguments.pull_request}'s head merged with main as main was "
               f"when that run started")

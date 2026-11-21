@@ -302,7 +302,7 @@ def test_volume_that_may_not_be_mounted_kept():
 def test_default_mount_parents_keep_copies_under_a_missing_volume():
     prune = load_program()
     for parent in ("/Volumes", "/mnt", "/media"):
-        volume = Path(parent) / f"nc-prune-test-volume-{uuid.uuid4().hex}"
+        volume = Path(parent) / f"nn-prune-test-volume-{uuid.uuid4().hex}"
         try:
             prune.removed_checkout(f"{volume}/repo/CLAUDE.md", lambda root, relative: True)
             told = None

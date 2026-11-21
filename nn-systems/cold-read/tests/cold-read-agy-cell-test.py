@@ -60,7 +60,7 @@ WHAT IS PINNED HERE.
     Claude's and Codex's login files in the scratch home are kept out too,
     and agy's own is still read, since masking it would log agy out
     (user-ruled 2026-09-29). These cases need the real sandbox program,
-    which cannot start inside the nc-test-sandbox, so they run only with
+    which cannot start inside the nn-test-sandbox, so they run only with
     --real-sandbox-cases-only, which
     nn-systems/cold-read/tests/cold-read-agy-cell-real-sandbox-test.py
     passes; every other case runs with the fixture's pass-through stand-in
@@ -263,7 +263,7 @@ failures = []
 # program, with no stand-in on PATH; REAL_SANDBOX_CASES_SUITE runs it so, and
 # is listed in scripts/run-all-test-suites.py's SUITES_RUN_WITHOUT_ANY_SANDBOX.
 # Without it every other case runs, with the fixture's pass-through stand-in
-# for the sandbox program on PATH, so this suite runs inside the nc-test-sandbox.
+# for the sandbox program on PATH, so this suite runs inside the nn-test-sandbox.
 REAL_SANDBOX_CASES_ONLY_FLAG = "--real-sandbox-cases-only"
 REAL_SANDBOX_CASES_ONLY = REAL_SANDBOX_CASES_ONLY_FLAG in sys.argv[1:]
 REAL_SANDBOX_CASES_SUITE = "nn-systems/cold-read/tests/cold-read-agy-cell-real-sandbox-test.py"
@@ -715,7 +715,7 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}; stamp={stamp!r}; stderr={result.stderr!r}")
 
     print("Not run here: the credential-file cases need the real sandbox program, "
-          f"which cannot start in the nc-test-sandbox; {REAL_SANDBOX_CASES_SUITE} runs them")
+          f"which cannot start in the nn-test-sandbox; {REAL_SANDBOX_CASES_SUITE} runs them")
 
     # --- The Google login, not a Gemini API key -------------------------------
     gemini_api_key_file = scratch_home_for(stubs) / ".config" / "nedsnodes" / "gemini-api.key"

@@ -284,7 +284,7 @@ DETACHED_OPERATION_IN_PROGRESS_LINE = (
 DETACHED_WORK_OF_ITS_OWN_LINE = (
     "It holds work of its own.\n"
     "This checkout is an agent-home, so git refuses commits in it: carry that work to a "
-    "worktree of your own on an nc-topic-branch, as the refusal of `git commit` here says how."
+    "worktree of your own on an nn-topic-branch, as the refusal of `git commit` here says how."
 )
 DETACHED_FAST_FORWARD_REFUSED_LINES = (
     "Git refused the fast-forward: {error}\n"
@@ -1211,7 +1211,7 @@ def merges_from_main(checkout: Path):
     branch's merges. Raises GitCommandFailed when git cannot read a merge's
     second parent or cannot say whether that parent is on origin/main.
 
-    A merge of another nc-topic-branch is not the banned thing, so the second
+    A merge of another nn-topic-branch is not the banned thing, so the second
     parent is tested for being on main rather than every merge being flagged.
     A branch that carries older catch-up merges is flagged once, which is
     correct: those merges are real and the agent has not been told of them.
