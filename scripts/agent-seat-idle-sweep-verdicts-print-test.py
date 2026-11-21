@@ -753,6 +753,22 @@ try:
               fields.SUBAGENT_OWN_RUNNING_BACKGROUND_COMMANDS: [
                   {"id": "bash-9", "started": "2026-11-02T09:05:00Z"}]}], verdicts["alpha"])
 
+    # A record the subagent wrote within the last 5 minutes keeps the session transcript's read from
+    # reading the subagent's own transcript past its last line, so only the subagent's own read can
+    # find that line's bytes cut in two by Claude Code still writing it.
+    machine = Machine()
+    subagent_with_own_background_command(machine, last_spend_at="2026-11-02T09:19:59Z")
+    project, _ = machine.seat("alpha", None)
+    with (project / "s-1" / "subagents" / "agent-a1b2.jsonl").open("ab") as handle:
+        handle.write(json.dumps(user("test output", at="2026-11-02T11:58:00Z")).encode() + b"\n"
+                     + b'{"type": "assistant", "message": {"content": "caf\xc3')
+    code, verdicts, _ = machine.run()
+    check("a stopped subagent that wrote a record within the last 5 minutes, whose own transcript's "
+          "last line, still being written, ends in bytes that are not UTF-8: an error for that "
+          "agent-seat, exit 1",
+          code == 1 and verdicts["alpha"]["rule"] is None
+          and "still being written" in verdicts["alpha"]["errors"][0], verdicts["alpha"])
+
     # --- rule 4 against rule 5: open tasks and their prerequisites -------------------------------
     machine = Machine()
     machine.seat("alpha", [user("go"), assistant("Done."), turn_end()])
