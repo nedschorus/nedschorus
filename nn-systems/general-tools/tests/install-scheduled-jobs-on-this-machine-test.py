@@ -618,7 +618,8 @@ with tempfile.TemporaryDirectory() as temporary:
     # A third job, placed on ned-box alone, for the cases about a job this
     # machine does not run.
     fixture_table["jobs"].append({
-        "name": "runs-on-ned-box-alone", "program": "scripts/runs-on-ned-box-alone.py",
+        "name": "runs-on-ned-box-alone", "owner": "reboot-test",
+        "program": "scripts/runs-on-ned-box-alone.py",
         "arguments": [], "output": ".claude/runs-on-ned-box-alone.log",
         "on": {"ned-box": {"scheduler": "cron", "schedule": "5 4 * * 0"}}})
     (root / "ned-box-home" / "Projects" / "nedsnodes" / "scripts"
@@ -1053,6 +1054,24 @@ with tempfile.TemporaryDirectory() as temporary:
                  "missing", arguments_not_a_list,
                  "gives job `transcript-mirror-to-log-store` a missing or wrongly typed "
                  "`program`, `arguments`, `output` or `on`")
+
+    owner_refusal = ("gives job `transcript-mirror-to-log-store` no `owner`, or an `owner` "
+                     "that is not a non-empty string; add `\"owner\": \"<agent-seat>\"` "
+                     "naming the agent-seat that owns the job")
+
+    def owner_missing(defective):
+        del defective["jobs"][0]["owner"]
+    table_defect("a job with no owner is refused, saying what to add", owner_missing,
+                 owner_refusal)
+
+    def owner_empty(defective):
+        defective["jobs"][0]["owner"] = ""
+    table_defect("a job whose owner is the empty string is refused", owner_empty, owner_refusal)
+
+    def owner_not_a_string(defective):
+        defective["jobs"][0]["owner"] = ["reboot-test"]
+    table_defect("a job whose owner is not a string is refused", owner_not_a_string,
+                 owner_refusal)
 
     def four_fields(defective):
         defective["jobs"][0]["on"]["ned-box"]["schedule"] = "* * * *"
