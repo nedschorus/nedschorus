@@ -508,7 +508,7 @@ def main():
     runner_gate.run_claude = lambda prompt, checkout=None: (
         0, "the cell's report body\n\n## Questions\n\nNone.\n\n"
            "## Leanness certification\n\n- the whole document\n",
-        "claude-fable-5-1", "")
+        "claude-fable-5-2", "")
     buffer = io.StringIO()
     # A real record directory, in a temporary tree: run_cell makes the cell's
     # scratch directory under the one it is handed, and a relative path here
@@ -1095,14 +1095,14 @@ def main():
     # The claude agent-binary's model chain. Fable 5 is obsolete (user, 2026-09-04)
     # and Fable is sometimes unavailable (user, 2026-09-11: "sometimes fable is
     # not available, so it should fall back to opus in that case"), so the cell
-    # tries Fable 5.1 and falls back to Opus 5. The three ways an attempt can
+    # tries Fable 5.2 and falls back to Opus 5.5. The three ways an attempt can
     # produce no review are the house chain's (run_model_chain in
     # nn-systems/cold-read/cold-read-cell-common.py). No model is called: the
     # launch is replaced for the length of these cases and answers per model.
     runner_chain = load_runner()
     fable, opus = runner_chain.CLAUDE_MODEL_CHAIN
-    check("the chain is Fable 5.1 then Opus 5, and Opus ends it",
-          runner_chain.CLAUDE_MODEL_CHAIN == ("claude-fable-5-1", "claude-opus-5"),
+    check("the chain is Fable 5.2 then Opus 5.5, and Opus ends it",
+          runner_chain.CLAUDE_MODEL_CHAIN == ("claude-fable-5-2", "claude-opus-5-5"),
           runner_chain.CLAUDE_MODEL_CHAIN)
 
     def answering(answers):
@@ -1193,15 +1193,15 @@ def main():
     runner_chain.subprocess.run = no_cli_launch_here
     try:
         fell_back = runner_chain.provenance_line(
-            "claude", "claude-opus-5", "cut", "docs/x.md", False, "commit=abc1234",
-            "claude-fable-5-1(exit1)")
+            "claude", "claude-opus-5-5", "cut", "docs/x.md", False, "commit=abc1234",
+            "claude-fable-5-2(exit1)")
         straight_through = runner_chain.provenance_line(
             "codex", "gpt-5.6-sol", "cut", "docs/x.md", False, "commit=abc1234")
     finally:
         runner_chain.subprocess.run = real_version_probe_run
     check("the provenance line records the model that answered and the fallback",
-          "model=claude-opus-5 " in fell_back
-          and "fallback_from=claude-fable-5-1(exit1) " in fell_back, fell_back)
+          "model=claude-opus-5-5 " in fell_back
+          and "fallback_from=claude-fable-5-2(exit1) " in fell_back, fell_back)
     check("a cell that did not fall back carries no fallback_from field",
           "fallback_from=" not in straight_through, straight_through)
     check("and neither line launched a CLI: both versions came from the cache",
@@ -1968,7 +1968,7 @@ def main():
     # returns the four values of the older contract, with no cause, is
     # reported by its exit code.
     for runtime in runner_relaunch.RUNTIMES:
-        attempts = "claude-fable-5-1(exit1)+claude-opus-5(exit1)" if runtime == "claude" else ""
+        attempts = "claude-fable-5-2(exit1)+claude-opus-5-5(exit1)" if runtime == "claude" else ""
         launcher = with_launcher(runner_relaunch, answering_in_turn([
             (1, "", "", attempts, ("exit-1", "first launch: overloaded")),
             (1, "", "", attempts, ("exit-1", capacity))]))
