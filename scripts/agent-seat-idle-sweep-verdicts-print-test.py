@@ -377,6 +377,15 @@ try:
         ("Unless you object, I'll add that as one clause to the item's new text.",
          "promise_after_event"),
         ("If you haven't, I'll hold it.", "hold"),
+        # A clause that declines does not hide an action another clause announces.
+        ("I'm starting nothing else until the tests finish, then I'll merge PR 4001.",
+         "promise_after_event"),
+        ("I'll push no further changes and merge it now.", "announced_action"),
+        ("I'll start no new reviews and finish grading the ones already running.",
+         "announced_action"),
+        ("I'll merge it without waiting and push the tag.", "announced_action"),
+        ("I'll run nothing but the failing test now.", "announced_action"),
+        ("I'll open no more than five pull requests, then merge them.", "announced_action"),
     ]
     machine = Machine()
     machine.seat("alpha", [user("go"), assistant("\n".join(s for s, _ in expected_kinds)), turn_end()])
@@ -394,12 +403,20 @@ try:
         check(f"not raised: {sentence!r}",
               [(s["kind"], s["code_reading"]) for s in verdicts["alpha"]["sentences"]]
               == [(kind, "not_raised")] and verdicts["alpha"].get("rule") == 4, verdicts["alpha"])
-    machine = Machine()
-    machine.seat("alpha", [user("go"), assistant("I'll merge it without pushing the tag."), turn_end()])
-    _, verdicts, _ = machine.run()
-    check("a negative sentence is not raised, and rules 3 to 5 decide",
-          [(s["kind"], s["code_reading"]) for s in verdicts["alpha"]["sentences"]]
-          == [("negative", "not_raised")] and verdicts["alpha"].get("rule") == 4, verdicts["alpha"])
+    for sentence in ("I'll merge it without pushing the tag.",
+                     "ned-box's load is near 22, so I'm starting nothing else for now.",
+                     "I'm starting none of them today.",
+                     "I'll open no more pull requests today.",
+                     "I'll push no other branches.",
+                     "I'm starting no new reviews for now and the load is high.",
+                     "I'll file no further issues today."):
+        machine = Machine()
+        machine.seat("alpha", [user("go"), assistant(sentence), turn_end()])
+        _, verdicts, _ = machine.run()
+        check(f"a negative sentence is not raised, and rules 3 to 5 decide: {sentence!r}",
+              [(s["kind"], s["code_reading"]) for s in verdicts["alpha"]["sentences"]]
+              == [("negative", "not_raised")] and verdicts["alpha"].get("rule") == 4,
+              verdicts["alpha"])
     machine = Machine()
     machine.seat("alpha", [user("go"),
                            assistant("Here is the diff.\n```\n-old\n+new\n```\nI'll push it now."),

@@ -44,7 +44,7 @@ import unittest
 
 MACHINE_DIRECTORY = pathlib.Path(__file__).resolve().parent.parent
 REPOSITORY_ROOT = MACHINE_DIRECTORY.parent.parent
-DESIGN_RELATIVE_PATH = "docs/design-to-main/design-to-main-state-machine-design.md"
+DESIGN_RELATIVE_PATH = "docs/design-to-main/design-to-main-state-machine.system.design.md"
 DESIGN_PATH = REPOSITORY_ROOT / DESIGN_RELATIVE_PATH
 STATE_TABLES_RELATIVE_PATH = "scripts/design-to-main/design-to-main-state-tables-common.py"
 
@@ -613,7 +613,7 @@ class EachFailureMessageNamesTheRuleAndOneFixPerCause(unittest.TestCase):
         message = self.failure_message(assert_the_design_and_the_code_pair, edited)
         self.assertIn("row 24", message)
         self.assertTrue(message.rstrip().endswith("\n".join([
-            "section 3.2 of docs/design-to-main/design-to-main-state-machine-design.md and "
+            "section 3.2 of docs/design-to-main/design-to-main-state-machine.system.design.md and "
             "TRANSITION_TABLE in scripts/design-to-main/design-to-main-state-tables-common.py "
             "disagree on the rows listed above; both copies are edited by hand, section 3.2 "
             "deciding what a transition is and the code what it does.",
@@ -635,7 +635,7 @@ class EachFailureMessageNamesTheRuleAndOneFixPerCause(unittest.TestCase):
         message = self.failure_message(assert_the_section_3_1_states_pair, section_3_1[:-1])
         self.assertIn("state ended: in STATE_TABLE, not in section 3.1", message)
         self.assertTrue(message.rstrip().endswith("\n".join([
-            "section 3.1 of docs/design-to-main/design-to-main-state-machine-design.md and "
+            "section 3.1 of docs/design-to-main/design-to-main-state-machine.system.design.md and "
             "STATE_TABLE in scripts/design-to-main/design-to-main-state-tables-common.py disagree "
             "on the states listed above; both copies of the states and their sub-states are edited "
             "by hand and must list the same."] + SECTION_3_1_FIX_LINES)), message)
@@ -646,7 +646,7 @@ class EachFailureMessageNamesTheRuleAndOneFixPerCause(unittest.TestCase):
         message = self.failure_message(assert_the_section_3_1_packages_pair, packages)
         self.assertIn("state %s" % T.TEST_SUITE_EXECUTING, message)
         self.assertTrue(message.rstrip().endswith("\n".join([
-            "section 3.1's package column in docs/design-to-main/design-to-main-state-machine-design.md "
+            "section 3.1's package column in docs/design-to-main/design-to-main-state-machine.system.design.md "
             "and STATE_TABLE's package_beyond_standard in "
             "scripts/design-to-main/design-to-main-state-tables-common.py disagree on the states "
             "listed above; the code's text is what a launched agent receives, so the design's "
@@ -658,7 +658,7 @@ class EachFailureMessageNamesTheRuleAndOneFixPerCause(unittest.TestCase):
                   for row in self.prose_rows]
         message = self.failure_message(assert_every_phrase_the_matcher_reads_is_used, edited)
         self.assertTrue(message.rstrip().endswith("\n".join([
-            'no row of section 3.2 of docs/design-to-main/design-to-main-state-machine-design.md '
+            'no row of section 3.2 of docs/design-to-main/design-to-main-state-machine.system.design.md '
             'has a From cell starting with "any reviewing state but "; this suite reads the rows by '
             "that phrase, and a phrase no row uses leaves its reading untested by the design, where "
             "a later row could fall into it by accident.",

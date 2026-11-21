@@ -572,8 +572,29 @@ def brief_cases(root, repository, base, frozen_head):
           code == 1 and "is APPROVED, not CHANGES_REQUESTED" in err, err)
 
     code, out, err = run(root, repository, routes_for(
-        frozen_head, [review(state="COMMENTED", commit_id=frozen_head)]))
+        frozen_head, [review(state="COMMENTED", commit_id=frozen_head, body="Read the new comments.")]))
     check("brief: comment-only reviews with no changes-requested review mean no fix-round, exit 1",
+          code == 1 and "is COMMENTED on commit" in err, err)
+
+    # On a pull request ned-review-merge opened, GitHub takes its verdicts only as COMMENT reviews.
+    code, out, err = run(root, repository, routes_for(
+        frozen_head, [review(state="COMMENTED", commit_id=frozen_head)]))
+    check("brief: merge-lane-2's COMMENT review opening with REQUEST_CHANGES, with no verdict review of its "
+          "own on the pull request, briefs a fix-round from its blocking findings",
+          code == 0 and "hook.py swallows the error" in out and "no case for the timeout" in out, err + out)
+
+    code, out, err = run(root, repository, routes_for(
+        frozen_head, [review(state="COMMENTED", commit_id=frozen_head),
+                      review(state="COMMENTED", commit_id=frozen_head, review_id=12,
+                             body="APPROVE\n\nThe fix holds.")]))
+    check("brief: a later COMMENT review opening with APPROVE closes that round, exit 1",
+          code == 1 and "is COMMENTED on commit" in err, err)
+
+    code, out, err = run(root, repository, routes_for(
+        frozen_head, [review(state="APPROVED", commit_id=base, review_id=9, body="APPROVE\n\nFine."),
+                      review(state="COMMENTED", commit_id=frozen_head)]))
+    check("brief: a COMMENT review opening with REQUEST_CHANGES is no round where merge-lane-2 has posted a "
+          "verdict review, exit 1",
           code == 1 and "is COMMENTED on commit" in err, err)
 
     code, out, err = run(root, repository, routes_for(base, [review(commit_id=frozen_head)]))
@@ -828,7 +849,6 @@ def check_cases(root, repository, base, frozen_head):
 
     git(repository, "reset", "-q", "--hard", frozen_head)
     git(repository, "merge", "-q", "--no-edit", "origin/main")
-    merge = git(repository, "rev-parse", "HEAD")
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                          "--check", "--answers", answers)
     check("check: a merge of origin/main refuses, and says to drop it", code == 1
@@ -2457,7 +2477,7 @@ def replaces_cases(root, repository, base, frozen_head):
         description="#replaces pull request 5\n"))
     check("replaces: a #replaces line with no full link is refused, naming the line",
           code == 1 and err.startswith("REFUSED: pull request 7's description has the line `#replaces pull request 5`")
-          and f"#replaces https://github.com/o/r/pull/<the old pull request's number>" in err, err + out)
+          and "#replaces https://github.com/o/r/pull/<the old pull request's number>" in err, err + out)
 
 
 def conflict_check_cases(root, repository, _base, frozen_head):

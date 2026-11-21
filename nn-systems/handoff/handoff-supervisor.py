@@ -2,7 +2,7 @@
 """Run one agent session and reincarnate it when it writes a handoff.
 
 The handoff system's supervisor (specification:
-nn-systems/handoff/handoff-design.md). One supervisor per agent, run in
+nn-systems/handoff/handoff.system.design.md). One supervisor per agent, run in
 that agent's console. It owns the whole reincarnation cycle because an agent
 cannot exit itself: /clear and /exit are unavailable to it, and self-SIGTERM
 trips the safety classifier.
