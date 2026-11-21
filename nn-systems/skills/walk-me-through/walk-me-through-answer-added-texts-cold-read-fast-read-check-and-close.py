@@ -1232,12 +1232,14 @@ APPROVAL_WALK_ITEM_SYSTEM_STATUS_CLAIM_NOT_RECHECKED = (
     "what an item tells him, so a status that was true when the item was written can cost him a correction or a "
     "wrong decision.\n"
     "If the item states a status: check each one now with a command, such as `claude auth status` for the login on "
-    "this machine, `tmux -L <agent-seat> ls` on the agent-seat's machine, or the ListAgents tool for an agent-seat; "
-    "correct the item where the status has changed, and write into the item the time you checked. Then run "
-    "`{command} " + SYSTEM_STATUS_CLAIMS_RECHECKED_FLAG + " '<each command you ran and the time, as in: tmux -L "
-    "cold-read-research ls at 14:02Z, session running>'`.\n"
-    "If the matched words state no current status, as in a quotation or a description of what a program does: "
-    "run `{command} " + SYSTEM_STATUS_CLAIMS_RECHECKED_FLAG + " 'no current status stated: <why>'`.\n"
+    "this machine, `tmux -L <agent-seat> ls` on the agent-seat's machine, `crontab -l` for a scheduled job, or the "
+    "ListAgents tool for an agent-seat; correct the item where the status has changed, and write into the item the "
+    "time you checked. When a check fails or cannot reach the machine, say in the item that the status is "
+    "unchecked, and what the command printed. Then run `{command} " + SYSTEM_STATUS_CLAIMS_RECHECKED_FLAG
+    + " '<each command you ran, the time and what it showed, as in: tmux -L cold-read-research ls at 14:02Z, "
+    "session running>'`, naming in the value any matched phrase that states no status, and why.\n"
+    "If none of the matched words states a current status, as in a quotation or a description of what a program "
+    "does: run `{command} " + SYSTEM_STATUS_CLAIMS_RECHECKED_FLAG + " 'no current status stated: <why>'`.\n"
     "From now on, check each status an item states with a command just before you present the item, and say in "
     "the item when you checked.")
 SYSTEM_STATUS_CLAIMS_RECHECKED_EMPTY = (

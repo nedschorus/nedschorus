@@ -664,8 +664,10 @@ def test_the_waiting_item_read_step_refuses_an_item_stating_a_system_status_unti
           and 'outside the walk ("still on hold", "offline")' in result.stderr
           and "\nIf the item states a status: check each one now with a command, such as `claude auth status`"
           in result.stderr
-          and f"Then run `{command} {flag} '<each command you ran and the time" in result.stderr
-          and f"\nIf the matched words state no current status, as in a quotation or a description of what a "
+          and "When a check fails or cannot reach the machine, say in the item that the status is unchecked"
+          in result.stderr
+          and f"Then run `{command} {flag} '<each command you ran, the time and what it showed" in result.stderr
+          and f"\nIf none of the matched words states a current status, as in a quotation or a description of what a "
               f"program does: run `{command} {flag} 'no current status stated: <why>'`.\n" in result.stderr
           and "\nFrom now on, check each status an item states with a command just before you present the item"
           in result.stderr
