@@ -60,8 +60,9 @@ needs a pull request is kept, as is one whose ancestry git cannot read.
 IDLE WORKTREES. A worktree is idle, and is removed, owner file or not,
 when all of these hold: it is not an agent-home, which is a worktree directly
 inside ~/agents or one whose own git directory holds AGENT_HOME_MARKER_FILE_NAME;
-no file or directory in it or in its own git directory, by mtime, has changed
-for IDLE_WORKTREE_REMOVED_AFTER_DAYS days; it holds no uncommitted or untracked
+no file or directory in it, and no file in its own git directory, has changed
+for IDLE_WORKTREE_REMOVED_AFTER_DAYS days, each by its mtime except a reflog,
+by its newest entry's time; it holds no uncommitted or untracked
 file; every commit of its HEAD is on a remote-tracking ref of origin, as last
 fetched; no open pull request has its branch as head branch or its HEAD as
 head commit; and no rebase, merge, cherry-pick or revert is in progress in it.
@@ -1200,6 +1201,35 @@ def path_changed_since(roots, cutoff):
     return None
 
 
+REFLOG_ENTRY_TIME = re.compile(rb"> (\d+) [-+]\d{4}(?:\t|$)")
+
+
+def git_directory_file_changed_since(git_directory, cutoff):
+    """Return the first file in a worktree's own git directory that changed at or after cutoff
+    (seconds since the epoch), or None when none did; raise OSError when one cannot be read. A file
+    under logs/, a reflog, changed when its newest entry was written; any other file, by its mtime."""
+    # git gc's `reflog expire --all` rewrites every worktree's reflogs without adding an entry, and
+    # its lock files change the mtimes of the directories that hold them, so neither mtime shows use.
+    def raise_error(error):
+        raise error
+    for directory, _, file_names in os.walk(git_directory, onerror=raise_error):
+        in_logs = Path(directory).relative_to(git_directory).parts[:1] == ("logs",)
+        for name in file_names:
+            path = Path(directory, name)
+            changed_at = os.lstat(path).st_mtime
+            if in_logs:
+                entries = path.read_bytes().rstrip(b"\n")
+                if not entries:
+                    continue
+                newest = REFLOG_ENTRY_TIME.search(entries.rsplit(b"\n", 1)[-1])
+                # An entry it cannot parse is judged by the mtime, which keeps the worktree sooner.
+                if newest is not None:
+                    changed_at = int(newest.group(1))
+            if changed_at >= cutoff:
+                return path
+    return None
+
+
 def idle_worktree_verdict(worktree, branch, record, pull_requests):
     """Return the Verdict for a worktree that holds no unsaved work and in which nothing has changed
     for IDLE_WORKTREE_REMOVED_AFTER_DAYS, owner file or not; or None when the rule does not apply, so
@@ -1215,7 +1245,8 @@ def idle_worktree_verdict(worktree, branch, record, pull_requests):
     judged_at = time.time()
     cutoff = judged_at - IDLE_WORKTREE_REMOVED_AFTER_DAYS * 86400
     try:
-        if path_changed_since([worktree, git_directory], cutoff) is not None:
+        if (path_changed_since([worktree], cutoff) is not None
+                or git_directory_file_changed_since(git_directory, cutoff) is not None):
             return None
     except OSError:
         return None

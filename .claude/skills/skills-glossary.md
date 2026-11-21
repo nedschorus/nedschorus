@@ -3,7 +3,7 @@
 This page defines the system-terms of this project's skills: the terms they alone use. Every project-term is defined in the project glossary, `docs/nedsnodes-wiki/nedsnodes-glossary.md`, and this page uses it as defined there.
 
 - **cold-read-cell** — one fresh-agent reviewing one cold-read-target under one reviewer prompt; a cold-read-full-run launches several of them.
-- **cold-read-fast-read** — one fast-clarify cold-read-cell on the fast cold-read-tier and, at the same time, one cold-read-cell that asks "What should be code", run by `nn-systems/cold-read/cold-read-fast-read.py`; it is either the whole review or the step before a cold-read-full-run.
+- **cold-read-fast-read** — one fast-clarify cold-read-cell on the fast cold-read-tier and, at the same time, unless it is run with `--without-question-4`, one cold-read-cell that asks "What should be code", run by `nn-systems/cold-read/cold-read-fast-read.py`; it is either the whole review or the step before a cold-read-full-run.
 - **cold-read-full-run** — the /cold-read skill's run of cold-read-cells on the defect-hunt prompt and the terminology prompt, launched by `nn-systems/cold-read/cold-read-grid.py`, with one more cold-read-cell that answers Question 4, What should be code.
 - **cold-read-reviewer-test-case** — a document's first version, its corrected version, and the weighted list of the defects between them, kept frozen in `cold-read-reviewer-test-cases/` to score cold-read-cells.
 - **cold-read-target** — the document under review; a run that makes a cold-read-record copies it there at launch.
