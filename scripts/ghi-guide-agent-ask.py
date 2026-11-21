@@ -189,7 +189,7 @@ LOCK_FILE_NAME = ".ghi-guide-agent-state.lock"
 # Model: named constant + env override, per issue #46's own framing —
 # "settled empirically." Starting pick for this build, not a measured
 # choice among fable/opus/sonnet.
-GHI_GUIDE_AGENT_MODEL = os.environ.get("GHI_GUIDE_AGENT_MODEL", "claude-sonnet-5")
+GHI_GUIDE_AGENT_MODEL = os.environ.get("GHI_GUIDE_AGENT_MODEL", "claude-sonnet-5-5")
 # ghi-guide-agent only reads: the mirror, the files open issues link to, and the log-store.
 GHI_GUIDE_AGENT_ALLOWED_TOOLS = "Read,Grep,Glob"
 # "One overall timeout (inside the hook budget)" (design § The ask path) —

@@ -366,7 +366,7 @@ with tempfile.TemporaryDirectory() as temporary:
         project_directory = ghi_ask.claude_code_session_transcript_lookup_and_text_search_common.project_directory_for_seat(seat, projects_root)
         project_directory.mkdir(parents=True, exist_ok=True)
         record = {"type": "assistant", "message": {
-            "model": "claude-sonnet-5",
+            "model": "claude-sonnet-5-5",
             "usage": {"input_tokens": 1_000, "cache_read_input_tokens": tokens - 1_000,
                       "cache_creation_input_tokens": 0}}}
         (project_directory / f"{session_id}.jsonl").write_text(
