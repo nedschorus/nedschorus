@@ -63,7 +63,7 @@ CONDITIONAL_BEFORE_MATCH = re.compile(
     r"\b(?:if|unless|when|whenever|while|would|should|could|might|may|once|until|whether|in\s+case|suppose|assume)\b", re.I)
 # The reader is what is waited for: an open approval-walk says so in every message, and the user knows it.
 WAITS_ON_THE_READER = re.compile(r"^\s*(?:on|for|until)\s+(?:you\b|you've\b|your\b|the\s+user(?:'s)?\b|his\b|him\b|he\b)", re.I)
-# Work said to wait, as in "tasks #743 and #748 are still waiting on cold-read-research": an approval-walk, a subagent
+# Work said to wait, as in "two tasks are still waiting on cold-read-research": an approval-walk, a subagent
 # or a pull request said to wait is progress the agent follows itself, and matches too often to be worth a reminder.
 WAITING_WORK = re.compile(r"\b(?:tasks?|work|messages?|promise)\b", re.I)
 # "the worktrees of any agent-seat whose handoff-supervisor is not running" names a kind, not a status.

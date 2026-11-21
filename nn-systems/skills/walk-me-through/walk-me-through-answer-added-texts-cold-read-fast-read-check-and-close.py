@@ -2508,7 +2508,7 @@ def unclosed_last_answer(walk_finder, minutes, parser):
     return None
 
 
-def item_read_findings_without_outcomes_lines(item, report, outcome_file, fast_read_program, command, top):
+def item_read_findings_without_outcomes_lines(item, report, outcome_file, fast_read_program, command):
     """The lines that withhold item from being presented while the report of its latest cold-read-fast-read has
     findings with no recorded outcome; empty when every finding has one or the report has none. Raise Failure when
     the report or its outcomes file cannot be read."""
@@ -2519,8 +2519,7 @@ def item_read_findings_without_outcomes_lines(item, report, outcome_file, fast_r
     except (OSError, ValueError) as error:
         raise Failure(ITEM_READ_FINDING_OUTCOMES_UNREADABLE.format(
             item=item, report=report, error=error, record=record, outcome_file=outcome_file, command=command,
-            read_again=READ_STEP_COMMAND.format(program=Path(__file__).resolve(), flags="",
-                                                top=shlex.quote(str(top)))))
+            read_again=command.replace(" " + AFTER_FIXES_FLAG, "")))
     if not missing:
         return []
     findings = finding_outcomes.cold_read_fast_read_record_findings(record)
@@ -2643,7 +2642,7 @@ def waiting_item_read(arguments, sub_step_of=None):
                     print(recheck_line)
                 withheld = item_read_findings_without_outcomes_lines(
                     item, latest[1]["report"], reads / f"{latest[0]}-outcome.json", arguments.fast_read_program,
-                    command, top)
+                    command)
                 print("\n".join([ITEM_READ_NOT_RUN.format(item=item, report=latest[1]["report"])]
                                  + (withheld or [ITEM_READ_NOT_RUN_NEXT.format(item=item, program=program,
                                                                                top=shlex.quote(str(top)))])))
@@ -2664,7 +2663,7 @@ def waiting_item_read(arguments, sub_step_of=None):
         print(recheck_line)
     notes = "".join(STATUS_FAST_READ_NOTE.format(note=note) for note in outcome["notes"])
     withheld = item_read_findings_without_outcomes_lines(item, outcome["report"], reads / f"{key}-outcome.json",
-                                                         arguments.fast_read_program, command, top)
+                                                         arguments.fast_read_program, command)
     print("\n".join([ITEM_READ_USED.format(item=item, how=how, report=outcome["report"], notes=notes)]
                     + [line.format(item=item, document=document, command=command, program=program,
                                    top=shlex.quote(str(top)))

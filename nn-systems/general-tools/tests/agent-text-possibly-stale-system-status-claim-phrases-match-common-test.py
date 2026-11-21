@@ -28,27 +28,38 @@ def check(name, condition, detail=""):
         failures += 1
 
 
-# Sentences agents wrote that the user corrected, each with the pattern that must catch it.
+# Claims cut down from replies the user corrected, then one sentence for each other alternative of each pattern.
 CAUGHT = [
-    ("offline", "Task #421, \"Tell cold-read-research which held branches ned-box-helper deleted\", is still on hold "
-                "because cold-read-research is offline."),
-    ("offline", "Every cold-read-research session on your Mac is offline, so I couldn't message it directly."),
-    ("back online", "The promise to message cold-read-research once it's back online is on my task list as task #421."),
-    ("none running", "I tried messaging cold-read-research again just now. None of its sessions is live; the most "
-                     "recent was last active 8 days ago."),
-    ("none running", "No agent is running in any of them, so they aren't causing the error."),
-    ("logged out", "The sixth failed because **`claude` is logged out on the Mac**."),
-    ("logged in to an account", "I'm back, and that also explains your missing sessions: **your machines are logged "
-                                "in to two different Claude accounts.**"),
-    ("still broken", "As far as I can find, the name-check agent is still broken on ned-box:"),
-    ("still waiting", "Tasks #743 and #748 are still waiting on reboot-test and on cold-read-research."),
-    ("stopped", "The crontab is empty apart from one commented line, so every scheduled job on ned-box is gone, not "
-                "only the dialogs refresh."),
-    ("stopped", "The session dialogs stopped updating at **22:10 last night**, and that's on purpose."),
-    ("down", "First action: re-arm the three watchers, which are down right now."),
-    ("unreachable", "ned-box is unreachable from the Mac, so I left the step for later."),
-    ("unreachable", "Still looking at why the drive won't mount; I'm reading the system log now."),
+    ("offline", "The task is still on hold because cold-read-research is offline."),
+    ("still waiting", "The task is still on hold because cold-read-research is offline."),
+    ("back online", "The promise to message cold-read-research once it's back online is on my task list."),
+    ("none running", "None of its sessions is live."),
+    ("none running", "No agent is running in any of them."),
+    ("logged out", "The sixth failed because `claude` is logged out on the Mac."),
+    ("logged in to an account", "Your machines are logged in to two different Claude accounts."),
+    ("still broken", "The name-check agent is still broken on ned-box."),
+    ("still waiting", "Two tasks are still waiting on reboot-test."),
+    ("stopped", "Every scheduled job on ned-box is gone."),
+    ("stopped", "The session dialogs stopped updating at 22:10."),
+    ("down", "Re-arm the three watchers, which are down right now."),
+    ("unreachable", "The drive won't mount."),
+    ("offline", "merge-lane-2 is not back online yet."),
+    ("back online", "Shipped: ned-box is back up."),
+    ("logged out", "The Mac is signed out of Claude."),
+    ("logged out", "claude is not logged in on ned-box."),
+    ("down", "ned-box went down at noon."),
+    ("unreachable", "ned-box is unreachable from the Mac."),
+    ("unreachable", "ned-box is not reachable over ssh."),
+    ("unreachable", "I could not reach ned-box."),
+    ("unreachable", "ned-box cannot be reached."),
+    ("unreachable", "/Volumes/nedhome is not mounted."),
     ("not running", "The handoff-supervisor of merge-lane-2 is not running."),
+    ("not running", "That process is no longer running."),
+    ("stopped", "The dialogs refresh job has been disabled."),
+    ("stopped", "The transcript mirror service is dead."),
+    ("still waiting", "The work is held until the restructure is done."),
+    ("still waiting", "The task is still blocked on cold-read-research."),
+    ("still waiting", "The message is still pending delivery."),
 ]
 for expected, sentence in CAUGHT:
     found = claims.possibly_stale_system_status_claim_phrases_find(sentence)
