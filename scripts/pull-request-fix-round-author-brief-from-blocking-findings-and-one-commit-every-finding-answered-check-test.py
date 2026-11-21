@@ -825,8 +825,9 @@ def check_cases(root, repository, base, frozen_head):
     check("check: a file the findings name is not listed", "  hook.py" not in out, out)
 
     code, out, err = run(root, repository, routes_for(fix, reviews), "--check", "--answers", answers)
-    check("check: one pushed commit prints the message for merge-lane-2",
-          code == 0 and f"New head {fix}" in out and "2. test.py: Added the timeout case." in out, out + err)
+    check("check: one pushed commit prints the message for merge-lane-2, counting the round's one commit",
+          code == 0 and f"New head {fix}, the round's 1 commit on top of the frozen-head {frozen_head}." in out
+          and "2. test.py: Added the timeout case." in out, out + err)
 
     code, out, err = run(root, repository, routes_for(base, reviews), "--check", "--answers", answers)
     check("check: GitHub's head that is neither the commit nor the frozen-head refuses",
@@ -2151,6 +2152,7 @@ def architecture_overview_cases(root, repository, _base, _frozen_head):
           code == 1 and "Not pushed yet" not in out and runner_calls(root) == []
           and f"{DEMO_OVERVIEW} names commit {described}, and later commits of the pull request change code the "
           "overview describes: nn-systems/demo/demo.py." in err
+          and f"the overview describes at the round's commit {fix[:12]}. scripts/pull-request-review-plan.py" in err
           and "set each one's **Checked against:** line to name the fix commit's full id" in err
           and f"overview-write-architecture-overview-claim-check-by-fresh-agent.py --overview {DEMO_OVERVIEW}" in err
           and "so pushing it would cost a second push under review" in err, out + err)
@@ -2160,6 +2162,7 @@ def architecture_overview_cases(root, repository, _base, _frozen_head):
     check("overview: an overview commit naming the fix commit, with no claim-check report on its text, refuses "
           "with exit 1 naming where it looked",
           code == 1 and "no claim-check report on the overview's text at the round's commit" in err
+          and f"commit {overview_commit[:12]} shows that no must-fix claim remains" in err
           and str(report_directory / Path(DEMO_OVERVIEW).stem) in err and runner_calls(root) == [], out + err)
 
     write_claim_check_report(report_directory, repository, overview_commit)
@@ -2168,7 +2171,8 @@ def architecture_overview_cases(root, repository, _base, _frozen_head):
           "and run the suites", code == 0 and "Not pushed yet" in out and len(runner_calls(root)) == 1, out + err)
     code, out, err = check_round_at(overview_commit)
     check("overview: after the push, the message for merge-lane-2 counts the round's two commits",
-          code == 0 and f"New head {overview_commit}, the round's 2 commits on top of the frozen-head" in out, out + err)
+          code == 0 and f"New head {overview_commit}, the round's 2 commits on top of the frozen-head {frozen_head}."
+          in out, out + err)
 
     commit_file(repository, "hook.py", "third\n", "a third commit")
     code, out, err = check_round_at(frozen_head)
@@ -2200,8 +2204,74 @@ def architecture_overview_check_cannot_read_case(_root, repository, _base, froze
     finally:
         os.chdir(original_directory)
     check("overview: a review plan check that cannot read the round's commit raises StepFailed naming it",
-          isinstance(raised, program.StepFailed) and "could not read the round's commit" in str(raised)
-          and "git could not read changed files" in str(raised), repr(raised))
+          isinstance(raised, program.StepFailed)
+          and f"could not read the round's commit {frozen_head[:12]}: git could not read changed files" in str(raised),
+          repr(raised))
+
+
+def commit_tree(repository, tree_of, *parents, message="commit"):
+    return git(repository, "commit-tree", f"{tree_of}^{{tree}}", *[argument for parent in parents for argument in ("-p", parent)],
+               "-m", message)
+
+
+def fix_commit_range_two_commit_round_cases(_root, repository, _base, _frozen_head):
+    """The round of a fix commit and an overview-only commit, read from real history by fix_commit_range.
+
+    Parent lists that sort before or after the expected list, without being it, tell an ordering comparison
+    from an equality one."""
+    program = load_program()
+    (repository / "docs" / "nedsnodes-wiki").mkdir(parents=True)
+    parent = commit_file(repository, DEMO_OVERVIEW, demo_overview_text("0" * 40), "the frozen-head's parent")
+    # The frozen-head's id must sort after its parent's, so that a merge whose first parent is that parent
+    # sorts before [frozen_head].
+    for attempt in range(100):
+        frozen_head = commit_tree(repository, parent, parent, message=f"frozen-head {attempt}")
+        if frozen_head > parent:
+            break
+    git(repository, "reset", "-q", "--hard", frozen_head)
+    fix = commit_file(repository, "hook.py", "fixed\n", "fix")
+    overview = commit_file(repository, DEMO_OVERVIEW, demo_overview_text(fix), "overview checked against the fix")
+
+    def round_range(head):
+        original_directory = os.getcwd()
+        os.chdir(repository)
+        try:
+            return program.fix_commit_range(frozen_head, program.commits_since(frozen_head, head))
+        except program.Refused as refusal:
+            return refusal
+        finally:
+            os.chdir(original_directory)
+
+    result = round_range(overview)
+    check("round shape: the fix commit and an overview-only commit give the overview commit as the round's last",
+          result == (frozen_head, overview), repr(result))
+
+    overview_merge = commit_tree(repository, overview, fix, frozen_head, message="overview commit made a merge")
+    result = round_range(overview_merge)
+    check("round shape: an overview-only second commit that is a merge whose first parent is the fix commit refuses",
+          isinstance(result, program.Refused) and "The round has 2 commits" in str(result)
+          and f"{overview_merge[:12]} (2 parents)" in str(result), repr(result))
+
+    fix_merge = commit_tree(repository, frozen_head, parent, frozen_head, message="fix commit made a merge")
+    git(repository, "checkout", "-q", "--detach", fix_merge)
+    overview_after_merge = commit_file(repository, DEMO_OVERVIEW, demo_overview_text(fix_merge), "overview after the merge")
+    result = round_range(overview_after_merge)
+    check("round shape: a first commit that is a merge whose parent list sorts before [frozen-head] refuses",
+          parent < frozen_head and isinstance(result, program.Refused) and "The round has 2 commits" in str(result)
+          and f"{fix_merge[:12]} (2 parents)" in str(result), repr(result))
+
+    side = commit_tree(repository, parent, parent, message="a side commit the frozen-head lacks")
+    fix_merge_after_frozen_head = commit_tree(repository, frozen_head, frozen_head, side,
+                                              message="fix commit made a merge whose first parent is the frozen-head")
+    git(repository, "checkout", "-q", "--detach", fix_merge_after_frozen_head)
+    overview_after_frozen_head_merge = commit_file(repository, DEMO_OVERVIEW, demo_overview_text(fix_merge_after_frozen_head),
+                                                   "overview after the merge")
+    result = round_range(overview_after_frozen_head_merge)
+    check("round shape: a first commit that is a merge whose first parent is the frozen-head, so its parent list "
+          "sorts after [frozen-head], refuses",
+          isinstance(result, program.Refused) and "The round has 2 commits" in str(result)
+          and f"{fix_merge_after_frozen_head[:12]} (2 parents), {overview_after_frozen_head_merge[:12]} (1 parent)" in str(result),
+          repr(result))
 
 
 def pushed_head_read_from_origin_cases(root, repository, _base, frozen_head):
@@ -2555,6 +2625,7 @@ gh_timeout_case()
 case("suites", suite_cases)
 case("architecture overview", architecture_overview_cases)
 case("architecture overview check cannot read", architecture_overview_check_cannot_read_case)
+case("fix commit range two-commit round", fix_commit_range_two_commit_round_cases)
 case("nits", nit_cases)
 case("move", move_cases)
 case("move hand commit", move_hand_commit_cases)
