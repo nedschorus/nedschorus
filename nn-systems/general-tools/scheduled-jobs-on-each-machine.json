@@ -202,6 +202,20 @@
       "on": {
         "ned-box": {"scheduler": "cron", "schedule": "15 8 * * *"}
       }
+    },
+    {
+      "name": "agent-seat-terminal-captures-older-than-seven-days-delete",
+      "program": "nn-systems/handoff/agent-seat-terminal-captures-older-than-seven-days-delete.py",
+      "arguments": [],
+      "output": ".claude/agent-seat-terminal-captures-older-than-seven-days-delete.log",
+      "on": {
+        "mac": {
+          "scheduler": "launchd",
+          "label": "com.nedsnodes.agent-seat-terminal-captures-older-than-seven-days-delete",
+          "launchd_keys": {"StartCalendarInterval": {"Hour": 5, "Minute": 45}}
+        },
+        "ned-box": {"scheduler": "cron", "schedule": "45 5 * * *"}
+      }
     }
   ]
 }
