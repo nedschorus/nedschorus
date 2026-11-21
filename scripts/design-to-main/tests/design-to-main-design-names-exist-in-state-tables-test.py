@@ -345,8 +345,8 @@ class TheCheckerFailsOnANameTheCodeDoesNotHave(unittest.TestCase):
         self.assertEqual(self.undefined_in(text), {"reject the tests"})
 
     def test_a_misspelled_state_exit_field_fails(self):
-        text = self.design_text + "\nIt writes `held-rulings`.\n"
-        self.assertEqual(self.undefined_in(text), {"held-rulings"})
+        text = self.design_text + "\nIt writes `named-file`.\n"
+        self.assertEqual(self.undefined_in(text), {"named-file"})
 
     def test_a_name_the_code_no_longer_defines_fails(self):
         without_flaky_test = dict(self.name_classes)

@@ -44,7 +44,6 @@ class StateExitRecord:
     coverage_types: Tuple[str, ...] = ()
     refusal_class: Optional[str] = None
     rulings: Tuple[str, ...] = ()
-    held_ruling: Optional[str] = None
     # Commit only named files and the run record; unrelated worktree changes do not belong to this state-exit.
     named_files: Tuple[str, ...] = ()
     notes: str = ""
@@ -279,13 +278,6 @@ def refuse_malformed_resume(run, state_exit, resume_destination):
     if state_exit.verdict != tables.V_RESUME:
         return
     from_state = state_exit.from_state
-    if (state_exit.held_ruling is not None
-            and state_exit.held_ruling not in tables.HELD_RULINGS_A_RESUME_MAY_CARRY):
-        raise IllegalStateExit(
-            "%r from %s carries %r as its held ruling; a held ruling is one of %s, never "
-            "escalate-to-user (section 6.6)" % (
-                state_exit.verdict, from_state, state_exit.held_ruling,
-                ", ".join(tables.HELD_RULINGS_A_RESUME_MAY_CARRY)))
     if state_exit.destination is not None:
         if (resume_destination not in tables.STATE_TABLE_BY_NAME
                 and resume_destination not in tables.COMPOSITE_STATE_OF_SUB_STATE):
@@ -514,7 +506,6 @@ class DesignToMainStateMachineFlow:
         self.routed = []
         self.discarded = []
         self.machine_errors = []
-        self.held_rulings_applied = []
         self.reviewers_advances_applied = []
 
 
@@ -767,9 +758,6 @@ class DesignToMainStateMachineFlow:
         refuse_malformed_resume(run, state_exit, state_exit.destination)
         if state_exit.destination:
             return state_exit.destination
-        if (run.investigation_opened_by_row == tables.ROW_THE_ARBITRATORS_THIRD_ENTRY
-                and state_exit.held_ruling is not None):
-            return tables.TO_APPLY_THE_HELD_RULING
         if run.investigation_held_resume_destination:
             return run.investigation_held_resume_destination
         derived = None
@@ -777,18 +765,6 @@ class DesignToMainStateMachineFlow:
             derived = self.git_record.earliest_state_downstream_of_changes(
                 self.commit_the_investigation_opened_with(run))
         return derived or run.paused_state
-
-    def apply_the_held_ruling(self, run, state_exit):
-        """Route the held arbitrator ruling without re-entering the arbitrator; return the next position."""
-        held = StateExitRecord(state=tables.TEST_SUITE_ARBITRATING,
-                               verdict=state_exit.held_ruling,
-                               package_commit=state_exit.package_commit,
-                               input_named=state_exit.input_named,
-                               investigation_focus=state_exit.investigation_focus)
-        row = find_legal_transition_row(run, held)
-        next_position, _ = self.apply_transition_row(run, row, held, None)
-        self.held_rulings_applied.append((row, held))
-        return next_position
 
     def apply_the_reviewers_advance(self, run, state_exit):
         """Apply the reviewer's advance, including side effects, and return its destination."""
@@ -916,13 +892,9 @@ class DesignToMainStateMachineFlow:
         if row.to_state == tables.ENDED:
             run.outcome = row.outcome
         if row.to_state == tables.TO_RESUME_DESTINATION:
-            # Reset before applying a held ruling so every agent gets a fresh per-version budget after user intervention.
             run.counters.zero_the_six_per_version_counters()
-            if resume_destination == tables.TO_APPLY_THE_HELD_RULING:
-                next_position = self.apply_the_held_ruling(run, state_exit)
-            else:
-                next_position = resume_destination
-                self.position_work_streams_for_resume(run, next_position, state_exit)
+            next_position = resume_destination
+            self.position_work_streams_for_resume(run, next_position, state_exit)
 
         # A resume must retain the arbitrator's original entry cause: its advance still refers to that suite or reviewer.
         if (next_position == tables.TEST_SUITE_ARBITRATING

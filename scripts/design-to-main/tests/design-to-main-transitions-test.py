@@ -354,15 +354,10 @@ class EveryRowOfSection32(unittest.TestCase):
                 T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION, destination=T.TEST_WRITING))
 
     def test_rows_62_and_63_read_the_writers_counter_only_never_the_arbitrators(self):
-        # The eighth walk, item 5: past the ceilings every further cycle is
-        # gated by the user's resume, so the "arbitrator-rulings below its
-        # ceiling" clause the code once carried on these rows is gone, and
-        # with it the admission that let a held ruling past it.
         self.assertEqual(T.TRANSITION_TABLE_BY_ROW["63"].guards, (T.G_WRITERS_COUNTER_AT_OR_ABOVE_CEILING,))
         self.assertEqual(T.TRANSITION_TABLE_BY_ROW["64"].guards, ())
         self.assertEqual(set(T.TRANSITION_TABLE_BY_ROW["63"].verdicts),
                          {T.V_REJECT_IMPLEMENTATION, T.V_REJECT_TESTS, T.V_FLAKY_TEST})
-        self.assertFalse(hasattr(M.GuardContext(run_with(), None), "held_ruling_applied_on_resume"))
 
     def test_the_write_ceiling_guards_read_at_or_above(self):
         # The eighth walk, item 6: the guards on implementation-writes and

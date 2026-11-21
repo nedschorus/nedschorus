@@ -289,7 +289,6 @@ def observe_every_routed_state_exit(machine, trace):
     def route_and_trace(run, state_exit):
         counters_before = run.counters.as_dict()
         advances_before = len(machine.reviewers_advances_applied)
-        held_before = len(machine.held_rulings_applied)
         route(run, state_exit)
         row, _, _ = machine.routed[-1]
         qualifiers = []
@@ -297,9 +296,8 @@ def observe_every_routed_state_exit(machine, trace):
             qualifiers.append("machine error")
         elif row.to_state in QUALIFIER_OF_DESTINATION_MARKER:
             qualifiers.append(QUALIFIER_OF_DESTINATION_MARKER[row.to_state])
-        for applied, before in ((machine.reviewers_advances_applied, advances_before),
-                                (machine.held_rulings_applied, held_before)):
-            qualifiers.extend("via row %s" % r.row for r, _ in applied[before:])
+        qualifiers.extend("via row %s" % r.row
+                          for r, _ in machine.reviewers_advances_applied[advances_before:])
         if (run.current_state == tables.INVESTIGATE_WORKFLOW and row is not None
                 and run.investigation_opened_by_row not in (None, row.row)):
             qualifiers.append("row %s on entry" % run.investigation_opened_by_row)
