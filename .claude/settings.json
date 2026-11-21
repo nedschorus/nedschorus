@@ -104,6 +104,11 @@
           },
           {
             "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/agent-reply-possibly-stale-system-status-claim-recheck-reminder-hook.py",
+            "timeout": 10
+          },
+          {
+            "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/cold-read-fast-read-due-for-linked-document-reminder-hook.py",
             "timeout": 30
           },
