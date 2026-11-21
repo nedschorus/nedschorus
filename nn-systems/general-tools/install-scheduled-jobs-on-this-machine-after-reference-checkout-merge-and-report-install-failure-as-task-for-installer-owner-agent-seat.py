@@ -270,16 +270,17 @@ def main(environment=None, argv=None):
     if environment.get(NED_BOX_REFERENCE_CHECKOUT_PATH_TEST_OVERRIDE_ENVIRONMENT_VARIABLE):
         reference_checkouts[NED_BOX] = environment[
             NED_BOX_REFERENCE_CHECKOUT_PATH_TEST_OVERRIDE_ENVIRONMENT_VARIABLE]
+    run_it_where = (f"run this in {reference_checkouts[NED_BOX]} on ned-box or "
+                    f"{reference_checkouts[MAC]} on the Mac.")
     top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
     if top.returncode != 0:
+        outcome(f"{os.getcwd()} is not in a Git checkout, so nothing was run; {run_it_where}")
         return EXIT_DONE
     checkout = os.path.realpath(top.stdout.strip())
     machine = next((name for name, path in reference_checkouts.items()
                     if os.path.realpath(path) == checkout), None)
     if machine is None:
-        outcome(f"{checkout} is not a reference-checkout, so nothing was run; run this in "
-                f"{reference_checkouts[NED_BOX]} on ned-box or {reference_checkouts[MAC]} on the "
-                f"Mac.")
+        outcome(f"{checkout} is not a reference-checkout, so nothing was run; {run_it_where}")
         return EXIT_DONE
     reference_checkout = reference_checkouts[machine]
     installer = environment.get(SCHEDULED_JOBS_INSTALLER_PATH_TEST_OVERRIDE_ENVIRONMENT_VARIABLE) \
