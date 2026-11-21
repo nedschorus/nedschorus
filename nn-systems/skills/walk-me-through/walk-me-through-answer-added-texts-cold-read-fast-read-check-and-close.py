@@ -39,8 +39,9 @@ leaves with no decision, REASON saying why, which changes nothing.
 makes ITEM, an item not yet shown named by its heading's title, the next item
 shown, numbering it and moving it to stand right before the waiting item in the
 walk-document, so that close comes back to the waiting item once ITEM is
-decided, its last sub-step included, unless that item is the summary item, is
-decided or deferred twice, or is gone from the walk-document; and it writes the minutes' `#next_to_present` line. It refuses, writing
+answered, or decided through its last sub-step, unless the waiting item is the
+summary item, is decided or deferred twice, or is gone from the walk-document;
+and it writes the minutes' `#next_to_present` line. It refuses, writing
 nothing, an ITEM no item heading has, and one already shown, which is every
 numbered item, decided or not; and it refuses, writing nothing, while close
 has not yet recorded the last answer check wrote, since close would then take
