@@ -72,8 +72,8 @@ USAGE_LINE = (
     "[--web-search] [--deadline-minutes <minutes>] [--run-log <file>] "
     "[--prefetch-github '<gh arguments>']... [--resume <session-id>]")
 
-REFUSAL = (
-    "Refused: a hand-typed `codex exec`. Typed into a shell, `codex exec` keeps "
+CODEX_EXEC_REFUSAL = (
+    "[rule bash-guard-codex-exec-typed-by-hand] Refused: a hand-typed `codex exec`. Typed into a shell, `codex exec` keeps "
     "stdin open and, started in the background, waits for input forever with "
     "nothing to stop it.\n"
     "Write the prompt to a file and run the task with:\n"
@@ -188,7 +188,7 @@ def command_runs_codex_exec(command: str) -> bool:
 
 
 def refusal_for_command(command: str):
-    return REFUSAL if command_runs_codex_exec(command) else None
+    return CODEX_EXEC_REFUSAL if command_runs_codex_exec(command) else None
 
 
 def deny(reason):

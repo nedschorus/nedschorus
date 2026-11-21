@@ -104,6 +104,17 @@ with tempfile.TemporaryDirectory() as directory:
           texts == ["see this screenshot\nand fix it"], texts)
 
 with tempfile.TemporaryDirectory() as directory:
+    # "unknown_block_kind" sorts after "text", so only an exact type match leaves it out.
+    path = write_transcript(directory, [
+        {"type": "user", "message": {"role": "user", "content": [
+            {"type": "text", "text": "the words typed"},
+            {"type": "unknown_block_kind", "text": "words from a block that is not text"}]}},
+    ])
+    texts = user_texts(path)
+    check("a block whose type is not text adds none of its text field to the message",
+          texts == ["the words typed"], texts)
+
+with tempfile.TemporaryDirectory() as directory:
     path = write_transcript(directory, [
         {"type": "user", "message": None},
         {"type": "assistant", "message": None},
@@ -217,6 +228,12 @@ with tempfile.TemporaryDirectory() as directory:
     texts = user_texts(path)
     check("a compaction summary and a handoff successor's opening prompt are not the user's",
           texts == ["I said: Read the file — the dialog from the session you are continuing is long"], texts)
+
+compaction_summary = typed("This session is being continued from a previous conversation that ran out of context.")
+check("typed_by_user, given no flag, treats a compaction summary as a program's; with the flag false it returns the text",
+      search_module.typed_by_user(compaction_summary) is None
+      and search_module.typed_by_user(compaction_summary, False) == compaction_summary["message"]["content"],
+      (search_module.typed_by_user(compaction_summary), search_module.typed_by_user(compaction_summary, False)))
 
 with tempfile.TemporaryDirectory() as directory:
     path = write_transcript(directory, [

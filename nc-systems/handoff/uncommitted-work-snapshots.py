@@ -849,6 +849,31 @@ def remove_worktree_and_branch_of_failed_work_snapshot_restore(repo, worktree, b
             f"so restore can be run again once the cause is fixed.")
 
 
+def post_checkout_hook_that_ran_text(repo):
+    """Which post-checkout hook git ran in repo, and whether it is the clone's own copy of
+    scripts/git-client-side-hooks/post-checkout: facts the owner-file error states in place of a
+    guessed cause."""
+    lookup = run_git(repo, "config", "--show-origin", "--get", "core.hooksPath")
+    origin, _tab, value = lookup.stdout.strip().partition("\t")
+    if lookup.returncode == 0:
+        hook = Path(repo) / value / "post-checkout"
+        where = (f"the post-checkout hook that ran is {hook}, because git's core.hooksPath setting "
+                 f"for {repo} is {value}, set in the config file {origin.removeprefix('file:')}")
+    elif lookup.returncode == 1:
+        hook = common_git_directory(repo) / "hooks" / "post-checkout"
+        where = (f"git's core.hooksPath setting for {repo} is not set, so the post-checkout hook "
+                 f"that ran is {hook}")
+    else:
+        return (f"which post-checkout hook ran is not known, because git config --show-origin "
+                f"--get core.hooksPath in {repo} {git_failure_text(lookup)}")
+    reference = Path(repo) / "scripts" / "git-client-side-hooks" / "post-checkout"
+    try:
+        same = hook.read_bytes() == reference.read_bytes()
+    except OSError as error:
+        return f"{where}; it could not be compared with {reference}: {error.strerror}: {error.filename}"
+    return f"{where}, which is {'the same as' if same else 'not the same as'} {reference}"
+
+
 def restore_work_snapshot(repo, ref, keep, environment=None, out=print):
     """The restore command; returns its exit code. Raises WorkSnapshotError only before it
     changes anything, because command_exit_code tells the user nothing was changed."""
@@ -884,28 +909,12 @@ def restore_work_snapshot(repo, ref, keep, environment=None, out=print):
             # file during `git worktree add`, naming GIT_AUTHOR_NAME's agent-seat as restore does.
             written = owners.worktree_owner_file_read(worktree)
             if written != owner:
-                hooks_path = run_git(repo, "config", "--show-origin", "--get", "core.hooksPath")
-                origin, _tab, value = hooks_path.stdout.strip().partition("\t")
-                if hooks_path.returncode == 0:
-                    likely_cause = (
-                        f"a likely cause is a core.hooksPath naming another clone's older hook: "
-                        f"git's core.hooksPath setting for {repo} is {value}, and the config file "
-                        f"that sets it is {origin.removeprefix('file:')}")
-                elif hooks_path.returncode == 1:
-                    likely_cause = (
-                        f"git's core.hooksPath setting for {repo} is not set, so the post-checkout "
-                        f"hook that ran is the copy in {common_git_directory(repo)}/hooks; a likely "
-                        f"cause is that this copy is older than "
-                        f"scripts/git-client-side-hooks/post-checkout")
-                else:
-                    likely_cause = (
-                        f"where the hook ran from is not known, because git config --show-origin "
-                        f"--get core.hooksPath in {repo} {git_failure_text(hooks_path)}")
                 raise owners.WorktreeOwnerFileError(
                     f"git worktree add left an owner file naming {json.dumps(written)}, where "
                     f"uncommitted-work-snapshots.py restore names {json.dumps(owner)}. "
                     f"scripts/git-client-side-hooks/post-checkout writes that file and should name "
-                    f"GIT_AUTHOR_NAME's agent-seat as restore does; {likely_cause}. "
+                    f"GIT_AUTHOR_NAME's agent-seat as restore does; "
+                    f"{post_checkout_hook_that_ran_text(repo)}. "
                     f"uncommitted-work-snapshots.py restore never overwrites an owner file that names another "
                     f"owner, because scripts/clean-worktrees.py decides from the owner when to remove "
                     f"the worktree") from None

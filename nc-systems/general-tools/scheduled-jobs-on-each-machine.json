@@ -27,7 +27,7 @@
     },
     {
       "name": "log-store-session-dialogs-refresh",
-      "program": "scripts/log-store-session-dialogs-refresh-nbd.py",
+      "program": "scripts/log-store-session-dialogs-refresh-hack.py",
       "arguments": ["--failures-only"],
       "output": ".claude/log-store-session-dialogs-refresh.log",
       "on": {
@@ -183,6 +183,15 @@
       "output": ".claude/cold-read-cell-credential-files-outside-denied-directories-daily-check-user-alert-write.log",
       "on": {
         "ned-box": {"scheduler": "cron", "schedule": "45 7 * * *"}
+      }
+    },
+    {
+      "name": "claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report",
+      "program": "nc-systems/general-tools/claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report.py",
+      "arguments": [],
+      "output": ".claude/claude-code-registered-hook-rule-ids-in-both-machines-transcripts-weekly-count-and-never-seen-rules-report.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "30 5 * * 1"}
       }
     },
     {

@@ -16,7 +16,7 @@ The design-to-main proposal for sorting a design's deferred-decisions (nedlern@n
 
 - `#not_in_this_run` begins a deferred line: "#not_in_this_run retry a failed push. Reason: an optimisation; one failure stops the run and tells the user."
 - `#rejected` begins a line the user turned down for good.
-- `#revisit_when` names the event before which a deferred line must be decided.
+- `#revisit_before` names the event after which a deferred decision becomes expensive to change, and `#revisit_after` names the event the deferred work waits on; either is left off when no such event can be named.
 
 The hashtag form is proposed, not yet a project convention. If the user rejects item 1.1, this review still asks whether a shared marker form is worth having, without assuming hashtags.
 
@@ -54,4 +54,4 @@ ghi-guide-agent, asked on 2026-10-15 whether an issue covers conventions for fix
 
 ## Next action
 
-Steps 1 to 3 are in the supporting document `docs/issues/1518-fixed-markers-list-every-literal-string-programs-and-prompts-match-with-its-readers-and-proposed-hashtag.md`, one section per system. Its sweep is done: every program and prompt under `scripts/`, `nc-systems/`, `.claude/guard-hooks/` and `.claude/skills/`, and every standing instruction file on ned-box, falls in a section, as its last section says. Two pieces remain before step 4: an agent-seat on the Mac sweeps the Mac's seat-briefs, which ned-box cannot reach, and adds a section for them; and the list gains a row for the fixed text that merge-lane-2's seat-brief, `/home/nedlern/agents/merge-lane-2/CLAUDE.local.md` on ned-box, sets for a review that carries findings, such as the three sentences it says such a review ends with, word for word. Then step 4's approval-walk takes the list to the user, and step 5's maintenance-job is built so that the list does not drift.
+Steps 1 to 3 are in the supporting document `docs/issues/1518-fixed-markers-list-every-literal-string-programs-and-prompts-match-with-its-readers-and-proposed-hashtag.md`, one section per system. Its sweep is done: every program and prompt under `scripts/`, `nc-systems/`, `.claude/guard-hooks/` and `.claude/skills/`, and every standing instruction file on ned-box, falls in a section, as its last section says. The two pieces it lacked are now in it: rows 102 to 104, for the fixed text that merge-lane-2's seat-brief, `/home/nedlern/agents/merge-lane-2/CLAUDE.local.md` on ned-box, sets, such as the three sentences it says a review that carries findings ends with, word for word; and the section "The Mac's seat-briefs", holding row 105, which an agent-seat on the Mac wrote after sweeping the Mac's seat-briefs, which ned-box cannot reach. Then step 4's approval-walk takes the list to the user, and step 5's maintenance-job is built so that the list does not drift.

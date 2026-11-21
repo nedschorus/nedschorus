@@ -187,6 +187,7 @@ GIT_GLOBAL_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
 TELL_THE_USER_OR_DISPATCHING_AGENT = "tell " + next_step_lines.REPORT_RECIPIENT_PHRASE_USER_OR_DISPATCHING_AGENT
 
 SHIPMENT_FAILED_REFUSAL_TEMPLATE = (
+    "[rule bash-guard-git-worktree-remove-cold-read-and-sanity-check-records-not-shipped] "
     "Refused on purpose: before a `git worktree remove`, this hook ships the cold-read-records "
     "and sanity-check records of the worktree it removes to the log-store{scope}, and "
     "{count} record(s) did not reach it. The folders cold-read-records/ and sanity-check-records/ "
@@ -221,6 +222,7 @@ SHIPMENT_FAILED_UNRESOLVED_SCOPE_TEMPLATE = (
 RECORD_CHECK_FAILED_LINE_TEMPLATE = "not shipped: this hook could not check or ship it: {error}"
 RECORD_BEING_WRITTEN_LINE_TEMPLATE = "Record {record} (worktree {worktree})\n"
 RECORD_BEING_WRITTEN_IN_REMOVED_WORKTREE_REFUSAL_TEMPLATE = (
+    "[rule bash-guard-git-worktree-remove-record-being-written] "
     "Refused on purpose: this command removes a worktree in which a running program, such as the "
     "cold-read-grid, is still writing a record. That program holds the record's being-written lock "
     "and ships the record to the log-store itself when it finishes; removing the worktree now would "
@@ -241,6 +243,7 @@ REMOVAL_NOT_DEFERRED_ENDING_TEMPLATE = (
     "finished:\", word for word.")
 REMOVAL_NOT_DEFERRED_FAILURE_TEMPLATE = "for {worktree}, {error}"
 REMOVED_WORKTREE_UNRESOLVED_REFUSAL_TEMPLATE = (
+    "[rule bash-guard-git-worktree-remove-record-being-written] "
     "Refused on purpose: this hook could not tell which worktree this command removes ({reason}), "
     "and a running program, such as the cold-read-grid, is still writing a record in the worktree "
     "each Record line below names. "
@@ -763,7 +766,7 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic, start_wai
             failures = []
             for worktree in dict.fromkeys(worktree for worktree, _ in being_written):
                 error = start_waiter(worktree, removed[worktree],
-                                     [record for held_in, record in being_written if held_in == worktree],
+                                     [record for held_in, record in being_written if held_in == worktree],  # pragma: no mutate, this branch runs only for one removed worktree, so every held_in equals it
                                      worktrees[0])
                 if error is not None:
                     failures.append(REMOVAL_NOT_DEFERRED_FAILURE_TEMPLATE.format(worktree=worktree, error=error))

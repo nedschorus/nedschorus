@@ -69,7 +69,7 @@ GH_API_METHOD_OPTIONS = {"-X", "--method"}
 GH_API_PULL_REQUEST_MERGE_PATH = re.compile(r"(^|/)pulls/[^/]+/merge/?$")
 PROGRAM_PATH = "nc-systems/skills/emergency-stop/emergency-stop-file-write-start-append-and-stop-lift.py"
 
-RULES = """EMERGENCY STOP in force: {path}
+IN_FORCE_RULES_NOTICE = """[rule emergency-stop-state-shown-to-every-agent-session] EMERGENCY STOP in force: {path}
 The coordinating agent-seat is {coordinating}; it carries on with the repair.
 Every agent-seat follows these rules until the user lifts the emergency stop:
 - Unless you are the coordinating agent-seat, finish the tool call you are in, then do no more work until the coordinating agent-seat or the user gives you work.
@@ -89,9 +89,9 @@ UNKNOWN_NOTE = ("emergency-stop state unknown: ned-box's log-store cannot be rea
                 "This hook refuses nothing while it cannot read the log-store, so carry on with your work, "
                 "and tell the user that this machine cannot reach ned-box's log-store. "
                 "This note is shown once per agent-session.")
-LIFTED_NOTE = ("The emergency stop {path} was lifted: {lift_line}\n"
+LIFTED_NOTICE = ("[rule emergency-stop-state-shown-to-every-agent-session] The emergency stop {path} was lifted: {lift_line}\n"
                "Its rules no longer apply: resume the work you held back, and push and merge as usual.")
-REFUSAL = ("Refused: an emergency stop is in force ({path}), and during it only the coordinating "
+PUSH_AND_MERGE_REFUSAL = ("[rule bash-guard-git-push-and-pr-merge-during-emergency-stop] Refused: an emergency stop is in force ({path}), and during it only the coordinating "
            "agent-seat ({coordinating}) pushes or merges; this agent-seat is {agent_seat}.\n"
            "Leave the work committed locally; pushing and merging resume after the user lifts the emergency stop.\n"
            "If the repair needs this push or merge, commit it on a branch and send the coordinating agent-seat "
@@ -245,7 +245,7 @@ def output_for(payload, environment, read_state=read_state_within_deadline):
     if isinstance(state, common.Lifted):
         if shown_before(record_path, f"lifted:{state.path.name}"):
             return None
-        return context_output(event, LIFTED_NOTE.format(path=state.path, lift_line=state.lift_line))
+        return context_output(event, LIFTED_NOTICE.format(path=state.path, lift_line=state.lift_line))
     if isinstance(state, common.InForce):
         coordinating = common.coordinating_agent_seat(state.text)
         body = FILE_HEADING + "\n" + state.text[:MAX_FILE_CHARACTERS]
@@ -261,9 +261,9 @@ def output_for(payload, environment, read_state=read_state_within_deadline):
             # A command that cannot be read may push or merge, so during a stop it is refused.
             pushes_or_merges, unread = True, UNREAD_COMMAND_LINE.format(error=error)
         if pushes_or_merges:
-            return refusal_output(REFUSAL.format(path=state.path, coordinating=coordinating or "none named",
+            return refusal_output(PUSH_AND_MERGE_REFUSAL.format(path=state.path, coordinating=coordinating or "none named",
                                                  agent_seat=agent_seat) + unread)
-    rules = RULES.format(path=state.path, coordinating=coordinating or "none named", program=PROGRAM_PATH)
+    rules = IN_FORCE_RULES_NOTICE.format(path=state.path, coordinating=coordinating or "none named", program=PROGRAM_PATH)
     return context_output(event, rules + "\n" + body)
 
 

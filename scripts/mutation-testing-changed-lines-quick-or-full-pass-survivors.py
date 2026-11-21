@@ -322,7 +322,7 @@ PRAGMA_NO_MUTATE_COMMENT = re.compile(r"\s*#.*pragma: no mutate.*")
 # Each checks one rule across a whole class of the repository's files, so its recording reads
 # nearly every module; the quick mutation pass leaves it out.
 REPOSITORY_WIDE_CHECKS = (
-    "nc-systems/general-tools/tests/common-module-wording-copied-into-other-test-files-guard-for-each-wording-module-test.py",
+    "nc-systems/general-tools/tests/common-module-wording-copied-into-other-test-files-scan-of-every-tracked-test-file-fails-on-any-copy-test.py",
     "scripts/code-comments-carry-no-history-markers-test.py",
     "scripts/edited-file-path-within-checkout-root-and-git-check-ignore-defined-once-test.py",
     "scripts/every-repository-program-help-option-test.py",
@@ -1660,9 +1660,8 @@ def recorded_mutant_killed_check(arguments, checkout, environment, runner,
     try:
         recordings_directory = runner.recordings_directory_for(recorded_inputs_directory, checkout)
     except runner.CouldNotRun as refusal:
-        raise CouldNotRun(str(refusal).splitlines()[0].replace(
-            f"{runner.PROGRAM}:", f"{PROGRAM}:", 1) + "\n"
-            + runner.git_failure_next_step_lines(Path(__file__).name)) from refusal
+        # Its next steps rerun this process's command, which is this program's.
+        raise CouldNotRun(str(refusal).replace(f"{runner.PROGRAM}:", f"{PROGRAM}:", 1)) from refusal
     suites_at = suites_at_head(checkout, head, environment)
     verdicts = {}
     to_run = []
@@ -2029,12 +2028,8 @@ def quick_or_full_mutation_pass_or_recorded_mutant_killed_check(
                 arguments.recorded_inputs_directory
                 or runner.DEFAULT_RECORDED_INPUTS_DIRECTORY, checkout)
         except runner.CouldNotRun as refusal:
-            # The runner's first line says what failed; the lines after it name the runner's
-            # own command, so this program's next steps replace them.
-            what_failed = str(refusal).splitlines()[0].replace(f"{runner.PROGRAM}:",
-                                                               f"{PROGRAM}:", 1)
-            raise CouldNotRun(what_failed + "\n"
-                              + runner.git_failure_next_step_lines(Path(__file__).name)) \
+            # Its next steps rerun this process's command, which is this program's.
+            raise CouldNotRun(str(refusal).replace(f"{runner.PROGRAM}:", f"{PROGRAM}:", 1)) \
                 from refusal
         suites_listed_at_head = suites_at_head(checkout, head, environment)
 

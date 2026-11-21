@@ -27,6 +27,7 @@ PROTECTED_COMPONENT_NAMES = ("Backups.backupdb",)
 PROTECTED_COMPONENT_SUFFIXES = (".sparsebundle",)
 
 DENY_MESSAGE = (
+    "[rule write-guard-backup-and-snapshot-state] "
     "Refusing to modify {path}: it is backup state (Timeshift snapshots or configuration "
     "on ned-box, or Time Machine state on the Mac). Backup state is never an agent's to "
     "write, because backups are how damage done by any agent is undone, and there is no "

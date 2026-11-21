@@ -692,6 +692,16 @@ def run_agent_text_cases(fixture):
     fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
     plan = fixture.read_review_plan()
     check("reflowed identical messages are omitted", plan["tool_message_to_agent_text_delta"] == [], plan)
+    # The collector builds each side's placeholder tuple separately, so equal tuples are distinct objects.
+    fixture.reset_fixture_to_base()
+    fixture.write_fixture_file("scripts/scoped-messages.py", 'print(\n    f"same moved message for {name}")\n')
+    earlier = fixture.commit_fixture_changes("multiline f-string message")
+    fixture.write_fixture_file("scripts/scoped-messages.py", 'print(f"same moved message for {name}")\n')
+    head = fixture.commit_fixture_changes("reflow f-string message")
+    fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
+    plan = fixture.read_review_plan()
+    check("reflowed identical f-string messages with equal placeholders are omitted",
+          plan["tool_message_to_agent_text_delta"] == [], plan)
     # Modelled on pull request 2119, which changed only the recovery note that
     # IgnitionPlanWithoutConversationTail.compose() builds in a local name and returns in its prompt.
     compose_before = ('class IgnitionPlan:\n    def compose(self):\n        if self.transcript_path is None:\n'
@@ -1331,7 +1341,7 @@ def run_architecture_overview_checked_against_commit_cases(fixture):
     flag = ["--overview-write-architecture-overview-claim-check-report-directory", str(report_directory)]
 
     def write_overview_with_report(named, path=FIXTURE_OVERVIEW_PATH):
-        last_line = f"**Checked against:** commit [{named}](https://github.com/nedschorus/nedschorus/commit/{named})\n" if named else ""
+        last_line = f"**Checked against:** commit [{named}](https://github.com/nedsnodes/nedsnodes/commit/{named})\n" if named else ""
         text = ("# Example overview\n\nIt is not `scripts/sibling-program.py`.\n\n## Components\n\n"
                 "- `nc-systems/example/parent-program.py`: the program.\n"
                 "- `scripts/example-program.py`: a shared script.\n- `config`: its settings.\n"

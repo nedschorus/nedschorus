@@ -88,7 +88,7 @@ def main():
     skill_text = SKILL.read_text(encoding="utf-8")
     section = skill_text.split("## While a stop is in force", 1)[1].split("\n## ", 1)[0]
     skill_rules = [line[2:].rstrip(".") for line in section.splitlines() if line.startswith("- ")]
-    hook_rule_lines = [line[2:] for line in hook.RULES.splitlines() if line.startswith("- ")]
+    hook_rule_lines = [line[2:] for line in hook.IN_FORCE_RULES_NOTICE.splitlines() if line.startswith("- ")]
     check("the hook's first four rules hold the skill's first four, word for word, in the same order",
           len(skill_rules) == 5 and len(hook_rule_lines) == 5
           and all(hook_line.startswith(skill_rule) for skill_rule, hook_line in zip(skill_rules[:4], hook_rule_lines)),

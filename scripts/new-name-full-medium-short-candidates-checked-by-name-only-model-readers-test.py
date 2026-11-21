@@ -385,6 +385,7 @@ def test_choose_needs_a_passing_candidate_and_reason():
     with tempfile.TemporaryDirectory() as folder:
         code, _, _, run, _ = run_and_judge(pathlib.Path(folder), all_verdicts, choose="cold-read-record-ship", reason="reads better")
         expect(code == 0 and run["outcome"]["chosen"] == "medium", "--choose with a reason picks a passing one")
+        expect(run["outcome"]["choose_reason"] == "reads better", "the outcome line records the --choose reason")
 
 
 def test_retry_once_only():
@@ -418,6 +419,10 @@ def test_per_model_summary():
         expect(summary["claude-opus-5-5"]["answered"] == 3 and summary["claude-opus-5-5"]["matched"] == 2
                and summary["claude-opus-5-5"]["only_miss"] == 1, "summary counts the opus miss")
         expect(summary["gpt-6.1-sol"]["matched"] == 3, "summary counts sol's matches")
+        summary = check.per_model_summary([json.loads(l) for l in log.read_text().splitlines()] + [
+            {"kind": "reader", "run_id": "extra", "reader_id": "x", "model": "gpt-6.1-sol", "error": None, "seconds": 5.0}])
+        expect(summary["gpt-6.1-sol"]["mean_seconds"] == 2.0,
+               "mean seconds is the answering readers' seconds summed and divided by their count: (1+1+1+5)/4 is 2.0")
 
 
 def test_reader_command_gives_each_runtime_nothing_but_the_name():

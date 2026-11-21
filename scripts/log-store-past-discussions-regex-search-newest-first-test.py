@@ -167,8 +167,8 @@ with tempfile.TemporaryDirectory() as scratch:
     check("hits come newest first", dates == sorted(dates, reverse=True), dates)
     check("the transcripts' subagents directories are not searched",
           "inside a subagent" not in result.stdout, result.stdout)
-    check("a walk file's agent-seat is read from its header",
-          any(h.startswith("2026-10-01  walk  agent-instructions-editor") for h in headers), headers)
+    check("a walk file's hit names no agent-seat, even when its text says \"run by <agent-seat> on\"",
+          [h for h in headers if "  walk" in h] == ["2026-10-01  walk"], headers)
     check("a session's machine and agent-seat are read from its path",
           any("user-messages  ned-box  prime-intellect" in h for h in headers)
           and any("session-dialogs  mac  fleet-restart-at-login" in h for h in headers), headers)
@@ -577,7 +577,7 @@ sys.exit(search.main(["start the heron plan", "--kind", "session-dialogs", "--jo
         agent("the stork plan", "2026-09-01T08:00:00Z"),
         agent("the stork plan", "2026-09-02T08:00:00Z")))
     left_out_section = ("## Subagent tasks and reports left out\n\nThe subagent tracker, "
-                        "handoff-extract-conversation-subagent-tracker-nbd.py, failed, so this dialog leaves out "
+                        "handoff-extract-conversation-subagent-tracker-hack.py, failed, so this dialog leaves out "
                         "every subagent task and report: RuntimeError: gone\n")
     egret_dialog = write(root / "session-dialogs" / "ned-box" / egret_key / "s22-dialog-complete.md",
                          "## Agent\n\nthe stork plan\n\n" + left_out_section)
@@ -839,17 +839,6 @@ print(x.render_companion(*x.complete_dialog_turns_and_report(pathlib.Path({str(e
           finding.returncode == 2 and "to date the session dialog " in finding.stderr
           and "to date the session dialog's hits by their turns" in finding.stderr
           and str(hidden) in finding.stderr, finding.stderr)
-
-    walk_file = root / "walk" / "heron-walk-2026-10-01-minutes.md"
-    header_match = json.dumps({"type": "match", "data": {
-        "path": {"text": str(walk_file)}, "lines": {"text": "heron\n"}, "line_number": 5,
-        "submatches": [{"start": 0}]}})
-    header_reporter = stub(scratch, "rg-reports-locked-walk", f"printf '%s\\n' '{header_match}'\n")
-    walk_file.chmod(0)
-    finding = run(root, "heron", "--kind", "walk", environment={PREFIX + "RIPGREP_PROGRAM_OVERRIDE": header_reporter})
-    walk_file.chmod(0o644)
-    check("a walk file whose header cannot be read for its agent-seat is a failure",
-          finding.returncode == 2 and "for its agent-seat" in finding.stderr, finding.stderr)
 
     probe = subprocess.run([sys.executable, "-c", f"""
 import importlib.util, sys

@@ -246,7 +246,7 @@ check("a failed shipment refuses the removal",
       code == 0 and output["hookSpecificOutput"]["permissionDecision"] == "deny", (code, output, stderr))
 check("the refusal opens by saying it refused on purpose, that the removed worktree's records are shipped, and how "
       "many failed",
-      reason.startswith("Refused on purpose: before a `git worktree remove`, this hook ships the cold-read-records "
+      reason.startswith("[rule bash-guard-git-worktree-remove-cold-read-and-sanity-check-records-not-shipped] Refused on purpose: before a `git worktree remove`, this hook ships the cold-read-records "
                         "and sanity-check records of the worktree it removes to the log-store, and 2 "
                         "record(s) did not reach it."), reason)
 check("a removal the hook placed gets no instruction to write its path out", "Run the removal again" not in reason,
@@ -309,7 +309,7 @@ code, output, stderr = run_hook_process('git worktree remove -f "$W"', checkout)
 reason = refusal(output) or ""
 check("a removal the hook cannot place is refused while any worktree holds a record the log-store refuses, saying "
       "it shipped every worktree's records",
-      reason.startswith("Refused on purpose: before a `git worktree remove`, this hook ships the cold-read-records "
+      reason.startswith("[rule bash-guard-git-worktree-remove-cold-read-and-sanity-check-records-not-shipped] Refused on purpose: before a `git worktree remove`, this hook ships the cold-read-records "
                         "and sanity-check records of the worktree it removes to the log-store; it could not tell "
                         "which worktree this command removes (the path $W holds a variable, a glob or a "
                         "substitution), so it shipped the records of every worktree of this repository, and 1 "
@@ -715,9 +715,11 @@ other_worktree = checkout.parent / "beingwritten-other-worktree"
 git(checkout, "worktree", "add", "-q", "--detach", str(other_worktree))
 writer, held = record_writer_started(being_written)
 being_written_in_store = STORE / "cold-read-records" / being_written.name
-removes_worktree_refusal_start = ("Refused on purpose: this command removes a worktree in which a running "
+removes_worktree_refusal_start = ("[rule bash-guard-git-worktree-remove-record-being-written] "
+                                  "Refused on purpose: this command removes a worktree in which a running "
                                   "program, such as the cold-read-grid, is still writing a record.")
-unresolved_refusal_start = "Refused on purpose: this hook could not tell which worktree this command removes ("
+unresolved_refusal_start = ("[rule bash-guard-git-worktree-remove-record-being-written] "
+                            "Refused on purpose: this hook could not tell which worktree this command removes (")
 deferred_ending = ("This hook has deferred the removal: a program waits until every record above is finished, "
                    "ships the records, removes the worktree, and tells the user if that fails. You have nothing "
                    "to do for the removal. If your command did anything else, none of it ran: run again now only "
@@ -885,6 +887,11 @@ check("env without a directory option still resolves the path against the cwd",
       hook.worktrees_removed_or_unresolved_reason("env -u X git worktree remove .claude/worktrees/A", "/r",
                                                   repository_worktrees)
       == ({Path("/r/.claude/worktrees/A"): False}, None))
+check("builtin with no command after it changes no directory",
+      hook.simple_command_changes_directory(["builtin"]) is False)
+code, output = run_hook(payload_for("git worktree remove /a/nowhere", "/"), runner_answering(0, b""))
+check("a removal when git lists no worktree whose directory exists, so there is nothing to ship, exits 0 silently",
+      (code, output) == (0, None), (code, output))
 
 
 # The deferred removal, end to end: the hook starts the real waiter, detached, which waits for the writer,
@@ -1103,7 +1110,8 @@ check("a log that cannot be written starts no waiter, and says why",
 
 
 # The waiter's other failures, injected in-process through its main.
-def waiter_run(worktree, *options, runner=subprocess.run, injected_hook=hook, task_list_id=None):
+def waiter_run(worktree, *options, runner=subprocess.run, injected_hook=hook, task_list_id=None,
+               clock=time.monotonic, sleep=time.sleep):
     """Run the waiter's main in-process on worktree, with home SCRATCH_HOME and, when given, the task list id;
     return (exit code, its log, the alerts this run wrote)."""
     alerts_before = alerts_naming(worktree)
@@ -1113,7 +1121,8 @@ def waiter_run(worktree, *options, runner=subprocess.run, injected_hook=hook, ta
         code = waiter.main(["--worktree", str(worktree), "--git-directory", str(worktree),
                             "--ned-box-home", str(SCRATCH_NED_BOX_HOME), "--poll-seconds", "0.05",
                             "--writer-own-shipment-grace-seconds", "0", *options],
-                           runner=runner, hook=injected_hook, home=SCRATCH_HOME, environment=environment)
+                           runner=runner, hook=injected_hook, home=SCRATCH_HOME, environment=environment,
+                           clock=clock, sleep=sleep)
     return code, log_output.getvalue(), [alert for alert in alerts_naming(worktree) if alert not in alerts_before]
 
 
@@ -1129,6 +1138,28 @@ check("a record still being written when the time limit runs out leaves the work
       code == 1 and failing_worktree.is_dir() and len(alerts) == 1
       and waiter.WAITER_TIME_LIMIT_RAN_OUT_USER_ALERT_FAILURE_SENTENCE in alerts[0]["alert_text"]
       and f"Record {failing_record} (worktree {failing_worktree})\n" in alerts[0]["alert_text"], (code, log_text))
+
+# The default limit, on a clock that only the waiter's own sleeps move: 30-second polls land on 49.5 and 50 minutes.
+simulated = {"now": 0.0, "slept_at": []}
+
+
+def simulated_sleep(seconds):
+    simulated["slept_at"].append(simulated["now"])
+    simulated["now"] += seconds
+
+
+writer, held = record_writer_started(failing_record)
+try:
+    code, log_text, alerts = waiter_run(failing_worktree, "--record", str(failing_record), "--poll-seconds", "30",
+                                        clock=lambda: simulated["now"], sleep=simulated_sleep)
+finally:
+    writer.communicate("")
+check("with the default time limit, a record still being written is still waited for at 49.5 minutes and the "
+      "waiter gives up at 50, leaving the worktree and writing a user-alert",
+      code == 1 and failing_worktree.is_dir() and len(alerts) == 1
+      and waiter.WAITER_TIME_LIMIT_RAN_OUT_USER_ALERT_FAILURE_SENTENCE in alerts[0]["alert_text"]
+      and max(simulated["slept_at"]) == 49.5 * 60 and simulated["now"] == 50 * 60,
+      (code, simulated["now"], simulated["slept_at"][-3:], log_text))
 
 
 def shipper_failing_runner(argv, **keywords):

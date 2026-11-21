@@ -16,6 +16,8 @@ import importlib.util
 import io
 import json
 import os
+import shlex
+import shutil
 import signal
 import sqlite3
 import socket
@@ -388,8 +390,8 @@ def runner_output_with_test_sandbox_not_started(suite):
     runner = load_test_suite_runner()
     not_run = {"suite": suite, "exit": 1, "seconds": 0.1, "skips": [],
                "test sandbox did not start": True}
-    return (f"{runner.suite_line(not_run)}\n\n1 not run, because bwrap could not build the "
-            f"nc-test-sandbox; each log says why and what to do:\n"
+    return (f"{runner.suite_line(not_run)}\n\n1 not run; each line says why, and each log "
+            f"what to do:\n"
             f"NOT RUN {suite} {runner.why_suite_failed(not_run)} — log /tmp/a.log\n")
 
 
@@ -515,6 +517,48 @@ def run_recorded_mutant_killed_check(scratch_name, head_files, diff_text, *flags
                            survivors.RECORDED_MUTANT_KILLED_CHECK_COMMAND_LINE_FLAG,
                            *diff_files, *flags, extra_environment=extra_environment)
     return completed, repository, worktrees_before, head
+
+
+def run_recorded_mutant_killed_check_root_commit_refusal_cases():
+    """--recorded-mutant-killed-check run where git cannot list HEAD's root commits, so the
+    runner cannot name the recordings directory: the refusal's next steps follow git's error."""
+    survivors = load_script_module()
+    for how, lock_file_in_error in (("names a lock file", True), ("names no lock file", False)):
+        with tempfile.TemporaryDirectory() as scratch_name:
+            repository, _, head = scratch_repository(scratch_name, HEAD_FILES)
+            control = Path(scratch_name) / "control"
+            control.mkdir()
+            lock_file = repository / ".git" / "index.lock"
+            git_error = (f"fatal: Unable to create '{lock_file}': File exists." if lock_file_in_error
+                         else "fatal: injected root-commit failure")
+            shim = Path(scratch_name) / "bin"
+            shim.mkdir()
+            (shim / "git").write_text(
+                "#!/bin/sh\n"
+                f'case "$*" in *"rev-list --max-parents=0"*) printf \'%s\\n\' {shlex.quote(git_error)} >&2; '
+                "exit 128 ;; esac\n"
+                f'exec {shlex.quote(shutil.which("git"))} "$@"\n')
+            (shim / "git").chmod(0o755)
+            flags = (survivors.RECORDED_MUTANT_KILLED_CHECK_COMMAND_LINE_FLAG,
+                     str(Path(scratch_name) / "mutant.diff"), "--head", head)
+            command, _ = script_command_and_environment(repository, control, *flags)
+            completed = run_script(repository, control, *flags,
+                                   path_override=f"{shim}{os.pathsep}{os.environ['PATH']}")
+            rerun = (f"`cd {shlex.quote(os.getcwd())} && "
+                     f"{shlex.join([command[0], str(Path(command[1]).resolve()), *command[2:]])}`")
+            step = (f"Git's error names the lock file {lock_file}: " if lock_file_in_error
+                    else f"Run exactly {rerun} once more.")
+            check(f"--recorded-mutant-killed-check, when git's error listing HEAD's root commits {how}, "
+                  f"exits 2 with the runner's reason under this program's name and the next step "
+                  f"for that error, rerunning the exact command run",
+                  completed.returncode == survivors.EXIT_COULD_NOT_RUN
+                  and completed.stderr.startswith(
+                      f"{survivors.PROGRAM}: not run — git could not list the root commits of HEAD "
+                      f"in {repository.resolve()} ({git_error})")
+                  and step in completed.stderr
+                  and f"exactly {rerun}" in completed.stderr
+                  and ("Git's error names the lock file" in completed.stderr) == lock_file_in_error,
+                  (completed.returncode, completed.stderr))
 
 
 def run_recorded_mutant_killed_check_cases():
@@ -1148,16 +1192,27 @@ def run_log_directories_parent_retention_and_stop_signal_cases():
     with tempfile.TemporaryDirectory() as scratch_name:
         scratch = Path(scratch_name)
         old, fresh, other = scratch / f"{prefix}old", scratch / f"{prefix}fresh", scratch / "other-old"
-        for each in (old, fresh, other):
+        one_day_old = scratch / f"{prefix}one-day-old"
+        for each in (old, fresh, other, one_day_old):
             (each / "a-log-dir").mkdir(parents=True)
         three_days_ago = now - 3 * 24 * 3600
         for each in (old, other):
             os.utime(each, (three_days_ago, three_days_ago))
-        survivors.test_suite_runner_log_directories_parents_past_retention_removed(scratch, now)
+        os.utime(one_day_old, (now - 24 * 3600, now - 24 * 3600))
+        # stat() of a dangling symlink raises FileNotFoundError, as it does for a parent another
+        # run removes between the glob and the stat.
+        (scratch / f"{prefix}dangling").symlink_to(scratch / "no-such-directory")
+        try:
+            survivors.test_suite_runner_log_directories_parents_past_retention_removed(scratch, now)
+            raised = None
+        except Exception as error:  # A crash is this case's failure, not the suite's.
+            raised = error
         check("at start, a log directories parent an earlier run left more than two days ago is "
-              "removed, and a fresh one and a directory of another name are left",
-              not old.exists() and fresh.exists() and other.exists(),
-              sorted(p.name for p in scratch.iterdir()))
+              "removed; a fresh one, a day-old one and a directory of another name are left; and "
+              "a parent whose stat() fails is skipped without an error",
+              raised is None and not old.exists() and fresh.exists() and one_day_old.exists()
+              and other.exists(),
+              f"raised={raised!r} left={sorted(p.name for p in scratch.iterdir())}")
 
     with tempfile.TemporaryDirectory() as scratch_name:
         parent = Path(scratch_name) / f"{prefix}stopped"
@@ -3185,7 +3240,8 @@ def run_cases():
 
             def refuse(given, top):
                 raise loaded_runner.CouldNotRun(
-                    f"{loaded_runner.PROGRAM}: not run — injected root-commit failure")
+                    f"{loaded_runner.PROGRAM}: not run — injected root-commit failure\n"
+                    + loaded_runner.git_failure_next_step_lines("fatal: injected"))
             loaded_runner.recordings_directory_for = refuse
             return loaded_runner
 
@@ -3205,12 +3261,12 @@ def run_cases():
         finally:
             del os.environ[CONTROL_DIRECTORY_VARIABLE]
         check("when the runner cannot name the recordings directory, the run exits 2 with "
-              "the runner's reason under this program's name",
+              "the runner's refusal under this program's name, its next steps unchanged",
               status == survivors_module.EXIT_COULD_NOT_RUN
               and printed.getvalue() == (
                   "mutation-testing-changed-lines-quick-or-full-pass-survivors: not run — injected root-commit "
                   "failure\n" + survivors_module.load_test_suite_runner()
-                  .git_failure_next_step_lines("mutation-testing-changed-lines-quick-or-full-pass-survivors.py")
+                  .git_failure_next_step_lines("fatal: injected")
                   + "\n"), (status, printed.getvalue()))
 
     # ------------------------------------------------------------------
@@ -3381,6 +3437,7 @@ def run_cases():
                   f"left={list(temporary_directory.iterdir())} out={out} err={err}")
 
     run_recorded_mutant_killed_check_cases()
+    run_recorded_mutant_killed_check_root_commit_refusal_cases()
     run_test_suite_runner_log_directories_cases()
     run_log_directories_parent_retention_and_stop_signal_cases()
     run_recorded_mutant_could_not_be_judged_log_directory_kept_case()
