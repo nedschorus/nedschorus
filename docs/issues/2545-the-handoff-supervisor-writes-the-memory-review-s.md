@@ -22,7 +22,7 @@ The design the user ruled on 2026-09-30, in GHI [Memory: a daily review of both 
 
 ## What this does not cover
 
-The nc-architecture-overview refresh reminder's mark, written by `nn-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py`, stays with the agent. Its docstring says to write it only after the user has been shown the refresh, so that an agent-seat closed before showing it leaves the next agent-seat able to remind him; a mark written when the reminder goes into the initial-agent-instructions would defeat that.
+The nc-architecture-overview refresh reminder's mark, written by its own mark program, since removed, stays with the agent. Its docstring says to write it only after the user has been shown the refresh, so that an agent-seat closed before showing it leaves the next agent-seat able to remind him; a mark written when the reminder goes into the initial-agent-instructions would defeat that.
 
 ## Next action
 
