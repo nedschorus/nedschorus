@@ -85,6 +85,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import select
 import shlex
 import shutil
@@ -3592,9 +3593,15 @@ with tempfile.TemporaryDirectory() as scratch:
     def idle_git_directory(worktree):
         return Path(git(worktree, "rev-parse", "--absolute-git-dir").strip())
 
-    def age(worktree):
+    def age(worktree, reflog_entries_too=True):
         """Set the mtime of every file and directory in the worktree and its own git directory to
-        three days ago."""
+        three days ago, and, with reflog_entries_too, the time of every entry of its reflogs."""
+        if reflog_entries_too:
+            for reflog in (idle_git_directory(worktree) / "logs").rglob("*"):
+                if reflog.is_file():
+                    reflog.write_bytes(re.sub(rb"> \d+ ([-+]\d{4})",
+                                              rb"> %d \1" % int(three_days_ago),
+                                              reflog.read_bytes()))
         for root in (worktree, idle_git_directory(worktree)):
             for directory, directory_names, file_names in os.walk(root, topdown=False):
                 for name in directory_names + file_names:
@@ -3687,6 +3694,18 @@ with tempfile.TemporaryDirectory() as scratch:
     # index would rewrite it, and the worktree would look changed today to the next run.
     stale_index_worktree = age(idle_candidate("stale-index-wt"))
     os.utime(stale_index_worktree / "README.md", (three_days_ago - 3600, three_days_ago - 3600))
+    reflog_today_worktree = age(idle_candidate("reflog-today-wt"))
+    git(reflog_today_worktree, "update-ref", "-m", "worked on today", "HEAD", "HEAD")
+    age(reflog_today_worktree, reflog_entries_too=False)
+    emptied_reflog_worktree = age(idle_candidate("emptied-reflog-wt"))
+    git(emptied_reflog_worktree, "reflog", "expire", "--expire=now", "--expire-unreachable=now", "HEAD")
+    # Last, as gc rewrites the reflogs of every worktree aged above, as it does on ned-box.
+    gc_rewritten_worktree = age(idle_candidate("gc-rewritten-wt"))
+    git(checkout, "gc", "--quiet")
+    gc_rewritten_reflog_mtime = os.stat(idle_git_directory(gc_rewritten_worktree) / "logs" / "HEAD").st_mtime
+    garbled_reflog_worktree = age(idle_candidate("garbled-reflog-wt"))
+    with open(idle_git_directory(garbled_reflog_worktree) / "logs" / "HEAD", "a", encoding="utf-8") as reflog:
+        reflog.write("not a reflog entry\n")
 
     open_pull_request = {"number": 30, "state": "OPEN", "headRefName": "open-pr-wt",
                          "headRefOid": "a" * 40, "closedAt": None}
@@ -3723,9 +3742,20 @@ with tempfile.TemporaryDirectory() as scratch:
           removal.stdout + removal.stderr)
     check("an idle worktree's branch keeps its commits on origin",
           "idle-wt" in git(origin, "branch", "--list", "idle-wt"), removal.stdout)
+    check("an idle worktree whose reflog git gc rewrote today, adding no entry, is removed",
+          gc_rewritten_reflog_mtime > three_days_ago
+          and idle_line(removal.stdout, "gc-rewritten-wt").startswith("gc-rewritten-wt: removed")
+          and not gc_rewritten_worktree.exists(),
+          f"{gc_rewritten_reflog_mtime} {three_days_ago}\n{removal.stdout}")
+    check("an idle worktree whose reflog holds no entry is removed",
+          idle_line(removal.stdout, "emptied-reflog-wt").startswith("emptied-reflog-wt: removed"),
+          removal.stdout)
     for worktree, why in ((fresh_worktree, "it was made today"),
                           (touched_worktree, "one of its files changed today"),
                           (git_touched_worktree, "a file in its own git directory changed today"),
+                          (reflog_today_worktree, "its reflog got an entry today"),
+                          (garbled_reflog_worktree,
+                           "its reflog's newest line, unreadable as an entry, was written today"),
                           (untracked_worktree, "it holds an untracked file"),
                           (modified_worktree, "it holds an uncommitted change"),
                           (unpushed_worktree, "it holds a commit GitHub lacks"),

@@ -995,7 +995,7 @@ check("the record the writer finished is in the log-store whole, with the file i
       and (STORE / "cold-read-records" / finishes_record.name / "fast-read.md").is_file())
 log_text = "".join(path.read_text() for path in waiter_logs_of(finishes_worktree))
 check("the waiter's log says it removed the worktree with -f, and it wrote no user-alert",
-      f"removed: git -C " in log_text and f"worktree remove -f {finishes_worktree}" in log_text
+      "removed: git -C " in log_text and f"worktree remove -f {finishes_worktree}" in log_text
       and alerts_naming(finishes_worktree) == [], log_text)
 
 # A writer killed early never ships its record: the waiter ships it once the grace runs out, then removes.
@@ -1083,7 +1083,7 @@ check("the task names the worktree, the git command, git's output, its Record li
       task.get("status") == "pending"
       and task.get("subject", "").startswith(f"Deferred `git worktree remove` of {refused_worktree} did not run: `git -C ")
       and f"\nWorktree: {refused_worktree}\n" in description
-      and f"\nGit command: git -C " in description and f" worktree remove {refused_worktree}\n" in description
+      and "\nGit command: git -C " in description and f" worktree remove {refused_worktree}\n" in description
       and f"worktree remove {refused_worktree}` exited 128: " in description
       and "\nGit's output, or the error's traceback:\nfatal: " in description
       and f"Record {refused_record} (worktree {refused_worktree})\n" in description

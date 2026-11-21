@@ -1,6 +1,6 @@
 # draft-md: the write hook that routes durable-file drafting through the skill
 
-Queued for build after the `draft-md` skill exists (specification: `docs/issues/142-draft-md-skill-design.md`, § "The sequence", the paragraph "How the skill gets invoked"). User-ruled 2026-08-27: a CLAUDE.md line will not make agents invoke the skill; a PreToolUse hook might, if it does not over-trigger.
+Queued for build after the `draft-md` skill exists (specification: `docs/issues/142-draft-md-skill.tool.design.md`, § "The sequence", the paragraph "How the skill gets invoked"). User-ruled 2026-08-27: a CLAUDE.md line will not make agents invoke the skill; a PreToolUse hook might, if it does not over-trigger.
 
 **What it does.** A PreToolUse hook on Write, Edit, and NotebookEdit, in the pattern of the three guards in `.claude/guard-hooks/` (soft block; a deny message that teaches the sanctioned path; the shared approval-marker lane in `guard-approval-marker-common.py`). When the session itself writes a durable file, the hook soft-blocks and says: draft this under `draft-md`, or approve the direct write. Reason: the moment the skill must fire is the moment the session is about to write, mid-task, when skill descriptions are the last thing in mind; a hook runs at that moment deterministically.
 

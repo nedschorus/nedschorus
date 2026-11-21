@@ -63,6 +63,36 @@ def check(name, condition, detail=""):
         if detail:
             print("      " + str(detail).replace("\n", "\n      "))
 
+# Runs the runner with its save failing and, right after the run reads a recording, another
+# run's save replacing that file.
+SAVE_FAILS_AFTER_ANOTHER_RUN_SAVES_DRIVER = r'''
+import importlib.util, os, sys
+program_path, *arguments = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("run_all_test_suites", program_path)
+program = importlib.util.module_from_spec(spec)
+sys.argv = [program_path, *arguments]
+spec.loader.exec_module(program)
+real_load_recording_and_identity = program.load_recording_and_identity
+replaced = []
+
+def load_then_another_run_saves(directory, suite):
+    found = real_load_recording_and_identity(directory, suite)
+    if not replaced and found[0] is not None:
+        replaced.append(directory)
+        target = program.recording_file_for(directory, suite)
+        newer = target.with_name(target.name + ".newer")
+        newer.write_text(target.read_text())
+        os.replace(newer, target)
+    return found
+
+def save_fails(directory, recording):
+    raise OSError("injected save failure")
+
+program.load_recording_and_identity = load_then_another_run_saves
+program.save_recording = save_fails
+sys.exit(program.main(arguments))
+'''
+
 
 def git(repo, *arguments):
     return subprocess.run(["git", "-C", str(repo), "-c", "core.hooksPath=/dev/null",
@@ -99,9 +129,10 @@ class Scratch:
             commit(path, files, name)
         return path, git(path, "rev-parse", "HEAD")
 
-    def run(self, checkout, since=None, store="store", save_to=None):
+    def run(self, checkout, since=None, store="store", save_to=None, driver=None):
         self.runs += 1
-        command = [sys.executable, str(PROGRAM), "--checkout", str(checkout),
+        command = [sys.executable, *(["-c", driver] if driver else []), str(PROGRAM),
+                   "--checkout", str(checkout),
                    "--log-dir", str(self.root / f"logs-{self.runs}"),
                    "--lock-file", str(self.root / "run.lock"),
                    "--recorded-inputs-directory", str(self.root / store),
@@ -177,6 +208,28 @@ def main():
                                                                     "HEAD"))
     runner.adopt_passing_recordings_that_match_the_checkout(
         merge_commit_checkout, scratch.root / "store", [scratch.root / "pr-x-recordings"])
+    adopted_again = runner.adopt_passing_recordings_that_match_the_checkout(
+        merge_commit_checkout, scratch.root / "store", [scratch.root / "pr-x-recordings"])
+    check("a suite whose recording where adoption saves already matches adopts none of the "
+          "matching recordings under the other directories",
+          adopted_again == [], adopted_again)
+    real_load_recording = runner.load_recording
+    loads = []
+
+    def load_recording_first_finding_none(directory, suite):
+        # As when another run saves the recording between adoption's two reads of one file.
+        loads.append(directory)
+        return None if len(loads) == 1 else real_load_recording(directory, suite)
+
+    runner.load_recording = load_recording_first_finding_none
+    try:
+        adopted_from_itself = runner.adopt_passing_recordings_that_match_the_checkout(
+            merge_commit_checkout, scratch.root / "store", [scratch.root / "store"])
+    finally:
+        runner.load_recording = real_load_recording
+    check("a matching recording under a directory that names the one adoption saves into is "
+          "not adopted into it from itself",
+          adopted_from_itself == [] and len(loads) == 2, (adopted_from_itself, loads))
     # Saving apart, so this run's own recording cannot answer the next run in place of adoption.
     before = scratch.run(merge_commit_checkout, since=x_head, store="after-merge-store",
                          save_to="unread-recordings")
@@ -219,19 +272,29 @@ def main():
     check("a recording of a run that failed is not adopted, even on its own tree",
           scratch.recording("pr-fails-recordings")["exit"] == 1 and adopted == [], adopted)
 
-    scratch.run(main_checkout, save_to="read-only-recordings")
-    saved_apart = next((scratch.root / "read-only-recordings").glob("*"))
-    store_before = scratch.recording("store")
-    saved_apart.chmod(0o555)
-    try:
-        result = scratch.run(main_checkout, save_to="read-only-recordings")
-    finally:
-        saved_apart.chmod(0o755)
-    check("a recording that cannot be saved apart leaves the store as it was, and says the "
-          "earlier recording where saves go could not be removed either",
-          f"inputs of {SUITE} not recorded: " in result.stdout
-          and f"Delete {saved_apart / (SUITE + '.json')} before the next run" in result.stdout
-          and scratch.recording("store") == store_before, result.stdout)
+    # One name sorts before "store" and one after, since the runner compares the two paths.
+    for save_to in ("read-only-recordings", "unwritable-recordings"):
+        scratch.run(main_checkout, save_to=save_to)
+        saved_apart = next((scratch.root / save_to).glob("*"))
+        store_before = scratch.recording("store")
+        saved_apart.chmod(0o555)
+        try:
+            result = scratch.run(main_checkout, save_to=save_to)
+        finally:
+            saved_apart.chmod(0o755)
+        check(f"a recording that cannot be saved apart, in {save_to}, leaves the store as it "
+              f"was, and says the earlier recording where saves go could not be removed either",
+              f"inputs of {SUITE} not recorded: " in result.stdout
+              and f"Delete {saved_apart / (SUITE + '.json')} before the next run" in result.stdout
+              and scratch.recording("store") == store_before, result.stdout)
+
+    result = scratch.run(main_checkout, save_to="store",
+                         driver=SAVE_FAILS_AFTER_ANOTHER_RUN_SAVES_DRIVER)
+    check("when the save directory given is the recordings directory, a failed save keeps the "
+          "recording another run saved after this run read it",
+          f"inputs of {SUITE} not recorded: injected save failure. The recording another run "
+          f"saved while this one ran is kept" in result.stdout
+          and scratch.recording("store") is not None, result.stdout + result.stderr)
 
     no_suites = scratch.root / "no-suites"
     no_suites.mkdir()

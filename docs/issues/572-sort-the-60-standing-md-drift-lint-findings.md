@@ -36,7 +36,7 @@ They are not one kind of thing, which is why sorting comes before fixing.
 
     | `<component's directory>/design-to-main-record/user-rulings.md` | every ruling the user has given ... |
 
-is a backticked placeholder path whose variable contains a space. The lint splits on that space and reports the tail as a real path, `directory>/design-to-main-record/user-rulings.md`. It fires at `docs/design-to-main/design-to-main-state-machine-design.md:521` and `:522` and in three `docs/agents/queue/design-to-main-*` files. A reader sorting this backlog without knowing would "fix" correct template text.
+is a backticked placeholder path whose variable contains a space. The lint splits on that space and reports the tail as a real path, `directory>/design-to-main-record/user-rulings.md`. It fires at `docs/design-to-main/design-to-main-state-machine.system.design.md:521` and `:522` and in three `docs/agents/queue/design-to-main-*` files. A reader sorting this backlog without knowing would "fix" correct template text.
 
 **This needed no ruling, and the first filing of this issue was wrong to say it did.** `<` is already in the lint's `SKIP_MARKERS`, so a `<placeholder>` was already meant to be unchecked; the marker is tested per word and the span is split on whitespace first, so a placeholder containing a space lost its `<` to the split. The fix collapses each `<...>` span to one marker-bearing word before the split, restoring the reach of a rule the lint already states: PR [md-drift-lint: a placeholder containing a space is no longer read as a path](https://github.com/nedschorus/nedschorus/pull/574). Measured there: 66 before, 61 after, the five removed being exactly these five.
 

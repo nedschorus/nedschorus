@@ -74,7 +74,7 @@ record holds the reference check alone and no report to keep.
 
 WHEN A COLD-READ-CELL FAILS (nedschorus#413; the design, user-reviewed
 2026-09-16 and 2026-09-17, is
-nn-systems/cold-read/cold-read-grid-cell-failure-handling-design.md). Every
+nn-systems/cold-read/cold-read-grid-cell-failure-handling.tool.design.md). Every
 cold-read-cell whose attempt ends without a landed report is retried once,
 at once, with the same model -- no cold-read-cell is special (user-ruled
 2026-09-11) -- and the first attempt's log is kept as
@@ -281,7 +281,7 @@ RETRYING_PREFIX = "RETRYING:"
 AGENT_BINARY_DOWN_PREFIX = "AGENT-BINARY DOWN:"
 STOPPED_CELL_WRITE_CHECK_LINE = (
     "The {cell} cell was stopped before it could check for files it wrote outside its "
-    "report, so no such check ran; that is "
+    "report, and the grid could not check for it, because {reason}; that is "
     + cell_common.COLD_READ_CELL_STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE
     + ". Before "
     "you do anything else, read `git status` against the edits you know are your own. "
@@ -289,6 +289,25 @@ STOPPED_CELL_WRITE_CHECK_LINE = (
     "`git restore --staged --worktree <path>` if it is tracked, only when its content shows a reviewer wrote "
     "it, such as notes about the document under review. Ask the user about any other "
     "change you did not make, and whenever you are unsure.")
+
+# A stopped cell never reaches its own stray-write check, so the grid runs one for it
+# against the snapshot it took before launching the cells.
+STOPPED_CELLS_STRAY_WRITE_LINE = (
+    "STRAY WRITE: {path} changed after the cells launched. The grid checked for the stopped "
+    "cells {cells}, whose own check never runs, and cannot tell who changed it. {undo}")
+STRAY_WRITE_UNDO_UNTRACKED = (
+    "If its content shows a reviewer wrote it, delete it: `rm -r -- {path}`. "
+    "Ask the user about it if you did not make it and are unsure.")
+STRAY_WRITE_UNDO_TRACKED = (
+    "If its content shows a reviewer wrote it, undo it: `git restore --staged --worktree -- {path}`. "
+    "Ask the user about it if you did not make it and are unsure.")
+STRAY_WRITE_NO_UNDO_ALREADY_CHANGED = (
+    "It already had uncommitted changes before the cells launched, so no undo command is given: "
+    "one would also undo those. Read `git diff -- {path}` against the edits you know are your own, "
+    "and ask the user about any change you did not make.")
+STOPPED_CELL_LINE = "{report}: stopped before it finished{deleted}."
+WORKING_TREE_SNAPSHOT_NOT_TAKEN_REASON = "its snapshot of the working tree before the cells launched failed ({error})"
+WORKING_TREE_CHECK_FAILED_REASON = "git status failed when it checked ({error})"
 
 ALL_LANDED_OPENING = "All seven reports landed in {record_dir}, one file per reviewer."
 SOME_LANDED_OPENING = (
@@ -926,6 +945,50 @@ def cell_status_line(line: str, phrase: str) -> bool:
                for program in CELL_PROGRAM_NAMES)
 
 
+def working_tree_snapshot_or_failure_reason() -> tuple:
+    """Return (snapshot, None), or (None, why no snapshot was taken)."""
+    try:
+        return cell_common.working_tree_state(), None
+    except cell_common.WriteDetectorUnavailable as error:
+        return None, WORKING_TREE_SNAPSHOT_NOT_TAKEN_REASON.format(error=error)
+
+
+def stopped_cells_write_check_lines(stopped_report_paths: list, baseline,
+                                    baseline_failure_reason, already_reported: set) -> list:
+    """Return a line per path changed since the baseline and not yet reported, each with
+    its undo command, or, when no check can run, a line per stopped cell saying so."""
+    reason = None if baseline is not None else (
+        baseline_failure_reason or "no snapshot of the working tree was taken before the cells launched")
+    if baseline is not None:
+        try:
+            changed = sorted({name for name, _ in cell_common.working_tree_state() - baseline})
+            untracked = {entry.path for entry in git_machine_readable_output.status_entries(
+                git_machine_readable_output.run_git(
+                    cell_common.REPO_ROOT, ["status", "--porcelain", "-z", "--untracked-files=all"]))
+                if entry.code == "??"}
+        except (cell_common.WriteDetectorUnavailable,
+                git_machine_readable_output.GitCommandFailed) as error:
+            reason = WORKING_TREE_CHECK_FAILED_REASON.format(
+                error=getattr(error, "stderr", "").strip() or error)
+    if reason is not None:
+        return [f"WRITE CHECK DID NOT RUN: {path.name} — "
+                + STOPPED_CELL_WRITE_CHECK_LINE.format(cell=cell_name_of(path), reason=reason)
+                for path in stopped_report_paths]
+    changed_before = {name for name, _ in baseline}
+    cells = ", ".join(cell_name_of(path) for path in stopped_report_paths)
+    lines = []
+    for name in changed:
+        if name in already_reported:
+            continue
+        already_reported.add(name)
+        undo = (STRAY_WRITE_NO_UNDO_ALREADY_CHANGED if name in changed_before
+                else STRAY_WRITE_UNDO_UNTRACKED if name in untracked
+                else STRAY_WRITE_UNDO_TRACKED)
+        lines.append(STOPPED_CELLS_STRAY_WRITE_LINE.format(
+            path=name, cells=cells, undo=undo.format(path=shlex.quote(name))))
+    return lines
+
+
 def lift_cell_status_lines(report_path: pathlib.Path, log_lines: list) -> None:
     """Print cell status lines before successful-attempt logs are deleted."""
     for line in log_lines:
@@ -995,6 +1058,8 @@ def wait_for_cells(running: dict,
                    target_check_interval_seconds: float = 0.0,
                    cell_poll_interval_seconds: float = CELL_POLL_INTERVAL_DEFAULT_SECONDS,
                    cell_attempt_timeout_seconds: float = CELL_ATTEMPT_TIMEOUT_DEFAULT_SECONDS,
+                   working_tree_baseline=None,
+                   working_tree_baseline_failure_reason: typing.Optional[str] = None,
                    ) -> RunOutcome:
     """Retry failed cells once, unless the cause is user-clearable or the attempt
     timed out, and wait for reports, absences or a changed target."""
@@ -1006,8 +1071,17 @@ def wait_for_cells(running: dict,
     for report_path in running:
         cells_by_runtime.setdefault(
             runtime_of(cell_name_of(report_path)), []).append(cell_name_of(report_path))
+    stray_paths_reported = set()
+
+    def print_stopped_cells_write_check(stopped_report_paths):
+        for line in stopped_cells_write_check_lines(
+                stopped_report_paths, working_tree_baseline,
+                working_tree_baseline_failure_reason, stray_paths_reported):
+            print(line, flush=True)
+
     while running:
         time.sleep(cell_poll_interval_seconds)
+        timed_out_this_poll = []
         for report_path in list(running):
             attempt = running[report_path]
             code = None if attempt.process is None else attempt.process.poll()
@@ -1017,9 +1091,7 @@ def wait_for_cells(running: dict,
             if timed_out:
                 report_deleted = stop_attempt_and_delete_unfinished_report(attempt, report_path)
                 code = attempt.process.returncode
-                print(f"WRITE CHECK DID NOT RUN: {report_path.name} — "
-                      f"{STOPPED_CELL_WRITE_CHECK_LINE.format(cell=cell_name_of(report_path))}",
-                      flush=True)
+                timed_out_this_poll.append(report_path)
             if attempt.process is not None and code is None:
                 continue
             del running[report_path]
@@ -1070,6 +1142,8 @@ def wait_for_cells(running: dict,
                     else:
                         outcome.absent[name] = report
             announce_agent_binary_down(cells_by_runtime, outcome)
+        if timed_out_this_poll:
+            print_stopped_cells_write_check(timed_out_this_poll)
         if running and time.monotonic() - last_target_check >= target_check_interval_seconds:
             last_target_check = time.monotonic()
             move = target_move()
@@ -1077,14 +1151,14 @@ def wait_for_cells(running: dict,
                 for report_path, attempt in running.items():
                     report_deleted = stop_attempt_and_delete_unfinished_report(attempt, report_path)
                     outcome.stopped.append(cell_name_of(report_path))
-                    # Stopped cells never reach the post-model stray-write check; absence of results is not a clean check.
                     log_lines = (attempt.stderr_path.read_text(encoding="utf-8").splitlines()
                                  if attempt.stderr_path.is_file() else [])
                     lift_cell_status_lines(report_path, log_lines)
-                    print(f"WRITE CHECK DID NOT RUN: {report_path.name} — "
-                          f"{STOPPED_CELL_WRITE_CHECK_LINE.format(cell=cell_name_of(report_path))}"
-                          f"{STOPPED_CELL_UNFINISHED_REPORT_DELETED_PHRASE if report_deleted else ''}",
+                    print(STOPPED_CELL_LINE.format(
+                        report=report_path.name,
+                        deleted=STOPPED_CELL_UNFINISHED_REPORT_DELETED_PHRASE if report_deleted else ""),
                           flush=True)
+                print_stopped_cells_write_check(list(running))
                 return outcome._replace(moved_mid_run=move)
     return outcome
 
@@ -1257,6 +1331,7 @@ def main() -> int:
 
     # Outside the checkout, like the cold-read-fast-read's: the cell's prompt is
     # not part of the record, and the claude launcher needs it as a file.
+    working_tree_baseline, working_tree_baseline_failure_reason = working_tree_snapshot_or_failure_reason()
     with tempfile.TemporaryDirectory(prefix="cold-read-grid-") as scratch:
         running = launch_cells(frozen_target, record_dir, target)
         running.update(launch_what_should_be_code_question_cell(
@@ -1269,7 +1344,8 @@ def main() -> int:
             float(os.environ.get(CELL_POLL_INTERVAL_OVERRIDE_VARIABLE)
                   or CELL_POLL_INTERVAL_DEFAULT_SECONDS),
             float(os.environ.get(CELL_ATTEMPT_TIMEOUT_OVERRIDE_VARIABLE)
-                  or CELL_ATTEMPT_TIMEOUT_DEFAULT_SECONDS))
+                  or CELL_ATTEMPT_TIMEOUT_DEFAULT_SECONDS),
+            working_tree_baseline, working_tree_baseline_failure_reason)
     # Before any marker goes in and before shipping: the store refuses changed bytes.
     question_4_line = what_should_be_code_question_closing_line(record_dir, outcome)
     # Retain the poll result if the changed bytes were restored before the final comparison.
