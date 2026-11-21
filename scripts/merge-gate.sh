@@ -369,20 +369,27 @@ if [ -n "$verdict_review" ]; then
        fi
        marks_refused="$MERGE_ACCOUNT's latest review with a verdict, https://github.com/$REPO/pull/$PR#pullrequestreview-$verdict_review_id ($verdict_review_state), lacks the marks scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py writes: $marks_missing."
        marks_unread="It was posted some other way, such as by hand with gh pr review, so $unread."
-       marks_rerun="Then run the gate again: scripts/merge-gate.sh $PR $head <submitted_at>, where submitted_at is what gh api repos/$REPO/pulls/$PR/reviews/<id> --jq .submitted_at prints for the review id the posting program's success line names."
+       marks_finding_category="Give each inline comment the finding_category merge-lane-2 judges it to have, one of must-fix-now, fix-next, fix-in-maintenance or file-for-later: must-fix-now only for a finding that blocks the merge, since the posting program posts a review with a must-fix-now comment as a request for changes and refuses an approval that has one."
+       marks_rerun="run the gate again: scripts/merge-gate.sh $PR $head <submitted_at>, where submitted_at is what gh api repos/$REPO/pulls/$PR/reviews/<id> --jq .submitted_at prints for the review id the posting program's success line names."
        # The posting program records a review on the --head-commit it is given, so reposting an older
        # commit's verdict on the head would let the stale-approval check below pass unreviewed commits.
        if [ "$verdict_review_commit" = "$head" ]; then
          fail "$marks_refused" "$marks_unread" \
-           "Write a review file holding that review's verdict, body and inline comments, each comment with its finding_category, in the form the docstring at the top of scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py describes for --github-account $MERGE_ACCOUNT." \
+           "Write that review's verdict, body and inline comments, if it has any, into a review file for the posting program, in the form the docstring at the top of scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py describes for --github-account $MERGE_ACCOUNT." \
+           "$marks_finding_category A comment posted by hand carries no category on GitHub, so decide each one; keep the verdict that review gave." \
            "Post it with: python3 scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py --pull-request $PR --head-commit $verdict_review_commit --github-account $MERGE_ACCOUNT <review file>" \
-           "Leave the review above as it is: the gate reads only $MERGE_ACCOUNT's latest review with a verdict." \
-           "$marks_rerun"
+           "Leave the unmarked review at https://github.com/$REPO/pull/$PR#pullrequestreview-$verdict_review_id on GitHub as it is: the gate reads only $MERGE_ACCOUNT's latest review with a verdict, which the review you post becomes." \
+           "Then $marks_rerun"
        else
          fail "$marks_refused" "$marks_unread" \
            "That review covers $verdict_review_commit, and the nc-head-commit is now $head, so do not post its verdict again: a review posted now is recorded on $head, which no one has reviewed." \
-           "Have $head reviewed, and post that review with: python3 scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py --pull-request $PR --head-commit $head --github-account $MERGE_ACCOUNT <review file>" \
-           "$marks_rerun"
+           "Leave the unmarked review on GitHub as it is: the review of $head that you post becomes the one the gate reads." \
+           "merge-lane-2 commissions a new review of $head itself, as its seat-brief says for every pull request, starting with: scripts/pull-request-review-plan.py --pull-request $PR" \
+           "When that review is done, write merge-lane-2's verdict, body and the reviewers' findings into a review file for the posting program, in the form the docstring at the top of scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py describes for --github-account $MERGE_ACCOUNT." \
+           "$marks_finding_category" \
+           "Post it with: python3 scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py --pull-request $PR --head-commit $head --github-account $MERGE_ACCOUNT <review file>" \
+           "When that review requests changes, the author's fix-round comes next, so do not run the gate until a later review approves." \
+           "When it approves, $marks_rerun"
        fi ;;
     *) cannot "python3 $VERDICT_REVIEW_POSTING_PROGRAM_MARKS_CHECK_PROGRAM_PATH exited $marks_check_status when the gate gave it review $verdict_review_id, so the gate cannot tell whether that review carries the posting program's marks; any error it printed is just above this line." \
          "Do not run the gate again, do not merge pull request $PR another way, and do not repair that program or python3 yourself." \

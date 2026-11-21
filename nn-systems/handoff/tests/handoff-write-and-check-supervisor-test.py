@@ -11,6 +11,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -1917,7 +1918,7 @@ def run_completed_task_prune_cases(workspace: Path):
     line = prune_line(completed)
     check("a copy to the log-store that fails keeps every completed task, names rsync's exit, and still writes the handoff",
           fixture.present("1.json") and fixture.present("2.json") and "failed, every completed task kept" in line
-          and "RuntimeError: rsync of the completed tasks" in line and "exited 23" in line
+          and "RuntimeError: rsync of the completed tasks" in line and re.search(r"exited [1-9][0-9]*: ", line)
           and fixture.handoff_written() and completed.returncode == 1, f"exit {completed.returncode}: {line}")
 
     # subprocess gives a negative exit for a signal, so a check for nonzero exits alone would miss it.
@@ -1959,6 +1960,8 @@ def run_completed_task_prune_cases(workspace: Path):
 
 
 # Runs the command ssh was given on this machine, after the options and the host.
+INSTALLED_RSYNC_IS_OPENRSYNC = subprocess.run(
+    ["rsync", "--version"], capture_output=True, text=True, check=False).stdout.startswith("openrsync")
 RUN_REMOTE_COMMAND_HERE_SSH_STUB = 'while [ "$1" = -o ]; do shift 2; done\nshift\nexec sh -c "$*"\n'
 # Lets the prune's rsync through, so that what follows in a stub answers only the sha256sum.
 RSYNC_ONLY_SSH_STUB_PREFIX = 'case "$*" in *"rsync --server"*) ' + RUN_REMOTE_COMMAND_HERE_SSH_STUB.replace("\n", "; ") + ';; esac\n'
@@ -2027,25 +2030,30 @@ def run_completed_task_prune_remote_store_cases(workspace: Path):
     check("over ssh, the remedy names only the copy sha256sum could not read, not a readable copy whose name it contains",
           f"`ls -l` on 11.json in {fixture.store_list_directory}" in line and "1.json," not in line, line)
 
-    # rsync reaches the store over ssh but cannot write there, so it exits 23 after connecting.
-    fixture = PruneFixture(workspace, "remote-store-unwritable")
-    fixture.task("1.json", task_bytes(1, "completed"), stored=False)
-    stubs = stub_ssh_directory(fixture.root / "remote-store-unwritable-stubs", RUN_REMOTE_COMMAND_HERE_SSH_STUB)
-    fixture.store_list_directory.chmod(0o555)
-    try:
-        line = prune_line(fixture.run(
-            "carry on\n", TRANSCRIPT_MIRROR_DESTINATION=f"stubhost:{fixture.store_root}",
-            PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
-    finally:
-        fixture.store_list_directory.chmod(0o755)
-    check("over ssh, an rsync that cannot write the store keeps every completed task",
-          fixture.present("1.json") and "kept every completed task" in line and "exited 23" in line, line)
-    check("over ssh, an rsync that cannot write the store gets the log-store remedy, not the ssh remedy",
-          "could not be updated" in line and f"`ls -ld {fixture.store_list_directory}`" in line
-          and "ssh stubhost true" not in line, line)
+    # The stub ssh runs the receiving rsync here, standing for ned-box's GNU rsync, which exits 23
+    # when it cannot write the store; the Mac's openrsync receiving exits 1 instead.
+    if INSTALLED_RSYNC_IS_OPENRSYNC:
+        print("SKIP  [this machine cannot run it] over ssh, an rsync that cannot write the store: the "
+              "installed rsync is openrsync, not the GNU rsync that receives on ned-box")
+    else:
+        fixture = PruneFixture(workspace, "remote-store-unwritable")
+        fixture.task("1.json", task_bytes(1, "completed"), stored=False)
+        stubs = stub_ssh_directory(fixture.root / "remote-store-unwritable-stubs", RUN_REMOTE_COMMAND_HERE_SSH_STUB)
+        fixture.store_list_directory.chmod(0o555)
+        try:
+            line = prune_line(fixture.run(
+                "carry on\n", TRANSCRIPT_MIRROR_DESTINATION=f"stubhost:{fixture.store_root}",
+                PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
+        finally:
+            fixture.store_list_directory.chmod(0o755)
+        check("over ssh, an rsync that cannot write the store keeps every completed task",
+              fixture.present("1.json") and "kept every completed task" in line and "exited 23" in line, line)
+        check("over ssh, an rsync that cannot write the store gets the log-store remedy, not the ssh remedy",
+              "could not be updated" in line and f"`ls -ld {fixture.store_list_directory}`" in line
+              and "ssh stubhost true" not in line, line)
 
-    # rsync exits 3 and 11 after connecting too, and need the same remedy as 23.
-    for exit_code in (3, 11):
+    # rsync exits 3, 11 and 23 only after connecting, and each needs the log-store remedy.
+    for exit_code in (3, 11, 23):
         fixture = PruneFixture(workspace, f"remote-rsync-exit-{exit_code}")
         fixture.task("1.json", task_bytes(1, "completed"), stored=False)
         stubs = stub_ssh_directory(fixture.root / f"remote-rsync-exit-{exit_code}-stubs", RUN_REMOTE_COMMAND_HERE_SSH_STUB)

@@ -113,7 +113,7 @@ with tempfile.TemporaryDirectory() as scratch:
                 path.unlink()
 
     def run(ned_box_reference=None, installer_exit=0, task_lists_directory=None,
-            mac_reference=None, failed_line=None, keep_tasks=False, remove_exit=0):
+            mac_reference=None, failed_line=None, keep_tasks=False, remove_exit=0, argv=()):
         reset(keep_tasks)
         os.environ["STAND_IN_INSTALLER_EXIT"] = str(installer_exit)
         os.environ["STAND_IN_REMOVE_NOT_IN_TABLE_EXIT"] = str(remove_exit)
@@ -133,7 +133,7 @@ with tempfile.TemporaryDirectory() as scratch:
         os.chdir(repository)
         try:
             with redirect_stdout(printed), redirect_stderr(errors):
-                code = after_merge.main(environment, argv=[])
+                code = after_merge.main(environment, argv=list(argv))
         finally:
             os.chdir(before)
             after_merge.REFERENCE_CHECKOUT_PATH_BY_MACHINE_NAME[after_merge.MAC] = saved_mac
@@ -167,11 +167,14 @@ with tempfile.TemporaryDirectory() as scratch:
           and "the --install step failed: it exited 1, so ned-box may not run every job"
               in written[0]["description"]
           and "FAILED: the crontab write did not hold" in written[0]["description"]
-          and f"then run `python3 {repository}/nn-systems/general-tools/"
-              "install-scheduled-jobs-on-this-machine.py --install && python3 "
-              f"{repository}/nn-systems/general-tools/install-scheduled-jobs-on-this-machine.py "
-              "--remove-not-in-table` on ned-box" in written[0]["description"]
-          and "once both exit 0 it marks this task completed" in written[0]["description"]
+          and f"Then run `cd {repository} && python3 {after_merge.PROGRAM} --print-outcome` on "
+              "ned-box: it runs both installer steps, `--install` and then "
+              "`--remove-not-in-table`, again, marks this task completed when both exit 0 or "
+              "rewrites this description with the new failure" in written[0]["description"]
+          and "\nWhen the fix needs something only the user can do, tell the user"
+              in written[0]["description"]
+          and written[0]["description"].endswith(
+              "The installer printed:\nFAILED: the crontab write did not hold")
           and "KEPT line" not in written[0]["description"],
           (code, errors, written))
 
@@ -328,13 +331,14 @@ with tempfile.TemporaryDirectory() as scratch:
           code == 1 and "FAILED — after the latest merge into ned-box's reference-checkout" in errors
           and "writing the task into the task list directory" in errors
           and "NotADirectoryError" in errors
-          and "\nIf you are reboot-test, put right, on ned-box, what stopped that write, "
+          and "\nIf you are reboot-test, also put right, on ned-box, what stopped the task write, "
               f"such as the permissions of {not_a_directory}/nedsnodes-reboot-test-tasks" in errors
-          and f"Then run `cd {repository} && python3 {after_merge.PROGRAM}` on ned-box, which runs "
-              "both steps again.\nIf a step fails again, the program writes the failure as a "
-              "task on your task list and exits 0 with nothing printed" in errors
-          and "\nIf both steps exit 0, the program prints nothing, writes no task and exits 0"
+          and f"\nIf you are reboot-test, then run `cd {repository} && python3 "
+              f"{after_merge.PROGRAM} --print-outcome` on ned-box: it runs both installer steps, "
+              "`--install` and then `--remove-not-in-table`, again and prints how they ended.\n"
               in errors
+          and errors.index("what stopped the task write") < errors.index("then run `cd")
+              < errors.index("If you are a subagent")
           and "If you are any other agent, send this whole message to reboot-test with Claude Code's "
               "SendMessage tool, addressed to reboot-test" in errors
           and "If you are the user, paste this whole message into reboot-test's session." in errors
@@ -350,6 +354,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and "NotADirectoryError" in errors
           and "If you are reboot-test and the installer printed a KEPT line, that crontab line "
               "runs a job the table does not give ned-box" in errors
+          and errors.index("printed a KEPT line") < errors.index("then run `cd")
           and "KEPT: not in the table — the crontab line" in errors, (code, errors))
 
     code, calls, printed, errors = run(mac_reference=repository)
@@ -369,7 +374,54 @@ with tempfile.TemporaryDirectory() as scratch:
           "ned-box, and prints the FAILED message",
           code == 1 and tasks() == [] and "FAILED — after the latest merge into the Mac's" in errors
           and "the --install step failed" in errors
-          and "reboot-test's task list is on ned-box" in errors, (code, errors))
+          and "reboot-test's task list is on ned-box" in errors
+          and f"If you are reboot-test, then ask the user to run `cd {repository} && python3 "
+              f"{after_merge.PROGRAM} --print-outcome` in a Terminal on the Mac, which ned-box "
+              "cannot run commands on, and to paste what it prints into your session" in errors
+          and "what stopped the task write" not in errors, (code, errors))
+
+    outcome = after_merge.PRINT_OUTCOME_COMMAND_LINE_FLAG
+    code, calls, printed, errors = run(ned_box_reference=repository, installer_exit=1,
+                                       argv=[outcome])
+    check("--print-outcome after a failure written as a task prints the failed step and the "
+          "task's file name and directory",
+          code == 0 and errors == ""
+          and printed == f"The --install step failed again on ned-box (exit 1); its output is in "
+                         f"the open task 1.json in {list_directory}.\n",
+          (code, printed, errors))
+    code, calls, printed, errors = run(ned_box_reference=repository, keep_tasks=True,
+                                       argv=[outcome])
+    open_names = [path.name for path in sorted(list_directory.glob("*.json"))]
+    check("--print-outcome after both steps succeed prints that, naming the tasks it marked "
+          "completed",
+          code == 0 and errors == "" and printed.startswith(
+              "Both installer steps, --install and then --remove-not-in-table, exited 0 on "
+              "ned-box; open tasks marked completed: ")
+          and all(name in printed for name in open_names), (code, printed, errors))
+    code, calls, printed, errors = run(ned_box_reference=repository, argv=[outcome])
+    check("--print-outcome with no open task says none was marked",
+          code == 0 and printed.endswith("open tasks marked completed: none.\n"), printed)
+    run(ned_box_reference=repository, installer_exit=1)
+    list_directory.chmod(0o500)
+    try:
+        code, calls, printed, errors = run(ned_box_reference=repository, keep_tasks=True,
+                                           argv=[outcome])
+    finally:
+        list_directory.chmod(0o700)
+    check("--print-outcome reports an open task it could not mark completed, which the hook's "
+          "run leaves unreported, and still exits 0",
+          code == 0 and errors == "" and "but marking the open task completed failed: "
+          "PermissionError" in printed, (code, printed, errors))
+    code, calls, printed, errors = run(mac_reference=repository, argv=[outcome])
+    check("--print-outcome on the Mac after both steps succeed says so",
+          code == 0 and printed == "Both installer steps, --install and then "
+          "--remove-not-in-table, exited 0 on the Mac.\n", (code, printed, errors))
+    code, calls, printed, errors = run(argv=[outcome])
+    check("--print-outcome outside a reference-checkout says nothing was run and names both "
+          "reference-checkouts",
+          code == 0 and calls == [] and "is not a reference-checkout, so nothing was run; run "
+          f"this in {elsewhere} on ned-box or " in printed, (code, calls, printed))
+    reset()
 
     outside = scratch / "not-a-repository"
     outside.mkdir()
