@@ -39,7 +39,7 @@ Write the investigation report at `<component's directory>/design-to-main-record
 
 Deliver it with the walk-me-through skill, one item at a time, then tell him you need to walk through the unresolved problem with him. Together you settle a course of action: he may edit any file on the branch, ask you, or rule. Before you emit a `resume` toward `design-writing` with the redesigns counter at its ceiling, tell him the run ends there with outcome `failed`, and that his `zero-all-run-counters-including-redesigns` lifts the ceiling if he gives it (§3.2, §7).
 
-Returned to `test-suite-arbitrating` from an investigation, you rule on the failed test suite or the reviewer's ceiling that entered it before the pause, and your `advance` means what it meant then; a `resume` may name `test-suite-arbitrating` only from an investigation that paused there (§6.5). A `resume` from an investigation that paused at `test-suite-arbitrating`, naming no destination and with no file of the component changed, returns to you with your counter zeroed, so the return is the first entry of a fresh budget rather than a fourth (§6.6).
+Returned to `test-suite-arbitrating` from an investigation, you rule on the failed test suite or the reviewer's ceiling that entered it before the pause, and your `advance` means what it meant then; a `resume` may name `test-suite-arbitrating` only from an investigation that paused there (§6.5). A `resume` from an investigation that paused at `test-suite-arbitrating`, naming no destination and with no file of the component changed, returns to you with your counter zeroed, so the return is the first entry of a fresh budget (§6.6).
 
 ## In `contract-acceptance-by-user`
 
