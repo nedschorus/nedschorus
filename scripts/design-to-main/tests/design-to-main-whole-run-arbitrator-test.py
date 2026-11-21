@@ -182,6 +182,19 @@ class ResumingFromTheArbitratorsThirdEntry(unittest.TestCase):
         self.assertEqual(self.arbitrator_launches(machine), 3)
         self.assertEqual(run.counters.value("arbitrator-rulings"), 1)
 
+    def test_a_plain_resume_after_the_user_edited_the_implementation_routes_on_the_edit(self):
+        # Section 6.6: the diff of the component's files decides, even in the
+        # investigation the arbitrator's third entry opened.
+        machine, run, record = self.open_the_third_entry_investigation()
+        edited = record.absolute(fixture.COMPONENT_DIRECTORY + "/widget_counter.py")
+        edited.parent.mkdir(parents=True, exist_ok=True)
+        edited.write_text("# the implementation, edited by the user in the investigation\n")
+        machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "72")
+        self.assertEqual(run.current_state, T.IMPLEMENTATION_REVIEWING)
+        self.assertEqual(self.arbitrator_launches(machine), 2)
+
     def test_a_resume_naming_a_destination_goes_there(self):
         machine, run, record = self.open_the_third_entry_investigation()
         machine.launcher.script.append(
