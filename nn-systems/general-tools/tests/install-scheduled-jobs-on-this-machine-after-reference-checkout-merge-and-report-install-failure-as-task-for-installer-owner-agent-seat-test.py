@@ -38,6 +38,7 @@ _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 SUBJECT = after_merge.SCHEDULED_JOBS_INSTALLER_FAILURE_TASK_SUBJECT_FOR_OWNING_AGENT_SEAT_TASK_LIST
+METADATA_KEY = after_merge.SCHEDULED_JOBS_INSTALLER_FAILURE_TASK_MARKER_METADATA_KEY
 NED_BOX_OVERRIDE = after_merge.NED_BOX_REFERENCE_CHECKOUT_PATH_TEST_OVERRIDE_ENVIRONMENT_VARIABLE
 failures = 0
 
@@ -162,6 +163,7 @@ with tempfile.TemporaryDirectory() as scratch:
           code == 0 and calls == ["--install"] and errors == "" and printed == ""
           and len(written) == 1 and written[0]["status"] == "pending"
           and written[0]["subject"] == SUBJECT
+          and written[0].get("metadata") == {METADATA_KEY: True}
           and "the --install step failed: it exited 1, so ned-box may not run every job"
               in written[0]["description"]
           and "FAILED: the crontab write did not hold" in written[0]["description"]
@@ -188,17 +190,51 @@ with tempfile.TemporaryDirectory() as scratch:
     for task_id in ("9", "10"):
         (list_directory / f"{task_id}.json").write_text(json.dumps(
             {"id": task_id, "subject": SUBJECT, "description": "an older failure",
-             "status": "pending", "blocks": [], "blockedBy": []}), encoding="utf-8")
+             "status": "pending", "blocks": [], "blockedBy": [],
+             "metadata": {METADATA_KEY: True}}), encoding="utf-8")
     code, calls, printed, errors = run(ned_box_reference=repository, installer_exit=1,
                                        failed_line="FAILED: with several open", keep_tasks=True)
     written = {task["id"]: task for task in tasks()}
-    check("a failure while several tasks of the subject are open opens no new task and rewrites "
-          "every open one, 9.json and 10.json alike, with the latest failure",
+    check("a failure while several installer-failure tasks are open opens no new task and "
+          "rewrites every open one, 9.json and 10.json alike, with the latest failure",
           code == 0 and errors == "" and sorted(written) == ["1", "10", "9"]
           and all("FAILED: with several open" in task["description"]
                   for task in written.values()), (code, errors, written))
     for task_id in ("9", "10"):
         (list_directory / f"{task_id}.json").unlink()
+
+    reset()
+    for task_id, subject, metadata in (
+            ("1", "a subject the program no longer writes", {METADATA_KEY: True}),
+            ("2", SUBJECT, None), ("3", SUBJECT, ["not", "an", "object"])):
+        record = {"id": task_id, "subject": subject, "description": "an older failure",
+                  "status": "pending", "blocks": [], "blockedBy": []}
+        if metadata is not None:
+            record["metadata"] = metadata
+        (list_directory / f"{task_id}.json").write_text(json.dumps(record), encoding="utf-8")
+    code, calls, printed, errors = run(ned_box_reference=repository, installer_exit=1,
+                                       failed_line="FAILED: under another subject", keep_tasks=True)
+    written = {task["id"]: task for task in tasks()}
+    check("a failure while a task carrying the installer-failure metadata key is open under "
+          "another subject rewrites that task and opens no new one, and leaves a task of the "
+          "subject without the key untouched",
+          code == 0 and errors == "" and sorted(written) == ["1", "2", "3"]
+          and "FAILED: under another subject" in written["1"]["description"]
+          and written["2"]["description"] == written["3"]["description"] == "an older failure",
+          (code, errors, written))
+    code, calls, printed, errors = run(ned_box_reference=repository, keep_tasks=True)
+    written = {task["id"]: task for task in tasks()}
+    check("when both steps succeed, a task carrying the installer-failure metadata key under "
+          "another subject is marked completed, and a task of the subject without the key "
+          "stays open",
+          code == 0 and errors == printed == "" and written["1"]["status"] == "completed"
+          and written["2"]["status"] == written["3"]["status"] == "pending",
+          (code, errors, written))
+    # The next case needs one open task described by "FAILED: with several open".
+    reset()
+    code, calls, printed, errors = run(ned_box_reference=repository, installer_exit=1)
+    code, calls, printed, errors = run(ned_box_reference=repository, installer_exit=1,
+                                       failed_line="FAILED: with several open", keep_tasks=True)
 
     list_directory.chmod(0o500)
     try:
@@ -348,10 +384,10 @@ with tempfile.TemporaryDirectory() as scratch:
     code, calls, printed, errors = run(ned_box_reference=repository, installer_exit=1,
                                        argv=[outcome])
     check("--print-outcome after a failure written as a task prints the failed step and the "
-          "task's subject and directory",
+          "task's file name and directory",
           code == 0 and errors == ""
           and printed == f"The --install step failed again on ned-box (exit 1); its output is in "
-                         f"the open task with the subject \"{SUBJECT}\" in {list_directory}.\n",
+                         f"the open task 1.json in {list_directory}.\n",
           (code, printed, errors))
     code, calls, printed, errors = run(ned_box_reference=repository, keep_tasks=True,
                                        argv=[outcome])
