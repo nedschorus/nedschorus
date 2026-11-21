@@ -168,7 +168,9 @@ The classifier gets its own cases in `nn-systems/cold-read/tests/cold-read-cell-
 - the weekly limit: line 1 of `nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/2384-each-round-of-a-pull-request-runs-its-2026-11-02-2/claude-hunt-deep.md.attempt-1.stderr.log`, run on ned-box;
 - the Fable limit: line 2 of `nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/2026-09-11-SKILL-2/2026-09-11-SKILL-2--claude-hunt-floor.md.stderr.log`, run on the Mac.
 
-The `logged-out` input is the capture of section 4. `agent-binary-missing`, `no-report` and `exit-N` come from the program's own branches and need no captured text.
+The `logged-out` input is the capture of section 4. `agent-binary-missing`, `invalid-answer`, `no-report` and `exit-N` come from the program's own branches and need no captured text.
+
+`invalid-answer` gets its own cases in `nn-systems/cold-read/tests/cold-read-cell-common-test.py`. A terminology cold-read-cell run on a stub agent-binary that returns no answer, an answer that breaks the schema, or an answer in which more than half the flags break a rule, each on the Claude or the Codex cold-read-cell, exits 1 with no report and a cause line naming `invalid-answer`. An invalid answer from the first model of a chain leaves the next model to write the report.
 
 ## 9. The skill text that changes with it
 
