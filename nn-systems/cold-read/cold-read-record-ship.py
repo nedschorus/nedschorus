@@ -276,6 +276,20 @@ PROVENANCE_COMMENT_PREFIX = "<!-- provenance:"
 # listing of the store; the record's name and a random part keep two
 # shipments apart.
 STAGING_DIRECTORY_PREFIX = ".ship-staging-"
+
+
+def cold_read_records_entry_name_is_shipment_staging_directory(name: str) -> bool:
+    """Whether an entry of a cold-read-records directory is a shipment's
+    staging copy, left there when a shipment stopped before removing it, and
+    so holds the same files as a record without being one."""
+    return name.startswith(STAGING_DIRECTORY_PREFIX)
+
+
+def cold_read_record_directories_listed_without_shipment_staging_directories(records_directory: pathlib.Path) -> list:
+    """The record directories of a cold-read-records directory, sorted, without
+    shipments' staging copies. Raise OSError when it cannot be listed."""
+    return sorted(entry for entry in pathlib.Path(records_directory).iterdir()
+                  if entry.is_dir() and not cold_read_records_entry_name_is_shipment_staging_directory(entry.name))
 # Marks the one ssh call that runs the placing step, so a test's stub `ssh`
 # can tell it from the inventory.
 PLACE_STAGED_FILES_MARKER = "# cold-read-record-ship: place staged files"

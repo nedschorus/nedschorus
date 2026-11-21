@@ -54,6 +54,10 @@ def build(root):
     write(records / "first-review-2026-10-01/triage.md",
           "# Triage\nA1: the user ruled \"keep it small\" (walk x, item 2).\nA2: agent fixed a typo.\n")
     write(records / "6-plain-2026-10-02/cold-read-triage.md", "the user ruled on six\n")
+    # An interrupted shipment's staging copy holds the same files as its record, and is no second record.
+    staging = records / ".ship-staging-first-review-2026-10-01-0123456789ab"
+    write(staging / "target/docs/issues/5-old-name-design.md", "# Five\n")
+    write(staging / "triage.md", "# Triage\nA1: the user ruled \"keep it small\" (walk x, item 2).\n")
 
     walk = log_store / "walk"
     write(walk / "first-review-2026-10-01-minutes.md",
