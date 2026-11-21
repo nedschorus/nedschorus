@@ -659,6 +659,24 @@ machine.seat("alpha", [
     *background_bash_launch("bk1", "python3 scripts/a.py", at(-30), "tb1", description="A"),
     assistant("Waiting."), turn_end()])
 machine.script(judged(True, "Your background command \"A\" (bk1) started 30 minutes ago. Is it "
+                            "taking longer than expected?"),
+               {"sends": [send_to("alpha", is_error=True)], "answer": {"sent": False, "reason": "r"}})
+machine.run(0)
+check("rule 5: a message whose send failed asks about nothing",
+      machine.events("judge_answer")[0]["running_work_asked_about"] == [], machine.events())
+answered_with_a_tool_call_and_idle_again(machine, 1)
+machine.script(judged(False, reason="r"))
+machine.run(8)
+calls, judge_facts = rule_five_judge_facts(machine)
+check("rule 5: a command named in a message whose send failed is handed to the judge again",
+      ids_handed_to_judge(judge_facts) == ["bk1"], calls)
+
+machine = Machine()
+machine.seat("alpha", [
+    user("go"),
+    *background_bash_launch("bk1", "python3 scripts/a.py", at(-30), "tb1", description="A"),
+    assistant("Waiting."), turn_end()])
+machine.script(judged(True, "Your background command \"A\" (bk1) started 30 minutes ago. Is it "
                             "taking longer than expected?"), sent_ok())
 machine.run(0)
 machine.append("alpha", *background_bash_launch("bk2", "timeout 1h python3 scripts/b.py", at(1),
