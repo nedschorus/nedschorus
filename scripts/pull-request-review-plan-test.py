@@ -1324,8 +1324,9 @@ def run_architecture_overview_claim_check_cases(fixture):
     fixture.configure_github_answers(head)
     blob = fixture.git_command("rev-parse", f"{head}:{FIXTURE_OVERVIEW_PATH}")
     result = fixture.run_review_plan(*flag)
-    check("an added overview with no claim-check report is refused, naming the overview and the command that checks it",
+    check("an added overview with no claim-check report is refused, naming the head's 12-character short hash, the overview and the command that checks it",
           refusal_has_expected_prefix(result) and not result.stdout
+          and f"the overview's text at head {head[:12]} shows that no " in result.stderr
           and f"{FIXTURE_OVERVIEW_PATH} (git blob {blob[:12]} at head): looked " in result.stderr
           and "newest report found: none" in result.stderr
           and f"--overview {FIXTURE_OVERVIEW_PATH}\n" in result.stderr, result.stderr)
