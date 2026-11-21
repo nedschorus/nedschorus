@@ -1553,6 +1553,23 @@ def test_print_block():
               "changes and has not yet approved the author's fixes. No #follow_up_request block was printed.\n"
               f"After ned-review-merge posts an approving review of pull request {NUMBER}, run: "
               f"python3 {program.PROGRAM} {NUMBER} {PRINT_BLOCK}\n"), err)
+    posted_approval = {"state": program.load_script_beside_this_one(program.POSTING_PROGRAM_FILE_NAME)
+                       .EVENT_STATES["COMMENT"], "body": "APPROVE\n\nThe review body."}
+    code, out, err = print_block([merge_lane_review(1, **posted_approval)],
+                                 [merge_lane_comment(10, 1, "**fix-next** Rename it.")])
+    check(f"{PRINT_BLOCK} reads merge-lane-2's approval posted as a COMMENT review on a pull request it opened",
+          code == 0 and err == "" and out == (f"#follow_up_request pull request {NUMBER}\n"
+                                               "1. fix-next: `scripts/thing.py:3`: Rename it.\n"), out + err)
+    code, out, err = print_block([merge_lane_review(1, state="COMMENTED", body="REQUEST_CHANGES\n\n**Blocking: 1**")],
+                                 [merge_lane_comment(10, 1, "**fix-next** Rename it.")])
+    check(f"{PRINT_BLOCK} refuses when merge-lane-2's only COMMENT verdict requests changes",
+          code == 1 and out == "" and "has no approving review" in err, out + err)
+    code, out, err = print_block([merge_lane_review(1, state="CHANGES_REQUESTED"),
+                                  merge_lane_review(2, state="COMMENTED", body="APPROVE\n\nA comment.")],
+                                 [merge_lane_comment(10, 1, "**fix-next** Rename it.")])
+    check(f"{PRINT_BLOCK} does not read a COMMENT review that opens with APPROVE as an approval where merge-lane-2 "
+          "gives its verdicts their own review states",
+          code == 1 and out == "" and "has no approving review" in err, out + err)
     code, out, err = print_block([merge_lane_review(1)], [merge_lane_comment(10, 1, "Rename it.")])
     check(f"{PRINT_BLOCK} refuses a merge-lane-2 comment with no mark, naming it, and says how to write the block "
           "by hand",
