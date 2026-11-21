@@ -4,7 +4,9 @@
 The program is loaded by path and its main() is called in this process with a
 scratch --state-directory and a fake `gh` first on PATH. The fake gh logs its
 arguments and prints the pages a case writes, as `gh api graphql --paginate
---slurp` prints them, or exits with the code and error a case writes.
+--slurp` prints them, or exits with the code and error a case writes. The idle
+sweep's run_headless is replaced by a fake sender that logs its prompt and
+returns the outcome a case sets, so the idle sweep's own check judges it.
 
 Run: python3 scripts/merge-lane-unreviewed-prs-count-then-next-agent-seat-go-ahead-to-open-surviving-mutant-test-prs-test.py
 """
@@ -76,6 +78,7 @@ class Case:
             (self.state / program.AGENT_SEATS_FILE_NAME).write_text("\n".join(seats) + "\n\n")
         if released is not None:
             (self.state / program.RELEASED_FILE_NAME).write_text(released)
+        self.sender_answers()
 
     def gh_answer(self, stdout="", exit_code=0, stderr=""):
         (self.directory / "gh-answer.json").write_text(
@@ -83,6 +86,8 @@ class Case:
 
     def run(self, *extra):
         saved_path = os.environ["PATH"]
+        saved_run_headless = program.idle_sweep.run_headless
+        program.idle_sweep.run_headless = self.fake_run_headless
         os.environ["PATH"] = f"{self.directory / 'bin'}{os.pathsep}{saved_path}"
         os.environ["GO_AHEAD_TEST_DIRECTORY"] = str(self.directory)
         output = io.StringIO()
@@ -91,12 +96,31 @@ class Case:
                 code = program.main(["--state-directory", str(self.state), *extra])
         finally:
             os.environ["PATH"] = saved_path
+            program.idle_sweep.run_headless = saved_run_headless
         return code, output.getvalue()
 
     def released(self):
         path = self.state / program.RELEASED_FILE_NAME
         return ([json.loads(line)["agent_seat"] for line in path.read_text().splitlines()]
                 if path.exists() else [])
+
+    def sender_answers(self, *outcomes):
+        """Each outcome: ("sent", seat), ("error", text) or ("sent-to", other entry)."""
+        self.outcomes = list(outcomes)
+        self.prompts = []
+
+    def fake_run_headless(self, prompt, schema, tools, working_directory, timeout_seconds):
+        self.prompts.append({"prompt": prompt, "tools": tools, "schema": schema,
+                             "working_directory": working_directory})
+        kind, value = self.outcomes.pop(0)
+        outcome = program.idle_sweep.HeadlessOutcome()
+        if kind == "error":
+            outcome.error = value
+        else:
+            outcome.sends = [{"to": f"{value} [1c88e6]", "message": "text", "succeeded": True,
+                              "result": "ok"}]
+            outcome.answer = {"sent": True, "reason": "sent"}
+        return outcome
 
     def gh_calls(self):
         log = self.directory / "gh-calls.log"
@@ -118,49 +142,63 @@ def cases(root):
     ten_unreviewed = [pull_request(number) for number in range(1, 11)]
     case = Case(root, "ten")
     case.gh_answer(pages(ten_unreviewed))
+    case.sender_answers(("sent", "reboot-test"))
     code, output = case.run()
-    check("10 unreviewed open pull requests name the first agent-seat for release, exit 0",
-          code == 0 and output.startswith("RELEASE reboot-test\n")
-          and "10 open pull requests, not drafts, have no review from ned-review-merge" in output,
-          f"exit {code}\n{output}")
-    check("the message says the agent-seat may open them one per source file, at most 5 at a "
-          "time",
-          "You may now open your pull requests that only add tests for surviving mutants: one "
-          "per source file, with at most 5 open at a time." in output, output)
-    check("the output gives the --record-released command for that agent-seat",
-          f"--record-released reboot-test --state-directory {case.state}" in output, output)
-    check("naming an agent-seat records nothing", case.released() == [], case.released())
-    code, output = case.run()
-    check("an agent-seat named but not recorded is named again on the next run",
-          code == 0 and output.startswith("RELEASE reboot-test\n"), output)
+    check("10 unreviewed open pull requests: the first agent-seat is sent the message and "
+          "recorded as released, and RELEASED is printed, exit 0",
+          code == 0 and output.startswith("RELEASED reboot-test\n")
+          and "10 open pull requests, not drafts, have no review from ned-review-merge" in output
+          and case.released() == ["reboot-test"], f"exit {code}\n{output}")
+    prompt = case.prompts[0]["prompt"] if case.prompts else ""
+    check("the message is sent with the idle sweep's own sender prompt, tools and schema, and "
+          "says the agent-seat may open them one per source file, at most 5 at a time",
+          len(case.prompts) == 1
+          and prompt.startswith(program.idle_sweep.SENDER_PROMPT.split("{seat}")[0])
+          and program.idle_sweep.FIND_THE_ENTRY.format(seat="reboot-test") in prompt
+          and "You may now open your pull requests that only add tests for surviving mutants: "
+              "one per source file, with at most 5 open at a time." in prompt
+          and program.idle_sweep.DO_NOT_REPLY_SENTENCE in prompt
+          and case.prompts[0]["tools"] == program.idle_sweep.SENDING_TOOLS
+          and case.prompts[0]["schema"] == program.idle_sweep.SEND_ANSWER_SCHEMA
+          and case.prompts[0]["working_directory"]
+              == case.state / program.SENDER_WORKING_DIRECTORY_NAME, case.prompts)
     check("gh reads every page of the open pull requests with the merge account's reviews",
           case.gh_calls() and case.gh_calls()[0][:4] == ["api", "graphql", "--paginate",
                                                          "--slurp"]
           and any('reviews(author: "ned-review-merge"' in argument
                   for argument in case.gh_calls()[0]), case.gh_calls())
-
-    code, output = case.run("--record-released", "reboot-test")
-    check("--record-released records the agent-seat, exit 0",
-          code == 0 and case.released() == ["reboot-test"]
-          and "recorded reboot-test as released" in output, f"exit {code}\n{output}")
-    check("--record-released does not call gh", len(case.gh_calls()) == 2, case.gh_calls())
+    case.sender_answers(("sent", "MD-skills"))
     code, output = case.run()
-    check("once recorded, the next agent-seat in the file's order is named",
-          code == 0 and output.startswith("RELEASE MD-skills\n"), output)
-    code, output = case.run("--record-released", "reboot-test")
-    check("recording an agent-seat already recorded writes nothing and exits 0",
-          code == 0 and case.released() == ["reboot-test"] and "already recorded" in output,
-          f"exit {code}\n{output}")
-    code, output = case.run("--record-released", "not-a-listed-seat")
-    check("--record-released refuses an agent-seat the agent-seats file does not name, exit 2",
-          code == 2 and case.released() == ["reboot-test"]
-          and "'not-a-listed-seat' is not named in" in output, f"exit {code}\n{output}")
+    check("once one is released, the next run releases the next agent-seat in the file's order",
+          code == 0 and output.startswith("RELEASED MD-skills\n")
+          and case.released() == ["reboot-test", "MD-skills"], f"exit {code}\n{output}")
+
+    for name, outcome, said in (
+            ("send-fails", ("error", "stopped after 300 seconds"),
+             "the headless agent-session that sends the message failed: stopped after 300 "
+             "seconds"),
+            ("check-fails", ("sent-to", "MD-skills"), "no SendMessage to reboot-test succeeded")):
+        case = Case(root, name)
+        case.gh_answer(pages(ten_unreviewed))
+        case.sender_answers(outcome)
+        code, output = case.run()
+        check(f"when the {name.split('-')[0]} fails, nothing is recorded, what failed is printed, "
+              f"no RELEASED line, exit 2, which the merge script reports without failing the "
+              f"merge",
+              code == 2 and case.released() == [] and said in output
+              and "RELEASED" not in output and "the next merge tries again" in output,
+              f"exit {code}\n{output}")
+        case.sender_answers(("sent", "reboot-test"))
+        code, output = case.run()
+        check(f"after the {name.split('-')[0]} failed, the next run sends to the same agent-seat "
+              f"again",
+              code == 0 and output.startswith("RELEASED reboot-test\n"), f"exit {code}\n{output}")
 
     case = Case(root, "eleven")
     case.gh_answer(pages([pull_request(number) for number in range(1, 12)]))
     code, output = case.run()
     check("11 unreviewed open pull requests name no agent-seat and print the count, exit 1",
-          code == 1 and "RELEASE" not in output
+          code == 1 and "RELEASE" not in output and case.prompts == []
           and output.startswith("11 open pull requests, not drafts"), f"exit {code}\n{output}")
 
     case = Case(root, "counted-right")
@@ -211,15 +249,18 @@ def cases(root):
           code == 2 and "line 2 of the released records" in output, f"exit {code}\n{output}")
 
     case = Case(root, "record-unwritable")
+    case.gh_answer(pages(ten_unreviewed))
+    case.sender_answers(("sent", "reboot-test"))
     case.state.chmod(0o555)
     try:
-        code, output = case.run("--record-released", "reboot-test")
+        code, output = case.run()
     finally:
         case.state.chmod(0o755)
-    check("a record that cannot be written exits 2 and says the agent-seat is named again",
-          code == 2 and "could not record reboot-test as released" in output
-          and "each merge names reboot-test for release again" in output,
-          f"exit {code}\n{output}")
+    check("a sent release that cannot be recorded exits 2, says the message will be sent again, "
+          "and gives the line to append",
+          code == 2 and "reboot-test was sent the release message, but it could not be recorded"
+          in output and "each merge sends reboot-test the message again" in output
+          and '"agent_seat": "reboot-test"' in output, f"exit {code}\n{output}")
 
     case = Case(root, "crash")
     case.gh_answer(pages(ten_unreviewed))

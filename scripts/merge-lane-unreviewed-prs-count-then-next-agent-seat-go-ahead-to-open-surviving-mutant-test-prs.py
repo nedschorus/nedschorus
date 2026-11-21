@@ -1,53 +1,57 @@
 #!/usr/bin/env python3
-"""Name the next agent-seat holding mutant-test tasks to release when merge-lane-2's review queue is quiet, or record one as released. Exits 0 if it named or recorded an agent-seat, 1 if it named none, 2 if it could not tell.
+"""Release the next agent-seat holding mutant-test tasks when merge-lane-2's review queue is quiet. Exits 0 if it released an agent-seat, 1 if none was due, 2 if it could not tell or the message was not sent.
 
 Usage:
   scripts/merge-lane-unreviewed-prs-count-then-next-agent-seat-go-ahead-to-open-surviving-mutant-test-prs.py
-      [--state-directory DIR] [--record-released AGENT_SEAT]
+      [--state-directory DIR]
 
-Without --record-released, the program counts the open pull requests, not
-drafts, that have no review from merge-lane-2 on their newest commit: no GitHub
-review by the account ned-review-merge, in any state, whose commit is the pull
-request's head commit. When that count is 10 or fewer and the agent-seats file
-names an agent-seat not yet recorded as released, the program prints `RELEASE
-<agent-seat>` for the first such agent-seat in the file's order, the message to
-send it, and the --record-released command to run once the message is sent;
-otherwise it prints the count. It writes nothing, so a release whose message
-was not sent, such as one in output a caller cut off, is named again on the
-next run.
-
-With --record-released AGENT_SEAT, the program records that agent-seat as
-released, so later runs name the next one. It refuses an agent-seat the
-agent-seats file does not name, and records an agent-seat already recorded
-only once.
+The program counts the open pull requests, not drafts, that have no review
+from merge-lane-2 on their newest commit: no GitHub review by the account
+ned-review-merge, in any state, whose commit is the pull request's head
+commit. When that count is 10 or fewer and the agent-seats file names an
+agent-seat not yet recorded as released, the program sends the first such
+agent-seat, in the file's order, the release message with the idle sweep's own
+send code and prompt, unchanged, from
+scripts/agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write.py.
+It records the agent-seat as released only when the idle sweep's check of that
+send passes, and then prints `RELEASED <agent-seat>`; when the send or that
+check fails, it prints what failed and records nothing, so the next run, at
+the next merge or by hand, tries again. Otherwise it prints the count.
 
 A mutant-test pull request only adds tests for surviving mutants. Such pull
-requests stay unopened until merge-lane-2 tells the agent-seat holding them
-that the review queue is quiet; the message says the agent-seat may then open
-them one per source file, with at most 5 open at a time.
+requests stay unopened until the agent-seat holding them is told that the
+review queue is quiet; the message says the agent-seat may then open them one
+per source file, with at most 5 open at a time.
 
 --state-directory, by default
 /home/nedlern/nedsnodes-logs/seats/merge-lane-2/surviving-mutant-test-prs-go-ahead,
-holds two files:
+holds two files and the sender's empty working directory:
   agent-seats-holding-surviving-mutant-test-tasks-in-go-ahead-order.txt: one
     agent-seat per line, in the order they are released; blank lines are
     ignored. The program only reads it.
   agent-seats-given-surviving-mutant-test-prs-go-ahead.jsonl: one JSON object
     per agent-seat recorded as released, with the keys agent_seat and
-    released_at. --record-released appends to it, and makes it when it is
-    missing.
+    released_at. The program appends to it, and makes it when it is missing.
 
 scripts/merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py
-runs this program, without --record-released, after each merge. gh runs with
-the environment the program is given, so with the GH_TOKEN its caller sets.
+runs this program after each merge. gh runs with the environment the program
+is given, so with the GH_TOKEN its caller sets.
 """
 
 import argparse
 import datetime
 import json
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
+
+_sweep_spec = importlib.util.spec_from_file_location(
+    "agent_seat_idle_sweep_headless_judge_wake_messages_send_and_user_alerts_write",
+    Path(__file__).with_name(
+        "agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write.py"))
+idle_sweep = importlib.util.module_from_spec(_sweep_spec)
+_sweep_spec.loader.exec_module(idle_sweep)
 
 REPOSITORY_OWNER, REPOSITORY_NAME = "nedsnodes", "nedsnodes"
 MERGE_LANE_ACCOUNT = "ned-review-merge"
@@ -57,10 +61,12 @@ DEFAULT_STATE_DIRECTORY = Path(
     "/home/nedlern/nedsnodes-logs/seats/merge-lane-2/surviving-mutant-test-prs-go-ahead")
 AGENT_SEATS_FILE_NAME = "agent-seats-holding-surviving-mutant-test-tasks-in-go-ahead-order.txt"
 RELEASED_FILE_NAME = "agent-seats-given-surviving-mutant-test-prs-go-ahead.jsonl"
-RELEASE_LINE_PREFIX = "RELEASE "
+RELEASED_LINE_PREFIX = "RELEASED "
+# The working directory names the sender the receiving agent-seat sees.
+SENDER_WORKING_DIRECTORY_NAME = "merge-lane-2-mutant-test-release"
 
-EXIT_NAMED_OR_RECORDED = 0
-EXIT_NAMED_NONE = 1
+EXIT_RELEASED = 0
+EXIT_NONE_DUE = 1
 EXIT_COULD_NOT_TELL = 2
 
 # reviews(last: 100): a pull request's reviews on its head commit are its newest.
@@ -94,8 +100,6 @@ def parse_arguments(argv):
     parser.add_argument("--state-directory", type=Path, default=DEFAULT_STATE_DIRECTORY,
                         help=f"holds {AGENT_SEATS_FILE_NAME} and {RELEASED_FILE_NAME} "
                              f"(default: {DEFAULT_STATE_DIRECTORY})")
-    parser.add_argument("--record-released", metavar="AGENT_SEAT",
-                        help="record AGENT_SEAT as released, once its message is sent")
     return parser.parse_args(argv)
 
 
@@ -186,17 +190,7 @@ def released_agent_seats(state_directory):
 
 
 def release_recorded(state_directory, agent_seat):
-    """Append agent_seat's record unless it is already recorded; return what was done."""
     path = state_directory / RELEASED_FILE_NAME
-    seats = agent_seats_in_release_order(state_directory)
-    if agent_seat not in seats:
-        raise CouldNotTell(f"{agent_seat!r} is not named in "
-                           f"{state_directory / AGENT_SEATS_FILE_NAME}, so it is not recorded as "
-                           f"released; the file names: {', '.join(seats) or 'no agent-seat'}.\n"
-                           f"Run the command with the agent-seat named on the RELEASE line: "
-                           f"{PROGRAM_COMMAND} --record-released <agent-seat>")
-    if agent_seat in released_agent_seats(state_directory):
-        return f"{agent_seat} was already recorded as released in {path}; nothing was written."
     record = {"agent_seat": agent_seat,
               "released_at": datetime.datetime.now(datetime.timezone.utc).strftime(
                   "%Y-%m-%dT%H:%M:%SZ")}
@@ -204,16 +198,33 @@ def release_recorded(state_directory, agent_seat):
         with path.open("a", encoding="utf-8") as released:
             released.write(json.dumps(record) + "\n")
     except OSError as error:
-        raise CouldNotTell(f"could not record {agent_seat} as released in {path}: {error}\n"
-                           f"Until it is recorded, each merge names {agent_seat} for release "
-                           f"again, and it may be sent the message twice.\n"
-                           f"If the error names a cause you can fix, fix it and run: "
-                           f"{PROGRAM_COMMAND} --record-released {agent_seat}\n"
-                           f"Otherwise tell the user: \"{agent_seat} has been told it may open "
-                           f"its mutant-test pull requests, but {path} on ned-box cannot be "
+        raise CouldNotTell(f"{agent_seat} was sent the release message, but it could not be "
+                           f"recorded as released in {path}: {error}\n"
+                           f"Until it is recorded, each merge sends {agent_seat} the message "
+                           f"again.\n"
+                           f"Append this line to {path} by hand, once the cause is fixed: "
+                           f"{json.dumps(record)}\n"
+                           f"If you cannot, tell the user: \"{agent_seat} has been told it may "
+                           f"open its mutant-test pull requests, but {path} on ned-box cannot be "
                            f"written to record that: {error}\"\n"
                            f"{SUBAGENT_LINE}")
-    return f"recorded {agent_seat} as released in {path}"
+
+
+def release_message_send_problems(state_directory, agent_seat, text):
+    """Send text to agent_seat as the idle sweep sends its wake messages; return what failed,
+    by the idle sweep's own check, or [] when the send passed it."""
+    text = f"{text}\n\n{idle_sweep.DO_NOT_REPLY_SENTENCE}"
+    prompt = idle_sweep.SENDER_PROMPT.format(
+        seat=agent_seat, text=text,
+        find_the_entry=idle_sweep.FIND_THE_ENTRY.format(seat=agent_seat),
+        keep_the_last_sentence=idle_sweep.KEEP_THE_LAST_SENTENCE)
+    outcome = idle_sweep.run_headless(prompt, idle_sweep.SEND_ANSWER_SCHEMA,
+                                      idle_sweep.SENDING_TOOLS,
+                                      state_directory / SENDER_WORKING_DIRECTORY_NAME,
+                                      idle_sweep.HEADLESS_TIMEOUT_SECONDS)
+    if outcome.error:
+        return [f"the headless agent-session that sends the message failed: {outcome.error}"]
+    return idle_sweep.send_problems(outcome, [agent_seat])
 
 
 def release_message(count):
@@ -223,7 +234,7 @@ def release_message(count):
             f"{MUTANT_TEST_PULL_REQUESTS_OPEN_AT_ONCE_AT_MOST} open at a time.")
 
 
-def release_named_and_printed(state_directory):
+def release_named_and_sent(state_directory):
     count = unreviewed_open_pull_requests_count()
     counted = (f"{count} open pull requests, not drafts, have no review from {MERGE_LANE_ACCOUNT} "
                f"on their head commit")
@@ -231,37 +242,40 @@ def release_named_and_printed(state_directory):
         print(f"{counted}; the review queue is quiet at "
               f"{QUIET_REVIEW_QUEUE_MOST_UNREVIEWED_PULL_REQUESTS} or fewer, so no agent-seat "
               f"holding mutant-test tasks is released.")
-        return EXIT_NAMED_NONE
+        return EXIT_NONE_DUE
     released = released_agent_seats(state_directory)
     waiting = [seat for seat in agent_seats_in_release_order(state_directory)
                if seat not in released]
     if not waiting:
         print(f"{counted}, but every agent-seat in {state_directory / AGENT_SEATS_FILE_NAME} is "
               f"already recorded as released in {state_directory / RELEASED_FILE_NAME}.")
-        return EXIT_NAMED_NONE
+        return EXIT_NONE_DUE
     seat = waiting[0]
-    record_command = f"{PROGRAM_COMMAND} --record-released {seat}"
-    if state_directory != DEFAULT_STATE_DIRECTORY:
-        record_command += f" --state-directory {state_directory}"
-    print(f"{RELEASE_LINE_PREFIX}{seat}\n"
-          f"{counted}. Send {seat} this message with SendMessage, addressed to {seat}:\n"
-          f"{release_message(count)}\n"
-          f"Once the message is sent, record the release, so the next merge names the next "
-          f"agent-seat instead of {seat}: {record_command}")
-    return EXIT_NAMED_OR_RECORDED
+    problems = release_message_send_problems(state_directory, seat, release_message(count))
+    if problems:
+        print(f"{counted}, so {seat} is due for release, but the release message was not sent: "
+              f"{'; '.join(problems)}.\n"
+              f"Nothing was recorded, so the next merge tries again. To try now, run: "
+              f"{PROGRAM_COMMAND}\n"
+              f"If it fails the same way, and the failure says claude is logged out on ned-box, "
+              f"tell the user so; otherwise tell the user: \"The release message to {seat} "
+              f"cannot be sent from ned-box: {'; '.join(problems)}\"\n"
+              f"{SUBAGENT_LINE}")
+        return EXIT_COULD_NOT_TELL
+    release_recorded(state_directory, seat)
+    print(f"{RELEASED_LINE_PREFIX}{seat}\n"
+          f"{counted}. {seat} was sent this message, and is recorded as released in "
+          f"{state_directory / RELEASED_FILE_NAME}:\n"
+          f"{release_message(count)}")
+    return EXIT_RELEASED
 
 
 def main(argv=None):
     arguments = parse_arguments(argv)
     try:
-        if arguments.record_released is not None:
-            print(release_recorded(arguments.state_directory, arguments.record_released))
-            return EXIT_NAMED_OR_RECORDED
-        return release_named_and_printed(arguments.state_directory)
+        return release_named_and_sent(arguments.state_directory)
     except CouldNotTell as error:
-        print(f"could not record {arguments.record_released} as released: {error}"
-              if arguments.record_released is not None else
-              f"could not tell whether to release an agent-seat holding mutant-test tasks: "
+        print(f"could not tell whether to release an agent-seat holding mutant-test tasks: "
               f"{error}")
     except Exception as error:  # noqa: BLE001 - a crash must exit 2, not Python's 1
         print(f"could not tell whether to release an agent-seat holding mutant-test tasks: "

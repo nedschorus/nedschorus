@@ -594,12 +594,12 @@ def main():
               and "go-ahead.py exited" not in output,
               f"{go_ahead_calls}\n{output}")
 
-        release = ("RELEASE reboot-test\nSend reboot-test this message with SendMessage\n"
-                   "Once the message is sent, record the release: fake --record-released\n")
+        release = ("RELEASED reboot-test\n10 open pull requests ... reboot-test was sent this "
+                   "message, and is recorded as released\n")
         exit_code, output, _, _, _ = run_case(
             scratch, "go-ahead-names-an-agent-seat", [(GATE_PASSED, 0)],
             default_routes(STACKED_AND_NOT), go_ahead_answer=(release, 0))
-        check("a RELEASE the go-ahead program prints is printed whole, and the merge exits 0",
+        check("a RELEASED the go-ahead program prints is printed whole, and the merge exits 0",
               exit_code == 0 and release in output, f"exit {exit_code}\n{output}")
 
         killed = (lambda directory: (directory / "bin" / "go-ahead.py").write_text(

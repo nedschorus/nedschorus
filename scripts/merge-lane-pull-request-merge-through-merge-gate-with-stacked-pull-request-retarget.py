@@ -82,8 +82,8 @@ files under it; such a review is run again.
 Last, once the pull request has merged, the program runs
 merge-lane-unreviewed-prs-count-then-next-agent-seat-go-ahead-to-open-surviving-mutant-test-prs.py,
 beside it, with the merge account's GH_TOKEN, and prints what it printed:
-`RELEASE <agent-seat>` with the message to send that agent-seat, or the count
-of pull requests waiting for a review. When it exits 2 or another code it does
+`RELEASED <agent-seat>` when it sent that agent-seat the release message, what
+failed when it could not, or the count of pull requests waiting for a review. When it exits 2 or another code it does
 not document, the program prints that too; the exit code below never depends
 on it.
 
