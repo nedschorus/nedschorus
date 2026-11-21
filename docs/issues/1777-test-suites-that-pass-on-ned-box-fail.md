@@ -1,5 +1,5 @@
 ---
-issue: "[Test suites that pass on ned-box fail on the Mac when they compare a path that macOS reaches through a link](https://github.com/nedschorus/nedschorus/issues/1777)"
+issue: "[Test suites that pass on ned-box fail on the Mac when they compare a path that macOS reaches through a link](https://github.com/nedsnodes/nedsnodes/issues/1777)"
 ---
 
 # Test suites that pass on ned-box fail on the Mac when they compare a path that macOS reaches through a link
@@ -10,15 +10,15 @@ Python's `tempfile` puts scratch files under `$TMPDIR`. On the Mac that is `/var
 
 This happened twice on 2026-10-20, both times in suites added that day:
 
-- PR [Cold-read programs report a failed git, ssh or judge cell instead of reading it as an answer](https://github.com/nedschorus/nedschorus/pull/1752) added two cold-read-grid test cases whose stand-in git never fired on the Mac. PR [cold-read-grid test: the failing-git stub matches the directory resolved, so it fires on the Mac](https://github.com/nedschorus/nedschorus/pull/1760), now merged, fixed that one stub.
-- Three more suites failed the same way: `scripts/dangling-path-citation-check-test.py`, `scripts/stale-code-citation-check-test.py` and `scripts/ghi-issue-write-test.py`. PR [Three Mac-failing suites build their scratch paths under the resolved temporary directory](https://github.com/nedschorus/nedschorus/pull/1775), open when this issue was filed, fixes those three.
+- PR [Cold-read programs report a failed git, ssh or judge cell instead of reading it as an answer](https://github.com/nedsnodes/nedsnodes/pull/1752) added two cold-read-grid test cases whose stand-in git never fired on the Mac. PR [cold-read-grid test: the failing-git stub matches the directory resolved, so it fires on the Mac](https://github.com/nedsnodes/nedsnodes/pull/1760), now merged, fixed that one stub.
+- Three more suites failed the same way: `scripts/dangling-path-citation-check-test.py`, `scripts/stale-code-citation-check-test.py` and `scripts/ghi-issue-write-test.py`. PR [Three Mac-failing suites build their scratch paths under the resolved temporary directory](https://github.com/nedsnodes/nedsnodes/pull/1775), open when this issue was filed, fixes those three.
 
 Each time, the Mac's pre-push test run refused every Mac push whose selection included a failing suite. The first blocked the filing of a GHI until PR 1760 merged; the second blocks a documentation pull request until PR 1775 merges.
 
 ## Why it is found late
 
 - No pull request has its tests run on the Mac before it merges: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/pull-request-head-test-runs/mac/` holds two records, both from 2026-10-01.
-- The Mac's nightly full test run of main would show the failure the next morning, but no program tells anyone what that run found. GHI [The daily full test runs tell the user about failures and about test cases that run nowhere or lack a tool, and every test suite prints a skipped test case in one format](https://github.com/nedschorus/nedschorus/issues/1206) covers that.
+- The Mac's nightly full test run of main would show the failure the next morning, but no program tells anyone what that run found. GHI [The daily full test runs tell the user about failures and about test cases that run nowhere or lack a tool, and every test suite prints a skipped test case in one format](https://github.com/nedsnodes/nedsnodes/issues/1206) covers that.
 - The suites are right on the machine they were written on, so neither their author nor a reviewer has a reason to look.
 
 ## Options

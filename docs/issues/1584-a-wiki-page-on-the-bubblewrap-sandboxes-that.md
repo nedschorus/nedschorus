@@ -1,12 +1,12 @@
 ---
-issue: "[A wiki page on the bubblewrap sandboxes that ned-box's programs run agents and test suites in](https://github.com/nedschorus/nedschorus/issues/1584)"
+issue: "[A wiki page on the bubblewrap sandboxes that ned-box's programs run agents and test suites in](https://github.com/nedsnodes/nedsnodes/issues/1584)"
 ---
 
 # A wiki page on the bubblewrap sandboxes that ned-box's programs run agents and test suites in
 
 ## Why
 
-Several programs on ned-box start a bubblewrap sandbox (`bwrap`): the test runner `scripts/run-all-test-suites.py` runs each test suite in one, the cold-read grid's agy cell, `nn-systems/cold-read/cold-read-agy-cell.py`, runs in one, and the benchmark pilot of GHI [A pilot of three past bug fixes, redone by agents on the code as it stood before each fix, to learn whether a benchmark of agent-instructions and hooks can be built from the project's history](https://github.com/nedschorus/nedschorus/issues/1505) runs `claude -p` in one. What each program learned about running inside a sandbox sits today in code comments, in GHI-MDs and in log-store notes, so an agent that writes the next program that starts a sandbox, or runs one program inside another's sandbox, has no one page to read and repeats the same trials.
+Several programs on ned-box start a bubblewrap sandbox (`bwrap`): the test runner `scripts/run-all-test-suites.py` runs each test suite in one, the cold-read grid's agy cell, `nn-systems/cold-read/cold-read-agy-cell.py`, runs in one, and the benchmark pilot of GHI [A pilot of three past bug fixes, redone by agents on the code as it stood before each fix, to learn whether a benchmark of agent-instructions and hooks can be built from the project's history](https://github.com/nedsnodes/nedsnodes/issues/1505) runs `claude -p` in one. What each program learned about running inside a sandbox sits today in code comments, in GHI-MDs and in log-store notes, so an agent that writes the next program that starts a sandbox, or runs one program inside another's sandbox, has no one page to read and repeats the same trials.
 
 ## What the page says
 
@@ -29,6 +29,6 @@ prime-intellect, which runs the pilot, writes the page after GHI 1505's sandbox 
 
 ## Prior work
 
-- GHI [Each test suite on ned-box runs in its own throwaway test environment, and suites start by free CPU and memory instead of waiting for a machine-wide lock](https://github.com/nedschorus/nedschorus/issues/1374) builds the test runner's sandbox; read it for facts.
+- GHI [Each test suite on ned-box runs in its own throwaway test environment, and suites start by free CPU and memory instead of waiting for a machine-wide lock](https://github.com/nedsnodes/nedsnodes/issues/1374) builds the test runner's sandbox; read it for facts.
 - The nesting probe of 2026-10-10: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/prime-intellect/benchmark-sandbox-nesting-probe-2026-10-10.md`.
-- GHI [run-agent: one CLI to invoke a Claude or Codex agent headlessly from any caller (Python, shell, either runtime)](https://github.com/nedschorus/nedschorus/issues/41) will start agents too, and will need the page's facts on sandbox nesting.
+- GHI [run-agent: one CLI to invoke a Claude or Codex agent headlessly from any caller (Python, shell, either runtime)](https://github.com/nedsnodes/nedsnodes/issues/41) will start agents too, and will need the page's facts on sandbox nesting.

@@ -1,5 +1,5 @@
 ---
-issue: "[Programs tell a broken branch reference from a branch with no commits yet](https://github.com/nedschorus/nedschorus/issues/1854)"
+issue: "[Programs tell a broken branch reference from a branch with no commits yet](https://github.com/nedsnodes/nedsnodes/issues/1854)"
 kind: design
 ---
 
@@ -15,10 +15,10 @@ Reproduced on ned-box with git 2.53.0, in a scratch repository with one commit w
 
 Each site came from one pull request in the 2026-10-20 round of fixes to programs that read a failed command as an answer; reviewers raised each one as a follow-up, detection only.
 
-- `scripts/checkout-freshness-catch-up.py`, the unborn-HEAD check added by [checkout-freshness-catch-up tells a failed git command from git's no](https://github.com/nedschorus/nedschorus/pull/1744), at line 733 of that pull request's head commit.
-- `scripts/new-shared-names-reminder-hook.py:294` on main, from [The name-collision and new-shared-names hooks report their own git failures instead of exiting 0 silently](https://github.com/nedschorus/nedschorus/pull/1757).
-- `scripts/ghi-issue-write.py`, `head_is_unborn`, at lines 569-576 of the head commit of [ghi-issue-write reports a failed git command instead of reading it as an answer](https://github.com/nedschorus/nedschorus/pull/1759); because that function answers "no commit yet", the merge-base step after it also reads its own failure as "no merge base", so fixing the function fixes both.
-- `nn-systems/cold-read/cold-read-cell-common.py`, `checkout_commit_for_provenance_stamp`, from [Cold-read-cell provenance stamp says checkout=no-commits-yet for a checkout with no commits, not a git failure](https://github.com/nedschorus/nedschorus/pull/1769).
+- `scripts/checkout-freshness-catch-up.py`, the unborn-HEAD check added by [checkout-freshness-catch-up tells a failed git command from git's no](https://github.com/nedsnodes/nedsnodes/pull/1744), at line 733 of that pull request's head commit.
+- `scripts/new-shared-names-reminder-hook.py:294` on main, from [The name-collision and new-shared-names hooks report their own git failures instead of exiting 0 silently](https://github.com/nedsnodes/nedsnodes/pull/1757).
+- `scripts/ghi-issue-write.py`, `head_is_unborn`, at lines 569-576 of the head commit of [ghi-issue-write reports a failed git command instead of reading it as an answer](https://github.com/nedsnodes/nedsnodes/pull/1759); because that function answers "no commit yet", the merge-base step after it also reads its own failure as "no merge base", so fixing the function fixes both.
+- `nn-systems/cold-read/cold-read-cell-common.py`, `checkout_commit_for_provenance_stamp`, from [Cold-read-cell provenance stamp says checkout=no-commits-yet for a checkout with no commits, not a git failure](https://github.com/nedsnodes/nedsnodes/pull/1769).
 
 ## What to do
 

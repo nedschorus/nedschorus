@@ -1,12 +1,12 @@
 ---
-issue: "[Write the project-wide architecture overview page that names each system and each critical component](https://github.com/nedschorus/nedschorus/issues/2205)"
+issue: "[Write the project-wide architecture overview page that names each system and each critical component](https://github.com/nedsnodes/nedsnodes/issues/2205)"
 ---
 
 # Write the project-wide architecture overview page that names each system and each critical component
 
 ## Why
 
-No page describes the project as a whole: the glossary's nc-architecture-overview is one wiki page per system under `nn-systems/`, and nothing above those pages names every system and the parts outside the project's own code that all of them stand on. When such a part fails, an agent has nowhere to look to learn that the failure is one it must report to the user and must not work around.
+No page describes the project as a whole: the glossary's nn-architecture-overview is one wiki page per system under `nn-systems/`, and nothing above those pages names every system and the parts outside the project's own code that all of them stand on. When such a part fails, an agent has nowhere to look to learn that the failure is one it must report to the user and must not work around.
 
 The user asked for this page on 2026-10-30 at 10:26, in item 5 of the approval-walk prime-intellect-handed-over-items-2026-10-29. The item proposed a `CLAUDE.md` bullet naming ned-box, git and GitHub as critical components, and he disapproved it. Its minutes, `nedlern@ned-box:/home/nedlern/agents/prime-intellect/docs/walk/prime-intellect-handed-over-items-2026-10-29-minutes.md`, record his answer at line 37 and the result at line 39; `docs/walk/` is not committed, so until the approval-walk closes the minutes are read on ned-box at that path. When it closes, `nn-systems/skills/walk-me-through/walk-files-ship.py` copies them to the log-store, at `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/prime-intellect-handed-over-items-2026-10-29-minutes.md`, which is then the copy to cite. His words:
 
@@ -19,7 +19,7 @@ In this GHI-MD, a critical component is a part the project does not own and whos
 
 ## What the page says
 
-- It names each system under `nn-systems/`, in one line each, and links that system's nc-architecture-overview where one exists. GHI [Rationalize the repository layout: group components by owning system under nn-systems/](https://github.com/nedschorus/nedschorus/issues/224) defines the systems.
+- It names each system under `nn-systems/`, in one line each, and links that system's nn-architecture-overview where one exists. GHI [Rationalize the repository layout: group components by owning system under nn-systems/](https://github.com/nedsnodes/nedsnodes/issues/224) defines the systems.
 - It names each critical component and says what the project uses it for.
 - For each critical component, it says that a failure of it is a showstopper: an agent reports the failure to the user, with what the failing command said and its remedy if it gave one, and does not build a workaround, a fallback or a second source, such as another machine or service set up to do the same job. A retry of a passing fault, such as one dropped connection, on an operation safe to repeat and with a limit on attempts, stays allowed, as `CLAUDE.md`'s bullet on guards and workarounds says; a failure that outlasts it is reported.
 - It says what counts as a failure of a critical component: the component itself being unavailable, such as GitHub not answering, ned-box unreachable, or the Claude account logged out or over its usage limit. A command that reaches the component and gets its answer is not a failure of that component, even when it ends with a nonzero exit: a git merge that stops on a merge conflict, a push GitHub refuses, or a script that ssh starts on ned-box and that exits nonzero. The agent handles such an exit as part of its work, and the showstopper rule does not apply.
@@ -44,8 +44,8 @@ Gemini is not on the list: the cold-read programs, its only users found (`grep -
 
 Two open GHIs already cover parts of this ground, and the page links their pages instead of repeating them; while either page has not merged, the page names its GHI instead, and is updated to link the page when it lands:
 
-- GHI [Write the wiki page that lists the system's requirements](https://github.com/nedschorus/nedschorus/issues/1908) lists every part the project stands on, for someone setting the project up. Its starting text lists eight parts, the machines' disks and Gemini among them; the list above counts each machine's disk as part of the machine. Once that page merges, the page this GHI asks for checks the list above against it.
-- GHI [Write the wiki page that gives each system requirement's fallback and escalation paths when it fails](https://github.com/nedschorus/nedschorus/issues/1910) gives, for each part, what stops when it fails and what happens next. The page this GHI asks for says only that a critical component's failure is a showstopper, with the rule above, and links that page for the detail. What an agent does when the failed part is its own path to the user, such as the network, and how a waiting agent learns that the part is fixed, are among GHI 1910's open questions, not this page's.
+- GHI [Write the wiki page that lists the system's requirements](https://github.com/nedsnodes/nedsnodes/issues/1908) lists every part the project stands on, for someone setting the project up. Its starting text lists eight parts, the machines' disks and Gemini among them; the list above counts each machine's disk as part of the machine. Once that page merges, the page this GHI asks for checks the list above against it.
+- GHI [Write the wiki page that gives each system requirement's fallback and escalation paths when it fails](https://github.com/nedsnodes/nedsnodes/issues/1910) gives, for each part, what stops when it fails and what happens next. The page this GHI asks for says only that a critical component's failure is a showstopper, with the rule above, and links that page for the detail. What an agent does when the failed part is its own path to the user, such as the network, and how a waiting agent learns that the part is fixed, are among GHI 1910's open questions, not this page's.
 
 On 2026-10-24 the user ruled, in GHI 1908, that the list of parts and what to do when each fails are two pages, written in that order. His 2026-10-30 words above describe one architecture page that names the components and says their failures are reported. This GHI reads the two rulings together: the overview names the systems and critical components and states the rule; the two pages of GHI 1908 and GHI 1910 keep the detail.
 
@@ -59,8 +59,8 @@ prime-intellect's task #63 (`nedlern@ned-box:/home/nedlern/.claude/tasks/nedsnod
 
 ## Related work
 
-- GHI [overview-write skill: how an overview of a system is written and checked before it lands](https://github.com/nedschorus/nedschorus/issues/168): the process that writes and checks an overview.
-- `docs/nedsnodes-wiki/nedsnodes-how-to-write-an-architecture-overview.md`: how a system's nc-architecture-overview is written today.
+- GHI [overview-write skill: how an overview of a system is written and checked before it lands](https://github.com/nedsnodes/nedsnodes/issues/168): the process that writes and checks an overview.
+- `docs/nedsnodes-wiki/nedsnodes-how-to-write-an-architecture-overview.md`: how a system's nn-architecture-overview is written today.
 - GHI 224, above: in the same answer, the user wanted git and GitHub described in the architecture overviews of the "getting work onto main" system and the "GitHub issues" system that GHI 224 names, as well as on this page.
 
 ## Next action

@@ -1,5 +1,5 @@
 ---
-issue: "[pull-request skill: how a change reaches main — durable-file disposition, the description, and topic-branch creation](https://github.com/nedschorus/nedschorus/issues/236)"
+issue: "[pull-request skill: how a change reaches main — durable-file disposition, the description, and topic-branch creation](https://github.com/nedsnodes/nedsnodes/issues/236)"
 kind: design
 ---
 
@@ -20,7 +20,7 @@ each saying "once it exists":
 Searched and NOT FOUND: `gh issue list --state all --limit 100` searched for
 "pull request skill", "philosophy OR code-prompt OR CPC", and "branch base
 commit worktree" — no issue covers this skill, including among the candidate
-skill issues GHI [Candidate skill: define-work — bounded work-definition spec before ambiguous or substantial work](https://github.com/nedschorus/nedschorus/issues/15)-GHI [Candidate skill: eval-agent-change — baseline-vs-candidate A/B with trigger cases and raw-count reporting](https://github.com/nedschorus/nedschorus/issues/23). Built skills are cold-read, ghi-write, handoff,
+skill issues GHI [Candidate skill: define-work — bounded work-definition spec before ambiguous or substantial work](https://github.com/nedsnodes/nedsnodes/issues/15)-GHI [Candidate skill: eval-agent-change — baseline-vs-candidate A/B with trigger cases and raw-count reporting](https://github.com/nedsnodes/nedsnodes/issues/23). Built skills are cold-read, ghi-write, handoff,
 walk-me-through (`ls .claude/skills/`). So two designs are written against a
 component nothing tracks.
 
@@ -33,7 +33,7 @@ Getting a change to main. Four parts:
 
 1. **Disposition of a durable file** — revise an existing document on the
    subject (the default) or write a new one. Assigned by the founding plan.
-2. **The pull request description** — invoking `draft-md`. Assigned by GHI [Build draft-md: the drafting-stage skill run before md-review (user-ruled 2026-08-22)](https://github.com/nedschorus/nedschorus/issues/142).
+2. **The pull request description** — invoking `draft-md`. Assigned by GHI [Build draft-md: the drafting-stage skill run before md-review (user-ruled 2026-08-22)](https://github.com/nedsnodes/nedsnodes/issues/142).
 3. **Creating the topic branch**, which nothing currently covers:
 
    > Create every topic branch from the seat's own branch, after
@@ -83,18 +83,18 @@ Getting a change to main. Four parts:
      items 1 and 3) found ten GHIs whose finished work their own text never
      recorded: eight finished and still open, and two still open whose landed
      half was invisible on the GHI.
-   - Two more since. GHI [The handoff-supervisor resumes a session that died without a handoff, instead of stopping the seat](https://github.com/nedschorus/nedschorus/issues/613)
-     was built by PR [The handoff-supervisor resumes a session that died without a handoff](https://github.com/nedschorus/nedschorus/pull/651),
-     merged 2026-09-22, and closed only on 2026-09-29. GHI [recover-crashed-seats.py: the six changes ruled 2026-09-02 — exit record, process-identity liveness, parking marker, verified restart, by-hand resume, window](https://github.com/nedschorus/nedschorus/issues/242)
-     says in its opening paragraph that change 6 is built — PR [recover-crashed-seats: --open-iterm-window-per-seat launches a recovered seat attached, in its own window](https://github.com/nedschorus/nedschorus/pull/319),
+   - Two more since. GHI [The handoff-supervisor resumes a session that died without a handoff, instead of stopping the seat](https://github.com/nedsnodes/nedsnodes/issues/613)
+     was built by PR [The handoff-supervisor resumes a session that died without a handoff](https://github.com/nedsnodes/nedsnodes/pull/651),
+     merged 2026-09-22, and closed only on 2026-09-29. GHI [recover-crashed-seats.py: the six changes ruled 2026-09-02 — exit record, process-identity liveness, parking marker, verified restart, by-hand resume, window](https://github.com/nedsnodes/nedsnodes/issues/242)
+     says in its opening paragraph that change 6 is built — PR [recover-crashed-seats: --open-iterm-window-per-seat launches a recovered seat attached, in its own window](https://github.com/nedsnodes/nedsnodes/pull/319),
      merged 2026-09-11 — yet its numbered list still gives change 6 without
      "Done".
-   - On 2026-09-29, PR [A recovered seat's supervisor runs from the reference clone, not from the checkout the recovery ran from](https://github.com/nedschorus/nedschorus/pull/778)
-     closed GHI [recover-crashed-seats: a recovered seat's supervisor runs from whichever checkout the recovery was run from, and stops at its next handoff once that checkout is removed](https://github.com/nedschorus/nedschorus/issues/659)
+   - On 2026-09-29, PR [A recovered seat's supervisor runs from the reference clone, not from the checkout the recovery ran from](https://github.com/nedsnodes/nedsnodes/pull/778)
+     closed GHI [recover-crashed-seats: a recovered seat's supervisor runs from whichever checkout the recovery was run from, and stops at its next handoff once that checkout is removed](https://github.com/nedsnodes/nedsnodes/issues/659)
      automatically through its "Closes" line. It changed only the two
      scripts, so the closed issue's GHI-MD still said under `## Next action`
      that the user decides. Its Outcome was added by hand afterwards, in PR
-     [GHI-MD edit for issue 659: recover-crashed-seats: a recovered seat's supervisor runs from whichever checkout the recovery was run from, and stops at its next handoff once that checkout is removed](https://github.com/nedschorus/nedschorus/pull/780),
+     [GHI-MD edit for issue 659: recover-crashed-seats: a recovered seat's supervisor runs from whichever checkout the recovery was run from, and stops at its next handoff once that checkout is removed](https://github.com/nedsnodes/nedsnodes/pull/780),
      still open when this was written.
 
 ## Architecture: code-prompt-code
@@ -138,11 +138,11 @@ Two consequences:
   creates a branch only for `scripts/git-gatekeeper.py`, which the gate refuses
   to check in (`gatekeeper-source-refused`). Everything else goes through the
   gate with no branch, and where the caller stands is irrelevant.
-- **GHI [Build draft-md: the drafting-stage skill run before md-review (user-ruled 2026-08-22)](https://github.com/nedschorus/nedschorus/issues/142)'s assumption expires.** It assigns this skill the description of an
+- **GHI [Build draft-md: the drafting-stage skill run before md-review (user-ruled 2026-08-22)](https://github.com/nedsnodes/nedsnodes/issues/142)'s assumption expires.** It assigns this skill the description of an
   agent-opened pull request. After activation the gate opens it, so either the
   skill runs before check-in and hands the gate a description, or the gate
   invokes `draft-md` itself. Resolved when the gate's check-in interface is
-  built; GHI [Build draft-md: the drafting-stage skill run before md-review (user-ruled 2026-08-22)](https://github.com/nedschorus/nedschorus/issues/142) needs a corresponding edit then.
+  built; GHI [Build draft-md: the drafting-stage skill run before md-review (user-ruled 2026-08-22)](https://github.com/nedsnodes/nedsnodes/issues/142) needs a corresponding edit then.
 
 ## Next action
 
@@ -155,7 +155,7 @@ and keeps it afterward for the lane that survives.
 
 ## Name (added 2026-09-05)
 
-The user calls the entry point to this workflow **/push**: "a missing skill used to initiate the design to main workflow" (his words on the vocabulary page, `docs/wiki/queue/213-project-vocabulary.md`). GHI [Four small skills the user named on the vocabulary page: /save, /push, /save-MD, /save-MD-as-draft (name open)](https://github.com/nedschorus/nedschorus/issues/256) records that name with three other small skills he asked for; this issue stays the design home.
+The user calls the entry point to this workflow **/push**: "a missing skill used to initiate the design to main workflow" (his words on the vocabulary page, `docs/wiki/queue/213-project-vocabulary.md`). GHI [Four small skills the user named on the vocabulary page: /save, /push, /save-MD, /save-MD-as-draft (name open)](https://github.com/nedsnodes/nedsnodes/issues/256) records that name with three other small skills he asked for; this issue stays the design home.
 
 
 ## Scope, and the attribution block (user-ruled 2026-09-13)
@@ -178,10 +178,10 @@ commit and pull request description, and `CLAUDE.md` still routes merges
 through the merge-lane seat "until the gatekeeper activates". The single
 overlapping fact is session identity, recorded for a different purpose at a
 different moment. **It does become transitional later:** [issue
-GHI [Deferred: main-gatekeeper activation shape 2 — a reviewer attached to the gate and an approving identity of its own](https://github.com/nedschorus/nedschorus/issues/357) describes the
+GHI [Deferred: main-gatekeeper activation shape 2 — a reviewer attached to the gate and an approving identity of its own](https://github.com/nedsnodes/nedsnodes/issues/357) describes the
 activation shape where the gate opens the pull request "with attribution
-computed", and GHI [Topic-branch base enforcement: a branch-creation script and a gh pr create check that refuses an undeclared carry of another PR's commits](https://github.com/nedschorus/nedschorus/issues/238)
+computed", and GHI [Topic-branch base enforcement: a branch-creation script and a gh pr create check that refuses an undeclared carry of another PR's commits](https://github.com/nedsnodes/nedsnodes/issues/238)
 records the user's 2026-09-18 ruling that the gate stamps a `Claude-Session`
 trailer on both the commit and the pull request it composes. So this section is
-re-examined when GHI [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper.system.design.md)](https://github.com/nedschorus/nedschorus/issues/3)'s
+re-examined when GHI [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper.system.design.md)](https://github.com/nedsnodes/nedsnodes/issues/3)'s
 slice has the gate composing pull requests, not before.

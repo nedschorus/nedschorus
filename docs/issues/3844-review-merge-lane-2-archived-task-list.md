@@ -1,5 +1,5 @@
 ---
-issue: "[Review merge-lane-2's archived task list](https://github.com/nedschorus/nedschorus/issues/3844)"
+issue: "[Review merge-lane-2's archived task list](https://github.com/nedsnodes/nedsnodes/issues/3844)"
 ---
 
 # Review merge-lane-2's archived task list
@@ -14,7 +14,7 @@ The archived tasks held work in progress, commitments, and questions waiting on 
 
 Nothing now. The user will schedule this review himself, by telling an agent-seat to start it; until he does, do not start it, and do not resume any work from an archived task.
 
-When he does, read each archived task's JSON file, which holds the whole task including its metadata; `task-list-archive.md` is only an index. Sort each task into one of three groups, by the rules of the sixteenth job of GHI [Regular maintenance: the list of maintenance jobs, how often each runs, and how each reaches the user](https://github.com/nedschorus/nedschorus/issues/1058), the job in which an agent-seat reviews its own task list:
+When he does, read each archived task's JSON file, which holds the whole task including its metadata; `task-list-archive.md` is only an index. Sort each task into one of three groups, by the rules of the sixteenth job of GHI [Regular maintenance: the list of maintenance jobs, how often each runs, and how each reaches the user](https://github.com/nedsnodes/nedsnodes/issues/1058), the job in which an agent-seat reviews its own task list:
 
 - Done, or no longer wanted: dropped, with a one-line reason.
 - Still wanted: put on the task list of the agent-seat that owns that work after the restructure, or, when it belongs in an issue, routed through the /ghi-write skill, which also finds an open issue that already covers it.

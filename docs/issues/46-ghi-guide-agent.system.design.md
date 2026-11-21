@@ -1,18 +1,18 @@
 ---
-issue: "[Build ghi-guide-agent — the GHI knowledge agent](https://github.com/nedschorus/nedschorus/issues/46)"
+issue: "[Build ghi-guide-agent — the GHI knowledge agent](https://github.com/nedsnodes/nedsnodes/issues/46)"
 kind: design
 design-as-of: 2026-08-11
 ---
 
 # Build ghi-guide-agent — the GHI knowledge agent
 
-How agents work with GitHub issues (GHIs) in nedschorus: `ghi-guide-agent`, a long-lived knowledge agent over the issue corpus; a script-maintained local mirror; a write path whose hook routes raw writes through the project write tool; and the `ghi-write` skill carrying the judgment none of the machinery can. Throughout, **GHI author** means whichever agent is filing or editing an issue. Decision trail: `git show 6c9b437:docs/drafts/ghi-info-agent-plan-draft.md` (per-item dispositions, 2026-08-07) and `git show db917b5:md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md`; the rejected single-gate direction is kept in § Why issue writes cannot be a credential gate, below, and in full at `git show 0860628:docs/drafts/ghi-gatekeeper-plan-draft.md`.
+How agents work with GitHub issues (GHIs) in nedsnodes: `ghi-guide-agent`, a long-lived knowledge agent over the issue corpus; a script-maintained local mirror; a write path whose hook routes raw writes through the project write tool; and the `ghi-write` skill carrying the judgment none of the machinery can. Throughout, **GHI author** means whichever agent is filing or editing an issue. Decision trail: `git show 6c9b437:docs/drafts/ghi-info-agent-plan-draft.md` (per-item dispositions, 2026-08-07) and `git show db917b5:md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md`; the rejected single-gate direction is kept in § Why issue writes cannot be a credential gate, below, and in full at `git show 0860628:docs/drafts/ghi-gatekeeper-plan-draft.md`.
 
 The organizing idea: instead of building a vector or graph database of the GHIs, we use a modern agent — the corpus fits in its context window (measured 2026-08-07: 45 issues ≈ 109 KB). Mechanical work is script work — fetch, format, measure, filter; `ghi-guide-agent` spends model turns only on judgment.
 
 ## Build status
 
-Issue [Build ghi-guide-agent — the GHI knowledge agent](https://github.com/nedschorus/nedschorus/issues/46) builds the whole system this design describes: the GHI mirror and refresh script, the ghi-guide-agent-ask wrapper, the issue-write tool and its redirect hook, the maintenance sweep and fixer spawning, and the seat on the box. On main as of 2026-09-30:
+Issue [Build ghi-guide-agent — the GHI knowledge agent](https://github.com/nedsnodes/nedsnodes/issues/46) builds the whole system this design describes: the GHI mirror and refresh script, the ghi-guide-agent-ask wrapper, the issue-write tool and its redirect hook, the maintenance sweep and fixer spawning, and the seat on the box. On main as of 2026-09-30:
 
 - **The `ghi-write` skill**, the front-loading layer, landed 2026-08-12 (§ The three-layer stack).
 - **The mirror and the seat:** `scripts/ghi-mirror-refresh.py`, run in the seat's checkout `~/agents/ghi-guide-agent` on ned-box, which holds `ghi-mirror/`.
@@ -63,7 +63,7 @@ Two files, split by state: `issues-open.md` — every open issue near-raw (numbe
 
 ## The ghi-guide-agent session
 
-**Where it runs:** the Ubuntu box, `~/agents/ghi-guide-agent` (the box convention; see issue [Run named agents on the Ubuntu box, reachable from iTerm2 by name: launch-claude with tmux attach-or-create, and the migration it requires](https://github.com/nedschorus/nedschorus/issues/45)); wrapper state — session id, counters — lives there. Mac-side callers reach it over SSH (`scripts/launch-claude-ubuntu` — renamed from `launch-claude` 2026-08-13, when a Mac-local twin `scripts/launch-claude-mac` joined it; same issue).
+**Where it runs:** the Ubuntu box, `~/agents/ghi-guide-agent` (the box convention; see issue [Run named agents on the Ubuntu box, reachable from iTerm2 by name: launch-claude with tmux attach-or-create, and the migration it requires](https://github.com/nedsnodes/nedsnodes/issues/45)); wrapper state — session id, counters — lives there. Mac-side callers reach it over SSH (`scripts/launch-claude-ubuntu` — renamed from `launch-claude` 2026-08-13, when a Mac-local twin `scripts/launch-claude-mac` joined it; same issue).
 
 **Lifecycle:** active while taking a turn, otherwise exited — a session id, transcript, and the mirror persist; no process does. No idle state exists for this class.
 
@@ -94,7 +94,7 @@ GHI authors write with `gh` as trained for create, edit, and close; comments are
 1. **Validate.** The file exists, opens with a heading, and is not already paired with an issue.
 2. **Adjudicate** (§ What ghi-guide-agent is; on an edit, the edit's own issue excluded). Fail-open: `ghi-guide-agent` unreachable means the write proceeds without adjudication — the mechanical checks still run.
 3. **File.** `gh issue create`, the title taken verbatim from the file's first heading, the body a placeholder. The tool generates the title rather than an agent typing it, so the two cannot disagree (user-ruled 2026-09-16 at the merge-lane seat: "the titles should be generated from them"). The tool relays `gh`'s own output verbatim and appends its lines after it.
-4. **Name and land.** Move the file to `docs/issues/<number>-<slug>.md` and land it on main through the tool's own pull request, merged by merge-lane exactly as every other pull request is (user-ruled 2026-09-20: "like every other change seems fine"). A raw push stays refused for every tool. This replaces the 2026-09-15 rule that the pull request merges without waiting on a person, which put the deferred approving identity of issue [Deferred: main-gatekeeper activation shape 2 — a reviewer attached to the gate and an approving identity of its own](https://github.com/nedschorus/nedschorus/issues/357) on this build's critical path; measured 2026-09-20, the lane merged 49 pull requests in a day against about 2.3 issues created a day over the preceding 30 days, so issue filings add roughly 5% to the lane's load and, counting edits to GHI-MDs, well under a fifth; and a GHI-MD is prose under `docs/`, which the review-scope rule makes silent, so the lane reads nothing and merges. **Accepted consequence:** between lane sessions an issue exists with a placeholder body and a link that does not yet resolve; the sequence is resumable, so the author reruns the tool and it continues.
+4. **Name and land.** Move the file to `docs/issues/<number>-<slug>.md` and land it on main through the tool's own pull request, merged by merge-lane exactly as every other pull request is (user-ruled 2026-09-20: "like every other change seems fine"). A raw push stays refused for every tool. This replaces the 2026-09-15 rule that the pull request merges without waiting on a person, which put the deferred approving identity of issue [Deferred: main-gatekeeper activation shape 2 — a reviewer attached to the gate and an approving identity of its own](https://github.com/nedsnodes/nedsnodes/issues/357) on this build's critical path; measured 2026-09-20, the lane merged 49 pull requests in a day against about 2.3 issues created a day over the preceding 30 days, so issue filings add roughly 5% to the lane's load and, counting edits to GHI-MDs, well under a fifth; and a GHI-MD is prose under `docs/`, which the review-scope rule makes silent, so the lane reads nothing and merges. **Accepted consequence:** between lane sessions an issue exists with a placeholder body and a link that does not yet resolve; the sequence is resumable, so the author reruns the tool and it continues.
 5. **Link.** Write the body from a glob of `docs/issues/<number>-*`: one link per file, in filename order, and nothing else. The list is derived at every write, so no author curates it and it cannot fall behind the files. An issue with a design, a design-contract and a test-design carries three links; most carry one.
 
 **The sequence is resumable.** Steps 3 to 5 are three separate remote operations and any of them can fail. Run again on the same file and the tool finds the issue it already created, from the pairing it recorded at step 3, and continues from the step that failed. It never files a second issue for one file.
@@ -139,7 +139,7 @@ Pair staleness is swept in one direction only — issue moved, GHI-MD not. The r
 
 1. **`ghi-write`** (skill; landed at [.claude/skills/ghi-write/SKILL.md](../../.claude/skills/ghi-write/SKILL.md), user-ruled 2026-08-12; decision trail at `git show 6bd0aa5:docs/drafts/ghi-write-skill-draft.md`): fires when a GHI author is about to file or edit; front-loads the right behavior — ask `ghi-guide-agent` first, route by state, edit rather than duplicate, and write the GHI-MD, which the tool then files, names, lands and links.
 2. **Hook + tool** — the correctness backstop when the skill does not fire: on the covered write path with `ghi-guide-agent` answering, a missed trigger costs efficiency — a late merge catch, one comment retry. The fail-open window and the enumeration holes are the accepted residuals, visible in the delta.
-3. **CLAUDE.md** — ambient documentation only (issue [Build ghi-write (step-1 founding skill): trigger on creating or revising a GHI; enforce edit-don't-comment-or-duplicate](https://github.com/nedschorus/nedschorus/issues/13) is this project's record of a written convention losing to trained habit).
+3. **CLAUDE.md** — ambient documentation only (issue [Build ghi-write (step-1 founding skill): trigger on creating or revising a GHI; enforce edit-don't-comment-or-duplicate](https://github.com/nedsnodes/nedsnodes/issues/13) is this project's record of a written convention losing to trained habit).
 
 ## Division of labor
 
@@ -308,7 +308,7 @@ Each with its failure branch (item 7 is a plain measurement and carries none):
 
 **Constants** live as named values at the top of the owning script — no config file in version 1; starting values, tuned in live use: closes-since-birth reincarnation threshold 20; stale-match 2 in the last 10 answers; transcript threshold set at build from NM's working values; ask timeout 5 minutes, inside the hook budget; one drift recheck per ask.
 
-**Pinned to what landed:** commit [b9d8b4e](https://github.com/nedschorus/nedschorus/commit/b9d8b4e9e4ce8af26269dc03d1df325fe16051bb) on 2026-09-22 — `scripts/ghi-guide-agent-ask.py` as merged by PR [ghi-info-ask's state key names the session it holds](https://github.com/nedschorus/nedschorus/pull/637).
+**Pinned to what landed:** commit [b9d8b4e](https://github.com/nedsnodes/nedsnodes/commit/b9d8b4e9e4ce8af26269dc03d1df325fe16051bb) on 2026-09-22 — `scripts/ghi-guide-agent-ask.py` as merged by PR [ghi-info-ask's state key names the session it holds](https://github.com/nedsnodes/nedsnodes/pull/637).
 
 ## Deferred-decisions
 

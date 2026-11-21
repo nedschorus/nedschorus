@@ -1,4 +1,4 @@
-# The Nedschorus objective: AI-native software development with natural-language human oversight
+# The NedsNodes objective: AI-native software development with natural-language human oversight
 
 **Status.** Two different things in this file have two different standings, and a reader needs to know which is which.
 
@@ -135,7 +135,7 @@ These are the present architectural decisions established by the human direction
 
 ## Project organization
 
-The existing Nedschorus placement rule remains useful: GitHub Issues carry walkable state, Markdown carries substantive reasoning, and queues hold material whose disposition is undecided.
+The existing NedsNodes placement rule remains useful: GitHub Issues carry walkable state, Markdown carries substantive reasoning, and queues hold material whose disposition is undecided.
 
 | Place | Holds |
 | --- | --- |

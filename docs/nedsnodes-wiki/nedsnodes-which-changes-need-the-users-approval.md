@@ -1,4 +1,4 @@
-# nedschorus: which changes need the user's approval
+# nedsnodes: which changes need the user's approval
 
 A change needs the user's approval only when it is on the list of changes that need approval below and is none of the exceptions after that list. Every other change is a pre-approved-change: make it, and do not report it to the user. If it later breaks something, report the breakage as you would any failure. Each edit is classified on its own. Only an edit on the list waits for the user, together with any edit that depends on it, and those edits share one pull request; every other edit goes in a different pull request, which merges without waiting. If you cannot tell whether a change is on the list or is an exception, ask the user.
 

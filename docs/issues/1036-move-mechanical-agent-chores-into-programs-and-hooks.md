@@ -1,5 +1,5 @@
 ---
-issue: "[Move mechanical agent chores into programs and hooks](https://github.com/nedschorus/nedschorus/issues/1036)"
+issue: "[Move mechanical agent chores into programs and hooks](https://github.com/nedsnodes/nedsnodes/issues/1036)"
 ---
 
 # Move mechanical agent chores into programs and hooks
@@ -40,7 +40,7 @@ Checked against main at 16704b7 on 2026-10-04. "Small" means a few lines added t
 
 ## Related GHIs
 
-GHI [Three mechanical checks agents keep forgetting to run: file-overlap before work starts, exit status through a pipe, and the settled-decision list](https://github.com/nedschorus/nedschorus/issues/216) has the same aim, a program in place of an instruction an agent forgets, but holds three different checks, none of them among the eleven, so it stays a GHI of its own. GHI [Four places where agent instructions should be Python: supervisor merge advice, appended-prompt editor notes, cold-read full-run rule, walk bare references](https://github.com/nedschorus/nedschorus/issues/418), closed, is the earlier survey of this kind; its places are not among the eleven either.
+GHI [Three mechanical checks agents keep forgetting to run: file-overlap before work starts, exit status through a pipe, and the settled-decision list](https://github.com/nedsnodes/nedsnodes/issues/216) has the same aim, a program in place of an instruction an agent forgets, but holds three different checks, none of them among the eleven, so it stays a GHI of its own. GHI [Four places where agent instructions should be Python: supervisor merge advice, appended-prompt editor notes, cold-read full-run rule, walk bare references](https://github.com/nedsnodes/nedsnodes/issues/418), closed, is the earlier survey of this kind; its places are not among the eleven either.
 
 Search receipt, 2026-10-04: ghi-guide-agent was asked whether any open or closed GHI covers these chores. Its reply said none does, but `scripts/ghi-guide-agent-ask.py` rejected the reply's format. Ten searches with `gh issue list --state all --search "<terms>"`, on the terms "mechanical chores", "automation agents by hand", "pre-push test", "announce merge-lane-2", "bare number linter", "reminder mark", "ship triage hook", "first prompt pull request state", "agents forget" and "scheduled job instead of agent" found only GHI 216 and GHI 418 on this subject, and `ls docs/issues/` found no other GHI-MD on it.
 
@@ -51,4 +51,4 @@ The user, in an approval-walk held by reboot-test, rules on each chore: build it
 ## Provisional additions (not yet vetted by the user)
 
 - fleet-restart-at-login, 2026-10-14: Put the Codex survey's 13 script candidates and its 3 corrections to this GHI-MD to the user, then carry what the user picks into this GHI-MD (task #155).
-- Agent-seat agent-instructions-editor, 2026-10-14: build chore 1, the pre-push hook that runs the affected test suites and refuses a push whose suites fail. The build is open as PR [Pre-push: run the selective test run and refuse a push whose suites fail](https://github.com/nedschorus/nedschorus/pull/1372).
+- Agent-seat agent-instructions-editor, 2026-10-14: build chore 1, the pre-push hook that runs the affected test suites and refuses a push whose suites fail. The build is open as PR [Pre-push: run the selective test run and refuse a push whose suites fail](https://github.com/nedsnodes/nedsnodes/pull/1372).

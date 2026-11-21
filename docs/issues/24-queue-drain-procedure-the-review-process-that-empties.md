@@ -1,5 +1,5 @@
 ---
-issue: "[Queue drain procedure — the review process that empties the wiki queue, the pair queue, nn-queue, the drafts directory and the queue-drain-candidate-label issue queue](https://github.com/nedschorus/nedschorus/issues/24)"
+issue: "[Queue drain procedure — the review process that empties the wiki queue, the pair queue, nn-queue, the drafts directory and the queue-drain-candidate-label issue queue](https://github.com/nedsnodes/nedsnodes/issues/24)"
 ---
 
 # Queue drain procedure — the review process that empties the wiki queue, the pair queue, nn-queue, the drafts directory and the queue-drain-candidate-label issue queue
@@ -18,30 +18,30 @@ The artifact-lifecycle design gives every non-final artifact a named queue (`doc
   - **drop** — deleted, with the reason in the commit message; explicit, never silent rot.
 - **Starvation visibility is the system half:** the handoff scrub step reports every queue's depth and oldest-item age (it already does this for the `queue-drain-candidate` issue queue), so an unwalked queue surfaces at every handoff without anyone remembering to look.
 
-## Build surfaces (when NC builds them)
+## Build surfaces (when NN builds them)
 
-1. The NC handoff skill's scrub step: add per-queue depth + oldest-age reporting (one grep per queue directory + one label query).
+1. The NN handoff skill's scrub step: add per-queue depth + oldest-age reporting (one grep per queue directory + one label query).
 2. Possibly a `drain-queue` walk variant later — only if live drains with walk-me-through prove insufficient; do not build ahead of friction.
 
 ## Status and dependency
 
-The parent queue-system ruling was boss-approved 2026-07-24 and executed (commit 4b20892: queues created at `docs/nedsnodes-wiki/queue/` and `docs/issues/queue/`, `boss-review` label renamed to `draft`, rule of record in founding plan § Project organization). This GHI remains open for the build half: the NC handoff skill's scrub step reporting every queue's depth and oldest-item age. Until that is built, the drain runs as discipline.
+The parent queue-system ruling was boss-approved 2026-07-24 and executed (commit 4b20892: queues created at `docs/nedsnodes-wiki/queue/` and `docs/issues/queue/`, `boss-review` label renamed to `draft`, rule of record in founding plan § Project organization). This GHI remains open for the build half: the NN handoff skill's scrub step reporting every queue's depth and oldest-item age. Until that is built, the drain runs as discipline.
 
 
 
 ## Drain scheduling — superseded (see the 2026-09-22 ruling below)
 
-The first drain is DEFERRED until the step-2 CLAUDE.md lands (GHI [Step 2: the CLAUDE.md build — NC's instruction floor (founding plan step 2)](https://github.com/nedschorus/nedschorus/issues/43)) — it then runs as a natural next sitting. Queue state at ruling: nn-queue 4 notes (oldest 2026-07-28; TTL 90 days — no pressure), docs/issues/queue 5 pair-bound MDs, docs/nedsnodes-wiki/queue 3 docs, draft-labeled issues zero, legacy-feature-queue empty. Nothing is blocked on the drain.
+The first drain is DEFERRED until the step-2 CLAUDE.md lands (GHI [Step 2: the CLAUDE.md build — NC's instruction floor (founding plan step 2)](https://github.com/nedsnodes/nedsnodes/issues/43)) — it then runs as a natural next sitting. Queue state at ruling: nn-queue 4 notes (oldest 2026-07-28; TTL 90 days — no pressure), docs/issues/queue 5 pair-bound MDs, docs/nedsnodes-wiki/queue 3 docs, draft-labeled issues zero, legacy-feature-queue empty. Nothing is blocked on the drain.
 
 ## The drain runs now (user-ruled 2026-09-22)
 
-**"Let do it as soon as this walk completes."** Ruled at item 8 of the walk `open-questions-concerns-and-recommendations-2026-09-21`, which closed the same day. This supersedes the 2026-08-06 deferral above: that one waited on GHI [Step 2: the CLAUDE.md build — NC's instruction floor (founding plan step 2)](https://github.com/nedschorus/nedschorus/issues/43), which closed 2026-08-06, and nothing ran in the seven weeks after. The replacement deferral was bounded by a named event rather than left open.
+**"Let do it as soon as this walk completes."** Ruled at item 8 of the walk `open-questions-concerns-and-recommendations-2026-09-21`, which closed the same day. This supersedes the 2026-08-06 deferral above: that one waited on GHI [Step 2: the CLAUDE.md build — NC's instruction floor (founding plan step 2)](https://github.com/nedsnodes/nedsnodes/issues/43), which closed 2026-08-06, and nothing ran in the seven weeks after. The replacement deferral was bounded by a named event rather than left open.
 
 ### `docs/drafts/` is in scope
 
 The user named drafts on 2026-09-19 — "at some point we need to clean out the queue and drafts" — and again in ruling the drain. It is a fourth location this procedure now covers.
 
-Recorded because it looked like settled doctrine and is not: GHI [Four small skills the user named on the vocabulary page: /save, /push, /save-MD, /save-MD-as-draft (name open)](https://github.com/nedschorus/nedschorus/issues/256) contains the sentence "`docs/drafts/` holds in-progress documents that are not queued for review". That sentence sits **inside an open question being put to the user**, not a ruling, and nothing else in the repository says it: `grep -rn 'not queued for review' --include='*.md'` over the tree returns nothing. So drafts had no settled status either way, and the user's words give them one.
+Recorded because it looked like settled doctrine and is not: GHI [Four small skills the user named on the vocabulary page: /save, /push, /save-MD, /save-MD-as-draft (name open)](https://github.com/nedsnodes/nedsnodes/issues/256) contains the sentence "`docs/drafts/` holds in-progress documents that are not queued for review". That sentence sits **inside an open question being put to the user**, not a ruling, and nothing else in the repository says it: `grep -rn 'not queued for review' --include='*.md'` over the tree returns nothing. So drafts had no settled status either way, and the user's words give them one.
 
 ### Queue state at the ruling
 

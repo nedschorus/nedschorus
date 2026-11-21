@@ -215,6 +215,11 @@ checkout = scratch_checkout({"a.py": "x = 1  # see nedschorus#418 and nc-head-co
 covered = run(checkout, "--residue-report")
 check("the residue report exits 0 when the allowlist covers every old name, and counts each by reason",
       covered.returncode == 0 and "2 old-name matches covered" in covered.stdout, covered.stdout)
+checkout = scratch_checkout({"a.md": "An nc-canary-test, an nc-scheduled-canary-test, an nc-one-shot-canary-test and "
+                                     "the nc-canary-runner.\n"})
+covered = run(checkout, "--residue-report")
+check("the residue report covers the four canary glossary terms as nc- glossary terms",
+      covered.returncode == 0 and "4 old-name matches covered" in covered.stdout, covered.stdout)
 checkout = scratch_checkout({"a.py": "PATH = 'nc-systems/x'\n"})
 uncovered = run(checkout, "--residue-report")
 check("the residue report exits 1 and prints each old name no reason covers",

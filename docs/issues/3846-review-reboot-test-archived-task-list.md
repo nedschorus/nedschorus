@@ -1,5 +1,5 @@
 ---
-issue: "[Review reboot-test's archived task list](https://github.com/nedschorus/nedschorus/issues/3846)"
+issue: "[Review reboot-test's archived task list](https://github.com/nedsnodes/nedsnodes/issues/3846)"
 ---
 
 # Review reboot-test's archived task list
@@ -16,7 +16,7 @@ On 2026-11-17, reboot-test archived its whole task list, 186 tasks (121 pending,
 
 These may have changed since; check each one's current state before deciding it.
 
-- Open pull requests: [3818](https://github.com/nedschorus/nedschorus/pull/3818), [3348](https://github.com/nedschorus/nedschorus/pull/3348), [3320](https://github.com/nedschorus/nedschorus/pull/3320), [3731](https://github.com/nedschorus/nedschorus/pull/3731), and the draft [3426](https://github.com/nedschorus/nedschorus/pull/3426).
+- Open pull requests: [3818](https://github.com/nedsnodes/nedsnodes/pull/3818), [3348](https://github.com/nedsnodes/nedsnodes/pull/3348), [3320](https://github.com/nedsnodes/nedsnodes/pull/3320), [3731](https://github.com/nedsnodes/nedsnodes/pull/3731), and the draft [3426](https://github.com/nedsnodes/nedsnodes/pull/3426).
 - Pushed branches with no pull request, by archived task:
   - 480: `bash-guards-replay-merge-tree-refusals-print-the-exact-rerun-command-topic-branch`
   - 524: `idle-sweep-failures-to-owning-agent-seat-tasks-and-headless-usage-limit-pause-topic-branch`

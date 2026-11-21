@@ -1,12 +1,12 @@
 ---
-issue: "[Reconcile import-tracking doctrine (entry checkpoint, rewrite policy, gatekeeper import check) with the team-building goal](https://github.com/nedschorus/nedschorus/issues/44)"
+issue: "[Reconcile import-tracking doctrine (entry checkpoint, rewrite policy, gatekeeper import check) with the team-building goal](https://github.com/nedsnodes/nedsnodes/issues/44)"
 ---
 
 # Reconcile import-tracking doctrine (entry checkpoint, rewrite policy, gatekeeper import check) with the team-building goal
 
 ## What this captures
 
-A boss direction (2026-08-06, at the CLAUDE.md admission of the entry-checkpoint line): NC's goal is to build a Claude–Codex–Python team, not to learn from or reuse nedlern; beyond manually selected pieces, carefully tracking imports from nedlern is a distraction, not a help. The CLAUDE.md floor line for the checkpoint was cut in the same ruling.
+A boss direction (2026-08-06, at the CLAUDE.md admission of the entry-checkpoint line): NN's goal is to build a Claude–Codex–Python team, not to learn from or reuse nedlern; beyond manually selected pieces, carefully tracking imports from nedlern is a distraction, not a help. The CLAUDE.md floor line for the checkpoint was cut in the same ruling.
 
 ## What it touches
 

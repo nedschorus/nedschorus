@@ -1,5 +1,5 @@
 ---
-issue: "[A fresh agent of the other agent-binary tries to break each proposal that changes how a program or an agent works, before the user decides on it](https://github.com/nedschorus/nedschorus/issues/1230)"
+issue: "[A fresh agent of the other agent-binary tries to break each proposal that changes how a program or an agent works, before the user decides on it](https://github.com/nedsnodes/nedsnodes/issues/1230)"
 kind: design
 ---
 
@@ -23,9 +23,9 @@ Later checks do not reliably catch such errors. A cold-read-full-run's cold-read
 
 ## What exists, and how it differs
 
-- **design-to-main** (`docs/design-to-main/design-to-main-state-machine.system.design.md`) has `design-acceptance-by-agent` (§6.2): a fresh agent checks a design "before the user reads the document", and every reviewer may write and run tests of its own (§6.1). §6.6 puts each of the user's acceptance checks after the document's cold read and its agent check. Once design-to-main is mandatory, every document the user accepts has had that check, which is why this review ends then. Its build is GHI [Build the design-to-main state machine: the Python machine, its per-state agent-instructions, and the nine items the design defers to the build](https://github.com/nedschorus/nedschorus/issues/282). The user decided on 2026-10-11 that design-to-main is used at discretion while it is tested and is mandatory once deployed; that decision is recorded in the walk-minutes of the approval-walk named in case 1.
+- **design-to-main** (`docs/design-to-main/design-to-main-state-machine.system.design.md`) has `design-acceptance-by-agent` (§6.2): a fresh agent checks a design "before the user reads the document", and every reviewer may write and run tests of its own (§6.1). §6.6 puts each of the user's acceptance checks after the document's cold read and its agent check. Once design-to-main is mandatory, every document the user accepts has had that check, which is why this review ends then. Its build is GHI [Build the design-to-main state machine: the Python machine, its per-state agent-instructions, and the nine items the design defers to the build](https://github.com/nedsnodes/nedsnodes/issues/282). The user decided on 2026-10-11 that design-to-main is used at discretion while it is tested and is mandatory once deployed; that decision is recorded in the walk-minutes of the approval-walk named in case 1.
 - **/sanity-check** (`.claude/skills/sanity-check/SKILL.md`) attacks a committed document that directs work, by deliberate decision, after its cold-read-full-run. Its runner takes a committed target only; the approval-walks' `-draft.md` files and the scratchpad files that hold proposals are not committed.
-- **GHI [Candidate skill: attack-artifact — isolated adversarial review; filed as a d-review comparison question](https://github.com/nedschorus/nedschorus/issues/19)** records an isolated adversarial reviewer as a candidate skill. It stays open, as source material for design-to-main's reviewer agent-instructions; this plan is filed as a GHI of its own and cites it as related.
+- **GHI [Candidate skill: attack-artifact — isolated adversarial review; filed as a d-review comparison question](https://github.com/nedsnodes/nedsnodes/issues/19)** records an isolated adversarial reviewer as a candidate skill. It stays open, as source material for design-to-main's reviewer agent-instructions; this plan is filed as a GHI of its own and cites it as related.
 
 ## The proposal
 
@@ -83,4 +83,4 @@ This agent-seat keeps a dated task: on 2026-11-15, count from the review reports
 
 ## Next action
 
-File this plan as a new GHI through the /ghi-write skill, citing GHI [Candidate skill: attack-artifact — isolated adversarial review; filed as a d-review comparison question](https://github.com/nedschorus/nedschorus/issues/19) as related. Then build the program, its prompt file, its tests, the removal test and the five references on one topic branch. The prompt file gets a cold-read-full-run, and each one-sentence change to a skill gets a cold-read-fast-read, as the /cold-read skill directs. Create the removal task and the 2026-11-15 task when the pull request merges.
+File this plan as a new GHI through the /ghi-write skill, citing GHI [Candidate skill: attack-artifact — isolated adversarial review; filed as a d-review comparison question](https://github.com/nedsnodes/nedsnodes/issues/19) as related. Then build the program, its prompt file, its tests, the removal test and the five references on one topic branch. The prompt file gets a cold-read-full-run, and each one-sentence change to a skill gets a cold-read-fast-read, as the /cold-read skill directs. Create the removal task and the 2026-11-15 task when the pull request merges.

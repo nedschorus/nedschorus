@@ -1,5 +1,5 @@
 ---
-issue: "[A pilot of three past bug fixes, redone by agents on the code as it stood before each fix, to learn whether a benchmark of agent-instructions and hooks can be built from the project's history](https://github.com/nedschorus/nedschorus/issues/1505)"
+issue: "[A pilot of three past bug fixes, redone by agents on the code as it stood before each fix, to learn whether a benchmark of agent-instructions and hooks can be built from the project's history](https://github.com/nedsnodes/nedsnodes/issues/1505)"
 kind: design
 ---
 
@@ -24,7 +24,7 @@ Whether such tasks can be built from this project's history, and whether agents'
 
 ## What the history supplies
 
-A count made on 2026-10-09 covered the 971 merged pull requests numbered 1 to 1160: 79 change a program and a test file and have a title that reads as a fix. The count, its program and the list of 79 are in `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/prime-intellect/benchmark-case-count-2026-10-09/`. 37 of the 79 merged after PR [Every test suite runs from one committed program, judged by its exit code](https://github.com/nedschorus/nedschorus/pull/618) added the test runner, at 2026-09-22T01:43Z: 628, 656, 688, 691, 695, 699, 701, 702, 708, 714, 728, 762, 771, 776, 800, 803, 822, 838, 881, 943, 960, 969, 971, 978, 985, 992, 1007, 1021, 1023, 1031, 1032, 1068, 1087, 1096, 1109, 1120 and 1160. Each merge commit has two parents, and none deleted or renamed a test file.
+A count made on 2026-10-09 covered the 971 merged pull requests numbered 1 to 1160: 79 change a program and a test file and have a title that reads as a fix. The count, its program and the list of 79 are in `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/prime-intellect/benchmark-case-count-2026-10-09/`. 37 of the 79 merged after PR [Every test suite runs from one committed program, judged by its exit code](https://github.com/nedsnodes/nedsnodes/pull/618) added the test runner, at 2026-09-22T01:43Z: 628, 656, 688, 691, 695, 699, 701, 702, 708, 714, 728, 762, 771, 776, 800, 803, 822, 838, 881, 943, 960, 969, 971, 978, 985, 992, 1007, 1021, 1023, 1031, 1032, 1068, 1087, 1096, 1109, 1120 and 1160. Each merge commit has two parents, and none deleted or renamed a test file.
 
 Building a case by reverting the fix on today's main was tried and rejected: on main of 2026-10-10 the revert applied cleanly for only 11 or 12 of the 79, and main takes 20 to 65 merges a day. On the pre-fix tree of 8 sampled pull requests (72, 102, 200, 307, 416, 584, 822 and 1160), the merged regression test failed before the fix and passed after it in all 8. Both trials are in `fresh-eyes-claude.md` of the sanity-check-record `nedlern@ned-box:/home/nedlern/nedsnodes-logs/sanity-check-records/2026-10-10-agent-instructions-and-hooks-change-benchmark-built-from-project-history/`.
 
@@ -101,7 +101,7 @@ The user decided the first ten in the approval-walks on the /sanity-check run of
 - No held-out cases until the benchmark runs on every pull request.
 - A transcript check for network commands, such as `curl` and `wget`, and reads of the project on GitHub (item 2 of `finding-dispositions.md` in the sanity-check-record named under "What the history supplies").
 - The probe running each hook alone and recording the files it opens; hooks that find their repository from their own location, as `scripts/uncommitted-work-snapshot-hook.py` does.
-- Test files outside the naming pattern, such as the captured responses under `scripts/merge-gate-test-captured-github-responses/` that PR [The merge gate enters the repository, with a test for every refusal](https://github.com/nedschorus/nedschorus/pull/691) changed.
+- Test files outside the naming pattern, such as the captured responses under `scripts/merge-gate-test-captured-github-responses/` that PR [The merge gate enters the repository, with a test for every refusal](https://github.com/nedsnodes/nedsnodes/pull/691) changed.
 - Running an invocation again after a usage limit or a logged-out `claude`.
 - The pilot report's further fields: skipped test cases, model, effort level and `claude` version, the 30-minute end.
 - Confirming that each candidate fixed a bug.
@@ -126,9 +126,9 @@ The user decided the first ten in the approval-walks on the /sanity-check run of
 
 ## Next action
 
-The pilot is parked by the user's ruling of 2026-10-17: nothing runs until he resumes it. When he does, prime-intellect runs Step 1, the sandbox probe, alone, and asks him whether Step 2 follows. If the probe fails, or he decides against spending more on a benchmark, the pilot stops there, and prime-intellect writes the page of GHI [A wiki page on the bubblewrap sandboxes that ned-box's programs run agents and test suites in](https://github.com/nedschorus/nedschorus/issues/1584) without the pilot's sandbox, as that GHI allows.
+The pilot is parked by the user's ruling of 2026-10-17: nothing runs until he resumes it. When he does, prime-intellect runs Step 1, the sandbox probe, alone, and asks him whether Step 2 follows. If the probe fails, or he decides against spending more on a benchmark, the pilot stops there, and prime-intellect writes the page of GHI [A wiki page on the bubblewrap sandboxes that ned-box's programs run agents and test suites in](https://github.com/nedsnodes/nedsnodes/issues/1584) without the pilot's sandbox, as that GHI allows.
 
 ## Prior work
 
-- GHI [Candidate skill: eval-agent-change — baseline-vs-candidate A/B with trigger cases and raw-count reporting](https://github.com/nedschorus/nedschorus/issues/23), closed as not planned on 2026-09-24, proposed comparing the current and the proposed version of a skill on trigger cases.
+- GHI [Candidate skill: eval-agent-change — baseline-vs-candidate A/B with trigger cases and raw-count reporting](https://github.com/nedsnodes/nedsnodes/issues/23), closed as not planned on 2026-09-24, proposed comparing the current and the proposed version of a skill on trigger cases.
 - The research behind this GHI-MD is `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/prime-intellect/deep-dive-2026-10-09/deep-dive-synthesis-2026-10-09.md`. The /sanity-check run of the earlier design, and what the user decided on each finding, are in the sanity-check-record named under "What the history supplies", in `finding-dispositions.md`.

@@ -1,12 +1,12 @@
 ---
-issue: "[Walk-me-through close step and waiting-item read step name different next sub-steps when an older sub-step heading is not retired](https://github.com/nedschorus/nedschorus/issues/3694)"
+issue: "[Walk-me-through close step and waiting-item read step name different next sub-steps when an older sub-step heading is not retired](https://github.com/nedsnodes/nedsnodes/issues/3694)"
 ---
 
 # Walk-me-through close step and waiting-item read step name different next sub-steps when an older sub-step heading is not retired
 
 ## Reproduction
 
-Run on main at [d0669489](https://github.com/nedschorus/nedschorus/tree/d0669489744104020aec67bee624b8987ae3cbea), in a scratch worktree, with the probe below. The probe loads the test file `nn-systems/skills/walk-me-through/tests/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close-test.py` for its `Case` class, which builds a walk in a scratch checkout and runs `nn-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py` on it. Save the probe as `probe.py` beside a checkout of main, and run it from the checkout's top as `python3 ../probe.py nn-systems/skills/walk-me-through/tests/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close-test.py`.
+Run on main at [d0669489](https://github.com/nedsnodes/nedsnodes/tree/d0669489744104020aec67bee624b8987ae3cbea), in a scratch worktree, with the probe below. The probe loads the test file `nn-systems/skills/walk-me-through/tests/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close-test.py` for its `Case` class, which builds a walk in a scratch checkout and runs `nn-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py` on it. Save the probe as `probe.py` beside a checkout of main, and run it from the checkout's top as `python3 ../probe.py nn-systems/skills/walk-me-through/tests/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close-test.py`.
 
 Each walk-document holds item 1, then item 3 with sub-step 3.1, its sub-sub-steps 3.1.1 and 3.1.2, and sub-step 3.2, all headed `of 10`. Each also holds one older sub-step heading, headed `of 9`, that is not retired. A heading is retired when a later heading says `revised` right after its `of M`, or when it falls under a heading that opens with `Withdrawn`, as in `#### Withdrawn version 1 of item 4.1`; the module docstring of `nn-systems/skills/walk-me-through/walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py` gives these rules. The four layouts differ only in the older heading's number and place.
 
@@ -54,7 +54,7 @@ When the older heading's number is 3.1.3, a number no current heading uses, `clo
 
 The hand-appended line is what makes the read step choose the sub-step. In the `older-3.1.3-inside-item-3` and `older-3.1.3-below-item-1` layouts, a second probe instead ran `check`, `close` and the read step in turn, approving each item the walk named. `close` named 3.2, the read step kept 3.2, and once 3.2 was approved `close` wrote `#next_to_present item 3.1.3 of 2`, naming the older heading as the next item to show the user. So in an untouched walk the user is shown the older, unretired part as if it were a live item. How a real walk comes to hand the read step `item 3` after 3.1's sub-sub-steps are answered, as the first probe does by hand, was not traced (unverified).
 
-The mac-claude reviewer of [pull request 3674](https://github.com/nedschorus/nedschorus/pull/3674) found the disagreement first, in [its inline comment](https://github.com/nedschorus/nedschorus/pull/3674#discussion_r4577868960) on review 5910092527, with the `3.1.3` layout inside item 3. mac-claude is the GitHub account that the fresh Claude reviewer the merge agent-seat commissions for each pull request posts as.
+The mac-claude reviewer of [pull request 3674](https://github.com/nedsnodes/nedsnodes/pull/3674) found the disagreement first, in [its inline comment](https://github.com/nedsnodes/nedsnodes/pull/3674#discussion_r4577868960) on review 5910092527, with the `3.1.3` layout inside item 3. mac-claude is the GitHub account that the fresh Claude reviewer the merge agent-seat commissions for each pull request posts as.
 
 ## The problem
 
@@ -62,9 +62,9 @@ The mac-claude reviewer of [pull request 3674](https://github.com/nedschorus/ned
 
 The two steps then use that undecided 3.1 differently. The following is read from the code and not traced (unverified). `close` runs `next_item` over the whole walk-document starting at the item just answered, 3.1.2, so it moves forward to 3.2 and does not come back to 3.1 on that pass. The read step's `approval_walk_item_first_numbered_sub_step_without_answer`, at line 2301, runs `next_item` over item 3's sub-steps from the start, so it finds 3.1 first. That function's docstring says it uses `next_item`'s rule "so the read step and the close step name the same sub-step", and in this case they do not.
 
-The decided-set code was written by the agent-seat reboot-test in [pull request 3665](https://github.com/nedschorus/nedschorus/pull/3665): `git blame` on lines 2817 to 2827 gives commits 1c5824a715 and c524a637e6, both in that pull request.
+The decided-set code was written by the agent-seat reboot-test in [pull request 3665](https://github.com/nedsnodes/nedsnodes/pull/3665): `git blame` on lines 2817 to 2827 gives commits 1c5824a715 and c524a637e6, both in that pull request.
 
-[Pull request 3674](https://github.com/nedschorus/nedschorus/pull/3674), open and not yet on main on 2026-11-15, adds two tests to the test file that touch this case. One checks that an older `3.1.3 of 9` keeps 3.1 undecided. The other checks that, with an older `3.1.1 of 9` below item 1, close and the read step both name 3.2.
+[Pull request 3674](https://github.com/nedsnodes/nedsnodes/pull/3674), open and not yet on main on 2026-11-15, adds two tests to the test file that touch this case. One checks that an older `3.1.3 of 9` keeps 3.1 undecided. The other checks that, with an older `3.1.1 of 9` below item 1, close and the read step both name 3.2.
 
 ## Why it matters
 

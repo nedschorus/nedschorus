@@ -1,14 +1,14 @@
 ---
-issue: "[cold-read skill: about a hundred findings from its 2026-09-19 six-reviewer read await their walk](https://github.com/nedschorus/nedschorus/issues/531)"
+issue: "[cold-read skill: about a hundred findings from its 2026-09-19 six-reviewer read await their walk](https://github.com/nedsnodes/nedsnodes/issues/531)"
 ---
 
 # cold-read skill: about a hundred findings from its 2026-09-19 six-reviewer read await their walk
 
 ## What
 
-The cold-read-full-run of `.claude/skills/cold-read/SKILL.md` on 2026-09-19 (record `nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/SKILL-cold-read-2026-09-18-2/`, six reports, about 140 findings) was triaged for the glossary-awareness change that pull request [Cold-read reviewers read the glossary, and the terminology reviewer proposes key-terms](https://github.com/nedschorus/nedschorus/pull/533) landed. About a hundred findings were on sentences that were on main before that change, so no approval covered them. This issue held them until their walk.
+The cold-read-full-run of `.claude/skills/cold-read/SKILL.md` on 2026-09-19 (record `nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/SKILL-cold-read-2026-09-18-2/`, six reports, about 140 findings) was triaged for the glossary-awareness change that pull request [Cold-read reviewers read the glossary, and the terminology reviewer proposes key-terms](https://github.com/nedsnodes/nedsnodes/pull/533) landed. About a hundred findings were on sentences that were on main before that change, so no approval covered them. This issue held them until their walk.
 
-**That walk has now run in part.** The approval-walk `SKILL-cold-read-2026-09-18-2` was reopened on 2026-09-20 for items 4 to 11; every item was approved and landed as pull request [The cold-read skill says what its programs actually do](https://github.com/nedschorus/nedschorus/pull/560), merged 2026-09-20 as 5646854. Twelve of this issue's thirteen finding groups are ruled. The "Smaller" group was never presented, and behind that one heading sit roughly sixty findings no item reached, plus partial remainders on nine that an item reached only in part. **This issue stays open for those.** Rulings are in `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/SKILL-cold-read-2026-09-18-2-dispositions.md`; the sitting's record is the minutes beside it.
+**That walk has now run in part.** The approval-walk `SKILL-cold-read-2026-09-18-2` was reopened on 2026-09-20 for items 4 to 11; every item was approved and landed as pull request [The cold-read skill says what its programs actually do](https://github.com/nedsnodes/nedsnodes/pull/560), merged 2026-09-20 as 5646854. Twelve of this issue's thirteen finding groups are ruled. The "Smaller" group was never presented, and behind that one heading sit roughly sixty findings no item reached, plus partial remainders on nine that an item reached only in part. **This issue stays open for those.** Rulings are in `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/SKILL-cold-read-2026-09-18-2-dispositions.md`; the sitting's record is the minutes beside it.
 
 ## Why
 

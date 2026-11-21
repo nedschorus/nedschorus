@@ -5,13 +5,13 @@ verified-as-of: 2026-08-13
 
 # Fleet machine paths and checkouts
 
-Where every working copy, agent-home, and handoff file lives on each machine of the nedschorus fleet, and which commands run where. Written because the fleet spans two machines that carry the same relative paths over different clones: on 2026-08-12 a `git pull` intended for the Ubuntu checkout ran on the Mac instead, leaving the box stale for hours while everyone believed it current. Naming the machine is not pedantry here; it is the difference between a command working and silently working somewhere else.
+Where every working copy, agent-home, and handoff file lives on each machine of the nedsnodes fleet, and which commands run where. Written because the fleet spans two machines that carry the same relative paths over different clones: on 2026-08-12 a `git pull` intended for the Ubuntu checkout ran on the Mac instead, leaving the box stale for hours while everyone believed it current. Naming the machine is not pedantry here; it is the difference between a command working and silently working somewhere else.
 
 The user-level instruction file on the box (`/home/nedlern/.claude/CLAUDE.md`) carries the short form of the rule to name the machine for every session; this document is the full map behind it.
 
 ## The two machines
 
-The user works at a **Mac**. Agent sessions run on **`ned-box`**, an Ubuntu machine on the same LAN, reached as `ssh nedlern@ned-box`. Each machine has its own clone of nedschorus, its own Claude credentials, and its own agent state. Git branches cross between them only when pushed, and the Mac mounts ned-box's home directory — beyond that mount, worktrees, handoff files, locks, and credentials are per-machine and never travel.
+The user works at a **Mac**. Agent sessions run on **`ned-box`**, an Ubuntu machine on the same LAN, reached as `ssh nedlern@ned-box`. Each machine has its own clone of nedsnodes, its own Claude credentials, and its own agent state. Git branches cross between them only when pushed, and the Mac mounts ned-box's home directory — beyond that mount, worktrees, handoff files, locks, and credentials are per-machine and never travel.
 
 The box is the default machine for agent work: more memory, CPU and bandwidth, and it does not compete with the machine the user is sitting at. The Mac runs agents only when the work needs to be where the user is — its browser session, its keychain, its GUI, or files that exist only there. Merges to `main` happen on ned-box, at the agent-seat merge-lane-2, which merges as `ned-review-merge`; branch protection lets only `ned-review-merge` and `nedlern` push to `main`.
 
@@ -74,7 +74,7 @@ Both launchers are attach-or-create: running a name that is already up attaches 
 
 **Does not cross:** worktrees and their directories, agent-homes, handoff files, supervisor locks, tmux sessions, Claude credentials (each machine authenticates separately), and anything uncommitted. A pull on one machine tells the other nothing.
 
-**A consequence worth remembering:** pulling the main checkout does not update agent-homes or task worktrees, because each has its own HEAD: a task worktree sits on its own branch, and an agent-home on a detached HEAD. After a merge to `main`, the main checkout needs its own pull. `main` is merged into a pull-request branch only by a hand-merge, to clear a conflict; an agent sees the change because the handoff-supervisor fast-forwards a clean agent-home at launch and `scripts/checkout-freshness-catch-up.py` fast-forwards it at each turn boundary, `scripts/checkout-freshness-catch-up.py` rebases a never-pushed branch onto `main` at each turn boundary, and new work starts on an nc-topic-branch cut from current `main`.
+**A consequence worth remembering:** pulling the main checkout does not update agent-homes or task worktrees, because each has its own HEAD: a task worktree sits on its own branch, and an agent-home on a detached HEAD. After a merge to `main`, the main checkout needs its own pull. `main` is merged into a pull-request branch only by a hand-merge, to clear a conflict; an agent sees the change because the handoff-supervisor fast-forwards a clean agent-home at launch and `scripts/checkout-freshness-catch-up.py` fast-forwards it at each turn boundary, `scripts/checkout-freshness-catch-up.py` rebases a never-pushed branch onto `main` at each turn boundary, and new work starts on an nn-topic-branch cut from current `main`.
 
 ## What the system needs in order to run
 

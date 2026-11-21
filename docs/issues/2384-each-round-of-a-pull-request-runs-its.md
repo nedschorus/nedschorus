@@ -1,5 +1,5 @@
 ---
-issue: "[Each round of a pull request runs its test suites once, and a push reuses a passing test run of the same tree](https://github.com/nedschorus/nedschorus/issues/2384)"
+issue: "[Each round of a pull request runs its test suites once, and a push reuses a passing test run of the same tree](https://github.com/nedsnodes/nedsnodes/issues/2384)"
 kind: design
 ---
 
@@ -7,19 +7,19 @@ kind: design
 
 ## What is wrong
 
-Today one round of a pull request, from the author's test run before the push to merge-lane-2's review, runs overlapping selections of the nc-test-suites up to three times:
+Today one round of a pull request, from the author's test run before the push to merge-lane-2's review, runs overlapping selections of the nn-test-suites up to three times:
 
 1. The author's test run, which the CLAUDE.md bullet beginning "Before pushing" asks for: `python3 scripts/run-all-test-suites.py --only-suites-whose-recorded-inputs-changed-since origin/main`.
 2. The pre-push selective test run, `scripts/git-client-side-hooks-pre-push-selective-test-run.py`, which selects the same way again on the same files, within a 480-second budget (`DEFAULT_TIME_BUDGET_SECONDS`). It runs nothing when an earlier step of the hook refuses the push, or when it finds the machine's test lock held.
 3. merge-lane-2's head test run, run by `scripts/merge-lane-pull-request-worktrees-reviewer-brief-codex-review-and-head-tests-run-without-merge.py`, which tests the pull request merged into main, the `pr<n>-merged` worktree, and selects since main's commit there, so it selects for the pull request's own changes.
 
-Selecting since `origin/main` usually picks more nc-test-suites than selecting since the merge base, because it also selects for the files main changed since the branch started. Test runs started by authors, by hand or by the pre-push hook, averaged 81 nc-test-suites, and the pre-push runs stopped at the budget averaged 107, against 64 in head test runs.
+Selecting since `origin/main` usually picks more nn-test-suites than selecting since the merge base, because it also selects for the files main changed since the branch started. Test runs started by authors, by hand or by the pre-push hook, averaged 81 nn-test-suites, and the pre-push runs stopped at the budget averaged 107, against 64 in head test runs.
 
 Two independent analyses of the transcripts of every agent-seat and the runners' reports for 2026-10-31T00:00Z to 2026-11-02T00:00Z, one by Opus and one by Codex, measured this cost. The figures below are the Opus report's; the Codex report counts 17.58 hours over 175 push operations, and says its operations overlap one another.
 
 - Pushes cost 18.0 agent-hours in the window and about 8 minutes of each round's critical path (168 pushes, median 8.1 minutes).
 - 130 pre-push selective test runs (102 from authors' pushes, 28 from `scripts/ghi-issue-write.py`) stopped at the 480-second budget with no verdict: 17.2 machine-hours thrown away, and each of those pushes went through without the pre-push run's verdict.
-- Running each round's nc-test-suites once would save about 78 pull-request hours and 63 agent-hours a week, and 60 machine-hours (Opus report, section 6, proposal 3).
+- Running each round's nn-test-suites once would save about 78 pull-request hours and 63 agent-hours a week, and 60 machine-hours (Opus report, section 6, proposal 3).
 
 The reports: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/analysis/fleet-time-and-token-costs-2026-10-31-to-2026-11-02/opus/report.md` (section 2, "Retries and timeouts", and section 6, proposal 3) and `nedlern@ned-box:/home/nedlern/nedsnodes-logs/analysis/fleet-time-and-token-costs-2026-10-31-to-2026-11-02/codex/report.md`.
 
@@ -33,7 +33,7 @@ So a pre-push selective test run that finished took a median of about five minut
 
 ## What the user decided
 
-On 2026-11-02 at about 00:55Z, in agent-instructions-editor's agent-session on ned-box, the user decided, in his words: "Obviously running the same tests is stupid unless there's a reason to run a test. ... I would make all these changes, and I'd make them in the order of efficiency." His decision is recorded at line 35 of `/home/nedlern/agents/agent-instructions-editor/docs/walk/merge-lane-2-seat-brief-rewrite-without-history-2026-11-02-minutes.md` on ned-box, whose outcome reads in part "tests run once per change unless there is a reason". This change is second in the order he set, by hours saved, after taking the eight test suites that run without a sandbox off per-change test runs, GHI [Test suites that run without a sandbox leave per-change test runs unless the change edits a file they read, and run on main in a quiet gap](https://github.com/nedschorus/nedschorus/issues/2381).
+On 2026-11-02 at about 00:55Z, in agent-instructions-editor's agent-session on ned-box, the user decided, in his words: "Obviously running the same tests is stupid unless there's a reason to run a test. ... I would make all these changes, and I'd make them in the order of efficiency." His decision is recorded at line 35 of `/home/nedlern/agents/agent-instructions-editor/docs/walk/merge-lane-2-seat-brief-rewrite-without-history-2026-11-02-minutes.md` on ned-box, whose outcome reads in part "tests run once per change unless there is a reason". This change is second in the order he set, by hours saved, after taking the eight test suites that run without a sandbox off per-change test runs, GHI [Test suites that run without a sandbox leave per-change test runs unless the change edits a file they read, and run on main in a quiet gap](https://github.com/nedsnodes/nedsnodes/issues/2381).
 
 So:
 
@@ -65,7 +65,7 @@ This design removes the second of the three test runs above: the push program ru
 
 A test run can take longer than the 600 seconds Claude Code gives one foreground Bash command, so the program is run in the background, and its exit status read when it ends; so are `scripts/ghi-issue-write.py` and the follow-up program's `open-pull-request`, which run it. Its usage text, theirs, and every tool-message-to-agent that names one of the three say so.
 
-Like the git hooks, the program is run as the reference-checkout's copy, `python3 ~/Projects/nedsnodes/scripts/branch-rebase-if-never-pushed-selective-test-run-record-and-push.py`, a path that is the same on the Mac and on ned-box, because an nc-topic-branch cut before the program merged has no copy of its own, and the hook's refusal must name a command that works from every branch. The program tests the checkout it is run from, as the pre-push step does today.
+Like the git hooks, the program is run as the reference-checkout's copy, `python3 ~/Projects/nedsnodes/scripts/branch-rebase-if-never-pushed-selective-test-run-record-and-push.py`, a path that is the same on the Mac and on ned-box, because an nn-topic-branch cut before the program merged has no copy of its own, and the hook's refusal must name a command that works from every branch. The program tests the checkout it is run from, as the pre-push step does today.
 
 ### The record
 
@@ -79,7 +79,7 @@ The record gets a directory of its own, rather than the runner's recorded inputs
 
 `scripts/git-client-side-hooks-pre-push-selective-test-run.py` is replaced by `scripts/git-client-side-hooks-pre-push-passing-selective-test-run-record-check.py`, which runs no test. The hook pipes the pushed refs to the new step on stdin and passes it the hook's arguments, as it does to its other steps, in place of today's `</dev/null`. For each branch the hook already picks, a push to origin of a branch other than main, the new step reads the pushed commit's tree hash and its merge base with `origin/main`, and looks for the record with that name. It lets the push through with one line when every picked branch has its record. It refuses the whole push, exit 10, when any picked branch has none, naming each such branch: the refusal says that no passing selective test run of this commit's files is recorded on this machine, so the push is stopped, then gives, for each such branch, the command to run in the background in place of `git push`: the program by its reference-checkout path with `--remote-branch <branch>`, run from a checkout whose HEAD is that branch's commit, one branch per run. When `git worktree list --porcelain` shows a worktree with that commit checked out, the command starts with `cd <that worktree> &&`; otherwise the refusal says no worktree has it checked out.
 
-The hook's other steps, the nc-mutation-testing worktree refusal, the refusal to rewrite or delete an open pull request's branch, and the conflict check with its revert check, stay as they are, and in the same order. The hook's failure handling stays too: a step that fails, rather than refusing, lets the push through and says so. For the new step, such as when git finds no merge base, that line says the record check did not run and why, and names no test command.
+The hook's other steps, the nn-mutation-testing worktree refusal, the refusal to rewrite or delete an open pull request's branch, and the conflict check with its revert check, stay as they are, and in the same order. The hook's failure handling stays too: a step that fails, rather than refusing, lets the push through and says so. For the new step, such as when git finds no merge base, that line says the record check did not run and why, and names no test command.
 
 The pushed commit's merge base with `origin/main` stays the same when main moves on with commits of its own, so a record made before main moved still matches. It changes when main takes in commits of the branch itself, as when a pull request the branch is stacked on merges, and after a hand-merge of main into the branch. The hook then finds no record under the new base and refuses, and the program, run again, selects since the new base, tests, records and pushes. The hook's conflict check fetches origin before the record check runs, so such a change can arrive during the push itself; the same refusal and rerun apply.
 
@@ -89,7 +89,7 @@ After each passing test run, the program reads the seconds of the last 20 record
 
 ### Callers and documents that change
 
-Every place that gives an agent or a program the command to run the selective test run before pushing, or a `git push` command for an nc-topic-branch, changes to name the push program. Searched on 2026-11-02 with `git grep -n "only-suites-whose-recorded-inputs-changed-since" origin/main` and `git grep -n -E "[\"']push[\"']" origin/main -- 'scripts/*.py' 'nn-systems/*.py'`, then each hit read. These searches find commands, not every sentence that says "push"; such a sentence is left as it is, because a plain `git push` it leads to is refused by the hook with the command to run instead.
+Every place that gives an agent or a program the command to run the selective test run before pushing, or a `git push` command for an nn-topic-branch, changes to name the push program. Searched on 2026-11-02 with `git grep -n "only-suites-whose-recorded-inputs-changed-since" origin/main` and `git grep -n -E "[\"']push[\"']" origin/main -- 'scripts/*.py' 'nn-systems/*.py'`, then each hit read. These searches find commands, not every sentence that says "push"; such a sentence is left as it is, because a plain `git push` it leads to is refused by the hook with the command to run instead.
 
 - `CLAUDE.md`, the bullet beginning "Before pushing". Its new wording names the push program in place of the runner; that wording goes to the user for approval before the build changes it, since `CLAUDE.md` is a guarded-file.
 - `scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py`: `PRE_PUSH_TEST_COMMAND`, step 6 ("Run the affected nc-test-suites"), and step 8 ("push once, with: git push origin HEAD:<branch>") become one step that runs the push program with `--remote-branch <branch>`, after the step 7 check, which today runs between the test run and the push. When the push program stops on a suite that fails because of this round's change, the subagent fixes it in the same commit, runs the check again, and runs the push program again. The step numbers the prompt cites, such as step 5's "the check in step 7", and `check_round`'s line "Not pushed yet. Push once, then run this same command again", change to match.
@@ -111,16 +111,16 @@ None in the program: choosing the base, deciding whether to rebase, running the 
 
 - The push program: it refuses `main`, a detached HEAD without `--remote-branch`, a git operation in progress, and each kind of change git would test but not push, and does not refuse the two named files; it rebases a never-pushed branch, stops on a branch behind or diverged from its remote branch, and leaves alone a pushed branch, a branch pushed under another name, and any push with `--remote-branch`; it stops on `unknown`; it aborts a rebase that conflicts and pushes nothing; a failing test run logs its seconds, writes no record and pushes nothing; a passing test run writes the record before the push, and writes none when HEAD or the checkout changed during it; a push that fails keeps the record, and a second invocation with the same tree and base pushes without a test run; the two-minute line appears when the median of the last 20 records, or of every record when there are fewer, is over 120 seconds, and not otherwise.
 - The pre-push step: it refuses a pushed commit with no record, with a record of another tree, and with a record of another base, naming the command with `--remote-branch` for each branch; it lets through a commit whose record matches; the hook's other steps run as before.
-- Each failure-handling line of both programs gets a test that causes the failure, as `CLAUDE.md` requires; after the merge, `scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py` checks those tests by nc-mutation-testing in its nightly run.
+- Each failure-handling line of both programs gets a test that causes the failure, as `CLAUDE.md` requires; after the merge, `scripts/scheduled-full-mutation-pass-of-merged-pull-requests-and-survivor-tasks-open.py` checks those tests by nn-mutation-testing in its nightly run.
 
 ## Deferred-decisions
 
-- Who builds this, and when. This GHI-MD's first version gave the design to the agent-seat reboot-test, after the design of GHI [Test suites that run without a sandbox leave per-change test runs unless the change edits a file they read, and run on main in a quiet gap](https://github.com/nedschorus/nedschorus/issues/2381); the user approved the outline on 2026-11-02 in ned-box-helper's approval-walk. The agent-seat that builds it is settled before the build starts.
+- Who builds this, and when. This GHI-MD's first version gave the design to the agent-seat reboot-test, after the design of GHI [Test suites that run without a sandbox leave per-change test runs unless the change edits a file they read, and run on main in a quiet gap](https://github.com/nedsnodes/nedsnodes/issues/2381); the user approved the outline on 2026-11-02 in ned-box-helper's approval-walk. The agent-seat that builds it is settled before the build starts.
 - The base. The approved item names "the main commit the suites were chosen against", and the user's 00:55Z decision 2 names the merge base. The two are the same commit for a never-pushed branch after step 3, and differ for a pushed branch that main has moved past; this design follows decision 2. If the user meant `origin/main` for a pushed branch too, step 4 and the pre-push step's lookup change together.
 - How the two-minute report reaches the user without telling him on every push: the design prints it after every passing test run while the median stays over two minutes; once a day per machine, or once only, are the alternatives, and so is a notice the program shows the user itself rather than through the agent. The user decides; until he does, the build prints it as the design says.
 - Whether merge-lane-2's head test run reuses a passing result for suites whose recorded inputs are identical, as the Opus report proposes. Without it, a round still runs its suites twice, once by the author and once in the head test run. Not part of this design.
-- If pull request [Mutation testing: a quick pass before push on failure-handling lines, and a scheduled full pass that opens a task per survivor](https://github.com/nedschorus/nedschorus/pull/2147) merges first: whether the push program runs its quick pass too.
-- How long the push program waits for the machine's test lock where the runner takes one, on a machine without nc-test-sandboxes such as the Mac: a number of seconds, or no limit. On ned-box, where suites run in nc-test-sandboxes, no lock is taken.
+- If pull request [Mutation testing: a quick pass before push on failure-handling lines, and a scheduled full pass that opens a task per survivor](https://github.com/nedsnodes/nedsnodes/pull/2147) merges first: whether the push program runs its quick pass too.
+- How long the push program waits for the machine's test lock where the runner takes one, on a machine without nn-test-sandboxes such as the Mac: a number of seconds, or no limit. On ned-box, where suites run in nn-test-sandboxes, no lock is taken.
 - What the push program does when the runner waits without end for CPU or memory to admit a suite, which the removed budget no longer stops; to be set from the first runs.
 - What happens to the runner and the push when the push program itself is stopped mid-run, such as when its agent-session ends.
 - Whether the record also names the runner's commit, so that a change to the reference-checkout's runner makes an older record stale; the head test run tests again before merge either way.
@@ -130,7 +130,7 @@ None in the program: choosing the base, deciding whether to rebase, running the 
 - What the program does when `head_state` returns `pushed` with no commits to push.
 - What the pre-push hook's refusal tells the agent when no worktree, or more than one, has the rejected commit checked out; or whether the push program takes a commit and cuts its own detached worktree, as `scripts/ghi-issue-write.py` does.
 - How an agent that runs the push program in the background reads the printed two-minute report, and whether a hook refuses a foreground run of the push program and gives the background form.
-- Whether the push program reruns a failed nc-test-suite at the base commit, so the fix-round's subagent judges only failures this round's change caused.
+- Whether the push program reruns a failed nn-test-suite at the base commit, so the fix-round's subagent judges only failures this round's change caused.
 - Whether old records are ever removed. Each is a few hundred bytes; none is removed until the number of files shows a need.
 
 ## Why it matters

@@ -1,5 +1,5 @@
 ---
-issue: "[A program that rewrites each Markdown citation of a renamed file to the file's new path, taking the new path from git's rename history](https://github.com/nedschorus/nedschorus/issues/3054)"
+issue: "[A program that rewrites each Markdown citation of a renamed file to the file's new path, taking the new path from git's rename history](https://github.com/nedsnodes/nedsnodes/issues/3054)"
 ---
 
 # A program that rewrites each Markdown citation of a renamed file to the file's new path, taking the new path from git's rename history
@@ -8,7 +8,7 @@ issue: "[A program that rewrites each Markdown citation of a renamed file to the
 
 When a pull request renames a file, every Markdown file that cites the old path must be updated in the same pull request. Two programs on main find such citations and only report them: `scripts/md-drift-lint.py` reports repository paths and link targets that do not exist on disk, and `scripts/dangling-path-citation-check.py` reports citations of the paths a change deleted or renamed, taking the old names of renamed files from `git diff --name-status` against the merge base. Neither program changes a file, so the author of the rename updates each citation by hand. For a renamed file, git already knows the one correct replacement: the new path its rename detection records. A program could apply that replacement itself.
 
-The user approved filing this as its own GHI on 2026-10-05, with "y" to item 7 of the approval-walk cold-read-and-ask-the-user-rules-2026-10-05, which proposed: "`scripts/md-drift-lint.py` already finds dead paths and broken links, and only reports them. A companion could apply the one replacement git's rename history gives." The walk-document is `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/cold-read-and-ask-the-user-rules-2026-10-05.md` (item 7, lines 75-78), and its walk-minutes are `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/cold-read-and-ask-the-user-rules-2026-10-05-minutes.md`. That walk-document item came from the proposed rename of the style guide in GHI [A project style guide: words to avoid, a mechanical checker, and a check on unbacked promises](https://github.com/nedschorus/nedschorus/issues/14); the rename is one case, and the program serves every rename.
+The user approved filing this as its own GHI on 2026-10-05, with "y" to item 7 of the approval-walk cold-read-and-ask-the-user-rules-2026-10-05, which proposed: "`scripts/md-drift-lint.py` already finds dead paths and broken links, and only reports them. A companion could apply the one replacement git's rename history gives." The walk-document is `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/cold-read-and-ask-the-user-rules-2026-10-05.md` (item 7, lines 75-78), and its walk-minutes are `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/cold-read-and-ask-the-user-rules-2026-10-05-minutes.md`. That walk-document item came from the proposed rename of the style guide in GHI [A project style guide: words to avoid, a mechanical checker, and a check on unbacked promises](https://github.com/nedsnodes/nedsnodes/issues/14); the rename is one case, and the program serves every rename.
 
 ## What to build
 
@@ -25,7 +25,7 @@ Today the reminder hook `nn-systems/general-tools/claude-code-bash-git-push-of-m
 
 ## Supporting documents
 
-- Search receipt: `scripts/ghi-guide-agent-ask.py --include-closed`, 2026-11-10, asked for a GHI, open or closed, for a check that applies git's rename detection so that a renamed file's citations in Markdown are found and updated; it found none. The nearest are GHI [Reference-integrity checker: links resolve and cited revision-paths exist — pure-code review check (and the home for what-else-can-code-check)](https://github.com/nedschorus/nedschorus/issues/42), which checks that links resolve and reports, and GHI [Nothing reports Markdown that still cites a constant or function by a name a pull request renamed or removed](https://github.com/nedschorus/nedschorus/issues/2841), which covers renamed code names, not file paths.
+- Search receipt: `scripts/ghi-guide-agent-ask.py --include-closed`, 2026-11-10, asked for a GHI, open or closed, for a check that applies git's rename detection so that a renamed file's citations in Markdown are found and updated; it found none. The nearest are GHI [Reference-integrity checker: links resolve and cited revision-paths exist — pure-code review check (and the home for what-else-can-code-check)](https://github.com/nedsnodes/nedsnodes/issues/42), which checks that links resolve and reports, and GHI [Nothing reports Markdown that still cites a constant or function by a name a pull request renamed or removed](https://github.com/nedsnodes/nedsnodes/issues/2841), which covers renamed code names, not file paths.
 
 ## Next action
 

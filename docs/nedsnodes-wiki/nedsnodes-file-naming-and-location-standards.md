@@ -1,6 +1,6 @@
 # File naming and location standards
 
-The naming and location standards for this project's files. Where a tool this project did not write, such as Claude Code, Git or GitHub, fixes a file's name or location, we follow the tool. These standards cover every other file in the repository. Where a skill or a program names the files it writes differently, this page still sets the pattern, and the migration of GHI [Rationalize the repository layout: group components by owning system under nn-systems/](https://github.com/nedschorus/nedschorus/issues/224) brings each into line. Until it does, a file that a skill's or a program's code reads stays where that code reads it. `docs/nedsnodes-wiki/nedsnodes-how-to-choose-a-name-for-files-code-and-glossary-terms.md` says how to choose the words of every name, file names included, and CLAUDE.md points there; this page gives the patterns and locations for each kind of file.
+The naming and location standards for this project's files. Where a tool this project did not write, such as Claude Code, Git or GitHub, fixes a file's name or location, we follow the tool. These standards cover every other file in the repository. Where a skill or a program names the files it writes differently, this page still sets the pattern, and the migration of GHI [Rationalize the repository layout: group components by owning system under nn-systems/](https://github.com/nedsnodes/nedsnodes/issues/224) brings each into line. Until it does, a file that a skill's or a program's code reads stays where that code reads it. `docs/nedsnodes-wiki/nedsnodes-how-to-choose-a-name-for-files-code-and-glossary-terms.md` says how to choose the words of every name, file names included, and CLAUDE.md points there; this page gives the patterns and locations for each kind of file.
 
 ## Terms this page uses
 
@@ -11,7 +11,7 @@ The naming and location standards for this project's files. Where a tool this pr
 
 ## Desired locations or file names for various components
 
-The MD-skills agent-seat moves each file on main that is not where, or not named as, this page says, under GHI [Rationalize the repository layout: group components by owning system under nn-systems/](https://github.com/nedschorus/nedschorus/issues/224), one system per pull request, repointing in the same commit every citation in the repository. A new file goes where this page says. A system gets its own directory under `nn-systems/` in the pull request that adds its first production code; test code alone does not earn one.
+The MD-skills agent-seat moves each file on main that is not where, or not named as, this page says, under GHI [Rationalize the repository layout: group components by owning system under nn-systems/](https://github.com/nedsnodes/nedsnodes/issues/224), one system per pull request, repointing in the same commit every citation in the repository. A new file goes where this page says. A system gets its own directory under `nn-systems/` in the pull request that adds its first production code; test code alone does not earn one.
 
 A file in a queue directory is named as it will be in its final location, apart from the issue number a GHI-MD gains when its GHI is filed. A GHI-MD moves to its final location through the ghi-write-tool once its cold read is done; any other file moves to it by `git mv` in a pull request once the user approves it.
 

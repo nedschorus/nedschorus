@@ -1,12 +1,12 @@
 ---
-issue: "[The idle sweep escalates and alerts the user about a promise whose event no task prerequisite can name](https://github.com/nedschorus/nedschorus/issues/3867)"
+issue: "[The idle sweep escalates and alerts the user about a promise whose event no task prerequisite can name](https://github.com/nedsnodes/nedsnodes/issues/3867)"
 ---
 
 # The idle sweep escalates and alerts the user about a promise whose event no task prerequisite can name
 
 The idle sweep, `scripts/agent-seat-idle-sweep-headless-judge-wake-messages-send-and-user-alerts-write.py` with `scripts/agent-seat-idle-sweep-verdicts-print.py`, treats a promise to act after an event as not acted on until the agent-seat makes a TaskCreate or TaskUpdate call that sets a task's `metadata.prerequisites`, or a TaskUpdate call with `addBlockedBy`. A task's `prerequisites` can name only three kinds of event, `pr_merged`, `issue_closed` and `approval_walk_item_decided`. So when a promise waits on any other event, such as a pull request being marked ready, another agent-seat sending a link, or the user's answer in chat, the agent-seat cannot do what the sweep asks, short of taking the promise back. The sweep then nudges it, escalates, and writes the user a user-alert that is false. On 2026-11-17 this cost the user four false user-alerts about merge-lane-2, and cost merge-lane-2 a turn for each nudge and escalation.
 
-The program's design is GHI [Tasks raise themselves when their prerequisites are met, and agent-seats left idle with something to do are woken](https://github.com/nedschorus/nedschorus/issues/940), `docs/issues/940-tasks-raise-themselves-when-their-due-time-passes.md`; this GHI reports a defect in the program built from that design.
+The program's design is GHI [Tasks raise themselves when their prerequisites are met, and agent-seats left idle with something to do are woken](https://github.com/nedsnodes/nedsnodes/issues/940), `docs/issues/940-tasks-raise-themselves-when-their-due-time-passes.md`; this GHI reports a defect in the program built from that design.
 
 ## What happened on 2026-11-17
 

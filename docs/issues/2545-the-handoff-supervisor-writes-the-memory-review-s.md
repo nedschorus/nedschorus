@@ -1,5 +1,5 @@
 ---
-issue: "[The handoff-supervisor writes the memory review's started mark when it puts the memory-review reminder into the initial-agent-instructions](https://github.com/nedschorus/nedschorus/issues/2545)"
+issue: "[The handoff-supervisor writes the memory review's started mark when it puts the memory-review reminder into the initial-agent-instructions](https://github.com/nedsnodes/nedsnodes/issues/2545)"
 ---
 
 # The handoff-supervisor writes the memory review's started mark when it puts the memory-review reminder into the initial-agent-instructions
@@ -18,11 +18,11 @@ When `memory_review_due_lines()` returns a reminder, the handoff-supervisor writ
 
 ## Open question
 
-The design the user ruled on 2026-09-30, in GHI [Memory: a daily review of both memory stores with the user](https://github.com/nedschorus/nedschorus/issues/39) (`docs/issues/39-memory-drain-at-reincarnation.md`, "What the user ruled, 2026-09-30", item 3), says the instruction tells the agent to mark the review started first. A mark the handoff-supervisor writes changes one case: when the successor never starts, or dies before it starts the review, the mark keeps every agent-seat on the Mac, that agent-seat's own next successor included, from being reminded until the next noon in Pacific time, where today the next agent-seat started would be reminded. Writing the mark only after the successor has started narrows that case but does not remove it. The builder brings the user that change before building.
+The design the user ruled on 2026-09-30, in GHI [Memory: a daily review of both memory stores with the user](https://github.com/nedsnodes/nedsnodes/issues/39) (`docs/issues/39-memory-drain-at-reincarnation.md`, "What the user ruled, 2026-09-30", item 3), says the instruction tells the agent to mark the review started first. A mark the handoff-supervisor writes changes one case: when the successor never starts, or dies before it starts the review, the mark keeps every agent-seat on the Mac, that agent-seat's own next successor included, from being reminded until the next noon in Pacific time, where today the next agent-seat started would be reminded. Writing the mark only after the successor has started narrows that case but does not remove it. The builder brings the user that change before building.
 
 ## What this does not cover
 
-The nc-architecture-overview refresh reminder's mark, written by `nn-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py`, stays with the agent. Its docstring says to write it only after the user has been shown the refresh, so that an agent-seat closed before showing it leaves the next agent-seat able to remind him; a mark written when the reminder goes into the initial-agent-instructions would defeat that.
+The nn-architecture-overview refresh reminder's mark, written by `nn-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py`, stays with the agent. Its docstring says to write it only after the user has been shown the refresh, so that an agent-seat closed before showing it leaves the next agent-seat able to remind him; a mark written when the reminder goes into the initial-agent-instructions would defeat that.
 
 ## Next action
 
@@ -30,4 +30,4 @@ An agent-seat that takes up this GHI brings the user the open question; once he 
 
 ## Where this came from
 
-Item 5 of Question 4, "What should be code", in the cold-read-fast-read of the handoff-system's nc-architecture-overview draft on 2026-11-03: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/nedsnodes-handoff-architecture-overview-draft-2026-11-03/cold-read-fast-read.md`. That item also proposed that the handoff-supervisor write the nc-architecture-overview refresh's shown mark; that half was dropped, for the reason under "What this does not cover". Checked against main at 78716fd58 on 2026-11-03. ghi-guide-agent, asked with `--include-closed`, named no issue that covers it.
+Item 5 of Question 4, "What should be code", in the cold-read-fast-read of the handoff-system's nn-architecture-overview draft on 2026-11-03: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/nedsnodes-handoff-architecture-overview-draft-2026-11-03/cold-read-fast-read.md`. That item also proposed that the handoff-supervisor write the nn-architecture-overview refresh's shown mark; that half was dropped, for the reason under "What this does not cover". Checked against main at 78716fd58 on 2026-11-03. ghi-guide-agent, asked with `--include-closed`, named no issue that covers it.

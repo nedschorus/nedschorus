@@ -1,5 +1,5 @@
 ---
-issue: "[A script that summarizes, per agent-seat, the time spent waiting on tests, on reviews, on the user and idle, from the agents' JSONL transcripts](https://github.com/nedschorus/nedschorus/issues/2257)"
+issue: "[A script that summarizes, per agent-seat, the time spent waiting on tests, on reviews, on the user and idle, from the agents' JSONL transcripts](https://github.com/nedsnodes/nedsnodes/issues/2257)"
 ---
 
 # A script that summarizes, per agent-seat, the time spent waiting on tests, on reviews, on the user and idle, from the agents' JSONL transcripts
@@ -19,13 +19,13 @@ This GHI is a placeholder: no design exists yet. The design answers these questi
 
 ## Why
 
-The user decided the script on 2026-10-14, as part of point 4 of the approval-walk ned-box-head-test-runs-in-isolated-test-environments-2026-10-14, recorded in GHI [Each test suite on ned-box runs in its own throwaway test environment, and suites start by free CPU and memory instead of waiting for a machine-wide lock](https://github.com/nedschorus/nedschorus/issues/1374), whose GHI-MD is `docs/issues/1374-each-test-suite-on-ned-box-runs-in.md`. Point 4 reads: "Separately, one script summarizes, per agent-seat, the time spent waiting on tests, on reviews, on the user and idle, from the existing JSONL transcripts, with no new logging in the agents." The build of that GHI did not include the script, and that GHI closes with this GHI carrying the work.
+The user decided the script on 2026-10-14, as part of point 4 of the approval-walk ned-box-head-test-runs-in-isolated-test-environments-2026-10-14, recorded in GHI [Each test suite on ned-box runs in its own throwaway test environment, and suites start by free CPU and memory instead of waiting for a machine-wide lock](https://github.com/nedsnodes/nedsnodes/issues/1374), whose GHI-MD is `docs/issues/1374-each-test-suite-on-ned-box-runs-in.md`. Point 4 reads: "Separately, one script summarizes, per agent-seat, the time spent waiting on tests, on reviews, on the user and idle, from the existing JSONL transcripts, with no new logging in the agents." The build of that GHI did not include the script, and that GHI closes with this GHI carrying the work.
 
 The test runner now records how long each test run waited and ran, but nothing says how much of an agent-seat's day those waits take, against waits on reviews and on the user and against idle time, so there is no evidence for which wait to shorten first.
 
 ## Related
 
-On 2026-10-30, `scripts/ghi-guide-agent-ask.py --include-closed`, asked for a GHI on this script, found none. The nearest are on other matters: GHI [#972](https://github.com/nedschorus/nedschorus/issues/972), the service that keeps one record of every agent-seat, which a design may use to attribute a transcript to its agent-seat; GHI [#27](https://github.com/nedschorus/nedschorus/issues/27), on detecting an agent-session that is stuck or waiting; and GHI [#1203](https://github.com/nedschorus/nedschorus/issues/1203), which nudges a pull request's author whose review findings have gone unanswered.
+On 2026-10-30, `scripts/ghi-guide-agent-ask.py --include-closed`, asked for a GHI on this script, found none. The nearest are on other matters: GHI [#972](https://github.com/nedsnodes/nedsnodes/issues/972), the service that keeps one record of every agent-seat, which a design may use to attribute a transcript to its agent-seat; GHI [#27](https://github.com/nedsnodes/nedsnodes/issues/27), on detecting an agent-session that is stuck or waiting; and GHI [#1203](https://github.com/nedsnodes/nedsnodes/issues/1203), which nudges a pull request's author whose review findings have gone unanswered.
 
 ## Next action
 

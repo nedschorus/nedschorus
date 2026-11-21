@@ -1,5 +1,5 @@
 ---
-issue: "[A research skill for agents who commission research whose numbers reach the user](https://github.com/nedschorus/nedschorus/issues/1916)"
+issue: "[A research skill for agents who commission research whose numbers reach the user](https://github.com/nedsnodes/nedsnodes/issues/1916)"
 ---
 
 # A research skill for agents who commission research whose numbers reach the user
@@ -23,8 +23,8 @@ The user called the data he had been shown "very deceptive", and asked how to av
 
 ## Related work
 
-- GHI [use-codex skill: one place that says how this project invokes Codex headlessly](https://github.com/nedschorus/nedschorus/issues/165) covers how Codex is invoked; the research skill would cover what research is asked for and how its figures are reported, and would point to the use-codex skill for the invocation.
-- GHI [A project style guide: words to avoid, a mechanical checker, and a check on unbacked promises](https://github.com/nedschorus/nedschorus/issues/14) records measurement practice, such as sample counts, in its supporting documents, for its own measurements only.
+- GHI [use-codex skill: one place that says how this project invokes Codex headlessly](https://github.com/nedsnodes/nedsnodes/issues/165) covers how Codex is invoked; the research skill would cover what research is asked for and how its figures are reported, and would point to the use-codex skill for the invocation.
+- GHI [A project style guide: words to avoid, a mechanical checker, and a check on unbacked promises](https://github.com/nedsnodes/nedsnodes/issues/14) records measurement practice, such as sample counts, in its supporting documents, for its own measurements only.
 - The `anthropic-skills:deep-research` skill, which Claude Code supplies and which is not in this repository, coordinates subagents that research the web and write a narrative report. The skill does not cover the session dialogs, labelling samples, agreement between labellers, held-out testing, or carrying a report's caveats into what the user is shown.
 - Absence receipt: on 2026-10-24, ghi-info, asked with `--include-closed` whether any GHI covers a generic research skill with labeller agreement, held-out samples and the reporting of sample sizes and caveats, found none, open or closed. A search of origin/main's paths and file contents for `research[-_ ]?skill` found nothing.
 

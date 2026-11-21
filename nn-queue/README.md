@@ -1,4 +1,4 @@
-# nn-queue (the NC walk queue)
+# nn-queue (the NN walk queue)
 
 The intake directory for user-requested notes awaiting their initial walk (user-ruled 2026-07-22; the rule of record is [nedsnodes-ai-native-software-development.md](../docs/nedsnodes-wiki/nedsnodes-ai-native-software-development-objective.md) § Project organization).
 

@@ -1,12 +1,12 @@
 ---
-issue: "[The recorded mutant killed check in scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py can apply a recorded mutant to a second copy of its hunk](https://github.com/nedschorus/nedschorus/issues/2780)"
+issue: "[The recorded mutant killed check in scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py can apply a recorded mutant to a second copy of its hunk](https://github.com/nedsnodes/nedsnodes/issues/2780)"
 ---
 
 # The recorded mutant killed check in scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py can apply a recorded mutant to a second copy of its hunk
 
 ## Reproduction
 
-Run on ned-box on 2026-11-07, against origin/main at 69db0032a27766e4db86612d79ddaaee50d4a3e9, in a scratch git repository made from that commit's tree, never in a shared checkout. `$SP` is any empty scratch directory, and `$CHECKOUT` is any nedschorus checkout that has a fetched `origin/main`.
+Run on ned-box on 2026-11-07, against origin/main at 69db0032a27766e4db86612d79ddaaee50d4a3e9, in a scratch git repository made from that commit's tree, never in a shared checkout. `$SP` is any empty scratch directory, and `$CHECKOUT` is any nedsnodes checkout that has a fetched `origin/main`.
 
 1. Make the scratch repository, with origin/main's tree as its first commit:
 
@@ -109,7 +109,7 @@ recorded_mutant_line_ends_with_pragma: False
 line 15 changed: '    return y * 2' -> '    return y + 2'
 ```
 
-Line 15 is in `twice`, not in `double`. A merge-lane-2 subagent got the same result on main and on the head of [pull request 2772](https://github.com/nedschorus/nedschorus/pull/2772), 4af47171ed3add8ac624f7b3c9b67e9410c55006.
+Line 15 is in `twice`, not in `double`. A merge-lane-2 subagent got the same result on main and on the head of [pull request 2772](https://github.com/nedsnodes/nedsnodes/pull/2772), 4af47171ed3add8ac624f7b3c9b67e9410c55006.
 
 ## What is wrong
 
@@ -129,6 +129,6 @@ It is hypothetical today. Of the 122 diff files in `nedlern@ned-box:/home/nedler
 
 ## What to do
 
-The owner is the agent-seat fleet-restart-at-login: its commits wrote this code, including a9241f1f0, which made the pragma be read at the mutant's place, and its open [pull request 2772](https://github.com/nedschorus/nedschorus/pull/2772) is working on the same check.
+The owner is the agent-seat fleet-restart-at-login: its commits wrote this code, including a9241f1f0, which made the pragma be read at the mutant's place, and its open [pull request 2772](https://github.com/nedsnodes/nedsnodes/pull/2772) is working on the same check.
 
 Suggested fix, from the Codex report: find each hunk's place once, with the pragma-aware comparison, and use that one place both for the pragma check and for applying the mutant, replacing only the lines the mutant changes, so that a context line carrying a pragma keeps it. At the least, detect when the two lookups pick different places and give the verdict MUTANT COULD NOT BE JUDGED, saying that the hunk's lines were found at two places and naming both lines. Add the reproduction as a test in `scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors-test.py`; calling the program's functions on the twin-hunk file, as step 6's script does, takes seconds, where the whole check takes minutes.

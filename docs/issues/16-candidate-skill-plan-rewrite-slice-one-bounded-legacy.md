@@ -1,5 +1,5 @@
 ---
-issue: "[Candidate skill: plan-rewrite-slice — one bounded legacy slice with four-way behavior classification](https://github.com/nedschorus/nedschorus/issues/16)"
+issue: "[Candidate skill: plan-rewrite-slice — one bounded legacy slice with four-way behavior classification](https://github.com/nedsnodes/nedsnodes/issues/16)"
 ---
 
 # Candidate skill: plan-rewrite-slice — one bounded legacy slice with four-way behavior classification

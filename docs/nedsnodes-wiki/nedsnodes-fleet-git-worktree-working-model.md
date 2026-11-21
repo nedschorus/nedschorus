@@ -58,7 +58,7 @@ passing review.
   reached only through the main-gatekeeper, which logs every use). Dormant
   until its credential work lands.
 - **The PR process** — until the gate activates: each pull request
-  merges one atomic nc-topic-branch, and
+  merges one atomic nn-topic-branch, and
   the merge-lane agent-seat reviews and merges every PR (deputization, recorded
   at R13, is the ruled exception). Recorded in CLAUDE.md's PR-process paragraph.
   The earlier form — commits accumulating on a seat-branch, cherry-picked
@@ -68,7 +68,7 @@ passing review.
 - **The override markers** — `.walk-approved` (instruction-file guard) and `.location-write-approved` (session-location guard), both gitignored, each by convention holding the user's quoted approval words, consumed by the one guarded call it approves (see Marker honesty); `.walk-approved` holds instead `#pre_approved_change` and the reason for a change that `docs/nedsnodes-wiki/nedsnodes-which-changes-need-the-users-approval.md` does not require his approval for.
 - **The launchers** — `scripts/launch-claude-mac` and
   `scripts/launch-claude-ubuntu`.
-- **#N** — nedschorus's GitHub tracker; issue or pull request is labeled
+- **#N** — nedsnodes's GitHub tracker; issue or pull request is labeled
   at first use per row.
 
 ## Scope
@@ -144,7 +144,7 @@ approval-walk began.
 ### Q1 — Which directory am I in?
 
 **R1. Enforcement programs resolve their roots correctly — resolvers FIXED
-(PR [guards: markers resolve from the session's own checkout, and the backup override lane is removed](https://github.com/nedschorus/nedschorus/pull/86), merged 2026-08-17); registration residue closed won't-fix
+(PR [guards: markers resolve from the session's own checkout, and the backup override lane is removed](https://github.com/nedsnodes/nedsnodes/pull/86), merged 2026-08-17); registration residue closed won't-fix
 (user-ruled 2026-08-22).** Two questions
 hide under "the root": which repository owns the target file, and which
 checkout the session is in — the latter from the session's own working
@@ -155,7 +155,7 @@ target-derived resolution is only the fallback when the session sits in
 no checkout. The residue, closed won't-fix: the hook and status-line *registration*
 lines in `.claude/settings.json` resolve through `$CLAUDE_PROJECT_DIR`
 and stay that way — benign while all checkouts carry identical copies.
-A re-registration was attempted and deliberately reverted (PR [guard and catch-up review fixes: item 1 of the working model's build queue](https://github.com/nedschorus/nedschorus/pull/103),
+A re-registration was attempted and deliberately reverted (PR [guard and catch-up review fixes: item 1 of the working model's build queue](https://github.com/nedsnodes/nedsnodes/pull/103),
 2026-08-19) after three shell forms in one day, two wrong; the PR
 records all three forms and their evidence. The closing ruling: a
 registration line carries no more machinery, because the forked-session
@@ -166,7 +166,7 @@ running as another checkout's copy, with effect.
 
 **R2. A session states and verifies its git context at start — satisfied
 by composition (ruled 2026-08-17), nothing built.** The four facts of
-issue [Successor startup must state its git context — app-spawned agents land in a worktree, not the checkout](https://github.com/nedschorus/nedschorus/issues/34) each have a delivery at least as good as a session-start print:
+issue [Successor startup must state its git context — app-spawned agents land in a worktree, not the checkout](https://github.com/nedsnodes/nedsnodes/issues/34) each have a delivery at least as good as a session-start print:
 directory and branch on the status line (R5); the write blocks covering
 the demonstrated wrong-place classes (R3, R6); the PR process in
 CLAUDE.md's ruled paragraph, the gatekeeper at activation, and branch
@@ -174,7 +174,7 @@ protection at push time. A session-start hook rides the same committed
 repository as CLAUDE.md, so the print adds zero reach.
 
 **R3. Detached HEAD or sitting in the reference checkout refuses writes —
-BUILT (PR [session-location write guard: no file writes from a detached HEAD or the reference checkout](https://github.com/nedschorus/nedschorus/pull/88), merged 2026-08-17).**
+BUILT (PR [session-location write guard: no file writes from a detached HEAD or the reference checkout](https://github.com/nedsnodes/nedsnodes/pull/88), merged 2026-08-17).**
 `.claude/guard-hooks/session-location-write-guard.py`, PreToolUse block on
 Edit/Write/NotebookEdit; exception lane via `.location-write-approved`.
 Scope, corrected 2026-08-19: the detached-HEAD test governs writes into
@@ -193,7 +193,7 @@ runtime's own refusal to edit files changed since last read. Residues
 assigned: starting-stale rides R3's ruling; push-time hardening rides the
 gatekeeper permanently.
 
-**R5. Status line shows the branch — ruled kept (2026-08-17, PR [status line: the │ separators become two plain spaces](https://github.com/nedschorus/nedschorus/pull/89)).**
+**R5. Status line shows the branch — ruled kept (2026-08-17, PR [status line: the │ separators become two plain spaces](https://github.com/nedsnodes/nedsnodes/pull/89)).**
 `scripts/session-statusline-command.py`. Kept because shell git commands
 pass no file-write guard — the line is that mistake's only always-on
 visibility.
@@ -201,7 +201,7 @@ visibility.
 ### Q2 — Whose directory is this?
 
 **R6 + R7. No agent writes into the reference checkout — BUILT as a block
-(PR [session-location guard: writes landing in the reference checkout are refused from any seat](https://github.com/nedschorus/nedschorus/pull/91), merged 2026-08-17).** The session-location guard's second
+(PR [session-location guard: writes landing in the reference checkout are refused from any seat](https://github.com/nedsnodes/nedsnodes/pull/91), merged 2026-08-17).** The session-location guard's second
 condition: a write *landing* in the reference checkout from a session
 seated elsewhere is refused, same marker lane. Scoped to the demonstrated
 class — all four recorded cross-checkout incidents targeted the reference.
@@ -225,13 +225,13 @@ viewers, forked sessions, and background sessions correctly from each
 session's own state.
 
 **R9. One name = one agent-seat; a handoff refuses a foreign claim — built-live
-(PR [handoff: the agent name defaults to the seat's directory, and a foreign claim is refused](https://github.com/nedschorus/nedschorus/pull/72), merged 2026-08-17).**
+(PR [handoff: the agent name defaults to the seat's directory, and a foreign claim is refused](https://github.com/nedsnodes/nedsnodes/pull/72), merged 2026-08-17).**
 `nn-systems/handoff/handoff-write-and-check-supervisor.py`: handoffs stamp
 `written-in:`; a writer whose directory differs is refused; `--claim`
 overrides deliberately, the typed flag in the transcript being the audit
 trail. The accident it kills: two same-name sessions overwrote a handoff
 eleven seconds apart, first lost unread. Residuals: handoffs written before PR
-[handoff: the agent name defaults to the seat's directory, and a foreign claim is refused](https://github.com/nedschorus/nedschorus/pull/72)
+[handoff: the agent name defaults to the seat's directory, and a foreign claim is refused](https://github.com/nedsnodes/nedsnodes/pull/72)
 carry no stamp; directory basenames are not globally unique across machines
 (machine-suffixed names deferred — rider 5 in
 `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/cold-read-research/45-session-seat-and-isolation-riders-retired-from-issues-queue-2026-10-02.md`). An agent-seat's
@@ -239,7 +239,7 @@ carry no stamp; directory basenames are not globally unique across machines
 correctly refuses, and `--claim` is the sanctioned path.
 
 **R10. Whether a change to an agent-instructions file needs the user's approval is set by the [approval page](nedsnodes-which-changes-need-the-users-approval.md) —
-built-live (root-resolution fixed by PR [guards: markers resolve from the session's own checkout, and the backup override lane is removed](https://github.com/nedschorus/nedschorus/pull/86)).**
+built-live (root-resolution fixed by PR [guards: markers resolve from the session's own checkout, and the backup override lane is removed](https://github.com/nedsnodes/nedsnodes/pull/86)).**
 `.claude/guard-hooks/instruction-file-guard.py`: CLAUDE.md, per-seat
 `CLAUDE.local.md`, `.claude/` (minus `worktrees/`, `jobs/` and `handoffs/`),
 reusable prompts, and the files the user reviews block on write; approval quoted into `.walk-approved`, or, for a change `docs/nedsnodes-wiki/nedsnodes-which-changes-need-the-users-approval.md` does not require his approval for, `#pre_approved_change` and the reason. **The shell-write gap is
@@ -272,7 +272,7 @@ to two accounts — the user's own (`nedlern`, which authors) and
 added 2026-08-19 so approval comes from a non-author); enforce-admins on;
 force-push and deletion blocked; and, since 2026-08-20, **one approving
 review is required for every merge** — enabled with the user present and
-drilled live on PR [catch-up hook: a git that never ran reports GIT_DID_NOT_RUN, not 1](https://github.com/nedschorus/nedschorus/pull/104). This is rung 1 at the account tier only: any
+drilled live on PR [catch-up hook: a git that never ran reports GIT_DID_NOT_RUN, not 1](https://github.com/nedsnodes/nedsnodes/pull/104). This is rung 1 at the account tier only: any
 process holding either credential can push, so "agents never push" is
 instructed, not impossible, until the gatekeeper's C2 credential design
 lands. The restriction was proven live 2026-08-18 by a user-authorized
@@ -288,11 +288,11 @@ the gate stays dormant for daily work.
 **R13. The PR process — built-live (process); retired when the gate
 activates.** Lives in CLAUDE.md's PR-process paragraph and
 `docs/agents/seat-first-prompt.md` § Reaching main. **Deputization** is
-the PR process's recorded exception (ruled 2026-08-18, PR [CLAUDE.md lane text: deputization recorded as the interim lane's exception](https://github.com/nedschorus/nedschorus/pull/93)): the user may
+the PR process's recorded exception (ruled 2026-08-18, PR [CLAUDE.md lane text: deputization recorded as the interim lane's exception](https://github.com/nedsnodes/nedsnodes/pull/93)): the user may
 instruct a specific agent-seat, in that agent-seat's own session, to merge a specific
 PR; relayed words are hearsay and are refused — exercised before it was
 recorded (a relayed instruction refused 2026-08-16; the user then deputized
-directly for PR [handoff: the agent name defaults to the seat's directory, and a foreign claim is refused](https://github.com/nedschorus/nedschorus/pull/72)'s merge).
+directly for PR [handoff: the agent name defaults to the seat's directory, and a foreign claim is refused](https://github.com/nedsnodes/nedsnodes/pull/72)'s merge).
 
 **R14. One branch, one writer — satisfied by defaults (ruled 2026-08-17);
 the old push-time check is retired.** An own-branch-only push check would
@@ -304,8 +304,8 @@ activation: a push is a shell operation no file-write hook sees.
 
 ### Q4 — How does a change reach a running agent-seat, and what keeps agent-seats alive?
 
-**R15. A landed change reaches every running agent-seat — BUILT (PR [checkout freshness: mid-session catch-up Stop hook, status-line display, reference-checkout pull](https://github.com/nedschorus/nedschorus/pull/87), merged
-2026-08-17; delivery ruling PR [catch-up: the abort-failed state alone is delivered to the agent as a forced turn](https://github.com/nedschorus/nedschorus/pull/90)).**
+**R15. A landed change reaches every running agent-seat — BUILT (PR [checkout freshness: mid-session catch-up Stop hook, status-line display, reference-checkout pull](https://github.com/nedsnodes/nedsnodes/pull/87), merged
+2026-08-17; delivery ruling PR [catch-up: the abort-failed state alone is delivered to the agent as a forced turn](https://github.com/nedsnodes/nedsnodes/pull/90)).**
 `scripts/checkout-freshness-catch-up.py` is the delivery; the status
 line's `⇣N` shows the lag; the launchers freshen the reference checkout
 at boot; the supervisor's launch-time-git-sync remains the floor. Coverage
@@ -331,7 +331,7 @@ passing a launcher. It was added because an agent-seat restarted by handoff pass
 no update moment at all, so a long-lived agent-seat drifted: both machines sat on
 2.1.278 with 2.1.280 published when the user asked why (user-ruled
 2026-09-22). The box's `DISABLE_AUTOUPDATER=1` flag was
-removed 2026-08-17 (dated backup beside it) when issue [Claude auto-update purges the running version under live fleet sessions — updates need a drain-or-retain policy](https://github.com/nedschorus/nedschorus/issues/62)'s auto-update
+removed 2026-08-17 (dated backup beside it) when issue [Claude auto-update purges the running version under live fleet sessions — updates need a drain-or-retain policy](https://github.com/nedsnodes/nedsnodes/issues/62)'s auto-update
 theory was retracted — which left background auto-update ON fleet-wide.
 The same flag returned 2026-08-22 for a different, still-valid reason:
 with launch as the update moment, the background updater adds nothing
@@ -351,7 +351,7 @@ The two gaps, each owned by named code: `launch-claude-mac` runs the
 supervisor from whatever checkout it is invoked in, which need not be the
 checkout that was freshened — whether the launcher *should* always
 operate on the reference checkout is an open design question routed to
-issue [Run named agents on the Ubuntu box, reachable from iTerm2 by name: launch-claude with tmux attach-or-create, and the migration it requires](https://github.com/nedschorus/nedschorus/issues/45) (design pair:
+issue [Run named agents on the Ubuntu box, reachable from iTerm2 by name: launch-claude with tmux attach-or-create, and the migration it requires](https://github.com/nedsnodes/nedsnodes/issues/45) (design pair:
 `docs/issues/45-remote-named-agent-launch-and-reattach.md`); and a freshening that fails is reported nowhere, on either
 launcher — the failure is recorded in a stamp file and nothing reads it
 (owned by `checkout-freshness-catch-up.py --reference-pull`, not by the
@@ -380,7 +380,7 @@ recorded Mac-side loss. What it buys, honestly: minutes-cadence never
 reaches the seconds class (R9's guard closed that class).
 
 **R20. The handoff channel preserves structure end to end — BUILT
-(PR [handoff: a multi-line next step survives the channel end to end (R20)](https://github.com/nedschorus/nedschorus/pull/108), merged 2026-08-20; fix ruled 2026-08-18).** Both ends: the
+(PR [handoff: a multi-line next step survives the channel end to end (R20)](https://github.com/nedsnodes/nedsnodes/pull/108), merged 2026-08-20; fix ruled 2026-08-18).** Both ends: the
 writer (`nn-systems/handoff/handoff-write-and-check-supervisor.py`) emits a
 delimited multi-line block and the reader
 (`nn-systems/handoff/handoff-supervisor.py`) parses it — a reader-only fix could not
@@ -392,18 +392,18 @@ per design-first.
 ### Q5 — What piles up, and who sweeps it?
 
 **R21. A session worktree is removed once its branch is merged into main and no running program is working inside it, whatever files it still holds; the cleaner names each file it discards —
-built-live (PR [clean-worktrees: mechanical reaper for finished session worktrees, reporting at every seat launch](https://github.com/nedschorus/nedschorus/pull/73)); vacancy made provable (PR [worktree reaper: prove vacancy before reaping, instead of assuming it](https://github.com/nedschorus/nedschorus/pull/100), merged 2026-08-19).**
+built-live (PR [clean-worktrees: mechanical reaper for finished session worktrees, reporting at every seat launch](https://github.com/nedsnodes/nedsnodes/pull/73)); vacancy made provable (PR [worktree reaper: prove vacancy before reaping, instead of assuming it](https://github.com/nedsnodes/nedsnodes/pull/100), merged 2026-08-19).**
 `scripts/clean-worktrees.py`: anything failing or ambiguous is kept with
 its reason; the launcher runs only the safe subset at boot; removal runs
 daily at 06:30 as `clean-worktrees.py --remove`. The posture it set,
 reused across this model: mechanical predicates, ambiguity keeps, report
-before remove. PR [worktree reaper: prove vacancy before reaping, instead of assuming it](https://github.com/nedschorus/nedschorus/pull/100) closed the gap where an untrustworthy vacancy
+before remove. PR [worktree reaper: prove vacancy before reaping, instead of assuming it](https://github.com/nedsnodes/nedsnodes/pull/100) closed the gap where an untrustworthy vacancy
 answer read as vacant: vacancy is now proven by a usable answer or the
 worktree is kept, with a reason that does not claim a process that was
 never seen. `lsof` present at provisioning is R18's checklist line.
 
 **R22. Untracked files classified; junk ignored by pattern — ruled closed
-(2026-08-17; issue [Worktree file hygiene: classify untracked files so junk is ignored rather than accumulating in search results](https://github.com/nedschorus/nedschorus/issues/50) closed).** The `.gitignore` is the living list —
+(2026-08-17; issue [Worktree file hygiene: classify untracked files so junk is ignored rather than accumulating in search results](https://github.com/nedsnodes/nedsnodes/issues/50) closed).** The `.gitignore` is the living list —
 new patterns as new junk classes are observed, each with its reason
 beside it. The periodic cleanup script is not built; build trigger: a
 real accumulation surfacing — then its first version reports and never
@@ -421,14 +421,14 @@ merged: `git fetch --prune origin` and read remote-tracking refs; a
 survey that cannot reach the remote says so. Evidence: a prune list built
 from unfetched refs missed four merged branches (2026-08-17).
 
-**R25. Dead worktree registrations get surfaced — BUILT (PR [clean-worktrees: one report line names dead registrations and the prune command (R25)](https://github.com/nedschorus/nedschorus/pull/112), merged
+**R25. Dead worktree registrations get surfaced — BUILT (PR [clean-worktrees: one report line names dead registrations and the prune command (R25)](https://github.com/nedsnodes/nedsnodes/pull/112), merged
 2026-08-20).** A worktree registered under a temporary directory
 (`/private/tmp` on macOS, `/tmp` on the box) leaves a dead entry when the
 temp area clears, and `git worktree prune` is manual. The
 `clean-worktrees.py` report carries one line naming dead registrations and
 the prune command — report only; the prune stays deliberate.
 
-**R26. New MDs land in canonical locations — ruled-unbuilt (issue [MD-placement guidance as symmetric pre-tool remind hooks on both runtimes (boss-directed design, build deferred)](https://github.com/nedschorus/nedschorus/issues/11)).** A
+**R26. New MDs land in canonical locations — ruled-unbuilt (issue [MD-placement guidance as symmetric pre-tool remind hooks on both runtimes (boss-directed design, build deferred)](https://github.com/nedsnodes/nedsnodes/issues/11)).** A
 PreToolUse *remind* hook on MD writes outside the canonical locations, symmetric
 across both agent runtimes, one shared config — the page
 `docs/nedsnodes-wiki/nedsnodes-founding-principles-actors-and-repository-layout.md` § "Where things live" becomes the single-source path list at
@@ -452,31 +452,31 @@ rulings; listed here to keep the numbering complete.
 
 | # | Rule | Rung | Status at close |
 |---|---|---|---|
-| R1 | Guards resolve roots correctly | — (foundation) | fixed, PR [guards: markers resolve from the session's own checkout, and the backup override lane is removed](https://github.com/nedschorus/nedschorus/pull/86); registration residue closed won't-fix 2026-08-22 (attempts recorded in PR [guard and catch-up review fixes: item 1 of the working model's build queue](https://github.com/nedschorus/nedschorus/pull/103)) |
+| R1 | Guards resolve roots correctly | — (foundation) | fixed, PR [guards: markers resolve from the session's own checkout, and the backup override lane is removed](https://github.com/nedsnodes/nedsnodes/pull/86); registration residue closed won't-fix 2026-08-22 (attempts recorded in PR [guard and catch-up review fixes: item 1 of the working model's build queue](https://github.com/nedsnodes/nedsnodes/pull/103)) |
 | R2 | Session states its git context | — (composition of R3/R5/R6) | satisfied by composition |
-| R3 | Detached/reference agent-seat refuses writes | block | built, PR [session-location write guard: no file writes from a detached HEAD or the reference checkout](https://github.com/nedschorus/nedschorus/pull/88) |
+| R3 | Detached/reference agent-seat refuses writes | block | built, PR [session-location write guard: no file writes from a detached HEAD or the reference checkout](https://github.com/nedsnodes/nedsnodes/pull/88) |
 | R4 | Stale base | — | absorbed by R15's catch-up |
-| R5 | Status line shows branch | default | kept; separators fixed, PR [status line: the │ separators become two plain spaces](https://github.com/nedschorus/nedschorus/pull/89) |
-| R6+R7 | No writes into the reference | block | built, PR [session-location guard: writes landing in the reference checkout are refused from any seat](https://github.com/nedschorus/nedschorus/pull/91) |
+| R5 | Status line shows branch | default | kept; separators fixed, PR [status line: the │ separators become two plain spaces](https://github.com/nedsnodes/nedsnodes/pull/89) |
+| R6+R7 | No writes into the reference | block | built, PR [session-location guard: writes landing in the reference checkout are refused from any seat](https://github.com/nedsnodes/nedsnodes/pull/91) |
 | R8 | One live session per directory | — | waits on detection; build nothing |
-| R9 | One name = one agent-seat | default + block | built-live, PR [handoff: the agent name defaults to the seat's directory, and a foreign claim is refused](https://github.com/nedschorus/nedschorus/pull/72) |
+| R9 | One name = one agent-seat | default + block | built-live, PR [handoff: the agent name defaults to the seat's directory, and a foreign claim is refused](https://github.com/nedsnodes/nedsnodes/pull/72) |
 | R10 | The approval page sets which agent-instructions changes need approval | block | built-live; shell gap ruled unguarded |
 | R11 | Backups read-only to agents | block (no lane) | built-live; lane removed |
 | R12 | Agents never push to main | impossible (account tier) + text (agent tier) | partial; required reviews live 2026-08-20; C2 pending |
-| R13 | PR process + deputization | text (process) | built-live; deputization recorded at R13, PR [CLAUDE.md lane text: deputization recorded as the interim lane's exception](https://github.com/nedschorus/nedschorus/pull/93) |
+| R13 | PR process + deputization | text (process) | built-live; deputization recorded at R13, PR [CLAUDE.md lane text: deputization recorded as the interim lane's exception](https://github.com/nedsnodes/nedsnodes/pull/93) |
 | R14 | One branch, one writer | default | satisfied by defaults; push check retired |
-| R15 | Landed changes reach running agent-seats | default + block (attention) | built, PRs [checkout freshness: mid-session catch-up Stop hook, status-line display, reference-checkout pull](https://github.com/nedschorus/nedschorus/pull/87)/PR [catch-up: the abort-failed state alone is delivered to the agent as a forced turn](https://github.com/nedschorus/nedschorus/pull/90) |
-| R16 | Binary updates at launch only | default | built-live; version check closed 2026-08-22, PR [Launcher update banner removed: background auto-update off fleet-wide, launch stays the one update moment](https://github.com/nedschorus/nedschorus/pull/135) — banner off via settings env |
+| R15 | Landed changes reach running agent-seats | default + block (attention) | built, PRs [checkout freshness: mid-session catch-up Stop hook, status-line display, reference-checkout pull](https://github.com/nedsnodes/nedsnodes/pull/87)/PR [catch-up: the abort-failed state alone is delivered to the agent as a forced turn](https://github.com/nedsnodes/nedsnodes/pull/90) |
+| R16 | Binary updates at launch only | default | built-live; version check closed 2026-08-22, PR [Launcher update banner removed: background auto-update off fleet-wide, launch stays the one update moment](https://github.com/nedsnodes/nedsnodes/pull/135) — banner off via settings env |
 | R17 | Machinery self-updates at safe points | text (principle) | two open: Mac launcher runs the invoking checkout's supervisor; freshening failures are silent |
 | R18 | Hosts survive disconnects | default | checklist ruled; box done |
 | R19 | Snapshot cadence | default | live: box 10-min, Mac hourly |
-| R20 | Handoff preserves structure | default | built, PR [handoff: a multi-line next step survives the channel end to end (R20)](https://github.com/nedschorus/nedschorus/pull/108) |
-| R21 | Worktrees reaped when safe | detect + remind | built-live, PR [clean-worktrees: mechanical reaper for finished session worktrees, reporting at every seat launch](https://github.com/nedschorus/nedschorus/pull/73); vacancy proven, PR [worktree reaper: prove vacancy before reaping, instead of assuming it](https://github.com/nedschorus/nedschorus/pull/100) |
-| R22 | Junk ignored by pattern | default | ruled closed; issue [Worktree file hygiene: classify untracked files so junk is ignored rather than accumulating in search results](https://github.com/nedschorus/nedschorus/issues/50) closed |
+| R20 | Handoff preserves structure | default | built, PR [handoff: a multi-line next step survives the channel end to end (R20)](https://github.com/nedsnodes/nedsnodes/pull/108) |
+| R21 | Worktrees reaped when safe | detect + remind | built-live, PR [clean-worktrees: mechanical reaper for finished session worktrees, reporting at every seat launch](https://github.com/nedsnodes/nedsnodes/pull/73); vacancy proven, PR [worktree reaper: prove vacancy before reaping, instead of assuming it](https://github.com/nedsnodes/nedsnodes/pull/100) |
+| R22 | Junk ignored by pattern | default | ruled closed; issue [Worktree file hygiene: classify untracked files so junk is ignored rather than accumulating in search results](https://github.com/nedsnodes/nedsnodes/issues/50) closed |
 | R23 | Scratch lives in the scratchpad | default | satisfied by runtime default |
 | R24 | Surveys fetch before concluding | default + text | mostly encoded: the checkout-freshness Stop hook fetches origin each turn; exact surveys still fetch first |
-| R25 | Dead registrations surfaced | remind (report) | built, PR [clean-worktrees: one report line names dead registrations and the prune command (R25)](https://github.com/nedschorus/nedschorus/pull/112) |
-| R26 | New MDs land in canonical locations | remind | ruled-unbuilt, issue [MD-placement guidance as symmetric pre-tool remind hooks on both runtimes (boss-directed design, build deferred)](https://github.com/nedschorus/nedschorus/issues/11) |
+| R25 | Dead registrations surfaced | remind (report) | built, PR [clean-worktrees: one report line names dead registrations and the prune command (R25)](https://github.com/nedsnodes/nedsnodes/pull/112) |
+| R26 | New MDs land in canonical locations | remind | ruled-unbuilt, issue [MD-placement guidance as symmetric pre-tool remind hooks on both runtimes (boss-directed design, build deferred)](https://github.com/nedsnodes/nedsnodes/issues/11) |
 | R27 | On-machine records stay uncommitted | default | built-live |
 | R28 | Rules delivered at trigger | principle | governs all rows |
 
@@ -491,20 +491,20 @@ PR's body states the intended behavior it should be reviewed against;
 merge-lane reviews against that statement and posts its review on the
 pull request.
 
-1. **Guard and catch-up review fixes** — LANDED (PR [guard and catch-up review fixes: item 1 of the working model's build queue](https://github.com/nedschorus/nedschorus/pull/103), merged
+1. **Guard and catch-up review fixes** — LANDED (PR [guard and catch-up review fixes: item 1 of the working model's build queue](https://github.com/nedsnodes/nedsnodes/pull/103), merged
    2026-08-19): fifteen of its sixteen entries, with the review
    discussions permanent on the pull request. The sixteenth — the hook
    re-registration (R1's residue) — was deliberately dropped with all
    attempted forms recorded in that PR, and closed won't-fix 2026-08-22
    (ruling and reopen trigger at R1).
-2. **R20** — the handoff both-ends structure fix — LANDED (PR [handoff: a multi-line next step survives the channel end to end (R20)](https://github.com/nedschorus/nedschorus/pull/108),
+2. **R20** — the handoff both-ends structure fix — LANDED (PR [handoff: a multi-line next step survives the channel end to end (R20)](https://github.com/nedsnodes/nedsnodes/pull/108),
    merged 2026-08-20; design section given a cold read in
    `handoff.system.design.md` first, per design-first).
 3. **R25** — the dead-registration report line in `clean-worktrees.py` —
-   LANDED (PR [clean-worktrees: one report line names dead registrations and the prune command (R25)](https://github.com/nedschorus/nedschorus/pull/112), merged 2026-08-20), with the review discussion
+   LANDED (PR [clean-worktrees: one report line names dead registrations and the prune command (R25)](https://github.com/nedsnodes/nedsnodes/pull/112), merged 2026-08-20), with the review discussion
    permanent on the pull request.
 4. **Launcher version check** (user-ruled 2026-08-17) — CLOSED
-   2026-08-22 (PR [Launcher update banner removed: background auto-update off fleet-wide, launch stays the one update moment](https://github.com/nedschorus/nedschorus/pull/135)), no version check built. The queued question is answered
+   2026-08-22 (PR [Launcher update banner removed: background auto-update off fleet-wide, launch stays the one update moment](https://github.com/nedsnodes/nedsnodes/pull/135)), no version check built. The queued question is answered
    (claude-code-guide agent, from the official setup and settings docs):
    `autoUpdatesChannel` exists — default `latest`, `stable` about a week
    behind — and both the background auto-updater and `claude update`
@@ -528,7 +528,7 @@ machine-suffixed agent-seat names (rider 5); other-seat-home write blocking
 
 Produced at the close of the git/worktree rules approval-walk (fifteen items,
 2026-08-17/18, git-infra agent-seat, the user ruling item by item). The approval-walk
-shipped the six PRs from PR [guards: markers resolve from the session's own checkout, and the backup override lane is removed](https://github.com/nedschorus/nedschorus/pull/86) through PR [session-location guard: writes landing in the reference checkout are refused from any seat](https://github.com/nedschorus/nedschorus/pull/91), and PR [CLAUDE.md lane text: deputization recorded as the interim lane's exception](https://github.com/nedschorus/nedschorus/pull/93) and closed issue [Worktree file hygiene: classify untracked files so junk is ignored rather than accumulating in search results](https://github.com/nedschorus/nedschorus/issues/50). Its working papers —
+shipped the six PRs from PR [guards: markers resolve from the session's own checkout, and the backup override lane is removed](https://github.com/nedsnodes/nedsnodes/pull/86) through PR [session-location guard: writes landing in the reference checkout are refused from any seat](https://github.com/nedsnodes/nedsnodes/pull/91), and PR [CLAUDE.md lane text: deputization recorded as the interim lane's exception](https://github.com/nedsnodes/nedsnodes/pull/93) and closed issue [Worktree file hygiene: classify untracked files so junk is ignored rather than accumulating in search results](https://github.com/nedsnodes/nedsnodes/issues/50). Its working papers —
 `walk-ledgers/2026-08-17-git-worktree-rules-inventory.md` and
 `walk-ledgers/2026-08-16-agent-worktree-git-coalesce-shape.md` — were
 kept on one machine and gitignored, deleted once this document was verified on

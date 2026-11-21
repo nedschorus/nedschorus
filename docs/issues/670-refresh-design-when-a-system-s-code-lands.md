@@ -1,5 +1,5 @@
 ---
-issue: "[refresh-design: when a system's code lands, bring its design, build-slice plan and overview into line — removing, never revising](https://github.com/nedschorus/nedschorus/issues/670)"
+issue: "[refresh-design: when a system's code lands, bring its design, build-slice plan and overview into line — removing, never revising](https://github.com/nedsnodes/nedsnodes/issues/670)"
 kind: design
 ---
 
@@ -16,7 +16,7 @@ The user ruled these on 2026-10-30 and 2026-10-31, as items 9.2, 9.3, 9.3.1 and 
 - **It covers designs as well as overviews, and fixes what the code cannot show (item 9.3.1, approved 2026-10-30).** A stale line that restates what the code shows, such as a list of files to read, is removed; a stale line about what the code cannot show, such as a reason or a decision, is fixed. This revises the rule of 2026-09-22 that a refresh removes and never revises. The user's words of 2026-10-30: "stale items should be either fixed or removed. It makes sense to remove design items which can simply be, here are the files you should read. [...] things that are not easily or not visibly not in the code or otherwise clear from reading the code have to be fixed."
 - **What is due (item 9.3.1).** Each document gets a `**Checked against:**` line when it is checked. A program lists a document as due when its system's code changed after that line's commit, or when it has no such line.
 - **How often, and when (items 9.3.1 and 9.2).** One document every 2 hours, the oldest check first. While the 5-hour usage limit lasts, the refresh runs only overnight: from the end of the full test run of main, which moves from 03:30 to 00:00 Pacific in GHI 1058's build, until 08:00 Pacific; after that, around the clock.
-- **It is a maintenance job (item 9.4, answered D on 2026-10-31).** The refresh becomes one of the maintenance jobs of GHI [Regular maintenance: the list of maintenance jobs, how often each runs, and how each reaches the user](https://github.com/nedschorus/nedschorus/issues/1058), and its questions go to the approval-walk of that GHI's nightly overseer agent-session. The overseer runs in tmux on ned-box with Remote Control on, and an iTerm2 window on the Mac, attached to its tmux session, opens each night. The recommendation built no Mac window; the user disapproved that recommendation, so the window opens: "It'd be safer to make it show up in Tmux Mac, just in case there's some message I need to see that doesn't get echoed in remote control."
+- **It is a maintenance job (item 9.4, answered D on 2026-10-31).** The refresh becomes one of the maintenance jobs of GHI [Regular maintenance: the list of maintenance jobs, how often each runs, and how each reaches the user](https://github.com/nedsnodes/nedsnodes/issues/1058), and its questions go to the approval-walk of that GHI's nightly overseer agent-session. The overseer runs in tmux on ned-box with Remote Control on, and an iTerm2 window on the Mac, attached to its tmux session, opens each night. The recommendation built no Mac window; the user disapproved that recommendation, so the window opens: "It'd be safer to make it show up in Tmux Mac, just in case there's some message I need to see that doesn't get echoed in remote control."
 - **A question waits until the user answers it (item 9.3, approved 2026-10-30).** A question has no deadline and carries into the next night's continuation of the same approval-walk. This replaces the ruling of 2026-10-04, decision 2 of the supporting design `docs/issues/670-system-overview-refresh-agent.tool.design.md`, that the waiting agent-session ends at 04:30 and the next night asks afresh.
 
 The supporting design `docs/issues/670-system-overview-refresh-agent.tool.design.md` predates these rulings: its 05:00 start, its overview-only scope, its agent-session of its own in the tmux session `system-overview-refresh`, and its 04:30 end are replaced by them.
@@ -57,19 +57,19 @@ The walk's minutes are shipped at its close to the log-store as `nedlern@ned-box
 
 ## What the first refresh by hand taught, 2026-09-23
 
-The handoff overview was refreshed by hand before this step exists, in PR [Handoff overview: refreshed by hand against the code at 40afb38](https://github.com/nedschorus/nedschorus/pull/677). Five lessons for whoever builds the step:
+The handoff overview was refreshed by hand before this step exists, in PR [Handoff overview: refreshed by hand against the code at 40afb38](https://github.com/nedsnodes/nedsnodes/pull/677). Five lessons for whoever builds the step:
 
 1. **An overview's last commit is not its verification commit.** The handoff overview's last commit was the 2026-09-20 directory move, and finding the commit it was actually checked against took `git log --follow` and a read of commit subjects. The pinned line must carry the commit.
 2. **While a system is half-migrated, the range must cover its files outside `nn-systems/<system>/`.** Seven of the handoff system's parts still live in `scripts/`.
-3. **A GitHub issue's status is itself stale.** GHI [recover-crashed-seats.py: the six changes ruled 2026-09-02 — exit record, process-identity liveness, parking marker, verified restart, by-hand resume, window](https://github.com/nedschorus/nedschorus/issues/242) says in its header that change 5 is not built and in its body that it is. A refresh reads the code and the merged pull requests, never an issue's claim.
+3. **A GitHub issue's status is itself stale.** GHI [recover-crashed-seats.py: the six changes ruled 2026-09-02 — exit record, process-identity liveness, parking marker, verified restart, by-hand resume, window](https://github.com/nedsnodes/nedsnodes/issues/242) says in its header that change 5 is not built and in its body that it is. A refresh reads the code and the merged pull requests, never an issue's claim.
 4. **A text match is not behaviour.** A grep reported that `resupervise-seat.py` passes `--adopt-session-id`; the hit was in its docstring. A claim is checked against the code path.
 5. **Most of what was new was "why" material** — how the parts fit and why — which a mechanical diff would miss. The refresh is judgement, done by an agent.
 
 ## Related, not parents
 
-- GHI [overview-write skill: how an overview of a system is written and checked before it lands](https://github.com/nedschorus/nedschorus/issues/168) — writes an overview's first version and says "something else keeps it true"; this issue is that something. A refresh's overview half should lean on it.
-- GHI [built-in-process-planned documents: design docs convert to a pointer map of built / in process / planned, with a skill that verifies and updates them](https://github.com/nedschorus/nedschorus/issues/219) — its 2026-08-29 update-at-landing ruling is this step's predecessor; item 7 retires the BIPP document it proposed.
-- GHI [Queue drain procedure — the review process that empties the wiki queue, the pair queue, nn-queue, docs/drafts and the draft-label issue queue](https://github.com/nedschorus/nedschorus/issues/24) — the precedent for a report at reincarnation (the handoff scrub step reports each queue's depth).
+- GHI [overview-write skill: how an overview of a system is written and checked before it lands](https://github.com/nedsnodes/nedsnodes/issues/168) — writes an overview's first version and says "something else keeps it true"; this issue is that something. A refresh's overview half should lean on it.
+- GHI [built-in-process-planned documents: design docs convert to a pointer map of built / in process / planned, with a skill that verifies and updates them](https://github.com/nedsnodes/nedsnodes/issues/219) — its 2026-08-29 update-at-landing ruling is this step's predecessor; item 7 retires the BIPP document it proposed.
+- GHI [Queue drain procedure — the review process that empties the wiki queue, the pair queue, nn-queue, docs/drafts and the draft-label issue queue](https://github.com/nedsnodes/nedsnodes/issues/24) — the precedent for a report at reincarnation (the handoff scrub step reports each queue's depth).
 
 ## The daily reminder turned down; a refresh agent deferred, 2026-10-03
 

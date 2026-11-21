@@ -1,5 +1,5 @@
 ---
-issue: "[Test the agent-instructions files: a Vale trial for the style-guide word checker, and md-drift-lint findings on changed lines block the merge](https://github.com/nedschorus/nedschorus/issues/1990)"
+issue: "[Test the agent-instructions files: a Vale trial for the style-guide word checker, and md-drift-lint findings on changed lines block the merge](https://github.com/nedsnodes/nedsnodes/issues/1990)"
 ---
 
 # Test the agent-instructions files: a Vale trial for the style-guide word checker, and md-drift-lint findings on changed lines block the merge
@@ -26,7 +26,7 @@ The reports differ on Vale. Codex recommends a narrow Vale configuration; Claude
 
 ## Part 1: a Vale trial
 
-`scripts/style-guide-word-checker-hack.py` reads the "Words to avoid" table of `docs/nedsnodes-wiki/nedsnodes-style-guide.md` each time it is called, so the page agents read and the list it flags cannot differ. Its weak point is its Markdown parser. GHI [The style-guide-word-checker misses prose and flags code in six Markdown shapes](https://github.com/nedschorus/nedschorus/issues/1043) reproduces six cases; four of them (its items 1, 2, 5 and 6) are the parser reading code as prose or prose as code. Items 3 and 4 are the hook's: which text an Edit or a Write hands to the checker. The GHI is open with no fix in progress.
+`scripts/style-guide-word-checker-hack.py` reads the "Words to avoid" table of `docs/nedsnodes-wiki/nedsnodes-style-guide.md` each time it is called, so the page agents read and the list it flags cannot differ. Its weak point is its Markdown parser. GHI [The style-guide-word-checker misses prose and flags code in six Markdown shapes](https://github.com/nedsnodes/nedsnodes/issues/1043) reproduces six cases; four of them (its items 1, 2, 5 and 6) are the parser reading code as prose or prose as code. Items 3 and 4 are the hook's: which text an Edit or a Write hands to the checker. The GHI is open with no fix in progress.
 
 Vale ([docs](https://docs.vale.sh/)) ignores code blocks and code spans in Markdown by default. Its rule types include existence (flag a word), substitution (flag a word and name its replacement) and consistency (one spelling throughout a file). Vale is not installed on ned-box today (`which vale` printed nothing, 2026-10-26). The trial downloads Vale's latest release binary to `~/.cache/vale-trial/` on ned-box, records its version in the report, and deletes the folder when it ends, so nothing is installed on either machine until the user adopts Vale.
 
@@ -46,7 +46,7 @@ Left to the builder: what the program does with a malformed row of the table, an
 
 Example: a pull request adds to a skill a sentence telling agents to run `scripts/run-all-test-suites.py` with a flag `--changed-only`, written as a command in backticks. The flag does not exist; the lint reports it; the review comment says so; and the pull request merges anyway, so an agent that follows that step runs a command that fails.
 
-The user decided on 2026-10-17, in item 11 of the approval-walk whose minutes are `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/nedschorus-which-changes-are-pre-approved-changes-draft-2026-10-15-minutes.md`, that a finding on a line the pull request's diff adds or changes blocks the merge as a code finding does, even when the mistake is older than the pull request, and the author fixes it in a fix-round. This holds for every kind of finding, including the finding that a GHI an architecture overview lists under "Planned work" is closed or has a different title on GitHub. When the lint does not finish, as when it exits 3 because GitHub could not be queried, the merge waits until it finishes, as it does for a test suite that cannot run. Findings on other lines are not reported, as today; GHI [Sort the 60 standing md-drift-lint findings into forward references and stale citations, then fix the stale ones](https://github.com/nedschorus/nedschorus/issues/572) covers them.
+The user decided on 2026-10-17, in item 11 of the approval-walk whose minutes are `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/nedschorus-which-changes-are-pre-approved-changes-draft-2026-10-15-minutes.md`, that a finding on a line the pull request's diff adds or changes blocks the merge as a code finding does, even when the mistake is older than the pull request, and the author fixes it in a fix-round. This holds for every kind of finding, including the finding that a GHI an architecture overview lists under "Planned work" is closed or has a different title on GitHub. When the lint does not finish, as when it exits 3 because GitHub could not be queried, the merge waits until it finishes, as it does for a test suite that cannot run. Findings on other lines are not reported, as today; GHI [Sort the 60 standing md-drift-lint findings into forward references and stale citations, then fix the stale ones](https://github.com/nedsnodes/nedsnodes/issues/572) covers them.
 
 That walk, not this GHI, changes the user-ruling of 2026-09-17, the two rules in merge-lane-2's seat-brief that a problem main already has never blocks, and the review-scope rule. By its item 10, the review-scope bullet of `CLAUDE.md` became a pointer to `docs/agents/pr-reviewer-instructions.md`, and the test that held the two copies identical was deleted.
 
@@ -58,9 +58,9 @@ Part 2 also moves running the lint from merge-lane-2 into code. Today merge-lane
 
 ## Deferred-decisions
 
-1. How a document marks a finding that is not a mistake so that the lint accepts it. Part 2 first surveys how the project and standard linters already do this, and brings its pick to the user; GHI [Sort the 60 standing md-drift-lint findings into forward references and stale citations, then fix the stale ones](https://github.com/nedschorus/nedschorus/issues/572) asks the same question for forward references.
+1. How a document marks a finding that is not a mistake so that the lint accepts it. Part 2 first surveys how the project and standard linters already do this, and brings its pick to the user; GHI [Sort the 60 standing md-drift-lint findings into forward references and stale citations, then fix the stale ones](https://github.com/nedsnodes/nedsnodes/issues/572) asks the same question for forward references.
 
 ## Related ground
 
-- GHI [A project style guide: words to avoid, a mechanical checker, and a check on unbacked promises](https://github.com/nedschorus/nedschorus/issues/14) built the word checker part 1 measures Vale against.
+- GHI [A project style guide: words to avoid, a mechanical checker, and a check on unbacked promises](https://github.com/nedsnodes/nedsnodes/issues/14) built the word checker part 1 measures Vale against.
 - Search receipt: `scripts/ghi-guide-agent-ask.py`, 2026-10-14, asked whether a GHI covers a prose linter such as Vale, behaviour evals of `CLAUDE.md` or skills, making md-drift-lint block merges, or shortening `CLAUDE.md` by moving rules into hooks. ghi-info answered that no GHI covers the cluster, that "Vale" appears in no GHI, that no GHI proposes testing whether agents follow `CLAUDE.md` or a skill, and named GHI 14, 572, 1043, 1127 and 1349 as the nearest ground. The receipt is renewed at filing, when `scripts/ghi-issue-write.py create` asks ghi-info again.

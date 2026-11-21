@@ -1,5 +1,5 @@
 ---
-issue: "[Design the project's Claude Code hooks: requirements drawn from the existing hooks, then keep, fix, merge, rewrite or remove each one](https://github.com/nedschorus/nedschorus/issues/1790)"
+issue: "[Design the project's Claude Code hooks: requirements drawn from the existing hooks, then keep, fix, merge, rewrite or remove each one](https://github.com/nedsnodes/nedsnodes/issues/1790)"
 ---
 
 # Design the project's Claude Code hooks: requirements drawn from the existing hooks, then keep, fix, merge, rewrite or remove each one
@@ -22,14 +22,14 @@ Deferred by the user on 2026-10-21. Work starts after the repeated and failing r
 
 - `.claude/settings.json`, and each hook program it registers.
 - `docs/nedsnodes-wiki/nedsnodes-enforcement-ladder.md`, which orders the ways to enforce a rule: impossible, default, block, remind, detect-and-reverse, text.
-- GHI [Trigger-first instruction delivery (moved from nedlern#1972): delivery timing as a property of every instruction — step-2 CLAUDE.md design input + carried design and scan](https://github.com/nedschorus/nedschorus/issues/30) and its design, `docs/issues/30-trigger-first-instruction-delivery.system.design.md`.
+- GHI [Trigger-first instruction delivery (moved from nedlern#1972): delivery timing as a property of every instruction — step-2 CLAUDE.md design input + carried design and scan](https://github.com/nedsnodes/nedsnodes/issues/30) and its design, `docs/issues/30-trigger-first-instruction-delivery.system.design.md`.
 - The firing survey: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/ned-box-helper/hook-overuse-and-design-check-survey-2026-10-20.md`. It counts each hook's reminders, refusals and stop blocks, and samples what agents did next.
 - Codex's hook review: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/ned-box-helper/hook-overuse-review-codex-2026-10-20.md`. It lists every handler and what it tells the agent, gathers published guidance, and recommends a change per hook, such as running the push citation checks instead of reminding the agent to run them.
-- Related open GHIs: [One Claude Code hook starts slow work early and a later hook adds the result, and a wiki page on hook techniques for controlling and instructing agents](https://github.com/nedschorus/nedschorus/issues/1515), and [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956).
+- Related open GHIs: [One Claude Code hook starts slow work early and a later hook adds the result, and a wiki page on hook techniques for controlling and instructing agents](https://github.com/nedsnodes/nedsnodes/issues/1515), and [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedsnodes/nedsnodes/issues/956).
 
 ## Method
 
-1. Write the design with the system-design skill. GHI [Type definitions for the project's kinds of markdown: what each contains, leaves out, and how long it runs](https://github.com/nedschorus/nedschorus/issues/1080) is where the user's approval of that skill, on 2026-10-20, is being written; until the skill exists, follow that GHI-MD's definition of a design. The design goes beside this GHI-MD, as `docs/issues/<this issue's number>-claude-code-hook-system-design.md`.
+1. Write the design with the system-design skill. GHI [Type definitions for the project's kinds of markdown: what each contains, leaves out, and how long it runs](https://github.com/nedsnodes/nedsnodes/issues/1080) is where the user's approval of that skill, on 2026-10-20, is being written; until the skill exists, follow that GHI-MD's definition of a design. The design goes beside this GHI-MD, as `docs/issues/<this issue's number>-claude-code-hook-system-design.md`.
 2. State the requirements each hook serves: what failure it prevents, at what moment, and which rung of the enforcement ladder it uses. Ask too whether the requirement belongs on a rung no hook provides, such as making the action impossible or the safe choice the default.
 3. Measure each hook's run time and the words it adds to the agent's context before deciding to remove or merge it.
 4. Before removing a hook that never fired, find out why: the failure it guards against may simply not have recurred, and a hook guarding against a costly failure can stay though it rarely fires.

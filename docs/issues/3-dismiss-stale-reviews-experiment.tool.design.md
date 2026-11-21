@@ -1,6 +1,6 @@
 # Experiment design — what enabling `dismiss_stale_reviews` on main would do
 
-Issue: issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper.system.design.md)](https://github.com/nedschorus/nedschorus/issues/3) ·
+Issue: issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper.system.design.md)](https://github.com/nedsnodes/nedsnodes/issues/3) ·
 Program: `scripts/protection-experiment-dismiss-stale-reviews.py`, deleted unrun
 
 **Status: dropped.** The experiment never ran except as a trial run, and its program is deleted. merge-lane-2 merges only the exact commit that was reviewed, so a commit pushed after the approval cannot merge under it, which is the problem `dismiss_stale_reviews` was to solve. The program can be read in git history at the commit pinned at the end of this page.
@@ -70,7 +70,7 @@ protection.
 
 Failures are reported, never silenced: `gh` stderr is captured and printed with
 the failing command, per the defect class recorded at
-PR [Add silenced-error-lint.py: flag silenced stderr the code then trusts](https://github.com/nedschorus/nedschorus/pull/111).
+PR [Add silenced-error-lint.py: flag silenced stderr the code then trusts](https://github.com/nedsnodes/nedsnodes/pull/111).
 
 ## How to judge the result
 
@@ -80,4 +80,4 @@ what happens to the PR process when an approval is dismissed mid-review — is t
 merge-lane exercise, and the decision to enable the setting on main is the
 user's, not this document's.
 
-**Pinned to what landed:** commit [b965517](https://github.com/nedschorus/nedschorus/commit/b9655170cebbbaa78e361b7b4aeef6f3e3a31089) on 2026-09-06 — `scripts/protection-experiment-dismiss-stale-reviews.py` as last changed, by PR [Sweep bare project words to the glossary's names (docs/wiki/project-vocabulary-glossary.md)](https://github.com/nedschorus/nedschorus/pull/259).
+**Pinned to what landed:** commit [b965517](https://github.com/nedsnodes/nedsnodes/commit/b9655170cebbbaa78e361b7b4aeef6f3e3a31089) on 2026-09-06 — `scripts/protection-experiment-dismiss-stale-reviews.py` as last changed, by PR [Sweep bare project words to the glossary's names (docs/wiki/project-vocabulary-glossary.md)](https://github.com/nedsnodes/nedsnodes/pull/259).

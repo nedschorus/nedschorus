@@ -1,5 +1,5 @@
 ---
-issue: "[Warn an agent when its reply names a document for the user without a link the user can open on his Mac](https://github.com/nedschorus/nedschorus/issues/1213)"
+issue: "[Warn an agent when its reply names a document for the user without a link the user can open on his Mac](https://github.com/nedsnodes/nedsnodes/issues/1213)"
 kind: design
 ---
 
@@ -11,7 +11,7 @@ The user reads agents' replies on his Mac. When an agent names a document in a r
 
 On 2026-10-12, in the cold-read-improvement agent-seat, an agent explaining an approval-walk item cited the project's objective page as `` `docs/nedsnodes-wiki/nedsnodes-ai-native-software-development-objective.md` ``. The user's viewer turned the path into the link `http://docs/nedsnodes-wiki/nedsnodes-ai-native-software-development-objective.md`, which opens nothing. The user asked why the agent had not written a Mac link, and whether the project had built, or had a GHI to build, a check for these links.
 
-The rule was in front of the agent twice: `~/.claude/CLAUDE.md` says "files linked for the user are clickable in the `file:///Volumes/nedhome/...` form", and `nn-systems/skills/explain/explain-how-to-write-an-identifier-instructions.md`, which the /explain skill the agent was running told it to follow at that step, says a wiki page is cited by "its title, linked". The agent did not open that file. A rule an agent must remember is the class of fix the user ruled fails (2026-09-08, recorded in GHI [Reference-integrity checker: links resolve and cited revision-paths exist — pure-code review check (and the home for what-else-can-code-check)](https://github.com/nedschorus/nedschorus/issues/42), section "Third caller"); the same day's reply also drew three bare-number warnings from the hook below, which shows a warning at the next prompt is read and acted on.
+The rule was in front of the agent twice: `~/.claude/CLAUDE.md` says "files linked for the user are clickable in the `file:///Volumes/nedhome/...` form", and `nn-systems/skills/explain/explain-how-to-write-an-identifier-instructions.md`, which the /explain skill the agent was running told it to follow at that step, says a wiki page is cited by "its title, linked". The agent did not open that file. A rule an agent must remember is the class of fix the user ruled fails (2026-09-08, recorded in GHI [Reference-integrity checker: links resolve and cited revision-paths exist — pure-code review check (and the home for what-else-can-code-check)](https://github.com/nedsnodes/nedsnodes/issues/42), section "Third caller"); the same day's reply also drew three bare-number warnings from the hook below, which shows a warning at the next prompt is read and acted on.
 
 ## What exists today
 
@@ -42,9 +42,9 @@ A note, never a refusal, handed to the agent with the user's next message, listi
 
 ## Related GHIs
 
-- GHI [Reference-integrity checker: links resolve and cited revision-paths exist — pure-code review check (and the home for what-else-can-code-check)](https://github.com/nedschorus/nedschorus/issues/42): its third part checks citations in committed files that the reader's machine cannot resolve, as a review check at pull-request time, built in the gatekeeper era. This GHI checks replies to the user with one hook and needs no review machinery, so it has its own lifecycle.
-- GHI [Cite files by name, not by path](https://github.com/nedschorus/nedschorus/issues/610): how a file is cited in committed text so a search finds every reference. A reply's link is for the user to click; the two do not conflict.
-- GHI [cold-read-record-ship.py prints a citation without its host when it runs on ned-box, where the seats run](https://github.com/nedschorus/nedschorus/issues/299), closed: an earlier case of a citation that did not resolve from where the reader sat, fixed in one program.
+- GHI [Reference-integrity checker: links resolve and cited revision-paths exist — pure-code review check (and the home for what-else-can-code-check)](https://github.com/nedsnodes/nedsnodes/issues/42): its third part checks citations in committed files that the reader's machine cannot resolve, as a review check at pull-request time, built in the gatekeeper era. This GHI checks replies to the user with one hook and needs no review machinery, so it has its own lifecycle.
+- GHI [Cite files by name, not by path](https://github.com/nedsnodes/nedsnodes/issues/610): how a file is cited in committed text so a search finds every reference. A reply's link is for the user to click; the two do not conflict.
+- GHI [cold-read-record-ship.py prints a citation without its host when it runs on ned-box, where the seats run](https://github.com/nedsnodes/nedsnodes/issues/299), closed: an earlier case of a citation that did not resolve from where the reader sat, fixed in one program.
 
 ## Deferred-decisions
 
@@ -58,4 +58,4 @@ Ask the user which place the 2026-10-12 test was in; he clicks one `file:///Volu
 
 ## Provisional additions (not yet vetted by the user)
 
-- cold-read-research, 2026-10-14: PR [ned-box path reply warning hook: note /home/nedlern/ paths the user cannot open on the Mac, with the /Volumes/nedhome link to write](https://github.com/nedschorus/nedschorus/pull/1358) merged as 7bb5aead, covering ned-box paths in replies. Its review left five non-blocking points for a follow-up pull request: (1) a bare file URL whose name holds `(`, `)` or `*` is cut at that character; (2) the same for an angle autolink such as `<file:///home/nedlern/report(1).md>`; (3) a link destination holding paired backticks yields NUL characters in the suggestion, so the destination should be read from the original text; (4) `previous_reply_note` and `note_record_path_for` should move into a `-common.py` module that both reply hooks import, instead of the new hook reaching into the bare-number hook's private functions; (5) a file URL inside underscore emphasis is not noted.
+- cold-read-research, 2026-10-14: PR [ned-box path reply warning hook: note /home/nedlern/ paths the user cannot open on the Mac, with the /Volumes/nedhome link to write](https://github.com/nedsnodes/nedsnodes/pull/1358) merged as 7bb5aead, covering ned-box paths in replies. Its review left five non-blocking points for a follow-up pull request: (1) a bare file URL whose name holds `(`, `)` or `*` is cut at that character; (2) the same for an angle autolink such as `<file:///home/nedlern/report(1).md>`; (3) a link destination holding paired backticks yields NUL characters in the suggestion, so the destination should be read from the original text; (4) `previous_reply_note` and `note_record_path_for` should move into a `-common.py` module that both reply hooks import, instead of the new hook reaching into the bare-number hook's private functions; (5) a file URL inside underscore emphasis is not noted.

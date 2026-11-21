@@ -1,5 +1,5 @@
 ---
-issue: "[Review the archived task list of the agent-seat cold-read-improvement](https://github.com/nedschorus/nedschorus/issues/3838)"
+issue: "[Review the archived task list of the agent-seat cold-read-improvement](https://github.com/nedsnodes/nedsnodes/issues/3838)"
 ---
 
 # Review the archived task list of the agent-seat cold-read-improvement
@@ -16,7 +16,7 @@ Many of the archived tasks may be deferred for a long time or changed by the res
 
 ## What the review does
 
-When the user schedules it, an agent-session reads `task-list-archive.md` in the archive folder and sorts each task by the criteria of the sixteenth job of GHI [Regular maintenance: the list of maintenance jobs, how often each runs, and how each reaches the user](https://github.com/nedschorus/nedschorus/issues/1058): a task whose work is done is marked done; a stale task is dropped with a reason; a task that is a question waiting on the user, a commitment to him, or a ruling of his not yet carried out goes to him as an item of an approval-walk. A task that belongs in an open GitHub issue goes to that issue, by the criteria of that GHI's eighth job, applied by hand, since the eighth job's program reads only live task lists and never this archive. The agent-session writes its decision for each task, with the reason, to a new review file in the archive folder, and changes none of the archived files.
+When the user schedules it, an agent-session reads `task-list-archive.md` in the archive folder and sorts each task by the criteria of the sixteenth job of GHI [Regular maintenance: the list of maintenance jobs, how often each runs, and how each reaches the user](https://github.com/nedsnodes/nedsnodes/issues/1058): a task whose work is done is marked done; a stale task is dropped with a reason; a task that is a question waiting on the user, a commitment to him, or a ruling of his not yet carried out goes to him as an item of an approval-walk. A task that belongs in an open GitHub issue goes to that issue, by the criteria of that GHI's eighth job, applied by hand, since the eighth job's program reads only live task lists and never this archive. The agent-session writes its decision for each task, with the reason, to a new review file in the archive folder, and changes none of the archived files.
 
 Each task kept is put back, with its description and metadata whole, on the task list of the agent-seat that owns its work after the restructure; when the restructure does not settle which agent-seat that is, the task goes to the user as an approval-walk item.
 

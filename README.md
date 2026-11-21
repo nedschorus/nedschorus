@@ -15,7 +15,7 @@ NedsNodes rebuilds SDLC the way UNIX rebuilt the operating system: many modular 
 
 Two new, and two old ideas, now powered by AIs, keep the system humming. **Cold-read** supplies the theory of mind AIs lack, so every prompt makes sense to a reader with minimal context. **Detect-instruct-correct** swaps unsolvable precognition for post-cognition: watch, revert, insert the right prompt, try again. And half our time and tokens are for **maintenance** and **data-driven internal improvements**, not visible progress, to replace slow decay with steady progress. 
 
-A robust SDLC needs \>1,000 nodes. NedsNodes has \~100. It is young, open-source, and adds nodes only when there is a proven need. *Want to see how it works? Ask your agent to read [https\://github.com/nedschorus/nedschorus](https://github.com/nedschorus/nedschorus) and tell you.*
+A robust SDLC needs \>1,000 nodes. NedsNodes has \~100. It is young, open-source, and adds nodes only when there is a proven need. *Want to see how it works? Ask your agent to read [https\://github.com/nedsnodes/nedsnodes](https://github.com/nedsnodes/nedsnodes) and tell you.*
 
 # [**hack**](https://hackersdictionary.com/html/entry/hack.html)
 
@@ -171,4 +171,4 @@ At least agents aren’t afraid of getting fired because they speak truth to pow
 
 Be prepared to spend half your time and tokens on forward progress, and half on looking backwards then strengthening your system to ward off problems that just happened, that will happen again. Retrospective vigilance, postmortems, root cause analysis, maintenance, repair systems, are needed for sane development, even if your boss’s boss or your users don’t care. 
 
-A robust SDLC needs \>1,000 nodes. NedsNodes has \~100. It is young, open-source, and adding nodes as needed, as proven by real world use. *Want to see how it works? Ask your agent to read [https\://github.com/nedschorus/nedschorus](https://github.com/nedschorus/nedschorus) and tell you. (Sorry \- it’s still under rapid development. Now that I’ve put my thoughts on ‘paper’, **I know what we need to do. Smart, nice hackers wanted... :)***
+A robust SDLC needs \>1,000 nodes. NedsNodes has \~100. It is young, open-source, and adding nodes as needed, as proven by real world use. *Want to see how it works? Ask your agent to read [https\://github.com/nedsnodes/nedsnodes](https://github.com/nedsnodes/nedsnodes) and tell you. (Sorry \- it’s still under rapid development. Now that I’ve put my thoughts on ‘paper’, **I know what we need to do. Smart, nice hackers wanted... :)***

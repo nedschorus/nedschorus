@@ -1,5 +1,5 @@
 ---
-issue: "[Check every prerequisite of the fleet's programs before an agent-session starts](https://github.com/nedschorus/nedschorus/issues/1055)"
+issue: "[Check every prerequisite of the fleet's programs before an agent-session starts](https://github.com/nedsnodes/nedsnodes/issues/1055)"
 ---
 
 # Check every prerequisite of the fleet's programs before an agent-session starts
@@ -24,16 +24,16 @@ Nothing checks, before an agent-session starts, any of these, each of which a pr
 
 ## Why
 
-When a prerequisite is missing, an agent learns of it only when some program fails mid-task. The program's message then has to explain a machine problem to an agent that cannot fix the machine, and every program that depends on the tool needs such a message of its own. Part two of GHI [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956) is removing the pre-push hook's own message for a missing `python3` for this reason: python3 is present on both machines, and one check at launch would cover the case better than a special message in each hook. A check at launch catches a missing prerequisite once, before any work starts, where the user can fix it.
+When a prerequisite is missing, an agent learns of it only when some program fails mid-task. The program's message then has to explain a machine problem to an agent that cannot fix the machine, and every program that depends on the tool needs such a message of its own. Part two of GHI [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedsnodes/nedsnodes/issues/956) is removing the pre-push hook's own message for a missing `python3` for this reason: python3 is present on both machines, and one check at launch would cover the case better than a special message in each hook. A check at launch catches a missing prerequisite once, before any work starts, where the user can fix it.
 
 ## Related GHIs
 
 Each of these covers one prerequisite or one start path, and the program this GHI proposes would sit beside or under them:
 
-- GHI [Run named agents on the Ubuntu box, reachable from iTerm2 by name: launch-claude with tmux attach-or-create, and the migration it requires](https://github.com/nedschorus/nedschorus/issues/45): the launchers this program would gate.
-- GHI [Fleet survives a machine restart without losing seat context: detect, hand off on notice, relaunch at boot, resume from transcript](https://github.com/nedschorus/nedschorus/issues/116): the restart path, which also starts agent-sessions.
-- GHI [Tell the user when ned-box's claude is logged out or ned-box's subscription has run out](https://github.com/nedschorus/nedschorus/issues/337): one prerequisite, `claude` being usable.
-- GHI [A crash-recovered ned-box seat runs without its own GitHub token, and the Mac launcher warns of a missing token when it only attaches](https://github.com/nedschorus/nedschorus/issues/759): one prerequisite, the agent-seat's GitHub token.
+- GHI [Run named agents on the Ubuntu box, reachable from iTerm2 by name: launch-claude with tmux attach-or-create, and the migration it requires](https://github.com/nedsnodes/nedsnodes/issues/45): the launchers this program would gate.
+- GHI [Fleet survives a machine restart without losing seat context: detect, hand off on notice, relaunch at boot, resume from transcript](https://github.com/nedsnodes/nedsnodes/issues/116): the restart path, which also starts agent-sessions.
+- GHI [Tell the user when ned-box's claude is logged out or ned-box's subscription has run out](https://github.com/nedsnodes/nedsnodes/issues/337): one prerequisite, `claude` being usable.
+- GHI [A crash-recovered ned-box seat runs without its own GitHub token, and the Mac launcher warns of a missing token when it only attaches](https://github.com/nedsnodes/nedsnodes/issues/759): one prerequisite, the agent-seat's GitHub token.
 
 ## Kinds of prerequisite the inventory covers
 

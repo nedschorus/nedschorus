@@ -1,5 +1,5 @@
 ---
-issue: "[The style-guide-word-checker misses prose and flags code in six Markdown shapes](https://github.com/nedschorus/nedschorus/issues/1043)"
+issue: "[The style-guide-word-checker misses prose and flags code in six Markdown shapes](https://github.com/nedsnodes/nedsnodes/issues/1043)"
 ---
 
 # The style-guide-word-checker misses prose and flags code in six Markdown shapes
@@ -116,7 +116,7 @@ Output: nothing (exit 0). Expected: a report of "seat" on line 3, the copy the W
 
 Control: the same Write content as case 4a, written to an untracked new file `fresh.md` in the same repository, reports `fresh.md:1: "seat": ...` (exit 0).
 
-merge-lane-2's [review 5394540218](https://github.com/nedschorus/nedschorus/pull/934#pullrequestreview-5394540218), where this was first recorded, notes that the hook's author has said comparing the Write's lines against the set of committed lines is intended. Case 4a shows the comparison misjudging a line whose text is unchanged but whose context changed from code to prose, which is a case that design answer did not address.
+merge-lane-2's [review 5394540218](https://github.com/nedsnodes/nedsnodes/pull/934#pullrequestreview-5394540218), where this was first recorded, notes that the hook's author has said comparing the Write's lines against the set of committed lines is intended. Case 4a shows the comparison misjudging a line whose text is unchanged but whose context changed from code to prose, which is a case that design answer did not address.
 
 ### 5. A heading after a list item, then an indented line of three tildes, hides all later prose
 
@@ -153,7 +153,7 @@ Expected: `[(5, 'seat')]` in both. A fragment does not show whether line 3 is an
 
 ## Provenance
 
-Items 1 to 4 were found by the Codex review cell, `scripts/code-review-codex-cell.py`, on PR [style-guide-word-checker: the project word list, its scanner, and a PostToolUse hook on markdown writes](https://github.com/nedschorus/nedschorus/pull/934), and recorded for a follow-up GHI in merge-lane-2's [review 5394540218](https://github.com/nedschorus/nedschorus/pull/934#pullrequestreview-5394540218) of that pull request. A fifth finding in that review, an indented code block read as prose, was fixed by PR [style-guide-word-checker: an indented code block is code, and a capitalised form is looked up](https://github.com/nedschorus/nedschorus/pull/1003) and is not part of this GHI. Items 5 and 6 were found by the Codex review cell on the second review round of that same PR 1003 and recorded in merge-lane-2's [review 5408173384](https://github.com/nedschorus/nedschorus/pull/1003#pullrequestreview-5408173384), which ran both inputs through main's checker and found main silent on both before PR 1003 merged.
+Items 1 to 4 were found by the Codex review cell, `scripts/code-review-codex-cell.py`, on PR [style-guide-word-checker: the project word list, its scanner, and a PostToolUse hook on markdown writes](https://github.com/nedsnodes/nedsnodes/pull/934), and recorded for a follow-up GHI in merge-lane-2's [review 5394540218](https://github.com/nedsnodes/nedsnodes/pull/934#pullrequestreview-5394540218) of that pull request. A fifth finding in that review, an indented code block read as prose, was fixed by PR [style-guide-word-checker: an indented code block is code, and a capitalised form is looked up](https://github.com/nedsnodes/nedsnodes/pull/1003) and is not part of this GHI. Items 5 and 6 were found by the Codex review cell on the second review round of that same PR 1003 and recorded in merge-lane-2's [review 5408173384](https://github.com/nedsnodes/nedsnodes/pull/1003#pullrequestreview-5408173384), which ran both inputs through main's checker and found main silent on both before PR 1003 merged.
 
 ## Why this matters
 
@@ -184,4 +184,4 @@ Fix the six shapes in the checker and the hook, adding one case per item to `scr
 
 ## Provisional additions (not yet vetted by the user)
 
-- Agent-seat agent-instructions-editor, 2026-10-14: the open notes from the review of PR [style-guide-word-checker: the page parser raises on every malformed table, and tests run on a fixture page](https://github.com/nedschorus/nedschorus/pull/985), to act on at the checker's next change, name two recognition gaps: a heading that interrupts a list, and an Edit fragment with an indented `~~~`. They are items 5 and 6 above, so they are fixed with this GHI.
+- Agent-seat agent-instructions-editor, 2026-10-14: the open notes from the review of PR [style-guide-word-checker: the page parser raises on every malformed table, and tests run on a fixture page](https://github.com/nedsnodes/nedsnodes/pull/985), to act on at the checker's next change, name two recognition gaps: a heading that interrupts a list, and an Edit fragment with an indented `~~~`. They are items 5 and 6 above, so they are fixed with this GHI.
