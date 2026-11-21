@@ -1224,71 +1224,32 @@ def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: P
 
 
 # The overview-refresh-due instruction, word for word. A template: the
-# overview, its draft, the command and the commit are filled in per system.
-# The subagent writes a draft in the wiki's queue directory, and the seat
-# writes the overview only once the user has approved the diff: the
-# instruction-file guard refuses an agent's write to a wiki page without the
-# user's approval, and a subagent cannot ask him for it. The draft has a name
-# of its own, the overview's with a -draft ending, so the file-name collision
-# hook has nothing to say about it. Once the user has been shown the diff the
-# seat marks the day's reminder as given, which keeps the line from every
-# other seat until the next day.
+# overview, the command and the commit are filled in per system.
 EXPECTED_OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE = (
-    " — Dispatch a subagent to write {overview_draft_path}: a copy of "
-    "{overview_path} refreshed against the commits "
+    " — Dispatch a subagent to refresh {overview_path} against the commits "
     "`{commit_listing_command}` lists, as "
     "docs/nedsnodes-wiki/nedsnodes-how-to-write-an-architecture-overview.md "
-    "defines a refresh, ending in the line `{checked_against_line}`. When the subagent reports, show the user the "
-    "diff between {overview_path} and {overview_draft_path}. Once the user "
-    "has been shown the diff, run `python3 {reminder_mark_script} {system}`. "
-    "When the user approves the diff, write {overview_path} from "
-    "{overview_draft_path} and delete {overview_draft_path}."
+    "defines a refresh, ending in the line `{checked_against_line}`, to check "
+    "the refresh as /overview-write says, and to open a pull request with it."
 )
-
-HANDOFF_ARCHITECTURE_OVERVIEW_REFRESH_USER_SHOWN_MARK_SCRIPT_PATH = (
-    SYSTEM_DIRECTORY / "handoff-architecture-overview-refresh-user-shown-mark.py")
-
-# The line a successor is given when the day's reminder marks cannot be read,
-# word for word. A template: the marks' location and the error are filled in.
-EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE = (
-    "overview check could not read the day's reminder marks in {marks_location}, "
-    "so no line is withheld for a reminder already given: {error}"
-    " — Before you act on any overview-refresh line in this prompt, tell the "
-    "user that the handoff-supervisor could not read the day's overview-refresh "
-    "reminder marks, giving the location {marks_location} and the error above, "
-    "and that an overview-refresh line in this prompt may therefore repeat a "
-    "refresh the user was already shown today."
-)
-
-# Appended to that line only when ned-box gave no answer, word for word.
-EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_NED_BOX_DID_NOT_ANSWER_SENTENCE = (
-    " Because ned-box did not answer this machine, also tell the user that "
-    "`ssh nedlern@ned-box true`, run on the Mac, shows whether ned-box answers "
-    "again, and that the next agent-session's start reads the marks again."
-)
-
-REMINDER_MARKS_UNREAD_LINE_OPENING = "overview check could not read the day's reminder marks in "
 
 
 def expected_overview_refresh_due_line(system: str, pinned: str, main: str,
                                        count: int, main_full: str) -> str:
     """The whole line for a fixture system, spelled out, so a change to the
-    report, the template, a command or where the draft goes fails the pin."""
+    report, the template or a command fails the pin."""
     overview = f"docs/nedsnodes-wiki/nedsnodes-{system}-architecture-overview.md"
-    draft = f"docs/nedsnodes-wiki/queue/nedsnodes-{system}-architecture-overview-draft.md"
     return (
         f"overview refresh due: {system} — {count} commit(s) under nn-systems/{system}/ "
         f"since the commit its overview was checked against, in {pinned}..{main} — Dispatch a "
-        f"subagent to write {draft}: a copy of {overview} refreshed "
-        f"against the commits `git log --no-merges {pinned}..{main} -- nn-systems/{system}/ "
+        f"subagent to refresh {overview} against the commits "
+        f"`git log --no-merges {pinned}..{main} -- nn-systems/{system}/ "
         f"':(exclude)nn-systems/{system}/*.md'` lists, as "
         "docs/nedsnodes-wiki/nedsnodes-how-to-write-an-architecture-overview.md "
         "defines a refresh, ending in the line `**Checked against:** commit "
-        f"[{main_full}](https://github.com/nedsnodes/nedsnodes/commit/{main_full})`. "
-        f"When the subagent reports, show the user the diff between {overview} and "
-        f"{draft}. Once the user has been shown the diff, run `python3 "
-        f"{HANDOFF_ARCHITECTURE_OVERVIEW_REFRESH_USER_SHOWN_MARK_SCRIPT_PATH} {system}`. When the user "
-        f"approves the diff, write {overview} from {draft} and delete {draft}.")
+        f"[{main_full}](https://github.com/nedsnodes/nedsnodes/commit/{main_full})`, "
+        "to check the refresh as /overview-write says, and to open a pull request "
+        "with it.")
 
 
 def expected_widget_overview_refresh_due_line(pinned: str, main: str, count: int,
@@ -1297,19 +1258,14 @@ def expected_widget_overview_refresh_due_line(pinned: str, main: str, count: int
     return expected_overview_refresh_due_line("widget", pinned, main, count, main_full)
 
 
-def overview_refresh_due_or_missing(directory: Path, now=None):
+def overview_refresh_due_or_missing(directory: Path):
     """overview_refresh_due_lines's result, or the string "missing" against a
     supervisor that has no such function, so each case FAILS cleanly there
-    instead of crashing the suite. now, when given, is the moment whose day
-    the once-a-day cases judge."""
+    instead of crashing the suite."""
     due = getattr(supervisor, "overview_refresh_due_lines", None)
     if due is None:
         return "missing"
-    if now is None:
-        return due(directory)
-    if "now" not in inspect.signature(due).parameters:
-        return "missing"
-    return due(directory, now=now)
+    return due(directory)
 
 
 def write_gh_answering_no_open_pull_requests(directory: Path) -> Path:
@@ -1792,9 +1748,7 @@ def run_overview_refresh_withheld_while_pull_request_open_cases(workspace: Path)
         directory.mkdir()
         calls = directory / "calls"
         if without_gh:
-            # python3 too: the day's reminder marks are read through it.
-            for program in ("git", "python3"):
-                (directory / program).symlink_to(shutil.which(program))
+            (directory / "git").symlink_to(shutil.which("git"))
             search_path = str(directory)
         else:
             fake_gh = directory / "gh"
@@ -1918,340 +1872,6 @@ def run_overview_refresh_withheld_while_pull_request_open_cases(workspace: Path)
           and "overview check for widget withheld" not in console, console)
 
 
-def run_overview_refresh_once_a_day_cases(workspace: Path):
-    """A due system's line is given once a day, to whichever seat reincarnates
-    first that day, on either machine.
-
-    Ruled 2026-10-01, the user's "y" to the merge-lane-2 seat, recorded at
-    https://github.com/nedsnodes/nedsnodes/pull/852#issuecomment-5939116857:
-    "one reminder a day for each overview that is behind, from whichever seat
-    starts up first that day; the other seats stay quiet until the next day."
-    The day's reminder is a mark in the log-store, one per system, which the
-    seat writes once the user has been shown the diff.
-
-    No case reaches ned-box. The marks directory is a fixture directory, set
-    through handoff_architecture_overview_refresh_user_shown_mark's constant; ned-box is played
-    by an ssh first on PATH that records the host of each call and runs its
-    body; the machine is named per case; a fake `gh` answers for GitHub; and
-    the moment is passed in.
-    """
-    root = workspace / "overview-refresh-once-a-day"
-    root.mkdir()
-    repository = root / "repository"
-    repository.mkdir()
-    git_in(["init", "--quiet", "--initial-branch=main"], repository)
-    git_in(["config", "user.name", "fixture"], repository)
-    git_in(["config", "user.email", "fixture@nedschorus.invalid"], repository)
-
-    def commit(texts_by_path, message):
-        for relative, text in texts_by_path.items():
-            path = repository / relative
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text, encoding="utf-8")
-        git_in(["add", "-A"], repository)
-        git_in(["commit", "--quiet", "-m", message], repository)
-        return git_in(["rev-parse", "HEAD"], repository).stdout.strip()
-
-    def publish():
-        git_in(["update-ref", "refs/remotes/origin/main", "HEAD"], repository)
-        return git_in(["rev-parse", "--short", "HEAD"], repository).stdout.strip()
-
-    def pinned_line(sha, system):
-        # An overview's last line, as the page on writing one spells it.
-        return (f"**Checked against:** commit [{sha}]"
-                f"(https://github.com/nedsnodes/nedsnodes/commit/{sha})")
-
-    reminder_mark = getattr(supervisor, "handoff_architecture_overview_refresh_user_shown_mark", None)
-    marks_directory = root / "daily-overview-refresh-reminder-marks"
-    no_open_pull_requests = write_gh_answering_no_open_pull_requests(
-        root / "gh-answering-no-open-pull-requests")
-    fake_count = [0]
-
-    def fake_gh_running(body) -> Path:
-        """A directory holding a fake `gh` whose shell is body."""
-        fake_count[0] += 1
-        directory = root / f"fake-gh-{fake_count[0]}"
-        directory.mkdir()
-        (directory / "gh").write_text("#!/bin/sh\n" + body + "\n", encoding="utf-8")
-        (directory / "gh").chmod(0o755)
-        return directory
-
-    def gh_answering(pull_requests) -> Path:
-        answer = root / f"answer-{uuid.uuid4().hex}.json"
-        answer.write_text(json.dumps(pull_requests), encoding="utf-8")
-        return fake_gh_running(f"cat '{answer}'")
-
-    @contextlib.contextmanager
-    def reminder_marks_in_place(ssh_body=SSH_THAT_RUNS_THE_COMMAND_HERE,
-                                hostname="a-mac-that-is-not-ned-box", read_timeout=None,
-                                gh_directory=no_open_pull_requests):
-        """Yields the file the fake ssh records its calls' hosts in."""
-        fake_count[0] += 1
-        directory = root / f"fake-ssh-{fake_count[0]}"
-        directory.mkdir()
-        calls = directory / "calls"
-        fake_ssh = directory / "ssh"
-        fake_ssh.write_text(
-            '#!/bin/sh\nwhile [ "$1" = "-o" ]; do shift 2; done\n'
-            'printf "%s\\n" "$1" >> "' + str(calls) + '"\nshift\n' + ssh_body + "\n",
-            encoding="utf-8")
-        fake_ssh.chmod(0o755)
-        missing = object()
-        saved = []
-
-        def replace(owner, name, value):
-            saved.append((owner, name, getattr(owner, name, missing)))
-            setattr(owner, name, value)
-
-        if reminder_mark is not None:
-            replace(reminder_mark, "DAILY_OVERVIEW_REFRESH_REMINDER_MARKS_DIRECTORY",
-                    str(marks_directory))
-            replace(reminder_mark, "ssh_target_for_this_machine",
-                    fixture.SSH_TARGET_FOR_THIS_MACHINE_UNPATCHED)
-        if read_timeout is not None:
-            replace(supervisor, "OVERVIEW_REFRESH_REMINDER_MARKS_READ_TIMEOUT_SECONDS",
-                    read_timeout)
-        replace(socket, "gethostname", lambda: hostname)
-        original_path = os.environ.get("PATH", "")
-        os.environ["PATH"] = (f"{directory}{os.pathsep}{gh_directory}{os.pathsep}"
-                              f"{original_path}")
-        try:
-            yield calls
-        finally:
-            os.environ["PATH"] = original_path
-            for owner, name, value in reversed(saved):
-                if value is missing:
-                    delattr(owner, name)
-                else:
-                    setattr(owner, name, value)
-
-    def due_at(now, **in_place_options):
-        """overview_refresh_due_lines's result at now, its console, and the
-        hosts the fake ssh was called for."""
-        console = io.StringIO()
-        with reminder_marks_in_place(**in_place_options) as calls, \
-                contextlib.redirect_stdout(console):
-            due = overview_refresh_due_or_missing(repository, now=now)
-        recorded = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
-        return due, console.getvalue(), recorded
-
-    def mark_as_the_seat_would(system, now, hostname="a-mac-that-is-not-ned-box"):
-        """Write the day's mark with the mark program itself."""
-        if reminder_mark is None:
-            return
-        with reminder_marks_in_place(hostname=hostname), \
-                contextlib.redirect_stdout(io.StringIO()), \
-                contextlib.redirect_stderr(io.StringIO()):
-            reminder_mark.main([system], now=now)
-
-    def mark_citation(file_name):
-        return f"nedlern@ned-box:{marks_directory}/{file_name}"
-
-    # 2026-10-01 in America/Los_Angeles is PDT, UTC-7.
-    morning = datetime(2026, 10, 1, 16, 0, tzinfo=timezone.utc)            # 09:00 Pacific
-    an_hour_later = datetime(2026, 10, 1, 17, 0, tzinfo=timezone.utc)      # 10:00 Pacific
-    late_that_evening = datetime(2026, 10, 2, 5, 0, tzinfo=timezone.utc)   # 22:00 Pacific,
-    #                                                 already 2026-10-02 in UTC and in Tokyo
-    early_the_next_day = datetime(2026, 10, 2, 8, 0, tzinfo=timezone.utc)  # 01:00 Pacific
-
-    widget_overview = "docs/nedsnodes-wiki/nedsnodes-widget-architecture-overview.md"
-    gadget_overview = "docs/nedsnodes-wiki/nedsnodes-gadget-architecture-overview.md"
-    widget_landed = commit({"nn-systems/widget/widget.py": "print('widget')\n"},
-                           "the widget lands")
-    gadget_landed = commit({"nn-systems/gadget/gadget.py": "print('gadget')\n"},
-                           "the gadget lands")
-    commit({widget_overview: "# The widget\n\n" + pinned_line(widget_landed, "widget") + "\n",
-            gadget_overview: "# The gadget\n\n" + pinned_line(gadget_landed, "gadget") + "\n"},
-           "both overviews, pinned")
-    publish()
-
-    due, console, calls = due_at(morning)
-    check("when no system is due, the day's reminder marks are never read",
-          due == () and calls == [], f"{due!r} {calls!r}\n{console}")
-
-    commit({"nn-systems/widget/widget.py": "print('widget, grown')\n",
-            "nn-systems/gadget/gadget.py": "print('gadget, grown')\n"}, "both grow")
-    main = publish()
-    widget_line = expected_overview_refresh_due_line("widget", widget_landed, main, 1, git_in(["rev-parse", main], repository).stdout.strip())
-    gadget_line = expected_overview_refresh_due_line("gadget", gadget_landed, main, 1, git_in(["rev-parse", main], repository).stdout.strip())
-
-    due, console, calls = due_at(morning)
-    check("the first seat of the day is given each due system's line, before noon as after",
-          due == (gadget_line, widget_line),
-          f"{due!r}\nexpected: {(gadget_line, widget_line)!r}\n{console}")
-    check("from the Mac, the day's reminder marks are read once, over ssh to nedlern@ned-box",
-          calls == ["nedlern@ned-box"], repr(calls))
-    check("with no mark for today, nothing is withheld and the console says nothing of marks",
-          "withheld" not in console and "reminder mark" not in console, console)
-
-    # The seat runs the mark program once the user has been shown the diff.
-    mark_as_the_seat_would("widget", morning + timedelta(minutes=5))
-    widget_mark = marks_directory / "2026-10-01-widget.txt"
-    check("the mark the seat writes for a system is today's file for that system",
-          widget_mark.is_file()
-          and widget_mark.read_text(encoding="utf-8") == "2026-10-01T16:05:00Z\n",
-          repr(sorted(path.name for path in marks_directory.iterdir())
-               if marks_directory.is_dir() else None))
-
-    due, console, calls = due_at(an_hour_later)
-    check("a later seat the same day is not given the line of a system whose mark is "
-          "today's, and is given the other system's line",
-          due == (gadget_line,), f"{due!r}\nexpected: {(gadget_line,)!r}\n{console}")
-    check("the console says why the line was withheld, naming the mark and its time",
-          "handoff-supervisor: overview check for widget withheld its line: the user was "
-          "shown this overview's refresh today, at 2026-10-01T16:05:00Z, as "
-          f"{mark_citation('2026-10-01-widget.txt')} records\n" in console
-          and "overview check for gadget withheld" not in console, console)
-
-    with local_time_zone("Asia/Tokyo"):
-        due, console, calls = due_at(late_that_evening)
-    check("the day is the Pacific date: late that evening, already tomorrow in UTC and in "
-          "the machine's own zone, the line stays withheld",
-          due == (gadget_line,), f"{due!r}\n{console}")
-
-    due, console, calls = due_at(early_the_next_day)
-    check("the next day the first seat is given the line again: a mark from the day "
-          "before does not withhold",
-          due == (gadget_line, widget_line) and "withheld" not in console,
-          f"{due!r}\n{console}")
-
-    # At least once a day decides every failure: marks that cannot be read
-    # withhold nothing.
-    due, console, calls = due_at(
-        an_hour_later,
-        ssh_body="echo 'ssh: connect to host ned-box port 22: No route to host' >&2\n"
-                 "echo 'second line' >&2\nexit 255")
-    unreachable_line = EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE.format(
-        marks_location=mark_citation(""),
-        error="DailyMemoryReviewReadOrWriteFailed: ssh nedlern@ned-box exited 255: ssh: "
-              "connect to host ned-box port 22: No route to host"
-    ) + EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_NED_BOX_DID_NOT_ANSWER_SENTENCE
-    check("when ned-box cannot be reached, every due line is given, the marked system's "
-          "too, and after them one line saying what could not be read, with ssh's first "
-          "line, for the successor to tell the user",
-          due == (gadget_line, widget_line, unreachable_line),
-          f"{due!r}\nexpected: {(gadget_line, widget_line, unreachable_line)!r}\n{console}")
-    # The supervisor prints every returned line, so printing here too would
-    # show the failure twice.
-    check("when ned-box cannot be reached, the overview check prints nothing of the "
-          "failure itself",
-          "could not read the day's reminder marks" not in console, console)
-
-    due, console, calls = due_at(an_hour_later, ssh_body="exec sleep 30", read_timeout=1)
-    check("when the read of the marks times out, every due line is given and then the "
-          "line saying so, with the timeout",
-          due[:2] == (gadget_line, widget_line) and len(due) == 3
-          and due[2].startswith(REMINDER_MARKS_UNREAD_LINE_OPENING)
-          and "ssh nedlern@ned-box timed out after 1 seconds and was killed" in due[2]
-          and due[2].endswith(
-              EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_NED_BOX_DID_NOT_ANSWER_SENTENCE),
-          f"{due!r}\n{console}")
-
-    due, console, calls = due_at(an_hour_later, ssh_body="echo 'this is not json'")
-    check("when the read's output does not parse, every due line is given and then the "
-          "line saying so",
-          due[:2] == (gadget_line, widget_line) and len(due) == 3
-          and due[2].startswith(REMINDER_MARKS_UNREAD_LINE_OPENING)
-          and "is not the JSON it should print" in due[2], f"{due!r}\n{console}")
-    # ned-box answered, so the line must not say it did not.
-    unparsable_line = EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE.format(
-        marks_location=mark_citation(""),
-        error="DailyMemoryReviewReadOrWriteFailed: the reader of memory stores and marks in "
-              "nn-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py, run over "
-              "ssh nedlern@ned-box, printed output that is not the JSON it should print: "
-              "JSONDecodeError: Expecting value: line 1 column 1 (char 0)")
-    check("when ned-box answers with output that does not parse, the line does not say "
-          "ned-box did not answer, nor give the check for whether ned-box answers",
-          due[2:] == (unparsable_line,), f"{due[2:]!r}\nexpected: {(unparsable_line,)!r}")
-
-    due, console, calls = due_at(
-        an_hour_later, ssh_body="echo 'python3: command not found' >&2\nexit 127")
-    check("when ssh reaches ned-box but the read there exits other than 255, the line "
-          "does not say ned-box did not answer",
-          len(due) == 3 and due[2].startswith(REMINDER_MARKS_UNREAD_LINE_OPENING)
-          and "exited 127" in due[2]
-          and "did not answer" not in due[2], f"{due!r}\n{console}")
-
-    # Any other exception carries no word on whether ned-box answered.
-    def read_that_raises_without_the_attribute(*_arguments, **_options):
-        raise RuntimeError("the marks read broke in this fixture")
-
-    if reminder_mark is not None:
-        unpatched_read = reminder_mark.read_daily_overview_refresh_reminder_marks
-        reminder_mark.read_daily_overview_refresh_reminder_marks = (
-            read_that_raises_without_the_attribute)
-        try:
-            due, console, calls = due_at(an_hour_later)
-        finally:
-            reminder_mark.read_daily_overview_refresh_reminder_marks = unpatched_read
-    check("when the marks read raises an exception that says nothing of ned-box "
-          "answering, the line does not say ned-box did not answer",
-          len(due) == 3 and due[2].startswith(REMINDER_MARKS_UNREAD_LINE_OPENING)
-          and "RuntimeError: the marks read broke in this fixture" in due[2]
-          and "did not answer" not in due[2], f"{due!r}\n{console}")
-
-    # A mark for today that does not hold the time it was written is not a
-    # mark: a file cut short as it was written, or one written by hand.
-    gadget_mark = marks_directory / "2026-10-01-gadget.txt"
-    for text, what in (("", "empty"), ("shown to the user\n", "not a time")):
-        gadget_mark.write_text(text, encoding="utf-8")
-        due, console, calls = due_at(an_hour_later)
-        check(f"a mark for today whose text is {what} does not withhold its line, while "
-              "the other system's good mark still withholds",
-              due == (gadget_line,), f"{due!r}\n{console}")
-        check(f"the console says the mark whose text is {what} does not hold a time",
-              "handoff-supervisor: overview check for gadget gives its line: the day's "
-              f"reminder mark {mark_citation('2026-10-01-gadget.txt')} does not hold the "
-              f"time it was written, but {text.strip()!r}\n" in console, console)
-
-    mark_as_the_seat_would("gadget", morning + timedelta(minutes=40))
-    due, console, calls = due_at(an_hour_later)
-    check("when the user has been shown every due overview's refresh today, no line is "
-          "given, and the console names each mark",
-          due == ()
-          and f"{mark_citation('2026-10-01-gadget.txt')} records" in console
-          and f"{mark_citation('2026-10-01-widget.txt')} records" in console,
-          f"{due!r}\n{console}")
-
-    due, console, calls = due_at(an_hour_later, hostname="ned-box")
-    check("on ned-box the marks are read locally, with no ssh, and withhold the same",
-          due == () and calls == [], f"{due!r} {calls!r}\n{console}")
-    due, console, calls = due_at(early_the_next_day, hostname="ned-box")
-    check("on ned-box, the next day, the first seat is given each line again",
-          due == (gadget_line, widget_line) and calls == [], f"{due!r} {calls!r}\n{console}")
-
-    # The open-pull-request check stays as it was, and comes first.
-    refresh_title = "Both overviews are refreshed against what landed"
-    refresh_url = "https://github.com/nedsnodes/nedsnodes/pull/9003"
-    due, console, calls = due_at(early_the_next_day, gh_directory=gh_answering([
-        {"url": refresh_url, "title": refresh_title,
-         "files": [{"path": widget_overview}, {"path": gadget_overview}]}]))
-    check("an open pull request that changes an overview still withholds its line, and "
-          "with no line left to give the marks are never read",
-          due == () and calls == []
-          and f"overview check for widget withheld its line: the open pull request "
-              f"\"{refresh_title}\" ({refresh_url}) already changes {widget_overview}"
-              in console, f"{due!r} {calls!r}\n{console}")
-    due, console, calls = due_at(early_the_next_day, gh_directory=gh_answering([
-        {"url": refresh_url, "title": refresh_title, "files": [{"path": widget_overview}]}]))
-    check("of two due systems with no mark for the day, the one whose overview an open "
-          "pull request changes is withheld and the other is given",
-          due == (gadget_line,), f"{due!r}\n{console}")
-
-    due, console, calls = due_at(an_hour_later, gh_directory=fake_gh_running(
-        "echo 'gh: To get started with GitHub CLI, please run:  gh auth login' >&2\nexit 4"))
-    check("when GitHub cannot be asked, a reminder already given today still withholds "
-          "its line",
-          due == () and "so no line is withheld for a pull request: gh exited 4" in console
-          and f"{mark_citation('2026-10-01-widget.txt')} records" in console,
-          f"{due!r}\n{console}")
-    due, console, calls = due_at(early_the_next_day, gh_directory=fake_gh_running(
-        "echo 'gh: To get started with GitHub CLI, please run:  gh auth login' >&2\nexit 4"))
-    check("when GitHub cannot be asked and no reminder has been given that day, every "
-          "due line is given",
-          due == (gadget_line, widget_line), f"{due!r}\n{console}")
-
-
 def run_overview_refresh_due_prompt_cases(workspace: Path):
     """Where the overview-refresh-due line goes: right after the branch-state
     line, at both call sites that compose it, and nothing appended."""
@@ -2259,73 +1879,6 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
           getattr(supervisor, "OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE", None)
           == EXPECTED_OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE,
           repr(getattr(supervisor, "OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE", None)))
-    check("the reminder mark command the overview line names is the program beside "
-          "the supervisor",
-          getattr(supervisor, "HANDOFF_ARCHITECTURE_OVERVIEW_REFRESH_USER_SHOWN_MARK_PATH", None)
-          == HANDOFF_ARCHITECTURE_OVERVIEW_REFRESH_USER_SHOWN_MARK_SCRIPT_PATH
-          and HANDOFF_ARCHITECTURE_OVERVIEW_REFRESH_USER_SHOWN_MARK_SCRIPT_PATH.is_file(),
-          repr(getattr(supervisor, "HANDOFF_ARCHITECTURE_OVERVIEW_REFRESH_USER_SHOWN_MARK_PATH", None)))
-    # The instruction and the two hooks that meet a subagent following it
-    # agree. The instruction-file guard lets the subagent write the draft the
-    # instruction names, and refuses the overview itself until the user has
-    # approved. The file-name collision hook, which runs after every Edit and
-    # Write, says nothing about the draft. Run over a scratch checkout in
-    # which the overview is a tracked file, as it is on main, so no real
-    # approval marker is in the guard's reach and the collision hook has a
-    # tracked name to compare the draft's with.
-    guarded_checkout = workspace / "overview-draft-guard-checkout"
-    guarded_checkout.mkdir()
-    git_in(["init", "--quiet", "--initial-branch=main"], guarded_checkout)
-    git_in(["config", "user.name", "fixture"], guarded_checkout)
-    git_in(["config", "user.email", "fixture@nedschorus.invalid"], guarded_checkout)
-    widget_overview = getattr(
-        supervisor, "SYSTEM_OVERVIEW_PATH_TEMPLATE", "missing").format(system="widget")
-    widget_overview_draft = getattr(
-        supervisor, "SYSTEM_OVERVIEW_DRAFT_PATH_TEMPLATE", "missing").format(system="widget")
-    (guarded_checkout / widget_overview).parent.mkdir(parents=True, exist_ok=True)
-    (guarded_checkout / widget_overview).write_text("# The widget\n", encoding="utf-8")
-    git_in(["add", "--", widget_overview], guarded_checkout)
-    git_in(["commit", "--quiet", "-m", "the widget's overview"], guarded_checkout)
-
-    def instruction_file_guard_exit_code(relative_path: str) -> int:
-        return subprocess.run(
-            [sys.executable, str(REPOSITORY_ROOT / ".claude" / "guard-hooks" / "instruction-file-guard.py")],
-            input=json.dumps({"cwd": str(guarded_checkout),
-                              "tool_input": {"file_path": str(guarded_checkout / relative_path)}}),
-            capture_output=True, text=True, check=False).returncode
-
-    def file_name_collision_warning(relative_path: str) -> str:
-        """What scripts/file-name-collision-warning-hook.py prints for an
-        agent that has just written relative_path in the scratch checkout:
-        its warning, or the empty string."""
-        written = guarded_checkout / relative_path
-        written.parent.mkdir(parents=True, exist_ok=True)
-        written.write_text("# The widget, refreshed\n", encoding="utf-8")
-        try:
-            return subprocess.run(
-                [sys.executable,
-                 str(REPOSITORY_ROOT / "scripts" / "file-name-collision-warning-hook.py")],
-                input=json.dumps({"cwd": str(guarded_checkout),
-                                  "tool_input": {"file_path": str(written)}}),
-                capture_output=True, text=True, check=False).stdout
-        finally:
-            written.unlink()
-
-    check("the instruction-file guard lets a subagent write the overview's draft",
-          instruction_file_guard_exit_code(widget_overview_draft) == 0, widget_overview_draft)
-    check("the instruction-file guard refuses an unapproved write to the overview itself",
-          instruction_file_guard_exit_code(widget_overview) == 2, widget_overview)
-    printed = file_name_collision_warning(widget_overview_draft)
-    check("the file-name collision hook says nothing when a subagent writes the overview's draft",
-          printed == "", f"{widget_overview_draft}: {printed}")
-    # The control: the hook is live in this checkout, so the silence above is
-    # the draft's name and not a hook that could not run.
-    draft_under_the_overviews_own_name = (
-        widget_overview_draft.rsplit("/", 1)[0] + "/" + widget_overview.rsplit("/", 1)[-1])
-    printed = file_name_collision_warning(draft_under_the_overviews_own_name)
-    check("the file-name collision hook warns about a second file under the overview's own name",
-          "file-name-collision-warning" in printed and widget_overview in printed,
-          f"{draft_under_the_overviews_own_name}: {printed}")
     # The convention finds the one overview on main, and that overview ends in
     # a Checked against line the reader counts: without one the check reports
     # nothing for the handoff system, silently.
@@ -2473,7 +2026,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
         other_seat_launched_prompts.append(prompt)
         return StubLaunchedSession(0)
 
-    def overview_refresh_due_lines_recording(working_directory, now=None):
+    def overview_refresh_due_lines_recording(working_directory):
         overview_check_calls.append(working_directory)
         return (expected,)
 
@@ -2498,69 +2051,6 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
     check("the supervisor of an agent-seat other than agent-instructions-editor prints "
           "no overview-refresh line",
           "overview refresh due" not in console.getvalue(), console.getvalue()[-900:])
-
-    # End to end, the marks unreadable: the successor is given the due line and,
-    # after it, the line saying the marks could not be read, and the console
-    # shows that line once. The read goes over ssh from the Mac and through
-    # /bin/sh to python3 on ned-box; a fake of each, first on PATH, fails it
-    # on either machine.
-    unread_directory = workspace / "overview-refresh-marks-unread-handoffs"
-    unread_directory.mkdir()
-    (unread_directory / "agent-instructions-editor-handoff.md").write_text(
-        "written-at: 2026-09-28T00:00:00Z\nnext-step: resume the audit\nsession-handoff-sequence-number: 5\n",
-        encoding="utf-8")
-    supervisor.write_supervisor_state(
-        unread_directory / "agent-instructions-editor-supervisor-state.json",
-        {"consumed_counter": 4, "launched_session_id": "no-such-session", "generation": 4})
-    unread_record_path = unread_directory / "launch-record.txt"
-    unread_stub_agent = unread_directory / "stub-agent"
-    unread_stub_agent.write_text(
-        stub_agent.read_text(encoding="utf-8").replace(str(record_path),
-                                                       str(unread_record_path)),
-        encoding="utf-8")
-    unread_stub_agent.chmod(0o755)
-    failing_read_directory = unread_directory / "failing-marks-read"
-    failing_read_directory.mkdir()
-    for program in ("ssh", "python3"):
-        (failing_read_directory / program).write_text(
-            "#!/bin/sh\necho 'marks read failed in this fixture' >&2\nexit 255\n",
-            encoding="utf-8")
-        (failing_read_directory / program).chmod(0o755)
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), "--agent", "agent-instructions-editor",
-         "--cd", str(seat),
-         "--handoff-dir", str(unread_directory), "--agent-command", str(unread_stub_agent),
-         "--agent-update-timeout-seconds", "0"],
-        capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60,
-        env={**os.environ,
-             "PATH": f"{failing_read_directory}{os.pathsep}{no_open_pull_requests}"
-                     f"{os.pathsep}{os.environ.get('PATH', '')}"})
-    launched = (unread_record_path.read_text(encoding="utf-8")
-                if unread_record_path.is_file() else "")
-    check("a successor started as a fresh agent-session whose reminder marks cannot be read is given the "
-          "overview-refresh-due line and, after it, the line saying the marks could "
-          "not be read, with the error, and the instruction to tell the user",
-          expected in launched and REMINDER_MARKS_UNREAD_LINE_OPENING in launched
-          and launched.index(expected) < launched.index(REMINDER_MARKS_UNREAD_LINE_OPENING)
-          and "marks read failed in this fixture" in launched
-          and "Before you act on any overview-refresh line in this prompt, tell the user"
-          in launched,
-          f"{result.returncode} {launched[-1500:]!r} {result.stdout[-900:]}")
-    check("the supervisor prints the line saying the marks could not be read on its "
-          "console, once",
-          result.stdout.count("handoff-supervisor: " + REMINDER_MARKS_UNREAD_LINE_OPENING) == 1,
-          result.stdout[-1500:])
-    check("the template the supervisor fills is word for word what was built",
-          getattr(supervisor, "OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE", None)
-          == EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE,
-          repr(getattr(supervisor, "OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE", None)))
-    check("the sentence for ned-box giving no answer is word for word what was built",
-          getattr(supervisor,
-                  "OVERVIEW_REFRESH_REMINDER_MARKS_NED_BOX_DID_NOT_ANSWER_SENTENCE", None)
-          == EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_NED_BOX_DID_NOT_ANSWER_SENTENCE,
-          repr(getattr(supervisor,
-                       "OVERVIEW_REFRESH_REMINDER_MARKS_NED_BOX_DID_NOT_ANSWER_SENTENCE",
-                       None)))
 
 
 # The memory-review-due instruction, word for word. A template: the mark
@@ -3522,7 +3012,6 @@ with fixture.handoff_supervisor_suite_workspace() as workspace:
         run_overview_refresh_due_cases(workspace)
         run_overview_refresh_unusable_system_name_cases(workspace)
     run_overview_refresh_withheld_while_pull_request_open_cases(workspace)
-    run_overview_refresh_once_a_day_cases(workspace)
     run_overview_refresh_due_prompt_cases(workspace)
     run_memory_review_due_cases(workspace)
     run_memory_review_due_prompt_cases(workspace)

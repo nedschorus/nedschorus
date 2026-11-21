@@ -990,3 +990,37 @@ The claim check's evidence:
 > - Contradicting line: nn-systems/handoff/handoff-supervisor.py:2550-2552 `print("handoff-supervisor: " + reference_checkout_back_on_main.reference_checkout_back_on_main_success_line_build(REFERENCE_CHECKOUT, main_commit, leftovers_branches))`. The builder at nn-systems/handoff/handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py:252 writes `saved = (f"its leftovers are saved on {', '.join(pushed)}, pushed to origin" if pushed`. So the branch is named on the handoff-supervisor's console, the agent-seat's tmux pane in the user's window.
 > - The rest holds (handoff-supervisor.py:2537-2543). The supervisor's docstring at :34-35 says the same as the overview (`neither the successor nor the user is told of such a branch`), and the successor's prompt does leave the branch out. Suggested wording: "telling the successor nothing of that branch, and naming it only on its console".
 State: open
+
+## E84 — possible problem: an assertion of the overview is contradicted
+
+Claim: clean-worktrees.py: "a worktree locked by Claude Code for a subagent whose process has ended is unlocked by `--remove` and then judged like any other" (and the rest of its worktree-removal rules).
+Found by: the overview claim check of 2026-11-21 against commit 6c4e193fbe3683f3908c350df73ffd7bfb9c71bc; its report is /home/nedlern/nedsnodes-logs/overview-write-architecture-overview-claim-check-reports/nedsnodes-handoff-architecture-overview/664e10840859a7dc9c96184fb499bb7b5854fc8d-2026-11-21T04-10-44-266989Z.md.
+Fixed by: regular maintenance, in the overview.
+Goes wrong when: a reader takes the assertion as exact.
+The claim check's evidence:
+> - scripts/clean-worktrees.py:88-90 "When no agent-seat's transcripts name the subagent, or more than one's do, the worktree is kept, locked, and named on a line of its own for the user to keep or delete."
+> - The overview states the unlock with no condition. The rest of the sentence matches 6-79, 95-117 (idle at 2 days, review checkout at 24 hours, owner rules).
+State: open
+
+## E85 — possible problem: an assertion of the overview is contradicted
+
+Claim: "A handoff-supervisor that outlives its agent-session records the exit before it exits ... A handoff-supervisor restarted on main's code that cannot start, for want of the token or its lock, or one that fails with an error it does not handle, exits without a record ... so does one that, about to resume an agent-session, cannot read that agent-session's transcript."
+Found by: the overview claim check of 2026-11-21 against commit 6c4e193fbe3683f3908c350df73ffd7bfb9c71bc; its report is /home/nedlern/nedsnodes-logs/overview-write-architecture-overview-claim-check-reports/nedsnodes-handoff-architecture-overview/664e10840859a7dc9c96184fb499bb7b5854fc8d-2026-11-21T04-10-44-266989Z.md.
+Fixed by: regular maintenance, in the overview.
+Goes wrong when: a reader takes the assertion as exact.
+The claim check's evidence:
+> - nn-systems/handoff/handoff-supervisor.py:2914-2916 `if shutil.which(arguments.agent_command) is None: ... return 3`
+> - handoff-supervisor.py:2912-2913 `parser.error(f"--cd is not a directory: ...")`
+> - A restarted supervisor also exits without a record through these two handled paths, which the overview's list of exceptions leaves out. The rest matches 2747, 2776-2779, 2683-2686.
+State: open
+
+## E86 — possible problem: an assertion of the overview is contradicted
+
+Claim: "The /handoff skill and the writer script: the agent, when the threshold hook asks or the user requests a session-handoff."
+Found by: the overview claim check of 2026-11-21 against commit 6c4e193fbe3683f3908c350df73ffd7bfb9c71bc; its report is /home/nedlern/nedsnodes-logs/overview-write-architecture-overview-claim-check-reports/nedsnodes-handoff-architecture-overview/664e10840859a7dc9c96184fb499bb7b5854fc8d-2026-11-21T04-10-44-266989Z.md.
+Fixed by: regular maintenance, in the overview.
+Goes wrong when: a reader takes the assertion as exact.
+The claim check's evidence:
+> - nn-systems/handoff/handoff-supervisor-restart-onto-main-code-by-relaunch-from-reference-checkout.py:422 "If you are the agent-seat {seat}: write your session-handoff now with the /handoff skill"
+> - The restart program also triggers the skill. The successor-prompt notice at handoff-supervisor.py:2371-2375 sends the agent there too.
+State: open

@@ -76,7 +76,6 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "nn-systems/handoff/handoff-supervisor.py": 7,
     "nn-systems/handoff/handoff-write-and-check-supervisor.py": 1,
     "nn-systems/handoff/tests/handoff-user-review-of-agent-memory-stores-mark-test.py": 4,
-    "nn-systems/handoff/tests/handoff-architecture-overview-refresh-user-shown-mark-test.py": 4,
     "nn-systems/handoff/tests/handoff-supervisor-session-end-and-resume-test.py": 26,
     "nn-systems/handoff/tests/handoff-supervisor-session-launch-and-seat-lock-test.py": 19,
     "nn-systems/handoff/tests/handoff-supervisor-successor-prompt-test.py": 82,
