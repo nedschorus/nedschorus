@@ -1,5 +1,5 @@
 ---
-issue: "[Review ned-box-helper's archived task list](https://github.com/nedschorus/nedschorus/issues/3832)"
+issue: "[Review ned-box-helper's archived task list](https://github.com/nedsnodes/nedsnodes/issues/3832)"
 ---
 
 # Review ned-box-helper's archived task list
@@ -12,6 +12,6 @@ This issue asks for no work now. The user will schedule the review. When he does
 
 The work in flight when the list was archived is recorded in task #388 on ned-box-helper's new task list, "Old tasks archived 2026-11-17 at the user's request: 106 tasks, which may need reviewing someday":
 
-- two open pull requests waiting on approval-walk items: [PR 3596](https://github.com/nedschorus/nedschorus/pull/3596) and [PR 3046](https://github.com/nedschorus/nedschorus/pull/3046);
-- two draft glossary pull requests: [PR 2905](https://github.com/nedschorus/nedschorus/pull/2905) and [PR 2898](https://github.com/nedschorus/nedschorus/pull/2898);
+- two open pull requests waiting on approval-walk items: [PR 3596](https://github.com/nedsnodes/nedsnodes/pull/3596) and [PR 3046](https://github.com/nedsnodes/nedsnodes/pull/3046);
+- two draft glossary pull requests: [PR 2905](https://github.com/nedsnodes/nedsnodes/pull/2905) and [PR 2898](https://github.com/nedsnodes/nedsnodes/pull/2898);
 - two worktrees on ned-box with unpushed commits: `/home/nedlern/agents/ned-box-helper-worktrees/task86-outside-service-wait-ghi` and `/home/nedlern/Projects/nedsnodes/.claude/worktrees/ghi-14-problem-words-design-rewrite`.

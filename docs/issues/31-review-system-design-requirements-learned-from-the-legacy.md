@@ -1,12 +1,12 @@
 ---
-issue: "[Review-system design requirements learned from the legacy gate — dormant until a class of work first requires review](https://github.com/nedschorus/nedschorus/issues/31)"
+issue: "[Review-system design requirements learned from the legacy gate — dormant until a class of work first requires review](https://github.com/nedsnodes/nedsnodes/issues/31)"
 ---
 
 # Review-system design requirements learned from the legacy gate — dormant until a class of work first requires review
 
 ## What this captures
 
-Design requirements for any future NC review system, extracted from the legacy system's review-gate defects during its wind-down (boss-directed extraction, 2026-07-27). **Dormant by design**: nothing here is built or scheduled. It wakes the day the boss first decides some class of work requires review; whoever designs that gate starts here instead of re-learning these from incidents.
+Design requirements for any future NN review system, extracted from the legacy system's review-gate defects during its wind-down (boss-directed extraction, 2026-07-27). **Dormant by design**: nothing here is built or scheduled. It wakes the day the boss first decides some class of work requires review; whoever designs that gate starts here instead of re-learning these from incidents.
 
 ## Part 1 — three mechanical checks a review gate owes
 
@@ -47,12 +47,12 @@ If the review system has states (on-hold, blocked, approved), each needs a legit
 
 ## Relations
 
-- The git-gatekeeper's dormant review-evidence growth point is where Part 1 attaches when a class is gated: https://github.com/nedschorus/nedschorus/issues/3
-- The multi-agent research behind the cross-runtime lever: https://github.com/nedschorus/nedschorus/issues/26
+- The git-gatekeeper's dormant review-evidence growth point is where Part 1 attaches when a class is gated: https://github.com/nedsnodes/nedsnodes/issues/3
+- The multi-agent research behind the cross-runtime lever: https://github.com/nedsnodes/nedsnodes/issues/26
 
 ## Close condition
 
-Closes when NC's first review gate is designed with these requirements dispositioned (adopted or rejected with reasons), or when the boss rules NC will not build review gates.
+Closes when NN's first review gate is designed with these requirements dispositioned (adopted or rejected with reasons), or when the boss rules NN will not build review gates.
 
 —
 Session: 3b576242-213e-43a2-bd16-80a1a36f67e7 (new-vp)
@@ -67,7 +67,7 @@ Procedure: criticize freely — reviewers are pointed at this class deliberately
 
 Guards:
 1. Gate evidence: a check-in touching the class requires walked-approval evidence — this designation activates the git-gatekeeper design's dormant Gate-evidence growth point.
-2. In-session tamper detection: carried by GHI [Catch a guarded file changed without the user's approval, ask him, and keep every version](https://github.com/nedschorus/nedschorus/issues/1268), whose hook detects an unapproved change after each tool call and asks the user instead of reverting.
+2. In-session tamper detection: carried by GHI [Catch a guarded file changed without the user's approval, ask him, and keep every version](https://github.com/nedsnodes/nedsnodes/issues/1268), whose hook detects an unapproved change after each tool call and asks the user instead of reverting.
 3. Micro-testing: contested or consequential wording changes are measured (old / candidate / no-guidance control, fresh contexts, repeated runs) before adoption; judgment landings by the context-holder remain legitimate.
 4. Provenance: rulings dated inline where they bind; landing commits name what was walked; any copy of a class file outside its home declares its canonical source and legitimate differences, and re-syncs when the canonical changes.
 

@@ -1,5 +1,5 @@
 ---
-issue: "[Cite files by name, not by path](https://github.com/nedschorus/nedschorus/issues/610)"
+issue: "[Cite files by name, not by path](https://github.com/nedsnodes/nedsnodes/issues/610)"
 ---
 
 # Cite files by name, not by path
@@ -11,7 +11,7 @@ issue: "[Cite files by name, not by path](https://github.com/nedschorus/nedschor
 
 The walk-minutes record no change to the user-ruling of 2026-09-21 that code writes a path out, "Always write paths out"; § User-rulings cites it.
 
-**Next action.** Two pieces remain, and the provisional additions at the end of this file name the agent-seats holding them. First, CLAUDE.md has no sentence on citing a file by its bare name. Second, `dangling-path-citation-check.py` still skips every word without a `/`, so it never checks a bare name; by the user's decision of 2026-09-28 in § User-rulings, it is to be taught to fail a bare file name, a word with no `/` that ends in a file extension, that no tracked file has. Already built: the collision warning of proposal 2, by PR [A second tracked file with the same name is reported the moment it is written](https://github.com/nedschorus/nedschorus/pull/641), and bare-name lookup in the reference check that `cold-read-grid.py` runs, by PR [Cold-read grid's reference check keeps a path written after a link, checks file links, and resolves a bare name only when one file has it](https://github.com/nedschorus/nedschorus/pull/1543).
+**Next action.** Two pieces remain, and the provisional additions at the end of this file name the agent-seats holding them. First, CLAUDE.md has no sentence on citing a file by its bare name. Second, `dangling-path-citation-check.py` still skips every word without a `/`, so it never checks a bare name; by the user's decision of 2026-09-28 in § User-rulings, it is to be taught to fail a bare file name, a word with no `/` that ends in a file extension, that no tracked file has. Already built: the collision warning of proposal 2, by PR [A second tracked file with the same name is reported the moment it is written](https://github.com/nedsnodes/nedsnodes/pull/641), and bare-name lookup in the reference check that `cold-read-grid.py` runs, by PR [Cold-read grid's reference check keeps a path written after a link, checks file links, and resolves a bare name only when one file has it](https://github.com/nedsnodes/nedsnodes/pull/1543).
 
 ## The problem
 
@@ -25,20 +25,20 @@ Which form a line uses is visible in the line itself. What is not visible is whe
 
 ## What went wrong, and where it is recorded
 
-On 2026-09-21, PR [The handoff system moves into nn-systems/handoff/, except what a live seat holds](https://github.com/nedschorus/nedschorus/pull/578) moved `handoff-supervisor.py` and `handoff-write-and-check-supervisor.py` from `scripts/` to `nn-systems/handoff/`. The merge-lane agent-seat tested the condition the pull request set itself — that no current reference to the old location survived — by running `git grep 'scripts/handoff-supervisor\.py'` over the merged tree. The search returned zero and was reported as a pass.
+On 2026-09-21, PR [The handoff system moves into nn-systems/handoff/, except what a live seat holds](https://github.com/nedsnodes/nedsnodes/pull/578) moved `handoff-supervisor.py` and `handoff-write-and-check-supervisor.py` from `scripts/` to `nn-systems/handoff/`. The merge-lane agent-seat tested the condition the pull request set itself — that no current reference to the old location survived — by running `git grep 'scripts/handoff-supervisor\.py'` over the merged tree. The search returned zero and was reported as a pass.
 
 The move was not clean. The move had left two references behind, and neither contains the string that was searched for:
 
 - `scripts/recover-crashed-seats.py` located the handoff-supervisor in two places as `Path(__file__).with_name("handoff-supervisor.py")` — form 2, the file beside it in `scripts/`. The move updated the import's path and not the command that launches an agent-seat, so on every machine but the Mac, ned-box included, recovery launched a file that was no longer there and every recovered agent-seat reported LAUNCHED BUT DID NOT COME UP.
 - `supervisor-file-names-defined-once-test.py` built the list of scripts it reads by globbing `scripts/*.py` and adding the handoff-supervisor by hand. `handoff-write-and-check-supervisor.py` left `scripts/` and was not added, so every case the test asks about `handoff-write-and-check-supervisor.py` passed by reading nothing.
 
-An independent reviewer found both, and commit [handoff move: the two references the move left behind](https://github.com/nedschorus/nedschorus/commit/0c1c8a3832df4f8864e288aaae0767c4bf8cad24) fixed them before merge. The merge-lane recorded its own blind search in [its review on that pull request](https://github.com/nedschorus/nedschorus/pull/578#pullrequestreview-5271189106), and noted that the author's own textual sweep and `scripts/dangling-path-citation-check.py` were blind in the same way.
+An independent reviewer found both, and commit [handoff move: the two references the move left behind](https://github.com/nedsnodes/nedsnodes/commit/0c1c8a3832df4f8864e288aaae0767c4bf8cad24) fixed them before merge. The merge-lane recorded its own blind search in [its review on that pull request](https://github.com/nedsnodes/nedsnodes/pull/578#pullrequestreview-5271189106), and noted that the author's own textual sweep and `scripts/dangling-path-citation-check.py` were blind in the same way.
 
 The search was not blind to everything: a form 1 reference left behind would have matched. The search was blind to the form that actually broke.
 
 ## Measurements
 
-All measured at commit [Merge pull request #606 from nedschorus/ghi-terms-are-named-for-what-they-act-on](https://github.com/nedschorus/nedschorus/commit/4ed4e4918122f3a9e56c811c58a6ac4137330801), main on 2026-09-21, over the files git tracks. How each number was taken is in the appendix.
+All measured at commit [Merge pull request #606 from nedschorus/ghi-terms-are-named-for-what-they-act-on](https://github.com/nedsnodes/nedsnodes/commit/4ed4e4918122f3a9e56c811c58a6ac4137330801), main on 2026-09-21, over the files git tracks. How each number was taken is in the appendix.
 
 **A search for the path misses a third of the programs.** Of the 62 tracked `.py` files whose names do not end `-test.py`, 21 occur as text in other tracked `.py` files only by basename, never by their path from the repository root; 39 occur both ways; 2 occur in no other `.py` file. A basename search finds every occurrence a path search finds, because a path string contains its basename, and it finds those 21 as well.
 
@@ -76,7 +76,7 @@ These are separable. Proposal 3 concerns how references are written; proposals 1
 
 1. **Verify a move by searching for the basename, not the path.** A basename search finds every form 1 and form 2 reference, at the same cost as a path search. A basename search would have found the reference left behind in `recover-crashed-seats.py`. The proposal changes no citation.
 
-2. **Keep basenames unique among tracked files, and test it.** No rename is needed at the measured commit. A new test in the suite lists the tracked files with `git ls-files`, compares their basenames with letter case ignored, and fails naming both paths when two collide, exempting `SKILL.md`, `README.md` and `.gitkeep`. That exemption list is the one fact the test holds rather than reads from the tree; a new basename a tool requires shows up as a failure, not a silent pass. On a collision, CLAUDE.md's naming rule applies: "if the name collides or nearly collides, add words." The GHI to carry the test: GHI [Reference-integrity checker](https://github.com/nedschorus/nedschorus/issues/42), whose title says it covers what else code can check about citations.
+2. **Keep basenames unique among tracked files, and test it.** No rename is needed at the measured commit. A new test in the suite lists the tracked files with `git ls-files`, compares their basenames with letter case ignored, and fails naming both paths when two collide, exempting `SKILL.md`, `README.md` and `.gitkeep`. That exemption list is the one fact the test holds rather than reads from the tree; a new basename a tool requires shows up as a failure, not a silent pass. On a collision, CLAUDE.md's naming rule applies: "if the name collides or nearly collides, add words." The GHI to carry the test: GHI [Reference-integrity checker](https://github.com/nedsnodes/nedsnodes/issues/42), whose title says it covers what else code can check about citations.
 
 3. **Whether to cite files by basename in prose instead of by path.** This is the only proposal that would change how anything is written, so it is the only one that bears on the user-ruling of 2026-09-21. The measurements above bear on searching, not on citing. Citing by basename has costs. A rename breaks a basename citation as surely as a path citation. A basename citation is followed by searching, not by clicking. A file whose basename repeats, such as `SKILL.md`, would still be cited by path. And the project's two path resolvers each fail on a basename, in opposite directions:
    - The reference check `cold-read-grid.py` runs before its reviewers resolves a citation only as a path from the repository root or from the reviewed document's own directory, so the reference check reports every basename citation of a file in another directory as unresolved. This document's own cold-read-full-run showed it: the reference check reported `handoff-supervisor.py` and four other basename citations as unresolved.
@@ -101,10 +101,10 @@ Each proposal and question this file put to the user, with his decision. The wal
 
 ## Related GHIs, not duplicates
 
-- GHI [Reference-integrity checker](https://github.com/nedschorus/nedschorus/issues/42) — the GHI that would carry the uniqueness test. Its title says it checks that "links resolve and cited revision-paths exist", meaning citations of the form `<revision>:<path>`; it does not address citation style or uniqueness.
-- GHI [Rationalize the repository layout](https://github.com/nedschorus/nedschorus/issues/224) — records an agent that followed a citation to a moved file and built the wrong thing from its absence.
-- GHI [Warn an agent when its reply names a document for the user without a link the user can open on his Mac](https://github.com/nedschorus/nedschorus/issues/1213) — its hook warns an agent when a reply to the user names a document without a link he can open on his Mac.
-- GHI [Sort the 60 standing md-drift-lint findings](https://github.com/nedschorus/nedschorus/issues/572) — the backlog from `scripts/md-drift-lint.py`, the project's mechanical drift lint for markdown. Proposal 3 would reduce its findings of stale paths, not its findings of stale line numbers.
+- GHI [Reference-integrity checker](https://github.com/nedsnodes/nedsnodes/issues/42) — the GHI that would carry the uniqueness test. Its title says it checks that "links resolve and cited revision-paths exist", meaning citations of the form `<revision>:<path>`; it does not address citation style or uniqueness.
+- GHI [Rationalize the repository layout](https://github.com/nedsnodes/nedsnodes/issues/224) — records an agent that followed a citation to a moved file and built the wrong thing from its absence.
+- GHI [Warn an agent when its reply names a document for the user without a link the user can open on his Mac](https://github.com/nedsnodes/nedsnodes/issues/1213) — its hook warns an agent when a reply to the user names a document without a link he can open on his Mac.
+- GHI [Sort the 60 standing md-drift-lint findings](https://github.com/nedsnodes/nedsnodes/issues/572) — the backlog from `scripts/md-drift-lint.py`, the project's mechanical drift lint for markdown. Proposal 3 would reduce its findings of stale paths, not its findings of stale line numbers.
 
 ## Appendix: how each number was measured
 

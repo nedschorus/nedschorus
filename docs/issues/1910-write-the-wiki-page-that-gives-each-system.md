@@ -1,5 +1,5 @@
 ---
-issue: "[Write the wiki page that gives each system requirement's fallback and escalation paths when it fails](https://github.com/nedschorus/nedschorus/issues/1910)"
+issue: "[Write the wiki page that gives each system requirement's fallback and escalation paths when it fails](https://github.com/nedsnodes/nedsnodes/issues/1910)"
 ---
 
 # Write the wiki page that gives each system requirement's fallback and escalation paths when it fails
@@ -19,7 +19,7 @@ A fallback and an escalation are different things, and the page keeps them apart
 
 ## Order and source
 
-This page is written after the page listing the parts, under GHI [Write the wiki page that lists the system's requirements](https://github.com/nedschorus/nedschorus/issues/1908). Start this one only when that GHI is closed, and take the list of parts from the merged page.
+This page is written after the page listing the parts, under GHI [Write the wiki page that lists the system's requirements](https://github.com/nedsnodes/nedsnodes/issues/1908). Start this one only when that GHI is closed, and take the list of parts from the merged page.
 
 The user decided this on 2026-10-24, in the approval-walk whose minutes are at `nedlern@ned-box:/home/nedlern/agents/fleet-restart-at-login/docs/walk/fleet-restart-at-login-every-open-question-combined-approval-walk-2026-10-22-minutes.md`, items 13.1 to 13.3. His words: "if this is just the system's requirements page, that's pretty different than if it's the fallback and escalation paths page ... we should do them one at a time. I guess we should do it top down, which would mean we do the system requirements page first. Now this project's going to take a little longer than I thought, so my sense is we should simply defer both of these, not in the walk, but move them both into GHIs. And they should refer to each other".
 
@@ -32,7 +32,7 @@ The user decided this on 2026-10-24, in the approval-walk whose minutes are at `
 The user ruled on these in the fleet-restart-at-login agent-session `c1b8aa3a-c1aa-4e9f-bddc-28d39a7c20ba`, whose transcript is `nedlern@ned-box:/home/nedlern/nedsnodes-logs/agent-session-files-by-machine/ned-box/projects/-home-nedlern-agents-fleet-restart-at-login/c1b8aa3a-c1aa-4e9f-bddc-28d39a7c20ba.jsonl`. The page follows them.
 
 - Claude Code being logged out, or ned-box being down, is a failure the user notices on his own, so the page gives its escalation path little, though not nothing. His words, at 2026-10-13T23:11:47Z: "claude logged out etc is very obvious. So we don't need to do much for that. ned-box down -same thing."
-- A failed-restart-notice opens as an HTML page in the Mac's browser rather than in another terminal window. In the same message he asked "crash watcher unable to restart a seat - maybe just pop up on my mac a html page that says what is the problem?", and at 2026-10-13T23:18:24Z he ruled: "Let's do a html page. as another iterm2 window can be lost." Pull request [1299](https://github.com/nedschorus/nedschorus/pull/1299), "Crash watcher notices open as HTML pages in the Mac's browser", built this; its merge commit 8c48d4d27 is on main.
+- A failed-restart-notice opens as an HTML page in the Mac's browser rather than in another terminal window. In the same message he asked "crash watcher unable to restart a seat - maybe just pop up on my mac a html page that says what is the problem?", and at 2026-10-13T23:18:24Z he ruled: "Let's do a html page. as another iterm2 window can be lost." Pull request [1299](https://github.com/nedsnodes/nedsnodes/pull/1299), "Crash watcher notices open as HTML pages in the Mac's browser", built this; its merge commit 8c48d4d27 is on main.
 
 ## Two CLAUDE.md changes that go with the page
 
@@ -48,7 +48,7 @@ Proposed in place of those two sentences:
 
 "When a hard dependency listed on `nedschorus-system-requirements-setup-and-fallback-or-escalation-when-one-fails.md` fails, such as ned-box not answering or a program reporting that a machine's `claude` is logged out, tell the user what the failing command or program said, with its remedy if it gave one. Do not find another way to do a step that needs that part: leave that step until the part is fixed or the user says otherwise, and meanwhile carry on with work that does not need it."
 
-How the message reaches the user is the subject of GHI [Tell the user when ned-box's claude is logged out or ned-box's subscription has run out](https://github.com/nedschorus/nedschorus/issues/337).
+How the message reaches the user is the subject of GHI [Tell the user when ned-box's claude is logged out or ned-box's subscription has run out](https://github.com/nedsnodes/nedsnodes/issues/337).
 
 ### A hard dependency earns no workaround
 
@@ -73,4 +73,4 @@ Raised by cold-read-fast-reads of the walk's earlier text and of this GHI-MD, an
 
 ## Next action
 
-After GHI [Write the wiki page that lists the system's requirements](https://github.com/nedschorus/nedschorus/issues/1908) closes, write `docs/nedsnodes-wiki/nedsnodes-system-requirement-failures-fallback-and-escalation-paths.md` from the starting text and the merged requirements page. The name has passed the project's name check. Give the page its /cold-read, and put its text and the two CLAUDE.md changes above to the user for his approval. Then open one pull request to merge-lane-2 with the page and whichever of the two changes he approved. When it merges, record the outcome in this GHI-MD and close the GHI.
+After GHI [Write the wiki page that lists the system's requirements](https://github.com/nedsnodes/nedsnodes/issues/1908) closes, write `docs/nedsnodes-wiki/nedsnodes-system-requirement-failures-fallback-and-escalation-paths.md` from the starting text and the merged requirements page. The name has passed the project's name check. Give the page its /cold-read, and put its text and the two CLAUDE.md changes above to the user for his approval. Then open one pull request to merge-lane-2 with the page and whichever of the two changes he approved. When it merges, record the outcome in this GHI-MD and close the GHI.

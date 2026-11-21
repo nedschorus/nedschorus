@@ -1,5 +1,5 @@
 ---
-issue: "[Check-in timing: infrequently-updated files immediately after update; append-type logs at logical breakpoints](https://github.com/nedschorus/nedschorus/issues/25)"
+issue: "[Check-in timing: infrequently-updated files immediately after update; append-type logs at logical breakpoints](https://github.com/nedsnodes/nedsnodes/issues/25)"
 ---
 
 # Check-in timing: infrequently-updated files immediately after update; append-type logs at logical breakpoints
@@ -13,8 +13,8 @@ Check-in through the git-gatekeeper is fast, safe, and reversible, so nothing wa
 
 ## Where this is applied
 
-- https://github.com/nedschorus/nedschorus/blob/main/docs/cross-project/fast-handoff-design.md — handoff files and read stamps submit through `git-gatekeeper.py check-in` immediately when written; the files reach disk first, so a failed submission never blocks a session boundary, and resubmission is always safe (a gatekeeper guarantee).
-- https://github.com/nedschorus/nedschorus/blob/295c9f35/docs/cross-project/comms-bridge-spec.md — log rotation happens when a handoff is written.
+- https://github.com/nedsnodes/nedsnodes/blob/main/docs/cross-project/fast-handoff-design.md — handoff files and read stamps submit through `git-gatekeeper.py check-in` immediately when written; the files reach disk first, so a failed submission never blocks a session boundary, and resubmission is always safe (a gatekeeper guarantee).
+- https://github.com/nedsnodes/nedsnodes/blob/295c9f35/docs/cross-project/comms-bridge-spec.md — log rotation happens when a handoff is written.
 
 ## Destination and close condition
 

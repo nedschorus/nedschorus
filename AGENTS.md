@@ -1,4 +1,4 @@
-# nedschorus — Codex agents: read CLAUDE.md
+# nedsnodes — Codex agents: read CLAUDE.md
 
 Read [CLAUDE.md](CLAUDE.md) at this repository's root and follow it — it holds this project's rules, or points to the file that holds them. Any reference to Claude there typically also applies to Codex, unless it names a Claude-specific function that Codex has no equivalent for.
 

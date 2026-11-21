@@ -1,5 +1,5 @@
 ---
-issue: "[Make approval-walks wrap up faster: read the next item ahead, reread after a fix only when the fix touches facts, and stop the /Volumes false alarm in cold reads](https://github.com/nedschorus/nedschorus/issues/2464)"
+issue: "[Make approval-walks wrap up faster: read the next item ahead, reread after a fix only when the fix touches facts, and stop the /Volumes false alarm in cold reads](https://github.com/nedsnodes/nedsnodes/issues/2464)"
 ---
 
 # Make approval-walks wrap up faster: read the next item ahead, reread after a fix only when the fix touches facts, and stop the /Volumes false alarm in cold reads

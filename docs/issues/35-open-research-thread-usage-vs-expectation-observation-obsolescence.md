@@ -1,5 +1,5 @@
 ---
-issue: "[Open research thread: usage-vs-expectation observation — obsolescence is a design problem, not an age problem](https://github.com/nedschorus/nedschorus/issues/35)"
+issue: "[Open research thread: usage-vs-expectation observation — obsolescence is a design problem, not an age problem](https://github.com/nedsnodes/nedsnodes/issues/35)"
 ---
 
 # Open research thread: usage-vs-expectation observation — obsolescence is a design problem, not an age problem
@@ -24,7 +24,7 @@ Declare an expected firing class at birth (HOT / NORMAL / RARE / EMERGENCY-ONLY;
 
 Instruments, graded: coverage.py (branch coverage + per-test dynamic contexts; `sys.monitoring` core on Python ≥3.12) for existence questions at test time; event counters in production; py-spy sampling for hotspot questions only — **sampling is biased toward hot code and cannot distinguish cold from dead**; diff-cover ("changed lines must be exercised") as the cheap gatekeeper-side entry. Vetted precedent for the tags: FoundationDB `CODE_PROBE`. Mutation testing (mutmut) is the adjacent test-the-tests instrument, used selectively.
 
-**Trigger:** NC's first real Python surface (the step-7 git-gatekeeper). A CDX-delegatable graded tool survey may run earlier on request.
+**Trigger:** NN's first real Python surface (the step-7 git-gatekeeper). A CDX-delegatable graded tool survey may run earlier on request.
 
 ## Observability by rule-kind (a "rule" spans prompts, scripts, skills, repeated processes, external mechanisms)
 
@@ -36,8 +36,8 @@ Instruments, graded: coverage.py (branch coverage + per-test dynamic contexts; `
 
 ## Related landings from the same walk
 
-- Design-change obsolescence sweep ("what does this change orphan?"): rider on GHI [Candidate skill: design-change — read-only evidence-grounded design with one recommendation and honest exits](https://github.com/nedschorus/nedschorus/issues/17).
-- Patch-cycle tripwire at three with goal-level escalation and a visible cycle count: rider on GHI [Candidate skill: diagnose-failure — bounded causal debugging with a three-fix escalation stop](https://github.com/nedschorus/nedschorus/issues/21). Its across-time instrument is git churn — fix-commit frequency per file, a well-studied defect predictor (hotspot analysis, Tornhill / code-maat); hard-to-test and repeatedly-patched tend to be the same code.
+- Design-change obsolescence sweep ("what does this change orphan?"): rider on GHI [Candidate skill: design-change — read-only evidence-grounded design with one recommendation and honest exits](https://github.com/nedsnodes/nedsnodes/issues/17).
+- Patch-cycle tripwire at three with goal-level escalation and a visible cycle count: rider on GHI [Candidate skill: diagnose-failure — bounded causal debugging with a three-fix escalation stop](https://github.com/nedsnodes/nedsnodes/issues/21). Its across-time instrument is git churn — fix-commit frequency per file, a well-studied defect predictor (hotspot analysis, Tornhill / code-maat); hard-to-test and repeatedly-patched tend to be the same code.
 
 ## Reference (retained; its derived proposals were withdrawn in the walk)
 

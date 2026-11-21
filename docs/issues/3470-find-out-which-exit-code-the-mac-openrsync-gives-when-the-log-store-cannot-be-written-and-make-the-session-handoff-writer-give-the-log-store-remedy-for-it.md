@@ -1,5 +1,5 @@
 ---
-issue: "[Find out which exit code the Mac's openrsync gives when the log-store cannot be written, and make the session-handoff writer give the log-store remedy for it](https://github.com/nedschorus/nedschorus/issues/3470)"
+issue: "[Find out which exit code the Mac's openrsync gives when the log-store cannot be written, and make the session-handoff writer give the log-store remedy for it](https://github.com/nedsnodes/nedsnodes/issues/3470)"
 ---
 
 # Find out which exit code the Mac's openrsync gives when the log-store cannot be written, and make the session-handoff writer give the log-store remedy for it
@@ -13,7 +13,7 @@ On the Mac, `rsync` is openrsync (`rsync --version` prints "openrsync: protocol 
 - "a copy to the log-store that fails keeps every completed task, names rsync's exit, and still writes the handoff", the fixture `store-folder-unwritable`: rsync copies to a local folder, and the case expects "exited 23" in the `RuntimeError` message, which says "exited 1".
 - "over ssh, an rsync that cannot write the store keeps every completed task" and "over ssh, an rsync that cannot write the store gets the log-store remedy, not the ssh remedy", both the fixture `remote-store-unwritable`: rsync goes through the test's ssh stand-in, `RUN_REMOTE_COMMAND_HERE_SSH_STUB`, exits 1, and the supervisor gives the ssh remedy instead of the log-store remedy.
 
-PR [Mac-only nc-test-suite failures fixed: moved HOME hides user site-packages, Linux-only launcher, /home resolution, agents root, git wording, BSD pgrep](https://github.com/nedschorus/nedschorus/pull/3461) fixed the Mac's other failing suites and left this one failing, with a `#root_cause_not_fixed` line that names this issue.
+PR [Mac-only nc-test-suite failures fixed: moved HOME hides user site-packages, Linux-only launcher, /home resolution, agents root, git wording, BSD pgrep](https://github.com/nedsnodes/nedsnodes/pull/3461) fixed the Mac's other failing suites and left this one failing, with a `#root_cause_not_fixed` line that names this issue.
 
 ## Why the cause is not yet known
 

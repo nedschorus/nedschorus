@@ -1,14 +1,14 @@
 ---
-issue: "[Working ideas and research backlog — capture pair (Decided / Candidate / Research / Reference)](https://github.com/nedschorus/nedschorus/issues/10)"
+issue: "[Working ideas and research backlog — capture pair (Decided / Candidate / Research / Reference)](https://github.com/nedsnodes/nedsnodes/issues/10)"
 ---
 
-Issue: https://github.com/nedschorus/nedschorus/issues/10
+Issue: https://github.com/nedsnodes/nedsnodes/issues/10
 
 ## Admission note (new-vp, 2026-07-22)
 
-- User-directed capture artifact, cops-reconstructed 2026-07-22 from the 2026-07-21 discussion and Ned's Google-Doc notes (the cleaned version had remained in chat); admitted through the single-admitter gate as pair issue [Working ideas and research backlog — capture pair (Decided / Candidate / Research / Reference)](https://github.com/nedschorus/nedschorus/issues/10). Capture ≠ commitment: nothing here is scheduled work, and the user's walk rules which candidates advance. Admitted by the new-vp session c3a1c7c5-9dd9-4d3f-9a92-602b37fff592.
+- User-directed capture artifact, cops-reconstructed 2026-07-22 from the 2026-07-21 discussion and Ned's Google-Doc notes (the cleaned version had remained in chat); admitted through the single-admitter gate as pair issue [Working ideas and research backlog — capture pair (Decided / Candidate / Research / Reference)](https://github.com/nedsnodes/nedsnodes/issues/10). Capture ≠ commitment: nothing here is scheduled work, and the user's walk rules which candidates advance. Admitted by the new-vp session c3a1c7c5-9dd9-4d3f-9a92-602b37fff592.
 - The "Related detailed documents" links name cops-local filenames; in this repository that material is the pair document of issue [Open-source publishing and community strategy — Ned's Chorus (doc: docs/issues/4-open-source-publishing-community-strategy.md)](4-open-source-publishing-community-strategy.md) (publishing strategy) and the pair document of issue [Ned's notes: engineering methods and sources — boot-set, rewrite policy, and skill shortlist (doc: docs/issues/9-neds-notes.md)](9-neds-notes.md) (engineering methods).
-- The 2026-07-22 admission redacted the two raw mirror URLs under "Raw Claude Code mirrors" per that subsection's own retain-privately instruction. REVERSED 2026-07-24 by the public-links ruling (commit 63920c0, "pair #10: public-links ruling applied"; walk item 14: links in this public repository are judged on usefulness and reliability only — no provenance-based quarantine): the URLs are restored below, matching pair issue [Ned's notes: engineering methods and sources — boot-set, rewrite policy, and skill shortlist (doc: docs/issues/9-neds-notes.md)](https://github.com/nedschorus/nedschorus/issues/9)'s research-sources section.
+- The 2026-07-22 admission redacted the two raw mirror URLs under "Raw Claude Code mirrors" per that subsection's own retain-privately instruction. REVERSED 2026-07-24 by the public-links ruling (commit 63920c0, "pair #10: public-links ruling applied"; walk item 14: links in this public repository are judged on usefulness and reliability only — no provenance-based quarantine): the URLs are restored below, matching pair issue [Ned's notes: engineering methods and sources — boot-set, rewrite policy, and skill shortlist (doc: docs/issues/9-neds-notes.md)](https://github.com/nedsnodes/nedsnodes/issues/9)'s research-sources section.
 - Revisions ride this pair as ordinary REVISE dispositions.
 
 # NedsChorus Working Ideas and Research Backlog
@@ -22,7 +22,7 @@ original cleaned version remained in chat instead of being saved as a file.
 
 ## How to read this document
 
-- **Decided** means Ned or the NedsChorus founding process has explicitly
+- **Decided** means Ned or the NedsNodes founding process has explicitly
   accepted the direction.
 - **Draft** means captured wording awaiting review and adoption; it is not
   doctrine. (Relabeled from "candidate" by user ruling 2026-07-26 — a
@@ -45,13 +45,13 @@ The governing approach is:
 
 - [Open-source publishing and community strategy](cops-nedschorus-open-source-publishing-community-strategy-2026-07-21.md) contains the detailed publishing/channel design.
 - [Engineering methods and source research](cops-neds-notes-2026-07-21.md) contains the curated software-engineering skill shortlist, source assessments, rejected alternatives, and accepted `walk-me-through` changes.
-- The NedsChorus repository contains the admitted publishing artifact at `/Users/el/Projects/nedsnodes/docs/issues/4-open-source-publishing-community-strategy.md`.
+- The NedsNodes repository contains the admitted publishing artifact at `/Users/el/Projects/nedsnodes/docs/issues/4-open-source-publishing-community-strategy.md`.
 
 ## Decided direction
 
-### NedsChorus is a careful new system
+### NedsNodes is a careful new system
 
-- NedsChorus is a ground-up successor informed by six months of study,
+- NedsNodes is a ground-up successor informed by six months of study,
   implementation, testing, and failure analysis.
 - Nedlern is a legacy reference and evidence source, not a template.
 - Nothing crosses from Nedlern merely because it already exists.
@@ -60,7 +60,7 @@ The governing approach is:
 
 ### Open source and publishing
 
-- Open-source NedsChorus (decided).
+- Open-source NedsNodes (decided).
 - Publishing strategy, channels, and mechanics live in
   the pair document of issue [Open-source publishing and community strategy — Ned's Chorus (doc: docs/issues/4-open-source-publishing-community-strategy.md)](4-open-source-publishing-community-strategy.md); this backlog no
   longer duplicates them.
@@ -86,7 +86,7 @@ rule); this is the summary, updated 2026-07-26 to the ruled state:
   doctrine, `docs/issues/queue/` for pair-bound documents, `nn-queue/` for
   user-requested notes awaiting their first walk, `legacy-feature-queue/` for
   consider-features outliving their slice
-  (issue [Queue drain procedure — the review process that empties the wiki queue, the pair queue, nn-queue, the drafts directory and the queue-drain-candidate-label issue queue](https://github.com/nedschorus/nedschorus/issues/24) tracks
+  (issue [Queue drain procedure — the review process that empties the wiki queue, the pair queue, nn-queue, the drafts directory and the queue-drain-candidate-label issue queue](https://github.com/nedsnodes/nedsnodes/issues/24) tracks
   the drain procedure).
 - Draft GitHub issues carry the **`queue-drain-candidate` label** — the issue-world's queue
   membership (renamed from `boss-review`, 2026-07-24, and from `draft`, 2026-10-19).
@@ -106,13 +106,13 @@ a Markdown document, or both should not be reopened without new evidence.
 Retired as a section 2026-07-26 (user-ruled): the walk behavior is specified
 by the walk-me-through skill itself — its frontmatter and code are the
 documentation, and a separate prose description would only drift. Cross-runtime
-scenario tests are deferred to NC step-1 (inner-walk item 2 ruling, pair issue [Ned's notes: engineering methods and sources — boot-set, rewrite policy, and skill shortlist (doc: docs/issues/9-neds-notes.md)](https://github.com/nedschorus/nedschorus/issues/9)
+scenario tests are deferred to NN step-1 (inner-walk item 2 ruling, pair issue [Ned's notes: engineering methods and sources — boot-set, rewrite policy, and skill shortlist (doc: docs/issues/9-neds-notes.md)](https://github.com/nedsnodes/nedsnodes/issues/9)
 walk minutes). The bullets formerly here are recoverable from git history.
 
 ## Candidate publishing modules
 
 Removed 2026-07-26 (user-ruled useless): the module sketches formerly here
-added nothing beyond pair issue [Open-source publishing and community strategy — Ned's Chorus (doc: docs/issues/4-open-source-publishing-community-strategy.md)](https://github.com/nedschorus/nedschorus/issues/4)'s publishing strategy. Recoverable from git
+added nothing beyond pair issue [Open-source publishing and community strategy — Ned's Chorus (doc: docs/issues/4-open-source-publishing-community-strategy.md)](https://github.com/nedsnodes/nedsnodes/issues/4)'s publishing strategy. Recoverable from git
 history.
 
 ## Draft document and directory structure
@@ -189,7 +189,7 @@ Draft review mechanics:
 
 The separate engineering note records that no external `write-test-plan` or
 general plan-attack skill met the desired quality bar. Those remain candidates
-for small NedsChorus-native skills, not reasons to import a large framework.
+for small NedsNodes-native skills, not reasons to import a large framework.
 
 ## Draft engineering rules
 
@@ -332,7 +332,7 @@ state machines, migrations, and other high-risk behavior.
 Removed 2026-07-26 (user-ruled obsolete): the lifecycle-role sketches and
 organization questions formerly here are superseded by the dynamic agent-team
 model — substance and state at the pair document of issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](26-dynamic-agent-team-model.md)
-(issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26)).
+(issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedsnodes/nedsnodes/issues/26)).
 Recoverable from git history.
 
 ## Communications backlog
@@ -350,13 +350,13 @@ GHIs:
 
 - User-notification mechanism (popup / markdown artifact / direct message /
   other) → rides the spy design on
-  issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26).
+  issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedsnodes/nedsnodes/issues/26).
 - API-vs-MCP per communication type, and agent-level vs task-level
   addressing → bridge-design inputs on
-  issue [Founding program — boot up nedschorus (plan of record: docs/cross-project/nedschorus-founding-plan.md)](https://github.com/nedschorus/nedschorus/issues/1) +
+  issue [Founding program — boot up nedschorus (plan of record: docs/cross-project/nedschorus-founding-plan.md)](https://github.com/nedsnodes/nedsnodes/issues/1) +
   comms-bridge-spec § Open.
 - Safe console text-insertion + stuck/waiting-state detection →
-  issue [Console text-insertion + stuck/waiting-state detection (operator tooling; captured from the comms backlog)](https://github.com/nedschorus/nedschorus/issues/27) (new).
+  issue [Console text-insertion + stuck/waiting-state detection (operator tooling; captured from the comms backlog)](https://github.com/nedsnodes/nedsnodes/issues/27) (new).
 - The former "minimize unnecessary console communication without removing
   required context" standing direction is RETIRED (user-ruled 2026-07-26):
   minimize is the wrong verb. The standard is consistent CLEAR AND COMPLETE
@@ -371,14 +371,14 @@ retired — docs are not attention surfaces, task-shaped items get GHIs):
   question "which agent needs attention, and why"; candidate status fields;
   the no-large-dashboard principle) and the idle-time-as-safe-catch-up
   direction → recorded on
-  issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26).
+  issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedsnodes/nedsnodes/issues/26).
 - The announce-then-idle second-wake investigation and the
   verify-supported-session-state-first step → recorded on
-  issue [Console text-insertion + stuck/waiting-state detection (operator tooling; captured from the comms backlog)](https://github.com/nedschorus/nedschorus/issues/27).
+  issue [Console text-insertion + stuck/waiting-state detection (operator tooling; captured from the comms backlog)](https://github.com/nedsnodes/nedsnodes/issues/27).
 - The research bundle (recaps customizable; small introspection tools;
   denoised artifact vs raw logs; controlled-test-project tuning method;
   task-list visibility for the user) →
-  issue [Agent-introspection research bundle: recaps, introspection tools, denoised artifacts, monitoring test method, task-list visibility](https://github.com/nedschorus/nedschorus/issues/28) (new).
+  issue [Agent-introspection research bundle: recaps, introspection tools, denoised artifacts, monitoring test method, task-list visibility](https://github.com/nedsnodes/nedsnodes/issues/28) (new).
 
 ## Claude and Codex runtime research
 
@@ -392,10 +392,10 @@ DISPERSED 2026-07-26 (walk item 17 cluster 3, user-ruled):
   resumption, recovery of messages lost to backward resumption, the small
   conflicting-names reviewer candidate, memory-maintenance tooling, and
   memory-entries-pointing-at-exact-wiki-pages — moved to the runtime-behavior
-  research bundle, issue [Runtime-behavior research bundle: instruction compression + deliberate scrub, instruction precedence, output styles, context clearing, names reviewer, memory maintenance](https://github.com/nedschorus/nedschorus/issues/29).
+  research bundle, issue [Runtime-behavior research bundle: instruction compression + deliberate scrub, instruction precedence, output styles, context clearing, names reviewer, memory maintenance](https://github.com/nedsnodes/nedsnodes/issues/29).
 - The bad-words entry's two unknowns (production source; fixture change
   observed without restart) → appended to
-  issue [Review the legacy system's bad-phrase list (command-vocabulary.md): add the status-inflation fail-indicator class ('standing doctrine') and pick NC's enforcement mechanism](https://github.com/nedschorus/nedschorus/issues/14).
+  issue [Review the legacy system's bad-phrase list (command-vocabulary.md): add the status-inflation fail-indicator class ('standing doctrine') and pick NC's enforcement mechanism](https://github.com/nedsnodes/nedsnodes/issues/14).
 - The grep-before-naming line rides the bundle to the step-2 `CLAUDE.md`
   rewrite as a one-line write-time discipline (its explicit-name half is
   already legacy doctrine; the grep-first half was written nowhere).
@@ -417,9 +417,9 @@ Recoverable from git history. This shrinks walk item 17 cluster 6.
 
 DISPERSED 2026-07-27 (walk item 17 cluster 4, user-ruled per entry; marks in
 place below). Net result: two sentences captured (the one-coherent-change-set
-workflow rule on issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper.system.design.md)](https://github.com/nedschorus/nedschorus/issues/3);
+workflow rule on issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper.system.design.md)](https://github.com/nedsnodes/nedsnodes/issues/3);
 the reply-incapable-sender terminal-state requirement on
-issue [Founding program — boot up nedschorus (plan of record: docs/cross-project/nedschorus-founding-plan.md)](https://github.com/nedschorus/nedschorus/issues/1)); one entry
+issue [Founding program — boot up nedschorus (plan of record: docs/cross-project/nedschorus-founding-plan.md)](https://github.com/nedsnodes/nedsnodes/issues/1)); one entry
 answered directly by ruling (check-in composition — lifecycle bundling is
 unrealistic); three recognized as already ruled or landed; four cut. The
 recurring deferral trigger across this cluster: review machinery questions
@@ -427,15 +427,15 @@ wake when the user gates an artifact class (the item-15 grow-back trigger).
 
 - Keep PRs atomic and independently mergeable.
   — processed 2026-07-27 → sentence on
-  issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper.system.design.md)](https://github.com/nedschorus/nedschorus/issues/3): the
+  issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper.system.design.md)](https://github.com/nedsnodes/nedsnodes/issues/3): the
   gatekeeper's CLAUDE.md workflow lines teach one coherent change set per
-  check-in (NC has no pull requests).
+  check-in (NN has no pull requests).
 - Decide by change type whether code, tests, design, and test plans should be checked
   in together.
   — processed 2026-07-27 → answered by user ruling: the premise is
   unrealistic — a lifecycle's artifacts arrive at different phases and are
   never bundled. Artifacts check in when produced
-  (issue [Check-in timing: infrequently-updated files immediately after update; append-type logs at logical breakpoints](https://github.com/nedschorus/nedschorus/issues/25));
+  (issue [Check-in timing: infrequently-updated files immediately after update; append-type logs at logical breakpoints](https://github.com/nedsnodes/nedsnodes/issues/25));
   within one phase the one-coherent-change-set rule governs, and a code
   change's coherent set includes the tests that pin it. No new capture.
 - Define the phases of review and the evidence each phase supplies.
@@ -445,7 +445,7 @@ wake when the user gates an artifact class (the item-15 grow-back trigger).
   Nothing filed.
 - Determine how GitHub Actions-based review with Codex actually behaves.
   — processed 2026-07-27 → CUT: its only consumer is a review system, which
-  NC defers until the user gates an artifact class (the item-15 grow-back
+  NN defers until the user gates an artifact class (the item-15 grow-back
   trigger). The question re-arises with that trigger; the legacy mechanism's
   behavior stays recoverable from its workflow files and wiki in git
   history. Nothing filed.
@@ -457,23 +457,23 @@ wake when the user gates an artifact class (the item-15 grow-back trigger).
   simplicity doctrine. Nothing filed.
 - Remember that review trailers may not appear in `gh pr view --json reviews`.
   — processed 2026-07-27 → landed legacy doctrine (trailer mechanics + the
-  review-status tooling exist because of it); moot for NC until the
+  review-status tooling exist because of it); moot for NN until the
   gate-a-class trigger, where the lesson rides the legacy documentation.
   Nothing filed.
 - Use the repository's real review-status mechanism or inspect pinned review
   comments.
   — processed 2026-07-27 → landed legacy doctrine (the interim control:
-  measure with the merge gate, never a proxy); moot for NC until the
+  measure with the merge gate, never a proxy); moot for NN until the
   gate-a-class trigger. Nothing filed.
 - Review the design and behavior of automatic mutual-review routing.
   — processed 2026-07-27 → CUT: the legacy routers' real defect (author
   exclusion keyed on laundered worktree identity) is already recorded in
-  the legacy repair queue, and nedlern is decommissioning; NC routing
+  the legacy repair queue, and nedlern is decommissioning; NN routing
   presupposes a review system and defers to the gate-a-class trigger.
   Nothing filed.
 - Investigate repeated postal injection when the sender is not reply-capable.
   — processed 2026-07-27 → sentence on
-  issue [Founding program — boot up nedschorus (plan of record: docs/cross-project/nedschorus-founding-plan.md)](https://github.com/nedschorus/nedschorus/issues/1): the
+  issue [Founding program — boot up nedschorus (plan of record: docs/cross-project/nedschorus-founding-plan.md)](https://github.com/nedsnodes/nedsnodes/issues/1): the
   bridge design must give every message a recipient-reachable terminal
   state even when the sender is reply-incapable; the legacy repeated
   injection is the motivating defect.
@@ -488,12 +488,12 @@ DISPERSED 2026-07-27 (walk item 17 cluster 5, user-ruled per entry; marks in
 place below). Net result: the user's two-concern frame (placement rules +
 the many-parts overview rule) written into § Draft document and directory
 structure with four duplicate bullets folded there; the steward ideal to
-issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26) as a
+issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedsnodes/nedsnodes/issues/26) as a
 candidate domain-expert duty; the scrub-duty enumeration to
-issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nn-systems/handoff/handoff.system.design.md](https://github.com/nedschorus/nedschorus/issues/2); two
+issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nn-systems/handoff/handoff.system.design.md](https://github.com/nedsnodes/nedsnodes/issues/2); two
 entries recognized as landed (the artifact-lifecycle promote path; the
 no-junk-drawer disposal machinery); one already dispersed (memory-to-page
-pointing, issue [Runtime-behavior research bundle: instruction compression + deliberate scrub, instruction precedence, output styles, context clearing, names reviewer, memory maintenance](https://github.com/nedschorus/nedschorus/issues/29)
+pointing, issue [Runtime-behavior research bundle: instruction compression + deliberate scrub, instruction precedence, output styles, context clearing, names reviewer, memory maintenance](https://github.com/nedsnodes/nedsnodes/issues/29)
 item 9); two cut (wiki-to-skill linking — re-arises at the step-3 wiki
 walk; the org-vs-artifact-rules distinction — enforced structurally).
 
@@ -506,7 +506,7 @@ walk; the org-vs-artifact-rules distinction — enforced structurally).
 - Link wiki pages to associated skill definitions when that relationship is
   useful.
   — processed 2026-07-27 → CUT: a page-linking standard for a wiki that
-  barely exists; re-arises at the step-3 wiki walk where NC page standards
+  barely exists; re-arises at the step-3 wiki walk where NN page standards
   get set under the user's review (legacy precedent: implementation-
   reference tables). Nothing filed.
 - Maintain an architecture overview.
@@ -520,7 +520,7 @@ walk; the org-vs-artifact-rules distinction — enforced structurally).
 - A possible organizing ideal is one system, one accountable steward, and one
   current overview; do not turn that ideal into exclusive control.
   — processed 2026-07-27 → sentence on
-  issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26): a
+  issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedsnodes/nedsnodes/issues/26): a
   candidate duty of the domain-expert tier (overview currency; never
   exclusive control), considered when that tier is designed.
 - Link system overviews to design, test plan, implementation, and evidence.
@@ -532,19 +532,19 @@ walk; the org-vs-artifact-rules distinction — enforced structurally).
 - Distinguish organizational rules from artifact-specific rules.
   — processed 2026-07-27 → CUT: a classification instruction with no
   consumer; the distinction is enforced structurally by where rules live
-  (org design in pair issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26) and the founding plan; artifact rules with
+  (org design in pair issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedsnodes/nedsnodes/issues/26) and the founding plan; artifact rules with
   their artifact class). Nothing filed.
 - Review and dispose of accumulated tasks and memories instead of allowing a
   permanent junk drawer.
   — processed 2026-07-27 → landed (artifact-lifecycle no-stateless-piles +
   the handoff scrub step), PLUS a sentence on
-  issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nn-systems/handoff/handoff.system.design.md](https://github.com/nedschorus/nedschorus/issues/2): the
+  issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nn-systems/handoff/handoff.system.design.md](https://github.com/nedsnodes/nedsnodes/issues/2): the
   scrub-step build enumerates its standing maintenance duties from the
   specs that name the scrub, so the set is explicit in the built skill.
 - Decide whether a memory should point to one general page or a specific system
   page based on retrieval usefulness.
   — processed 2026-07-27 → already dispersed: subsumed by
-  issue [Runtime-behavior research bundle: instruction compression + deliberate scrub, instruction precedence, output styles, context clearing, names reviewer, memory maintenance](https://github.com/nedschorus/nedschorus/issues/29)
+  issue [Runtime-behavior research bundle: instruction compression + deliberate scrub, instruction precedence, output styles, context clearing, names reviewer, memory maintenance](https://github.com/nedsnodes/nedsnodes/issues/29)
   item 9 (memory-entries-point-at-exact-wiki-pages research), which
   measures exactly this general-vs-specific question. Nothing filed.
 
@@ -623,7 +623,7 @@ endorsement.
 <https://github.com/hoangsonww/Claude-Code-Agent-Monitor>
 
 - **Use:** compare status, waiting, interruption, cost, hooks, SQLite,
-  WebSockets, and UI ideas with NedsChorus requirements.
+  WebSockets, and UI ideas with NedsNodes requirements.
 - **Why retained:** directly relevant prototype.
 - **Limit:** some states are inferred; installation changes hooks and adds
   another service. Study before considering adoption.
@@ -742,7 +742,7 @@ conclusions are:
 - Boot set — RESOLVED 2026-07-24 (walk item 12; founding-plan open question
   8): the five founding skills only; candidates join one at a time when a
   real task exposes the missing decision (first expected pull:
-  write-test-plan, issue [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18)).
+  write-test-plan, issue [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedsnodes/nedsnodes/issues/18)).
 - Legacy behaviors — RESOLVED 2026-07-24 (walk item 13, the rewrite policy;
   founding plan § Standing decisions): per-cherry-pick four-class feature
   classification (preserve-feature / update-feature / remove-feature /

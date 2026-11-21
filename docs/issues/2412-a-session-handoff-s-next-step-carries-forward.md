@@ -1,5 +1,5 @@
 ---
-issue: "[A session-handoff's next step carries forward a step that a later ruling or skill change removed](https://github.com/nedschorus/nedschorus/issues/2412)"
+issue: "[A session-handoff's next step carries forward a step that a later ruling or skill change removed](https://github.com/nedsnodes/nedsnodes/issues/2412)"
 ---
 
 # A session-handoff's next step carries forward a step that a later ruling or skill change removed
@@ -25,9 +25,9 @@ A next step is the successor's first instruction, and the successor trusts it ov
 
 ## Related issues
 
-ghi-guide-agent, asked on 2026-11-02, found no issue with this subject. The handoff issues it listed ([754](https://github.com/nedschorus/nedschorus/issues/754), [1125](https://github.com/nedschorus/nedschorus/issues/1125), [1129](https://github.com/nedschorus/nedschorus/issues/1129) and [2036](https://github.com/nedschorus/nedschorus/issues/2036), all open) cover recovery and restart, not stale next-step content. Nearest in shape:
-- [Trigger-first instruction delivery](https://github.com/nedschorus/nedschorus/issues/30) and [Save each lesson where agents meet it at the moment it applies](https://github.com/nedschorus/nedschorus/issues/1349): a ruling that does not reach the place it applies.
-- [Nothing checks that a design document still describes the code a pull request changes](https://github.com/nedschorus/nedschorus/issues/2078): the same drift between a written step and the current source, for another pair of files.
+ghi-guide-agent, asked on 2026-11-02, found no issue with this subject. The handoff issues it listed ([754](https://github.com/nedsnodes/nedsnodes/issues/754), [1125](https://github.com/nedsnodes/nedsnodes/issues/1125), [1129](https://github.com/nedsnodes/nedsnodes/issues/1129) and [2036](https://github.com/nedsnodes/nedsnodes/issues/2036), all open) cover recovery and restart, not stale next-step content. Nearest in shape:
+- [Trigger-first instruction delivery](https://github.com/nedsnodes/nedsnodes/issues/30) and [Save each lesson where agents meet it at the moment it applies](https://github.com/nedsnodes/nedsnodes/issues/1349): a ruling that does not reach the place it applies.
+- [Nothing checks that a design document still describes the code a pull request changes](https://github.com/nedsnodes/nedsnodes/issues/2078): the same drift between a written step and the current source, for another pair of files.
 
 ## Next action
 

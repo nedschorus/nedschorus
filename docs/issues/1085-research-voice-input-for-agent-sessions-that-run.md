@@ -1,12 +1,12 @@
 ---
-issue: "[Research voice input for agent-sessions that run on ned-box](https://github.com/nedschorus/nedschorus/issues/1085)"
+issue: "[Research voice input for agent-sessions that run on ned-box](https://github.com/nedsnodes/nedsnodes/issues/1085)"
 ---
 
 # Research voice input for agent-sessions that run on ned-box
 
 ## Problem
 
-The user wants to speak to his agents instead of typing to them. He sits at a Mac. Most agent-seats run on ned-box, the Ubuntu machine on the same LAN, each in its own tmux server. He reaches them from iTerm2 windows on the Mac over ssh, with [`scripts/launch-claude-ubuntu`](https://github.com/nedschorus/nedschorus/blob/main/scripts/launch-claude-ubuntu) `<name>` or `ssh -t nedlern@ned-box tmux -L <name> attach -t <name>`. He reaches some agent-sessions through Remote Control in the Claude app instead.
+The user wants to speak to his agents instead of typing to them. He sits at a Mac. Most agent-seats run on ned-box, the Ubuntu machine on the same LAN, each in its own tmux server. He reaches them from iTerm2 windows on the Mac over ssh, with [`scripts/launch-claude-ubuntu`](https://github.com/nedsnodes/nedsnodes/blob/main/scripts/launch-claude-ubuntu) `<name>` or `ssh -t nedlern@ned-box tmux -L <name> attach -t <name>`. He reaches some agent-sessions through Remote Control in the Claude app instead.
 
 ## What is known
 

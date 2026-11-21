@@ -1,5 +1,5 @@
 ---
-issue: "[Genre-suffix naming for non-reviewable documents (-log, -report, -capture), and mechanical exclusion from the review instruments](https://github.com/nedschorus/nedschorus/issues/152)"
+issue: "[Genre-suffix naming for non-reviewable documents (-log, -report, -capture), and mechanical exclusion from the review instruments](https://github.com/nedsnodes/nedsnodes/issues/152)"
 kind: design
 ---
 
@@ -21,7 +21,7 @@ Documents that only report what happened are not reviewable the way work-directi
 
 **Open, for the user:** whether the two gitignored working directories `sanity-check-records/` and `md-review-records/` rename to match, or keep their name as machine-local material that never enters the review path anyway.
 
-This settles a question left open under GHI [Build draft-md: the drafting-stage skill run before md-review (user-ruled 2026-08-22)](https://github.com/nedschorus/nedschorus/issues/142): documents that record decisions keep their ruling stamps as content, because the genre suffix takes them out of the review path entirely — no exception clause is needed inside the drafting rules.
+This settles a question left open under GHI [Build draft-md: the drafting-stage skill run before md-review (user-ruled 2026-08-22)](https://github.com/nedsnodes/nedsnodes/issues/142): documents that record decisions keep their ruling stamps as content, because the genre suffix takes them out of the review path entirely — no exception clause is needed inside the drafting rules.
 
 Search receipt: `gh issue list --state all --search "naming convention suffix"` returned nothing; `--search "md-review exclude records"` returned no issue on this subject (2026-08-23).
 

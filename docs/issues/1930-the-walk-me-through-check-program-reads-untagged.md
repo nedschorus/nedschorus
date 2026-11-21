@@ -1,5 +1,5 @@
 ---
-issue: "[The walk-me-through check program reads untagged walk-minutes lines as decisions by their keywords](https://github.com/nedschorus/nedschorus/issues/1930)"
+issue: "[The walk-me-through check program reads untagged walk-minutes lines as decisions by their keywords](https://github.com/nedsnodes/nedsnodes/issues/1930)"
 ---
 
 # The walk-me-through check program reads untagged walk-minutes lines as decisions by their keywords
@@ -12,7 +12,7 @@ The walk-me-through check program, `nn-systems/skills/walk-me-through/walk-me-th
 
 On 2026-10-24 at 17:05 local time, in prime-intellect's approval-walk `prime-intellect-open-decisions-for-the-user-2026-10-22-2`, the user approved item 6.1 of 17, and `close` wrote `#next_to_present item 16 of 17`, the summary item, instead of item 7. At that close the walk-minutes held this untagged re-plan note, which prime-intellect has since reworded to avoid the word (line 71 now ends "the definition item 4 settled"): `Items 5 to 15: "loose end" respelled "loose-end" after item 4; item 5 cites the approved definition.` Its word "approved" made the program count items 7 to 15 as decided. The evidence is the `#next_to_present item 16 of 17` line and prime-intellect's correction below it in `/home/nedlern/agents/prime-intellect/docs/walk/prime-intellect-open-decisions-for-the-user-2026-10-22-2-minutes.md`.
 
-PR [walk-me-through close: a deciding word right after a determiner, as in "the approved definition", records no decision](https://github.com/nedschorus/nedschorus/pull/1924) narrows the rule: a deciding word right after "the", "a" or "an" no longer counts. That ends the outage, but other forms still decide every item a note names. The PR's reviewers found these: "our approved definition", "the previously approved definition", "the user-approved definition", "item 4's approved definition", "the definition item 4 approved", and "Items 3 to 4 of 5: item 3 cites its approved definition."
+PR [walk-me-through close: a deciding word right after a determiner, as in "the approved definition", records no decision](https://github.com/nedsnodes/nedsnodes/pull/1924) narrows the rule: a deciding word right after "the", "a" or "an" no longer counts. That ends the outage, but other forms still decide every item a note names. The PR's reviewers found these: "our approved definition", "the previously approved definition", "the user-approved definition", "item 4's approved definition", "the definition item 4 approved", and "Items 3 to 4 of 5: item 3 cites its approved definition."
 
 A second weakness of the same kind: a note's item range, such as "Items 5 to 15", is applied to whatever those numbers mean after a later re-plan renumbers the walk, because minutes lines are read without the walk's total.
 

@@ -1,5 +1,5 @@
 ---
-issue: "[One shared reader of a transcript's subagent start, resume and finish events for scripts/handoff-context-threshold-hook.py and nn-systems/handoff/handoff-write-and-check-supervisor.py](https://github.com/nedschorus/nedschorus/issues/3546)"
+issue: "[One shared reader of a transcript's subagent start, resume and finish events for scripts/handoff-context-threshold-hook.py and nn-systems/handoff/handoff-write-and-check-supervisor.py](https://github.com/nedsnodes/nedsnodes/issues/3546)"
 ---
 
 # One shared reader of a transcript's subagent start, resume and finish events for scripts/handoff-context-threshold-hook.py and nn-systems/handoff/handoff-write-and-check-supervisor.py
@@ -10,8 +10,8 @@ Two programs each read, with code of their own, the same events in an agent-sess
 
 The same kind of gap has been fixed twice since the two readers were written:
 
-- PR [Threshold hook's transcript scan counts a subagent resumed by SendMessage as in flight](https://github.com/nedschorus/nedschorus/pull/2926), merged 2026-11-11, taught `work_in_flight` to read a resume, which `spawned_subagent_roster` already read. Its `#root_cause` line says the two parsers were left separate "because the roster skips a line that does not parse while the hook refuses on one, and one shared parser is a design change of its own". Its Claude reviewer, posting as `mac-claude`, noted the second parser in `spawned_subagent_roster` and did not raise it as a finding, because the pull request's description declared it as a design choice.
-- PR [Idle sweep and session-handoff: count a subagent or background command stopped by TaskStop as finished, and a later resume as in flight](https://github.com/nedschorus/nedschorus/pull/3059), merged 2026-11-11, had to teach both readers that a TaskStop ends a subagent, because Claude Code writes no task-notification for a task that TaskStop stops.
+- PR [Threshold hook's transcript scan counts a subagent resumed by SendMessage as in flight](https://github.com/nedsnodes/nedsnodes/pull/2926), merged 2026-11-11, taught `work_in_flight` to read a resume, which `spawned_subagent_roster` already read. Its `#root_cause` line says the two parsers were left separate "because the roster skips a line that does not parse while the hook refuses on one, and one shared parser is a design change of its own". Its Claude reviewer, posting as `mac-claude`, noted the second parser in `spawned_subagent_roster` and did not raise it as a finding, because the pull request's description declared it as a design choice.
+- PR [Idle sweep and session-handoff: count a subagent or background command stopped by TaskStop as finished, and a later resume as in flight](https://github.com/nedsnodes/nedsnodes/pull/3059), merged 2026-11-11, had to teach both readers that a TaskStop ends a subagent, because Claude Code writes no task-notification for a task that TaskStop stops.
 
 No one has seen the two readers disagree on a real transcript; this is a concern judged from reading the code. The user approved filing it on 2026-11-13 at 22:04Z, answering "ao" (approve as obvious) to item 43 of merge-lane-2's approval-walk, whose minutes are at `nedlern@ned-box:/home/nedlern/agents/merge-lane-2/docs/walk/merge-lane-2-pr-2760-pr-2695-and-emergency-stop-merges-approval-walk-2026-11-08-minutes.md`.
 

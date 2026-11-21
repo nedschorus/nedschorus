@@ -1,5 +1,5 @@
 ---
-issue: "[Tests that find a file through the program's own file name constant: pin each name other programs or agents read](https://github.com/nedschorus/nedschorus/issues/3433)"
+issue: "[Tests that find a file through the program's own file name constant: pin each name other programs or agents read](https://github.com/nedsnodes/nedsnodes/issues/3433)"
 ---
 
 # Tests that find a file through the program's own file name constant: pin each name other programs or agents read
@@ -8,8 +8,8 @@ A test that finds a program's output file through the program's own constant, su
 
 ## Why
 
-- It has happened. In merge-lane-2's follow-up request on PR [Bash guards replay: the refusal right lines file and its constant are named for the rightly refused review answer lines they hold](https://github.com/nedschorus/nedschorus/pull/3311), finding 1 reported that putting `ADDED_GUARD_REFUSAL_GROUP_RIGHTLY_REFUSED_REVIEW_ANSWER_LINES_FILE_NAME` back to its old value `"added-guard-refusal-right-lines.txt"` left all 155 cases of `nn-systems/general-tools/tests/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check-test.py` passing.
-- PR [Bash guards replay test: pin the rightly refused review answer lines file's name](https://github.com/nedschorus/nedschorus/pull/3328) pins that one name: its test checks `lines_file.name == "added-guard-refusal-group-rightly-refused-review-answer-lines.txt"`. Its description's `#root_cause_not_fixed` line leaves the other tests that find a file through their program's constant to this GHI.
+- It has happened. In merge-lane-2's follow-up request on PR [Bash guards replay: the refusal right lines file and its constant are named for the rightly refused review answer lines they hold](https://github.com/nedsnodes/nedsnodes/pull/3311), finding 1 reported that putting `ADDED_GUARD_REFUSAL_GROUP_RIGHTLY_REFUSED_REVIEW_ANSWER_LINES_FILE_NAME` back to its old value `"added-guard-refusal-right-lines.txt"` left all 155 cases of `nn-systems/general-tools/tests/bash-guards-verdict-changes-between-git-refs-on-recorded-commands-check-test.py` passing.
+- PR [Bash guards replay test: pin the rightly refused review answer lines file's name](https://github.com/nedsnodes/nedsnodes/pull/3328) pins that one name: its test checks `lines_file.name == "added-guard-refusal-group-rightly-refused-review-answer-lines.txt"`. Its description's `#root_cause_not_fixed` line leaves the other tests that find a file through their program's constant to this GHI.
 - Pinning the cases found today by hand fixes those cases only. A test that keeps checking catches the next one too, which is the root cause the PR 3328 line leaves.
 
 ## What exists today

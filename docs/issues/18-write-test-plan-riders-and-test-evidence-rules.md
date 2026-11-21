@@ -1,12 +1,12 @@
 ---
-issue: "[Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18)"
-status: working material for issue [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18)
+issue: "[Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedsnodes/nedsnodes/issues/18)"
+status: working material for issue [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedsnodes/nedsnodes/issues/18)
 as-of: 2026-09-16
 ---
 
 # write-test-plan: the riders, and the rules on what counts as test evidence
 
-The GHI-MD of issue [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18), the candidate skill write-test-plan. It carries the summary, the disposition, the next action, and the substance: the four riders drained into the issue on 2026-09-02, the worked example that triggered the build, and the user's rules on what evidence a change needs before it merges. Every section from the riders down to "Evidence of record" moved here verbatim from the issue body on 2026-09-16, when adding the newest ruling would have passed the body's 1000-word cap; the summary, the disposition and the next action followed on 2026-09-30 from the issue's former body. The section on code that runs only against a stand-in is new.
+The GHI-MD of issue [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedsnodes/nedsnodes/issues/18), the candidate skill write-test-plan. It carries the summary, the disposition, the next action, and the substance: the four riders drained into the issue on 2026-09-02, the worked example that triggered the build, and the user's rules on what evidence a change needs before it merges. Every section from the riders down to "Evidence of record" moved here verbatim from the issue body on 2026-09-16, when adding the newest ruling would have passed the body's 1000-word cap; the summary, the disposition and the next action followed on 2026-09-30 from the issue's former body. The section on code that runs only against a stand-in is new.
 
 ## What the skill does
 
@@ -70,7 +70,7 @@ The 2026-09-02 research pass above found that **mutation testing would have prai
 
 The loop that mutation testing is usually run as: apply a mutation to the file under test, run the suite, expect red, then revert with `git checkout -- <file>` and go on to the next mutation. `git checkout --` restores the file **as of the last commit**. So when the fix being exercised is still uncommitted, the first revert discards the fix along with the mutation, and every mutation after the first runs against pristine code.
 
-Measured on 2026-09-21, building pull request [The ignition prompt's tail sentences are constants, and a note that claimed coverage it did not have](https://github.com/nedschorus/nedschorus/pull/591). Four mutations were planned. The first ran against the real change and failed correctly, two cases named. Its revert then removed the change. Mutations two, three and four ran against the file as `origin/main` had it.
+Measured on 2026-09-21, building pull request [The ignition prompt's tail sentences are constants, and a note that claimed coverage it did not have](https://github.com/nedsnodes/nedsnodes/pull/591). Four mutations were planned. The first ran against the real change and failed correctly, two cases named. Its revert then removed the change. Mutations two, three and four ran against the file as `origin/main` had it.
 
 What makes it dangerous is the failure mode, not the mistake. A mutation run against code that does not contain the guard should report a **pass**, and a pass is what the loop is reading for when it says "this one was not caught". Here it surfaced only because the change added module constants the test file referenced by name, so the suite raised `AttributeError` and crashed instead of passing. A change that added no new name — a bounded comparison, a corrected literal, a narrowed condition — would have produced three clean greens and a mutation table that was false in good faith.
 
@@ -84,7 +84,7 @@ This is rider 1 turned on the test harness itself. A mutation loop that cannot r
 
 ## 2026-10-10: a failure-test rule held in CLAUDE.md until this build lands
 
-Pull request [CLAUDE.md "Before pushing": a test for each failure the change handles; the full-run explanation goes](https://github.com/nedschorus/nedschorus/pull/1171) puts this rule in CLAUDE.md's "Before pushing" bullet: "When you add code that handles a failure that a bad input or a failing stub can cause, such as an `except` block or a check of an exit code, add a test that causes that failure; check the test by removing that code for a moment, and a test must fail." The pull request that lands this build moves the rule into what the build produces and deletes it from CLAUDE.md. Removing the code for a moment is mutation testing done by hand, and it shows only that the failure path is exercised, not that the test's baseline is true, which the 2026-09-02 research pass found mutation testing cannot show.
+Pull request [CLAUDE.md "Before pushing": a test for each failure the change handles; the full-run explanation goes](https://github.com/nedsnodes/nedsnodes/pull/1171) puts this rule in CLAUDE.md's "Before pushing" bullet: "When you add code that handles a failure that a bad input or a failing stub can cause, such as an `except` block or a check of an exit code, add a test that causes that failure; check the test by removing that code for a moment, and a test must fail." The pull request that lands this build moves the rule into what the build produces and deletes it from CLAUDE.md. Removing the code for a moment is mutation testing done by hand, and it shows only that the failure path is exercised, not that the test's baseline is true, which the 2026-09-02 research pass found mutation testing cannot show.
 
 ## 2026-10-10: three tiers of test run
 
@@ -115,4 +115,4 @@ Build the skill `.claude/skills/write-test-plan/`, with the riders and rules in 
 - cops delta packet: `nn-queue/archived/2026-07-23-cops-candidate-skill-delta-packet.md` (this skill's section)
 - Shortlist origin: `docs/issues/9-neds-notes.md` § Working skill shortlist
 - The 2026-09-02 walk that triggered the build: `docs/walk/prevention-rules-from-the-2026-08-31-fix-rounds-minutes.md` (lands with the build)
-- The defects: https://github.com/nedschorus/nedschorus/pull/222 and https://github.com/nedschorus/nedschorus/pull/223
+- The defects: https://github.com/nedsnodes/nedsnodes/pull/222 and https://github.com/nedsnodes/nedsnodes/pull/223

@@ -76,7 +76,7 @@ channel 2. Nothing reaches 30. So the >30 fixture comes from one of:
 
 1. a public repository's pull request whose channel exceeds 30, captured
    read-only — this proves what the real API does and is preferred; or
-2. the organisation's own probe repository, `nedschorus/ghi-api-probes` — private,
+2. the organisation's own probe repository, `nedsnodes/ghi-api-probes` — private,
    named in the main-gatekeeper design's credential section as the organisation's
    second repository — which exists for exactly this, with a note saying the
    fixture is a sandbox capture and therefore proves what the sandbox does.

@@ -1,5 +1,5 @@
 ---
-issue: "[Tests that time work against a wall-clock limit sized to an idle machine fail when ned-box is busy](https://github.com/nedschorus/nedschorus/issues/1830)"
+issue: "[Tests that time work against a wall-clock limit sized to an idle machine fail when ned-box is busy](https://github.com/nedsnodes/nedsnodes/issues/1830)"
 ---
 
 # Tests that time work against a wall-clock limit sized to an idle machine fail when ned-box is busy
@@ -9,9 +9,9 @@ issue: "[Tests that time work against a wall-clock limit sized to an idle machin
 Six test files on main check that an operation finishes fast by comparing elapsed wall-clock time with a fixed limit. Each limit was sized on an idle machine. When ned-box is busy, the code under test is correct but takes longer, so the test fails although nothing is wrong. A false failure blocks a merge or a pre-push run until someone reruns it, and it teaches agents to rerun failing tests rather than read them.
 
 The same kind of check has already failed for real, so this is not a guess about the class:
-- PR [Tests that passed only on a quiet machine wait for the event, or count work or CPU time](https://github.com/nedschorus/nedschorus/pull/1828), merged 2026-10-22T00:49Z, rewrote five such tests after failures under load, among them the shell-reader redirection case that failed on ned-box at main 35f494ca.
+- PR [Tests that passed only on a quiet machine wait for the event, or count work or CPU time](https://github.com/nedsnodes/nedsnodes/pull/1828), merged 2026-10-22T00:49Z, rewrote five such tests after failures under load, among them the shell-reader redirection case that failed on ned-box at main 35f494ca.
 - On 2026-10-21, `scripts/pull-request-review-plan-test.py` failed ned-box's daily full test run with a 10-second subprocess timeout; commit b4ada4e49 raised that limit.
-- Closed issues [Two test cases that fail on a busy machine and pass on rerun](https://github.com/nedschorus/nedschorus/issues/1112) and [The Codex task runner's deadline test case fails on a busy machine](https://github.com/nedschorus/nedschorus/issues/1323) fixed three more cases between them.
+- Closed issues [Two test cases that fail on a busy machine and pass on rerun](https://github.com/nedsnodes/nedsnodes/issues/1112) and [The Codex task runner's deadline test case fails on a busy machine](https://github.com/nedsnodes/nedsnodes/issues/1323) fixed three more cases between them.
 
 How busy ned-box gets: on 2026-10-21 its load average reached 15 to 19.
 

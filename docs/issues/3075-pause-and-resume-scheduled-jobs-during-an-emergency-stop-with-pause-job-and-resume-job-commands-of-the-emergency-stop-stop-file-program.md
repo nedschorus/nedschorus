@@ -1,12 +1,12 @@
 ---
-issue: "[Pause and resume scheduled jobs during an emergency stop with pause-job and resume-job commands of the emergency-stop stop-file program](https://github.com/nedschorus/nedschorus/issues/3075)"
+issue: "[Pause and resume scheduled jobs during an emergency stop with pause-job and resume-job commands of the emergency-stop stop-file program](https://github.com/nedsnodes/nedsnodes/issues/3075)"
 ---
 
 # Pause and resume scheduled jobs during an emergency stop with pause-job and resume-job commands of the emergency-stop stop-file program
 
 ## Why
 
-During an emergency stop, the scheduled jobs keep running. The user ruled on 2026-10-30 that they are "listed for pausing by hand" ([GHI 2161, "Build the emergency-stop skill, which writes one stop file in the log-store that every agent-session is shown until the user lifts the stop"](https://github.com/nedschorus/nedschorus/issues/2161), item 9.1.2.1 part 1). On 2026-11-08 he approved item 31 of approval-walk ghi-783-ghi-md-picks-and-renames-approval-walk-2026-11-05, which writes that pausing out as English steps in step 2 of "Coordinating the repair" in `.claude/skills/emergency-stop/SKILL.md`, in [PR 2731](https://github.com/nedschorus/nedschorus/pull/2731): the coordinator comments out a crontab line or runs `launchctl bootout gui/$(id -u)/<label>`, and lists each paused job in the repair brief; whoever lifts the stop reads that brief and turns each job back on.
+During an emergency stop, the scheduled jobs keep running. The user ruled on 2026-10-30 that they are "listed for pausing by hand" ([GHI 2161, "Build the emergency-stop skill, which writes one stop file in the log-store that every agent-session is shown until the user lifts the stop"](https://github.com/nedsnodes/nedsnodes/issues/2161), item 9.1.2.1 part 1). On 2026-11-08 he approved item 31 of approval-walk ghi-783-ghi-md-picks-and-renames-approval-walk-2026-11-05, which writes that pausing out as English steps in step 2 of "Coordinating the repair" in `.claude/skills/emergency-stop/SKILL.md`, in [PR 2731](https://github.com/nedsnodes/nedsnodes/pull/2731): the coordinator comments out a crontab line or runs `launchctl bootout gui/$(id -u)/<label>`, and lists each paused job in the repair brief; whoever lifts the stop reads that brief and turns each job back on.
 
 Those steps need no judgment, so code-prompt-code puts them in code. On 2026-11-10 the user approved item 38 of the same walk, "Pause and resume scheduled jobs with code, in a follow-up", answering "A" to its recommendation: "keep item 31's steps in PR 2731, and file a follow-up GHI for `pause-job` and `resume-job` commands, built on the scheduled-jobs installer, which replace those steps when they land." The walk-document is `docs/walk/ghi-783-ghi-md-picks-and-renames-approval-walk-2026-11-05.md`. This GHI is that follow-up.
 

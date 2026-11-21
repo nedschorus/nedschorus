@@ -1,5 +1,5 @@
 ---
-issue: "[A wiki page on when a step given to an agent should become code and when it should stay with the model, with before-and-after examples of code-prompt-code from this project](https://github.com/nedschorus/nedschorus/issues/2127)"
+issue: "[A wiki page on when a step given to an agent should become code and when it should stay with the model, with before-and-after examples of code-prompt-code from this project](https://github.com/nedsnodes/nedsnodes/issues/2127)"
 ---
 
 # A wiki page on when a step given to an agent should become code and when it should stay with the model, with before-and-after examples of code-prompt-code from this project
@@ -20,9 +20,9 @@ The user approved this GHI as item 2.2.1.2 of cold-read-research's approval-walk
 
 ## The earlier attempt
 
-GHI [code-prompt-code (CPC) design philosophy wiki page: systems as state machines whose nodes are code or prompts](https://github.com/nedschorus/nedschorus/issues/237) asked for a page on the design idea: systems as state machines whose nodes are code or prompts. It was closed as not planned on 2026-09-21, because the objective page and the glossary already carried that idea; its outcome says "Re-file if a dedicated page is later wanted." This GHI is that re-filing, with a narrower subject: not the idea, which the objective page keeps, but the decision for each step, taught from examples the project did not have in September.
+GHI [code-prompt-code (CPC) design philosophy wiki page: systems as state machines whose nodes are code or prompts](https://github.com/nedsnodes/nedsnodes/issues/237) asked for a page on the design idea: systems as state machines whose nodes are code or prompts. It was closed as not planned on 2026-09-21, because the objective page and the glossary already carried that idea; its outcome says "Re-file if a dedicated page is later wanted." This GHI is that re-filing, with a narrower subject: not the idea, which the objective page keeps, but the decision for each step, taught from examples the project did not have in September.
 
-GHI [Move mechanical agent chores into programs and hooks](https://github.com/nedschorus/nedschorus/issues/1036) is related and separate: it lists eleven chores to move into programs, and states the principle that a program does only the normal case and hands every other case back to the agent with a message saying what failed. The new page links to that principle rather than restating it, and may use those chores as examples.
+GHI [Move mechanical agent chores into programs and hooks](https://github.com/nedsnodes/nedsnodes/issues/1036) is related and separate: it lists eleven chores to move into programs, and states the principle that a program does only the normal case and hands every other case back to the agent with a message saying what failed. The new page links to that principle rather than restating it, and may use those chores as examples.
 
 ## What the page draws from
 

@@ -1,5 +1,5 @@
 ---
-issue: "[A process that turns each unblocked open GitHub issue into a task](https://github.com/nedschorus/nedschorus/issues/2082)"
+issue: "[A process that turns each unblocked open GitHub issue into a task](https://github.com/nedsnodes/nedsnodes/issues/2082)"
 ---
 
 # A process that turns each unblocked open GitHub issue into a task
@@ -30,12 +30,12 @@ This GHI asks for no program that checks for a loop between GHIs, because no suc
 
 ghi-info, asked on 2026-10-28 with closed GHIs included, found none that covers turning GHIs into tasks or deciding from "blocked by" which GHIs are unblocked. It named these as nearest:
 
-- GHI [Tasks raise themselves when their due time passes or their prerequisite is met](https://github.com/nedschorus/nedschorus/issues/940) already builds an item that becomes active when its prerequisite is met, for tasks rather than GHIs.
-- GHI [Check each new task against the open issues when it is filed, and add a match to that issue's GHI-MD](https://github.com/nedschorus/nedschorus/issues/1432) links the two in the opposite direction, from a new task to an existing GHI.
+- GHI [Tasks raise themselves when their due time passes or their prerequisite is met](https://github.com/nedsnodes/nedsnodes/issues/940) already builds an item that becomes active when its prerequisite is met, for tasks rather than GHIs.
+- GHI [Check each new task against the open issues when it is filed, and add a match to that issue's GHI-MD](https://github.com/nedsnodes/nedsnodes/issues/1432) links the two in the opposite direction, from a new task to an existing GHI.
 
 ## Next action
 
-The user decides, through the queue-drain (GHI [Queue drain procedure — the review process that empties the wiki queue, the pair queue, nn-queue, the drafts directory and the queue-drain-candidate-label issue queue](https://github.com/nedschorus/nedschorus/issues/24)), whether to build this, drop it, or leave it waiting. Until he decides, no agent builds it.
+The user decides, through the queue-drain (GHI [Queue drain procedure — the review process that empties the wiki queue, the pair queue, nn-queue, the drafts directory and the queue-drain-candidate-label issue queue](https://github.com/nedsnodes/nedsnodes/issues/24)), whether to build this, drop it, or leave it waiting. Until he decides, no agent builds it.
 
 ## Deferred-decisions
 

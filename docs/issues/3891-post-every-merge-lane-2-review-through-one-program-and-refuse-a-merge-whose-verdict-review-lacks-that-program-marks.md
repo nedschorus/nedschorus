@@ -1,5 +1,5 @@
 ---
-issue: "[Post every merge-lane-2 review through one program, and refuse a merge whose verdict review lacks that program's marks](https://github.com/nedschorus/nedschorus/issues/3891)"
+issue: "[Post every merge-lane-2 review through one program, and refuse a merge whose verdict review lacks that program's marks](https://github.com/nedsnodes/nedsnodes/issues/3891)"
 ---
 
 # Post every merge-lane-2 review through one program, and refuse a merge whose verdict review lacks that program's marks
@@ -17,8 +17,8 @@ The fix-round program, `scripts/pull-request-fix-round-author-brief-from-blockin
 
 This has happened twice:
 
-- On [PR 3881](https://github.com/nedschorus/nedschorus/pull/3881), merge-lane-2's hand-typed review [5949985134](https://github.com/nedschorus/nedschorus/pull/3881#pullrequestreview-5949985134) requested changes with no marked inline comment, and its review [5949991380](https://github.com/nedschorus/nedschorus/pull/3881#pullrequestreview-5949991380), less than a minute later, reposted the blocking finding as a comment opening with `**Blocks**`.
-- On [PR 3602](https://github.com/nedschorus/nedschorus/pull/3602), the hand-typed review [5945142106](https://github.com/nedschorus/nedschorus/pull/3602#pullrequestreview-5945142106) was followed by [5945151474](https://github.com/nedschorus/nedschorus/pull/3602#pullrequestreview-5945151474), which reposted its blocking finding the same way.
+- On [PR 3881](https://github.com/nedsnodes/nedsnodes/pull/3881), merge-lane-2's hand-typed review [5949985134](https://github.com/nedsnodes/nedsnodes/pull/3881#pullrequestreview-5949985134) requested changes with no marked inline comment, and its review [5949991380](https://github.com/nedsnodes/nedsnodes/pull/3881#pullrequestreview-5949991380), less than a minute later, reposted the blocking finding as a comment opening with `**Blocks**`.
+- On [PR 3602](https://github.com/nedsnodes/nedsnodes/pull/3602), the hand-typed review [5945142106](https://github.com/nedsnodes/nedsnodes/pull/3602#pullrequestreview-5945142106) was followed by [5945151474](https://github.com/nedsnodes/nedsnodes/pull/3602#pullrequestreview-5945151474), which reposted its blocking finding the same way.
 
 Since 2026-11-04, merge-lane-2 has posted 505 reviews with a hand-typed `gh pr review`, 13 of them requesting changes, and 25 with the posting program, by the count recorded in item 91.2 of the approval-walk `nedlern@ned-box:/home/nedlern/agents/merge-lane-2/docs/walk/merge-lane-2-pr-2760-pr-2695-and-emergency-stop-merges-approval-walk-2026-11-08.md`, a file in merge-lane-2's agent-home that git does not track (unverified).
 
@@ -38,7 +38,7 @@ Each change carries its tests: the merge gate refusing a verdict review without 
 
 ## Related
 
-- GHI [Programs for sixteen merge-lane-2 seat-brief steps that need no judgment](https://github.com/nedschorus/nedschorus/issues/2608), whose item 1 asks for a program that posts merge-lane-2's review and writes its fixed closing sentences. The posting program now exists; this GHI covers making it the only way merge-lane-2 posts, and the gate's check that it was.
+- GHI [Programs for sixteen merge-lane-2 seat-brief steps that need no judgment](https://github.com/nedsnodes/nedsnodes/issues/2608), whose item 1 asks for a program that posts merge-lane-2's review and writes its fixed closing sentences. The posting program now exists; this GHI covers making it the only way merge-lane-2 posts, and the gate's check that it was.
 
 ## Next action
 

@@ -1,5 +1,5 @@
 ---
-issue: "[Candidate skill: attack-artifact — isolated adversarial review; filed as a d-review comparison question](https://github.com/nedschorus/nedschorus/issues/19)"
+issue: "[Candidate skill: attack-artifact — isolated adversarial review; filed as a d-review comparison question](https://github.com/nedsnodes/nedsnodes/issues/19)"
 ---
 
 # Candidate skill: attack-artifact — isolated adversarial review; filed as a d-review comparison question

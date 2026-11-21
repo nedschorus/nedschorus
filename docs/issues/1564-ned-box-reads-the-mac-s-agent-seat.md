@@ -1,5 +1,5 @@
 ---
-issue: "[ned-box reads the Mac's agent-seat task lists live, through the Mac's forced command for ned-box](https://github.com/nedschorus/nedschorus/issues/1564)"
+issue: "[ned-box reads the Mac's agent-seat task lists live, through the Mac's forced command for ned-box](https://github.com/nedsnodes/nedsnodes/issues/1564)"
 kind: design
 ---
 
@@ -37,5 +37,5 @@ Build the change on a topic branch, with tests for the new request (accepted, re
 
 ## Related
 
-- GHI [A small HTTP service with SQLite on ned-box keeps one record of every agent-seat on both machines](https://github.com/nedschorus/nedschorus/issues/972): its build-slice 5 plans for the whole-fleet view on ned-box to read the Mac's tasks from the mirror's copy; once this change lands, that view can read them live instead.
-- GHI [Relaunch stopped agent-seats with open tasks daily](https://github.com/nedschorus/nedschorus/issues/936): its GHI-MD says the reader, run on ned-box, reads ned-box's store alone; that sentence changes when this lands.
+- GHI [A small HTTP service with SQLite on ned-box keeps one record of every agent-seat on both machines](https://github.com/nedsnodes/nedsnodes/issues/972): its build-slice 5 plans for the whole-fleet view on ned-box to read the Mac's tasks from the mirror's copy; once this change lands, that view can read them live instead.
+- GHI [Relaunch stopped agent-seats with open tasks daily](https://github.com/nedsnodes/nedsnodes/issues/936): its GHI-MD says the reader, run on ned-box, reads ned-box's store alone; that sentence changes when this lands.

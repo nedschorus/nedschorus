@@ -1,5 +1,5 @@
 ---
-issue: "[One Claude Code hook starts slow work early and a later hook adds the result, and a wiki page on hook techniques for controlling and instructing agents](https://github.com/nedschorus/nedschorus/issues/1515)"
+issue: "[One Claude Code hook starts slow work early and a later hook adds the result, and a wiki page on hook techniques for controlling and instructing agents](https://github.com/nedsnodes/nedsnodes/issues/1515)"
 ---
 
 # One Claude Code hook starts slow work early and a later hook adds the result, and a wiki page on hook techniques for controlling and instructing agents
@@ -10,7 +10,7 @@ A Claude Code hook that must answer before the agent's turn ends has little time
 
 The user, on 2026-10-16 at about 02:30Z, in merge-lane-2's agent-session on ned-box: "the ideal is that the MessageDisplay lets us do something ASAP, and by the time the next hook runs, and the something is ready, we can say/add the something. This might be a new trick or technique we can use to control and instruct agents - and someday we'll have a wiki page on that."
 
-One GHI already pairs two hooks this way without naming the technique: GHI-MD `docs/issues/14-review-the-legacy-system-s-bad-phrase-list.md` (GHI [A project style guide](https://github.com/nedschorus/nedschorus/issues/14)) pairs a MessageDisplay mark with a Stop hook. Related GHIs: GHI [A fresh agent of the other agent-binary tries to break each proposal](https://github.com/nedschorus/nedschorus/issues/1230) rejected a MessageDisplay hook for spotting proposals. GHI [Move mechanical agent chores into programs and hooks](https://github.com/nedschorus/nedschorus/issues/1036) moves agent chores into hooks. GHI [A Stop hook's report inside a claude -p review cell displaces the cell's report](https://github.com/nedschorus/nedschorus/issues/397), closed, shows a Stop hook's output changing what a `claude -p` agent reports. No wiki page describes hook techniques or the hook event order: of the file names in `docs/nedsnodes-wiki/` on main, only one contains "hook", the page on writing a hook's refusal message.
+One GHI already pairs two hooks this way without naming the technique: GHI-MD `docs/issues/14-review-the-legacy-system-s-bad-phrase-list.md` (GHI [A project style guide](https://github.com/nedsnodes/nedsnodes/issues/14)) pairs a MessageDisplay mark with a Stop hook. Related GHIs: GHI [A fresh agent of the other agent-binary tries to break each proposal](https://github.com/nedsnodes/nedsnodes/issues/1230) rejected a MessageDisplay hook for spotting proposals. GHI [Move mechanical agent chores into programs and hooks](https://github.com/nedsnodes/nedsnodes/issues/1036) moves agent chores into hooks. GHI [A Stop hook's report inside a claude -p review cell displaces the cell's report](https://github.com/nedsnodes/nedsnodes/issues/397), closed, shows a Stop hook's output changing what a `claude -p` agent reports. No wiki page describes hook techniques or the hook event order: of the file names in `docs/nedsnodes-wiki/` on main, only one contains "hook", the page on writing a hook's refusal message.
 
 ## What is measured
 

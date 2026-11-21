@@ -1,5 +1,5 @@
 ---
-issue: "[The walk-me-through recommendation reader reads an HTML comment inside another HTML block as the item's recommendation](https://github.com/nedschorus/nedschorus/issues/3142)"
+issue: "[The walk-me-through recommendation reader reads an HTML comment inside another HTML block as the item's recommendation](https://github.com/nedsnodes/nedsnodes/issues/3142)"
 ---
 
 # The walk-me-through recommendation reader reads an HTML comment inside another HTML block as the item's recommendation
@@ -35,7 +35,7 @@ Two programs read an item's recommendation through this function:
 
 No walk-minutes file holds such a comment yet: on ned-box, `grep -rlE '<(div|details|table|p)[ >]' /home/nedlern/nedsnodes-logs/walk/ | xargs -r grep -l '<!--'` found no file there with both an HTML block tag and a comment, on 2026-11-11.
 
-The Codex review cell found the defect while reviewing pull request [3089](https://github.com/nedschorus/nedschorus/pull/3089), and merge-lane-2 graded it fix-next, as finding 2 of its approving review there. That pull request did not cause it; main had it before. Its root cause is close to the first one that pull request's `#root_cause` names, that `prose_lines()` found HTML comments through the parser's `html_block` tokens: it still finds them only through tokens that start with `<!--`, so a comment that starts partway through an HTML block is not found. Finding 1 of the same review, a backquoted `<!--` in a paragraph that also holds a real comment, is a separate fix-next finding and is not covered here.
+The Codex review cell found the defect while reviewing pull request [3089](https://github.com/nedsnodes/nedsnodes/pull/3089), and merge-lane-2 graded it fix-next, as finding 2 of its approving review there. That pull request did not cause it; main had it before. Its root cause is close to the first one that pull request's `#root_cause` names, that `prose_lines()` found HTML comments through the parser's `html_block` tokens: it still finds them only through tokens that start with `<!--`, so a comment that starts partway through an HTML block is not found. Finding 1 of the same review, a backquoted `<!--` in a paragraph that also holds a real comment, is a separate fix-next finding and is not covered here.
 
 ## What to do
 

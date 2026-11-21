@@ -1,5 +1,5 @@
 ---
-issue: "[Add a fourth sanity-check audit: hidden dependencies, untestable claims, criteria vs intent (user-ruled 2026-08-21)](https://github.com/nedschorus/nedschorus/issues/121)"
+issue: "[Add a fourth sanity-check audit: hidden dependencies, untestable claims, criteria vs intent (user-ruled 2026-08-21)](https://github.com/nedsnodes/nedsnodes/issues/121)"
 ---
 
 # Add a fourth sanity-check audit: hidden dependencies, untestable claims, criteria vs intent (user-ruled 2026-08-21)

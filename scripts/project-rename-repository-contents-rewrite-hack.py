@@ -344,7 +344,8 @@ OLD_NAME = re.compile(r"(?i:nedschorus)|" + B + r"(?:nc[-_]|NC_|Nc(?=[A-Z]))|" +
 
 GLOSSARY_TERM_STEMS = (r"head[-_]commits?|test[-_]suites?|test[-_]sandbox(?:es)?|architecture[-_]overviews?|"
                        r"topic[-_]branch(?:es)?|mutation[-_]testing|critical[-_]code|checkin[-_]quality[-_]gate|"
-                       r"python[-_]toolchain|system(?!s)|tests?|candidate|prune[-_]test")
+                       r"python[-_]toolchain|system(?!s)|tests?|candidate|prune[-_]test|"
+                       r"(?:scheduled[-_]|one[-_]shot[-_])?canary[-_]test|canary[-_]runner")
 
 # (path glob, pattern, reason): the pattern is searched in one line of a file whose path matches the glob,
 # and every span it matches is covered by the reason.

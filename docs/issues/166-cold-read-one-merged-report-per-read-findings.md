@@ -1,5 +1,5 @@
 ---
-issue: "[cold-read: one merged report per read — findings grouped by passage, with each cell's wording and the count of cells that raised it](https://github.com/nedschorus/nedschorus/issues/166)"
+issue: "[cold-read: one merged report per read — findings grouped by passage, with each cell's wording and the count of cells that raised it](https://github.com/nedsnodes/nedsnodes/issues/166)"
 ---
 
 # cold-read: one merged report per read — findings grouped by passage, with each cell's wording and the count of cells that raised it
@@ -30,15 +30,15 @@ What the commissioning agent is told to do with the merged file — the prompt o
 ## What it builds on
 
 - The grid script (`scripts/cold-read-grid.py` on branch `MD-skills`; on main it is still `scripts/md-review-grid.py` until the 2026-08-25 rename lands) already knows when all eight cells are done and where the reports are; the merge is a final step there.
-- The report contract in `scripts/cold-read-cell-common.py` (branch `MD-skills`; created by the report-to-file fix that closes GHI [md-review-grid reports eight reviews saved when eight cells produced nothing](https://github.com/nedschorus/nedschorus/issues/164), not yet on main) fixes the shape the merge can rely on: numbered findings, quoted passages, a closing "clean sections:" line, one provenance stamp per report.
+- The report contract in `scripts/cold-read-cell-common.py` (branch `MD-skills`; created by the report-to-file fix that closes GHI [md-review-grid reports eight reviews saved when eight cells produced nothing](https://github.com/nedsnodes/nedsnodes/issues/164), not yet on main) fixes the shape the merge can rely on: numbered findings, quoted passages, a closing "clean sections:" line, one provenance stamp per report.
 - Three record sets from 2026-08-24 with their hand-made comparisons, and twelve older sets with the user's dispositions, are test material: a merge script can be checked against what a comparer produced by hand.
 
 ## Next action
 
-Design first, then build: the merged file's format, the passage-overlap rule, and what the agent is told. The design goes through a cold read before the build. Filed as a follow-on to GHI [md-review-grid reports eight reviews saved when eight cells produced nothing](https://github.com/nedschorus/nedschorus/issues/164), which hardened the grid's per-cell reporting; this is the step after that reporting.
+Design first, then build: the merged file's format, the passage-overlap rule, and what the agent is told. The design goes through a cold read before the build. Filed as a follow-on to GHI [md-review-grid reports eight reviews saved when eight cells produced nothing](https://github.com/nedsnodes/nedsnodes/issues/164), which hardened the grid's per-cell reporting; this is the step after that reporting.
 
 ## Relations
 
-- GHI [md-review-grid reports eight reviews saved when eight cells produced nothing](https://github.com/nedschorus/nedschorus/issues/164) — the grid's per-cell success and failure reporting; this issue starts where that one ends.
-- GHI [Adversarial whole-package review — two runtimes, blind first passes, threaded Q&A (doc: docs/issues/8-adversarial-package-review.md)](https://github.com/nedschorus/nedschorus/issues/8) — the one-off two-reviewer synthesis of the founding review, the nearest precedent on record.
-- GHI [use-codex skill: one place that says how this project invokes Codex headlessly](https://github.com/nedschorus/nedschorus/issues/165) — the use-codex skill; the Codex cells this merge reads are launched the way that skill will describe.
+- GHI [md-review-grid reports eight reviews saved when eight cells produced nothing](https://github.com/nedsnodes/nedsnodes/issues/164) — the grid's per-cell success and failure reporting; this issue starts where that one ends.
+- GHI [Adversarial whole-package review — two runtimes, blind first passes, threaded Q&A (doc: docs/issues/8-adversarial-package-review.md)](https://github.com/nedsnodes/nedsnodes/issues/8) — the one-off two-reviewer synthesis of the founding review, the nearest precedent on record.
+- GHI [use-codex skill: one place that says how this project invokes Codex headlessly](https://github.com/nedsnodes/nedsnodes/issues/165) — the use-codex skill; the Codex cells this merge reads are launched the way that skill will describe.

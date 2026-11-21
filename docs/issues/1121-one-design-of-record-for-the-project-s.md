@@ -1,5 +1,5 @@
 ---
-issue: "[One design of record for the project's git checkouts, worktrees and branch rules](https://github.com/nedschorus/nedschorus/issues/1121)"
+issue: "[One design of record for the project's git checkouts, worktrees and branch rules](https://github.com/nedsnodes/nedsnodes/issues/1121)"
 ---
 
 # One design of record for the project's git checkouts, worktrees and branch rules
@@ -12,7 +12,7 @@ How this project keeps its git checkouts current with main, and what an agent ma
 - `scripts/checkout-freshness-catch-up.py`, a Stop hook, rebases a never-pushed branch, moves a detached checkout with no work of its own forward, fast-forwards the machine's reference checkout (the clone's main worktree, kept on the main branch, such as `/Users/el/Projects/nedsnodes` on the Mac), and tells the agent what changed; its rules live in its docstring.
 - `launch_time_git_sync` in `nn-systems/handoff/handoff-supervisor.py`, formerly `sync_working_branch_with_main`, fast-forwards a seat's checkout at launch; no document describes it.
 - The git hooks, `scripts/branch-conflict-check.py`, `.claude/guard-hooks/force-push-with-open-pull-request-guard-hook.py`, `scripts/obsolete-file-edit-warning-hook.py`, `.claude/guard-hooks/session-location-write-guard.py`, `scripts/clean-worktrees.py` and `scripts/merge-gate.sh` each enforce one piece.
-- Closed GHIs record past rulings: [checkout-freshness catch-up merges main into a branch whose head is frozen under review](https://github.com/nedschorus/nedschorus/issues/324) and [The checkout-freshness hook treats a new branch cut at a pull request's pushed head as never pushed, and rebases it](https://github.com/nedschorus/nedschorus/issues/913).
+- Closed GHIs record past rulings: [checkout-freshness catch-up merges main into a branch whose head is frozen under review](https://github.com/nedsnodes/nedsnodes/issues/324) and [The checkout-freshness hook treats a new branch cut at a pull request's pushed head as never pushed, and rebases it](https://github.com/nedsnodes/nedsnodes/issues/913).
 
 Because nothing states the whole, the pieces disagree, and agents act on the disagreement. On 2026-10-08 the Mac's MD-skills seat checkout sat 86 commits behind main on a detached HEAD, a shape `docs/agents/seat-first-prompt.md` says should never occur, and the agent ran a skill whose text predated a rule the user had approved. A reading of every place on 2026-10-09 found sixteen further disagreements, which the design lists in full; among them:
 
@@ -38,10 +38,10 @@ The design gets a fast read and a full cold read, then an approval-walk with the
 
 ## Related GHIs
 
-- [pull-request skill: how a change reaches main — durable-file disposition, the description, and topic-branch creation](https://github.com/nedschorus/nedschorus/issues/236) defines how an agent creates a topic branch from its seat-branch. The design adopts that procedure, or puts any conflict with it to the user; the skill itself stays with that GHI.
-- [Topic-branch base enforcement: a branch-creation script and a gh pr create check that refuses an undeclared carry of another PR's commits](https://github.com/nedschorus/nedschorus/issues/238) keeps its unbuilt script and check; the design cites them.
-- [Move mechanical agent chores into programs and hooks](https://github.com/nedschorus/nedschorus/issues/1036): its rows 1 (the pre-push test run), 2 (the supervisor's rebase instruction), 9 (the first prompt's branch checks) and 10 (announcing a push) concern these rules; this design takes them over, and that GHI-MD is edited to point here.
-- [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956): any message the design changes follows its rules for messages.
+- [pull-request skill: how a change reaches main — durable-file disposition, the description, and topic-branch creation](https://github.com/nedsnodes/nedsnodes/issues/236) defines how an agent creates a topic branch from its seat-branch. The design adopts that procedure, or puts any conflict with it to the user; the skill itself stays with that GHI.
+- [Topic-branch base enforcement: a branch-creation script and a gh pr create check that refuses an undeclared carry of another PR's commits](https://github.com/nedsnodes/nedsnodes/issues/238) keeps its unbuilt script and check; the design cites them.
+- [Move mechanical agent chores into programs and hooks](https://github.com/nedsnodes/nedsnodes/issues/1036): its rows 1 (the pre-push test run), 2 (the supervisor's rebase instruction), 9 (the first prompt's branch checks) and 10 (announcing a push) concern these rules; this design takes them over, and that GHI-MD is edited to point here.
+- [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedsnodes/nedsnodes/issues/956): any message the design changes follows its rules for messages.
 
 ## Next action
 

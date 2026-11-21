@@ -1,5 +1,5 @@
 ---
-issue: "[update-glossary skill: the editor rules for the nedschorus glossary, taken off the page (user-asked 2026-09-06)](https://github.com/nedschorus/nedschorus/issues/262)"
+issue: "[update-glossary skill: the editor rules for the nedschorus glossary, taken off the page (user-asked 2026-09-06)](https://github.com/nedsnodes/nedsnodes/issues/262)"
 kind: design
 ---
 
@@ -7,7 +7,7 @@ kind: design
 
 ## Why
 
-The project vocabulary glossary, `docs/nedsnodes-wiki/nedsnodes-glossary.md` (landed as PR [Land the project vocabulary glossary as the wiki's first page, and point CLAUDE.md at it](https://github.com/nedschorus/nedschorus/pull/258) on 2026-09-06; GHI [Project vocabulary wiki page: define this project's own terms so a zero-context reader can resolve them](https://github.com/nedschorus/nedschorus/issues/213)), is the user's own text and every agent reads it through CLAUDE.md's pointer. Its purpose paragraph carried instructions to whoever edits the page: no links, which terms qualify, which skills to list. In the cold-read triage walk of 2026-09-06 the user ruled those sentences off the page: "they are intended for the writer or editor of vocab, not for the readers of the vocab. So I guess we need a minimal add-vocab skill for these how to add vocab instructions", and then: "sounds like we need a GHI for the update-glossary skill." This issue is that GHI.
+The project vocabulary glossary, `docs/nedsnodes-wiki/nedsnodes-glossary.md` (landed as PR [Land the project vocabulary glossary as the wiki's first page, and point CLAUDE.md at it](https://github.com/nedsnodes/nedsnodes/pull/258) on 2026-09-06; GHI [Project vocabulary wiki page: define this project's own terms so a zero-context reader can resolve them](https://github.com/nedsnodes/nedsnodes/issues/213)), is the user's own text and every agent reads it through CLAUDE.md's pointer. Its purpose paragraph carried instructions to whoever edits the page: no links, which terms qualify, which skills to list. In the cold-read triage walk of 2026-09-06 the user ruled those sentences off the page: "they are intended for the writer or editor of vocab, not for the readers of the vocab. So I guess we need a minimal add-vocab skill for these how to add vocab instructions", and then: "sounds like we need a GHI for the update-glossary skill." This issue is that GHI.
 
 ## What the skill does
 
@@ -25,7 +25,7 @@ A minimal skill, loaded when an agent is about to add, change or remove an entry
 
 ## A skill, not agent-instructions
 
-update-glossary stays a skill. On 2026-09-06 the user decided that instructions are a skill only when they are used outside the state machine, such as at his request, and that the instructions a state of the state machine launches its agent with are that state's agent-instructions, not a skill; GHI [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18) quotes those 2026-09-06 words in its section "2026-10-30: write-test-plan is a skill", where that issue applies the rule. The state machine is design-to-main's. These editor rules are used outside it, by whichever agent is about to change the glossary, usually because the user asked for the change. No state of design-to-main changes the glossary: neither `docs/design-to-main/design-to-main-state-machine.system.design.md` nor any of its queued agent-instructions, `docs/agents/queue/design-to-main-*`, tells an agent to edit it. And the user asked for these rules as a skill, in the words quoted under Why.
+update-glossary stays a skill. On 2026-09-06 the user decided that instructions are a skill only when they are used outside the state machine, such as at his request, and that the instructions a state of the state machine launches its agent with are that state's agent-instructions, not a skill; GHI [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedsnodes/nedsnodes/issues/18) quotes those 2026-09-06 words in its section "2026-10-30: write-test-plan is a skill", where that issue applies the rule. The state machine is design-to-main's. These editor rules are used outside it, by whichever agent is about to change the glossary, usually because the user asked for the change. No state of design-to-main changes the glossary: neither `docs/design-to-main/design-to-main-state-machine.system.design.md` nor any of its queued agent-instructions, `docs/agents/queue/design-to-main-*`, tells an agent to edit it. And the user asked for these rules as a skill, in the words quoted under Why.
 
 ## Name
 
@@ -33,7 +33,7 @@ Settled: **update-glossary** (user-ruled 2026-09-06: "update-glossary is good").
 
 ## What exists
 
-Skills on main: cold-read, ghi-write, handoff, walk-me-through. Related: GHI [Four small skills the user named on the vocabulary page: /save, /push, /save-MD, /save-MD-as-draft (name open)](https://github.com/nedschorus/nedschorus/issues/256) (four other small skills the user named on the same page), GHI [Project vocabulary wiki page: define this project's own terms so a zero-context reader can resolve them](https://github.com/nedschorus/nedschorus/issues/213) (the page). Search receipt: `gh issue list --repo nedschorus/nedschorus --state all --limit 100 --search "<terms>"` for "vocabulary skill", "glossary skill", "update-glossary", "add-vocab", 2026-09-06: no issue names this skill.
+Skills on main: cold-read, ghi-write, handoff, walk-me-through. Related: GHI [Four small skills the user named on the vocabulary page: /save, /push, /save-MD, /save-MD-as-draft (name open)](https://github.com/nedsnodes/nedsnodes/issues/256) (four other small skills the user named on the same page), GHI [Project vocabulary wiki page: define this project's own terms so a zero-context reader can resolve them](https://github.com/nedsnodes/nedsnodes/issues/213) (the page). Search receipt: `gh issue list --repo nedschorus/nedschorus --state all --limit 100 --search "<terms>"` for "vocabulary skill", "glossary skill", "update-glossary", "add-vocab", 2026-09-06: no issue names this skill.
 
 ## Next action
 

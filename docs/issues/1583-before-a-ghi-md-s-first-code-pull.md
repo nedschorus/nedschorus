@@ -1,5 +1,5 @@
 ---
-issue: "[Before a GHI-MD's first code pull request, the agent sorts every line of its deferred-decisions with the user, using fixed hashtag markers](https://github.com/nedschorus/nedschorus/issues/1583)"
+issue: "[Before a GHI-MD's first code pull request, the agent sorts every line of its deferred-decisions with the user, using fixed hashtag markers](https://github.com/nedsnodes/nedsnodes/issues/1583)"
 kind: design
 ---
 
@@ -34,6 +34,6 @@ Find where the rule belongs, among the places an agent reads or meets before it 
 
 ## Prior work
 
-- GHI [Build the design-to-main state machine: the Python machine, its per-state agent-instructions, and the nine items the design defers to the build](https://github.com/nedschorus/nedschorus/issues/282): design-to-main's version of the same sort lands there, by the proposal `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/prime-intellect/design-to-main-deferred-decisions-proposal-2026-10-15.md`.
-- GHI [Review the whole project for fixed markers that would be clearer as hashtags](https://github.com/nedschorus/nedschorus/issues/1518): the project-wide hashtag review; its rulings may rename these markers, and this GHI follows them.
+- GHI [Build the design-to-main state machine: the Python machine, its per-state agent-instructions, and the nine items the design defers to the build](https://github.com/nedsnodes/nedsnodes/issues/282): design-to-main's version of the same sort lands there, by the proposal `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/prime-intellect/design-to-main-deferred-decisions-proposal-2026-10-15.md`.
+- GHI [Review the whole project for fixed markers that would be clearer as hashtags](https://github.com/nedsnodes/nedsnodes/issues/1518): the project-wide hashtag review; its rulings may rename these markers, and this GHI follows them.
 - The best-practice research behind the buckets and markers: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/prime-intellect/deferred-decision-categories-best-practice-research-2026-10-15/`.

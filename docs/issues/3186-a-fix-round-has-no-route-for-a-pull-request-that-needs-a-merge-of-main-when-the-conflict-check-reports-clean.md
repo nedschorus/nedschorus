@@ -1,5 +1,5 @@
 ---
-issue: "[A fix-round has no route for a pull request that needs a merge of main when the conflict check reports clean](https://github.com/nedschorus/nedschorus/issues/3186)"
+issue: "[A fix-round has no route for a pull request that needs a merge of main when the conflict check reports clean](https://github.com/nedsnodes/nedsnodes/issues/3186)"
 ---
 
 # A fix-round has no route for a pull request that needs a merge of main when the conflict check reports clean

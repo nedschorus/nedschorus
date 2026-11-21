@@ -1,5 +1,5 @@
 ---
-issue: "[Check each new task against the open issues when it is filed, and add a match to that issue's GHI-MD](https://github.com/nedschorus/nedschorus/issues/1432)"
+issue: "[Check each new task against the open issues when it is filed, and add a match to that issue's GHI-MD](https://github.com/nedsnodes/nedsnodes/issues/1432)"
 kind: design
 ---
 
@@ -17,11 +17,11 @@ The background question queues its answer, and the answer reaches the agent with
 
 For each open issue the answer names, the agent reads its GHI-MD. If the GHI-MD covers the same matter, not merely the same area, as the ghi-write skill uses the words, and does not already record the task, the agent adds one line for the task with edit-GHI under the heading "Provisional additions (not yet vetted by the user)", adding the heading at the end when it is missing, naming the agent-seat and the date; then, with `TaskUpdate`, it changes the task's subject to "Work on GHI <title> (<url>): <the old subject>". When the answer names no issue, or ghi-guide-agent says the question is not about issues, the task stays as it is. When ghi-guide-agent returns a question about one of the user's rulings, the agent puts that question to the user.
 
-When the question fails or times out, the background question records the task's agent-seat and id, so that the eighth job of GHI [Daily maintenance in one daily step, starting with a daily check of every wiki page](https://github.com/nedschorus/nedschorus/issues/1058), being added to that GHI-MD now, checks it; that job also checks a task filed before the issue it belongs to existed.
+When the question fails or times out, the background question records the task's agent-seat and id, so that the eighth job of GHI [Daily maintenance in one daily step, starting with a daily check of every wiki page](https://github.com/nedsnodes/nedsnodes/issues/1058), being added to that GHI-MD now, checks it; that job also checks a task filed before the issue it belongs to existed.
 
 ## What exists today
 
-No hook on main reads a `TaskCreate` call: `git grep -n -i taskcreate origin/main -- '*.py' '.claude/*.json'` finds none. ghi-guide-agent found no open issue for this check; the nearest is GHI [Move mechanical agent chores into programs and hooks](https://github.com/nedschorus/nedschorus/issues/1036), whose eleven chores do not include it. In the sweep, `scripts/ghi-issue-write.py edit` replaced whole GHI-MDs with editors' older copies and deleted 4 lines other agent-seats had added; agent-seat reboot-test is building the tool's refusal of such an edit. This hook makes such edits frequent, so it waits for that fix.
+No hook on main reads a `TaskCreate` call: `git grep -n -i taskcreate origin/main -- '*.py' '.claude/*.json'` finds none. ghi-guide-agent found no open issue for this check; the nearest is GHI [Move mechanical agent chores into programs and hooks](https://github.com/nedsnodes/nedsnodes/issues/1036), whose eleven chores do not include it. In the sweep, `scripts/ghi-issue-write.py edit` replaced whole GHI-MDs with editors' older copies and deleted 4 lines other agent-seats had added; agent-seat reboot-test is building the tool's refusal of such an edit. This hook makes such edits frequent, so it waits for that fix.
 
 ## Deferred-decisions
 

@@ -1,5 +1,5 @@
 ---
-issue: "[A wiki page of the project's goals and philosophies: how agents work with the user, and how they build and finish work](https://github.com/nedschorus/nedschorus/issues/2411)"
+issue: "[A wiki page of the project's goals and philosophies: how agents work with the user, and how they build and finish work](https://github.com/nedsnodes/nedsnodes/issues/2411)"
 ---
 
 # A wiki page of the project's goals and philosophies: how agents work with the user, and how they build and finish work
@@ -14,7 +14,7 @@ The section "Standing decisions" in `docs/nedsnodes-wiki/nedsnodes-ai-native-sof
 
 ## The principles
 
-The page pending approval, `docs/nedsnodes-wiki/queue/nedsnodes-goals-and-philosophy-founding-statement-and-agent-working-principles.md`, which reached the wiki queue on main through PR [Wiki queue: the project's goals-and-philosophies page for GHI 2411, pending the user's approval](https://github.com/nedschorus/nedschorus/pull/2513), holds the fourteen principles below and two more drawn from the user's founding statement of 2026-11-03, sixteen in all. The page numbers them differently: the list's principles 1 to 11 are the page's 6 to 16; the list's 13, 12 and 14 are the page's 1, 2 and 3; the page's 4 and 5 are the two from the founding statement. Each principle cites the user-rulings it comes from, which the page's section Sources quotes, gathered from the walk-minutes and his typed messages.
+The page pending approval, `docs/nedsnodes-wiki/queue/nedsnodes-goals-and-philosophy-founding-statement-and-agent-working-principles.md`, which reached the wiki queue on main through PR [Wiki queue: the project's goals-and-philosophies page for GHI 2411, pending the user's approval](https://github.com/nedsnodes/nedsnodes/pull/2513), holds the fourteen principles below and two more drawn from the user's founding statement of 2026-11-03, sixteen in all. The page numbers them differently: the list's principles 1 to 11 are the page's 6 to 16; the list's 13, 12 and 14 are the page's 1, 2 and 3; the page's 4 and 5 are the two from the founding statement. Each principle cites the user-rulings it comes from, which the page's section Sources quotes, gathered from the walk-minutes and his typed messages.
 
 How agents work with the user:
 
@@ -54,11 +54,11 @@ The user also said, on line 36, that the principles of 2026-11-03 belong in `CLA
 
 ## Related work, not duplicates
 
-- GHI [A wiki page on when a step given to an agent should become code and when it should stay with the model, with before-and-after examples of code-prompt-code from this project](https://github.com/nedschorus/nedschorus/issues/2127) plans the page that tells an agent, step by step, which steps go to code. This page states principle 13 and links to that page; it does not teach the decision.
-- GHI [Pull requests, their reviews and approval-walks held as one state machine over one schema and one store, so code tracks their state and agents are handed only the steps that need judgment](https://github.com/nedschorus/nedschorus/issues/2505) applies principle 13 to pull requests, their reviews and approval-walks, and quotes the same words of the user. Its GHI-MD links here for the principle.
-- GHI [code-prompt-code (CPC) design philosophy wiki page: systems as state machines whose nodes are code or prompts](https://github.com/nedschorus/nedschorus/issues/237), closed as not planned on 2026-09-21, asked for a page on the code-prompt-code design idea, which the objective page and the glossary carry.
-- GHI [Move mechanical agent chores into programs and hooks](https://github.com/nedschorus/nedschorus/issues/1036) lists chores to move into programs, an application of principle 13.
-- GHI [Save each lesson where agents meet it at the moment it applies, and decide whether a store that recalls lessons by subject is worth building](https://github.com/nedschorus/nedschorus/issues/1349) is about where single lessons live, not about one collected page.
+- GHI [A wiki page on when a step given to an agent should become code and when it should stay with the model, with before-and-after examples of code-prompt-code from this project](https://github.com/nedsnodes/nedsnodes/issues/2127) plans the page that tells an agent, step by step, which steps go to code. This page states principle 13 and links to that page; it does not teach the decision.
+- GHI [Pull requests, their reviews and approval-walks held as one state machine over one schema and one store, so code tracks their state and agents are handed only the steps that need judgment](https://github.com/nedsnodes/nedsnodes/issues/2505) applies principle 13 to pull requests, their reviews and approval-walks, and quotes the same words of the user. Its GHI-MD links here for the principle.
+- GHI [code-prompt-code (CPC) design philosophy wiki page: systems as state machines whose nodes are code or prompts](https://github.com/nedsnodes/nedsnodes/issues/237), closed as not planned on 2026-09-21, asked for a page on the code-prompt-code design idea, which the objective page and the glossary carry.
+- GHI [Move mechanical agent chores into programs and hooks](https://github.com/nedsnodes/nedsnodes/issues/1036) lists chores to move into programs, an application of principle 13.
+- GHI [Save each lesson where agents meet it at the moment it applies, and decide whether a store that recalls lessons by subject is worth building](https://github.com/nedsnodes/nedsnodes/issues/1349) is about where single lessons live, not about one collected page.
 
 ## Next action
 

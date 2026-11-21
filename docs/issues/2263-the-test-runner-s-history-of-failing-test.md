@@ -1,5 +1,5 @@
 ---
-issue: "[The test runner's history of failing test cases says whether each failure was a caught defect or a flaky failure, keeps a retried attempt's output, and names the pull request](https://github.com/nedschorus/nedschorus/issues/2263)"
+issue: "[The test runner's history of failing test cases says whether each failure was a caught defect or a flaky failure, keeps a retried attempt's output, and names the pull request](https://github.com/nedsnodes/nedsnodes/issues/2263)"
 ---
 
 # The test runner's history of failing test cases says whether each failure was a caught defect or a flaky failure, keeps a retried attempt's output, and names the pull request
@@ -20,13 +20,13 @@ This GHI is a placeholder: no design exists yet. The Outcome section of `docs/is
 
 ## Why
 
-The user decided all three on 2026-10-14, as part of point 4 of the approval-walk ned-box-head-test-runs-in-isolated-test-environments-2026-10-14, recorded in GHI [Each test suite on ned-box runs in its own throwaway test environment, and suites start by free CPU and memory instead of waiting for a machine-wide lock](https://github.com/nedschorus/nedschorus/issues/1374), whose GHI-MD is `docs/issues/1374-each-test-suite-on-ned-box-runs-in.md`. Point 4 reads: "A history of every failing test case, with its pull request, its commit, and whether a code change fixed it (a caught defect) or it passed on rerun (a flaky failure); a retry keeps the failed attempt's output." The build of that GHI recorded the history without these three, and that GHI closes with this GHI carrying them.
+The user decided all three on 2026-10-14, as part of point 4 of the approval-walk ned-box-head-test-runs-in-isolated-test-environments-2026-10-14, recorded in GHI [Each test suite on ned-box runs in its own throwaway test environment, and suites start by free CPU and memory instead of waiting for a machine-wide lock](https://github.com/nedsnodes/nedsnodes/issues/1374), whose GHI-MD is `docs/issues/1374-each-test-suite-on-ned-box-runs-in.md`. Point 4 reads: "A history of every failing test case, with its pull request, its commit, and whether a code change fixed it (a caught defect) or it passed on rerun (a flaky failure); a retry keeps the failed attempt's output." The build of that GHI recorded the history without these three, and that GHI closes with this GHI carrying them.
 
-A history that cannot tell a caught defect from a flaky failure cannot show which test cases fail for reasons outside the code, such as the failures on a busy machine that GHI [#1830](https://github.com/nedschorus/nedschorus/issues/1830) describes.
+A history that cannot tell a caught defect from a flaky failure cannot show which test cases fail for reasons outside the code, such as the failures on a busy machine that GHI [#1830](https://github.com/nedsnodes/nedsnodes/issues/1830) describes.
 
 ## Related
 
-On 2026-10-30, `scripts/ghi-guide-agent-ask.py --include-closed`, asked for a GHI on these three additions, found none. The nearest are on other matters: GHI [#1206](https://github.com/nedschorus/nedschorus/issues/1206), on what the daily full test runs report to the user; GHI [#1830](https://github.com/nedschorus/nedschorus/issues/1830), on test cases timed against a wall-clock limit that fail on a busy machine; and GHI [#2135](https://github.com/nedschorus/nedschorus/issues/2135), on mutation testing.
+On 2026-10-30, `scripts/ghi-guide-agent-ask.py --include-closed`, asked for a GHI on these three additions, found none. The nearest are on other matters: GHI [#1206](https://github.com/nedsnodes/nedsnodes/issues/1206), on what the daily full test runs report to the user; GHI [#1830](https://github.com/nedsnodes/nedsnodes/issues/1830), on test cases timed against a wall-clock limit that fail on a busy machine; and GHI [#2135](https://github.com/nedsnodes/nedsnodes/issues/2135), on mutation testing.
 
 ## Next action
 

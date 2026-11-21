@@ -1,5 +1,5 @@
 ---
-issue: "[Hooks that tell the agent something on stderr with exit 1 are read only by the user, because Claude Code never gives that stderr to the model](https://github.com/nedschorus/nedschorus/issues/1796)"
+issue: "[Hooks that tell the agent something on stderr with exit 1 are read only by the user, because Claude Code never gives that stderr to the model](https://github.com/nedsnodes/nedsnodes/issues/1796)"
 ---
 
 # Hooks that tell the agent something on stderr with exit 1 are read only by the user, because Claude Code never gives that stderr to the model
@@ -11,7 +11,7 @@ Claude Code 2.1.306, on ned-box, in a scratch directory outside the repository: 
 - **Exit 1.** The transcript records the hook's output as a `hook_non_blocking_error` record whose `stderr` holds all three lines. The `api-request` record sent after the hook ran (line 31 of the transcript) contains no `MARK` text at all. The model answered: "MARK-LINE: NONE. No hook output, error or other text in my context mentions it." Transcript: `nedlern@ned-box:/home/nedlern/.claude/projects/-home-nedlern--cache-merge-lane-pull-request-reviewer-scratch-directories-rv1795-r1-probe/00f861d4-7301-4c76-9c52-a9753f4f3827.jsonl`.
 - **Exit 2, as a control.** The same hook exiting 2 put all three lines in the model's context, as `PostToolUse:Write hook blocking error from command: ...`, and the model quoted all three. Transcript: the one `.jsonl` file under `nedlern@ned-box:/home/nedlern/.claude/projects/-home-nedlern--cache-merge-lane-pull-request-reviewer-scratch-directories-rv1795-r1-probe2/`.
 
-The pull request reviewer `mac-claude` ran these probes for review 5599415547 on [pull request 1795](https://github.com/nedschorus/nedschorus/pull/1795); read the review with `gh api repos/nedschorus/nedschorus/pulls/1795/reviews --jq '.[] | select(.id==5599415547) | .body'` and its inline comment with `gh api repos/nedschorus/nedschorus/pulls/1795/comments --jq '.[] | select(.pull_request_review_id==5599415547) | .body'`.
+The pull request reviewer `mac-claude` ran these probes for review 5599415547 on [pull request 1795](https://github.com/nedsnodes/nedsnodes/pull/1795); read the review with `gh api repos/nedschorus/nedschorus/pulls/1795/reviews --jq '.[] | select(.id==5599415547) | .body'` and its inline comment with `gh api repos/nedschorus/nedschorus/pulls/1795/comments --jq '.[] | select(.pull_request_review_id==5599415547) | .body'`.
 
 Earlier probes on Claude Code 2.1.294 and 2.1.295 agree. Their transcripts are under `nedlern@ned-box:/home/nedlern/.claude/projects/`, in the directories whose names start with `-tmp-claude-1000--home-nedlern-agents-merge-lane-2-e1187575-` and end with `rv1107r2-probe2`, `rv1107r3-exp`, `rv1107r3-exp2`, `rv1107-stopprobe` and `rv1109-stopprobe`.
 
@@ -34,7 +34,7 @@ Each hook listed below writes on stderr, with exit 1, either an instruction the 
 
 Line numbers are at origin/main commit `1846c5282`, and each cites the line that starts the stderr text. Every hook below is registered in `.claude/settings.json`.
 
-[Pull request 1795](https://github.com/nedschorus/nedschorus/pull/1795), open when this GHI was filed, fixes the git-failure reports of `scripts/file-name-collision-warning-hook.py` and `scripts/obsolete-file-edit-warning-hook.py`: those reports move to exit 0 with JSON `hookSpecificOutput.additionalContext`. At `1846c5282` both reports still print to stderr and exit 1, at `scripts/file-name-collision-warning-hook.py:162` and `scripts/obsolete-file-edit-warning-hook.py:528`; they are left out of the list below only because pull request 1795 fixes them. If pull request 1795 closes without merging, add them back. The crash handler of `scripts/obsolete-file-edit-warning-hook.py` still prints to stderr and exits 1 after pull request 1795, so the crash handler is listed.
+[Pull request 1795](https://github.com/nedsnodes/nedsnodes/pull/1795), open when this GHI was filed, fixes the git-failure reports of `scripts/file-name-collision-warning-hook.py` and `scripts/obsolete-file-edit-warning-hook.py`: those reports move to exit 0 with JSON `hookSpecificOutput.additionalContext`. At `1846c5282` both reports still print to stderr and exit 1, at `scripts/file-name-collision-warning-hook.py:162` and `scripts/obsolete-file-edit-warning-hook.py:528`; they are left out of the list below only because pull request 1795 fixes them. If pull request 1795 closes without merging, add them back. The crash handler of `scripts/obsolete-file-edit-warning-hook.py` still prints to stderr and exits 1 after pull request 1795, so the crash handler is listed.
 
 ### Instructions the agent is meant to follow
 
@@ -65,8 +65,8 @@ How the list was made: for every program registered in `.claude/settings.json` a
 
 ## Related, and not the same work
 
-- GHI [Design the project's Claude Code hooks: requirements drawn from the existing hooks, then keep, fix, merge, rewrite or remove each one](https://github.com/nedschorus/nedschorus/issues/1790) does not mention which channel a hook's output reaches.
-- GHI [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedschorus/nedschorus/issues/956) is about the wording of such messages, not about whether they reach the agent.
+- GHI [Design the project's Claude Code hooks: requirements drawn from the existing hooks, then keep, fix, merge, rewrite or remove each one](https://github.com/nedsnodes/nedsnodes/issues/1790) does not mention which channel a hook's output reaches.
+- GHI [Every refusal and warning a program hands an agent says why and what to do instead](https://github.com/nedsnodes/nedsnodes/issues/956) is about the wording of such messages, not about whether they reach the agent.
 - reboot-test's approval-walk on exit codes, whose walk-document is `nedlern@ned-box:/home/nedlern/agents/reboot-test/docs/walk/exit-code-convention-wiki-page-2026-10-20.md` (the 17-item version in reboot-test's agent-home; the copy in the log-store is older and has 11 items), proposes in item 6 that "When the agent's next act depends on the check having run, as with a guard that could not check a command, the hook exits 0 and tells the agent in `additionalContext`", and in item 15 that a hook tells the agent things through `additionalContext` at exit 0 and, when it breaks, prints the cause on stderr and exits 1. The user has not decided items 6 and 15: the walk-minutes, `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/exit-code-convention-wiki-page-2026-10-20-minutes.md`, record items 1 and 2 approved and item 3 as the next to present. This GHI does not decide those items.
 
 ## Next action

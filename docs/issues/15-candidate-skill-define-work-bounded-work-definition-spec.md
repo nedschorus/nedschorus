@@ -1,5 +1,5 @@
 ---
-issue: "[Candidate skill: define-work — bounded work-definition spec before ambiguous or substantial work](https://github.com/nedschorus/nedschorus/issues/15)"
+issue: "[Candidate skill: define-work — bounded work-definition spec before ambiguous or substantial work](https://github.com/nedsnodes/nedsnodes/issues/15)"
 ---
 
 # Candidate skill: define-work — bounded work-definition spec before ambiguous or substantial work

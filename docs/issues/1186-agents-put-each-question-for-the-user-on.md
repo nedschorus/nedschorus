@@ -1,11 +1,11 @@
 ---
-issue: "[Agents put each question for the user on a page that pops up on his Mac, and hold the dialog with him there](https://github.com/nedschorus/nedschorus/issues/1186)"
+issue: "[Agents put each question for the user on a page that pops up on his Mac, and hold the dialog with him there](https://github.com/nedsnodes/nedsnodes/issues/1186)"
 kind: design
 ---
 
 # Agents put each question for the user on a page that pops up on his Mac, and hold the dialog with him there
 
-This design is deferred, with no date. The user ruled on 2026-10-19, as item 1 of the approval-walk reboot-test-questions-owed-to-the-user-2026-10-19 in the reboot-test agent-seat, that "we can defer the pop-up thing, perhaps indefinitely", because he now works from an iPad through Remote Control rather than at the Mac: "I've started using remote control a lot, and so I'm not using my Mac because I'm on an iPad." In the same ruling, the daily maintenance jobs of GHI [Daily maintenance in one daily step, starting with a daily check of every wiki page](https://github.com/nedschorus/nedschorus/issues/1058) run in interactive agent-sessions of their own, which he reaches through Remote Control, not on the page this design describes. The walk-minutes are at `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/reboot-test-questions-owed-to-the-user-2026-10-19-minutes.md`. Nothing below is to be built unless he takes it up again; until then, every question for him stays in the agent-seat's window.
+This design is deferred, with no date. The user ruled on 2026-10-19, as item 1 of the approval-walk reboot-test-questions-owed-to-the-user-2026-10-19 in the reboot-test agent-seat, that "we can defer the pop-up thing, perhaps indefinitely", because he now works from an iPad through Remote Control rather than at the Mac: "I've started using remote control a lot, and so I'm not using my Mac because I'm on an iPad." In the same ruling, the daily maintenance jobs of GHI [Daily maintenance in one daily step, starting with a daily check of every wiki page](https://github.com/nedsnodes/nedsnodes/issues/1058) run in interactive agent-sessions of their own, which he reaches through Remote Control, not on the page this design describes. The walk-minutes are at `nedlern@ned-box:/home/nedlern/nedsnodes-logs/walk/reboot-test-questions-owed-to-the-user-2026-10-19-minutes.md`. Nothing below is to be built unless he takes it up again; until then, every question for him stays in the agent-seat's window.
 
 This is a design. An agent-seat that needs the user's decision puts the question, with its context, on a private Claude artifact page. A monitor on the Mac opens the page in his browser at once. He answers there with Y, N, D or NVM, or writes to the agent-seat, which replies on the same page until the question is decided. A watcher on ned-box tells the asking agent-seat within seconds when he writes. At first only a few questions go to a page: those that keep a pull request from merging, or that hold up work the agent-seat cannot do another way, such as a pull request it cannot open until he chooses between two designs. Every other question stays in the agent-seat's window, unless he asks the agent-seat to put it on a page, which he can do for any question at any time. Nothing is built yet except a trial page; the next action, if he takes the design up again, is build-slice 1.
 
@@ -13,7 +13,7 @@ This is a design. An agent-seat that needs the user's decision puts the question
 
 An agent-seat that needs the user's answer asks in its own terminal window and waits, and nothing tells him the question is there:
 
-- **Questions asked in one window get missed.** The pull request [The walk and seat shippers judge a shipment by what the store holds](https://github.com/nedschorus/nedschorus/pull/918) waited 20 hours because its author asked him to approve one paragraph in one agent-seat's window alone; GHI [Wake idle agent-seats that have unfinished work, after a usage limit resets and after a change request goes unanswered](https://github.com/nedschorus/nedschorus/issues/1152) records the stall.
+- **Questions asked in one window get missed.** The pull request [The walk and seat shippers judge a shipment by what the store holds](https://github.com/nedsnodes/nedsnodes/pull/918) waited 20 hours because its author asked him to approve one paragraph in one agent-seat's window alone; GHI [Wake idle agent-seats that have unfinished work, after a usage limit resets and after a change request goes unanswered](https://github.com/nedsnodes/nedsnodes/issues/1152) records the stall.
 - **Push notifications do not reach him.** Claude Code's PushNotification tool sends nothing while the agent-session's terminal counts as active; two test notifications on 2026-10-09 were both held back. His phone's notifications are off.
 - **He reads the last message first.** A question further up a window is missed, and a question repeated into every window while he is away clutters them.
 
@@ -68,9 +68,9 @@ Each build-slice is one pull request that leaves main working.
 ## Relations
 
 - Trial page: [Question Page Trial](https://claude.ai/artifact/6dLHXaM8yPxEe1Uc2HH3PY), where the page, the dialog, the database copy and the watcher's read were each shown to work on 2026-10-12; the read recipe is `nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/agent-instructions-editor/artifact-db-read-trial-2026-10-12/artifact_db_read.py`.
-- GHI [A small service on ned-box keeps one record of every agent-seat on both machines](https://github.com/nedschorus/nedschorus/issues/972): a web server on ned-box, which this design no longer needs.
-- GHI [Wake idle agent-seats that have unfinished work, after a usage limit resets and after a change request goes unanswered](https://github.com/nedschorus/nedschorus/issues/1152): wakes agent-seats; this design reaches the user.
-- GHI [Seat mailboxes across machines and runtimes](https://github.com/nedschorus/nedschorus/issues/749): messages between agent-seats.
+- GHI [A small service on ned-box keeps one record of every agent-seat on both machines](https://github.com/nedsnodes/nedsnodes/issues/972): a web server on ned-box, which this design no longer needs.
+- GHI [Wake idle agent-seats that have unfinished work, after a usage limit resets and after a change request goes unanswered](https://github.com/nedsnodes/nedsnodes/issues/1152): wakes agent-seats; this design reaches the user.
+- GHI [Seat mailboxes across machines and runtimes](https://github.com/nedsnodes/nedsnodes/issues/749): messages between agent-seats.
 - Search receipt: ghi-guide-agent on 2026-10-10, asked twice, open and closed GHIs: no GHI covers a single place for the user's questions.
 
 ## Provisional additions (not yet vetted by the user)

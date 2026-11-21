@@ -1,5 +1,5 @@
 ---
-issue: "[Restore and discard commands in `nn-systems/handoff/uncommitted-work-snapshots.py` replace the restore steps an agent runs by hand](https://github.com/nedschorus/nedschorus/issues/2539)"
+issue: "[Restore and discard commands in `nn-systems/handoff/uncommitted-work-snapshots.py` replace the restore steps an agent runs by hand](https://github.com/nedsnodes/nedsnodes/issues/2539)"
 ---
 
 # Restore and discard commands in `nn-systems/handoff/uncommitted-work-snapshots.py` replace the restore steps an agent runs by hand
@@ -28,7 +28,7 @@ Two commands on `nn-systems/handoff/uncommitted-work-snapshots.py`:
 
 Each list entry the handoff-supervisor prints then ends with the command to run: `discard <ref>` for a work-snapshot taken during an operation, and otherwise `restore <ref> --keep` followed by every changed file, so the agent's only edit is to delete the files it drops.
 
-`RESTORE_STEPS` then keeps only what needs judgment: reading the diff and the end of the dead agent-session's transcript to decide which files to keep, removing any mutant left by nc-mutation-testing from a kept file, in a commit of its own after `restore`, before the branch is pushed, choosing between `restore` and `discard`, and telling the user what failed when the command refuses or fails.
+`RESTORE_STEPS` then keeps only what needs judgment: reading the diff and the end of the dead agent-session's transcript to decide which files to keep, removing any mutant left by nn-mutation-testing from a kept file, in a commit of its own after `restore`, before the branch is pushed, choosing between `restore` and `discard`, and telling the user what failed when the command refuses or fails.
 
 Tests for both commands, the task and the cleaner's closing of it go in `nn-systems/handoff/tests/uncommitted-work-snapshots-test.py`, with each failure injected: a kept path not in the work-snapshot, an empty `--keep`, a branch or worktree directory that already exists, a branch that already holds the restore, an unset `CLAUDE_CODE_TASK_LIST_ID` or `GIT_AUTHOR_NAME`, a `git worktree add`, an owner file write, an apply and a commit that fail, a worktree or branch the undo cannot remove, a task that cannot be opened, a ref deletion that fails, a merge-time work-snapshot, and, for both commands, a ref that no longer exists; and, for the cleaner, a restore commit that reached `origin/main`, a branch deleted with `git branch -D`, a renamed branch, one deleted locally but still on origin, a fetch that fails, a task with no `Restore commit: ` line, a commit git cannot judge, and a task file that cannot be read or rewritten.
 
@@ -56,8 +56,8 @@ The user approved a change to the rule that closes the task on 2026-11-08, as it
 
 ## Next action
 
-[PR 2790](https://github.com/nedschorus/nedschorus/pull/2790), open on 2026-11-08, builds what the 2026-11-07 rulings decided: the two commands, the task `restore` opens and the code that closes it, their tests, the shortened `RESTORE_STEPS`, and the design's § 3. It merges with the rule the 2026-11-07 rulings set, under which a rebase still closes the task early, and is not changed for the 2026-11-08 ruling. After it merges, an agent-seat builds the 2026-11-08 ruling in a pull request of its own: the trailer in `restore`'s commit and in the task's description, the new rule in `scripts/clean-worktrees.py`, its tests, one of which rebases a restored branch and checks that the task stays open, and the approved sentences in the design's § 3.
+[PR 2790](https://github.com/nedsnodes/nedsnodes/pull/2790), open on 2026-11-08, builds what the 2026-11-07 rulings decided: the two commands, the task `restore` opens and the code that closes it, their tests, the shortened `RESTORE_STEPS`, and the design's § 3. It merges with the rule the 2026-11-07 rulings set, under which a rebase still closes the task early, and is not changed for the 2026-11-08 ruling. After it merges, an agent-seat builds the 2026-11-08 ruling in a pull request of its own: the trailer in `restore`'s commit and in the task's description, the new rule in `scripts/clean-worktrees.py`, its tests, one of which rebases a restored branch and checks that the task stays open, and the approved sentences in the design's § 3.
 
 ## Where this came from
 
-Item 2 of Question 4, "What should be code", in the cold-read-fast-read of the handoff-system's nc-architecture-overview draft on 2026-11-03: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/nedsnodes-handoff-architecture-overview-draft-2026-11-03/cold-read-fast-read.md`. Checked against main at 78716fd58 on 2026-11-03. ghi-guide-agent, asked with `--include-closed`, named no issue, open or closed, that covers it.
+Item 2 of Question 4, "What should be code", in the cold-read-fast-read of the handoff-system's nn-architecture-overview draft on 2026-11-03: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/nedsnodes-handoff-architecture-overview-draft-2026-11-03/cold-read-fast-read.md`. Checked against main at 78716fd58 on 2026-11-03. ghi-guide-agent, asked with `--include-closed`, named no issue, open or closed, that covers it.

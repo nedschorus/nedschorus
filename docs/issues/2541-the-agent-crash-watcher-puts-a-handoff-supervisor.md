@@ -1,5 +1,5 @@
 ---
-issue: "[The agent-crash-watcher puts a handoff-supervisor back on an unsupervised agent-seat whose session-handoff is waiting](https://github.com/nedschorus/nedschorus/issues/2541)"
+issue: "[The agent-crash-watcher puts a handoff-supervisor back on an unsupervised agent-seat whose session-handoff is waiting](https://github.com/nedsnodes/nedsnodes/issues/2541)"
 ---
 
 # The agent-crash-watcher puts a handoff-supervisor back on an unsupervised agent-seat whose session-handoff is waiting
@@ -12,7 +12,7 @@ The agent-crash-watcher, `nn-systems/handoff/handoff-agent-crash-watcher.py`, ru
 
 ## Why it matters
 
-The agent-session has done its part, a session-handoff, and the successor that would carry the work on never starts until a person notices. The project builds code-prompt-code: detecting a waiting session-handoff, no live handoff-supervisor lock and a running `claude`, then running one program, needs no judgment. The session-handoff writer, `nn-systems/handoff/handoff-write-and-check-supervisor.py`, cannot do it: the handoff-system's nc-architecture-overview, `docs/nedsnodes-wiki/nedsnodes-handoff-architecture-overview.md`, says under its invariants that the writer starts nothing, because the program that starts a successor must be the one that ends the agent-session. `resupervise-seat.py` keeps to that invariant, since it starts a handoff-supervisor, which ends the agent-session and starts the successor, as `recover-crashed-seats.py` does when the watcher runs it today.
+The agent-session has done its part, a session-handoff, and the successor that would carry the work on never starts until a person notices. The project builds code-prompt-code: detecting a waiting session-handoff, no live handoff-supervisor lock and a running `claude`, then running one program, needs no judgment. The session-handoff writer, `nn-systems/handoff/handoff-write-and-check-supervisor.py`, cannot do it: the handoff-system's nn-architecture-overview, `docs/nedsnodes-wiki/nedsnodes-handoff-architecture-overview.md`, says under its invariants that the writer starts nothing, because the program that starts a successor must be the one that ends the agent-session. `resupervise-seat.py` keeps to that invariant, since it starts a handoff-supervisor, which ends the agent-session and starts the successor, as `recover-crashed-seats.py` does when the watcher runs it today.
 
 ## What to build
 
@@ -50,8 +50,8 @@ The questions below came from a cold-read-fast-read of this GHI-MD on 2026-11-14
 
 ## Next action
 
-An agent-seat that takes up this GHI brings the user the first open question; once he approves, it builds the check in one pull request with its tests, reusing the supervisor check GHI [recover-crashed-seats.py: the six changes ruled 2026-09-02 — exit record, process-identity liveness, parking marker, verified restart, by-hand resume, window](https://github.com/nedschorus/nedschorus/issues/242) built rather than writing another.
+An agent-seat that takes up this GHI brings the user the first open question; once he approves, it builds the check in one pull request with its tests, reusing the supervisor check GHI [recover-crashed-seats.py: the six changes ruled 2026-09-02 — exit record, process-identity liveness, parking marker, verified restart, by-hand resume, window](https://github.com/nedsnodes/nedsnodes/issues/242) built rather than writing another.
 
 ## Where this came from
 
-Item 3 of Question 4, "What should be code", in the cold-read-fast-read of the handoff-system's nc-architecture-overview draft on 2026-11-03: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/nedsnodes-handoff-architecture-overview-draft-2026-11-03/cold-read-fast-read.md`. Checked against main at 78716fd58 on 2026-11-03. ghi-guide-agent, asked with `--include-closed`, named no issue that covers it; GHI [Crash recovery for seats that died without a handoff: find the last live transcript, resume it supervised](https://github.com/nedschorus/nedschorus/issues/120), closed, is about an agent-session that died without a session-handoff, a different case.
+Item 3 of Question 4, "What should be code", in the cold-read-fast-read of the handoff-system's nn-architecture-overview draft on 2026-11-03: `nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/nedsnodes-handoff-architecture-overview-draft-2026-11-03/cold-read-fast-read.md`. Checked against main at 78716fd58 on 2026-11-03. ghi-guide-agent, asked with `--include-closed`, named no issue that covers it; GHI [Crash recovery for seats that died without a handoff: find the last live transcript, resume it supervised](https://github.com/nedsnodes/nedsnodes/issues/120), closed, is about an agent-session that died without a session-handoff, a different case.

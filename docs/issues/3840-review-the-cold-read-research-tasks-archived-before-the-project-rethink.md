@@ -1,5 +1,5 @@
 ---
-issue: "[Review the cold-read-research tasks archived before the project rethink](https://github.com/nedschorus/nedschorus/issues/3840)"
+issue: "[Review the cold-read-research tasks archived before the project rethink](https://github.com/nedsnodes/nedsnodes/issues/3840)"
 ---
 
 # Review the cold-read-research tasks archived before the project rethink

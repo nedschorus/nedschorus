@@ -1,5 +1,5 @@
 ---
-issue: "[Reconcile the restater judge's binary critical mark with the defect list's severity weights, at the judge prompt's walk](https://github.com/nedschorus/nedschorus/issues/339)"
+issue: "[Reconcile the restater judge's binary critical mark with the defect list's severity weights, at the judge prompt's walk](https://github.com/nedsnodes/nedsnodes/issues/339)"
 ---
 
 # Reconcile the restater judge's binary critical mark with the defect list's severity weights, at the judge prompt's walk

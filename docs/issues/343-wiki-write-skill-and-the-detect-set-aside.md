@@ -1,5 +1,5 @@
 ---
-issue: "[wiki-write skill, and the detect-set-aside-ask hook that enforces it — checking the file, not the tool call](https://github.com/nedschorus/nedschorus/issues/343)"
+issue: "[wiki-write skill, and the detect-set-aside-ask hook that enforces it — checking the file, not the tool call](https://github.com/nedsnodes/nedsnodes/issues/343)"
 ---
 
 # wiki-write skill, and the detect-set-aside-ask hook that enforces it — checking the file, not the tool call
@@ -9,7 +9,7 @@ issue: "[wiki-write skill, and the detect-set-aside-ask hook that enforces it �
 Two parts, user-ruled 2026-09-13 in a walk.
 
 **1. A `wiki-write` skill** — the procedure for creating or revising a page under
-`docs/nedsnodes-wiki/` (renamed from `docs/wiki/` by PR [docs/wiki becomes docs/nedsnodes-wiki, so the Obsidian vault has a name](https://github.com/nedschorus/nedschorus/pull/347) on 2026-09-14, after this issue was filed; the search receipt below quotes the old name because that is what was searched). The name is the user's, chosen to match `ghi-write`. This is not a
+`docs/nedsnodes-wiki/` (renamed from `docs/wiki/` by PR [docs/wiki becomes docs/nedsnodes-wiki, so the Obsidian vault has a name](https://github.com/nedsnodes/nedsnodes/pull/347) on 2026-09-14, after this issue was filed; the search receipt below quotes the old name because that is what was searched). The name is the user's, chosen to match `ghi-write`. This is not a
 family of four skills: `ghi-write` already owns GitHub issues and queue files,
 so this covers the wiki page only.
 
@@ -22,10 +22,10 @@ reference openable.
 
 That machinery already paid once. A seat was about to write a testing-technique
 wiki page, ran `scripts/ghi-guide-agent-ask.py`, and found
-GHI [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18) already owned the
+GHI [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedsnodes/nedsnodes/issues/18) already owned the
 subject with a sharper formulation. Nothing was written.
 
-**2. The enforcement** is carried by GHI [Catch a guarded file changed without the user's approval, ask him, and keep every version](https://github.com/nedschorus/nedschorus/issues/1268), whose hook checks guarded files, the wiki included, after each tool call and asks the user instead of setting the change aside. The sections below on the Stop hook, setting aside and the open question are kept as the reasoning that led there; GHI 1268's GHI-MD settles the open question: the instruction-file guard stays as the check before the write.
+**2. The enforcement** is carried by GHI [Catch a guarded file changed without the user's approval, ask him, and keep every version](https://github.com/nedsnodes/nedsnodes/issues/1268), whose hook checks guarded files, the wiki included, after each tool call and asks the user instead of setting the change aside. The sections below on the Stop hook, setting aside and the open question are kept as the reasoning that led there; GHI 1268's GHI-MD settles the open question: the instruction-file guard stays as the check before the write.
 
 ## Why a Stop hook and not a PreToolUse block
 
@@ -78,9 +78,9 @@ user-ruled the same day: "I'd be very careful with skills."
 `gh issue list --state all --limit 60 --search "wiki page skill OR wiki-write OR
 docs/wiki"` and a second search for "ghi-write skill OR cold-read skill OR
 wiki-write OR instruction-file-guard OR walk approved", 2026-09-13. Nearest are
-GHI [overview-write skill: how an overview of a system is written and checked before it lands](https://github.com/nedschorus/nedschorus/issues/168) (overview-write),
-GHI [Project vocabulary wiki page: define this project's own terms so a zero-context reader can resolve them](https://github.com/nedschorus/nedschorus/issues/213) (vocabulary page) and
-GHI [Four small skills the user named on the vocabulary page: /save, /push, /save-MD, /save-MD-as-draft (name open)](https://github.com/nedschorus/nedschorus/issues/256) (four small skills).
+GHI [overview-write skill: how an overview of a system is written and checked before it lands](https://github.com/nedsnodes/nedsnodes/issues/168) (overview-write),
+GHI [Project vocabulary wiki page: define this project's own terms so a zero-context reader can resolve them](https://github.com/nedsnodes/nedsnodes/issues/213) (vocabulary page) and
+GHI [Four small skills the user named on the vocabulary page: /save, /push, /save-MD, /save-MD-as-draft (name open)](https://github.com/nedsnodes/nedsnodes/issues/256) (four small skills).
 None covers how a wiki page is created or what stops one being created
 unasked.
 
@@ -90,7 +90,7 @@ unasked.
 
 Asked at the cold-read-research seat whether a dedicated wiki-update subsystem should let him rule on a change immediately rather than set it aside for a later walk, the user ruled, verbatim: "Normally changes to wiki files will come in batches, so a walk is good at that. If it's only one or two changes, then maybe we don't need a walk, but since the walk comes with all sorts of review stuff, probably a walk is fine. And just because its a walk doesn't mean it's not immediately (except the review delay, which I don't mind)."
 
-So the shape above stood: the hook sets an unwalked page change aside, and the skill walks it, and the walk is run then and there. The hook's half of that was superseded on 2026-10-12, when the user ruled that the hook asks him instead of setting the change aside (GHI [Catch a guarded file changed without the user's approval, ask him, and keep every version](https://github.com/nedschorus/nedschorus/issues/1268), section "Why"); the skill walking the change, then and there, stands. On 2026-09-15 he also ruled the narrower case of a single new glossary term the other way ("I think a walk is overkill for something as simple as this"): a new project term is proposed to the user, and that rule now sits in CLAUDE.md's naming bullet (PR [Glossary: project terms are hyphenated phrases, abbreviations or slash names; the seat model's words become headwords; CLAUDE.md says so](https://github.com/nedschorus/nedschorus/pull/384)). Evidence that the hook is needed, from the same afternoon: two seats wrote or drafted glossary changes in parallel with no mechanism to notice each other, and merge-lane would not have either, since reviewers report nothing about prose under docs/.
+So the shape above stood: the hook sets an unwalked page change aside, and the skill walks it, and the walk is run then and there. The hook's half of that was superseded on 2026-10-12, when the user ruled that the hook asks him instead of setting the change aside (GHI [Catch a guarded file changed without the user's approval, ask him, and keep every version](https://github.com/nedsnodes/nedsnodes/issues/1268), section "Why"); the skill walking the change, then and there, stands. On 2026-09-15 he also ruled the narrower case of a single new glossary term the other way ("I think a walk is overkill for something as simple as this"): a new project term is proposed to the user, and that rule now sits in CLAUDE.md's naming bullet (PR [Glossary: project terms are hyphenated phrases, abbreviations or slash names; the seat model's words become headwords; CLAUDE.md says so](https://github.com/nedsnodes/nedsnodes/pull/384)). Evidence that the hook is needed, from the same afternoon: two seats wrote or drafted glossary changes in parallel with no mechanism to notice each other, and merge-lane would not have either, since reviewers report nothing about prose under docs/.
 
 ## Provisional additions (not yet vetted by the user)
 

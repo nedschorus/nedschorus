@@ -1,5 +1,5 @@
 ---
-issue: "[The cold-read-fast-read reports a looser word used where an SDLC-term fits, and an SDLC-term used with a meaning other than its standard one](https://github.com/nedschorus/nedschorus/issues/2490)"
+issue: "[The cold-read-fast-read reports a looser word used where an SDLC-term fits, and an SDLC-term used with a meaning other than its standard one](https://github.com/nedsnodes/nedsnodes/issues/2490)"
 ---
 
 # The cold-read-fast-read reports a looser word used where an SDLC-term fits, and an SDLC-term used with a meaning other than its standard one
@@ -9,14 +9,14 @@ issue: "[The cold-read-fast-read reports a looser word used where an SDLC-term f
 ## Where this comes from
 
 - On 2026-10-20 the user said agents do not use "finding" and "failure" consistently, and proposed that "the fast cold read ... would need a new section about using consistent uses of standard SDLC terms, and we could probably trawl the transcripts for, say, 5 or 10 examples". reboot-test proposed that the cold-read-fast-read read the SDLC-terms page, report each place a document uses a looser word where a listed term fits, and report each place a document uses a listed term with a meaning other than the standard one, filed after the exit-code walk with the trawled cases. The user answered "Approved." at 2026-10-20T17:07:20Z. The exchange is at `nedlern@ned-box:/home/nedlern/nedsnodes-logs/session-dialogs/ned-box/-home-nedlern-agents-reboot-test/a57e7234-a0b4-4b5c-9bcb-22b1cc32c76a-dialog-complete.md`, lines 3667-3727.
-- The exit-code page that walk produced merged on 2026-11-03 as `docs/nedsnodes-wiki/nedsnodes-how-a-program-reports-success-failure-and-findings-with-its-exit-code.md`, with pull request [Add the wiki page on how a program reports success, failure and findings with its exit code](https://github.com/nedschorus/nedschorus/pull/2474).
+- The exit-code page that walk produced merged on 2026-11-03 as `docs/nedsnodes-wiki/nedsnodes-how-a-program-reports-success-failure-and-findings-with-its-exit-code.md`, with pull request [Add the wiki page on how a program reports success, failure and findings with its exit code](https://github.com/nedsnodes/nedsnodes/pull/2474).
 
 ## What exists today
 
 - The cold-read-full-run already has this check for the documents it reads: test (1) of `.claude/skills/cold-read/prompts/terminology-prompt.md` flags a term that has "a standard software-engineering term for the same thing, or for something slightly narrower or wider", and test (4) flags an established term "used ... to mean something different". It relies on the cold-read-cell's own knowledge of standard terms and does not read the SDLC-terms page either.
 - The cold-read-full-run reads only the documents the /cold-read skill's step 2 sends to it, and its triage declines findings on lines a pull request did not change. So a loose term the full run flags in older text stays: case 1 below was flagged in `CLAUDE.md` on 2026-10-29 and declined as outside that pull request's topic (`nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/CLAUDE-2026-10-29-2/triage.md`, lines 3-5), and the term has since spread to another GHI-MD.
 - `docs/nedsnodes-wiki/nedsnodes-sdlc-terms.md` on origin/main lists one term, canonical location. The "failure" and "finding" lines the user approved on 2026-10-20 have not landed; reboot-test lands them in a pull request of their own, which is on its task list. Until they land, the page lists no term that cases 5 and 6 need, so step 1 below waits for them.
-- ghi-guide-agent found no issue, open or closed, that covers this check (asked 2026-11-03 with `--include-closed`). The nearest are [GHI 14, a project style guide with a mechanical checker](https://github.com/nedschorus/nedschorus/issues/14), whose word-checker code may be reusable, and [GHI 2158, the rebuild of the /cold-read skill so its programs do the mechanical steps](https://github.com/nedschorus/nedschorus/issues/2158), whose cold-read-fast-read program this check would run inside.
+- ghi-guide-agent found no issue, open or closed, that covers this check (asked 2026-11-03 with `--include-closed`). The nearest are [GHI 14, a project style guide with a mechanical checker](https://github.com/nedsnodes/nedsnodes/issues/14), whose word-checker code may be reusable, and [GHI 2158, the rebuild of the /cold-read skill so its programs do the mechanical steps](https://github.com/nedsnodes/nedsnodes/issues/2158), whose cold-read-fast-read program this check would run inside.
 
 ## Cases from the project's documents and transcripts
 

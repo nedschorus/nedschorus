@@ -1,5 +1,5 @@
 ---
-issue: "[Find whether Claude Code's rewind can correct an agent's wrong act, triggered by a program](https://github.com/nedschorus/nedschorus/issues/1758)"
+issue: "[Find whether Claude Code's rewind can correct an agent's wrong act, triggered by a program](https://github.com/nedsnodes/nedsnodes/issues/1758)"
 ---
 
 # Find whether Claude Code's rewind can correct an agent's wrong act, triggered by a program
@@ -23,7 +23,7 @@ These points come from Anthropic's documentation, read 2026-10-20.
 1. Whether a program in this project can rewind a running agent-session's files: whether `--rewind-files` works on a session that is still open, or only on one that is resumed after it ends.
 2. Whether anything can rewind a running agent-session's conversation from outside it, so that the agent also forgets the wrong act.
 3. Whether checkpoints exist for this project's agent-seats as they are launched today, without that environment variable, including the headless agent-sessions that programs such as the cold-read-cells start.
-4. For which of this project's wrong acts a rewind would be the right correction. The wrong acts to weigh are those the techniques page's correction section lists. The guarded-file case already has GHI [Catch a guarded file changed without the user's approval, ask him, and keep every version](https://github.com/nedschorus/nedschorus/issues/1268), and rewind cannot undo the shell edits that case is mostly about.
+4. For which of this project's wrong acts a rewind would be the right correction. The wrong acts to weigh are those the techniques page's correction section lists. The guarded-file case already has GHI [Catch a guarded file changed without the user's approval, ask him, and keep every version](https://github.com/nedsnodes/nedsnodes/issues/1268), and rewind cannot undo the shell edits that case is mostly about.
 
 ## Next action
 

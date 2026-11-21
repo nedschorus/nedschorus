@@ -1,5 +1,5 @@
 ---
-issue: "[Two shipments of one cold-read-record name at the same moment can lose a report while both say it shipped](https://github.com/nedschorus/nedschorus/issues/910)"
+issue: "[Two shipments of one cold-read-record name at the same moment can lose a report while both say it shipped](https://github.com/nedsnodes/nedsnodes/issues/910)"
 ---
 
 # Two shipments of one cold-read-record name at the same moment can lose a report while both say it shipped
@@ -29,7 +29,7 @@ Repeated 20 times, each with a new scratch directory:
 - 1 of 20: the second run printed `REFUSED: race-check-2026-10-01 — already in the store with different content: …` and exited 2. This is the refusal the shipper is meant to give.
 - 2 of 20: one run printed rsync's `mkdir "…/race-check-2026-10-01" failed: File exists (17)`, then `FAILED: race-check-2026-10-01 — rsync exit 11 during the copy; a later run finishes it.`, and exited 1. The other run shipped. This failure is loud: nothing is lost without a word.
 
-The same loss was first seen by mac-claude, the independent reviewer of PR [The explain skill is installed, with the script that gives a draft reply its fresh read](https://github.com/nedschorus/nedschorus/pull/894), in [its round 2 review](https://github.com/nedschorus/nedschorus/pull/894#pullrequestreview-5386377670), item 2. Two checkouts of that pull request's program shipped a record named `explain-reply-draft-seat-a-151738-2026-10-01` at once. Both printed `shipped:`. The store kept one checkout's `fast-read.md` beside the other checkout's `target/` directory.
+The same loss was first seen by mac-claude, the independent reviewer of PR [The explain skill is installed, with the script that gives a draft reply its fresh read](https://github.com/nedsnodes/nedsnodes/pull/894), in [its round 2 review](https://github.com/nedsnodes/nedsnodes/pull/894#pullrequestreview-5386377670), item 2. Two checkouts of that pull request's program shipped a record named `explain-reply-draft-seat-a-151738-2026-10-01` at once. Both printed `shipped:`. The store kept one checkout's `fast-read.md` beside the other checkout's `target/` directory.
 
 ## Cause
 
@@ -42,7 +42,7 @@ The same loss was first seen by mac-claude, the independent reviewer of PR [The 
 
 A cold-read report is lost while both runs say it was shipped, and the store can hold one record that mixes files from both checkouts. Nothing on screen or in the store shows it. A caller that sees `shipped:`, a person or a program, treats the record as safe.
 
-It needs two shipments of one record name at the same moment. Names carry the record's date, so this takes two runs of one target on one day: two checkouts, or two machines. The defect predates PR [The explain skill is installed, with the script that gives a draft reply its fresh read](https://github.com/nedschorus/nedschorus/pull/894), whose program names its own records by seat and time of day. Other cold-read-records are still named by target and date. That pull request does not trigger it.
+It needs two shipments of one record name at the same moment. Names carry the record's date, so this takes two runs of one target on one day: two checkouts, or two machines. The defect predates PR [The explain skill is installed, with the script that gives a draft reply its fresh read](https://github.com/nedsnodes/nedsnodes/pull/894), whose program names its own records by seat and time of day. Other cold-read-records are still named by target and date. That pull request does not trigger it.
 
 ## What a fix must do
 
