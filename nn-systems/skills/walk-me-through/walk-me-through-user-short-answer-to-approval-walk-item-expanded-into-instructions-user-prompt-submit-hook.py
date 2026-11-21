@@ -131,7 +131,9 @@ texts are read as the Markdown parser renders them, link targets and other
 markup left out, reference links resolved by the definitions of their own
 text, whitespace squeezed, each running count's `of M` and each deferred note
 dropped. What the item decides is its decision-bearing lines, read line by
-line from the item's text after its heading: the text after a `#new` or
+line from the paragraphs of the item's text after its heading, and from the
+lines of its visible HTML blocks, such as a `<div>`, with their tags and
+comments taken out: the text after a `#new` or
 `#new_if_d` mark opening a line, or, for such a mark with nothing after it,
 the rest of its paragraph or else the block below it, such as a `>` quote;
 the text after a `#case_against` mark, its
@@ -141,18 +143,28 @@ parts, the text after each `Part N.` opening a line. Each passes when its
 words, compared without punctuation, letter case or the marks `#new`,
 `#new_if_d`, `#case_against` and `[advisor]`, are those of a line of the
 same kind that the message holds after the heading's line and before any
-heading or closing line that opens another item, read by the
+top-level heading or closing line that opens another item, read by the
 same rules; or, when the message holds no line of that kind and the line is no
-`Recommendation:` or `The alternative:` line, are the words a paragraph of
-the message ends with, as when the message dropped a `#new` mark or put "If
-you approve, the new text:" before the text. Words found elsewhere in the
+`Recommendation:` or `The alternative:` line, are the words a unit of the
+message ends with, as when the message dropped a `#new` mark or put "If
+you approve, the new text:" before the text. A unit is a paragraph, a visible
+HTML block, or a whole list or quotation, since a bare `#new` can introduce
+one. Lines passing that second way must end units in the item's order, each
+unit below the last, so that a `#new` and a `#new_if_d` text swapped in a
+message that dropped both marks do not pass. Words found elsewhere in the
 message do not count, because a recommendation and an alternative swapped
 would each still be found. A change anywhere else in the item, such as
 its explanation or an example, never refuses. Each line that does not pass is
-paired with the message paragraph most like it by its words, preferring one
-that names the same kind of line, and every pair of the answer goes to the
+paired with the message unit most like it by its words, preferring one
+that names the same kind of line. The check also runs the other way: a
+decision-bearing line the message showed that no current line of the same
+kind has the words of, and that no line of that kind going to the model
+accounts for, is a line the item dropped, such as a third part removed after
+the item was shown; it is paired with the item's unit most like it. Every
+pair of the answer goes to the
 model MODEL in one headless `claude -p` call, run with every hook disabled, no
-tools and no session file, which judges whether the line's meaning changed; a
+tools and no session file, which judges whether the line's meaning changed, or
+for a dropped line whether the item still says it; a
 change made only for clarity does not. The answer is not counted when the
 model judges a meaning changed, when the message holds no paragraph after the
 heading to pair a line with, or when no message showed the item; and when the
@@ -165,6 +177,14 @@ it does not ask the agent to show the item again for an unreadable transcript,
 because that cannot make it readable. A refused answer gets none of the
 answer's lines and no --user-reply-as-typed line.
 
+Not handled: a `#new` and a `#new_if_d` text both shown with labels in
+place of their marks, such as "If you approve, the new text:", and swapped,
+pass with no model call, since each ends a unit in order; so does a current
+`#new Restart the workers.` against a shown "Do not restart the workers.",
+which ends with its words. Lines of the same kind are matched against one
+pool for the whole item, so the recommendations of sub-steps 4.1 and 4.2
+swapped pass with no model call too.
+
 WHEN READING THE WALK STATE FAILS, such as a minutes file that is not UTF-8,
 the first line says so and why, and the text gives the answer's lines both for
 an open approval-walk and for none. When an A, AO, Aa or D answer reaches an item
@@ -175,6 +195,7 @@ which Claude Code records as a non-blocking error.
 Tool-messages-to-agent follow
 docs/nedsnodes-wiki/nedsnodes-how-to-write-a-tool-message-to-agent-such-as-a-hook-refusal-or-script-error.md.
 """
+import collections
 import difflib
 import importlib.util
 import json
@@ -499,16 +520,28 @@ DECISION_LINES_CHANGED_REASON = (
     "{findings} The hook compares only the item's decision-bearing lines: the text after a `#new` or `#new_if_d` "
     "mark, the `#case_against` line, the text after `The alternative:` and after `Recommendation:`, and, in an item "
     "with parts, the text after each `Part N.`. A line passes when a line of the same kind in the message holds the "
-    "same words, punctuation, letter case and the marks `#new`, `#new_if_d`, `#case_against` and `[advisor]` aside, "
+    "same words, ignoring punctuation, letter case and the marks `#new`, `#new_if_d`, `#case_against` and `[advisor]`, "
     "or, for a line other than a recommendation or an alternative that the message shows without its mark, when a "
-    "paragraph of the message ends with those words; for any other line a model "
-    "judges whether the message's closest paragraph means the same, so a change made only for clarity passes, and so "
-    "does any change outside those lines, such as in the explanation or an example.")
+    "paragraph, list or quotation of the message ends with those words; for any other line a model "
+    "judges whether the message's closest paragraph means the same, and for a line the message showed that the item "
+    "no longer has, whether the item's closest paragraph still says it, so a change made only for clarity passes, and "
+    "so does any change outside those lines, such as in the explanation or an example.")
 DECISION_LINE_MEANING_CHANGED_REASON = (
     "Its {line} now reads \"{current}\", and the model judged that this means something other than what the message "
     "showed, \"{shown}\": {why}")
 DECISION_LINE_NOT_IN_MESSAGE_REASON = (
     "Its {line} now reads \"{current}\", and the message holds no paragraph after the item's heading to compare it with.")
+DECISION_LINE_DROPPED_REASON = (
+    "The message showed a {line}, \"{shown}\", which the item no longer has, and the model judged that the item's "
+    "closest text, \"{current}\", does not say the same: {why}")
+DECISION_LINE_DROPPED_NOTHING_LEFT_REASON = (
+    "The message showed a {line}, \"{shown}\", which the item no longer has, and the item has no paragraph left to "
+    "compare it with.")
+DECISION_LINE_DROPPED_CHECK_FAILED_REASON = (
+    "The message showed a {line}, \"{shown}\", which the item no longer has in those words, and the hook's "
+    "`claude -p` call that has a model judge whether the item's closest text, \"{current}\", still says it failed, so "
+    "the hook cannot tell whether the user saw what he answered: {why}. Showing the item's current text unchanged "
+    "lets his next answer pass with no model call.")
 DECISION_LINE_CHECK_FAILED_REASON = (
     "Its {line} now reads \"{current}\", in other words than the message's \"{shown}\", and the hook's `claude -p` "
     "call that has a model judge whether that changes the meaning failed, so the hook cannot tell whether the user saw "
@@ -535,7 +568,11 @@ Each numbered pair below gives one decision-bearing line of an item: its recomme
 
 For each pair, answer meaning_changed: true when the current line means something the shown text does not: a different action, a different scope, object, number, name, file or condition, different proposed text in substance, a different case-against rating or argument, or a line the shown text does not contain at all. Answer false when the change is made only for clarity: rewording, reordering, splitting or joining sentences, fixing grammar or punctuation, or adding words that make the same meaning plainer. Give a one-sentence reason.
 
+A pair marked "shown, then dropped" is the other way round: "Shown" is a decision-bearing line the agent's message held and the current text no longer has in those words, and "Current" is the current text's paragraph most like it. Answer meaning_changed true unless "Current" still says what "Shown" said.
+
 {pairs}"""
+# Follows a pair's line name in the model's prompt when the line is one the message showed and the item dropped.
+DROPPED_PAIR_NOTE = ", shown, then dropped"
 # A decision-bearing line opens with one of these marks; `#new_if_d` is tried before `#new`.
 DECISION_MARK = re.compile(r"^(#new_if_d|#new|#case_against)(?!\w)[\s:]*(.*)$", re.I)
 DECISION_PART = re.compile(r"^(Part \d+)\.(?:\s+|$)(.*)$")
@@ -974,6 +1011,11 @@ def checked_item_numbers(answer, walk):
 
 
 RENDERED_CHILD_TYPES = ("text", "code_inline", "html_inline", "image")
+CONTAINER_BLOCK_TYPES = ("blockquote_open", "bullet_list_open", "ordered_list_open")
+# lines: the block's rendered lines, as text_as_shown_squeezed gives each; following: the words of the block that
+# follows a paragraph at its own level, such as a `>` quote, a list or the next paragraph, as shown_words gives them,
+# or "" when none follows or the block is HTML; span: its first line and the line after its last.
+RenderedBlock = collections.namedtuple("RenderedBlock", "lines following span")
 
 
 def text_as_shown_squeezed(text):
@@ -1000,22 +1042,22 @@ def shown_words(markdown, parser, env=None):
     return text_as_shown_squeezed("".join(pieces))
 
 
-def rendered_paragraph_lines(markdown, parser, env):
-    """[the rendered lines of one paragraph, each as text_as_shown_squeezed gives it] for each paragraph of markdown,
-    list items' and quotations' included, in order; headings and code are no paragraphs."""
-    return [lines for lines, _, _ in rendered_paragraphs_with_following_block(markdown, parser, env)]
-
-
-def rendered_paragraphs_with_following_block(markdown, parser, env):
-    """[(the paragraph's lines as rendered_paragraph_lines gives them; the words of the block that follows the
-    paragraph at its own level, such as a `>` quote, a list or the next paragraph, as shown_words gives them, or ""
-    when none follows; how many paragraphs that block holds)] for each paragraph of markdown, in order."""
+def rendered_blocks(markdown, parser, env):
+    """[RenderedBlock] for each paragraph and visible HTML block of markdown, list items' and quotations' included,
+    in order; headings and code are neither. An HTML block's lines are read with its comments and tags taken out,
+    as the check-and-close program's new_marks() reads a `#new` line inside a `<div>`."""
     text = load_walk_finder().approval_walk_text_with_approval_walk_item_hashtag_lines_removed(markdown)
     source_lines = text.split("\n")
     tokens = parser.parse(text, env)
-    paragraphs = []
-    for index, (previous, token) in enumerate(zip(tokens, tokens[1:]), 1):
-        if token.type != "inline" or previous.type != "paragraph_open":
+    blocks = []
+    for index, token in enumerate(tokens):
+        if token.type == "html_block":
+            visible = re.sub(r"<[^>]*>", " ", re.sub(r"<!--.*?(?:-->|$)", " ", token.content, flags=re.S))
+            lines = [text_as_shown_squeezed(line) for line in visible.split("\n") if line.strip()]
+            if lines:
+                blocks.append(RenderedBlock(lines, "", token.map))
+            continue
+        if token.type != "inline" or tokens[index - 1].type != "paragraph_open":
             continue
         lines = [[]]
         for child in token.children:
@@ -1023,38 +1065,42 @@ def rendered_paragraphs_with_following_block(markdown, parser, env):
                 lines.append([])
             elif child.type in RENDERED_CHILD_TYPES:
                 lines[-1].append(child.content)
-        following, held = "", 0
+        following = ""
         block_start = index + 2  # past the inline token and its paragraph_close
         if block_start < len(tokens) and tokens[block_start].nesting >= 0 and tokens[block_start].map:
-            block_end, depth = block_start, tokens[block_start].nesting
-            while depth > 0:
-                block_end += 1
-                depth += tokens[block_end].nesting
             start, end = tokens[block_start].map
             following = shown_words("\n".join(source_lines[start:end]), parser, env)
-            held = sum(token.type == "paragraph_open" for token in tokens[block_start:block_end + 1])
-        paragraphs.append(([text_as_shown_squeezed("".join(line)) for line in lines], following, held))
-    return paragraphs
+        blocks.append(RenderedBlock([text_as_shown_squeezed("".join(line)) for line in lines], following,
+                                    tokens[index - 1].map))
+    return blocks
+
+
+def shown_units(markdown, parser, env):
+    """[(first line, line after the last, words)] for each unit of markdown a decision-bearing line can be compared
+    with, in order of first line: each of rendered_blocks' blocks, its lines joined, and each list and quotation
+    whole, as shown_words gives it, since a bare `#new` mark's text can be a whole list or quotation. A unit holding
+    ANSWER_LETTERS_TEXT, a closing line, or no words is left out."""
+    text = load_walk_finder().approval_walk_text_with_approval_walk_item_hashtag_lines_removed(markdown)
+    source_lines = text.split("\n")
+    units = [(*block.span, " ".join(block.lines)) for block in rendered_blocks(markdown, parser, env)]
+    units += [(*token.map, shown_words("\n".join(source_lines[slice(*token.map)]), parser, env))
+              for token in parser.parse(text, env) if token.map and token.type in CONTAINER_BLOCK_TYPES]
+    return sorted(unit for unit in units if ANSWER_LETTERS_TEXT not in unit[2] and comparable_words(unit[2]))
 
 
 def decision_bearing_lines(body, parser, env, has_parts):
     """[(the line's name, as a refusal names it; its decision-bearing text)] for the item body's Markdown, as the
     module docstring's AN ANSWER TO A VERSION THE USER MAY NOT HAVE SEEN says, read line by line as rendered."""
     found = []
-    skipped = 0
-    for paragraph, following, held in rendered_paragraphs_with_following_block(body, parser, env):
-        if skipped:
-            skipped -= 1
-            continue
-        for index, line in enumerate(paragraph):
+    for block in rendered_blocks(body, parser, env):
+        for index, line in enumerate(block.lines):
             line = re.sub(r"\[advisor\]", " ", line, flags=re.I).strip()
             mark = DECISION_MARK.match(line)
             part = DECISION_PART.match(line) if has_parts else None
             if mark and not comparable_words(mark[2]) and mark[1].lower() in BARE_MARKS_INTRODUCING_A_BLOCK:
                 # A bare mark's text is what it introduces: the rest of its paragraph, or else the block below it.
-                rest = " ".join(paragraph[index + 1:])
-                found.append((f"`{mark[1]}` line", rest if comparable_words(rest) else following))
-                skipped = 0 if comparable_words(rest) else held
+                rest = " ".join(block.lines[index + 1:])
+                found.append((f"`{mark[1]}` line", rest if comparable_words(rest) else block.following))
                 break
             if mark:
                 found.append((f"`{mark[1]}` line", mark[2]))
@@ -1062,25 +1108,60 @@ def decision_bearing_lines(body, parser, env, has_parts):
                 found.append((f"`{part[1]}.` line", part[2]))
             else:
                 labels = list(DECISION_LABEL.finditer(line))
-                for label, following in zip(labels, [*labels[1:], None]):
+                for label, next_label in zip(labels, [*labels[1:], None]):
                     name = DECISION_LABEL_NAMES[label[1].lower()]
-                    found.append((f"`{name}:` line", line[label.end():following.start() if following else None]))
+                    found.append((f"`{name}:` line", line[label.end():next_label.start() if next_label else None]))
     return [(name, text.strip()) for name, text in found if comparable_words(text)]
 
 
-def shown_unchanged(name, current, shown_lines, paragraphs):
-    """Whether the message shows the decision-bearing line unchanged, needing no model call: a line of the message of
-    the same kind has its words; or, when the message has no line of that kind and the line is no `Recommendation:` or
-    `The alternative:` line, a paragraph of the message ends with its words, as one that dropped the mark or shows
-    `If you approve, the new text:` before it does. Words found anywhere else do not count, since a recommendation
-    and an alternative swapped would each still be found."""
-    words = comparable_words(current)
-    same_kind = [text for kind, text in shown_lines if kind == name]
-    if same_kind:
-        return any(comparable_words(text) == words for text in same_kind)
-    if name in UNMARKED_LINE_NAMES_NEEDING_THE_MODEL:
-        return False
-    return any(f" {comparable_words(paragraph)}".endswith(f" {words}") for paragraph in paragraphs)
+def lines_not_shown(current_lines, shown_lines, units):
+    """[(name, current)] for each of current_lines, the item's decision-bearing lines in the walk-document's order,
+    that the message does not show unchanged and so need the model: none passes unless a line of the message of the
+    same kind, among shown_lines, has its words; or, when the message has no line of that kind and the line is no
+    `Recommendation:` or `The alternative:` line, a unit of the message, among units, ends with its words, as one that
+    dropped the mark or shows `If you approve, the new text:` before it does. Lines passing that second way must end
+    units in the walk-document's order, each unit starting below the last one taken, so that a `#new` and a
+    `#new_if_d` text swapped in a message that dropped both marks do not pass. Words found anywhere else do not count,
+    since a recommendation and an alternative swapped would each still be found."""
+    missed, taken_until = [], 0
+    for name, current in current_lines:
+        words = comparable_words(current)
+        same_kind = [text for kind, text in shown_lines if kind == name]
+        if same_kind:
+            shown = any(comparable_words(text) == words for text in same_kind)
+        elif name in UNMARKED_LINE_NAMES_NEEDING_THE_MODEL:
+            shown = False
+        else:
+            unit = next((unit for unit in units if unit[0] >= taken_until
+                         and f" {comparable_words(unit[2])}".endswith(f" {words}")), None)
+            shown = unit is not None
+            if shown:
+                taken_until = unit[1]
+        if not shown:
+            missed.append((name, current))
+    return missed
+
+
+def shown_lines_dropped(shown_lines, current_lines, missed):
+    """[(name, shown)] for each of shown_lines, the message's decision-bearing lines, that the item no longer has:
+    no current line of the same kind has its words, and no line of that kind among missed, the current lines going to
+    the model, accounts for it. Each missed line accounts for the unmatched shown line of its kind most like it, so a
+    line reworded is judged once, as missed, and only a line the walk-document dropped is left."""
+    dropped = []
+    for name in dict.fromkeys(kind for kind, _ in shown_lines):
+        current = {comparable_words(text) for kind, text in current_lines if kind == name}
+        unmatched = [text for kind, text in shown_lines if kind == name and comparable_words(text) not in current]
+        for _, text in [line for line in missed if line[0] == name]:
+            if unmatched:
+                unmatched.remove(max(unmatched, key=lambda shown: likeness(shown, text)))
+        dropped += [(name, text) for text in unmatched]
+    return dropped
+
+
+def likeness(text, other):
+    """How alike text and other are by their words, from 0 to 1."""
+    return difflib.SequenceMatcher(None, comparable_words(text).split(), comparable_words(other).split(),
+                                   autojunk=False).ratio()
 
 
 def comparable_words(text):
@@ -1088,15 +1169,14 @@ def comparable_words(text):
     return words_without_punctuation_or_case(MARK_WORDS.sub(" ", text))
 
 
-def closest_shown_paragraph(line_name, text, paragraphs):
-    """The message paragraph, as one string, most like text by its words, preferring one that PAIRING_HINTS says carries
-    the same kind of line; None when the message has no paragraph."""
+def closest_unit(line_name, text, units):
+    """The words of the unit, of shown_units' units, most like text by its words, preferring one that PAIRING_HINTS
+    says carries the same kind of line; None when there is no unit."""
     hint = PAIRING_HINTS.get(line_name) or (rf"\bpart\W+{line_name.split()[1][:-2]}\b"
                                             if line_name.startswith("`Part ") else None)
-    hinted = [paragraph for paragraph in paragraphs if hint and re.search(hint, paragraph, re.I)]
-    words = comparable_words(text).split()
-    return max(hinted or paragraphs, key=lambda paragraph: difflib.SequenceMatcher(
-        None, words, comparable_words(paragraph).split(), autojunk=False).ratio(), default=None)
+    words = [unit[2] for unit in units]
+    hinted = [unit for unit in words if hint and re.search(hint, unit, re.I)]
+    return max(hinted or words, key=lambda unit: likeness(text, unit), default=None)
 
 
 def words_without_punctuation_or_case(words):
@@ -1158,12 +1238,10 @@ def last_showing_message(transcript_path, heading, parser, references):
 
 def item_openings_as_shown(tokens, parser, env):
     """Yield (first line, words as shown_words gives them) for each block of tokens that can open an item in a message:
-    a heading, or a top-level paragraph holding ANSWER_LETTERS_TEXT, the closing line. A line of an item's own body,
-    a list item or a code block among them, opens nothing, whatever its words say."""
+    a top-level heading, or a top-level paragraph holding ANSWER_LETTERS_TEXT, the closing line. A line of an item's
+    own body, a list item, a quotation or a code block among them, opens nothing, whatever its words say."""
     for position, token in enumerate(tokens):
-        if not token.map or token.type not in ("heading_open", "paragraph_open"):
-            continue
-        if token.type == "paragraph_open" and token.level != 0:
+        if not token.map or token.type not in ("heading_open", "paragraph_open") or token.level != 0:
             continue
         words = shown_words(tokens[position + 1].content, parser, env)
         if token.type == "heading_open" or ANSWER_LETTERS_TEXT in words:
@@ -1190,14 +1268,15 @@ def opens_another_item(words, heading):
 
 
 def model_judgement(pairs, timeout_seconds=MODEL_TIMEOUT_SECONDS):
-    """Return ([(meaning changed, the model's one-sentence reason)] for each (line name, shown, current) of pairs, in
-    order; None) or (None, why the `claude -p` call failed)."""
+    """Return ([(meaning changed, the model's one-sentence reason)] for each (line name, shown, current, whether the
+    line is one the message showed and the item dropped) of pairs, in order; None) or (None, why the `claude -p` call
+    failed)."""
     prefix = load_walk_finder().load_module(
         "claude_code_headless_run_command_line_prefix_with_no_connectors_and_explicit_permission_mode_common",
         COMMAND_LINE_PREFIX_FILE)
     prompt = MODEL_PROMPT_TEMPLATE.format(pairs="\n\n".join(
-        f"Pair {number}, the item's {name}.\nShown: {shown}\nCurrent: {current}"
-        for number, (name, shown, current) in enumerate(pairs, 1)))
+        f"Pair {number}, the item's {name}{DROPPED_PAIR_NOTE if dropped else ''}.\nShown: {shown}\nCurrent: {current}"
+        for number, (name, shown, current, dropped) in enumerate(pairs, 1)))
     command = [*prefix.claude_code_headless_run_command_line_prefix_build(
                    "dontAsk", caller_claude_code_session_settings={"disableAllHooks": True}),
                "--model", MODEL, "--output-format", "json",
@@ -1273,31 +1352,38 @@ def unseen_item_lines(answer, walk, transcript_path):
             reasons[number] = NEVER_SHOWN_REASON.format(item=item)
             continue
         after_heading, message_env, timestamp = shown
-        paragraphs = [" ".join(lines) for lines in rendered_paragraph_lines(after_heading, parser, message_env)
-                      if ANSWER_LETTERS_TEXT not in " ".join(lines) and comparable_words(" ".join(lines))]
+        units = shown_units(after_heading, parser, message_env)
         shown_lines = decision_bearing_lines(after_heading, parser, message_env, number in walk.parts)
-        missed = [(name, current, closest_shown_paragraph(name, current, paragraphs))
-                  for name, current in decision_bearing_lines(body, parser, env, number in walk.parts)
-                  if not shown_unchanged(name, current, shown_lines, paragraphs)]
-        if missed:
-            misses[number] = (timestamp, missed)
-    pairs = [(name, shown, current) for _, missed in misses.values() for name, current, shown in missed
-             if shown is not None]
+        current_lines = decision_bearing_lines(body, parser, env, number in walk.parts)
+        missed = lines_not_shown(current_lines, shown_lines, units)
+        current_units = shown_units(body, parser, env)
+        # (line name, the message's text, the walk-document's text, whether the line is one the message showed and
+        # the item dropped)
+        checks = [(name, closest_unit(name, current, units), current, False) for name, current in missed]
+        checks += [(name, text, closest_unit(name, text, current_units), True)
+                   for name, text in shown_lines_dropped(shown_lines, current_lines, missed)]
+        if checks:
+            misses[number] = (timestamp, checks)
+    pairs = [check for _, checks in misses.values() for check in checks if None not in check]
     verdicts, failure = model_judgement(pairs) if pairs else ([], None)
     verdicts = iter(verdicts or [])
     for number in [number for number in numbers if number in misses]:
-        timestamp, missed = misses[number]
+        timestamp, checks = misses[number]
         findings = []
-        for name, current, shown in missed:
-            values = {"line": name, "current": current, "shown": text_quoted_shortened(shown or "")}
-            if shown is None:
-                findings.append(DECISION_LINE_NOT_IN_MESSAGE_REASON.format(**values))
+        for name, shown, current, dropped in checks:
+            values = {"line": name, "current": text_quoted_shortened(current or "") if dropped else current,
+                      "shown": shown if dropped else text_quoted_shortened(shown or "")}
+            if None in (shown, current):
+                findings.append((DECISION_LINE_DROPPED_NOTHING_LEFT_REASON if dropped
+                                 else DECISION_LINE_NOT_IN_MESSAGE_REASON).format(**values))
             elif failure:
-                findings.append(DECISION_LINE_CHECK_FAILED_REASON.format(**values, why=failure))
+                findings.append((DECISION_LINE_DROPPED_CHECK_FAILED_REASON if dropped
+                                 else DECISION_LINE_CHECK_FAILED_REASON).format(**values, why=failure))
             else:
                 changed, why = next(verdicts)
                 if changed:
-                    findings.append(DECISION_LINE_MEANING_CHANGED_REASON.format(**values, why=why))
+                    findings.append((DECISION_LINE_DROPPED_REASON if dropped
+                                     else DECISION_LINE_MEANING_CHANGED_REASON).format(**values, why=why))
         if findings:
             reasons[number] = DECISION_LINES_CHANGED_REASON.format(
                 item=item_name(number, walk), timestamp=timestamp, findings=" ".join(findings))
