@@ -260,6 +260,9 @@ def run_unit_cases():
         ("a string compared inside a printed argument", 'print(x == "yes")\n', '"yes"', '"no"'),
         ("a string compared inside an assignment expression in a printed argument",
          'print(allowed := command == "push")\n', '"push"', '"reset"'),
+        ("a method's result compared inside a printed argument", 'print(x == "yes".upper())\n', '"yes"', '"no"'),
+        ("a .format result compared inside a printed argument", 'print(x == "a {}".format(y))\n', '"a {}"', '"b {}"'),
+        ("the test of a conditional expression in a printed argument", 'print("a" if c == "yes" else "b")\n', '"yes"', '"no"'),
     ]
     for case_name, source, old_text, new_text in behaviour_string_cases:
         check(f"normalized AST keeps a string that carries behaviour: {case_name}",
@@ -269,6 +272,10 @@ def run_unit_cases():
         ("a helper printer's text", 'import sys\ndef say(stream, text):\n    print(text, file=stream)\nsay(sys.stderr, "old line")\n'),
         ("a .format template that is printed", 'print("old {}".format(1))\n'),
         ("a + chain whose other operand is a repetition", 'print("old " + ("x" * count))\n'),
+        ("a keyword argument of a printing call", 'print("a", end="old")\n'),
+        ("a conditional expression reached through a + parent", 'print(x + ("old" if c else "b"))\n'),
+        ("a branch of a conditional expression", 'print("a" if c else "old")\n'),
+        ("a method called on a method's result that is printed", 'print("old {}".format(1).strip())\n'),
     ]
     for case_name, source in printed_string_cases:
         check(f"normalized AST ignores a printed string: {case_name}",
