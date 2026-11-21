@@ -1,11 +1,129 @@
 ---
-issue: "[Build the emergency-stop skill, which writes one stop file in the log-store that every agent-session is shown until the user lifts the stop](https://github.com/nedschorus/nedschorus/issues/2161)"
+issue: "[Build the emergency-stop skill, which writes one stop file in the log-store that every agent-session is shown until the user lifts the stop](https://github.com/nedsnodes/nedsnodes/issues/2161)"
 kind: design
 ---
 
 # Build the emergency-stop skill, which writes one stop file in the log-store that every agent-session is shown until the user lifts the stop
 
 This GHI-MD is the design of the emergency-stop skill and its hooks, filed as a GitHub issue so that the work has one record.
+
+## Paused on 2026-11-20: what is built and what is still open
+
+The user paused the emergency-stop work on the evening of 2026-11-20, Pacific time (2026-11-21T01:17:08Z UTC; times below are UTC), in the walk-minutes of approval-walk ghi-783-ghi-md-picks-and-renames-approval-walk-2026-11-05, `nedlern@ned-box:/home/nedlern/agents/prime-intellect/docs/walk/ghi-783-ghi-md-picks-and-renames-approval-walk-2026-11-05-minutes.md`, line 627, in his words: "We've been working on this emergency stop stuff for a long time. I think it's just I think we should pause this and save what we got and put it back into a GitHub issue. I'm also worried that we're working on the emergency stop, but we haven't defined how to restart it. And we seems like very rarely need it. So yeah, I just package all this up in or record everything we've got in a nice MD file and stick it in a GHI and pull all the related walk items out once they've been recorded. So we can move on to something more useful." This section records everything still open, so that the work can be picked up later without loss. No work on it resumes until the user says so. Two words from his quote: "restart" here means agent-seats taking up again, after a lift, the work they held back during the emergency stop; "walk items" are approval-walk items.
+
+What is built. PR [Emergency stop: the /emergency-stop skill, its stop-file program, and the hook that shows the stop and refuses pushes and merges, with the rulings of approval-walk items 21 to 38 (replaces 3599)](https://github.com/nedsnodes/nedsnodes/pull/3605) merged on 2026-11-14 as 0440ba7c4: `.claude/skills/emergency-stop/SKILL.md`, the programs in `nn-systems/skills/emergency-stop/`, the hook registrations in `.claude/settings.json`, and the change, during an emergency stop, to two hooks of /walk-me-through that run on Claude Code's Stop event, in `nn-systems/skills/walk-me-through/`. merge-lane-2's approving review of PR 3605 left three non-blocking findings: the first, a test that `start` fails when the read-back finds another emergency-stop file in force, merged as PR [3607](https://github.com/nedsnodes/nedsnodes/pull/3607); the second is PR 3901 below; the third, whether the hook exits when its read of the emergency-stop folder hangs, is the first unseen approval-walk item below. The glossary lines of part 5 of the approval of 2026-10-30 at 15:55 (under What is decided) are in `docs/nedsnodes-wiki/nedsnodes-glossary.md`. No emergency stop appears to have been started: the folder `/home/nedlern/nedsnodes-logs/emergency-stop/` did not exist on 2026-11-20.
+
+### Open: PR 3901, the six failure messages, and its changes-requested review
+
+PR [Emergency stop: six failure messages say what was written, whether pushes and merges are refused, and the command to run again](https://github.com/nedsnodes/nedsnodes/pull/3901) is open as a draft, converted at the pause. Branch `emergency-stop-six-messages-say-what-was-stopped-and-what-to-do-topic-branch`, nc-head-commit 3faa82884; its worktree on ned-box, `/home/nedlern/agents/prime-intellect-worktrees/emergency-stop-six-messages`, is kept until the user decides whether PR 3901 goes on.
+
+What it changes. It answers the second of those findings: six places where a cold-read-fast-read struggled with the messages, opening FAILED, that the program prints when it cannot write or read the emergency-stop file. In `nn-systems/skills/emergency-stop/`, each failure message of `emergency-stop-file-write-start-append-and-stop-lift.py` prints the text the user approved in items 55.1 to 55.6 of the approval-walk (his answers are in the walk-minutes, lines 357 to 393; 55.3 asked for no decision). The full approved texts are in the walk-document, `nedlern@ned-box:/home/nedlern/agents/prime-intellect/docs/walk/ghi-783-ghi-md-picks-and-renames-approval-walk-2026-11-05.md`, under the headings "Item 55.1 of 69" to "Item 55.6 of 78", and as built on PR 3901's branch. After a failed write or read-back, the program reads the folder itself and states whether a stop is in force. When `start`'s read-back does not find its stop in force, `start` writes and reads back a second time; a failed write is not retried. After the second try, `start` deletes each emergency-stop file it created that still holds only the text it wrote, and keeps one another agent-seat has added to; when the second try succeeds, it also keeps the file in force. The unreachable-folder and failed-write messages end with the exact command line to run again. The hook's test now checks the whole text of its message for an unreadable emergency-stop file (item 55.1), and each failure test compares the whole printed message. As built, 55.2's message opens "start wrote no emergency-stop file"; the text the user approved says "start wrote no stop file". The built text puts the glossary's term, "emergency-stop file", in place of his plain words (walk-minutes line 398), and the pull request's description does not mention it.
+
+merge-lane-2's round-2 [review 5998696090](https://github.com/nedsnodes/nedsnodes/pull/3901#pullrequestreview-5998696090), CHANGES_REQUESTED at 3faa82884 on 2026-11-20, has two findings, both from Codex, which merge-lane-2's review runs as one of its reviewers, on `nn-systems/skills/emergency-stop/emergency-stop-file-write-start-append-and-stop-lift.py`. The must-fix-now findings of its first review, that is the findings to fix before the merge, are fixed at 3faa82884, and the test run of 3faa82884 merged with main passed 21 of 21. The two findings:
+
+- Blocking, Codex P1, lines 205-209: another agent-seat's `append` can land after `start`'s clean-up has read the stop file but before it deletes it; the file still compares as unchanged, and the clean-up deletes the other agent-seat's stop, whose command had reported its words saved. merge-lane-2 graded it must-fix-now, the same kind of finding as one of the first review's, at line 180, that the clean-up could delete an emergency-stop file another agent-seat had added to, and asked for a simplification instead of another fix-round: "The simplest shape may be for start's retry never to delete a stop file it created. ... Please send merge-lane-2 the shape you choose before pushing; if it changes the design the user approved, it goes to him first."
+- Fix-next, that is in a follow-up after the merge, Codex P2, lines 206-207: no test causes the new `UnicodeDecodeError` handler; if the simplification removes the handler, the finding goes with it.
+
+The fix the review suggested as "the simplest shape", which merge-lane-2 then reviewed as an approval-walk item and on which the user has not ruled, is approval-walk item 78: `start` never deletes a stop file, and its FAILED message tells the agent to run `status` and tell the user. It reverses the user-ruling on item 55.6 of 2026-11-17, that `start` deletes the stop files it wrote "so that a failed start can never come into force later". The user moved on from 78.1, which asked no decision, on 2026-11-21 at 01:08Z (walk-minutes line 623); 78.2 was waiting for his answer when he paused the work, and was closed unanswered (lines 627 to 629). Item 78 as the walk-document showed it, word for word, without its withdrawn versions:
+
+> ## Item 78 of 120: Emergency-stop `start` stops deleting the stop files it wrote, so it can never delete another agent-seat's stop
+> #approval_walk_item_first_entered 2026-11-20
+> #approval_walk_item_in_category_must_fix_now
+>
+> ### Item 78.1 of 120: What `start` deletes today, and the defect the review found
+>
+> You ruled on 2026-11-17 (item 55.6 of [this walk](file:///Volumes/nedhome/agents/prime-intellect/docs/walk/ghi-783-ghi-md-picks-and-renames-approval-walk-2026-11-05.md)) that when `start` cannot find its new stop in force, it tries once more, and when both tries fail it deletes the stop files it wrote, "so that a failed start can never come into force later". Both review rounds of [PR "Emergency stop: six failure messages say what was written, whether pushes and merges are refused, and the command to run again"](https://github.com/nedsnodes/nedsnodes/pull/3901) found this defect in that delete:
+>
+> Agent-seat A's `start` writes a stop file, but A's read-back fails twice, say because the folder answers late. Meanwhile B's `start` finds A's file in force, adds B's words to it, and tells B "added to the emergency stop in force". Then A deletes the file: B's stop is gone, and pushes and merges are no longer refused. A reads the file just before deleting it, to see whether anyone added to it, but B's words can land between that read and the delete.
+>
+> The fix is to stop deleting. Only the newest stop file, by its name, the UTC time it was started, counts; `lift` adds a line to the newest and removes no file. So a stop file a failed `start` leaves in the folder counts only when it is the newest. That is the case you ruled out: the folder answers late, both tries fail, `start` prints FAILED, and then the file appears and the stop takes effect late, even after a lift. It is still a stop the user asked for, and he can lift it.
+>
+> No decision here; type N or next to continue.
+>
+> ### Item 78.2 of 120: `start` keeps every stop file, and its FAILED message says so
+>
+> Part 1. `start` never deletes a stop file. Its report after a successful second try drops "; it kept {paths}, the stop file its first try wrote, because another agent-seat added to it after start wrote it".
+>
+> Part 2. The FAILED message's "so it deleted the stop files it wrote." becomes:
+>
+> #new "so it left the stop files it wrote in the folder; only the newest stop file counts.\nWhen the folder can be read again, run `python3 nn-systems/skills/emergency-stop/emergency-stop-file-write-start-append-and-stop-lift.py status`; if it prints InForce, tell the user, who decides whether to lift the stop."
+>
+> #case_against weak: a stop can come into force after `start` said it failed.
+>
+> The alternative: as offered on 2026-11-17, the agent makes the second try, and the stop files stay in the folder.
+>
+> The advisor and merge-lane-2 reviewed this item, and its proposed text had a fast read of its own.
+>
+> Recommendation: make parts 1 and 2 in PR 3901.
+
+A further defect of the same code, noted in the walk-minutes at line 400 and never shown to the user: when `start`'s two tries each only add to another agent-seat's stop file, as after two starts in the same second, and both read-backs fail, `start` has created no file of its own, yet its FAILED message says it "deleted the stop files it wrote". At 3faa82884 the message is still built that way when nothing was created and the failure is a read-back (lines 178 to 188 and 215 to 217; read from the code, not run). Item 78.2's new text, "so it left the stop files it wrote in the folder", would be untrue in the same case, and it says what to do only when `status` prints InForce. The wording for the case where `start` created no file is the user's to approve; it goes to him with item 78, and the build makes the message from the list of files `start` created, with a test that causes that case.
+
+### Open: two approval-walk items the user has not seen
+
+Both were in the walk-document, not yet shown to him, when he paused the work. The second is the same matter as question 4 under Deferred-decisions below, with the same recommendation; what it adds is its case against, that an emergency may well make several agent-seats start a stop at once. Each is copied whole, word for word, and a note after each says where it no longer matches the merged code.
+
+> ## Whether the emergency-stop hook exits when its read of the stop folder hangs
+> #approval_walk_item_first_entered 2026-11-14
+> #approval_walk_item_in_category_fix_during_maintenance
+>
+> On the Mac, the emergency-stop hook reads the stop folder on ned-box through the Mac's network share of ned-box. It gives that read 5 seconds, on a separate thread, then goes on without it. merge-lane-2 asked whether the hook really exits when the share hangs. If it did not, every Mac command the hook guards would wait too. Nobody has seen this happen.
+>
+> A test on ned-box can check most of it, in about 20 lines and 5 seconds of test time: it puts a named pipe with no writer, named like a stop file, in a stop folder made for the test, so the hook's read blocks for good, and checks that the hook still exits within 15 seconds: the 5 seconds plus time to start. What it cannot check is a read stuck inside the Mac's operating system on a hung share; that needs the Mac with the share deliberately hung.
+>
+> #case_against weak: it adds a test for a failure nobody has seen.
+>
+> The alternative: add no test, and change nothing until a hook is seen stalling.
+>
+> Recommendation: add the ned-box test to the follow-up pull request, and test the Mac case only if a hook is seen stalling there.
+
+Note: "the follow-up pull request" in this item meant the follow-up to PR 3605 for merge-lane-2's non-blocking findings, which is now PR 3901. The hook runs at every prompt and every tool call (`.claude/settings.json`), so a hung read would hold all of a Mac agent-session's work, not only its pushes and merges, until Claude Code's hook time limit stops the hook.
+
+> ## Two emergency stops started a second apart can hide one of them
+> #approval_walk_item_first_entered 2026-11-14
+> #approval_walk_item_in_category_fix_during_maintenance
+>
+> The emergency-stop program's `start` reads the stop folder, then writes a stop file named by the time; the newest file not lifted is in force. Two starts in the same second collide on the file name, and the second adds to the first; two starts a second apart do not.
+>
+> Example: A starts a stop at 12:00:07 and B at 12:00:08, each having read the folder before the other wrote. Both are told "started", but only B's file is in force: A's evidence is hidden, and the hook, which refuses pushes from every agent-seat except the one coordinating the repair, refuses A's pushes. In a second case, an agent-seat's words added to a stop just after you lift it put it back in force. prime-intellect reproduced both on main ([reproduction](file:///Volumes/nedhome/nedschorus-logs/seats/prime-intellect/emergency-stop-start-append-race-reproduction-2026-11-14/)). [PR 3608, "GHI-MD edit for issue 2161: Build the emergency-stop skill, which writes one stop file in the log-store that every agent-session is shown until the user lifts the stop"](https://github.com/nedschorus/nedschorus/pull/3608) records the race as open in GHI 2161's design.
+>
+> No emergency stop has happened yet. The window is about a second, not measured, and nothing is deleted: both files stay in the stop folder for anyone to see and fix by hand.
+>
+> #case_against medium: an emergency may well make several agent-seats start a stop at once, and then the agent-seat that believes it coordinates the repair cannot push.
+>
+> The alternative: add a lock. Each write first claims a lock file, and a start that finds it taken waits, then reads the folder again. It needs a rule for a lock a crashed program leaves behind, and nobody has checked that the lock holds on the Mac, which reaches ned-box's stop folder over its network share.
+>
+> Recommendation: change nothing until an emergency stop shows the race.
+
+Note: "the newest file not lifted is in force" in this item is looser than the merged reader, `nn-systems/skills/emergency-stop/emergency-stop-file-in-force-read-common.py`, which looks only at the newest emergency-stop file and counts a stop in force while that file's last line is not a lift line.
+
+### Open decision: how work restarts after an emergency stop
+
+The user's question, from his ruling above: "we haven't defined how to restart it". He added that a stop is very rarely needed: "we seems like very rarely need it". No design has been put to him.
+
+What happens at a lift today, on main at 8108ca041:
+
+- `lift` appends two lines to the stop file in force: `<time> lifted by <agent-seat>`, then `#emergency_stop_lifted <his words>` (`nn-systems/skills/emergency-stop/emergency-stop-file-write-start-append-and-stop-lift.py`, lines 234 to 236). `hand-over-lift` records that a named agent-seat may lift on his word, and does not lift.
+- The hook, `nn-systems/skills/emergency-stop/emergency-stop-file-shown-and-push-and-merge-refusal-hook.py`, runs at UserPromptSubmit and at every PreToolUse (`.claude/settings.json`). After a lift it shows each agent-session once: "[rule emergency-stop-state-shown-to-every-agent-session] The emergency stop {path} was lifted: {lift_line}" and "Its rules no longer apply: resume the work you held back, and push and merge as usual." (lines 92 and 93). Its push-and-merge refusal stops.
+- `.claude/skills/emergency-stop/SKILL.md`, "Lifting a stop": whoever lifts re-enables, by hand, the schedule of each scheduled job the repair brief lists as paused, asks an agent-seat on the other machine for the jobs there, and tells the user any it could not turn back on. GHI [Pause and resume scheduled jobs during an emergency stop with pause-job and resume-job commands of the emergency-stop stop-file program](https://github.com/nedsnodes/nedsnodes/issues/3075) would move those steps into code.
+- The rules the hook shows during a stop say that an open approval-walk resumes at its `#next_to_present` item after the lift (hook line 78).
+
+What nothing covers today:
+
+- Waking agent-seats. An agent-session learns of the lift only at its next prompt or tool call. An agent-seat that obeyed "do no more work until the coordinating agent-seat or the user gives you work" and ended its turn sits idle until someone sends it a message; nothing in the skill or its programs sends one.
+- What was held back. Nothing records what each agent-seat held back, or which background tasks it killed, so "resume the work you held back" rests on each agent-session's own context, which a session-handoff or a restart during the emergency stop may have lost. A killed background task is not restarted by anything.
+- Checking that work restarted. No step confirms that each agent-seat saw the lift and resumed, nor reports one that did not.
+- Ending the repair. Nothing says that the coordinating agent-seat's role ends at the lift, or that the repair brief records how the repair ended.
+- Order. Every agent-seat may push its locally committed work at once after the lift; nothing sets an order.
+
+The decision for the user: whether a restart needs defining before more work goes into stopping, and if so what it covers. One choice, consistent with his remark that a stop is very rarely needed, is to define no more than what is built, and decide the restart after the first real stop shows what it lacks. Pieces a restart design could use, proposed by the cold-read-fast-read of this section and not yet weighed: `lift` sends every agent-seat a message, so that none waits idle; the hook records which agent-sessions it has shown the lift notice, and `status` lists the agent-seats not yet shown; the hook records each push or merge it refused, with its directory and branch, and the lift notice lists them to the agent-seat that ran them; and GHI 3075's `pause-job` and `resume-job` become part of the restart.
+
+### Other open emergency-stop work
+
+- Question 4 under Deferred-decisions below, two stops started a second apart, is open; the unseen approval-walk item above carries the same choice.
+- The 08:00 Pacific reminder during a stop is not built: under "Still open for the build" below, it waits for a channel a scheduled job can use. Of the files that `git grep -i -l emergency 8108ca041 -- nn-systems scripts .claude` lists, none outside `nn-systems/skills/emergency-stop/` is a program that sends it, and none inside does either. Archived prime-intellect task 131 (`nedlern@ned-box:/home/nedlern/nedsnodes-logs/seats/prime-intellect/task-list-archive-2026-11-17/task-list-archive.md`, line 153) lists it as still to do.
+- GHI [3075](https://github.com/nedsnodes/nedsnodes/issues/3075) is open with a placeholder body, "Filing in progress, pairing key ghipairdaa2f3116d9e03e0", although its GHI-MD, `docs/issues/3075-pause-and-resume-scheduled-jobs-during-an-emergency-stop-with-pause-job-and-resume-job-commands-of-the-emergency-stop-stop-file-program.md`, merged in PR 3076; rerunning `python3 scripts/ghi-issue-write.py create` on that file finishes its filing, as the GHI's placeholder body itself says. Its build is paused with this work.
+- Question 23's completion check. On 2026-11-20 every agent-home on ned-box under `/home/nedlern/agents/` held the merge commit 0440ba7c4; the Mac's agent-homes were not checked (unverified). The Outcome section the Next action asks for has not been written.
+- Older text of this GHI-MD that no longer matches the merged code or itself, found by the cold-read-full-run of 2026-11-20 (cold-read-record `nedlern@ned-box:/home/nedlern/nedsnodes-logs/cold-read-records/2161-build-the-emergency-stop-skill-which-writes-one-2026-11-20-2/`), to be brought into line when the work resumes; the approved texts quoted under What is decided stay as the user approved them. "Why" says "Today" a stop reaches other agent-seats only by relayed messages, which was true before PR 3605 merged. Question 3 says the stop file lists the scheduled jobs that push or merge; the program lists every job in `nn-systems/general-tools/scheduled-jobs-on-each-machine.json`. Question 9 names the repair brief `<stop file name>-repair-brief.md`; the program builds it from the name without `.md`, as `2026-11-14T12-00-07Z-repair-brief.md`. Question 13 says every push and merge is refused; the hook refuses only the `git push` and `gh pr merge` it sees in an agent's own Bash command, not one a program the agent runs makes, a gap the user ruled on 2026-11-11 to leave until an emergency stop shows it (item 22 part 4 of approval-walk merge-lane-2-pr-2760-pr-2695-and-emergency-stop-merges-approval-walk-2026-11-08, as merge-lane-2's approving review of PR 3605 records). Question 19 gives the lift notice as one line with a time; the hook's notice is the two lines quoted under "Open decision" above. The build's settled answers say stop files are named by the UTC time a stop started; the program names a new file one second after the newest lifted file when this machine's clock is behind the one that wrote it. Question 4 paraphrases the guard rule of `CLAUDE.md` more loosely than `CLAUDE.md` words it.
 
 ## Why
 
@@ -130,4 +248,11 @@ The questions these answer were:
 
 ## Next action
 
-prime-intellect builds the emergency-stop skill under `.claude/skills/emergency-stop/`, as the answers above say: the program that writes, appends to and lifts the stop file; the hook that shows the file to every agent-session at each UserPromptSubmit and PreToolUse until its lift line; the PreToolUse refusal of `git push` and `gh pr merge` during a stop, except the coordinating agent-seat's; the change, for a stop, to the hooks of /walk-me-through, `nn-systems/skills/walk-me-through/walk-me-through-agent-question-to-user-outside-approval-walk-items-refusal-stop-hook.py` and `nn-systems/skills/walk-me-through/walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook.py`; the 08:00 Pacific reminder once a channel for it is chosen, as the open point above says; and the two glossary lines of part 5. The work is done when its pull request has merged, every agent-home's checkout on both machines contains the merge commit, and the outcome is recorded in an Outcome section at the top of this GHI-MD.
+The work is paused at the user-ruling of 2026-11-20, recorded under "Paused on 2026-11-20" above; nothing here is worked on until he says to resume it. When he does, prime-intellect puts to him, in one new approval-walk made with the /walk-me-through skill, first the open decision on how work restarts after an emergency stop. If he decides the restart is to be designed first, prime-intellect writes that design into this GHI-MD, puts it to him, and the rest waits until he approves it. Otherwise the same approval-walk goes on to item 78, as the fix for PR 3901's blocking finding, with the wording for the case where `start` created no file, and then the two approval-walk items above. prime-intellect carries out his answers, and marks PR 3901 ready for review again only after what he decides on item 78 is built. It also reruns `python3 scripts/ghi-issue-write.py create` on GHI 3075's GHI-MD, and brings the older text listed under "Other open emergency-stop work" into line.
+
+The work is done when all of these hold:
+
+- PR 3901 has merged; or the user has decided to close it, and its approved texts of items 55.1 to 55.6 have merged in another pull request, which prime-intellect opens, or been dropped by his decision.
+- Every point under "Paused on 2026-11-20" has an answer from the user or a merged pull request, an answer that changes nothing included.
+- Every agent-home's checkout on both machines contains the merge commit of PR 3605 and of each emergency-stop pull request merged under this GHI before the Outcome is written.
+- The outcome is recorded in an Outcome section at the top of this GHI-MD.
