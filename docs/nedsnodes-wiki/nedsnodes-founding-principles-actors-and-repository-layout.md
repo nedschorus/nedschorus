@@ -1,4 +1,4 @@
-# nedschorus
+# nedsnodes
 
 A system in which one human and a small number of AI agents build and improve the software-development system they themselves run on.
 

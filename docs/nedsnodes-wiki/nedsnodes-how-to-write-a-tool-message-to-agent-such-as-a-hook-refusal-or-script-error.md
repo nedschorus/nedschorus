@@ -11,11 +11,11 @@ This page covers every tool-message-to-agent a program in this project hands an 
 - a warning or reminder a hook adds, as `additionalContext`, to what the agent reads next;
 - the `reason` field of a Stop hook that keeps the agent's turn open;
 - an error, a failing verdict or usage text that a script the agent runs prints, a git hook included; usage text the agent asked for with `--help` is not an error, and this page does not cover it;
-- the FAIL line of an nc-test-suite that enforces a project rule.
+- the FAIL line of an nn-test-suite that enforces a project rule.
 
 A line a program shows the user directly, with no agent between, says what a fact for the user says under "When the message sends the agent to the user": what stopped, on which machine, and what it costs him. The rest of this page is about messages an agent reads.
 
-Below, "the act" means what the agent did, or tried to do, that the program answers: the tool call or command a hook or a git hook checks; for a script's error, the command that ran the script; for a Stop hook, the agent's attempt to end its turn; for an nc-test-suite's FAIL line, the change under test.
+Below, "the act" means what the agent did, or tried to do, that the program answers: the tool call or command a hook or a git hook checks; for a script's error, the command that ran the script; for a Stop hook, the agent's attempt to end its turn; for an nn-test-suite's FAIL line, the change under test.
 
 ## What a message says
 

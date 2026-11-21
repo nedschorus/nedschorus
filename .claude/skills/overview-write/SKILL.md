@@ -1,11 +1,11 @@
 ---
 name: overview-write
-description: Use when you write, refresh or fix an nc-architecture-overview, the page docs/nedsnodes-wiki/nedsnodes-<system>-architecture-overview.md of a system under nn-systems/, and when scripts/pull-request-review-plan.py refuses a pull request because an overview has no claim-check report showing that no claim ranked must fix remains. Points to the page that says how an overview is written, and runs the program that checks its claims against the code.
+description: Use when you write, refresh or fix an nn-architecture-overview, the page docs/nedsnodes-wiki/nedsnodes-<system>-architecture-overview.md of a system under nn-systems/, and when scripts/pull-request-review-plan.py refuses a pull request because an overview has no claim-check report showing that no claim ranked must fix remains. Points to the page that says how an overview is written, and runs the program that checks its claims against the code.
 ---
 
 # overview-write
 
-An nc-architecture-overview tells an agent who must change a system how the system is built. Its usual defect is a confident statement about the code that is wrong, which a cold read cannot see, so a program checks every assertion against the code before the overview merges. The page `docs/nedsnodes-wiki/nedsnodes-how-to-write-an-architecture-overview.md`, called the how-to page here, holds the rules; this skill runs its check.
+An nn-architecture-overview tells an agent who must change a system how the system is built. Its usual defect is a confident statement about the code that is wrong, which a cold read cannot see, so a program checks every assertion against the code before the overview merges. The page `docs/nedsnodes-wiki/nedsnodes-how-to-write-an-architecture-overview.md`, called the how-to page here, holds the rules; this skill runs its check.
 
 1. Write or refresh the overview as the how-to page says, ending it with the `**Checked against:**` line that names the commit whose code you describe: a commit of main, or, in a pull request that also changes the code the overview describes, a commit of that pull request that holds the code and is earlier in its history than the overview edit. Give it the cold read the how-to page's section "Checking an overview" names: a cold-read-full-run for a new overview, a cold-read-fast-read for a refresh. Commit it on your topic branch.
 

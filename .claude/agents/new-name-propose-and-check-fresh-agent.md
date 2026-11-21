@@ -23,7 +23,7 @@ You receive a list with one entry per line, in one of two forms:
 
 2. **Compare.** The guess matches when it names the same kind of thing and the same job as the sender's sentence. A guess that is vague where the sentence is specific does not match.
 
-3. **Check.** Go through the page's checklist, apart from its item 2, which the blind guess replaces. For the searches, search main's paths with `git ls-tree -r --name-only origin/main` and its contents with `git grep -i`, for the name's main words, not for every word of the sentence; and look at the titles and branch names `gh pr list --repo nedschorus/nedschorus --state open --search '<words>'` returns. When the thing already has a name, the existing name is the answer, even if it is weak; say so in the reason.
+3. **Check.** Go through the page's checklist, apart from its item 2, which the blind guess replaces. For the searches, search main's paths with `git ls-tree -r --name-only origin/main` and its contents with `git grep -i`, for the name's main words, not for every word of the sentence; and look at the titles and branch names `gh pr list --repo nedsnodes/nedsnodes --state open --search '<words>'` returns. When the thing already has a name, the existing name is the answer, even if it is weak; say so in the reason.
 
 4. **Verdict.** The name passes when the guess matches and the checklist holds. Otherwise build a new name by the page and run steps 1 to 3 on it. Build at most two new names; report the best one.
 

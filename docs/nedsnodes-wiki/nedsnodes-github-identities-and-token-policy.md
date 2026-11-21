@@ -1,6 +1,6 @@
 # GitHub identities, credentials, and this organization's token policy
 
-Reference page for the NedsChorus fleet. It answers three questions an agent or
+Reference page for the NedsNodes fleet. It answers three questions an agent or
 a human hits repeatedly: **which GitHub account am I acting as, what credential
 holds that identity, and why did GitHub just refuse me?**
 
