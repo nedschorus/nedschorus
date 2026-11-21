@@ -403,7 +403,8 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
                 if kind == "prompt":
                     self.entries_by_node_context[identity]["kind"] = "prompt"
                 continue
-            entry = {"line": node.lineno, "end_line": node.end_lineno, "label": label,
+            entry = {"line": node.lineno, "column": node.col_offset, "end_line": node.end_lineno,
+                     "end_column": node.end_col_offset, "label": label,
                      "text": text_of_string_node(node), "literal_text": literal_text_of_string_node(node),
                      "placeholder_value_source_code_texts": placeholder_sources_of_string_node(node),
                      "text_as_agent_reads_it_with_placeholder_stand_ins":
@@ -849,7 +850,8 @@ def module_level_string_values_whose_name_the_file_binds_only_once(tree, module_
 
 
 def tool_message_to_agent_string_nodes_in_source(source):
-    """Each entry holds line and end_line, counted from 1, label, text, literal_text,
+    """Each entry holds line and end_line, counted from 1, column and end_column, counted from 0 as
+    ast counts them, label, text, literal_text,
     placeholder_value_source_code_texts, text_as_agent_reads_it_with_placeholder_stand_ins and kind,
     "prompt" or "message".
     Source that is None or does not parse yields no entries."""

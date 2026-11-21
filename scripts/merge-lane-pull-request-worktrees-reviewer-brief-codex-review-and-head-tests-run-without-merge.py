@@ -434,7 +434,7 @@ def main(argv=None):
                    CLAUDE_REVIEWER_STEP: outputs / "claude-reviews" / f"pr{number}-{head_commit}*"}
         def what_to_do(position, step, step_arguments):
             """One step's line: its exit code, and its records or its command."""
-            exit_code = failure.exit_codes[position]
+            exit_code = failure.exit_codes[position]  # noqa: F821 runs only inside the except, while failure is bound
             command = shlex.join(step_command(step, arguments, step_arguments))
             if exit_code != 0 and step == CLAUDE_REVIEWER_STEP:
                 # The posting script can exit nonzero after a successful post, when its
