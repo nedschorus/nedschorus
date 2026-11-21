@@ -1898,6 +1898,31 @@ with tempfile.TemporaryDirectory() as scratch:
               "a-design-2026-09-16", "a-design-2026-09-16-2", "a-design-2026-09-17"],
           f"exit {result.returncode}; records={records_after_three_reads}; "
           f"stderr={result.stderr[-300:]!r}")
+    check("a read whose report has no findings says on stderr that it needs no finding outcomes",
+          "cold-read-fast-read: the report has no findings, so it needs no finding outcomes." in result.stderr,
+          result.stderr[-300:])
+
+    # A read whose report has findings ends its stderr with each finding and the ready-made command that
+    # records their outcomes, naming the record; stdout is still the one path.
+    findings_relative = "docs/drafts/a-design-with-findings.md"
+    (repository / findings_relative).write_text("# A design\n\nOne vague line.\n", encoding="utf-8")
+    findings_report = (repository / "cold-read-records"
+                       / f"a-design-with-findings-{record_stamp}" / "cold-read-fast-read.md")
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"report": "## Question 2: Where you struggled\n\n1. `One vague line.`: vague.\n"}},
+        findings_report, findings_relative, counter,
+        question_4_plan={"report": "1. `One vague line.` — code could check it.\n"})
+    check("a read whose report has findings lists them on stderr with the ready-made command naming its record, "
+          "after the record line, and stdout is still the report's path",
+          result.returncode == 0 and result.stdout.strip() == str(findings_report)
+          and "cold-read-fast-read: the report has 2 findings:\n  Q2.1: `One vague line.`: vague.\n"
+              "  Q4.1: `One vague line.` — code could check it.\n" in result.stderr
+          and (f"--record-finding-outcomes-in-cold-read-record {findings_report.parent} \\\n"
+               "  --finding-outcome 'Q2.1=<applied, or declined: reason>' \\\n"
+               "  --finding-outcome 'Q4.1=<applied, or declined: reason>'") in result.stderr
+          and result.stderr.index("record: shipped:") < result.stderr.index("the report has 2 findings"),
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr[-900:]!r}")
 
     # The walk route: no record, no freeze, no ship, so a store that cannot be
     # reached leaves the exit 0.
@@ -2184,16 +2209,16 @@ check("so is one in its queue, which becomes such a file",
 check("a wiki file is in the class",
       class_of(root / "docs/nedsnodes-wiki/nedsnodes-glossary.md") == "a wiki file")
 check("a design is recognised by its name, wherever it sits",
-      class_of(root / "nn-systems/main-gatekeeper/main-gatekeeper-design.md") == "a design"
-      and class_of(root / "docs/issues/46-ghi-guide-agent-design.md") == "a design")
+      class_of(root / "nn-systems/main-gatekeeper/main-gatekeeper.system.design.md") == "a design"
+      and class_of(root / "docs/issues/46-ghi-guide-agent.system.design.md") == "a design")
 check("a test design and a design-contract have their own names",
-      class_of(root / "docs/issues/x-test-design.md") == "a test design"
-      and class_of(root / "docs/designs/queue/x-contract.md") == "a design-contract")
+      class_of(root / "docs/issues/x.tool.test-design.md") == "a test design"
+      and class_of(root / "docs/designs/queue/x.tool.contract.md") == "a design-contract")
 check("a design-contract is named as the state-machine design names it",
-      class_of(root / "docs/design-to-main/some-component-contract.md")
+      class_of(root / "docs/design-to-main/some-component.system.contract.md")
       == "a design-contract")
 check("a design in docs/design-to-main/ is a design, by its name",
-      class_of(root / "docs/design-to-main/design-to-main-state-machine-design.md")
+      class_of(root / "docs/design-to-main/design-to-main-state-machine.system.design.md")
       == "a design")
 check("a design's glossary is not in step 2's list, so it is not called a design",
       class_of(root / "docs/design-to-main/design-to-main-glossary.md") is None)

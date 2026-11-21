@@ -28,7 +28,7 @@ WHAT IS PINNED HERE.
 
   - A failed cell is retried once, with the same model, and no cell is
     special (user-ruled 2026-09-11; the design is
-    nn-systems/cold-read/cold-read-grid-cell-failure-handling-design.md, whose
+    nn-systems/cold-read/cold-read-grid-cell-failure-handling.tool.design.md, whose
     section 8 lists the cases below). The first failure prints RETRYING:
     with the attempt's cause and keeps the attempt-1 log; a retry that
     lands prints saved: and its log is deleted; a retry that fails prints
@@ -361,6 +361,10 @@ if effort_log:
             effort = argument.split("=", 1)[1]
     with open(effort_log, "a", encoding="utf-8") as handle:
         handle.write(f"{given.name} {effort}\n")
+for written_path in filter(None, os.environ.get(
+        "COLD_READ_GRID_TEST_STUB_WRITE_PATHS_BEFORE_SLEEPING", "").split(",")):
+    with open(written_path, "a", encoding="utf-8") as handle:
+        handle.write("A reviewer's write outside its report, made before it was stopped.\n")
 sleep_seconds = float(os.environ.get("COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS") or 0)
 fast_fragment = os.environ.get("COLD_READ_GRID_TEST_STUB_FAST_REPORT_NAME_FRAGMENT")
 if sleep_seconds and not (fast_fragment and fast_fragment in given.name):
@@ -779,32 +783,18 @@ try:
     check("a terminology cell stopped for a moved frozen copy removes its answer directory",
           answer_directories_left_in(cells_temporary_directory) == [],
           answer_directories_left_in(cells_temporary_directory))
-    # A stopped cell never reaches its stray-write check, which runs after the
-    # model exits; without a line saying so the run reads as checked and
-    # clean (nedschorus#167, and PR 699's review).
-    unchecked_lines = [line for line in result.stdout.splitlines()
-                       if line.startswith("WRITE CHECK DID NOT RUN:")]
-    # A third stop allows no new run, so the stopped cell's line must not assume one.
-    check("the not-checked line does not assume a new run follows",
-          unchecked_lines != [] and not any("new run" in line for line in unchecked_lines),
-          repr(unchecked_lines))
-    check("every stopped cell is named as not checked for stray writes",
-          all(any(line.startswith(f"WRITE CHECK DID NOT RUN: {name}.md — ")
-                  for line in unchecked_lines)
+    # A stopped cell never reaches its own stray-write check, so the grid checks for it.
+    # The edit here is to the frozen copy, which is under the gitignored record, so the
+    # grid's check finds nothing to report.
+    check("every stopped cell is named as stopped",
+          all(f"{name}.md: stopped before it finished" in result.stdout
               for name in ("claude-hunt-deep", "claude-hunt-second-strongest-model",
                            "claude-terminology-deep", "codex-hunt-deep",
                            "codex-terminology-deep")),
-          repr(unchecked_lines))
-    check("each not-checked line names its stopped cell and opens a sentence with a capital",
-          unchecked_lines != [] and all(
-              line.split(" — ", 1)[1].startswith(
-                  f"The {line.split(': ', 1)[1].split('.md', 1)[0]} cell was stopped")
-              for line in unchecked_lines),
-          repr(unchecked_lines))
-    check("the not-checked line says the missing check is not a clean result, in cell-common's words",
-          unchecked_lines != []
-          and all(cell_common.COLD_READ_CELL_STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE in line for line in unchecked_lines),
-          repr(unchecked_lines))
+          repr(result.stdout))
+    check("the grid's check ran for the stopped cells and found no write outside the record",
+          "WRITE CHECK DID NOT RUN" not in result.stdout and "STRAY WRITE:" not in result.stdout,
+          repr(result.stdout))
 
     # --- A frozen copy that moves while reviewers have written but not exited
     # Five cells write their reports and hang; the sixth edits the copy and
@@ -831,14 +821,11 @@ try:
           record_directory is not None
           and not any((record_directory / f"{name}.md").exists() for name in hung_cells),
           sorted(path.name for path in record_directory.glob("*.md")) if record_directory else None)
-    unchecked_lines = [line for line in result.stdout.splitlines()
-                       if line.startswith("WRITE CHECK DID NOT RUN:")]
-    check("each stopped cell's not-checked line says its unfinished report is deleted",
-          all(any(line.startswith(f"WRITE CHECK DID NOT RUN: {name}.md — ")
-                  and line.endswith("; the unfinished report it had written is deleted")
-                  for line in unchecked_lines)
+    check("each stopped cell's line says its unfinished report is deleted",
+          all(f"{name}.md: stopped before it finished; the unfinished report it had written is deleted."
+              in result.stdout.splitlines()
               for name in hung_cells),
-          repr(unchecked_lines))
+          repr(result.stdout))
     check("no cell stopped mid-report or its launcher is left running",
           processes_mentioning(str(hung_stubs), str(repository)) == [],
           processes_mentioning(str(hung_stubs), str(repository)))
@@ -880,7 +867,7 @@ try:
           and "Stopped before finishing" not in result.stdout, repr(result.stdout))
 
     # --- Every failure case below, in the design's terms ---------------------
-    # nn-systems/cold-read/cold-read-grid-cell-failure-handling-design.md, section
+    # nn-systems/cold-read/cold-read-grid-cell-failure-handling.tool.design.md, section
     # 8. The real limit texts (section 4) are the fixtures: the lines of the
     # kept logs it cites, and the 2026-09-18 logged-out capture on ned-box.
     WEEKLY_LIMIT_LINE = "You've hit your weekly limit · resets Nov 7, 3am (America/Los_Angeles)"
@@ -1160,8 +1147,9 @@ try:
           elapsed < stub_reading_seconds and result.returncode == 1
           and lines_opening(result, "saved:") == [] and "No report landed in" in result.stdout,
           f"elapsed {elapsed:.1f}s, exit {result.returncode}; stdout={result.stdout!r}")
-    check("a timed-out cell says its write check did not run, and no Tell the user line",
-          len(lines_opening(result, "WRITE CHECK DID NOT RUN:")) == 8
+    check("the grid checks for the timed-out cells, finds nothing, and prints no Tell the user line",
+          lines_opening(result, "WRITE CHECK DID NOT RUN:") == []
+          and lines_opening(result, "STRAY WRITE:") == []
           and "Tell the user:" not in result.stdout, repr(result.stdout))
     time.sleep(stub_reading_seconds + 1 - elapsed if elapsed < stub_reading_seconds else 0)
     record_directory = record_directory_of(repository)
@@ -1171,6 +1159,55 @@ try:
     check("a terminology cell stopped past the time limit removes its answer directory",
           answer_directories_left_in(cells_temporary_directory) == [],
           answer_directories_left_in(cells_temporary_directory))
+
+    # --- Stopped cells that wrote outside their reports ------------------------
+    # Every cell writes three files before it is stopped: a new file, a committed one
+    # unchanged before the run, and a file already untracked before the run. The grid
+    # lists each once, with the undo command its kind allows.
+    repository = build_scratch_repository(scratch, "checkout-stopped-cells-stray-writes")
+    new_file = "notes-a-reviewer-left.md"
+    already_untracked = "already-untracked-before-the-run.md"
+    (repository / already_untracked).write_text("The agent's own draft.\n", encoding="utf-8")
+    result = run_grid(repository, stubs, {
+        "COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS": str(stub_reading_seconds),
+        "COLD_READ_GRID_CELL_ATTEMPT_TIMEOUT_SECONDS": "2",
+        "COLD_READ_GRID_TEST_STUB_WRITE_PATHS_BEFORE_SLEEPING": ",".join(
+            str(repository / name) for name in (new_file, TARGET_RELATIVE_PATH, already_untracked))})
+    stray_lines = lines_opening(result, "STRAY WRITE:")
+    check("each path the stopped cells changed is listed once, and nothing says the check did not run",
+          sorted(line.split(" ", 3)[2] for line in stray_lines)
+          == sorted([new_file, TARGET_RELATIVE_PATH, already_untracked])
+          and lines_opening(result, "WRITE CHECK DID NOT RUN:") == [],
+          repr(result.stdout))
+    check("a new file gets a delete command",
+          any(line.startswith(f"STRAY WRITE: {new_file} ") and f"`rm -r -- {new_file}`" in line
+              for line in stray_lines), repr(stray_lines))
+    check("a committed file gets a restore command",
+          any(line.startswith(f"STRAY WRITE: {TARGET_RELATIVE_PATH} ")
+              and f"`git restore --staged --worktree -- {TARGET_RELATIVE_PATH}`" in line
+              for line in stray_lines), repr(stray_lines))
+    check("a file already changed before the run gets no undo command",
+          any(line.startswith(f"STRAY WRITE: {already_untracked} ")
+              and "no undo command is given" in line and "rm -r" not in line
+              and "git restore" not in line
+              for line in stray_lines), repr(stray_lines))
+    time.sleep(stub_reading_seconds)
+
+    # --- Stopped cells, and no snapshot to check them against -----------------
+    # GIT_DIR points at nothing, so the grid's own snapshot fails as well as each cell's.
+    repository = build_scratch_repository(scratch, "checkout-stopped-cells-no-snapshot")
+    result = run_grid(repository, stubs, {
+        "GIT_DIR": str(scratch / "no-such-git-directory"),
+        "COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS": str(stub_reading_seconds),
+        "COLD_READ_GRID_CELL_ATTEMPT_TIMEOUT_SECONDS": "2"})
+    unchecked_lines = lines_opening(result, "WRITE CHECK DID NOT RUN:")
+    check("with no snapshot, every stopped cell says no check ran, why, and that it is not a clean result",
+          len(unchecked_lines) == 8 and all(
+              "its snapshot of the working tree before the cells launched failed" in line
+              and cell_common.COLD_READ_CELL_STRAY_WRITE_CHECK_SKIPPED_IS_NOT_A_CLEAN_RESULT_PHRASE in line
+              for line in unchecked_lines),
+          repr(unchecked_lines))
+    time.sleep(stub_reading_seconds)
 
     # --- A cell that writes its report and then hangs is stopped, report deleted
     hang_seconds = 30
@@ -1530,7 +1567,7 @@ try:
           f"exit {result.returncode}; stdout={result.stdout!r}")
     check("the closing text gives the account limit as why Question 4 was not answered",
           "Question 4, What should be code, was not answered: account-limit — weekly limit · resets "
-          f"Nov 7, 3am (America/Los_Angeles) (log: " in result.stdout
+          "Nov 7, 3am (America/Los_Angeles) (log: " in result.stdout
           and f"{QUESTION_4_REPORT_NAME}.stderr.log). The other reports do not depend on it: "
           "go on without its answer." in result.stdout, repr(result.stdout))
 
@@ -1649,6 +1686,21 @@ try:
         "cold_read_grid_under_test", SYSTEM_DIRECTORY / "cold-read-grid.py")
     grid_module = importlib.util.module_from_spec(grid_spec)
     grid_spec.loader.exec_module(grid_module)
+
+    def failing_working_tree_state():
+        raise grid_module.cell_common.WriteDetectorUnavailable("injected git status failure")
+
+    real_working_tree_state = grid_module.cell_common.working_tree_state
+    grid_module.cell_common.working_tree_state = failing_working_tree_state
+    try:
+        lines = grid_module.stopped_cells_write_check_lines(
+            [scratch / "claude-hunt-deep.md"], set(), None, set())
+    finally:
+        grid_module.cell_common.working_tree_state = real_working_tree_state
+    check("a git status that fails at check time is reported as no check, with its error",
+          len(lines) == 1 and lines[0].startswith("WRITE CHECK DID NOT RUN: claude-hunt-deep.md — ")
+          and "git status failed when it checked (injected git status failure)" in lines[0],
+          repr(lines))
     attempt = grid_module.start_attempt(
         [sys.executable, "-c", "import time; time.sleep(120)"],
         scratch / "report.md", 1, scratch / "cell.stderr.log")

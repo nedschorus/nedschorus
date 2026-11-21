@@ -262,26 +262,26 @@ with tempfile.TemporaryDirectory() as temporary_directory:
 
     # Reviewed documents (2026-09-30): an MD file the user reviews is known by
     # where it sits — docs/agents/, docs/nedsnodes-wiki/, nn-systems/skills/ —
-    # or, for a design, by its -design.md name wherever it sits. Drafts stay
+    # or, for a design, by its .design.md name wherever it sits. Drafts stay
     # free in the draft places; test-designs and design-contracts are left to
     # design-to-main's own acceptance states.
     reviewed_homes = [
         ("a doc in docs/agents/", workspace / "docs" / "agents" / "x.md"),
         ("a wiki page in docs/nedsnodes-wiki/", workspace / "docs" / "nedsnodes-wiki" / "x.md"),
         ("a skill's doc under nn-systems/skills/", skills / "docs" / "x.md"),
-        ("a skill's design under nn-systems/skills/", skills / "docs" / "cold-read-design.md"),
+        ("a skill's design under nn-systems/skills/", skills / "docs" / "cold-read.system.design.md"),
         ("a skill MD without either prompt ending", skills / "defect-hunt.md"),
-        ("a design GHI-MD in docs/issues/", workspace / "docs" / "issues" / "12-foo-design.md"),
+        ("a design GHI-MD in docs/issues/", workspace / "docs" / "issues" / "12-foo.system.design.md"),
         ("a landed design in its system's docs/",
-         workspace / "nn-systems" / "handoff" / "docs" / "handoff-foo-design.md"),
-        ("design-to-main's design", workspace / "docs" / "design-to-main" / "design-to-main-state-machine-design.md"),
+         workspace / "nn-systems" / "handoff" / "docs" / "handoff-foo.tool.design.md"),
+        ("design-to-main's design", workspace / "docs" / "design-to-main" / "design-to-main-state-machine.system.design.md"),
         ("a design in a record-named directory below the checkout's top",
-         workspace / "docs" / "cold-read-records" / "foo-design-2026-09-30" / "foo-design.md"),
-        ("a wiki page named contract.md, with no hyphen before contract",
+         workspace / "docs" / "cold-read-records" / "foo-design-2026-09-30" / "foo.tool.design.md"),
+        ("a wiki page named contract.md, with no dot before contract",
          workspace / "docs" / "nedsnodes-wiki" / "contract.md"),
-        ("a wiki page whose name ends contract.md without the hyphen",
+        ("a wiki page whose name ends contract.md without the dot",
          workspace / "docs" / "nedsnodes-wiki" / "nedsnodes-subcontract.md"),
-        ("a wiki page whose name ends test-design.md without the hyphen",
+        ("a wiki page whose name ends test-design.md without the dot",
          workspace / "docs" / "nedsnodes-wiki" / "footest-design.md"),
     ]
     for label, target in reviewed_homes:
@@ -310,20 +310,21 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     draft_places = [
         ("a draft in docs/agents/queue/", workspace / "docs" / "agents" / "queue" / "x.md"),
         ("a draft in docs/nedsnodes-wiki/queue/", workspace / "docs" / "nedsnodes-wiki" / "queue" / "x.md"),
-        ("a design draft in docs/issues/queue/", workspace / "docs" / "issues" / "queue" / "foo-design.md"),
-        ("a design draft in docs/drafts/", workspace / "docs" / "drafts" / "foo-design.md"),
-        ("a design draft in nn-queue/", workspace / "nn-queue" / "foo-design.md"),
+        ("a design draft in docs/issues/queue/", workspace / "docs" / "issues" / "queue" / "foo.tool.design.md"),
+        ("a design draft in docs/drafts/", workspace / "docs" / "drafts" / "foo.tool.design.md"),
+        ("a design draft in nn-queue/", workspace / "nn-queue" / "foo.tool.design.md"),
     ]
     for label, target in draft_places:
         result = run_hook(decoy, workspace, str(target))
         check(f"{label} passes", result.returncode == 0, result.stderr)
     not_reviewed = [
         ("a system's doc that is not a design", workspace / "nn-systems" / "handoff" / "docs" / "x.md"),
-        ("a test-design", workspace / "docs" / "issues" / "12-foo-test-design.md"),
-        ("a design-contract", workspace / "docs" / "issues" / "12-foo-contract.md"),
-        ("a skill's test-design under nn-systems/skills/", skills / "docs" / "cold-read-test-design.md"),
-        ("a skill's design-contract under nn-systems/skills/", skills / "docs" / "cold-read-contract.md"),
-        ("a name ending design.md without the hyphen", workspace / "docs" / "issues" / "12-redesign.md"),
+        ("a test-design", workspace / "docs" / "issues" / "12-foo.tool.test-design.md"),
+        ("a design-contract", workspace / "docs" / "issues" / "12-foo.tool.contract.md"),
+        ("a skill's test-design under nn-systems/skills/", skills / "docs" / "cold-read.system.test-design.md"),
+        ("a skill's design-contract under nn-systems/skills/", skills / "docs" / "cold-read.system.contract.md"),
+        ("a name ending design.md without the dot", workspace / "docs" / "issues" / "12-redesign.md"),
+        ("a name ending -design.md, with a hyphen where the dot goes", workspace / "docs" / "issues" / "12-foo-design.md"),
         ("a reviewed home's path below the checkout's top",
          workspace / "tools" / "docs" / "nedsnodes-wiki" / "x.md"),
         ("a GHI-MD that is not a design", workspace / "docs" / "issues" / "12-foo.md"),
@@ -331,11 +332,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         ("a skill's code", skills / "x.py"),
         ("a non-MD file in a reviewed home", workspace / "docs" / "nedsnodes-wiki" / "diagram.png"),
         ("a design's frozen copy in a cold-read record",
-         workspace / "cold-read-records" / "foo-design-2026-09-30" / "foo-design.md"),
+         workspace / "cold-read-records" / "foo-design-2026-09-30" / "foo.tool.design.md"),
         ("a design's frozen copy in a sanity-check record",
-         workspace / "sanity-check-records" / "2026-09-30-foo-design" / "foo-design.md"),
+         workspace / "sanity-check-records" / "2026-09-30-foo-design" / "foo.tool.design.md"),
         ("a design's frozen copy in an md-review record",
-         workspace / "md-review-records" / "foo-design-2026-09-30" / "foo-design.md"),
+         workspace / "md-review-records" / "foo-design-2026-09-30" / "foo.tool.design.md"),
     ]
     for label, target in not_reviewed:
         result = run_hook(decoy, workspace, str(target))
@@ -364,11 +365,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     make_checkout(reviewed_worktree)
     result = run_hook(decoy, workspace, str(reviewed_worktree / "docs" / "nedsnodes-wiki" / "x.md"))
     check("a reviewed document inside a worktree checkout is blocked", result.returncode == 2)
-    result = run_hook(decoy, workspace, str(outside / "foo-design.md"))
+    result = run_hook(decoy, workspace, str(outside / "foo.tool.design.md"))
     check("a design outside any checkout passes", result.returncode == 0, result.stderr)
     marker = workspace / ".walk-approved"
     marker.write_text("y\n", encoding="utf-8")
-    result = run_hook(decoy, workspace, str(workspace / "docs" / "issues" / "12-foo-design.md"))
+    result = run_hook(decoy, workspace, str(workspace / "docs" / "issues" / "12-foo.system.design.md"))
     check("an approved change to a reviewed document passes once", result.returncode == 0, result.stderr)
     check("the marker is consumed by the document's pass", not marker.exists())
 

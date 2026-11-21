@@ -173,7 +173,7 @@ def structured_answer_from_run(completed, answer_file: pathlib.Path):
 def model_family_name(model: str) -> str:
     """Return the family name used by Claude's model-limit messages."""
     parts = model.split("-")
-    return parts[1].capitalize() if len(parts) > 1 and parts[1] else model
+    return (parts[1] if len(parts) > 1 and parts[1] else model).capitalize()
 
 
 # Match the CLI's failure messages at line starts; model-limit prefixes use the current model family.

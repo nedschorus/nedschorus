@@ -389,7 +389,9 @@ def approval_body(path, section_is_new):
         section = f"adding a \"{PROVISIONAL_HEADING[3:]}\" section"
     else:
         section = f"adding lines to its existing \"{PROVISIONAL_HEADING[3:]}\" section"
-    return (f"Approved by merge-lane-2's scheduled job {PROGRAM}. Prose tier: the pull request "
+    # scripts/merge-gate.sh refuses an approval by the merge account whose body does not open with the line
+    # APPROVE, the verdict line scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py writes.
+    return (f"APPROVE\n\nApproved by merge-lane-2's scheduled job {PROGRAM}. Prose tier: the pull request "
             f"changes only {path} (checked against the file at the merge base and at the "
             f"nc-head-commit with a CommonMark parser: one file, no other text, heading or link "
             f"reference definition changed, the section not moved), {section}, the form the "

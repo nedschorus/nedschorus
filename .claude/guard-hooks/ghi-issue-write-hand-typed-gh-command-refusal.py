@@ -18,7 +18,7 @@ THE RULINGS IT CARRIES.
 - No comments (user-ruled 2026-09-24, item 4 of the meta-walk
   reboot-test-meta-walk-2026-09-23): "But I don't want comments as agents
   forget to read them. Better to update the ghi-Md". The design's comment
-  operation, `docs/issues/46-ghi-guide-agent-design.md` § The GHI write path,
+  operation, `docs/issues/46-ghi-guide-agent.system.design.md` § The GHI write path,
   is dropped with it: there is no comment operation and there will be none.
   The same
   walk approved this hook with "Y" to: refuse a hand-typed `gh issue

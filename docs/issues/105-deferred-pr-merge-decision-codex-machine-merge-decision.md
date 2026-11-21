@@ -38,7 +38,7 @@ Closed as not planned on 2026-09-30, by the user's "y" to item 5 of the walk eig
 
 ## Related, not the same matter
 
-- GHI [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3) — the git-gatekeeper is this component's eventual consumer: the gate that can review, or refuse, what passes through it.
+- GHI [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper.system.design.md)](https://github.com/nedschorus/nedschorus/issues/3) — the git-gatekeeper is this component's eventual consumer: the gate that can review, or refuse, what passes through it.
 - GHI [run-agent: one CLI to invoke a Claude or Codex agent headlessly from any caller (Python, shell, either runtime)](https://github.com/nedschorus/nedschorus/issues/41) — run-agent, the headless invocation layer this could ride on.
 
 Search receipt for filing new rather than amending: `gh issue list --state all --limit 100 --search "review"` and `--search "codex"` (2026-08-19) returned no issue covering a machine merge-decision or Codex PR-review component; GHI [nedsmessenger is deferred until nedschorus can build it; where its early context lives](https://github.com/nedschorus/nedschorus/issues/80) is the precedent shape for deferral issues.
