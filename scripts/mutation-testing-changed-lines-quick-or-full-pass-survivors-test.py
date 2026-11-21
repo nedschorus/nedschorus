@@ -5,7 +5,7 @@ Run: python3 scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors
 Prints one line per case and exits non-zero if any case fails.
 
 No case runs the real cosmic-ray. Each case builds a scratch repository with
-a base commit and a nc-head-commit, and points --cosmic-ray-venv at a fake venv
+a base commit and an nn-head-commit, and points --cosmic-ray-venv at a fake venv
 whose cosmic-ray and cr-filter-git record every call and behave as the
 case's plan file says; with run_test_command, the fake's baseline runs the
 test command, the suite runner on fixture suites, as cosmic-ray runs it.
@@ -237,7 +237,7 @@ def git(repository, *arguments):
 
 
 def scratch_repository(directory, head_files):
-    """A repository with a base commit and a nc-head-commit adding head_files."""
+    """A repository with a base commit and an nn-head-commit adding head_files."""
     repository = Path(directory) / "repository"
     repository.mkdir()
     git(repository, "init", "-q", "-b", "main")
@@ -386,7 +386,7 @@ def runner_output_with_suites_timed_out(timed_out, others=()):
 
 
 def runner_output_with_test_sandbox_not_started(suite):
-    """The suite runner's NOT RUN lines for a suite whose nc-test-sandbox did not start, from its code."""
+    """The suite runner's NOT RUN lines for a suite whose nn-test-sandbox did not start, from its code."""
     runner = load_test_suite_runner()
     not_run = {"suite": suite, "exit": 1, "seconds": 0.1, "skips": [],
                "test sandbox did not start": True}
@@ -416,7 +416,7 @@ def test_command_output_when_the_machine_lock_is_held(scratch):
     repository, _, _ = scratch_repository(scratch, HEAD_FILES)
     lock_file = Path(scratch) / "machine.lock"
     environment = dict(os.environ)
-    # Suites without an nc-test-sandbox: the path that takes the machine lock.
+    # Suites without an nn-test-sandbox: the path that takes the machine lock.
     environment[load_test_suite_runner().SIGNAL_SANDBOX_INSIDE_VARIABLE] = "1"
     with open(lock_file, "a+") as holder:
         fcntl.flock(holder, fcntl.LOCK_EX)
@@ -2023,7 +2023,7 @@ def run_mutants_run_at_most_case_with_real_cosmic_ray():
 
 
 def in_test_sandboxes_through_a_fake_bwrap(scratch_name):
-    """run_script's keyword arguments that make the suites run in nc-test-sandboxes, as on a
+    """run_script's keyword arguments that make the suites run in nn-test-sandboxes, as on a
     Linux machine with bwrap, through a fake bwrap on PATH; the variable that marks a run
     already inside the sandbox is dropped, since this file itself runs inside the suite
     runner's."""
@@ -2049,7 +2049,7 @@ def run_parallel_mutants_and_kept_sessions_cases():
               completed.returncode == 2 and wanted in completed.stderr, completed.stderr)
     if not sys.platform.startswith("linux"):
         print("SKIP  [this machine cannot run it] the parallel mutant workers' and kept "
-              "sessions' cases: parallel workers need nc-test-sandboxes, which bwrap gives only "
+              "sessions' cases: parallel workers need nn-test-sandboxes, which bwrap gives only "
               "on Linux, and the nightly pass that keeps sessions runs on ned-box only")
         return
     with tempfile.TemporaryDirectory() as scratch_name:
@@ -2567,20 +2567,20 @@ def run_cases():
                "failure history could not be written: full\n"
                "SUMMARY: 1 passed, 0 failed, 1 total\n")]],
          1, "0 killed, 0 survived, 1 errored"),
-        ("a killed mutant whose only failing suite's nc-test-sandbox did not start is ERRORED, "
+        ("a killed mutant whose only failing suite's nn-test-sandbox did not start is ERRORED, "
          "not killed",
          [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
            killed_with_output(runner_output_with_test_sandbox_not_started(
                "scripts/thing-test.py"))]],
          1, "0 killed, 0 survived, 1 errored"),
-        ("the ERRORED line for a mutant whose only nonzero suite's nc-test-sandbox did not start "
+        ("the ERRORED line for a mutant whose only nonzero suite's nn-test-sandbox did not start "
          "quotes the runner's NOT RUN line, which names the suite",
          [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
            killed_with_output(runner_output_with_test_sandbox_not_started(
                "scripts/thing-test.py"))]],
          1, "its output says: NOT RUN scripts/thing-test.py did not start: bwrap could not "
-            "build its nc-test-sandbox"),
-        ("a killed mutant with one suite failing beside an nc-test-sandbox that did not start is "
+            "build its nn-test-sandbox"),
+        ("a killed mutant with one suite failing beside an nn-test-sandbox that did not start is "
          "killed",
          [[work_item("scripts/thing.py", 2, "core/NumberReplacer", "a"),
            killed_with_output(runner_output_with_test_sandbox_not_started(
@@ -2873,7 +2873,7 @@ def run_cases():
               json.dumps(calls(control)))
 
     # ------------------------------------------------------------------
-    # A nc-head-commit already in the base, as a merged pull request's is:
+    # An nn-head-commit already in the base, as a merged pull request's is:
     # exit 2 before a worktree, not a 0-mutant success.
     # ------------------------------------------------------------------
     with tempfile.TemporaryDirectory() as scratch_name:
@@ -2882,11 +2882,11 @@ def run_cases():
         git(repository, "commit", "-q", "--allow-empty", "-m", "merged later")
         base_containing_head = git(repository, "rev-parse", "HEAD")
         for case_name, given_base in [
-                ("a base that contains the nc-head-commit", base_containing_head),
-                ("a base equal to the nc-head-commit", head)]:
+                ("a base that contains the nn-head-commit", base_containing_head),
+                ("a base equal to the nn-head-commit", head)]:
             completed = run_script(repository, control, "--head", head,
                                    "--base", given_base, "--cosmic-ray-venv", str(venv))
-            check(f"{case_name}: exit 2, saying the nc-head-commit is already in the base",
+            check(f"{case_name}: exit 2, saying the nn-head-commit is already in the base",
                   completed.returncode == 2
                   and f"head {head[:12]} is already in {given_base}" in completed.stderr
                   and "SUMMARY" not in completed.stdout,
@@ -3124,7 +3124,7 @@ def run_cases():
              + f"{runner.NOT_RUN_TO_THE_END_LINE_PREFIX}: stopped\n")]]},
          (), survivors_module.EXIT_COULD_NOT_RUN, ["fail on the unmutated head"],
          ["suite fails on unmutated head", "ran out of time"]),
-        ("a baseline killed with an nc-test-sandbox that did not start exits 2, naming no "
+        ("a baseline killed with an nn-test-sandbox that did not start exits 2, naming no "
          "suite as failing",
          {"baseline_exit": 1, "baseline_dump": [[baseline_item, killed_with_output(
              runner_output_with_test_sandbox_not_started("scripts/thing-test.py"))]]},
@@ -3315,8 +3315,8 @@ def run_cases():
                                    path_override=f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
                                    dropped_variables=(inside_variable,))
             _, words = config_and_test_command_words(control)
-            check("with the sandbox on, the run says each suite runs in its own nc-test-sandbox, named by the bwrap program",
-                  f"each suite runs in its own nc-test-sandbox: {fake_bin / 'bwrap'}"
+            check("with the sandbox on, the run says each suite runs in its own nn-test-sandbox, named by the bwrap program",
+                  f"each suite runs in its own nn-test-sandbox: {fake_bin / 'bwrap'}"
                   in completed.stdout, f"rc={completed.returncode} out={completed.stdout}")
             check("a suite listed to run outside the sandbox is named in a NO SANDBOX line",
                   f"NO SANDBOX  {outside_suite} runs WITHOUT the signal sandbox"

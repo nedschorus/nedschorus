@@ -518,7 +518,7 @@ def unknown_origin_next_steps(repository, rules, machine, rerun_command):
                     f"commit it on {branch}")
             if case == "pushed":
                 step += (f" as a new commit, not by amending or rebasing, because {branch} is pushed as "
-                         f"origin/{branch}, and once its pull request is marked ready, its nc-head-commit is a "
+                         f"origin/{branch}, and once its pull request is marked ready, its nn-head-commit is a "
                          f"frozen-head, which must not be rewritten; {rerun}")
             else:
                 step += f", {rerun}"

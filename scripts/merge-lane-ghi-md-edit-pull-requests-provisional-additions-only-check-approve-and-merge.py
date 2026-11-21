@@ -16,14 +16,14 @@ table beside it, scheduled-jobs-on-each-machine.json:
 Each invocation lists every open pull request
 whose title starts "GHI-MD edit for issue" and, for each one that is not a
 draft pull request, is not on the held list and has not already been
-reported at its nc-head-commit, reads the file it changes at its merge base
-and at its nc-head-commit, and passes it when all of these hold:
+reported at its nn-head-commit, reads the file it changes at its merge base
+and at its nn-head-commit, and passes it when all of these hold:
   - it changes exactly one file, and that file is under docs/issues/ and
     is changed in place, which GitHub's compare calls "modified": a file
     the pull request adds, renames or deletes is reported;
   - neither text holds a character that Markdown or git reads as a line
     break other than "\n", such as a carriage return or a form feed;
-  - the text at the nc-head-commit holds the line
+  - the text at the nn-head-commit holds the line
     "## Provisional additions (not yet vetted by the user)" as a heading
     once, and the text at the merge base holds it at most once;
   - its other headings, as a CommonMark parser finds them, are the merge
@@ -33,11 +33,11 @@ and at its nc-head-commit, and passes it when all of these hold:
     the CommonMark parser finds them, are the merge base's, one for one,
     because a definition renders as nothing and can change where other
     links in the file point;
-  - the section is taken out of the text at the nc-head-commit, and out of
+  - the section is taken out of the text at the nn-head-commit, and out of
     the text at the merge base when that text has the section, and what is
     left of the two texts is the same; when the merge base has the section,
     the section starts on the same line of the file in both texts, so the
-    pull request does not move it; and the section at the nc-head-commit
+    pull request does not move it; and the section at the nn-head-commit
     holds every line of the merge base's section, in order. The section
     starts at the first of the blank lines just above the heading, or at
     the heading when no blank line is there, and ends at its last line that
@@ -45,7 +45,7 @@ and at its nc-head-commit, and passes it when all of these hold:
     the file. The blank lines above the heading are the section's, so a
     pull request may add blank lines there; the blank lines after the
     section are part of what is left;
-  - the text at the nc-head-commit differs from the text at the merge base.
+  - the text at the nn-head-commit differs from the text at the merge base.
 Each pull request is read in turn, after the merges of the pull requests
 before it in the same invocation, but is checked against its own merge
 base, not against the main those merges made. When an earlier merge makes it
@@ -53,7 +53,7 @@ conflict with main, its merge fails and it is reported; when the two merge
 without a conflict, such as two pull requests that each add the section at a
 different place in one file, nothing checks the file main ends up with.
 A passing pull request is approved as ned-review-merge, pinned to the
-nc-head-commit that was read, and merged by running
+nn-head-commit that was read, and merged by running
 merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py
 from the checkout this program is in, with the approval's time as the
 reviewed-since time. That merge program runs scripts/merge-gate.sh from this
@@ -64,7 +64,7 @@ merge-lane-2 is running uses it.
 
 Every other pull request, and every one whose approval or merge fails, gets
 one message for merge-lane-2: a file
-needs-a-look/pr<number>-<first 12 characters of the nc-head-commit>.txt under
+needs-a-look/pr<number>-<first 12 characters of the nn-head-commit>.txt under
 the state directory, <merge-lane-worktrees-and-outputs-directory>/merge-lane-ghi-md-edit-pull-requests-check-approve-and-merge-hold-list-reported-heads-and-needs-a-look-messages,
 by default /home/nedlern/nedsnodes-logs/seats/merge-lane-2/merge-helpers/merge-lane-ghi-md-edit-pull-requests-check-approve-and-merge-hold-list-reported-heads-and-needs-a-look-messages.
 merge-lane-2's watcher, scripts/watch-open-pull-requests-hack.py, prints one
@@ -76,12 +76,12 @@ request after. Whether a pull
 request was reported is read from reported-nc-head-commits.json alone, never
 from the files, so moving a file does not report its pull request again.
 reported-nc-head-commits.json in the state
-directory records the nc-head-commit each message was written for: a
+directory records the nn-head-commit each message was written for: a
 reported pull request is left alone, never approved, merged or reported
-again, until its nc-head-commit changes. A pull request that is no longer
+again, until its nn-head-commit changes. A pull request that is no longer
 open is dropped from that record. The program has no command that makes it
-check a reported pull request again at the same nc-head-commit: such a pull
-request is merged or closed by merge-lane-2, or gets a new nc-head-commit
+check a reported pull request again at the same nn-head-commit: such a pull
+request is merged or closed by merge-lane-2, or gets a new nn-head-commit
 from its author.
 
 The held list is held-pull-requests.txt in the state directory, which
@@ -101,7 +101,7 @@ so and exits 0, because a merge and its after-merge test run can outlast 5
 minutes.
 
 What it does not handle: it does not retry a failed approval or merge at the
-same nc-head-commit; merge-lane-2 handles that pull request by hand. A
+same nn-head-commit; merge-lane-2 handles that pull request by hand. A
 failed approval or merge is reported and the invocation goes on to the next
 pull request. An
 approval whose merge then fails stays on the pull request.
@@ -218,7 +218,7 @@ def read_held_list(path):
 
 
 def read_record(path):
-    """Return {pull request number: nc-head-commit reported}; a missing file records none."""
+    """Return {pull request number: nn-head-commit reported}; a missing file records none."""
     try:
         record = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -228,7 +228,7 @@ def read_record(path):
     if not isinstance(record, dict) or not all(
             key.isdigit() and isinstance(value, str) for key, value in record.items()):
         raise Stopped(f"the record {path} is not a JSON object of pull request numbers to "
-                      f"nc-head-commits")
+                      f"nn-head-commits")
     return {int(key): value for key, value in record.items()}
 
 
@@ -308,7 +308,7 @@ def provisional_section(parser, text, where):
                      definition["title"]) for definition in environment.get("duplicate_refs", [])]
     definitions = [definition[1:] for definition in sorted(definitions)]
     provisional = [heading for heading in headings if heading[2] == PROVISIONAL_HEADING]
-    if len(provisional) > 1 or (where == "nc-head-commit" and not provisional):
+    if len(provisional) > 1 or (where == "nn-head-commit" and not provisional):
         return (f"the file at the {where} has the heading \"{PROVISIONAL_HEADING}\" "
                 f"{len(provisional)} times, not once")
     others = [heading[:3] for heading in headings if heading[2] != PROVISIONAL_HEADING]
@@ -325,7 +325,7 @@ def provisional_section(parser, text, where):
 
 def provisional_additions_only_problem(parser, base_text, head_text):
     """Return None when head_text is base_text with lines added only to its provisional-additions section, or with that section added, else why not."""
-    for where, text in (("merge base", base_text), ("nc-head-commit", head_text)):
+    for where, text in (("merge base", base_text), ("nn-head-commit", head_text)):
         line_break = next((character for character in text
                            if character in LINE_BREAKS_OTHER_THAN_NEWLINE), None)
         if line_break is not None:
@@ -337,7 +337,7 @@ def provisional_additions_only_problem(parser, base_text, head_text):
     base = provisional_section(parser, base_text, "merge base")
     if isinstance(base, str):
         return base
-    head = provisional_section(parser, head_text, "nc-head-commit")
+    head = provisional_section(parser, head_text, "nn-head-commit")
     if isinstance(head, str):
         return head
     ((base_lines, base_headings, base_definitions, base_start, base_end),
@@ -348,7 +348,7 @@ def provisional_additions_only_problem(parser, base_text, head_text):
         return (f"it adds, removes or changes a heading other than \"{PROVISIONAL_HEADING}\": "
                 f"heading {first + 1} is {(base_headings[first:first + 1] or ['none'])[0]!r} at the "
                 f"merge base and {(head_headings[first:first + 1] or ['none'])[0]!r} at the "
-                f"nc-head-commit")
+                f"nn-head-commit")
     if base_definitions != head_definitions:
         first = next(index for index in range(max(len(base_definitions), len(head_definitions)))
                      if base_definitions[index:index + 1] != head_definitions[index:index + 1])
@@ -356,7 +356,7 @@ def provisional_additions_only_problem(parser, base_text, head_text):
                 f"\"[x]: https://example.com\", which renders as nothing and can change where "
                 f"other links in the file point: definition {first + 1} is "
                 f"{(base_definitions[first:first + 1] or ['none'])[0]!r} at the merge base and "
-                f"{(head_definitions[first:first + 1] or ['none'])[0]!r} at the nc-head-commit")
+                f"{(head_definitions[first:first + 1] or ['none'])[0]!r} at the nn-head-commit")
     base_section = base_lines[base_start:base_end] if base_start is not None else []
     base_outside = (base_lines[:base_start] + base_lines[base_end:] if base_start is not None
                     else base_lines)
@@ -365,10 +365,10 @@ def provisional_additions_only_problem(parser, base_text, head_text):
         first = next(index for index in range(max(len(base_outside), len(head_outside)))
                      if base_outside[index:index + 1] != head_outside[index:index + 1])
         return (f"it changes text outside the section \"{PROVISIONAL_HEADING}\" (lines "
-                f"{start + 1} to {end} of the file at the nc-head-commit): the first line that "
+                f"{start + 1} to {end} of the file at the nn-head-commit): the first line that "
                 f"differs is {(base_outside[first:first + 1] or ['none'])[0][:120]!r} at the merge "
                 f"base and {(head_outside[first:first + 1] or ['none'])[0][:120]!r} at the "
-                f"nc-head-commit")
+                f"nn-head-commit")
     # The text outside the section is the same in both, so the section starts at the same place
     # in it exactly when it starts on the same line.
     if base_start is not None and base_start != start:
@@ -376,7 +376,7 @@ def provisional_additions_only_problem(parser, base_text, head_text):
         head_heading = head_lines.index(PROVISIONAL_HEADING, start) + 1
         return (f"it moves the section \"{PROVISIONAL_HEADING}\", whose heading is on line "
                 f"{base_heading} of the file at the merge base and on line {head_heading} at the "
-                f"nc-head-commit, instead of only adding lines to it")
+                f"nn-head-commit, instead of only adding lines to it")
     head_section = iter(head_lines[start:end])
     if not all(line in head_section for line in base_section):
         return (f"it removes or changes a line of the section \"{PROVISIONAL_HEADING}\" instead "
@@ -393,7 +393,7 @@ def approval_body(path, section_is_new):
     # APPROVE, the verdict line scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py writes.
     return (f"APPROVE\n\nApproved by merge-lane-2's scheduled job {PROGRAM}. Prose tier: the pull request "
             f"changes only {path} (checked against the file at the merge base and at the "
-            f"nc-head-commit with a CommonMark parser: one file, no other text, heading or link "
+            f"nn-head-commit with a CommonMark parser: one file, no other text, heading or link "
             f"reference definition changed, the section not moved), {section}, the form the "
             f"user's task-to-GHI sweep asks for. No independent "
             f"reviewer: prose under docs/ is silent to reviewers under CLAUDE.md's review-scope "
@@ -439,17 +439,17 @@ class Invocation:
         return self._parser
 
     def report(self, pull_request, why, details=""):
-        """Write the needs-a-look notice for merge-lane-2 for this nc-head-commit, then record it."""
+        """Write the needs-a-look notice for merge-lane-2 for this nn-head-commit, then record it."""
         number, head = pull_request["number"], pull_request["headRefOid"]
         messages = needs_a_look_directory(self.arguments.merge_lane_worktrees_and_outputs_directory)
         message = messages / f"pr{number}-{head[:12]}.txt"
         text = (f"GHI-MD edit pull request {number} needs a look: "
                 f"https://github.com/{REPOSITORY}/pull/{number}\n"
                 f"Title: {pull_request['title']}\n"
-                f"nc-head-commit: {head}\n"
+                f"nn-head-commit: {head}\n"
                 f"Why: {why}\n"
                 + (f"\n{details.rstrip()}\n" if details else "")
-                + f"\n{PROGRAM} leaves this pull request alone until its nc-head-commit changes.\n"
+                + f"\n{PROGRAM} leaves this pull request alone until its nn-head-commit changes.\n"
                   f"Review and merge it, or close it, as any other pull request.\n"
                   f"Move this file into {messages / HANDLED_MESSAGES_DIRECTORY_NAME} as soon as you "
                   f"have read it: until then the watcher reports it again at each start, before "
@@ -483,13 +483,13 @@ class Invocation:
             try:
                 base_text, head_text = (text.decode("utf-8") for text in texts)
             except UnicodeDecodeError as error:
-                problem = f"{path} is not UTF-8 at its merge base or its nc-head-commit: {error}"
+                problem = f"{path} is not UTF-8 at its merge base or its nn-head-commit: {error}"
             else:
                 problem = provisional_additions_only_problem(self.parser(), base_text, head_text)
         head_after_read = gh_json(self.environment, "pr", "view", str(number), "--repo",
                                   REPOSITORY, "--json", "headRefOid")["headRefOid"]
         if head_after_read != head:
-            say(f"pull request {number}'s nc-head-commit moved while it was read; left for the "
+            say(f"pull request {number}'s nn-head-commit moved while it was read; left for the "
                 f"next invocation")
             return
         if problem:

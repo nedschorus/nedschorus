@@ -230,13 +230,13 @@ def run_unit_cases():
     check("no VERDICT line is malformed", result("I could not check it.\n") == "malformed: no VERDICT line")
     check("a missing COUNTS line is malformed", result("VERDICT 1 supported: a\n") == "malformed: 0 COUNTS lines, not one")
     check("the how-to page matches the template, so callers must check nn-systems/<system>",
-          claim_check.nc_architecture_overview_described_system_name_from_page_path(
+          claim_check.nn_architecture_overview_described_system_name_from_page_path(
               "docs/nedsnodes-wiki/nedsnodes-how-to-write-an-architecture-overview.md") == "how-to-write-an")
     check("a proposed-improvements file beside an overview is not an overview path",
-          claim_check.nc_architecture_overview_described_system_name_from_page_path(
+          claim_check.nn_architecture_overview_described_system_name_from_page_path(
               "docs/nedsnodes-wiki/nedsnodes-handoff-architecture-overview-proposed-improvements-or-changes-x.md") is None)
     check("an overview's one proposed-improvements-or-changes-file is in its system's docs/, outside the wiki folder",
-          claim_check.nc_architecture_overview_proposed_improvements_or_changes_file_path_from_page_path(OVERVIEW) == PROPOSALS)
+          claim_check.nn_architecture_overview_proposed_improvements_or_changes_file_path_from_page_path(OVERVIEW) == PROPOSALS)
     check("the pointer line names the file and its directory in separate backtick spans, so md-drift-lint at an older "
           "commit, where the file is missing, finds no path to check",
           claim_check.overview_pointer_line_to_proposed_improvements_or_changes_file(OVERVIEW)
@@ -646,7 +646,7 @@ def run_program_cases(fixture):
                              "--report-directory", str(fixture.reports)], cwd=fixture.repository,
                             env=fixture.environment, capture_output=True, text=True, timeout=TIMEOUT_SECONDS)
     check("a path with no nn-systems/<system> directory is refused as not an overview",
-          result.returncode == 1 and "is not an nc-architecture-overview" in result.stderr, result.stderr)
+          result.returncode == 1 and "is not an nn-architecture-overview" in result.stderr, result.stderr)
 
     fixture.commit_overview(checked_against=False)
     result = fixture.run()

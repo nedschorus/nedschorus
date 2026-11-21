@@ -35,7 +35,7 @@
 # conflict check. Such a push still runs the open
 # pull request check, which asks GitHub about a forced update or a deletion of
 # a branch on origin.
-# The filter matches branches_to_check in the Python file; the pre-push nc-test-suite
+# The filter matches branches_to_check in the Python file; the pre-push nn-test-suite
 # pins both against the same pushes.
 
 hook_directory=$(dirname "$0")

@@ -247,7 +247,7 @@ _LOOP_CONDITION_CHECK = r"(?:![ \t]+)?(?:grep|pgrep|kill[ \t]+-0|test|\[|true|:)
 _DEADLINE = r"\$\(date[ \t]+\+%s\)"
 WAIT_LIMIT_TABLE_WAITING_TASK_KIND_NAME = "waiting-task"
 BACKGROUND_TASK_WAIT_LIMIT_MINUTES_BY_KIND = (
-    ("nc-mutation-testing", (r".*(?:mutation|mutmut|mutant).*",), 105.0),
+    ("nn-mutation-testing", (r".*(?:mutation|mutmut|mutant).*",), 105.0),
     ("test-suite", (r".*(?:run-all-test-suites\.py|pytest|-test\.py\b|_test\.py\b|unittest"
                     r"|head-tests-with-retry|head-test-run|test-suite|run-suites).*",), 90.0),
     (WAIT_LIMIT_TABLE_WAITING_TASK_KIND_NAME, tuple(_COMMAND_PREFIX + shape + _TO_THE_END for shape in (

@@ -61,7 +61,7 @@ WHAT IS PINNED HERE.
     at the effort the grid pins, which the stub reads off its own command
     line; the agy cell runs inside the fixture's pass-through stand-in for
     the sandbox program, bwrap or sandbox-exec, so this suite runs inside
-    the nc-test-sandbox, where the real bwrap cannot start.
+    the nn-test-sandbox, where the real bwrap cannot start.
 
   - The model's echoed words are not the cell's status. The cell re-emits its
     agent-binary's stderr into the log the grid lifts from, and the Codex CLI
@@ -1427,7 +1427,7 @@ try:
         "exactly one prompt asks it": len(question_4_prompts) == 1,
         "the template pieces in order": holds_in_order(question_4_prompt, template_pieces),
         # The grid names the resolved path, as its saved line does; the
-        # nc-test-sandbox's TMPDIR is a symlink, so the two spellings differ there.
+        # nn-test-sandbox's TMPDIR is a symlink, so the two spellings differ there.
         f"the report path {question_4_report.resolve()}":
             str(question_4_report.resolve()) in question_4_prompt,
         "'is a frozen copy of'": "is a frozen copy of" in question_4_prompt,
@@ -2654,7 +2654,7 @@ try:
               and "refusing cold-read-full-run" not in result.stderr,
               f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
-    # A change merged from an nc-topic-branch lands at the merge, not at the
+    # A change merged from an nn-topic-branch lands at the merge, not at the
     # topic's commit: runs between the two reviewed that change and do not count.
     repository = build_scratch_repository(scratch, "full-run-count-merged-topic")
     git_in = lambda *arguments, when=None: subprocess.run(

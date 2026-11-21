@@ -55,7 +55,7 @@ RAN_FILE_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_RAN_FILE"
 # Every fixture run behaves as it does inside a full run, whose signal sandbox sets this:
 # its suites run unconfined, sharing the scratch directory's ran.txt, under the run.lock
 # this file reads. Run on its own on Linux, a fixture run would otherwise give each fixture
-# suite an nc-test-sandbox, whose private writes ran.txt never sees. The nc-test-sandbox itself is
+# suite an nn-test-sandbox, whose private writes ran.txt never sees. The nn-test-sandbox itself is
 # tested in run-all-test-suites-signal-sandbox-test.py and
 # run-all-test-suites-machine-wide-test-suite-admission-test.py.
 os.environ["RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX"] = "1"
@@ -78,12 +78,12 @@ def check(case_name, condition, detail=""):
 def linux_only_cases_run_here(cases):
     """True on Linux; elsewhere prints why the cases are skipped and returns False.
 
-    Every case that builds or inspects an nc-test-sandbox, runs bwrap or reads /proc goes
+    Every case that builds or inspects an nn-test-sandbox, runs bwrap or reads /proc goes
     through this, since only Linux has them.
     """
     if sys.platform.startswith("linux"):
         return True
-    print(f"SKIP  {cases}: nc-test-sandboxes, bwrap and /proc exist only on Linux")
+    print(f"SKIP  {cases}: nn-test-sandboxes, bwrap and /proc exist only on Linux")
     return False
 
 
@@ -2333,7 +2333,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
 # A suite a cause outside this repository stopped, such as claude's usage limit, is NOT RUN,
 # not FAIL, and names the cause; a failing case in the same run still fails the run.
-OUTSIDE_CAUSE_EXIT = module.NC_TEST_SUITE_EXIT_CODE_FOR_NOT_RUN_BECAUSE_A_CAUSE_OUTSIDE_THIS_REPOSITORY_STOPPED_ITS_CASES
+OUTSIDE_CAUSE_EXIT = module.NN_TEST_SUITE_EXIT_CODE_FOR_NOT_RUN_BECAUSE_A_CAUSE_OUTSIDE_THIS_REPOSITORY_STOPPED_ITS_CASES
 STOPPED_BY_WEEKLY_LIMIT = ("print('PASS  a case that needs no claude')\n"
                            "print(\"NOT RUN: the trial; claude stopped: account-limit — weekly limit · "
                            "resets Nov 16, 8pm (America/Los_Angeles)\")\n"
@@ -3781,7 +3781,7 @@ with tempfile.TemporaryDirectory() as scratch:
           and "not run to the end — stopped by SIGTERM" in stopped_output,
           (stub_pids, runner_process.returncode, stopped_output))
 
-# A suite outside an nc-test-sandbox whose grandchild starts a session of its own, which the
+# A suite outside an nn-test-sandbox whose grandchild starts a session of its own, which the
 # suite's process group does not hold. The grandchild writes outlived-its-tmpdir when it sees
 # the suite's TMPDIR removed while it still runs; it ends then, once this test no longer runs,
 # or after 60 s, so a kill that misses it leaves nothing running.
@@ -4218,7 +4218,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
 with tempfile.TemporaryDirectory() as scratch:
     temp = pathlib.Path(scratch)
-    prefix = module.SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX
+    prefix = module.SUITE_OUTSIDE_NN_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX
     left_by_killed_runner = temp / f"{prefix}ab_cd123"
     still_in_use = temp / f"{prefix}xy_z9876"
     not_mkdtemp_shaped = temp / f"{prefix}another-program"

@@ -44,7 +44,7 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
-# As inside a full run: the fixture suite runs unconfined, without an nc-test-sandbox, whose
+# As inside a full run: the fixture suite runs unconfined, without an nn-test-sandbox, whose
 # own tests are elsewhere.
 os.environ["RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX"] = "1"
 

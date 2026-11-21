@@ -141,7 +141,7 @@ if kind == "killed":
     os.kill(os.getpid(), signal.SIGTERM)
 print("VERDICT: CONFLICT -- abc conflicts with origin/main.")
 print("ANSWER: %s -- the fake's answer." % kind)
-print("Cut a new nc-topic-branch from current origin/main.", flush=True)
+print("Cut a new nn-topic-branch from current origin/main.", flush=True)
 if kind == "replace-then-exit-2":
     sys.exit(2)
 if kind == "replace-then-killed":
@@ -357,8 +357,8 @@ def brief_cases(root, repository, base, frozen_head):
     check("brief: names the conflict check and then the check command, and no test run of its own, since "
           "the check runs the suites",
           out.index(f"branch-conflict-check.py --pull-request {NUMBER}") < out.index(f"{NUMBER} --check")
-          and "run-all-test-suites" not in out and "Run the affected nc-test-suites" not in out
-          and "Before the push, the check runs the nc-test-suites" in out, out)
+          and "run-all-test-suites" not in out and "Run the affected nn-test-suites" not in out
+          and "Before the push, the check runs the nn-test-suites" in out, out)
     check("brief: says what to do when the check refuses and when a step fails after the push",
           "git commit --amend is allowed before the push" in out
           and "do not push again or rewrite the branch" in out, out)
@@ -2066,7 +2066,7 @@ def suite_cases(root, repository, _base, _frozen_head):
                          environment_extra=environment)
     check("suites: after the push the message for merge-lane-2 names that suite, and no suite runs, and the "
           "new shared names are not listed again",
-          code == 0 and "nc-test-suites that fail at the frozen-head too, so not because of this round: "
+          code == 0 and "nn-test-suites that fail at the frozen-head too, so not because of this round: "
           "a-test.py." in out and runner_calls(root) == [], out + err)
     code, out, err = run(root, repository, routes_for(fixed, [review(commit_id=fixed)]), "--check", "--answers",
                          answers, environment_extra=environment)
@@ -2178,8 +2178,8 @@ def architecture_overview_cases(root, repository, _base, _frozen_head):
     (repository / DEMO_OVERVIEW).write_text(demo_overview_text(fix))
     commit_file(repository, "hook.py", "also\n", "overview and other code in the second commit")
     code, out, err = check_round_at(frozen_head)
-    check("overview: a second commit that changes more than nc-architecture-overview pages refuses",
-          code == 1 and "The round has 2 commits" in err and "changes only nc-architecture-overview pages" in err,
+    check("overview: a second commit that changes more than nn-architecture-overview pages refuses",
+          code == 1 and "The round has 2 commits" in err and "changes only nn-architecture-overview pages" in err,
           out + err)
 
 
@@ -2494,7 +2494,7 @@ def conflict_check_cases(root, repository, _base, frozen_head):
     code, out, err = run(root, repository, routes, environment_extra={"FAKE_CONFLICT_CHECK": "replace"})
     check("conflict check: a replace answer prints the check's report and the replace steps, and exits 0",
           code == 0 and "ANSWER: replace -- the fake's answer." in out
-          and "Cut a new nc-topic-branch from current origin/main." in out
+          and "Cut a new nn-topic-branch from current origin/main." in out
           and f"No fix-round runs: pull request {NUMBER} conflicts with main" in out
           and "tell merge-lane-2 with SendMessage that this round stopped on a conflict with main" in out
           and f"Frozen-head: {frozen_head}" in out, err + out)

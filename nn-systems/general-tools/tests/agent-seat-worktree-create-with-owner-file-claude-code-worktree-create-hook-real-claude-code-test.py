@@ -13,7 +13,7 @@ for GIT_AUTHOR_NAME, so scripts/run-all-test-suites.py runs it outside any sandb
 one short haiku agent-session, and removes the Claude Code project directory claude made for
 the scratch clone. When claude names a cause outside this repository, such as its usage limit
 or being logged out, the trial's cases are not judged: the suite prints the cause as its last
-line and exits run-all-test-suites.py's NC_TEST_SUITE_EXIT_CODE_FOR_NOT_RUN_BECAUSE_A_CAUSE_OUTSIDE_THIS_REPOSITORY_STOPPED_ITS_CASES,
+line and exits run-all-test-suites.py's NN_TEST_SUITE_EXIT_CODE_FOR_NOT_RUN_BECAUSE_A_CAUSE_OUTSIDE_THIS_REPOSITORY_STOPPED_ITS_CASES,
 unless another case failed.
 
 Run: python3 nn-systems/general-tools/tests/agent-seat-worktree-create-with-owner-file-claude-code-worktree-create-hook-real-claude-code-test.py
@@ -232,7 +232,7 @@ def suite_last_line_and_exit_code(failed_cases, outside_causes):
         return f"FAILED: {len(failed_cases)} failed", 1
     if outside_causes:
         return (f"NOT RUN: the trial against the installed Claude Code; claude stopped: {outside_causes[0]}",
-                test_suite_runner.NC_TEST_SUITE_EXIT_CODE_FOR_NOT_RUN_BECAUSE_A_CAUSE_OUTSIDE_THIS_REPOSITORY_STOPPED_ITS_CASES)
+                test_suite_runner.NN_TEST_SUITE_EXIT_CODE_FOR_NOT_RUN_BECAUSE_A_CAUSE_OUTSIDE_THIS_REPOSITORY_STOPPED_ITS_CASES)
     return "PASSED: 0 failed", 0
 
 
@@ -244,7 +244,7 @@ def test_a_failed_case_outranks_an_outside_cause():
     check("claude's weekly limit alone exits NOT RUN's code, naming the cause",
           suite_last_line_and_exit_code([], [weekly_limit])
           == (f"NOT RUN: the trial against the installed Claude Code; claude stopped: {weekly_limit}",
-              test_suite_runner.NC_TEST_SUITE_EXIT_CODE_FOR_NOT_RUN_BECAUSE_A_CAUSE_OUTSIDE_THIS_REPOSITORY_STOPPED_ITS_CASES))
+              test_suite_runner.NN_TEST_SUITE_EXIT_CODE_FOR_NOT_RUN_BECAUSE_A_CAUSE_OUTSIDE_THIS_REPOSITORY_STOPPED_ITS_CASES))
     check("neither exits 0", suite_last_line_and_exit_code([], []) == ("PASSED: 0 failed", 0))
 
 

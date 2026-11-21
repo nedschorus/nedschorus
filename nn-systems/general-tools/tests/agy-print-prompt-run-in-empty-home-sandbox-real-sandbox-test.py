@@ -4,12 +4,12 @@ the real bwrap: the home holds nothing but .gemini, /usr, /etc and
 /run/systemd/resolve are mounted read-only, and agy starts in an empty working
 directory.
 
-The real bwrap cannot start inside the nc-test-sandbox, so this suite is
+The real bwrap cannot start inside the nn-test-sandbox, so this suite is
 listed in scripts/run-all-test-suites.py's SUITES_RUN_WITHOUT_ANY_SANDBOX and
 waits for that list's machine-wide lock. It runs
 nn-systems/general-tools/tests/agy-print-prompt-run-in-empty-home-sandbox-test.py
 with --real-sandbox-cases-only, which runs those cases alone; the other cases
-of that suite run inside the nc-test-sandbox with a stand-in for bwrap. Its
+of that suite run inside the nn-test-sandbox with a stand-in for bwrap. Its
 exit code and output are that run's.
 
 Run: python3 nn-systems/general-tools/tests/agy-print-prompt-run-in-empty-home-sandbox-real-sandbox-test.py

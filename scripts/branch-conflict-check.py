@@ -620,7 +620,7 @@ def replace_lines(answer_line, pull_request, base, understand, caveat=()):
         "comment naming the commit or pull request on %s that holds it, and stop."
         % (base, pull_request, base),
     ] + understand + [
-        "Cut a new nc-topic-branch from current %s and carry this branch's work "
+        "Cut a new nn-topic-branch from current %s and carry this branch's work "
         "onto it, rewriting this branch's lines so that both changes work." % base,
         "Run python3 scripts/run-all-test-suites.py "
         "--only-suites-whose-recorded-inputs-changed-since %s." % base,

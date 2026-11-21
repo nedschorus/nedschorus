@@ -71,7 +71,7 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
     base_resolves and head_resolves override `resolves` for one side, so a case
     can make exactly one rev unresolvable. Without that, both guards see a
     failure, the first one returns, and the second is never exercised -- which
-    is how the head guard went unpinned until nc-mutation-testing found it.
+    is how the head guard went unpinned until nn-mutation-testing found it.
 
     gh_head is the pushed head GitHub answers about, and defaults to the hash
     the fake git resolves HEAD to -- the matching case, so a case that says
@@ -710,7 +710,7 @@ def replace_lines(number, base="origin/main"):
         "comment naming the commit or pull request on %s that holds it, and stop."
         % (base, number, base),
     ] + understand_lines(base) + [
-        "Cut a new nc-topic-branch from current %s and carry this branch's work "
+        "Cut a new nn-topic-branch from current %s and carry this branch's work "
         "onto it, rewriting this branch's lines so that both changes work." % base,
         "Run python3 scripts/run-all-test-suites.py "
             "--only-suites-whose-recorded-inputs-changed-since %s." % base,

@@ -82,7 +82,7 @@ session-handoff now; 1 not restarted, and the agent-seat carries on; 2 bad invoc
 Second half: 0 restarted and the successor replied; 1 a failure, shown to the user as a notice.
 
 NEDSNODES_HANDOFF_SUPERVISOR_RESTART_LOG_DIRECTORY overrides where the log directories go: the
-seam the nc-test-suite uses.
+seam the nn-test-suite uses.
 """
 
 import argparse

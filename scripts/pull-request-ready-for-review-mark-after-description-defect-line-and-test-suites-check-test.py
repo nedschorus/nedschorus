@@ -190,7 +190,7 @@ def main():
              FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
                         branch=answers("some-other-branch\n")),
              ["view", "rev-parse", "branch"],
-             [f"this checkout's HEAD, {'b' * 12}, is not #77 ({URL})'s pushed nc-head-commit, "
+             [f"this checkout's HEAD, {'b' * 12}, is not #77 ({URL})'s pushed nn-head-commit, "
               f"{'a' * 12}", f"This checkout is on branch some-other-branch, not the pull "
               f"request's branch {BRANCH}: run this again from the checkout that has {BRANCH} "
               "checked out; git worktree list names each checkout of this clone with its "
@@ -260,7 +260,7 @@ def main():
              FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
                         has_commit=exits(1, "error: hash mismatch " + HEAD)),
              ["view", "rev-parse", "branch", "has-commit"],
-             ["looking for the pushed nc-head-commit in this checkout failed: git rev-parse "
+             ["looking for the pushed nn-head-commit in this checkout failed: git rev-parse "
               f"--verify exited with status 1: error: hash mismatch {HEAD}."]),
             ("a checkout with untracked files that are not ignored",
              FakeRunner(status=answers("?? notes.txt\n?? more.txt\n")),
@@ -412,23 +412,23 @@ def main():
             ("the pushed commit is in the clone but cannot be read",
              FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
                         has_commit=exits(128, "error: inflate: data stream error")),
-             ["looking for the pushed nc-head-commit in this checkout failed: git rev-parse "
+             ["looking for the pushed nn-head-commit in this checkout failed: git rev-parse "
               "--verify exited with status 128: error: inflate: data stream error.",
               "If git gave any other error: Run this command again once."]),
             ("git merge-base fails",
              FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
                         ancestor=exits(128, "fatal: Not a valid commit name")),
-             ["comparing this checkout's HEAD with the pushed nc-head-commit failed: git "
+             ["comparing this checkout's HEAD with the pushed nn-head-commit failed: git "
               "merge-base --is-ancestor exited with status 128: fatal: Not a valid commit name.",
               "If git gave any other error: Run this command again once."]),
             ("git merge-base is killed by a signal",
              FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"), ancestor=exits(-9)),
-             ["comparing this checkout's HEAD with the pushed nc-head-commit failed: git "
+             ["comparing this checkout's HEAD with the pushed nn-head-commit failed: git "
               "merge-base --is-ancestor exited with status -9, printing no error."]),
             ("git merge-base cannot be run",
              FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),
                         ancestor=raises(FileNotFoundError(2, "No such file", "git"))),
-             ["comparing this checkout's HEAD with the pushed nc-head-commit failed: git could "
+             ["comparing this checkout's HEAD with the pushed nn-head-commit failed: git could "
               "not be run ("]),
             ("git merge-base does not answer in time",
              FakeRunner(rev_parse=answers(f"{CHECKOUT}\n{OTHER}\n"),

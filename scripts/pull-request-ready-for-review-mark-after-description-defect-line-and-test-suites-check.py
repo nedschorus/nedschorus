@@ -3,9 +3,9 @@
 
 Usage: python3 scripts/pull-request-ready-for-review-mark-after-description-defect-line-and-test-suites-check.py <pull request number>
 
-Run it from the pull request's own checkout, with its nc-head-commit checked out. In order, it:
+Run it from the pull request's own checkout, with its nn-head-commit checked out. In order, it:
 1. reads the pull request with gh, and stops when it is not open, or is already ready for review;
-2. refuses when the checkout's HEAD is not the pull request's pushed nc-head-commit, naming the
+2. refuses when the checkout's HEAD is not the pull request's pushed nn-head-commit, naming the
    one case that applies (another branch is checked out, the pushed commit has not been fetched,
    or the checkout is ahead, behind, or both), or when git status shows an uncommitted change or
    an untracked file that is not ignored, whatever status.showUntrackedFiles says, because the
@@ -151,11 +151,11 @@ def head_mismatch_next_steps(pull_request, head, runner, git_failed):
     # that is there but unreadable prints an error, with exit 128 or, for a hash mismatch, 1.
     pushed_is_here = git_answers_yes(
         ["git", "rev-parse", "--verify", "--quiet", pushed + "^{commit}"], runner,
-        "looking for the pushed nc-head-commit in this checkout", git_failed)
+        "looking for the pushed nn-head-commit in this checkout", git_failed)
     if not pushed_is_here:
         return (f"This checkout does not have the pushed commit yet: run git fetch origin "
                 f"{quoted}, then run this again, and it names what to do next.")
-    comparing = "comparing this checkout's HEAD with the pushed nc-head-commit"
+    comparing = "comparing this checkout's HEAD with the pushed nn-head-commit"
     if git_answers_yes(["git", "merge-base", "--is-ancestor", pushed, head], runner, comparing,
                        git_failed):
         return (f"This checkout has commits the pull request lacks: push them with git push "
@@ -212,7 +212,7 @@ def check_and_mark_ready(number, runner, output):
     checkout, head = printed
     if head != pull_request["headRefOid"]:
         raise StepFailed(
-            f"this checkout's HEAD, {head[:12]}, is not {name}'s pushed nc-head-commit, "
+            f"this checkout's HEAD, {head[:12]}, is not {name}'s pushed nn-head-commit, "
             f"{str(pull_request['headRefOid'])[:12]}, so the test suites would not test the "
             f"commits under review. {NOTHING_CHANGED_LINE}\n"
             + head_mismatch_next_steps(pull_request, head, runner, rev_parse_failed))
@@ -300,7 +300,7 @@ def check_and_mark_ready(number, runner, output):
 def main(argv=None, runner=subprocess.run, output=sys.stdout, errors=sys.stderr):
     parser = argparse.ArgumentParser(
         description="Mark one draft pull request ready for review, after checking that this "
-                    "checkout's HEAD is its pushed nc-head-commit, that its description has a "
+                    "checkout's HEAD is its pushed nn-head-commit, that its description has a "
                     "defect line, and that the test suites pass.")
     parser.add_argument("pull_request_number", type=int)
     arguments = parser.parse_args(argv)

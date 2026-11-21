@@ -123,7 +123,7 @@ a caller told it failed would ask for a second one.
 
 NEDSNODES_MAC_WINDOW_OPENER overrides the opener's path, NEDSNODES_MAC_OPEN_PROGRAM
 the program that opens Typora and the browser, NEDSNODES_NED_BOX_HOME ned-box's home and
-NEDSNODES_MAC_NED_BOX_HOME_MOUNT the Mac's mount of it: the seams the nc-test-suites
+NEDSNODES_MAC_NED_BOX_HOME_MOUNT the Mac's mount of it: the seams the nn-test-suites
 use, so no test opens a real window or a real file. sshd does not pass
 a client's environment to a forced command, so ned-box cannot set them.
 """

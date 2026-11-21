@@ -32,9 +32,9 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 SKILL_FILE_RELATIVE_PATH = ".claude/skills/walk-me-through/SKILL.md"
 SKILL_FILE = REPO_ROOT / SKILL_FILE_RELATIVE_PATH
 _rule_failure_lines_spec = importlib.util.spec_from_file_location(
-    "rule_enforcing_nc_test_suite_failure_message_closing_lines_text_common",
+    "rule_enforcing_nn_test_suite_failure_message_closing_lines_text_common",
     REPO_ROOT / "nn-systems" / "general-tools"
-    / "rule-enforcing-nc-test-suite-failure-message-closing-lines-text-common.py")
+    / "rule-enforcing-nn-test-suite-failure-message-closing-lines-text-common.py")
 RULE_FAILURE_LINES = importlib.util.module_from_spec(_rule_failure_lines_spec)
 _rule_failure_lines_spec.loader.exec_module(RULE_FAILURE_LINES)
 # Every `<name>-something.md` and `<name>.md` the skill writes. The skill

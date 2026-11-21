@@ -59,7 +59,7 @@ def git(directory, *arguments):
 
 
 def build_repositories(scratch):
-    """Return (checkout, main commit, nc-head-commit)."""
+    """Return (checkout, main commit, nn-head-commit)."""
     origin = scratch / "origin.git"
     author = scratch / "author"
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True,
@@ -128,12 +128,12 @@ def main():
         check("both worktrees are made, exit 0", completed.returncode == 0
               and head_worktree.is_dir() and merged_worktree.is_dir(), detail)
         if completed.returncode == 0:
-            check("pr<n>-head is at the nc-head-commit",
+            check("pr<n>-head is at the nn-head-commit",
                   git(head_worktree, "rev-parse", "HEAD") == head_commit, detail)
             check("pr<n>-head is detached",
                   git(head_worktree, "rev-parse", "--abbrev-ref", "HEAD") == "HEAD", detail)
             parents = git(merged_worktree, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:]
-            check("pr<n>-merged is a merge commit of main and the nc-head-commit",
+            check("pr<n>-merged is a merge commit of main and the nn-head-commit",
                   parents == [main_commit, head_commit], repr(parents))
             check("the merge commit is made as merge-lane-2",
                   git(merged_worktree, "log", "-1", "--format=%an") == "merge-lane-2", detail)
@@ -164,7 +164,7 @@ def main():
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
 
         completed = run_program(helpers, checkout, "7", "0" * 40, main_commit)
-        check("a nc-head-commit git cannot find exits 1 and names the failed step",
+        check("an nn-head-commit git cannot find exits 1 and names the failed step",
               completed.returncode == 1 and "worktrees not rebuilt" in completed.stdout
               and "worktree add" in completed.stdout,
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Post a pull request review, the Claude reviewer's as mac-claude or merge-lane-2's as ned-review-merge, then read it back from GitHub.
 
-Did the review get posted on the named nc-head-commit, as the review file
+Did the review get posted on the named nn-head-commit, as the review file
 says? Exits 0 if the review was posted and read back as expected, 2 otherwise.
 
 Usage:
@@ -154,7 +154,7 @@ NO_NEW_ACTIVITY = (
     "gate's refusal for activity after reviewed-since, and scripts/merge-gate.sh finds nothing posted or "
     "edited on pull request {number} after {account}'s latest review or the pin.\n"
     "Do not post the review any other way.\n"
-    "If you have reviewed the nc-head-commit, give the file your verdict and findings, in the form this "
+    "If you have reviewed the nn-head-commit, give the file your verdict and findings, in the form this "
     "program's docstring describes, and run the same command again.\n"
     "If the gate refused for new activity, run the gate again: what it counted may have been your own "
     "review.")
@@ -441,7 +441,7 @@ def parse_arguments(argv):
     parser.add_argument("--pull-request", type=int, required=True,
                         help="the pull request's number")
     parser.add_argument("--head-commit", required=True,
-                        help="the full hash of the nc-head-commit the review is on")
+                        help="the full hash of the nn-head-commit the review is on")
     parser.add_argument("--github-account", choices=(MAC_CLAUDE_ACCOUNT, MERGE_LANE_ACCOUNT),
                         default=MAC_CLAUDE_ACCOUNT,
                         help="the GitHub account the review is posted as, which also sets the "

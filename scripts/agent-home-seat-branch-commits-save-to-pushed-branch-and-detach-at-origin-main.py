@@ -200,7 +200,7 @@ def move_agent_home(home: Path, today: datetime.date):
 
 LEFT_INSTRUCTIONS = (
     "For each agent-home left as it was: carry its changes or commits to a worktree on an "
-    "nc-topic-branch, or ask that agent-seat to, unless they are throwaway, such as a test "
+    "nn-topic-branch, or ask that agent-seat to, unless they are throwaway, such as a test "
     "run's output; then run this program again.\n"
     "If a step failed, fix what its error names, then run this program again: it pushes "
     "nothing twice and moves only what is still to move."

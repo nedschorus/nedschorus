@@ -914,7 +914,7 @@ def main():
         check("with no head test run record, after the merge the runner in a worktree at the "
               "merge commit runs the suites whose recorded inputs changed since the reviewed "
               "head, its logs in the outputs directory, and says it fell back to the head",
-              f"selecting the nc-test-suites whose recorded inputs changed since the head "
+              f"selecting the nn-test-suites whose recorded inputs changed since the head "
               f"commit {HEAD[:12]}, which selects more suites than the merge changed: no "
               f"readable head test run record under" in output
               and len(calls) == 1 and calls[0]["cwd"] == str(merge_commit_worktree)
@@ -1186,7 +1186,7 @@ def main():
                   "--only-suites-whose-recorded-inputs-changed-since", merged]
               and tree_of(scratch, name, merged)
               == tree_of(scratch, name, origin_commit(scratch, name))
-              and f"selecting the nc-test-suites whose recorded inputs changed since "
+              and f"selecting the nn-test-suites whose recorded inputs changed since "
                   f"{merged[:12]}, the commit the head test run passed on: "
                   f"pull request 10's head merged with main as main was when that run started"
                   in output

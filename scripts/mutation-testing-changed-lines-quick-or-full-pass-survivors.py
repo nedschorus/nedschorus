@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run nc-mutation-testing with cosmic-ray on the lines a change made, in its quick or its full pass, and print the survivors.
+"""Run nn-mutation-testing with cosmic-ray on the lines a change made, in its quick or its full pass, and print the survivors.
 
 Usage:
   scripts/mutation-testing-changed-lines-quick-or-full-pass-survivors.py
@@ -63,11 +63,11 @@ suites, --leave-recorded-inputs-and-failure-history-unchanged, so a mutant
 changes no suite's recording, and --stop-at-first-failing-suite, so a mutant
 one suite kills does not wait for the rest. The runner runs the suites in
 parallel, each starting when the runner's admission lets it (on Linux in
-nc-test-sandboxes, when the machine's CPU and memory have room: ADMISSION in the
+nn-test-sandboxes, when the machine's CPU and memory have room: ADMISSION in the
 runner's docstring), each in its signal sandbox and, on Linux with
-bwrap, its nc-test-sandbox, each under its own time limit (see PER-SUITE TIMEOUT
+bwrap, its nn-test-sandbox, each under its own time limit (see PER-SUITE TIMEOUT
 in the runner's docstring), and passes on --python, --recorded-inputs-directory
-and, when given, --lock-file. Where suites run without nc-test-sandboxes (macOS,
+and, when given, --lock-file. Where suites run without nn-test-sandboxes (macOS,
 or Linux without bwrap), each of the runner's runs takes the machine's lock,
 and the runner exits 3 without running a suite while another test run holds it.
 On a mutant, that refusal judges no suite, so the mutant is printed as ERRORED
@@ -114,7 +114,7 @@ test command sends the runner SIGTERM once the limit, that ceiling and
 MUTANT_TIMEOUT_EXTRA_SECONDS_FOR_TEST_SUITE_RUNNER_TO_STOP_ITS_SUITES, 30 s,
 have passed; cosmic-ray's own limit, which kills only the test command's
 process group, is 30 s later still, since a suite runs in a session of its own
-and, outside an nc-test-sandbox, outlives a runner killed with SIGKILL.
+and, outside an nn-test-sandbox, outlives a runner killed with SIGKILL.
 
 PARALLEL MUTANTS. --parallel-mutant-workers N runs N mutants at once, each in a
 scratch worktree of its own at the head, since each worker edits its mutant into
@@ -129,7 +129,7 @@ records each result in the session. A mutant whose worker gives no result
 stays without one, and the script exits 2 naming it. The baseline runs once,
 in the first worktree. The suites of every worker still wait for the
 runner's ADMISSION, so N above the machine's free cores only queues them.
-Where suites do not run in nc-test-sandboxes, every run of the runner takes
+Where suites do not run in nn-test-sandboxes, every run of the runner takes
 the machine's lock, so an N above 1 exits 2 before making a worktree.
 Without the flag, mutants run one at a time, by `cosmic-ray exec`.
 
@@ -175,7 +175,7 @@ judge, because its worker raised, its suites could not be launched, a suite
 ran past its own time limit, which the runner's TIMEOUT line names, the
 suites ran past the limit on one run of them, or the runner exited nonzero without a
 suite failing by its own exit (it printed nothing, was not run to the end,
-could not write its records, or a suite's nc-test-sandbox did not start), is
+could not write its records, or a suite's nn-test-sandbox did not start), is
 printed as ERRORED and counts against the run like a survivor. cosmic-ray
 itself reports every nonzero exit of the runner as a kill; this script does
 not. A mutant one of whose suites had a process killed at the suite's memory
@@ -262,7 +262,7 @@ exists, 1 one survived, 2 one could not be judged or the check could not run,
 a suite failing without a mutant included; never 3):
 0 every mutant was killed, 1 a mutant survived, errored or was
 not run, or a changed file has no suite, 2 could not run (cosmic-ray missing or unable to start,
-a git step failed, the nc-head-commit is already in the base, the worktree could
+a git step failed, the nn-head-commit is already in the base, the worktree could
 not be made, a changed file the quick mutation pass reads is not valid Python,
 the JSON file could not be written, or a suite runs out of time, cannot be
 launched, or fails without the suite runner naming it on the unmutated head),
@@ -472,7 +472,7 @@ def cosmic_ray_tool_paths(venv):
 
 
 def head_and_base_of_pull_request(number, checkout, environment):
-    """Return (nc-head-commit, base ref) of a pull request, fetching both."""
+    """Return (nn-head-commit, base ref) of a pull request, fetching both."""
     view = json.loads(run_or_raise(
         ["gh", "pr", "view", str(number), "--json", "headRefOid,baseRefName"],
         checkout, environment, what=f"gh pr view {number}"))
@@ -495,7 +495,7 @@ def changed_python_files_to_mutate(checkout, merge_base, head, environment):
 
 
 def suites_at_head(checkout, head, environment):
-    """The nc-test-suites git tracks at head."""
+    """The nn-test-suites git tracks at head."""
     listed = run_or_raise(["git", "ls-tree", "-r", "-z", "--name-only", head], checkout,
                           environment, what="git ls-tree")
     return [path for path in git_output.nul_separated_fields(listed)
@@ -1862,7 +1862,7 @@ def parse_arguments(argv):
     which = parser.add_mutually_exclusive_group()
     which.add_argument("--pull-request", type=int,
                        help="the pull request to test; its head and base are read with gh and fetched")
-    which.add_argument("--head", help="the nc-head-commit to test (needs --base, except with "
+    which.add_argument("--head", help="the nn-head-commit to test (needs --base, except with "
                                       f"{RECORDED_MUTANT_KILLED_CHECK_COMMAND_LINE_FLAG})")
     parser.add_argument("--base", help="the base the head is compared with (with --head)")
     parser.add_argument("--checkout", default=str(Path(__file__).resolve().parent.parent),
@@ -2055,7 +2055,7 @@ def quick_or_full_mutation_pass_or_recorded_mutant_killed_check(
             raise CouldNotRun(
                 f"{PROGRAM}: not run — {PARALLEL_MUTANT_WORKERS_FLAG} "
                 f"{arguments.parallel_mutant_workers} needs the suites to run in "
-                f"nc-test-sandboxes, which they do not here, so each run of the suite runner "
+                f"nn-test-sandboxes, which they do not here, so each run of the suite runner "
                 f"takes the machine's lock and every worker but one would be refused it.\n"
                 f"Run this again with {PARALLEL_MUTANT_WORKERS_FLAG} 1, or without it.")
         if in_test_sandboxes:

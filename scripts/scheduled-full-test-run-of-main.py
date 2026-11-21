@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run every nc-test-suite on main once a day on this machine, and record the result in the log-store.
+"""Run every nn-test-suite on main once a day on this machine, and record the result in the log-store.
 
 Usage:
   scripts/scheduled-full-test-run-of-main.py [--clone DIR] [--log-store-root DIR]
@@ -437,7 +437,7 @@ def write_record_command(log_store_root: str, machine: str, file_name: str) -> s
 def parse_arguments(argv):
     parser = argparse.ArgumentParser(
         prog=PROGRAM,
-        description="Run every nc-test-suite on main on this machine and record the result "
+        description="Run every nn-test-suite on main on this machine and record the result "
                     "in the log-store.")
     parser.add_argument("--clone", default=str(REPOSITORY_ROOT))
     parser.add_argument("--log-store-root", default=SCHEDULED_FULL_TEST_RUN_DEFAULT_LOG_STORE_ROOT)

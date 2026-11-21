@@ -9,7 +9,7 @@ server is ended with kill-server on its own socket, and that socket's file is re
 other tmux server is touched.
 
 Linux with the user's session bus, systemd-run and tmux only; elsewhere every case is
-skipped. The nc-test-sandbox hides /run/user/<uid>, so the runner runs this suite
+skipped. The nn-test-sandbox hides /run/user/<uid>, so the runner runs this suite
 without any sandbox; run inside a sandbox anyway, it skips.
 
 Run: python3 scripts/recover-crashed-seats-started-tmux-server-lands-in-user-systemd-manager-cgroup-without-xdg-runtime-dir-real-process-test.py   (exit 0 = all passed)

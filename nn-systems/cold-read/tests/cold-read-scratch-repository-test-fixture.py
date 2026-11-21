@@ -171,7 +171,7 @@ def cold_read_fast_read_scratch_repository_whose_stub_agy_answers_in_chat(scratc
 
 
 # A stand-in for bwrap and sandbox-exec, so a suite whose program starts one
-# of them can run inside the nc-test-sandbox, where the real bwrap cannot
+# of them can run inside the nn-test-sandbox, where the real bwrap cannot
 # start. It confines nothing: it checks the options it is given, applies
 # --chdir, --clearenv, --setenv and --unsetenv in order, runs the command at the source of a bind whose
 # destination is the command's path, and replaces itself with the command, so

@@ -183,7 +183,7 @@ def run_command_and_environment(root, repo, name, suite_watches_this_test):
     environment = dict(os.environ)
     environment.pop(module.SIGNAL_SANDBOX_INSIDE_VARIABLE, None)
     # In the checkout, which a suite run without any sandbox and this test share; inside
-    # an nc-test-sandbox the checkout is a copy-on-write overlay, so a sandboxed suite reports
+    # an nn-test-sandbox the checkout is a copy-on-write overlay, so a sandboxed suite reports
     # its start in its output instead.
     environment[STARTED_FILE_VARIABLE] = str(repo / f"{name}.started")
     environment[STOP_FILE_VARIABLE] = str(repo / "stop")
@@ -362,7 +362,7 @@ else:
         finally:
             (root / "stop").write_text("stop\n")
 
-# --- The launcher a suite outside an nc-test-sandbox starts under ----------------
+# --- The launcher a suite outside an nn-test-sandbox starts under ----------------
 _launcher_spec = importlib.util.spec_from_file_location(
     "suite_launcher", module.ONE_SUITE_CHILD_SUBREAPER_LAUNCHER_PATH)
 launcher = importlib.util.module_from_spec(_launcher_spec)
@@ -484,7 +484,7 @@ else:
               "timeout" in result and "is kept for any still running" in note
               and kept_directory is not None and pathlib.Path(kept_directory).is_dir(), note)
         if kept_directory and pathlib.Path(kept_directory).name.startswith(
-                module.SUITE_OUTSIDE_NC_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX):
+                module.SUITE_OUTSIDE_NN_TEST_SANDBOX_TEMPORARY_DIRECTORY_PREFIX):
             shutil.rmtree(kept_directory, ignore_errors=True)
 
 # --- A killed run's suite that still runs keeps its traces ---------------------

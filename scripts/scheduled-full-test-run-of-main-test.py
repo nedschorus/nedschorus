@@ -1128,10 +1128,10 @@ def run_not_run_suite_record_cases():
     summary = "SUMMARY: 1 passed, 0 failed, 1 not run, 2 total"
     printed = ["scripts/run-all-test-suites.py: /a/checkout at 0123456789ab", "PASS scripts/a-test.py (0.1s)",
                not_run_lines[0], "", "1 not run, because bwrap could not build the "
-               "nc-test-sandbox; each log says why and what to do:", not_run_lines[1], summary]
+               "nn-test-sandbox; each log says why and what to do:", not_run_lines[1], summary]
     kept = program.runner_output_lines_for_the_record(
         types.SimpleNamespace(stdout="\n".join(printed) + "\n", stderr=""))
-    check("a run with a suite whose nc-test-sandbox did not start keeps both of the runner's "
+    check("a run with a suite whose nn-test-sandbox did not start keeps both of the runner's "
           "NOT RUN lines for it in the record, as the runner's own code prints them",
           [line for line in kept if line in not_run_lines] == not_run_lines
           and summary in kept, repr(kept))
