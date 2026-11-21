@@ -3,7 +3,8 @@
 
 Rule 1: tiers follow content. Tests, fenced Markdown code, and Python changes
 limited to docstrings, comments and tool-message-to-agent strings get codex-review-and-head-tests-tier.
-A tool-message-to-agent string is one that tool_message_to_agent_string_nodes_in_source finds;
+A tool-message-to-agent string is one that tool_message_to_agent_string_nodes_in_source,
+in nn-systems/general-tools/python-source-tool-message-to-agent-string-collector-common.py, finds;
 any other string, such as a regular expression, a command's argument or a path,
 carries behaviour, so a change to it is a behaviour change.
 Python behaviour changes and other code get claude-and-codex-review-and-head-tests-tier. Prose gets
