@@ -478,19 +478,23 @@ def passes_its_text_up(child, parent):
 
 def nearest_call_prints_its_argument(node, parents, helper_printers):
     """True when node's text reaches, unchanged, a statement or the argument of a printing call or
-    helper printer, the exception a raise statement builds, or a method called on node itself, as
-    .format is. The collector also counts a string inside any call nested in a printed argument,
-    such as the pattern in print(re.sub("a", "b", text)), but such a string steers the call, not
-    the text; and one inside a comparison, as in print(x == "yes"), which prints only a Boolean."""
+    helper printer, or the exception a raise statement builds. A method called on the text, as
+    .format is, passes its result on up. The collector also counts a string inside any call nested
+    in a printed argument, such as the pattern in print(re.sub("a", "b", text)), but such a string
+    steers the call, not the text; and one inside a comparison, as in print(x == "yes") or
+    print(x == "yes".upper()), which prints only a Boolean."""
     child = node
     parent = parents.get(child)
-    while passes_its_text_up(child, parent):
-        child, parent = parent, parents.get(parent)
+    while True:
+        while passes_its_text_up(child, parent):
+            child, parent = parent, parents.get(parent)
+        call = parents.get(parent)
+        if not (isinstance(parent, ast.Attribute) and parent.value is child
+                and isinstance(call, ast.Call) and call.func is parent):
+            break
+        child, parent = call, parents.get(call)
     if isinstance(parent, ast.stmt):
         return True
-    if isinstance(parent, ast.Attribute):
-        call = parents.get(parent)
-        return parent.value is child and isinstance(call, ast.Call) and call.func is parent
     if not isinstance(parent, ast.Call) or child is parent.func:
         return False
     call_name = ast.unparse(parent.func)
