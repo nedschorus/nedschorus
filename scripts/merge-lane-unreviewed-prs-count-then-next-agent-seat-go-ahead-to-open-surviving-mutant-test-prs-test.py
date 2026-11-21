@@ -105,7 +105,8 @@ class Case:
                 if path.exists() else [])
 
     def sender_answers(self, *outcomes):
-        """Each outcome: ("sent", seat), ("error", text) or ("sent-to", other entry)."""
+        """Each outcome: ("sent", seat), ("error", text), ("sent-to", other entry) or
+        ("sent-text", other text), which sends that text to the first agent-seat."""
         self.outcomes = list(outcomes)
         self.prompts = []
 
@@ -117,7 +118,10 @@ class Case:
         if kind == "error":
             outcome.error = value
         else:
-            outcome.sends = [{"to": f"{value} [1c88e6]", "message": "text", "succeeded": True,
+            # The text code wrote is the prompt's text between its two lines of dashes.
+            text = prompt.split("----------\n", 1)[1].rsplit("\n----------", 1)[0]
+            seat, message = (SEATS[0], value) if kind == "sent-text" else (value, text)
+            outcome.sends = [{"to": f"{seat} [1c88e6]", "message": message, "succeeded": True,
                               "result": "ok"}]
             outcome.answer = {"sent": True, "reason": "sent"}
         return outcome
@@ -177,12 +181,15 @@ def cases(root):
             ("send-fails", ("error", "stopped after 300 seconds"),
              "the headless agent-session that sends the message failed: stopped after 300 "
              "seconds"),
-            ("check-fails", ("sent-to", "MD-skills"), "no SendMessage to reboot-test succeeded")):
+            ("check-fails", ("sent-to", "MD-skills"), "no SendMessage to reboot-test succeeded"),
+            ("text-differs", ("sent-text", "You may open your mutant-test pull requests now."),
+             "sent reboot-test a text other than the release message: 'You may open your "
+             "mutant-test pull requests now.'")):
         case = Case(root, name)
         case.gh_answer(pages(ten_unreviewed))
         case.sender_answers(outcome)
         code, output = case.run()
-        check(f"when the {name.split('-')[0]} fails, nothing is recorded, what failed is printed, "
+        check(f"when the {name.split('-')[0]} {'differs' if name == 'text-differs' else 'fails'}, nothing is recorded, what failed is printed, "
               f"no RELEASED line, exit 2, which the merge script reports without failing the "
               f"merge",
               code == 2 and case.released() == [] and said in output
@@ -190,7 +197,7 @@ def cases(root):
               f"exit {code}\n{output}")
         case.sender_answers(("sent", "reboot-test"))
         code, output = case.run()
-        check(f"after the {name.split('-')[0]} failed, the next run sends to the same agent-seat "
+        check(f"after the {name.split('-')[0]} {'differed' if name == 'text-differs' else 'failed'}, the next run sends to the same agent-seat "
               f"again",
               code == 0 and output.startswith("RELEASED reboot-test\n"), f"exit {code}\n{output}")
 
