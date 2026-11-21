@@ -1,5 +1,5 @@
 ---
-issue: "[Regular maintenance: the list of maintenance jobs, how often each runs, and how each reaches the user](https://github.com/nedschorus/nedschorus/issues/1058)"
+issue: "[Regular maintenance: the list of maintenance jobs, how often each runs, and how each reaches the user](https://github.com/nedsnodes/nedsnodes/issues/1058)"
 kind: design
 ---
 
