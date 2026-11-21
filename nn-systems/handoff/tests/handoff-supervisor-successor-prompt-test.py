@@ -1229,8 +1229,8 @@ EXPECTED_OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE = (
     " — Dispatch a subagent to refresh {overview_path} against the commits "
     "`{commit_listing_command}` lists, as "
     "docs/nedsnodes-wiki/nedsnodes-how-to-write-an-architecture-overview.md "
-    "defines a refresh, ending in the line `{checked_against_line}`, and to "
-    "open a pull request with the refresh as /overview-write says."
+    "defines a refresh, ending in the line `{checked_against_line}`, to check "
+    "the refresh as /overview-write says, and to open a pull request with it."
 )
 
 
@@ -1248,7 +1248,8 @@ def expected_overview_refresh_due_line(system: str, pinned: str, main: str,
         "docs/nedsnodes-wiki/nedsnodes-how-to-write-an-architecture-overview.md "
         "defines a refresh, ending in the line `**Checked against:** commit "
         f"[{main_full}](https://github.com/nedsnodes/nedsnodes/commit/{main_full})`, "
-        "and to open a pull request with the refresh as /overview-write says.")
+        "to check the refresh as /overview-write says, and to open a pull request "
+        "with it.")
 
 
 def expected_widget_overview_refresh_due_line(pinned: str, main: str, count: int,

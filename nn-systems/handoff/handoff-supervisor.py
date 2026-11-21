@@ -48,9 +48,8 @@ The cycle, per reincarnation:
   5. Launch the successor with the initial agent instructions. Beside the
      launch-time-git-sync's line they carry, for agent-instructions-editor alone, one
      line per system whose code moved on
-     main past the commit its overview was checked against, until the user has been shown
-     that overview's refresh that day (overview_refresh_due_lines), plus
-     one line saying so when the day's reminder marks cannot be read,
+     main past the commit its overview was checked against, unless an open
+     pull request changes that overview (overview_refresh_due_lines),
      and, on the Mac from noon Pacific, one line when the day's memory review
      is due (memory_review_due_lines).
      Every launch, a resume included, also carries the agent-seat's leftover
@@ -506,8 +505,8 @@ OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE = (
     " — Dispatch a subagent to refresh {overview_path} against the commits "
     "`{commit_listing_command}` lists, as "
     "docs/nedsnodes-wiki/nedsnodes-how-to-write-an-architecture-overview.md "
-    "defines a refresh, ending in the line `{checked_against_line}`, and to "
-    "open a pull request with the refresh as /overview-write says."
+    "defines a refresh, ending in the line `{checked_against_line}`, to check "
+    "the refresh as /overview-write says, and to open a pull request with it."
 )
 
 MEMORY_REVIEW_DUE_FROM_PACIFIC_HOUR = 12
