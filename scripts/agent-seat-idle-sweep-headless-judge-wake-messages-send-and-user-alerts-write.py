@@ -279,9 +279,10 @@ it, or by a task to build one together with a proposal to the user; a memory nev
 - A hold, such as "I'll hold", is backed by a task whose prerequisites name what releases the hold.
 
 Judge each sentence by the rule of the kind the JSON gives it, because the message that names an \
-unbacked sentence is worded for that kind; a sentence that, read whole, declines or puts off an \
-action instead of promising one, such as "ned-box's load is near 22, so I'm starting nothing else \
-for now", leaves nothing undone: it is backed.
+unbacked sentence is worded for that kind; a sentence that, read whole, only declines an action \
+and commits the agent-seat to nothing later, such as "ned-box's load is near 22, so I'm starting \
+nothing else for now", leaves nothing undone: it is backed. A hold or a promise to act after an \
+event puts off an action until something happens; judge it by its own rule above.
 
 The tool calls the agent-seat made from the earliest sentence's turn on are in the JSON below, with \
 the tasks they created or updated and the files they changed; so are its open tasks that have \
