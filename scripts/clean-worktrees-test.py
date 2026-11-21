@@ -3697,10 +3697,15 @@ with tempfile.TemporaryDirectory() as scratch:
     reflog_today_worktree = age(idle_candidate("reflog-today-wt"))
     git(reflog_today_worktree, "update-ref", "-m", "worked on today", "HEAD", "HEAD")
     age(reflog_today_worktree, reflog_entries_too=False)
+    emptied_reflog_worktree = age(idle_candidate("emptied-reflog-wt"))
+    git(emptied_reflog_worktree, "reflog", "expire", "--expire=now", "--expire-unreachable=now", "HEAD")
     # Last, as gc rewrites the reflogs of every worktree aged above, as it does on ned-box.
     gc_rewritten_worktree = age(idle_candidate("gc-rewritten-wt"))
     git(checkout, "gc", "--quiet")
     gc_rewritten_reflog_mtime = os.stat(idle_git_directory(gc_rewritten_worktree) / "logs" / "HEAD").st_mtime
+    garbled_reflog_worktree = age(idle_candidate("garbled-reflog-wt"))
+    with open(idle_git_directory(garbled_reflog_worktree) / "logs" / "HEAD", "a", encoding="utf-8") as reflog:
+        reflog.write("not a reflog entry\n")
 
     open_pull_request = {"number": 30, "state": "OPEN", "headRefName": "open-pr-wt",
                          "headRefOid": "a" * 40, "closedAt": None}
@@ -3742,10 +3747,15 @@ with tempfile.TemporaryDirectory() as scratch:
           and idle_line(removal.stdout, "gc-rewritten-wt").startswith("gc-rewritten-wt: removed")
           and not gc_rewritten_worktree.exists(),
           f"{gc_rewritten_reflog_mtime} {three_days_ago}\n{removal.stdout}")
+    check("an idle worktree whose reflog holds no entry is removed",
+          idle_line(removal.stdout, "emptied-reflog-wt").startswith("emptied-reflog-wt: removed"),
+          removal.stdout)
     for worktree, why in ((fresh_worktree, "it was made today"),
                           (touched_worktree, "one of its files changed today"),
                           (git_touched_worktree, "a file in its own git directory changed today"),
                           (reflog_today_worktree, "its reflog got an entry today"),
+                          (garbled_reflog_worktree,
+                           "its reflog's newest line, unreadable as an entry, was written today"),
                           (untracked_worktree, "it holds an untracked file"),
                           (modified_worktree, "it holds an uncommitted change"),
                           (unpushed_worktree, "it holds a commit GitHub lacks"),
