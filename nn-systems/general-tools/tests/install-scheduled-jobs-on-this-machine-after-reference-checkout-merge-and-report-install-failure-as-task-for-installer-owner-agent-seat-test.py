@@ -390,14 +390,28 @@ with tempfile.TemporaryDirectory() as scratch:
     outside = scratch / "not-a-repository"
     outside.mkdir()
     reset()
-    before = os.getcwd()
-    os.chdir(outside)
-    try:
-        code = after_merge.main({**os.environ, **seams}, argv=[])
-    finally:
-        os.chdir(before)
-    check("outside any git checkout nothing is done", code == 0 and not installer_log.exists(),
-          code)
+    def run_outside(argv):
+        printed, errors = io.StringIO(), io.StringIO()
+        before = os.getcwd()
+        os.chdir(outside)
+        try:
+            with redirect_stdout(printed), redirect_stderr(errors):
+                code = after_merge.main({**os.environ, **seams}, argv=argv)
+        finally:
+            os.chdir(before)
+        return code, printed.getvalue(), errors.getvalue()
+
+    code, printed, errors = run_outside([])
+    check("outside any git checkout nothing is done and nothing is printed",
+          code == 0 and not installer_log.exists() and printed == errors == "",
+          (code, printed, errors))
+    code, printed, errors = run_outside([outcome])
+    check("--print-outcome outside any git checkout says nothing was run and names both "
+          "reference-checkouts",
+          code == 0 and not installer_log.exists() and errors == ""
+          and printed.startswith(f"{os.path.realpath(outside)} is not in a Git checkout, so "
+                                 "nothing was run; run this in ")
+          and " on ned-box or " in printed, (code, printed, errors))
 
     reset()
     helped = subprocess.run(["python3", str(PROGRAM_PATH), "--help"], cwd=repository,
