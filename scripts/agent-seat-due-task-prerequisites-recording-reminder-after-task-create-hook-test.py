@@ -5,8 +5,9 @@ record what the new task waits on.
 Each case runs the hook as a subprocess, as Claude Code does. The expected
 text is written out whole here, so a change to the user's wording fails this
 suite. The prerequisites example in that text is checked against the due-task
-hook's own reader, and the branches example against the first prompt's list
-program, so neither pair can drift apart.
+hook's own reader, the approval key against the key that hook reads, and the
+branches example against the first prompt's list program, so none of them can
+drift apart.
 """
 import importlib.util
 import json
@@ -33,7 +34,12 @@ EXPECTED_TEXT_WITH_ID_7 = (
     "is noise.\n"
     'If this task holds a branch or a worktree, now or once you make one, record each with TaskUpdate '
     'in the task\'s metadata, as "branches": ["<branch name>", "<worktree path>"]; the first prompt\'s '
-    "list of this agent-seat's worktrees and branches then leaves them out while the task is open."
+    "list of this agent-seat's worktrees and branches then leaves them out while the task is open.\n"
+    'If this task (id 7) needs no decision from the user, record why with TaskUpdate in its metadata, as '
+    '"approval": "<the walk item or the user\'s words that approved it, with the date>", or as '
+    '"approval": "no approval needed: <the exception it falls under, or that it is on neither list, in the '
+    'words of docs/nedsnodes-wiki/nedsnodes-which-changes-need-the-users-approval.md>". Record nothing '
+    "when it needs a decision from the user."
 )
 EXPECTED_TEXT_WITHOUT_ID = EXPECTED_TEXT_WITH_ID_7.replace(" (id 7)", "")
 
@@ -115,6 +121,13 @@ check("the approval-walk item example, values filled in, is one the due-task hoo
       readable == [("approval_walk_item_decided",
                     {"approval_walk_minutes_file_path": "/work/docs/walk/w-minutes.md",
                      "approval_walk_item_heading": "Item 3 of 5: The fix"})], repr(readable))
+
+approval_line = EXPECTED_TEXT_WITHOUT_ID.splitlines()[-1]
+check("the approval record's key is the one the due-task hook reads",
+      approval_line.count(f'"{due_task_raise_hook.APPROVAL_KEY}": "') == 2, repr(approval_line))
+approval_page = approval_line.split("in the words of ", 1)[1].split(">", 1)[0]
+check("the approval page the reminder names exists",
+      (Path(__file__).resolve().parents[1] / approval_page).is_file(), approval_page)
 
 fault_line = run_hook("not json").stderr
 fault_walk_item_example = json.loads(
