@@ -195,9 +195,10 @@ swapped pass with no model call too. A `#new` and a `#new_if_d` text both
 shown without their marks and then swapped in the walk-document go to the
 model, but each is paired with the message unit most like it, which is the
 same sentence from the other place, so the model sees identical texts and
-the answer counts. An item whose last decision-bearing line was removed
-after it was shown has no place to end its copy, so a line of the agent's
-own after the item is then read as a line the item dropped.
+the answer counts. The message's copy of the item ends at the item's
+closing line, so a decision-bearing line the agent wrote of its own
+between the item's text and its closing line is read as one the item
+dropped, and goes to the model.
 
 WHEN READING THE WALK STATE FAILS, such as a minutes file that is not UTF-8,
 the first line says so and why, and the text gives the answer's lines both for
@@ -1104,10 +1105,12 @@ def shown_units(markdown, parser, env):
 
 
 def decision_bearing_lines(body, parser, env, has_parts):
-    """[(the line's name, as a refusal names it; its decision-bearing text)] for the item body's Markdown, as the
-    module docstring's AN ANSWER TO A VERSION THE USER MAY NOT HAVE SEEN says, read line by line as rendered."""
+    """[(the line's name, as a refusal names it; its decision-bearing text; the words of the unit, of shown_units'
+    units, that holds it, which a refusal quotes as the user saw it)] for the item body's Markdown, as the module
+    docstring's AN ANSWER TO A VERSION THE USER MAY NOT HAVE SEEN says, read line by line as rendered."""
     found = []
     for block in rendered_blocks(body, parser, env):
+        unit = " ".join(block.lines)
         for index, line in enumerate(block.lines):
             line = re.sub(r"\[advisor\]", " ", line, flags=re.I).strip()
             mark = DECISION_MARK.match(line)
@@ -1115,52 +1118,55 @@ def decision_bearing_lines(body, parser, env, has_parts):
             if mark and not comparable_words(mark[2]) and mark[1].lower() in BARE_MARKS_INTRODUCING_A_BLOCK:
                 # A bare mark's text is what it introduces: the rest of its paragraph, or else the block below it.
                 rest = " ".join(block.lines[index + 1:])
-                found.append((f"`{mark[1].lower()}` line", rest if comparable_words(rest) else block.following))
+                text = rest if comparable_words(rest) else block.following
+                found.append((f"`{mark[1].lower()}` line", text, text))
                 break
             if mark:
                 # A mark typed `#NEW` is the same kind of line as `#new`.
-                found.append((f"`{mark[1].lower()}` line", mark[2]))
+                found.append((f"`{mark[1].lower()}` line", mark[2], unit))
             elif part:
-                found.append((f"`{part[1]}.` line", part[2]))
+                found.append((f"`{part[1]}.` line", part[2], unit))
             else:
                 labels = list(DECISION_LABEL.finditer(line))
                 for label, next_label in zip(labels, [*labels[1:], None]):
                     name = DECISION_LABEL_NAMES[label[1].lower()]
-                    found.append((f"`{name}:` line", line[label.end():next_label.start() if next_label else None]))
-    return [(name, text.strip()) for name, text in found if comparable_words(text)]
+                    found.append((f"`{name}:` line", line[label.end():next_label.start() if next_label else None],
+                                  unit))
+    return [(name, text.strip(), unit) for name, text, unit in found if comparable_words(text)]
 
 
 def decision_line_checks(current_lines, shown_lines, units, current_units):
     """[(line name, the message's text, the walk-document's text, whether the line is one the message showed and the
     item dropped)] for each pair the model must judge, from current_lines, the item's decision-bearing lines, and
-    shown_lines, the message's copy's, each in its own order; units and current_units are the two texts' units.
+    shown_lines, the message's copy's, each in its own order, as decision_bearing_lines gives them; units and
+    current_units are the two texts' units.
 
     Each line keeps its place, so a pair is made from the lines' positions, not from which text looks most alike.
     A current line passes when an unused shown line of its kind has its words, the first such at or after the last
     shown line taken; or, when the message has no line of its kind and it is no `Recommendation:` or `The
     alternative:` line, when a unit of the message ends with its words, each such unit below the last one taken, as
     for a message that dropped the mark or put `If you approve, the new text:` before it. Each line that does not pass
-    is paired with the first unused shown line of its kind between the shown lines its neighbours above and below
-    took, and else with the message unit most like it; a shown line left unused is one the item dropped, paired with
-    the item's unit most like it, unless it sits below the shown line the item's last line took, where the item's
-    copy has ended and the agent's own words, or another item's, begin."""
+    is paired with the unit holding the first unused shown line of its kind between the shown lines its neighbours
+    above and below took, and else with the message unit most like it; a shown line left unused is one the item
+    dropped, paired with the item's unit most like it. The copy ends where message_copy_of_item ends it, so every
+    shown line is the item's own."""
     taken = {}  # index in current_lines -> index in shown_lines
     passed, unit_end = set(), 0
-    for index, (name, current) in enumerate(current_lines):
+    for index, (name, current, _) in enumerate(current_lines):
         words = comparable_words(current)
         after = max(taken.values(), default=-1)
-        same = [place for place, (kind, text) in enumerate(shown_lines)
+        same = [place for place, (kind, text, _) in enumerate(shown_lines)
                 if kind == name and place not in taken.values() and comparable_words(text) == words]
         if same:
             taken[index] = next((place for place in same if place > after), same[0])
-        elif name not in UNMARKED_LINE_NAMES_NEEDING_THE_MODEL and not any(kind == name for kind, _ in shown_lines):
+        elif name not in UNMARKED_LINE_NAMES_NEEDING_THE_MODEL and not any(kind == name for kind, _, _ in shown_lines):
             unit = next((unit for unit in units if unit[0] >= unit_end
                          and f" {comparable_words(unit[2])}".endswith(f" {words}")), None)
             if unit is not None:
                 passed.add(index)
                 unit_end = unit[1]
     checks = []
-    for index, (name, current) in enumerate(current_lines):
+    for index, (name, current, _) in enumerate(current_lines):
         if index in taken or index in passed:
             continue
         above = max((place for line, place in taken.items() if line < index), default=-1)
@@ -1171,19 +1177,11 @@ def decision_line_checks(current_lines, shown_lines, units, current_units):
             checks.append((name, closest_unit(name, current, units), current, False))
         else:
             taken[index] = place
-            checks.append((name, unit_holding(shown_lines[place][1], units), current, False))
-    last = taken.get(len(current_lines) - 1, len(shown_lines))
+            # The shown line's own unit, not the first unit holding its words, which can be an earlier paragraph.
+            checks.append((name, shown_lines[place][2], current, False))
     checks += [(name, text, closest_unit(name, text, current_units), True)
-               for place, (name, text) in enumerate(shown_lines) if place not in taken.values() and place < last]
+               for place, (name, text, _) in enumerate(shown_lines) if place not in taken.values()]
     return checks
-
-
-def unit_holding(text, units):
-    """The words of the smallest unit, of shown_units' units, that holds text's words, so that a refusal quotes the
-    line with its label, as the user saw it; text itself when no unit does."""
-    words = f" {comparable_words(text)} "
-    holding = [unit[2] for unit in units if words in f" {comparable_words(unit[2])} "]
-    return min(holding, key=len, default=text)
 
 
 def likeness(text, other):
@@ -1229,8 +1227,9 @@ def with_walk_document_references(env, references):
 
 
 def last_showing_message(transcript_path, heading, parser, references):
-    """Return (the Markdown of the newest assistant text block outside a subagent that has a line opening with
-    heading, from the line after that one to the block's end; the block's env, holding its reference definitions and
+    """Return (the line opening with heading in the newest assistant text block outside a subagent that has one; the
+    block's Markdown from the line after that one to the line that opens another item, or the block's end; the
+    block's env, holding its reference definitions and
     the walk-document's references it does not define, so that a reference link a block shows without its definition
     renders as the walk-document's does; the block's timestamp), or None when no block does. Raise OSError or
     ValueError when the transcript cannot be read."""
@@ -1260,26 +1259,36 @@ def last_showing_message(transcript_path, heading, parser, references):
                 if f"{shown_words(line, parser, env)} ".startswith(f"{heading} "):
                     end = next((start for start, words in item_openings_as_shown(tokens, parser, env)
                                 if start > index and opens_another_item(words, heading)), len(lines))
-                    return "\n".join(lines[index + 1:end]), env, record.get("timestamp", "an unknown time")
+                    return (line, "\n".join(lines[index + 1:end]), env,
+                            record.get("timestamp", "an unknown time"))
     return None
 
 
-def message_copy_of_item(heading_line, after_heading, number):
-    """The part of after_heading, a message's text below the line that opens with the item's heading, that shows item
-    number: the walk finder reads heading_line, the item's heading in the walk-document, and after_heading below it as
-    it reads a walk-document, so that under a heading several items share, only this item's own text is compared;
-    the text of every unit that names the item, as when the message puts a heading for item 11 inside the range
-    `Items 10 to 12`; after_heading whole when the finder reads no item number there."""
+def message_copy_of_item(heading_line, message_heading_line, after_heading, number):
+    """The part of after_heading, a message's text below message_heading_line, its line that opens with the item's
+    heading, that shows item number, up to the item's closing line: the walk finder reads heading_line, the item's
+    heading in the walk-document, at message_heading_line's heading level, and after_heading below it as it reads a
+    walk-document, so that under a heading several items share, only this item's own text is compared; the text of
+    every unit that names the item, as when the message puts a heading for item 11 inside the range `Items 10 to 12`;
+    after_heading whole when the finder reads no item number there. The message's heading level counts, not the
+    walk-document's, since a `### Explanation` ends a `###` item but not a `##` one."""
     walk_finder = load_walk_finder()
     parser = walk_finder.markdown_parser()
+    level = re.match(r" {0,3}(#{1,6})(?=[ \t]|$)", message_heading_line)
+    if level:
+        heading_line = (re.sub(r"^ {0,3}#{1,6}(?=[ \t]|$)", level[1], heading_line, count=1)
+                        if re.match(r" {0,3}#{1,6}(?=[ \t]|$)", heading_line) else f"{level[1]} {heading_line}")
     text = f"{heading_line}\n{after_heading}"
     units = walk_finder.item_unit_spans(text, parser)
     pieces = [walk_finder.approval_walk_item_text_as_shown_to_user(text, parser, units, unit, number)
               for unit in units if number in unit[0]]
-    if not pieces:
-        return after_heading
     # The first piece opens with heading_line, which is the walk-document's, not the message's.
-    return "\n\n".join([pieces[0].partition("\n")[2], *pieces[1:]])
+    copy = "\n\n".join([pieces[0].partition("\n")[2], *pieces[1:]]) if pieces else after_heading
+    env = {}
+    closing = next((start for start, words in item_openings_as_shown(parser.parse(copy, env), parser, env)
+                    if ANSWER_LETTERS_TEXT in words), None)
+    # Below the item's closing line come the agent's own words, which are no line of the item's.
+    return copy if closing is None else "\n".join(copy.split("\n")[:closing])
 
 
 def item_openings_as_shown(tokens, parser, env):
@@ -1397,8 +1406,8 @@ def unseen_item_lines(answer, walk, transcript_path):
         if shown is None:
             reasons[number] = NEVER_SHOWN_REASON.format(item=item)
             continue
-        after_heading, message_env, timestamp = shown
-        copy = message_copy_of_item(heading_line, after_heading, number)
+        message_heading_line, after_heading, message_env, timestamp = shown
+        copy = message_copy_of_item(heading_line, message_heading_line, after_heading, number)
         # The message's copy is read as holding parts on its own count, so a part the item dropped is still read.
         has_parts = number in walk.parts or bool(part_numbers(part_starts(parser.parse(copy, {})), 0,
                                                               copy.count("\n") + 1))
