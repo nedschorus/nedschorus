@@ -521,15 +521,20 @@ def run_recorded_mutant_killed_check(scratch_name, head_files, diff_text, *flags
 
 def run_recorded_mutant_killed_check_root_commit_refusal_cases():
     """--recorded-mutant-killed-check run where git cannot list HEAD's root commits, so the
-    runner cannot name the recordings directory: the refusal's next steps follow git's error."""
+    runner cannot name the recordings directory: the refusal's next steps follow git's error,
+    and only the refusal's first word, the runner's name, becomes this program's."""
     survivors = load_script_module()
-    for how, lock_file_in_error in (("names a lock file", True), ("names no lock file", False)):
+    runner = load_test_suite_runner()
+    for how, lock_file_in_error in (("names a lock file", True), ("names no lock file", False),
+                                    ("quotes the suite runner's name", False)):
         with tempfile.TemporaryDirectory() as scratch_name:
             repository, _, head = scratch_repository(scratch_name, HEAD_FILES)
             control = Path(scratch_name) / "control"
             control.mkdir()
             lock_file = repository / ".git" / "index.lock"
             git_error = (f"fatal: Unable to create '{lock_file}': File exists." if lock_file_in_error
+                         else f"fatal: injected root-commit failure in {runner.PROGRAM}: quoted"
+                         if how == "quotes the suite runner's name"
                          else "fatal: injected root-commit failure")
             shim = Path(scratch_name) / "bin"
             shim.mkdir()
@@ -3239,8 +3244,10 @@ def run_cases():
             loaded_runner = load_runner_for_refusal()
 
             def refuse(given, top):
+                # Git's error quotes the runner's name, which must stay as git wrote it.
                 raise loaded_runner.CouldNotRun(
-                    f"{loaded_runner.PROGRAM}: not run — injected root-commit failure\n"
+                    f"{loaded_runner.PROGRAM}: not run — injected root-commit failure "
+                    f"({loaded_runner.PROGRAM}: quoted by git)\n"
                     + loaded_runner.git_failure_next_step_lines("fatal: injected"))
             loaded_runner.recordings_directory_for = refuse
             return loaded_runner
@@ -3261,11 +3268,12 @@ def run_cases():
         finally:
             del os.environ[CONTROL_DIRECTORY_VARIABLE]
         check("when the runner cannot name the recordings directory, the run exits 2 with "
-              "the runner's refusal under this program's name, its next steps unchanged",
+              "the runner's refusal under this program's name, its next steps and the runner's "
+              "name quoted in git's error unchanged",
               status == survivors_module.EXIT_COULD_NOT_RUN
               and printed.getvalue() == (
                   "mutation-testing-changed-lines-quick-or-full-pass-survivors: not run — injected root-commit "
-                  "failure\n" + survivors_module.load_test_suite_runner()
+                  "failure (scripts/run-all-test-suites.py: quoted by git)\n" + survivors_module.load_test_suite_runner()
                   .git_failure_next_step_lines("fatal: injected")
                   + "\n"), (status, printed.getvalue()))
 
