@@ -155,9 +155,9 @@ _common_spec.loader.exec_module(common)
 
 PROGRAM = "cold-read-codex-cell"
 
-# Use version-prefixed model IDs; gpt-6.1-sol requires codex-cli 0.159.1 or later.
+# Use version-prefixed model IDs that the installed codex-cli lists in ~/.codex/models_cache.json; one it does not list hangs the run.
 TIER_TO_CODEX_MODEL_CHAIN = {
-    "deep": ("gpt-6.1-sol",),
+    "deep": ("gpt-6.2-sol",),
     "second-strongest-model": ("gpt-6-luna",),
 }
 

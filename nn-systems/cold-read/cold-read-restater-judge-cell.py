@@ -10,14 +10,14 @@ Two runs of this cold-read-cell make one restater's score; the program that
 launches both and scores them is nn-systems/cold-read/cold-read-restater-judge-runner.py.
 
 THE RULED DESIGN THIS IMPLEMENTS (user-ruled 2026-09-05, "Opus max is the
-backup to Fable. y"). One fresh Claude Fable 5.1 instance at effort xhigh per
+backup to Fable. y"). One fresh Claude Fable 5.2 instance at effort xhigh per
 restater class, given the three rough drafts, the three perfect versions, the
 three defect lists and that restater's three restatements. It counts the
 problems the restatements caught, BY DEFECT NUMBER from the list, and the
 places the restatement was stupid -- a sentence the perfect version keeps
 unchanged that the restatement misread. Two judge runs per restater. When
 Fable is unavailable -- the account limit, or a safeguard refusal that
-returned no report -- Claude Opus 5 at max judges instead, and the record says
+returned no report -- Claude Opus 5.5 at max judges instead, and the record says
 so. Problems a restatement caught that are not on the defect list go back to
 the scrub rather than being scored. The walk that carries the ruling is
 docs/walk/fast-cold-read-perfect-test-cases.md at the cold-read-research seat
@@ -62,7 +62,7 @@ both because the ruled design asks for something their shape cannot express:
 
   - TWO MODELS AT TWO EFFORTS. Every other chain runs one effort, so the
     shared runner took one. The ruling pins Fable at xhigh and Opus at max,
-    which is one chain at two efforts, and a stamp reading `model=claude-opus-5
+    which is one chain at two efforts, and a stamp reading `model=claude-opus-5-5
     effort=xhigh` would name a run that never happened. The shared runner
     therefore takes an optional `model_to_effort` map (added with this
     cold-read-cell) and stamps the effort of the model that actually
@@ -129,12 +129,12 @@ JUDGE_RUNTIME = "claude"
 JUDGE_CELL = "restater-judge"
 JUDGE_TIER = "judge"
 
-JUDGE_MODEL_CHAIN = ("claude-fable-5-1", "claude-opus-5")
+JUDGE_MODEL_CHAIN = ("claude-fable-5-2", "claude-opus-5-5")
 
 # Stamp the effort of the model that actually produced the report.
 JUDGE_MODEL_TO_REASONING_EFFORT = {
-    "claude-fable-5-1": "xhigh",
-    "claude-opus-5": "max",
+    "claude-fable-5-2": "xhigh",
+    "claude-opus-5-5": "max",
 }
 
 # The restater label becomes a path segment in the runner’s record name.
@@ -161,7 +161,7 @@ def build_judge_argument_parser():
     parser.add_argument(
         "--restater", required=True, metavar="CLASS",
         help="the restater class under judgment, named as the roster names "
-             "its models (gemini-3.8-flash-low, gpt-6.1-sol, claude-opus-5); "
+             "its models (gemini-3.8-flash-low, gpt-6.2-sol, claude-opus-5-5); "
              "lowercase letters and digits joined by single hyphens or dots",
     )
     parser.add_argument(

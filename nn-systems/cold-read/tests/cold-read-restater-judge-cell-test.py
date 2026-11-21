@@ -6,16 +6,16 @@ ever called.
 WHAT IS PINNED HERE.
 
   - The ruled chain and its two efforts (user-ruled 2026-09-05, "Opus max is
-    the backup to Fable"): Fable 5.1 judges at xhigh, and the stamp says so,
+    the backup to Fable"): Fable 5.2 judges at xhigh, and the stamp says so,
     with runtime=claude, cell=restater-judge, tier=judge.
 
   - THE FALLBACK AND ITS MARK IN THE RECORD, which is the whole reason this
     cell has a chain at all. Both ways the ruling names Fable unavailable are
     driven: a Fable that exits non-zero (the account limit) and a Fable that
     exits 0 having written nothing (a safeguard refusal that returned no
-    report). Either way Opus 5 judges AT MAX -- not at Fable's xhigh, which
+    report). Either way Opus 5.5 judges AT MAX -- not at Fable's xhigh, which
     is the seam this cell added to the shared module -- the stamp carries
-    `fallback_from=claude-fable-5-1(...)`, and the cell says on stderr that
+    `fallback_from=claude-fable-5-2(...)`, and the cell says on stderr that
     it fell back, in the words the runner and the grid lift out of a log.
 
   - The invocation is the Claude leg's own, because the judge imports that
@@ -251,8 +251,8 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a judge cell whose Fable writes the report exits 0",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
     stamp = provenance_stamp_of(report)
-    check("the judge is pinned to claude-fable-5-1 at xhigh, stamped restater-judge/judge",
-          stamp.startswith("<!-- provenance: runtime=claude model=claude-fable-5-1 "
+    check("the judge is pinned to claude-fable-5-2 at xhigh, stamped restater-judge/judge",
+          stamp.startswith("<!-- provenance: runtime=claude model=claude-fable-5-2 "
                            "effort=xhigh cell=restater-judge tier=judge "),
           repr(stamp))
     check("the stamp carries duration_s and no tokens field",
@@ -269,7 +269,7 @@ with tempfile.TemporaryDirectory() as scratch:
           # argv[0] is the stub's own path, which is how PATH resolution
           # hands it over; its basename is the binary the cell asked for.
           Path(argv[0]).name == "claude" and argv[1] == "-p"
-          and argv[argv.index("--model") + 1] == "claude-fable-5-1"
+          and argv[argv.index("--model") + 1] == "claude-fable-5-2"
           and argv[argv.index("--effort") + 1] == "xhigh"
           and argv[argv.index("--output-format") + 1] == "text"
           and argv[argv.index("--allowedTools") + 1] == "Read,Grep,Glob,Write,WebFetch",
@@ -345,13 +345,13 @@ with tempfile.TemporaryDirectory() as scratch:
     argv_dump = scratch / "fallback-argv.json"
     result = run_judge_cell(
         repository, stubs,
-        {"claude-fable-5-1": {"exit": 1},
-         "claude-opus-5": {"report": STUB_JUDGE_REPORT, "dump_argv": str(argv_dump)}},
+        {"claude-fable-5-2": {"exit": 1},
+         "claude-opus-5-5": {"report": STUB_JUDGE_REPORT, "dump_argv": str(argv_dump)}},
         report,
     )
     stamp = provenance_stamp_of(report)
     check("a Fable that exits non-zero falls back to Opus, and the cell exits 0",
-          result.returncode == 0 and " model=claude-opus-5 " in stamp,
+          result.returncode == 0 and " model=claude-opus-5-5 " in stamp,
           f"exit {result.returncode}; stamp={stamp!r}; stderr={result.stderr!r}")
     check("the backup judges at max, not at Fable's xhigh",
           " effort=max " in stamp, repr(stamp))
@@ -359,10 +359,10 @@ with tempfile.TemporaryDirectory() as scratch:
     check("Opus was actually invoked at max, not merely stamped so",
           argv[argv.index("--effort") + 1] == "max", repr(argv))
     check("the record says what it fell back from",
-          " fallback_from=claude-fable-5-1(exit1) " in stamp, repr(stamp))
+          " fallback_from=claude-fable-5-2(exit1) " in stamp, repr(stamp))
     check("the fallback is announced on stderr in the phrase the runner lifts",
           any(line.startswith("cold-read-restater-judge-cell: "
-                              f"{FELL_BACK_PHRASE} claude-opus-5")
+                              f"{FELL_BACK_PHRASE} claude-opus-5-5")
               for line in result.stderr.splitlines()),
           repr(result.stderr))
 
@@ -371,17 +371,17 @@ with tempfile.TemporaryDirectory() as scratch:
     report = report_path_for(repository, "fallback-no-report")
     result = run_judge_cell(
         repository, stubs,
-        {"claude-fable-5-1": {"stdout": "I cannot help with that request.\n"},
-         "claude-opus-5": {"report": STUB_JUDGE_REPORT}},
+        {"claude-fable-5-2": {"stdout": "I cannot help with that request.\n"},
+         "claude-opus-5-5": {"report": STUB_JUDGE_REPORT}},
         report,
     )
     stamp = provenance_stamp_of(report)
     check("a Fable that exits 0 having written nothing falls back to Opus at max",
-          result.returncode == 0 and " model=claude-opus-5 " in stamp
+          result.returncode == 0 and " model=claude-opus-5-5 " in stamp
           and " effort=max " in stamp,
           f"exit {result.returncode}; stamp={stamp!r}")
     check("the record marks that refusal as the thing it fell back from",
-          " fallback_from=claude-fable-5-1(no-report) " in stamp, repr(stamp))
+          " fallback_from=claude-fable-5-2(no-report) " in stamp, repr(stamp))
     check("the refusing model's own words still reach stderr",
           "I cannot help with that request." in result.stderr, repr(result.stderr))
 
@@ -390,14 +390,14 @@ with tempfile.TemporaryDirectory() as scratch:
     report = report_path_for(repository, "both-fail")
     result = run_judge_cell(
         repository, stubs,
-        {"claude-fable-5-1": {"exit": 1}, "claude-opus-5": {"exit": 1}}, report,
+        {"claude-fable-5-2": {"exit": 1}, "claude-opus-5-5": {"exit": 1}}, report,
     )
     check("a judge run whose models both fail exits 1 and leaves no report",
           result.returncode == 1 and not report.exists(),
           f"exit {result.returncode}; stderr={result.stderr!r}")
     check("the failure names every model it tried",
-          "claude-fable-5-1(exit1)" in result.stderr
-          and "claude-opus-5(exit1)" in result.stderr, repr(result.stderr))
+          "claude-fable-5-2(exit1)" in result.stderr
+          and "claude-opus-5-5(exit1)" in result.stderr, repr(result.stderr))
 
     # --- A case file that is not there -------------------------------------
     repository = build_scratch_repository(scratch)
@@ -461,7 +461,7 @@ with tempfile.TemporaryDirectory() as scratch:
     argv_dump = scratch / "effort-override-argv.json"
     result = run_judge_cell(
         repository, stubs,
-        {"claude-fable-5-1": {"report": STUB_JUDGE_REPORT, "dump_argv": str(argv_dump)}},
+        {"claude-fable-5-2": {"report": STUB_JUDGE_REPORT, "dump_argv": str(argv_dump)}},
         report, "--effort", "high",
     )
     stamp = provenance_stamp_of(report)
