@@ -306,12 +306,14 @@ STRAY_WRITE_NO_UNDO_ALREADY_CHANGED = (
     "It already had uncommitted changes before the cells launched, so no undo command is given: "
     "one would also undo those. Read `git -C {repository} diff -- {path}` against the edits you know "
     "are your own, and ask the user about any change you did not make.")
-# Restoring a rename's destination deletes it, and with it the uncommitted changes its source held.
-STRAY_WRITE_NO_UNDO_RENAMED_FROM_ALREADY_CHANGED = (
-    "It was renamed from {origin}, which already had uncommitted changes before the cells launched, "
-    "so no undo command is given: one would delete those changes. Read `git -C {repository} diff "
-    "HEAD -M -- {origin} {path}` against the edits you know are your own, and ask the user about "
-    "any change you did not make.")
+# Git pairs a move as a rename only when the content stays similar, so a plain `mv`, or a
+# `git mv` of a much-edited file, shows as a new file; restoring or deleting it would lose the
+# uncommitted changes it carried. The snapshot, not git's pairing, says whether any could be lost.
+STRAY_WRITE_NO_UNDO_MAY_HOLD_MOVED_CHANGES = (
+    "Since the cells launched, {gone} went missing, though it already had uncommitted changes "
+    "then, so this path may be it moved and no undo command is given: one would delete those "
+    "changes. Read it against the edits you know are your own, and ask the user about any change "
+    "you did not make.")
 STOPPED_CELL_LINE = "{report}: stopped before it finished{deleted}."
 WORKING_TREE_SNAPSHOT_NOT_TAKEN_REASON = "its snapshot of the working tree before the cells launched failed ({error})"
 WORKING_TREE_CHECK_FAILED_REASON = "git status failed when it checked ({error})"
@@ -983,8 +985,9 @@ def stopped_cells_write_check_lines(stopped_report_paths: list, baseline,
                 + STOPPED_CELL_WRITE_CHECK_LINE.format(cell=cell_name_of(path), reason=reason)
                 for path in stopped_report_paths]
     untracked = {entry.path for entry in entries if entry.code == "??"}
-    origin_of = {entry.path: entry.origin_path for entry in entries if entry.origin_path}
     changed_before = {name for name, _ in baseline}
+    gone = sorted(name for name in changed_before
+                  if not os.path.lexists(cell_common.REPO_ROOT / name))
     cells = ", ".join(cell_name_of(path) for path in stopped_report_paths)
     repository = shlex.quote(str(cell_common.REPO_ROOT))
     lines = []
@@ -993,14 +996,14 @@ def stopped_cells_write_check_lines(stopped_report_paths: list, baseline,
             continue
         already_reported.add(name)
         undo = (STRAY_WRITE_NO_UNDO_ALREADY_CHANGED if name in changed_before
-                else STRAY_WRITE_NO_UNDO_RENAMED_FROM_ALREADY_CHANGED if origin_of.get(name) in changed_before
+                else STRAY_WRITE_NO_UNDO_MAY_HOLD_MOVED_CHANGES if gone
                 else STRAY_WRITE_UNDO_UNTRACKED if name in untracked
                 else STRAY_WRITE_UNDO_TRACKED)
         lines.append(STOPPED_CELLS_STRAY_WRITE_LINE.format(
             path=name, cells=cells, undo=undo.format(
                 path=shlex.quote(name), repository=repository,
                 absolute_path=shlex.quote(str(cell_common.REPO_ROOT / name)),
-                origin=shlex.quote(origin_of.get(name) or ""))))
+                gone=", ".join(shlex.quote(name) for name in gone))))
     return lines
 
 

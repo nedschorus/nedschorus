@@ -1657,40 +1657,50 @@ try:
           and "git status failed when it checked (injected git status failure)" in lines[0],
           repr(lines))
 
-    # A stopped cell that `git mv`s a file the agent had already edited: restoring the
-    # destination would delete it, and the agent's edits with it.
-    rename_repository = (scratch / "checkout-stopped-cell-renames-an-edited-file").resolve()
-    rename_repository.mkdir()
+    # A stopped cell that moves a file the agent had already edited: restoring or deleting the
+    # destination would delete it, and the agent's edits with it. Git pairs the move as a
+    # rename only for a `git mv` of similar content, so each kind of move is checked.
+    committed_lines = [f"Committed line {number}.\n" for number in range(20)]
+    lightly_edited = "".join(committed_lines[:19]) + "The agent's own uncommitted line.\n"
+    much_edited = "".join(f"The agent's own uncommitted line {number}.\n" for number in range(20))
+    for case, agent_edit, plain_mv in (("git-mv-paired-as-a-rename", lightly_edited, False),
+                                       ("git-mv-of-a-much-edited-file", much_edited, False),
+                                       ("plain-mv", lightly_edited, True)):
+        repository_of_case = (scratch / f"checkout-stopped-cell-moves-an-edited-file-{case}").resolve()
+        repository_of_case.mkdir()
 
-    def git_in_rename_repository(*arguments):
-        subprocess.run(["git", "-C", str(rename_repository), "-c", "user.name=grid test",
-                        "-c", "user.email=grid-test@example.invalid", *arguments],
-                       check=True, capture_output=True)
+        def git(*arguments):
+            subprocess.run(["git", "-C", str(repository_of_case), "-c", "user.name=grid test",
+                            "-c", "user.email=grid-test@example.invalid", *arguments],
+                           check=True, capture_output=True)
 
-    git_in_rename_repository("init", "--quiet")
-    (rename_repository / "agent-draft.md").write_text("Committed text.\n", encoding="utf-8")
-    git_in_rename_repository("add", "agent-draft.md")
-    git_in_rename_repository("commit", "--quiet", "-m", "seed")
-    (rename_repository / "agent-draft.md").write_text(
-        "Committed text.\nThe agent's own edit, not yet committed.\n", encoding="utf-8")
-    with mock.patch.object(grid_module.cell_common, "REPO_ROOT", rename_repository):
-        rename_baseline = grid_module.cell_common.working_tree_state()
-        git_in_rename_repository("mv", "agent-draft.md", "renamed-by-a-reviewer.md")
-        reported = set()
-        rename_lines = grid_module.stopped_cells_write_check_lines(
-            [scratch / "claude-hunt-deep.md"], rename_baseline, None, reported)
-        (rename_repository / "renamed-by-a-reviewer.md").write_text("A later write.\n", encoding="utf-8")
-        later_lines = grid_module.stopped_cells_write_check_lines(
-            [scratch / "codex-hunt-deep.md"], rename_baseline, None, reported)
-    destination_lines = [line for line in rename_lines
-                         if line.startswith("STRAY WRITE: renamed-by-a-reviewer.md ")]
-    check("a file renamed from one the agent had edited gets no undo command, and is named as renamed",
-          len(destination_lines) == 1 and "no undo command is given" in destination_lines[0]
-          and "renamed from agent-draft.md" in destination_lines[0]
-          and "restore" not in destination_lines[0] and "rm -r" not in destination_lines[0],
-          repr(rename_lines))
-    check("a path already listed is not listed again when later cells are stopped",
-          later_lines == [], repr(later_lines))
+        git("init", "--quiet")
+        (repository_of_case / "agent-draft.md").write_text("".join(committed_lines), encoding="utf-8")
+        git("add", "agent-draft.md")
+        git("commit", "--quiet", "-m", "seed")
+        (repository_of_case / "agent-draft.md").write_text(agent_edit, encoding="utf-8")
+        with mock.patch.object(grid_module.cell_common, "REPO_ROOT", repository_of_case):
+            baseline_of_case = grid_module.cell_common.working_tree_state()
+            if plain_mv:
+                (repository_of_case / "agent-draft.md").rename(repository_of_case / "moved-by-a-reviewer.md")
+            else:
+                git("mv", "agent-draft.md", "moved-by-a-reviewer.md")
+            reported_of_case = set()
+            lines_of_case = grid_module.stopped_cells_write_check_lines(
+                [scratch / "claude-hunt-deep.md"], baseline_of_case, None, reported_of_case)
+            (repository_of_case / "moved-by-a-reviewer.md").write_text("A later write.\n", encoding="utf-8")
+            later_lines_of_case = grid_module.stopped_cells_write_check_lines(
+                [scratch / "codex-hunt-deep.md"], baseline_of_case, None, reported_of_case)
+        destination_lines = [line for line in lines_of_case
+                             if line.startswith("STRAY WRITE: moved-by-a-reviewer.md ")]
+        check(f"{case}: a file moved from one the agent had edited gets no undo command, and the "
+              "edited file is named as gone",
+              len(destination_lines) == 1 and "no undo command is given" in destination_lines[0]
+              and "agent-draft.md went missing" in destination_lines[0]
+              and "restore" not in destination_lines[0] and "rm -r" not in destination_lines[0],
+              repr(lines_of_case))
+        check(f"{case}: a path already listed is not listed again when later cells are stopped",
+              later_lines_of_case == [], repr(later_lines_of_case))
     attempt = grid_module.start_attempt(
         [sys.executable, "-c", "import time; time.sleep(120)"],
         scratch / "report.md", 1, scratch / "cell.stderr.log")
