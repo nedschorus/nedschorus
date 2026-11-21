@@ -245,7 +245,7 @@ def run_unit_cases():
           review_plan_module.fenced_code_block_line_numbers_in_markdown(fence_source) == {2, 3, 4, 5, 6, 8, 9})
     check("fence detection distinguishes tildes from backticks",
           review_plan_module.fenced_code_block_line_numbers_in_markdown("~~~\n```\n~~~~\nprose\n") == {1, 2, 3})
-    normalized = review_plan_module.normalized_syntax_tree_dump_without_docstrings_or_printed_strings
+    normalized = review_plan_module.normalized_syntax_tree_dump_without_docstrings_or_tool_message_to_agent_strings
     old_source = '"""module old"""\nclass Example:\n    """class old"""\n    async def show(self, x):\n        """function old"""\n        print(f"old {x}", "old " + x)\n'
     new_source = old_source.replace("old", "new") + "# a comment\n"
     check("normalized AST ignores docstrings, comments, printed f-string constant parts and printed + chain pieces",
@@ -257,17 +257,32 @@ def run_unit_cases():
          '"push"', '"push --force"'),
         ("a regular expression", 'import re\nPATTERN = re.compile(r"^git push\\b")\n', 'r"^git push\\b"', 'r"^git (push|reset)\\b"'),
         ("a string beside a printed one on the same line", 'import re\nprint(re.sub("a", "b", "shown"))\n', '"a"', '"z"'),
+        ("a string compared inside a printed argument", 'print(x == "yes")\n', '"yes"', '"no"'),
+        ("a string compared inside an assignment expression in a printed argument",
+         'print(allowed := command == "push")\n', '"push"', '"reset"'),
+        ("a method's result compared inside a printed argument", 'print(x == "yes".upper())\n', '"yes"', '"no"'),
+        ("a .format result compared inside a printed argument", 'print(x == "a {}".format(y))\n', '"a {}"', '"b {}"'),
+        ("a .startswith call on a string inside a printed argument", 'print("yes".startswith(x))\n', '"yes"', '"no"'),
+        ("a .count call on a string inside a printed argument", 'print("a,b".count(x))\n', '"a,b"', '"a;b"'),
+        ("a join separator inside a printed argument", 'print("old, ".join(xs))\n', '"old, "', '"new, "'),
+        ("a + chain join separator inside a printed argument", 'print(("old " + x).join(xs))\n', '"old "', '"new "'),
+        ("the test of a conditional expression in a printed argument", 'print("a" if c == "yes" else "b")\n', '"yes"', '"no"'),
     ]
     for case_name, source, old_text, new_text in behaviour_string_cases:
         check(f"normalized AST keeps a string that carries behaviour: {case_name}",
               normalized(source) != normalized(source.replace(old_text, new_text)))
-    printed_string_cases = [
+    tool_message_to_agent_string_cases = [
         ("a raised exception's message", 'def f():\n    raise ValueError("old failure")\n'),
         ("a helper printer's text", 'import sys\ndef say(stream, text):\n    print(text, file=stream)\nsay(sys.stderr, "old line")\n'),
         ("a .format template that is printed", 'print("old {}".format(1))\n'),
+        ("a + chain whose other operand is a repetition", 'print("old " + ("x" * count))\n'),
+        ("a keyword argument of a printing call", 'print("a", end="old")\n'),
+        ("a conditional expression reached through a + parent", 'print(x + ("old" if c else "b"))\n'),
+        ("a branch of a conditional expression", 'print("a" if c else "old")\n'),
+        ("a method called on a method's result that is printed", 'print("old {}".format(1).strip())\n'),
     ]
-    for case_name, source in printed_string_cases:
-        check(f"normalized AST ignores a printed string: {case_name}",
+    for case_name, source in tool_message_to_agent_string_cases:
+        check(f"normalized AST ignores a tool-message-to-agent string: {case_name}",
               normalized(source) == normalized(source.replace("old", "new")))
     check("normalized AST ignores a printed module constant named as a message",
           normalized('CHECK_MESSAGE = "old"\nprint(CHECK_MESSAGE)\n') == normalized('CHECK_MESSAGE = "new"\nprint(CHECK_MESSAGE)\n'))
@@ -350,7 +365,7 @@ def run_classification_cases(fixture):
     plan = fixture.plan_for_changed_file("scripts/example-program-test.py", 'EXPECTED = "new"\nassert EXPECTED\n')
     check("a changed test gets codex-review-and-head-tests-tier", plan["tier"] == "codex-review-and-head-tests-tier" and plan["changed_files"][0]["class"] == "test", plan)
     plan = fixture.plan_for_changed_file("scripts/example-program.py", BASELINE_FILE_CONTENTS["scripts/example-program.py"].replace("Old", "New").replace('"old"', '"new"'))
-    check("Python printed string, docstring and comment changes get codex-review-and-head-tests-tier", plan["tier"] == "codex-review-and-head-tests-tier" and "printed strings" in plan["tier_decided_by"], plan)
+    check("Python tool-message-to-agent string, docstring and comment changes get codex-review-and-head-tests-tier", plan["tier"] == "codex-review-and-head-tests-tier" and "tool-message-to-agent strings" in plan["tier_decided_by"], plan)
     plan = fixture.plan_for_changed_file("docs/review-note.md", BASELINE_FILE_CONTENTS["docs/review-note.md"].replace("print('old')", "print('new')"))
     check("fenced Markdown code changes get codex-review-and-head-tests-tier", plan["tier"] == "codex-review-and-head-tests-tier" and "fenced code blocks" in plan["tier_decided_by"], plan)
     full_reviewer_cases = [

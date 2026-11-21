@@ -2,8 +2,9 @@
 """Compute the review tier and facts the merge-lane puts in a pull request's review brief.
 
 Rule 1: tiers follow content. Tests, fenced Markdown code, and Python changes
-limited to docstrings, comments and printed strings get codex-review-and-head-tests-tier.
-A printed string is one that tool_message_to_agent_string_nodes_in_source finds;
+limited to docstrings, comments and tool-message-to-agent strings get codex-review-and-head-tests-tier.
+A tool-message-to-agent string is one that tool_message_to_agent_string_nodes_in_source,
+in nn-systems/general-tools/python-source-tool-message-to-agent-string-collector-common.py, finds;
 any other string, such as a regular expression, a command's argument or a path,
 carries behaviour, so a change to it is a behaviour change.
 Python behaviour changes and other code get claude-and-codex-review-and-head-tests-tier. Prose gets
@@ -456,38 +457,61 @@ def source_position(node):
 
 
 def literal_piece_positions(node):
-    """The positions of the string literals that make up a printed string node: the node itself,
+    """The positions of the string literals that make up a tool-message-to-agent string node: the node itself,
     an f-string's literal parts, or the literal operands of a + chain. A format spec is left out."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return {source_position(node)}
     if isinstance(node, ast.JoinedStr):
         return {source_position(part) for part in node.values if isinstance(part, ast.Constant)}
-    if isinstance(node, ast.BinOp):
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         return set().union(*(literal_piece_positions(operand) for operand in addition_chain_operands(node)))
     return set()
 
 
+def passes_its_text_up(child, parent):
+    """True when parent's value holds child's text as it is: an f-string part, an operand of a +
+    chain, a keyword argument, or a branch of a conditional expression. A comparison, a
+    subscript or any other expression turns the text into something else, such as a Boolean."""
+    return (isinstance(parent, (ast.JoinedStr, ast.FormattedValue, ast.keyword))
+            or (isinstance(parent, ast.BinOp) and isinstance(parent.op, ast.Add))
+            or (isinstance(parent, ast.IfExp) and child is not parent.test))
+
+
+STR_METHODS_THAT_RETURN_THE_TEXT = frozenset({
+    "format", "strip", "lstrip", "rstrip", "upper", "lower", "casefold", "title", "capitalize",
+    "replace", "center", "ljust", "rjust", "removeprefix", "removesuffix"})
+
+
 def nearest_call_prints_its_argument(node, parents, helper_printers):
-    """True when the call nearest above node, if any, is a printing call or helper printer, the
-    exception a raise statement builds, or a method called on node itself, as .format is. The
-    collector also counts a string inside any call nested in a printed argument, such as the
-    pattern in print(re.sub("a", "b", text)), but such a string steers the call, not the text."""
+    """True when node's text reaches, unchanged, a statement or the argument of a printing call or
+    helper printer, or the exception a raise statement builds. A str method that returns the text,
+    as .format does, passes its result on up; one such as .startswith or .count turns the text into
+    a value it steers, as a comparison does. The collector also counts a string inside any call nested
+    in a printed argument, such as the pattern in print(re.sub("a", "b", text)), but such a string
+    steers the call, not the text; and one inside a comparison, as in print(x == "yes") or
+    print(x == "yes".upper()), which prints only a Boolean."""
     child = node
     parent = parents.get(child)
-    while parent is not None and not isinstance(parent, ast.Call):
-        if isinstance(parent, ast.stmt):
-            return True
-        child, parent = parent, parents.get(parent)
-    if parent is None:
+    while True:
+        while passes_its_text_up(child, parent):
+            child, parent = parent, parents.get(parent)
+        call = parents.get(parent)
+        if not (isinstance(parent, ast.Attribute) and parent.value is child
+                and parent.attr in STR_METHODS_THAT_RETURN_THE_TEXT
+                and isinstance(call, ast.Call) and call.func is parent):
+            break
+        child, parent = call, parents.get(call)
+    if isinstance(parent, ast.stmt):
         return True
+    if not isinstance(parent, ast.Call) or child is parent.func:
+        return False
     call_name = ast.unparse(parent.func)
     return (call_name in PRINTING_CALL_NAMES
             or (isinstance(parent.func, ast.Name) and parent.func.id in helper_printers)
-            or (isinstance(parents.get(parent), ast.Raise) and parents[parent].exc is parent)
-            or (child is parent.func and isinstance(parent.func, ast.Attribute)))
+            or (isinstance(parents.get(parent), ast.Raise) and parents[parent].exc is parent))
 
 
-def printed_string_literal_positions(tree, source):
+def tool_message_to_agent_string_literal_positions(tree, source):
     entry_positions = {(entry["line"], entry["column"], entry["end_line"], entry["end_column"])
                        for entry in tool_message_to_agent_string_nodes_in_source(source)}
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
@@ -498,11 +522,11 @@ def printed_string_literal_positions(tree, source):
                          and nearest_call_prints_its_argument(node, parents, helper_printers)))
 
 
-class SyntaxTreeWithoutDocstringsOrPrintedStringValues(ast.NodeTransformer):
+class SyntaxTreeWithoutDocstringsOrToolMessageToAgentStringValues(ast.NodeTransformer):
     """Preserve code structure while ignoring the text allowed at a lower tier."""
 
-    def __init__(self, printed_positions):
-        self.printed_positions = printed_positions
+    def __init__(self, tool_message_to_agent_positions):
+        self.tool_message_to_agent_positions = tool_message_to_agent_positions
 
     def visit(self, node):
         if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -513,15 +537,15 @@ class SyntaxTreeWithoutDocstringsOrPrintedStringValues(ast.NodeTransformer):
         return super().visit(node)
 
     def visit_Constant(self, node):
-        if isinstance(node.value, str) and source_position(node) in self.printed_positions:
+        if isinstance(node.value, str) and source_position(node) in self.tool_message_to_agent_positions:
             node.value = ""
         return node
 
 
-def normalized_syntax_tree_dump_without_docstrings_or_printed_strings(source):
+def normalized_syntax_tree_dump_without_docstrings_or_tool_message_to_agent_strings(source):
     tree = ast.parse(source)
-    printed_positions = printed_string_literal_positions(tree, source)
-    return ast.dump(SyntaxTreeWithoutDocstringsOrPrintedStringValues(printed_positions).visit(tree))
+    tool_message_to_agent_positions = tool_message_to_agent_string_literal_positions(tree, source)
+    return ast.dump(SyntaxTreeWithoutDocstringsOrToolMessageToAgentStringValues(tool_message_to_agent_positions).visit(tree))
 
 
 def registered_hook_paths_at_revision(repository, revision):
@@ -590,12 +614,12 @@ def classify_changed_file_into_class_tier_and_reason(repository, old_revision, n
             try:
                 if source is None:
                     raise SyntaxError("no source blob")
-                syntax_dumps.append(normalized_syntax_tree_dump_without_docstrings_or_printed_strings(source))
+                syntax_dumps.append(normalized_syntax_tree_dump_without_docstrings_or_tool_message_to_agent_strings(source))
             except (SyntaxError, ValueError):
                 return "code", "claude-and-codex-review-and-head-tests-tier", f"{path} does not parse at {side}"
         if syntax_dumps[0] == syntax_dumps[1]:
-            return "code", "codex-review-and-head-tests-tier", f"{path} changes only docstrings, comments and printed strings"
-        return "code", "claude-and-codex-review-and-head-tests-tier", f"{path} changes its syntax tree beyond docstrings, comments and printed strings"
+            return "code", "codex-review-and-head-tests-tier", f"{path} changes only docstrings, comments and tool-message-to-agent strings"
+        return "code", "claude-and-codex-review-and-head-tests-tier", f"{path} changes its syntax tree beyond docstrings, comments and tool-message-to-agent strings"
     return "code", "claude-and-codex-review-and-head-tests-tier", f"{path} is not Python or Markdown, so no check shows its change leaves behaviour alone"
 
 
