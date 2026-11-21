@@ -17,7 +17,7 @@ so a correction to their wording reaches every suite at once:
 Load it by path, under the snake_case form of its file name:
 
     spec = importlib.util.spec_from_file_location(
-        "rule_enforcing_nc_test_suite_failure_message_closing_lines_text_common", <path>)
+        "rule_enforcing_nn_test_suite_failure_message_closing_lines_text_common", <path>)
 """
 
 import importlib.util

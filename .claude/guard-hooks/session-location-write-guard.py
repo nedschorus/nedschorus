@@ -45,7 +45,7 @@ DETACHED_DENY_MESSAGE = (
     "on no branch, so nothing keeps the commit once you switch away or the worktree is "
     "removed.\n"
     "If this checkout is your agent-seat's agent-home, do the work in a worktree of your own "
-    "on an nc-topic-branch, made with git -C ~/Projects/nedsnodes worktree add -b <branch "
+    "on an nn-topic-branch, made with git -C ~/Projects/nedsnodes worktree add -b <branch "
     "name> ~/Projects/nedsnodes/.claude/worktrees/<directory name> origin/main: an "
     "agent-home holds no work, and git refuses commits in it.\n"
     "If this checkout was made for the work you are doing, make a branch here (git switch "

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Tests for nn-systems/general-tools/rule-enforcing-nc-test-suite-failure-message-closing-lines-text-common.py.
+"""Tests for nn-systems/general-tools/rule-enforcing-nn-test-suite-failure-message-closing-lines-text-common.py.
 
 The rule-enforcing nn-test-suites print these lines through their own cases.
 These cases pin the wording word for word, and check that no other test file
 keeps its own copy of it.
 
-Run: python3 nn-systems/general-tools/tests/rule-enforcing-nc-test-suite-failure-message-closing-lines-text-common-test.py
+Run: python3 nn-systems/general-tools/tests/rule-enforcing-nn-test-suite-failure-message-closing-lines-text-common-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -15,9 +15,9 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 MODULE_PATH = (REPOSITORY_ROOT / "nn-systems" / "general-tools"
-               / "rule-enforcing-nc-test-suite-failure-message-closing-lines-text-common.py")
+               / "rule-enforcing-nn-test-suite-failure-message-closing-lines-text-common.py")
 _spec = importlib.util.spec_from_file_location(
-    "rule_enforcing_nc_test_suite_failure_message_closing_lines_text_common", MODULE_PATH)
+    "rule_enforcing_nn_test_suite_failure_message_closing_lines_text_common", MODULE_PATH)
 lines = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(lines)
 
