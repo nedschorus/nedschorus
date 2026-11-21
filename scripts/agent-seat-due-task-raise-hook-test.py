@@ -280,11 +280,19 @@ seat.task("33", metadata=MET, blocked_by=["34"])
 check("blockedBy naming an unreadable task file: held", silent(seat.run()))
 
 seat = Seat()
-seat.task("35", metadata={"prerequisites": [{"pr_merged": 6}]}, blocked_by=["36"])
+seat.task("35", metadata={"prerequisites": [{"issue_closed": 6}]}, blocked_by=["36"])
+seat.task("36")
+seat.respond({"issue:6": {"state": "CLOSED", "title": "T", "url": "https://x/6"}})
+check("blockedBy incomplete: gh not asked about the held task's GHI",
+      silent(seat.run()) and seat.gh_calls() == [], seat.gh_calls())
+
+seat = Seat()
+seat.task("37", metadata={"prerequisites": [{"pr_merged": 6}]}, blocked_by=["36"])
 seat.task("36")
 seat.respond({"pr:6": {"state": "MERGED", "title": "T", "url": "https://x/6"}})
-check("blockedBy incomplete: gh not asked for the held task",
-      silent(seat.run()) and seat.gh_calls() == [], seat.gh_calls())
+check("blockedBy incomplete: the held task's pull request is asked about, since a pull request "
+      "closed without merging raises the task whatever holds it; merged, it raises nothing",
+      silent(seat.run()) and len(seat.gh_calls()) == 1, seat.gh_calls())
 
 # --- blockedBy alone: raised once its blockers all complete -------------------
 seat = Seat()
@@ -603,6 +611,133 @@ seat.task("117", status="completed")
 check("unreadable prerequisites, blockers completed: named, never raised",
       context_of(seat.run()) == problem_text(
           "116", "it is an empty list, which names nothing to wait on"))
+
+# --- a pull request closed without merging ---------------------------------------------
+CLOSED_INSTRUCTIONS = (
+    "If a task named above as waiting on a pull request closed without merging is still wanted, "
+    "put what it now waits on in its metadata.prerequisites with TaskUpdate, in place of that pull "
+    "request, or act on the task now.\n"
+    "If such a task is no longer wanted, set its status to deleted with TaskUpdate.\n"
+    "If you expect such a pull request to be reopened and merged, leave its task as it is: this "
+    "hook raises the task when the pull request merges, and does not name the closing again.")
+
+
+def age_cached_answers(seat):
+    """Make every cached gh answer older than the recheck interval, so the next stop asks gh."""
+    state = json.loads(seat.state_path.read_text())
+    for answer in state["checks"].values():
+        answer["checked_at_epoch"] -= hook.CONDITION_RECHECK_INTERVAL_SECONDS
+    seat.state_path.write_text(json.dumps(state))
+
+
+seat = Seat()
+seat.task("120", metadata={"prerequisites": [{"pr_merged": 150}]}, subject="Use the\nnew flag")
+seat.respond({"pr:150": {"state": "CLOSED", "title": "Add a flag", "url": "https://x/150"}})
+result = seat.run()
+check("pull request closed without merging: exit 0, the exact text handed to the agent",
+      result.returncode == 0 and context_of(result) == (
+          '[rule due-task-pull-request-closed-without-merging-replace-or-delete] Task 120 "Use the new flag" waits on a pull request that was closed without merging: '
+          'PR "Add a flag" (https://x/150).\n'
+          + CLOSED_INSTRUCTIONS), (result, context_of(result)))
+check("pull request closed without merging: recorded by its number",
+      json.loads(seat.state_path.read_text())["raised"]["120"]
+      == {"pull_requests_closed_without_merging": [150]}, seat.state_path.read_text())
+check("pull request closed without merging: raised once, then silent", silent(seat.run()))
+age_cached_answers(seat)
+check("pull request closed without merging: silent after the recheck too", silent(seat.run()))
+
+seat = Seat()
+seat.task("121", metadata={"prerequisites": [{"pr_merged": 151}, {"issue_closed": 152},
+                                             {"pr_merged": MERGED_PR}]},
+          blocked_by=["122"])
+seat.task("122", status="in_progress")
+seat.respond({"pr:151": {"state": "CLOSED"},
+              "issue:152": {"state": "OPEN", "title": "G", "url": "https://x/152"}})
+text = context_of(seat.run()) or ""
+check("several prerequisites, one other unmet and a blocker open: raised at once, cited by "
+      "number when gh gave no title",
+      text.startswith('[rule due-task-pull-request-closed-without-merging-replace-or-delete] Task 121 "Subject of task 121" waits on a pull request that was closed '
+                      "without merging: PR 151.\n")
+      and "Act on task" not in text and "PR 900" not in text, text)
+seat.task("121", metadata={"prerequisites": [{"pr_merged": 151}, {"issue_closed": 153}]},
+          blocked_by=["122", "123"])
+seat.task("123")
+seat.respond({"issue:153": {"state": "OPEN", "title": "H", "url": "https://x/153"}})
+age_cached_answers(seat)
+check("several prerequisites: not raised again when the others and the blockers change",
+      silent(seat.run()))
+seat.task("121", metadata={"prerequisites": [{"pr_merged": 151}, {"pr_merged": 154}]},
+          blocked_by=["122", "123"])
+seat.respond({"pr:154": {"state": "CLOSED", "title": "Second", "url": "https://x/154"}})
+text = context_of(seat.run()) or ""
+check("several prerequisites: a second pull request closed without merging is raised, alone",
+      text.startswith('[rule due-task-pull-request-closed-without-merging-replace-or-delete] Task 121 "Subject of task 121" waits on a pull request that was closed '
+                      'without merging: PR "Second" (https://x/154).\n'), text)
+
+seat = Seat()
+seat.task("124", metadata={"prerequisites": [{"pr_merged": 155}]}, subject="Reopen me")
+seat.respond({"pr:155": {"state": "CLOSED", "title": "R", "url": "https://x/155"}})
+check("reopened then merged: the closing raised",
+      "closed without merging" in (context_of(seat.run()) or ""))
+seat.respond({"pr:155": {"state": "OPEN", "title": "R", "url": "https://x/155"}})
+age_cached_answers(seat)
+check("reopened then merged: silent while open", silent(seat.run()))
+seat.respond({"pr:155": {"state": "MERGED", "title": "R", "url": "https://x/155"}})
+age_cached_answers(seat)
+result = seat.run()
+check("reopened then merged: raised as met, with no second closed-without-merging raise",
+      context_of(result) == ('[rule due-task-raise-when-prerequisites-met] Act on task 124 "Reopen me" now: its prerequisites are met: '
+                             f'PR "R" (https://x/155) is merged.\n{DEFER_LINE}'),
+      repr(context_of(result)))
+
+seat = Seat()
+seat.task("125", metadata={"prerequisites": [{"pr_merged": 156}]}, blocked_by=["126"])
+seat.task("126")
+seat.respond({"pr:156": "fail"})
+result = seat.run()
+check("a held task's pull request whose state gh cannot give: reported with gh's failure, "
+      "exit 1, nothing raised or recorded as raised",
+      reported(result, "This hook could not ask GitHub whether PR 156 is merged, so no task "
+                       "waiting on it was raised: `gh pr view 156 --repo nedsnodes/nedsnodes "
+                       "--json state,title,url` exited 1: gh stand-in: failing on purpose.")
+      and json.loads(seat.state_path.read_text())["raised"] == {}, result)
+seat.respond({"pr:156": {"state": "CLOSED", "title": "T", "url": "https://x/156"}})
+age_cached_answers(seat)
+check("a held task's pull request gh answers at a later stop: raised",
+      "closed without merging: PR \"T\"" in (context_of(seat.run()) or ""))
+
+seat = Seat()
+seat.task("127", metadata={"prerequisites": [{"pr_merged": 157}]}, blocked_by=["128"])
+seat.task("128")
+seat.task("129", metadata={"prerequisites": [{"pr_merged": 158}]})
+cached = {"pr_merged:157": {"met": False, "closed_without_merging": True, "checked_at_epoch": 0},
+          "pr_merged:158": {"met": False, "closed_without_merging": False, "checked_at_epoch": 0}}
+unheld, held = hook.unheld_and_held_tasks(hook.read_tasks(seat.task_directory),
+                                          seat.task_directory, hook.GitHubConditionChecker(cached, 0),
+                                          {})
+check("pull request closed without merging, not yet raised: the idle sweep's rule 4 counts its "
+      "task as not held, though a blocker is open",
+      unheld == ["127", "128"] and held == 1, (unheld, held))
+unheld, held = hook.unheld_and_held_tasks(
+    hook.read_tasks(seat.task_directory), seat.task_directory,
+    hook.GitHubConditionChecker(cached, 0),
+    {"127": {"pull_requests_closed_without_merging": [157]}})
+check("pull request closed without merging, already raised: counted as held again",
+      unheld == ["128"] and held == 2, (unheld, held))
+
+seat = Seat()
+seat.task("130", metadata={"prerequisites": [{"pr_merged": 159}]})
+seat.respond({"pr:159": {"state": "CLOSED", "title": "T", "url": "https://x/159"}})
+seat.state_path.parent.parent.mkdir(parents=True)
+seat.state_path.parent.write_text("a file where the state directory should be")
+result = seat.run()
+check("pull request closed without merging, state cannot be written: reported, counting the "
+      "task as not raised",
+      reported(result, "could not be written, and so 1 due task(s) were not raised at this "
+                       "stop"), result)
+seat.state_path.parent.unlink()
+check("pull request closed without merging, state writable again: raised",
+      "closed without merging" in (context_of(seat.run()) or ""))
 
 # --- malformed input ----------------------------------------------------------------
 seat = Seat()
@@ -1164,7 +1299,8 @@ seat.waiting_task("78", ITEM_1)
 seat.minutes_say("item 1 of 3: deferred; it moves to just before the summary item. <open>")
 seat.task("79")
 unheld, held = hook.unheld_and_held_tasks(hook.read_tasks(seat.task_directory),
-                                          seat.task_directory, hook.GitHubConditionChecker({}, 0))
+                                          seat.task_directory, hook.GitHubConditionChecker({}, 0),
+                                          {})
 check("approval-walk item not decided: the next-action list counts the task held",
       unheld == ["79"] and held == 1, (unheld, held))
 

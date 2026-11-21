@@ -173,7 +173,7 @@ def a_process_that_looks_like_a_supervisor(workspace: Path, agent: str,
     try:
         first_line = process.stdout.readline().rstrip("\n")
         if first_line != STAND_IN_SUPERVISOR_READY_LINE:
-            exit_status = process.wait() if first_line == "" else "none yet, it is still running"
+            exit_status = process.wait() if first_line == "" else "none yet, it is still running"  # pragma: no mutate, readline on a text-mode pipe gives a str, and only "" is <= "" for a str, so <= acts as ==
             raise RuntimeError(
                 f"the stand-in supervisor for {agent} (process {process.pid}) never printed "
                 f"{STAND_IN_SUPERVISOR_READY_LINE!r}: its first line was {first_line!r} and its "

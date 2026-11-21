@@ -2199,6 +2199,18 @@ def test_a_setext_heading_in_the_message_gives_its_copy_the_level_it_shows():
           counted(lines) and not case.model_calls(), f"lines {lines!r}")
 
 
+def test_a_decision_line_inside_a_multi_line_setext_heading_reaches_the_messages_copy():
+    item = DECISION_ITEM.replace("#new_if_d Show every row.\n\n", "")
+    shown = item.replace("## Item 4 of 9: a filter", "Item 4 of 9: a filter\n#new_if_d Show every row.\n---")
+    case = Case(next_to_present="item 4 of 9", document="# A walk\n\n" + item + "\n", model="changed")
+    lines = case.lines("a", case.transcript(f"{shown}\n\n{ITEM_4_CLOSING_LINE}"))
+    calls = case.model_calls()
+    check("an answer goes to the model and is refused when the message's setext heading holds a `#new_if_d` line "
+          "the walk-document has since removed",
+          len(calls) == 1 and "shown, then dropped" in calls[0]["stdin"] and lines is not None
+          and not counted(lines), f"lines {lines!r}, calls {calls!r}")
+
+
 def test_a_closing_line_with_no_blank_line_before_it_keeps_the_items_last_line():
     case = Case(next_to_present="item 4 of 9", document="# A walk\n\n" + DECISION_ITEM + "\n", model="changed")
     lines = case.lines("a", case.transcript(f"{DECISION_ITEM}\n{ITEM_4_CLOSING_LINE}"))

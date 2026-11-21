@@ -24,14 +24,18 @@ of these hold:
 - the transcript's latest Remote Control line is that disconnect line, with no
   later bridge_status line ("/remote-control is active"), which Claude Code
   logs whenever Remote Control comes back on, by the command or by itself;
-- this program has not already typed for that disconnect line;
+- this program has typed for that disconnect line fewer than
+  REMOTE_CONTROL_RECONNECT_COMMAND_TMUX_TYPINGS_PER_DISCONNECT_AT_MOST times, and not in the last
+  REMOTE_CONTROL_RECONNECT_SECONDS_TO_WAIT_FOR_REMOTE_CONTROL_ACTIVE_BEFORE_TYPING_COMMAND_AGAIN, because a typing Claude Code
+  accepts can still leave Remote Control off;
 - the record's status is not "waiting", which Claude Code sets while a dialog
   waits for an answer;
 - the pane is not in a tmux mode such as copy mode, where typed keys go to tmux
   and "/" starts a search;
 - the pane shows the prompt line empty: the line between the input box's two
   rules is the prompt character alone.
-Otherwise it types nothing and tries again on the next run. Typing only on the
+Otherwise it types nothing, and a later run tries again while the typings for
+that disconnect line number fewer than REMOTE_CONTROL_RECONNECT_COMMAND_TMUX_TYPINGS_PER_DISCONNECT_AT_MOST. Typing only on the
 disconnect line matters: while Remote Control is on, the same command opens
 its menu instead, whose choices include "Disconnect this session".
 
@@ -41,7 +45,8 @@ saved per transcript in TRANSCRIPT_READ_POSITIONS_FILE_NAME in LOG_DIRECTORY. A 
 whose bytes before that place no longer match is read whole, and so is every
 transcript when the saved file is missing or unreadable.
 
-It does not check afterwards that Remote Control came back. A failure it meets
+When Remote Control is still off REMOTE_CONTROL_RECONNECT_SECONDS_TO_WAIT_FOR_REMOTE_CONTROL_ACTIVE_BEFORE_TYPING_COMMAND_AGAIN after
+the last of those typings, that is a failure, reported as below. A failure it meets
 in one agent-seat, such as a session record it cannot read or a tmux command
 that fails or times out, is written to REMOTE_CONTROL_RECONNECT_WATCHER_DECISIONS_FILE_NAME in LOG_DIRECTORY and
 printed to stderr; the run goes on to the next agent-seat and, once every
@@ -50,11 +55,12 @@ shown to the user in a terminal window on his Mac running --show-notice,
 opened from ned-box with scripts/open-mac-window-from-ned-box.py and on the
 Mac with scripts/open-iterm-window-running-command. "The first
 time" counts once per agent-seat, claude process and kind of failure; once per
-disconnect line for a failed typing; and once per error text for a failure that
+disconnect line for a failed typing, and once for those typings all leaving
+Remote Control off; and once per error text for a failure that
 stops the whole run. When the notice cannot be written or the window cannot be
 opened, that is printed to stderr too, and a later run that meets the same
 failure tries the notice again. Each typing is also written to REMOTE_CONTROL_RECONNECT_WATCHER_DECISIONS_FILE_NAME, which is what
-keeps a later run from typing again for the same disconnect line. A log directory may also hold
+a later run counts the typings for a disconnect line from. A log directory may also hold
 REMOTE_CONTROL_RECONNECT_WATCHER_DECISIONS_FILE_ITS_NAME_BEFORE_PROGRAM_PREFIX_STILL_READ, the same log under its earlier name; each run reads
 it too, and writes only REMOTE_CONTROL_RECONNECT_WATCHER_DECISIONS_FILE_NAME.
 
@@ -142,6 +148,9 @@ SESSION_RECORD_GRACE_SECONDS = 60
 # Typed text and its Enter sent together can arrive as one paste, which the prompt does not submit.
 SECONDS_BETWEEN_TEXT_AND_ENTER = 0.5
 TMUX_TIMEOUT_SECONDS = 30
+REMOTE_CONTROL_RECONNECT_COMMAND_TMUX_TYPINGS_PER_DISCONNECT_AT_MOST = 3
+# Claude Code logs the bridge_status line within seconds of a typing that takes; this spans two runs or more.
+REMOTE_CONTROL_RECONNECT_SECONDS_TO_WAIT_FOR_REMOTE_CONTROL_ACTIVE_BEFORE_TYPING_COMMAND_AGAIN = 150
 MAC_TMUX_DIRECTORIES_CRON_PATH_LACKS = ("/opt/homebrew/bin", "/usr/local/bin")
 # Longer than the opener's own ssh time limit, so the opener reports its timeout itself.
 MAC_WINDOW_OPENER_TIMEOUT_SECONDS = 90
@@ -504,8 +513,19 @@ def check_seat(run: Run, seat, pid, age, session_records_directory: Path, projec
     if disconnect is None:
         return
     event = {"session_id": session_id, "disconnect": disconnect.get("uuid")}
-    if run.logged(seat=seat, decision="typed", **event):
-        return
+    typings = [entry for entry in run.entries
+               if entry.get("seat") == seat and entry.get("decision") == "typed"
+               and all(entry.get(key) == value for key, value in event.items())]
+    if typings:
+        last_typed_at = datetime.fromisoformat(typings[-1]["at"])
+        if (datetime.now(timezone.utc) - last_typed_at).total_seconds() < REMOTE_CONTROL_RECONNECT_SECONDS_TO_WAIT_FOR_REMOTE_CONTROL_ACTIVE_BEFORE_TYPING_COMMAND_AGAIN:
+            return
+        if len(typings) >= REMOTE_CONTROL_RECONNECT_COMMAND_TMUX_TYPINGS_PER_DISCONNECT_AT_MOST:
+            report_typing_failure(run, seat, event, disconnect,
+                                  f"it typed /remote-control {seat} into its tmux pane {len(typings)} times, the "
+                                  f"last at {typings[-1]['at']}, and Claude Code has logged no line saying "
+                                  "Remote Control is active since", kind="reconnect-typing-limit-reached-remote-control-still-off")
+            return
     if status == DIALOG_OPEN_STATUS:
         skip(run, seat, event, "a dialog is open: its session record's status is waiting")
         return
@@ -551,9 +571,9 @@ def skip(run: Run, seat, event, reason):
         run.log(seat, "skipped", reason=reason, **event)
 
 
-def report_typing_failure(run: Run, seat, event, disconnect, problem):
-    run.report(seat, "typing-failed", TYPING_FAILED_NOTICE_TEMPLATE, problem,
-               key=f"{seat}:{event['session_id']}:{event['disconnect']}:typing-failed",
+def report_typing_failure(run: Run, seat, event, disconnect, problem, kind="typing-failed"):
+    run.report(seat, kind, TYPING_FAILED_NOTICE_TEMPLATE, problem,
+               key=f"{seat}:{event['session_id']}:{event['disconnect']}:{kind}",
                disconnected_at=disconnect.get("timestamp", "an unknown time"))
 
 

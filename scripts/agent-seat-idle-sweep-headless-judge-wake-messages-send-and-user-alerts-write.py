@@ -22,7 +22,11 @@ Each invocation, under a lock that keeps two from overlapping:
 5. For each idle agent-seat, applies the verdict's rule: rule 1 wakes it once its limit has ended;
    rule 2 has unbacked promises and announced actions judged and named to it; rule 3 sends the
    handoff text; rule 4 ends a wait no rule 2 message was sent on; rule 5 has the judge
-   decide whether to message it, and write the message. A wait whose rule 2 messages named only
+   decide whether to message it, and write the message. The judge is not told of a background
+   command whose command line starts with coreutils `timeout` that has not yet ended it, since
+   such work ends by itself, nor of a background command, subagent or workflow a rule 5 message
+   has already named, since the sweep asks once about each; when something runs and all of it is
+   such work, the judge is not asked. A wait whose rule 2 messages named only
    promises to act after an event and hold sentences ends when the agent-seat has recorded, after each
    message, one task per sentence it named, each with a TaskCreate or TaskUpdate call whose result
    succeeded and that sets `metadata.prerequisites` or `addBlockedBy`. A message starts a wait, unless a wait is
@@ -49,9 +53,11 @@ case only when no rule 2 message was sent on the wait, makes the task call a rul
 asked for, as step 5 says, stops at a usage limit (rule 1), starts a
 new agent-session, or spends tokens after the user was told. So an agent-seat that answers each
 rule 3 or rule 5 message with a tool call and goes idle again is nudged again, and never
-escalated; one that answers a rule 2 message with a tool call and a fresh promise is escalated,
-because a tool call that ended a promise wait would let an agent-seat that makes a fresh promise
-at each rule 2 message be nudged again forever and never escalated.
+escalated, unless all that still runs has been asked about; a command that hangs after the one
+question about it reaches nobody until the agent-seat looks. One that answers a rule 2 message
+with a tool call and a fresh promise is escalated, because a tool call that ended a promise wait
+would let an agent-seat that makes a fresh promise at each rule 2 message be nudged again forever
+and never escalated.
 
 How it fails, and what the user sees: when a sender sends a text other than the one code wrote,
 the text it sent is logged as a sent_text_differs_from_code_text event, step 4's delivery check
@@ -177,6 +183,9 @@ UNBACKED_SENTENCE_LINES = {
 # The kinds of sentence whose message asks for a task call that code can see: one that sets
 # prerequisites or addBlockedBy. An announced action or a standing rule only the judge finds done.
 TASK_CALL_SETTLED_KINDS = frozenset((fields.PROMISE_AFTER_EVENT, fields.HOLD))
+# On a rule 5 judge_answer event: the ids of the background commands, subagents and workflows its
+# message asked about, which no later rule 5 message asks about again.
+RUNNING_WORK_ASKED_ABOUT = "running_work_asked_about"
 # An event logged with each rule 2 message, carrying the sentences it names and their kinds.
 PROMISE_MESSAGE = "promise_message"
 # On an open wait: the rule 2 messages sent on it, [{"at", "kinds", "sentences"}], or None when one
@@ -246,13 +255,16 @@ agent-seat's other work.
 
 Judge whether the agent-seat could act now. If it could, write it one short message saying what you \
 saw. Name each background command, workflow and subagent that has not finished or reported, \
-with how long it has run, and ask whether it is taking longer than expected, such as "Your \
-test-suite run started 25 minutes ago and has not finished. Is it taking longer than expected?". \
+with how long it has run, and ask whether it is taking longer than expected. Name a background \
+command by its description, in quotation marks, followed by its id in brackets, or by its id \
+alone when its description is null, and a subagent or workflow by its id, such as "Your background command "Run the idle-sweep test \
+suites" (b7k2m4qzp) started 25 minutes ago and has not finished. Is it taking longer than \
+expected?". \
 A subagent with stopped_at has stopped and reported: it is not running, and only the background \
 commands it launched, under own_running_background_commands, still run. Say so, and name each of \
-those commands with how long it has run, such as "Your subagent ae10c20d94ca876c9 reported 124 \
-minutes ago, but background command bgyicuvln, which it started 131 minutes ago, has not \
-finished. Is it still needed?". \
+those commands with how long it has run, such as "Your subagent ae10c20d94ca876c9 reported 20 \
+minutes ago. Your subagent's background command "Check which recorded surviving mutants current \
+main kills" (bk9617lvz) started 29 minutes ago and has not finished. Is it still needed?". \
 With nothing running, ask what is going on, such as "Your task "Open the pull request for the \
 reviewed fix" is open and nothing holds it, and you have made no tool call for 12 minutes. What's \
 going on?". If it could not act now, write \
@@ -387,6 +399,10 @@ class SweepLog:
     def last_judge_answer(self, seat):
         answers = [event for event in self.of_seat(seat, "judge_answer") if event.get("rule") == 5]
         return answers[-1] if answers else None
+
+    def running_work_asked_about(self, seat):
+        return {work_id for event in self.of_seat(seat, "judge_answer") if event.get("rule") == 5
+                for work_id in event.get(RUNNING_WORK_ASKED_ABOUT, [])}
 
     def checked_sentences(self, seat):
         return {(event["record_uuid"], event["sentence"])
@@ -966,6 +982,31 @@ class Sweep:
                 "running_background_commands": with_minutes(running.get("background_commands", [])),
                 "running_workflows": with_minutes(running.get("workflows", []))}
 
+    def running_work_to_ask_about(self, facts, asked_about):
+        """The facts less the running work not to ask the agent-seat about: each background
+        command whose own timeout has not yet ended it, since it ends by itself; each command,
+        subagent and workflow a rule 5 message has already asked about, since the sweep asks once
+        about each; and each stopped subagent left with no other command."""
+        own = fields.SUBAGENT_OWN_RUNNING_BACKGROUND_COMMANDS
+        ends_at = fields.BACKGROUND_COMMAND_TIMEOUT_ENDS_AT
+
+        def to_ask_about(commands):
+            return [command for command in commands if command["id"] not in asked_about
+                    and not (command.get(ends_at) and parse_time(command[ends_at]) > self.now)]
+        subagents = []
+        for entry in facts["running_subagents"]:
+            if own in entry:
+                entry = {**entry, own: to_ask_about(entry[own])}
+                if not entry[own]:
+                    continue
+            elif entry["id"] in asked_about:
+                continue
+            subagents.append(entry)
+        return {**facts, "running_subagents": subagents,
+                "running_background_commands": to_ask_about(facts["running_background_commands"]),
+                "running_workflows": [workflow for workflow in facts["running_workflows"]
+                                      if workflow["id"] not in asked_about]}
+
     def judge_idle_seat(self, seat, verdict, stretch):
         answer = self.log.last_judge_answer(seat)
         if (answer and answer["session_id"] == verdict[fields.SESSION_ID]
@@ -973,7 +1014,12 @@ class Sweep:
                 and seconds_between(agent_seat_idle_sweep_invocation_started_at(answer), self.now)
                 < JUDGE_ASK_AGAIN_SECONDS):
             return
-        facts = dict(self.facts(seat, verdict), step=NUDGE)
+        all_facts = self.facts(seat, verdict)
+        facts = dict(self.running_work_to_ask_about(all_facts, self.log.running_work_asked_about(seat)),
+                     step=NUDGE)
+        running_keys = ("running_subagents", "running_background_commands", "running_workflows")
+        if any(all_facts[key] for key in running_keys) and not any(facts[key] for key in running_keys):
+            return
         idle_minutes = int(seconds_between(stretch, self.now) // 60) if stretch else None
         prompt = IDLE_JUDGE_PROMPT.format(seat=seat, idle_minutes=idle_minutes,
                                           facts=json.dumps(facts, indent=1, ensure_ascii=False))
@@ -981,10 +1027,12 @@ class Sweep:
                                self.timeout_seconds)
         problem = outcome.error or idle_judge_answer_problem(outcome.answer)
         answer = outcome.answer or {}
+        send = not problem and answer["send"]
         self.record({"event": "judge_answer", "agent_seat": seat, "rule": 5,
                      "session_id": verdict[fields.SESSION_ID], "last_activity": stretch,
-                     "send": not problem and answer["send"], "reason": answer.get("reason"),
-                     "failed": bool(problem)})
+                     "send": send, "reason": answer.get("reason"), "failed": bool(problem),
+                     RUNNING_WORK_ASKED_ABOUT: running_work_named_in(facts, answer["message"])
+                     if send else []})
         if problem:
             self.headless_failed(seat, "judge whether it could act now", problem,
                                  outcome.error_kind or JUDGE_ANSWER_UNUSABLE)
@@ -1075,6 +1123,18 @@ def sentence_answer_problem(answer, count):
         return f"the judge's answer does not give backed true or false once for each of {count} " \
                f"sentences: {json.dumps(answer)[:500]}"
     return None
+
+
+def running_work_named_in(facts, message):
+    """The ids of the running work handed to the judge that its message names: the prompt asks it
+    to name each by id, and one it left out is asked about at the next rule 5 nudge instead of
+    never."""
+    own = fields.SUBAGENT_OWN_RUNNING_BACKGROUND_COMMANDS
+    ids = [command["id"] for entry in facts["running_subagents"] for command in entry.get(own, [])]
+    ids += [entry["id"] for entry in facts["running_subagents"] if own not in entry]
+    ids += [entry["id"] for key in ("running_background_commands", "running_workflows")
+            for entry in facts[key]]
+    return sorted(work_id for work_id in set(ids) if work_id in message)
 
 
 def idle_judge_answer_problem(answer):
@@ -1189,6 +1249,8 @@ def main(argv=None):
     parser.add_argument("--projects-root", default="~/.claude/projects")
     parser.add_argument("--tasks-root", default="~/.claude/tasks")
     parser.add_argument("--claude-json", default="~/.claude.json")
+    parser.add_argument("--due-task-raise-state-directory",
+                        default=str(Path("~") / verdicts_print.due_task_hook.STATE_DIRECTORY_UNDER_HOME))
     arguments = parser.parse_args(argv)
     now = parse_time(arguments.now) if arguments.now else datetime.now(timezone.utc)
     if now is None:

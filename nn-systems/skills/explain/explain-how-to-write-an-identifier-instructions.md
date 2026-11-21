@@ -43,7 +43,7 @@ dates inside these templates are examples; put the real ones in their place.
   being the comment's own: it ends `#pullrequestreview-<id>`,
   `#discussion_r<id>` or `#issuecomment-<id>`.
 - A branch: `branch <name>`; write `origin/<name>` only for a branch pushed there.
-- A model: its vendor model id, such as `gpt-6-astra`. A nickname you cannot
+- A model: its vendor model id, such as `gpt-6.2-astra`. A nickname you cannot
   match to a vendor model id is "the model nicknamed <x>".
 - Anything else, such as a code symbol or an environment variable: its kind in
   words, "the environment variable `GH_TOKEN`".

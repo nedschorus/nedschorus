@@ -1754,6 +1754,14 @@ def case_marks_hand_typed_approval_refused(gate):
         "non-blocking findings to send the author after the merge.\n",
         "\nPost it with: python3 scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py "
         f"--pull-request 3881 --head-commit {approval['commit_id']} --github-account ned-review-merge <review file>\n",
+        "\nGive each inline comment the finding_category merge-lane-2 judges it to have, one of must-fix-now, "
+        "fix-next, fix-in-maintenance or file-for-later: must-fix-now only for a finding that blocks the merge, "
+        "since the posting program posts a review with a must-fix-now comment as a request for changes and refuses "
+        "an approval that has one. A comment posted by hand carries no category on GitHub, so decide each one; keep "
+        "the verdict that review gave.\n",
+        "\nLeave the unmarked review at https://github.com/nedsnodes/nedsnodes/pull/3881#pullrequestreview-5950181743 "
+        "on GitHub as it is: the gate reads only ned-review-merge's latest review with a verdict, which the review "
+        "you post becomes.\n",
         f"\nThen run the gate again: scripts/merge-gate.sh 3881 {approval['commit_id']} <submitted_at>, "), run.summary()
 
 
@@ -1769,9 +1777,16 @@ def case_marks_hand_typed_approval_of_older_commit_asks_for_review_of_head(gate)
         "https://github.com/nedsnodes/nedsnodes/pull/3881#pullrequestreview-5950181743 (APPROVED), lacks the marks",
         f"\nThat review covers {approval['commit_id']}, and the nc-head-commit is now {LATER_HEAD}, so do not post "
         f"its verdict again: a review posted now is recorded on {LATER_HEAD}, which no one has reviewed.\n",
-        f"\nHave {LATER_HEAD} reviewed, and post that review with: python3 "
-        "scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py --pull-request 3881 "
-        f"--head-commit {LATER_HEAD} --github-account ned-review-merge <review file>\n")
+        f"\nmerge-lane-2 commissions a new review of {LATER_HEAD} itself, as its seat-brief says for every pull "
+        "request, starting with: scripts/pull-request-review-plan.py --pull-request 3881\n",
+        "\nWhen that review is done, write merge-lane-2's verdict, body and the reviewers' findings into a review file",
+        "\nLeave the unmarked review on GitHub as it is: the review of " + LATER_HEAD + " that you post becomes the one "
+        "the gate reads.\n",
+        "\nPost it with: python3 scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py --pull-request 3881 "
+        f"--head-commit {LATER_HEAD} --github-account ned-review-merge <review file>\n",
+        "\nWhen that review requests changes, the author's fix-round comes next, so do not run the gate until a later "
+        "review approves.\n",
+        f"\nWhen it approves, run the gate again: scripts/merge-gate.sh 3881 {LATER_HEAD} <submitted_at>, ")
     return passed and f"--head-commit {approval['commit_id']}" not in run.stdout + run.stderr, run.summary()
 
 
