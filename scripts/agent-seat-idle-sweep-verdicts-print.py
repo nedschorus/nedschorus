@@ -331,6 +331,13 @@ def is_usage_limit(record):
     return record.get("type") == "assistant" and record.get("apiError") == USAGE_LIMIT_API_ERROR
 
 
+def usage_limit_reset_time(record):
+    """The reset time, in Unix seconds, that a usage-limit record carries, or None when it carries
+    none. Its text, such as "resets 1am (America/Los_Angeles)", is for people and is not read."""
+    resets_at = (record.get("quotaLimits") or {}).get("resetsAt")
+    return resets_at if isinstance(resets_at, (int, float)) else None
+
+
 def message_text(record):
     content = (record.get("message") or {}).get("content")
     if isinstance(content, str):
@@ -742,12 +749,10 @@ def verdict_for_seat(seat, paths, now, since, checker, parser, usage_limit_recor
             return verdict
 
         if limit and last.get("uuid") not in usage_limit_records_skipped:
-            quota = last.get("quotaLimits") or {}
-            resets_at = quota.get("resetsAt")
+            resets_at = usage_limit_reset_time(last)
             verdict["usage_limit"] = {
                 "record_uuid": last.get("uuid"), "resets_at": resets_at,
-                "reset_time_passed": isinstance(resets_at, (int, float))
-                and now.timestamp() >= resets_at,
+                "reset_time_passed": resets_at is not None and now.timestamp() >= resets_at,
                 "account_now_logged_in": logged_in_account(paths.claude_json)}
             verdict.update({fields.RULE: 1, fields.DECISION: fields.SESSION_LIMIT})
             return verdict
