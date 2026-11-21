@@ -128,7 +128,7 @@ _VERBS = (
     "fetch|pull|clone|grep|search|verify|investigate|record|save|publish|comment|"
     "close|revert|rename|move|copy|land|kick off|fire|queue|retry|rerun|amend|"
     "squash|reopen|resolve|patch|implement|scan|compare|diff|inspect|confirm|"
-    "re-?dispatch|re-?push|re-?file|re-?open|relaunch|notify|ping|hand|stage"
+    "re-?dispatch|re-?push|re-?file|re-?open|relaunch|notify|ping|hand|stage|finish"
 )
 _GERUNDS = (
     "opening|filing|creating|pushing|committing|running|re-?running|starting|"
@@ -141,7 +141,7 @@ _GERUNDS = (
     "kicking off|firing|queueing|queuing|retrying|amending|squashing|"
     "reopening|resolving|patching|implementing|scanning|comparing|inspecting|"
     "confirming|re-?dispatching|re-?pushing|relaunching|notifying|pinging|"
-    "handing|staging"
+    "handing|staging|finishing"
 )
 _FILLER = (r"(?:(?:now|then|first|next|go ahead and|go|quickly|also|immediately|just|"
            r"straight away|right away|actually|instead|again)\s+)*")
@@ -185,7 +185,14 @@ RX_CONDITIONAL_ON_EVENT = re.compile(
 RX_NEGATED_ACTION = re.compile(
     r"\b(?:without|instead of|rather than|not yet|never|no longer|don't|won't|can't)\s+"
     r"(?:\w+\s+){0,2}?(?:push|pushing|commit|committing|dispatch|dispatching|fork|forking|file|"
-    r"filing|open|opening|send|sending|message|messaging|start|starting|spawn|spawning)\b", re.I)
+    r"filing|open|opening|send|sending|message|messaging|start|starting|spawn|spawning)\b"
+    # A negated object declines the action too, as in "I'm starting nothing else for now"; but
+    # "nothing but the test" names what is done, and "no more than five" sets a limit.
+    r"|\b(?:" + _VERBS + "|" + _GERUNDS + r")\s+(?:nothing|none|no\s+(?:more|other|new|further))\b"
+    r"(?!\s+(?:else\s+)?(?:but|than)\b)",
+    re.I)
+# Coordinated clauses share the sentence's subject: "I'll push no further changes and merge it now".
+RX_CLAUSE_BREAK = re.compile(r",\s*(?:and\s+)?then\s+|\s+and\s+(?:then\s+)?|;\s*", re.I)
 
 
 def clean_text(text):
@@ -230,6 +237,16 @@ def _announces(sentence):
     return bool(match and _gerund_announces(sentence, match))
 
 
+def _declines_every_action(sentence):
+    """Whether a clause declines an action and no other clause announces one."""
+    clauses = RX_CLAUSE_BREAK.split(sentence)
+    if not any(RX_NEGATED_ACTION.search(clause) for clause in clauses):
+        return False
+    return not any(not RX_NEGATED_ACTION.search(clause)
+                   and (_announces(clause) or _announces("I'll " + clause))
+                   for clause in clauses)
+
+
 def sentence_kind(sentence):
     """Return the kind of a sentence the phrase lists match, or None for a sentence they miss."""
     if sentence.endswith("?"):
@@ -238,7 +255,7 @@ def sentence_kind(sentence):
     if kind is None:
         if not _announces(sentence):
             return None
-        if RX_NEGATED_ACTION.search(sentence):
+        if _declines_every_action(sentence):
             return NEGATIVE
     # The user has the next move whatever else the sentence promises.
     if RX_CONDITIONAL_ON_USER.search(sentence):

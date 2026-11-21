@@ -385,7 +385,7 @@ Outer walk, 17 items:
     ANCHOR = item 15.
 15. First bounded test task (ruling) — processed 2026-07-25 → CONFIRMED
     (the user's word "approved", session 23789ca5): first bounded test task =
-    the main-gatekeeper build slice (main-gatekeeper-design.md § Build
+    the main-gatekeeper build slice (main-gatekeeper.system.design.md § Build
     slice: check-in / status / cancel / imports + tests T1–T12 + the
     CLAUDE.md workflow lines), boot test first per founding-plan step 7;
     resolves pair-#10 question 4. The item expanded mid-walk into the
@@ -438,8 +438,8 @@ Outer walk, 17 items:
     check-in undoing a prior one) is the post-push remedy; (o) the spec's
     scope ends at MAIN — deploying to production is a separate DevOps/CI
     concern (user); file renamed fast-pr-to-prod-design.md →
-    main-gatekeeper-design.md (component-named; NC has no pull requests).
-    SPEC FOLDED: full rewrite of main-gatekeeper-design.md + README
+    main-gatekeeper.system.design.md (component-named; NC has no pull requests).
+    SPEC FOLDED: full rewrite of main-gatekeeper.system.design.md + README
     principles 5/6 + actors + entry-manifest retired-to-historical +
     comms-bridge promotion-transport retired + founding-plan pointers.
     Later rulings, continued: (p) S2 RESOLVED (user-approved 2026-07-24):
@@ -529,7 +529,7 @@ Outer walk, 17 items:
     Cluster 4 (git/GitHub/review) processed 2026-07-27, walked per-entry
     at the user's direction (ten entries, each ruled individually): two
     sentences captured (one-coherent-change-set-per-check-in →
-    issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3);
+    issue [main-gatekeeper — the single check-in gate (design: nn-systems/main-gatekeeper/main-gatekeeper.system.design.md)](https://github.com/nedschorus/nedschorus/issues/3);
     reply-incapable-sender terminal-state requirement →
     issue [Founding program — boot up nedschorus (plan of record: docs/cross-project/nedschorus-founding-plan.md)](https://github.com/nedschorus/nedschorus/issues/1));
     check-in composition ANSWERED by user ruling (lifecycle bundling is
@@ -554,7 +554,7 @@ Outer walk, 17 items:
     GHIs, and its tests" — with four duplicate overview bullets folded
     there; steward ideal → issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26)
     (candidate domain-expert duty: overview currency, never exclusive
-    control); scrub-duty enumeration → issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nn-systems/handoff/handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2)
+    control); scrub-duty enumeration → issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nn-systems/handoff/handoff.system.design.md](https://github.com/nedschorus/nedschorus/issues/2)
     (the build enumerates task/memory disposal, queue-depth reporting,
     nn-queue expiry, trailer-absence audit — surfaced by the user's
     question whether any one artifact collects maintenance duties; none

@@ -475,7 +475,7 @@ with tempfile.TemporaryDirectory() as workspace:
 
     # A NEGATED BUILT WORD IS NOT A CLAIM THAT THE CODE IS BUILT. The status
     # values here are the ones docs/design-to-main/design-to-main-state-machine-
-    # design.md and nn-systems/main-gatekeeper/main-gatekeeper-design.md carry
+    # design.md and nn-systems/main-gatekeeper/main-gatekeeper.system.design.md carry
     # on main, which a substring test read as built -- so the rider was silent
     # on the clearest unbuilt claim a status can make.
     write_document(root, "docs/not-built.md", document(

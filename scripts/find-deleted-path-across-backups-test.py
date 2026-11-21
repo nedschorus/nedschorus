@@ -1490,10 +1490,6 @@ check("the reflog surface on a non-repo is UNAVAILABLE, not NOT FOUND",
 # a caller's git redirect variables — every command runs without them
 # --------------------------------------------------------------------------
 
-# Imported here, not with the others, for the reason given at `import select`
-# below: an import added at the top moves the line run-all-test-suites cites.
-import json  # noqa: E402
-
 # Written out here rather than read from the program, so a name dropped from
 # the program's list fails a case instead of shrinking what the cases check.
 GIT_REDIRECT_VARIABLES_EXPECTED_DROPPED = (
@@ -1851,7 +1847,6 @@ class RunsLocallyRefusesSsh(FakeRunner):
 import select  # noqa: E402
 import signal  # noqa: E402
 import socket  # noqa: E402
-import time  # noqa: E402
 
 
 def log_store_fixture(tmp):
