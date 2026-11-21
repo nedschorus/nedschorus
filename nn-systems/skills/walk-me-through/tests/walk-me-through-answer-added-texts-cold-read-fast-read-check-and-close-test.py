@@ -221,9 +221,9 @@ class Case:
     counter = 0
 
     def __init__(self, next_to_present="item 3 of 9", document=WALK_DOCUMENT, temporary_directory_name="tmp",
-                 rating="none."):
+                 rating="none.", root_name_suffix=""):
         Case.counter += 1
-        self.root = SUITE_ROOT / f"case-{Case.counter}"
+        self.root = SUITE_ROOT / f"case-{Case.counter}{root_name_suffix}"
         self.checkout = self.root / "checkout"
         self.checkout.mkdir(parents=True)
         subprocess.run(["git", "init", "-q", str(self.checkout)], check=True)
@@ -2446,7 +2446,7 @@ def test_a_first_deferral_of_the_item_just_before_the_summary_item_takes_it_out_
                   UNDO_COMMITTED_CHANGE_LINE]
               and f"{answered}: deferred while it stood just before the summary item, so it leaves the walk and "
                   "stays open. <open>\n" in minutes
-              and "second" not in closed.stdout and "second" not in minutes
+              and "second" not in outside_paths(closed.stdout, case) and "second" not in minutes
               and walk_document(case) == before
               and marker(case) == "#next_to_present item 5 of 5", described(closed) + minutes)
         case.run("check")
@@ -3846,7 +3846,7 @@ def test_an_item_of_no_kind_rated_weak_settled_as_alters_earlier_approved_text_o
               "only;" in result.stdout
           and "such as whether the case against names nothing besides the user's earlier word-for-word approval of "
               "the text the change alters, and" in result.stdout
-          and PERMISSIONS_JUDGEMENT in result.stdout and "cost" not in result.stdout + minutes,
+          and PERMISSIONS_JUDGEMENT in result.stdout and "cost" not in outside_paths(result.stdout + minutes, case),
           described(result) + minutes)
     closed = case.run("close")
     check("close records the item settled as weak and alters earlier approved text only as accepted, and moves on past it",
@@ -6227,7 +6227,8 @@ def test_bump_refuses_an_item_no_heading_has_or_one_already_shown_writing_nothin
 
 
 def test_bump_refuses_while_the_last_answer_has_no_close_line_writing_nothing():
-    case = Case(next_to_present="item 1 of 9", document=bump_walk())
+    # The case directory holds "held", as a worktree's path can, and close prints the checkout path inside it.
+    case = Case(next_to_present="item 1 of 9", document=bump_walk(), root_name_suffix="-held")
     answered = case.run("check")
     document, minutes = walk_document(case), case.minutes.read_text()
     bumped = case.run("check", "--bump", "three", reply="bump three")
@@ -6246,7 +6247,7 @@ def test_bump_refuses_while_the_last_answer_has_no_close_line_writing_nothing():
     closed = case.run("close")
     check("close then records the answer for the item the user answered, not a held answer",
           closed.returncode == 0 and "\nitem 1 of 9: approved" in case.minutes.read_text()
-          and "held" not in closed.stdout, described(closed) + case.minutes.read_text())
+          and "held" not in outside_paths(closed.stdout, case), described(closed) + case.minutes.read_text())
 
 _finding_outcomes_spec = importlib.util.spec_from_file_location(
     "cold_read_fast_read_report_findings_parse_and_finding_outcomes_check_common",
