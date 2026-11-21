@@ -990,3 +990,26 @@ The claim check's evidence:
 > - Contradicting line: nn-systems/handoff/handoff-supervisor.py:2550-2552 `print("handoff-supervisor: " + reference_checkout_back_on_main.reference_checkout_back_on_main_success_line_build(REFERENCE_CHECKOUT, main_commit, leftovers_branches))`. The builder at nn-systems/handoff/handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py:252 writes `saved = (f"its leftovers are saved on {', '.join(pushed)}, pushed to origin" if pushed`. So the branch is named on the handoff-supervisor's console, the agent-seat's tmux pane in the user's window.
 > - The rest holds (handoff-supervisor.py:2537-2543). The supervisor's docstring at :34-35 says the same as the overview (`neither the successor nor the user is told of such a branch`), and the successor's prompt does leave the branch out. Suggested wording: "telling the successor nothing of that branch, and naming it only on its console".
 State: open
+
+## E84 — possible problem: an assertion of the overview is contradicted
+
+Claim: The cleaner deletes a local branch other than main that no worktree has checked out, "and no other branch", with `-D` only for a finished pull request's head branch.
+Found by: the overview claim check of 2026-11-18 against commit 46844e6f221b7702dfacb176b1ae657fb06e6757; its report is /home/nedlern/nedsnodes-logs/overview-write-architecture-overview-claim-check-reports/nedsnodes-handoff-architecture-overview/6d6d2eb147cfe6fb0d3c9b2c11b8d55761134401-2026-11-18T07-23-22-284097Z.md.
+Fixed by: regular maintenance, in the overview.
+Goes wrong when: a reader takes the assertion as exact.
+The claim check's evidence:
+> - clean-worktrees.py:197-201 `A worktree on a branch other than main then has that branch deleted with \`git branch -D\`, even when origin/main lacks some of its commits`
+> - clean-worktrees.py:202-206 `--force-delete-branch keeps the branch when it is main, does not exist, is checked out in a worktree, cannot be checked against the pull requests, or is the head branch of an open pull request; otherwise it deletes it with \`git branch -D\``
+> - So the program's named-worktree and named-branch commands, which the first-prompt list sends agents to, delete branches with no pull request, which "no other branch" rules out. The sentence holds only for `--remove`.
+> - Row 133 names those commands, so no agent would act wrongly; scope "and no other branch" to `--remove`.
+State: open
+
+## E85 — possible problem: an assertion of the overview is contradicted
+
+Claim: The reference-checkout back-on-main program "saves the checkout's leftovers, its uncommitted changes and the commits origin/main lacks, to a branch it pushes, and only then puts the checkout back on main."
+Found by: the overview claim check of 2026-11-20 against commit a9f87f0c602f5ae1cead8145adb6d31e184c7d9c; its report is /home/nedlern/nedsnodes-logs/overview-write-architecture-overview-claim-check-reports/nedsnodes-handoff-architecture-overview/a90d58084f1bf5045f885b07773932fffb5c5bfa-2026-11-20T18-23-10-478975Z.md.
+Fixed by: regular maintenance, in the overview.
+Goes wrong when: a reader takes the assertion as exact.
+The claim check's evidence:
+> nn-systems/handoff/handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py:27-29: `then runs git switch --no-overwrite-ignore -C main origin/main, which puts the local main at origin/main and checks it out, whether or not every push succeeded`. Also handoff-supervisor.py:2464-2466: `which it can be even after a failed push, so a leftovers branch the program could not push stays only in that checkout`. The program does not wait for a successful push before putting the checkout back on main. Because the leftovers stay on a local branch and later runs push them, no work is lost and no agent would act wrongly, so this is ranked fix-later.
+State: open
