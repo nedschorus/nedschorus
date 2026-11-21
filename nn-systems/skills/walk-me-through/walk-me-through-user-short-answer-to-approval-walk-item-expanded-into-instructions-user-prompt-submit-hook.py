@@ -1274,10 +1274,13 @@ def message_copy_of_item(heading_line, message_heading_line, after_heading, numb
     walk-document's, since a `### Explanation` ends a `###` item but not a `##` one."""
     walk_finder = load_walk_finder()
     parser = walk_finder.markdown_parser()
-    level = re.match(r" {0,3}(#{1,6})(?=[ \t]|$)", message_heading_line)
-    if level:
-        heading_line = (re.sub(r"^ {0,3}#{1,6}(?=[ \t]|$)", level[1], heading_line, count=1)
-                        if re.match(r" {0,3}#{1,6}(?=[ \t]|$)", heading_line) else f"{level[1]} {heading_line}")
+    # The parsed token gives the level of a setext heading too, whose underline is after_heading's first line.
+    opening = parser.parse(f"{message_heading_line}\n{after_heading}", {})
+    if opening and opening[0].type == "heading_open" and opening[0].map[0] == 0:
+        marks = "#" * int(opening[0].tag[1])
+        heading_line = (re.sub(r"^ {0,3}#{1,6}(?=[ \t]|$)", marks, heading_line, count=1)
+                        if re.match(r" {0,3}#{1,6}(?=[ \t]|$)", heading_line) else f"{marks} {heading_line}")
+        after_heading = "\n".join(after_heading.split("\n")[opening[0].map[1] - 1:])
     text = f"{heading_line}\n{after_heading}"
     units = walk_finder.item_unit_spans(text, parser)
     pieces = [walk_finder.approval_walk_item_text_as_shown_to_user(text, parser, units, unit, number)
@@ -1285,10 +1288,17 @@ def message_copy_of_item(heading_line, message_heading_line, after_heading, numb
     # The first piece opens with heading_line, which is the walk-document's, not the message's.
     copy = "\n\n".join([pieces[0].partition("\n")[2], *pieces[1:]]) if pieces else after_heading
     env = {}
+    lines = copy.split("\n")
     closing = next((start for start, words in item_openings_as_shown(parser.parse(copy, env), parser, env)
                     if ANSWER_LETTERS_TEXT in words), None)
+    if closing is None:
+        return copy
+    # With no blank line before it, the closing line shares a paragraph with the item's last line, so the cut is at
+    # the closing line's own line, not the paragraph's first.
+    closing = next((index for index in range(closing, len(lines))
+                    if ANSWER_LETTERS_TEXT in shown_words(lines[index], parser, env)), closing)
     # Below the item's closing line come the agent's own words, which are no line of the item's.
-    return copy if closing is None else "\n".join(copy.split("\n")[:closing])
+    return "\n".join(lines[:closing])
 
 
 def item_openings_as_shown(tokens, parser, env):
