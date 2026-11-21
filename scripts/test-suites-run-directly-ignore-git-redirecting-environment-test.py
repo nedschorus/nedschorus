@@ -139,6 +139,9 @@ FILES_THE_SUITE_RUN_WITH_EVERY_VARIABLE_READS = (
     "nn-systems/cold-read/cold-read-record-names-common.py",
     "nn-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py",
     "nn-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py",
+    "nn-systems/cold-read/cold-read-terminology-answer-rules-check-glossary-lookups-and-report-render-common.py",
+    "nn-systems/general-tools/json-schema-keyword-subset-answer-check-common.py",
+    "nn-systems/general-tools/glossary-entries-of-project-and-system-glossaries-read-common.py",
 )
 
 # Where each variable points, relative to the named repository's top
