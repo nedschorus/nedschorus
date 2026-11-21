@@ -8,8 +8,6 @@ import io
 import json
 import os
 import pathlib
-import socket
-import subprocess
 import sys
 import tempfile
 

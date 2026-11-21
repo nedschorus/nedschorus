@@ -195,6 +195,15 @@
       }
     },
     {
+      "name": "cold-read-fast-read-finding-outcomes-count-as-user-alert-once-14-days-after-own-first-cron-run",
+      "program": "nn-systems/cold-read/cold-read-fast-read-finding-outcomes-count-as-user-alert-once-14-days-after-own-first-cron-run.py",
+      "arguments": [],
+      "output": ".claude/cold-read-fast-read-finding-outcomes-count-as-user-alert-once-14-days-after-own-first-cron-run.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "15 8 * * *"}
+      }
+    },
+    {
       "name": "agent-seat-terminal-captures-older-than-seven-days-delete",
       "program": "nn-systems/handoff/agent-seat-terminal-captures-older-than-seven-days-delete.py",
       "arguments": [],

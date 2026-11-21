@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Ask ghi-guide-agent, the project's knowledge agent over its GitHub-issue corpus
-(nedschorus#46, design doc docs/issues/46-ghi-guide-agent-design.md § The
+(nedschorus#46, design doc docs/issues/46-ghi-guide-agent.system.design.md § The
 ask path). Run by any agent — and by the ghi-write skill's step 1 — before
 filing or editing an issue, to learn what already covers the ground.
 

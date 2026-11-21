@@ -10,6 +10,7 @@
 # open issue in this repository, which merge-lane-2 sends the author.
 #
 #   scripts/merge-gate.sh <pr-number> <expected-head-sha> <reviewed-since-iso8601>
+#   scripts/merge-gate.sh --print-new-activity-count-after-reviewed-since-bound <pr-number>
 #
 # EXIT CODES. 0 the merge may proceed; 1 the gate REFUSES, a named reason on
 # stderr; 2 the gate COULD NOT RUN -- bad invocation, missing jq or gh,
@@ -156,15 +157,33 @@ if [ $# -eq 1 ] && { [ "$1" = --help ] || [ "$1" = -h ]; }; then
   echo "command pinned to the commit the latest approving review covered."
   echo "Exit codes: 0 the merge may proceed; 1 the gate refuses, with the reason on stderr;"
   echo "2 the gate could not run: bad invocation, missing jq or gh, unreadable token, or a failed read."
+  echo
+  echo "usage: scripts/merge-gate.sh --print-new-activity-count-after-reviewed-since-bound <pull request number>"
+  echo
+  echo "Prints how many inline comments, issue comments and reviews the gate's activity check finds"
+  echo "after the latest reviewed-since it accepts: the later of the pin and $MERGE_ACCOUNT's latest review."
+  echo "Exit codes: 0 the count is printed; 2 the gate could not count."
   exit 0
 fi
-[ $# -eq 3 ] || cannot "merge-gate.sh takes exactly three arguments and was given $#." \
+# The posting program, scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py, runs this
+# mode to decide whether a review with no verdict answers the activity check below: it is the same check,
+# with reviewed-since at the bound that check accepts at most.
+NEW_ACTIVITY_COUNT_OPTION=--print-new-activity-count-after-reviewed-since-bound
+if [ $# -eq 2 ] && [ "$1" = "$NEW_ACTIVITY_COUNT_OPTION" ]; then
+  PR=$2
+  case "$PR" in
+    *[!0-9]*|"") cannot "$NEW_ACTIVITY_COUNT_OPTION takes a pull request number and was given: $PR" \
+      "Call it as: scripts/merge-gate.sh $NEW_ACTIVITY_COUNT_OPTION <pull request number>" ;;
+  esac
+else
+  [ $# -eq 3 ] || cannot "merge-gate.sh takes exactly three arguments and was given $#." \
   "Call it as: scripts/merge-gate.sh <pull request number> <the nc-head-commit, all 40 characters> <reviewed-since: the submitted_at of your latest review as the merge account, or of the pin if that is later>"
-PR=$1; EXPECTED=$2; SINCE=$3
+  PR=$1; EXPECTED=$2; SINCE=$3
 
-NO_SANDBOX_SUITES_PROGRAM="$(dirname "${BASH_SOURCE[0]}")/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py"
-if ! python3 "$NO_SANDBOX_SUITES_PROGRAM" --print-merge-gate-notice-of-last-failed-or-stopped-run --clone "$(dirname "${BASH_SOURCE[0]}")/.." >&2; then
-  printf 'NO-SANDBOX TEST SUITES ON MAIN: %s --print-merge-gate-notice-of-last-failed-or-stopped-run failed; its error is just above this line. The gate goes on; tell reboot-test, which owns that program.\n' "$NO_SANDBOX_SUITES_PROGRAM" >&2
+  NO_SANDBOX_SUITES_PROGRAM="$(dirname "${BASH_SOURCE[0]}")/no-sandbox-test-suites-run-on-main-in-a-quiet-gap.py"
+  if ! python3 "$NO_SANDBOX_SUITES_PROGRAM" --print-merge-gate-notice-of-last-failed-or-stopped-run --clone "$(dirname "${BASH_SOURCE[0]}")/.." >&2; then
+    printf 'NO-SANDBOX TEST SUITES ON MAIN: %s --print-merge-gate-notice-of-last-failed-or-stopped-run failed; its error is just above this line. The gate goes on; tell reboot-test, which owns that program.\n' "$NO_SANDBOX_SUITES_PROGRAM" >&2
+  fi
 fi
 
 command -v jq >/dev/null 2>&1 || cannot "jq is not on PATH. Put jq on PATH, then rerun the gate." \
@@ -172,7 +191,9 @@ command -v jq >/dev/null 2>&1 || cannot "jq is not on PATH. Put jq on PATH, then
 command -v gh >/dev/null 2>&1 || cannot "gh is not on PATH. Put gh on PATH, then rerun the gate." \
   "If gh is not installed on this machine, tell the user this message."
 DESCRIPTION_DEFECT_LINE_READER="$(dirname "${BASH_SOURCE[0]}")/pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py"
+VERDICT_REVIEW_POSTING_PROGRAM_MARKS_CHECK_PROGRAM_PATH="$(dirname "${BASH_SOURCE[0]}")/merge-gate-approval-or-changes-request-review-has-review-posting-program-marks-check.py"
 
+if [ "$1" != "$NEW_ACTIVITY_COUNT_OPTION" ]; then
 # An abbreviated or malformed EXPECTED used to refuse as "head moved", naming the
 # wrong cause: the head had not moved, the caller had passed a short sha.
 FULL_HASH_LINE="Pass the nc-head-commit's full hash in lower case, as gh pr view $PR --json headRefOid --jq .headRefOid prints it, then run the gate again."
@@ -189,6 +210,7 @@ case "$SINCE" in
 esac
 # The right shape can still be no real time, such as month 13.
 jq -n --arg since "$SINCE" '$since | fromdateiso8601' >/dev/null 2>&1 || cannot "$SINCE_FORM" "$SINCE_FORM_LINE"
+fi
 
 # export's own status masked cat's, so a missing token file was swallowed and
 # GH_TOKEN was set to the empty string -- which gh treats as unset, falling back
@@ -198,6 +220,93 @@ token=$(cat "$TOKEN_FILE" 2>/dev/null)
 [ $? -eq 0 ] || cannot "could not read the merge account's token at $TOKEN_FILE" "$TOKEN_ONLY_MERGE_ACCOUNT" "$TOKEN_TELL_THE_USER"
 [ -n "$token" ] || cannot "the token file $TOKEN_FILE is empty" "$TOKEN_ONLY_MERGE_ACCOUNT" "$TOKEN_TELL_THE_USER"
 export GH_TOKEN="$token"
+
+# The functions' bodies keep the gate's own indentation, so merge-gate-test.py's mutations find each line.
+read_review_channel() {
+reviews_raw=$(gh api "repos/$REPO/pulls/$PR/reviews" --paginate)
+[ $? -eq 0 ] || cannot "could not read the reviews of pull request $PR; any error gh printed is just above this line." "$RERUN_ONCE_GH"
+}
+
+read_latest_approval() {
+approval=$(jq -s -c \
+  '[.[][] | select(.state == "APPROVED")]
+   | sort_by(.submitted_at) | last // empty' <<<"$reviews_raw")
+[ $? -eq 0 ] || cannot "could not parse the review channel" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+}
+
+read_approval_fields() {
+APPROVAL_UNPARSABLE="could not parse the approving review"
+approved_sha=$(jq -r '.commit_id' <<<"$approval")    || cannot "$APPROVAL_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+approval_id=$(jq -r '.id' <<<"$approval")            || cannot "$APPROVAL_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+approval_at=$(jq -r '.submitted_at' <<<"$approval")  || cannot "$APPROVAL_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+approver=$(jq -r '.user.login' <<<"$approval")       || cannot "$APPROVAL_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+}
+
+# The latest time the activity check accepts as reviewed-since: the later of the pin and the merge
+# account's own latest review.
+read_reviewed_since_bound() {
+bound_at=$(jq -s -r --arg merge_account "$MERGE_ACCOUNT" --arg approved "$approval_at" \
+  '[$approved] + [.[][] | select(.user.login == $merge_account and .submitted_at != null)
+                          | .submitted_at]
+   | max_by(fromdateiso8601)' <<<"$reviews_raw")
+[ $? -eq 0 ] || cannot "could not parse the review channel" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+}
+
+# Counts what was posted or edited after SINCE, on each channel, into inline, issue and reviews.
+count_channel_activity_since() {
+inline_raw=$(gh api "repos/$REPO/pulls/$PR/comments" --paginate)
+[ $? -eq 0 ] || cannot "could not read the inline comments of pull request $PR; any error gh printed is just above this line." "$RERUN_ONCE_GH"
+issue_raw=$(gh api "repos/$REPO/issues/$PR/comments" --paginate)
+[ $? -eq 0 ] || cannot "could not read the issue comments of pull request $PR; any error gh printed is just above this line." "$RERUN_ONCE_GH"
+
+# The reviews whose inline comments are read at the review's own time, by id:
+# the pin and the merge account's reviews, submitted at or before SINCE. See the
+# header, "WHY AN INLINE COMMENT POSTED WITH A REVIEW THE CALLER WROTE OR READ".
+reviews_read_by_caller=$(jq -s -c --arg merge_account "$MERGE_ACCOUNT" --arg since "$SINCE" \
+    --argjson approval_id "$approval_id" \
+  '[.[][] | select((.id == $approval_id or .user.login == $merge_account)
+                   and .submitted_at != null
+                   and (.submitted_at | fromdateiso8601) <= ($since | fromdateiso8601))
+          | {key: (.id | tostring), value: (.submitted_at | fromdateiso8601)}]
+   | from_entries' <<<"$reviews_raw")
+[ $? -eq 0 ] || cannot "could not parse the review channel" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+
+inline=$(jq -s --arg since "$SINCE" --argjson reviews_read_by_caller "$reviews_read_by_caller" \
+  '[.[][] | ([.created_at, .updated_at] | map(select(. != null)) | max | fromdateiso8601) as $latest
+          | $reviews_read_by_caller[.pull_request_review_id | tostring] as $review_at
+          | (if $review_at != null and $latest <= $review_at + 1 then $review_at else $latest end) as $posted
+          | select($posted
+                   > ($since | fromdateiso8601))] | length' <<<"$inline_raw")
+[ $? -eq 0 ] || cannot "could not parse the inline comment channel" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+issue=$(jq -s --arg since "$SINCE" \
+  '[.[][] | select(([.created_at, .updated_at] | map(select(. != null)) | max | fromdateiso8601)
+                   > ($since | fromdateiso8601))] | length' <<<"$issue_raw")
+[ $? -eq 0 ] || cannot "could not parse the issue comment channel" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+
+# Every account's later reviews count, including the merge account's own
+# findings. Only the pinned approval is excluded, by id: counting it would refuse
+# every merge it authorises.
+reviews=$(jq -s --arg since "$SINCE" --argjson approval_id "$approval_id" \
+  '[.[][] | select(.id != $approval_id and (.submitted_at | fromdateiso8601) > ($since | fromdateiso8601))] | length' <<<"$reviews_raw")
+[ $? -eq 0 ] || cannot "could not parse the review channel" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+}
+
+if [ "$1" = "$NEW_ACTIVITY_COUNT_OPTION" ]; then
+  read_review_channel
+  read_latest_approval
+  if [ -n "$approval" ]; then
+    read_approval_fields
+  else
+    # With no pin, only the merge account's own reviews bound reviewed-since, and with none of
+    # those either, everything on the pull request is new.
+    approval_id=0; approval_at=1970-01-01T00:00:00Z
+  fi
+  read_reviewed_since_bound
+  SINCE=$bound_at
+  count_channel_activity_since
+  echo $((inline + issue + reviews))
+  exit 0
+fi
 
 state=$(gh pr view "$PR" --repo "$REPO" --json headRefOid,mergeStateStatus,reviewDecision,isDraft)
 [ $? -eq 0 ] || cannot "could not read pull request $PR's state; any error gh printed is just above this line." \
@@ -216,33 +325,74 @@ draft=$(jq -r .isDraft <<<"$state")                || cannot "$STATE_UNPARSABLE"
 # BELIEVES was reviewed. Paginated, because an approval at index 32 was invisible
 # and refused as "no APPROVED review found". Not piped: the exit status must be
 # this call's.
-reviews_raw=$(gh api "repos/$REPO/pulls/$PR/reviews" --paginate)
-[ $? -eq 0 ] || cannot "could not read the reviews of pull request $PR; any error gh printed is just above this line." "$RERUN_ONCE_GH"
+read_review_channel
 
-approval=$(jq -s -c \
-  '[.[][] | select(.state == "APPROVED")]
-   | sort_by(.submitted_at) | last // empty' <<<"$reviews_raw")
-[ $? -eq 0 ] || cannot "could not parse the review channel" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+read_latest_approval
 [ -n "$approval" ] || fail "no APPROVED review found; the gate prints a merge command only for a commit an approving review covers." \
   "If the nc-head-commit has not been reviewed yet, commission its review, and run the gate again once the nc-head-commit is approved." \
   "If its review found a defect, do not merge until the defect is fixed and the new nc-head-commit is approved." \
   "If its review found no defect, approve the nc-head-commit as an account other than the pull request's author: the merge account, or mac-claude when the merge account opened the pull request. Then run the gate again."
 
-APPROVAL_UNPARSABLE="could not parse the approving review"
-approved_sha=$(jq -r '.commit_id' <<<"$approval")    || cannot "$APPROVAL_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
-approval_id=$(jq -r '.id' <<<"$approval")            || cannot "$APPROVAL_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
-approval_at=$(jq -r '.submitted_at' <<<"$approval")  || cannot "$APPROVAL_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
-approver=$(jq -r '.user.login' <<<"$approval")       || cannot "$APPROVAL_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+read_approval_fields
 [ -n "$approved_sha" ] && [ "$approved_sha" != "null" ] || fail "the approving review https://github.com/$REPO/pull/$PR#pullrequestreview-$approval_id records no commit_id, so the gate cannot tell which commit it approved." \
   "Do not merge. Tell the user this message."
 
+# Read from the review GitHub holds, so it catches a verdict however it was posted.
+verdict_review=$(jq -s -c --arg merge_account "$MERGE_ACCOUNT" \
+  '[.[][] | select(.user.login == $merge_account and (.state == "APPROVED" or .state == "CHANGES_REQUESTED"))]
+   | sort_by(.submitted_at) | last // empty' <<<"$reviews_raw")
+[ $? -eq 0 ] || cannot "could not parse the review channel" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+if [ -n "$verdict_review" ]; then
+  VERDICT_REVIEW_UNPARSABLE="could not parse $MERGE_ACCOUNT's latest approving or changes-requesting review"
+  verdict_review_id=$(jq -r '.id' <<<"$verdict_review")       || cannot "$VERDICT_REVIEW_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+  verdict_review_state=$(jq -r '.state' <<<"$verdict_review") || cannot "$VERDICT_REVIEW_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+  verdict_review_commit=$(jq -r '.commit_id' <<<"$verdict_review") || cannot "$VERDICT_REVIEW_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+  verdict_review_comments='[]'
+  # An approval's marks are all in its body; only a request for changes carries marked comments.
+  if [ "$verdict_review_state" = "CHANGES_REQUESTED" ]; then
+    verdict_review_comments_raw=$(gh api "repos/$REPO/pulls/$PR/reviews/$verdict_review_id/comments" --paginate)
+    [ $? -eq 0 ] || cannot "could not read the inline comments of review $verdict_review_id on pull request $PR; any error gh printed is just above this line." "$RERUN_ONCE_GH"
+    verdict_review_comments=$(jq -s -c 'add // []' <<<"$verdict_review_comments_raw")
+    [ $? -eq 0 ] || cannot "could not parse the inline comments of review $verdict_review_id" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+  fi
+  marks_check_input=$(jq -n -c --argjson review "$verdict_review" --argjson comments "$verdict_review_comments" \
+    '{review: $review, comments: $comments}')
+  [ $? -eq 0 ] || cannot "$VERDICT_REVIEW_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+  marks_missing=$(python3 "$VERDICT_REVIEW_POSTING_PROGRAM_MARKS_CHECK_PROGRAM_PATH" <<<"$marks_check_input")
+  marks_check_status=$?
+  case "$marks_check_status" in
+    0) : ;;
+    1) if [ "$verdict_review_state" = "APPROVED" ]; then
+         unread="scripts/pull-request-follow-up-request-after-merge-finding-answers-and-next-step.py cannot read its non-blocking findings to send the author after the merge"
+       else
+         unread="scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py cannot read its blocking findings to brief the author's fix-round"
+       fi
+       marks_refused="$MERGE_ACCOUNT's latest review with a verdict, https://github.com/$REPO/pull/$PR#pullrequestreview-$verdict_review_id ($verdict_review_state), lacks the marks scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py writes: $marks_missing."
+       marks_unread="It was posted some other way, such as by hand with gh pr review, so $unread."
+       marks_rerun="Then run the gate again: scripts/merge-gate.sh $PR $head <submitted_at>, where submitted_at is what gh api repos/$REPO/pulls/$PR/reviews/<id> --jq .submitted_at prints for the review id the posting program's success line names."
+       # The posting program records a review on the --head-commit it is given, so reposting an older
+       # commit's verdict on the head would let the stale-approval check below pass unreviewed commits.
+       if [ "$verdict_review_commit" = "$head" ]; then
+         fail "$marks_refused" "$marks_unread" \
+           "Write a review file holding that review's verdict, body and inline comments, each comment with its finding_category, in the form the docstring at the top of scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py describes for --github-account $MERGE_ACCOUNT." \
+           "Post it with: python3 scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py --pull-request $PR --head-commit $verdict_review_commit --github-account $MERGE_ACCOUNT <review file>" \
+           "Leave the review above as it is: the gate reads only $MERGE_ACCOUNT's latest review with a verdict." \
+           "$marks_rerun"
+       else
+         fail "$marks_refused" "$marks_unread" \
+           "That review covers $verdict_review_commit, and the nc-head-commit is now $head, so do not post its verdict again: a review posted now is recorded on $head, which no one has reviewed." \
+           "Have $head reviewed, and post that review with: python3 scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py --pull-request $PR --head-commit $head --github-account $MERGE_ACCOUNT <review file>" \
+           "$marks_rerun"
+       fi ;;
+    *) cannot "python3 $VERDICT_REVIEW_POSTING_PROGRAM_MARKS_CHECK_PROGRAM_PATH exited $marks_check_status when the gate gave it review $verdict_review_id, so the gate cannot tell whether that review carries the posting program's marks; any error it printed is just above this line." \
+         "Do not run the gate again, do not merge pull request $PR another way, and do not repair that program or python3 yourself." \
+         "Send this whole message, with the error printed above it, to the agent-seat reboot-test, which owns that program, with SendMessage; run the gate again when reboot-test says the program is fixed." ;;
+  esac
+fi
+
 # "Since now" made every activity check below a no-op (F2). A PENDING review has
 # no submitted_at and is left out of the bound.
-bound_at=$(jq -s -r --arg merge_account "$MERGE_ACCOUNT" --arg approved "$approval_at" \
-  '[$approved] + [.[][] | select(.user.login == $merge_account and .submitted_at != null)
-                          | .submitted_at]
-   | max_by(fromdateiso8601)' <<<"$reviews_raw")
-[ $? -eq 0 ] || cannot "could not parse the review channel" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+read_reviewed_since_bound
 since_ok=$(jq -n --arg since "$SINCE" --arg bound "$bound_at" \
   '($since | fromdateiso8601) <= ($bound | fromdateiso8601)')
 [ $? -eq 0 ] || cannot "could not compare reviewed-since against $bound_at" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
@@ -289,45 +439,11 @@ esac
 
 # Both comment channels, by their LATEST timestamp -- NOT by commit_id, which
 # GitHub remaps to the new head and which therefore proves nothing about age.
-inline_raw=$(gh api "repos/$REPO/pulls/$PR/comments" --paginate)
-[ $? -eq 0 ] || cannot "could not read the inline comments of pull request $PR; any error gh printed is just above this line." "$RERUN_ONCE_GH"
-issue_raw=$(gh api "repos/$REPO/issues/$PR/comments" --paginate)
-[ $? -eq 0 ] || cannot "could not read the issue comments of pull request $PR; any error gh printed is just above this line." "$RERUN_ONCE_GH"
-
-# The reviews whose inline comments are read at the review's own time, by id:
-# the pin and the merge account's reviews, submitted at or before SINCE. See the
-# header, "WHY AN INLINE COMMENT POSTED WITH A REVIEW THE CALLER WROTE OR READ".
-reviews_read_by_caller=$(jq -s -c --arg merge_account "$MERGE_ACCOUNT" --arg since "$SINCE" \
-    --argjson approval_id "$approval_id" \
-  '[.[][] | select((.id == $approval_id or .user.login == $merge_account)
-                   and .submitted_at != null
-                   and (.submitted_at | fromdateiso8601) <= ($since | fromdateiso8601))
-          | {key: (.id | tostring), value: (.submitted_at | fromdateiso8601)}]
-   | from_entries' <<<"$reviews_raw")
-[ $? -eq 0 ] || cannot "could not parse the review channel" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
-
-inline=$(jq -s --arg since "$SINCE" --argjson reviews_read_by_caller "$reviews_read_by_caller" \
-  '[.[][] | ([.created_at, .updated_at] | map(select(. != null)) | max | fromdateiso8601) as $latest
-          | $reviews_read_by_caller[.pull_request_review_id | tostring] as $review_at
-          | (if $review_at != null and $latest <= $review_at + 1 then $review_at else $latest end) as $posted
-          | select($posted
-                   > ($since | fromdateiso8601))] | length' <<<"$inline_raw")
-[ $? -eq 0 ] || cannot "could not parse the inline comment channel" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
-issue=$(jq -s --arg since "$SINCE" \
-  '[.[][] | select(([.created_at, .updated_at] | map(select(. != null)) | max | fromdateiso8601)
-                   > ($since | fromdateiso8601))] | length' <<<"$issue_raw")
-[ $? -eq 0 ] || cannot "could not parse the issue comment channel" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
-
-# Every account's later reviews count, including the merge account's own
-# findings. Only the pinned approval is excluded, by id: counting it would refuse
-# every merge it authorises.
-reviews=$(jq -s --arg since "$SINCE" --argjson approval_id "$approval_id" \
-  '[.[][] | select(.id != $approval_id and (.submitted_at | fromdateiso8601) > ($since | fromdateiso8601))] | length' <<<"$reviews_raw")
-[ $? -eq 0 ] || cannot "could not parse the review channel" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+count_channel_activity_since
 
 NEW_ACTIVITY_READ="Read everything posted or edited since $SINCE: the inline comments, the issue comments and the reviews."
 NEW_ACTIVITY_FINDING="If any raises a finding, do not merge until the finding is fixed, or answered with a reason that shows it does not hold; a fix moves the nc-head-commit, which then needs its own approving review."
-NEW_ACTIVITY_RECORD="When nothing is left open, post a review as the merge account saying what you read, check that nothing was posted between your reading and that review; if something was, read it and repeat from the first line. Then run the gate again with the review's submitted_at as reviewed-since."
+NEW_ACTIVITY_RECORD="When nothing is left open, post a review as the merge account saying what you read, with a review file holding only {\"body\": <what you read>} and the command python3 scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py --pull-request $PR --head-commit $head --github-account $MERGE_ACCOUNT <review file>. Check that nothing was posted between your reading and that review; if something was, read it and repeat from the first line. Then run the gate again with the review's submitted_at as reviewed-since."
 [ "$inline" -eq 0 ]  || fail "$inline inline comment(s) posted or edited since $SINCE -- read them before merging" \
   "$NEW_ACTIVITY_READ" "$NEW_ACTIVITY_FINDING" "$NEW_ACTIVITY_RECORD"
 [ "$issue" -eq 0 ]   || fail "$issue issue comment(s) posted or edited since $SINCE -- read them before merging" \

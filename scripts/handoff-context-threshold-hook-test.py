@@ -1636,6 +1636,32 @@ with tempfile.TemporaryDirectory() as workspace:
               " began and is still running, so you need not add that work to your task list"
               in hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION,
               hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION)
+        check("the instruction on new work limits the subagent, background or detached rule to work left running at the turn's end",
+              "Work you leave running when your turn ends must run as a subagent, a background Bash task,"
+              " or a detached process, such as one started with setsid or systemd-run --user, that writes"
+              " its result to a file; name that file in your next-step file, since the handoff writer script"
+              " cannot name that process. A command or an edit that finishes within your turn needs none of"
+              " these." in hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION,
+              hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION)
+        check("the instruction on new work says what to do with a background Bash task started before the deferral",
+              "A background Bash task started before the deferral and still running is named, with its"
+              " command, in the next-step file when the successor must run it again; otherwise it is"
+              " stopped at the session-handoff."
+              in hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION,
+              hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION)
+        writer_script = "nn-systems/handoff/handoff-write-and-check-supervisor.py"
+        check("the instruction on new work says unlisted work means running the writer again with a new next-step file",
+              "Write work the writer could not list into a new next-step file that holds your next step and"
+              " names that work, and run the writer again with --next-step-file."
+              in hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION
+              and writer_script in hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION,
+              hook.NEW_WORK_DURING_HANDOFF_DEFERRAL_INSTRUCTION)
+        writer_help = subprocess.run(
+            [sys.executable, str(HOOK_SCRIPT.parents[1] / writer_script), "--help"],
+            capture_output=True, text=True, check=False)
+        check("the writer script the instruction on new work names accepts --next-step-file",
+              writer_help.returncode == 0 and "--next-step-file" in writer_help.stdout,
+              f"exit {writer_help.returncode}: {(writer_help.stdout + writer_help.stderr)[-300:]}")
         # Agents read "handoff" in the notice and ran the skill anyway.
         check("the deferral tells the agent, on a line of its own, not to run the skill yet",
               opens_a_line_with_do_not_run_handoff_skill_yet(result.stderr),

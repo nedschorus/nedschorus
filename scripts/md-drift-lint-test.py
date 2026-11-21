@@ -354,7 +354,7 @@ with tempfile.TemporaryDirectory() as workspace:
     # split on whitespace first, so a placeholder containing a space lost its
     # "<" to the split and its tail was checked as a real path. Five standing
     # findings on main were this. The first case is the repository's own text,
-    # from docs/design-to-main/design-to-main-state-machine-design.md:521.
+    # from docs/design-to-main/design-to-main-state-machine.system.design.md:521.
     findings = problems_for(
         "| `<component's directory>/design-to-main-record/design-to-main-component-user-rulings-log.md` | every ruling |",
         root)
@@ -438,7 +438,7 @@ with tempfile.TemporaryDirectory() as workspace:
           problems_for("the value `9999` per [d](docs/real-doc.md)", root) == [])
     # A paragraph is one line, so a number and a code file in different
     # sentences of it are different claims. The shape is
-    # nn-systems/handoff/handoff-design.md:114, whose exit codes `143` and
+    # nn-systems/handoff/handoff.system.design.md:114, whose exit codes `143` and
     # `137` belong to the handoff-supervisor it names in prose, not to the
     # one script the paragraph cites as a path, several sentences later.
     findings = problems_for(

@@ -2,7 +2,10 @@
 """Compute the review tier and facts the merge-lane puts in a pull request's review brief.
 
 Rule 1: tiers follow content. Tests, fenced Markdown code, and Python changes
-limited to docstrings, comments and string constants get codex-review-and-head-tests-tier.
+limited to docstrings, comments and printed strings get codex-review-and-head-tests-tier.
+A printed string is one that tool_message_to_agent_string_nodes_in_source finds;
+any other string, such as a regular expression, a command's argument or a path,
+carries behaviour, so a change to it is a behaviour change.
 Python behaviour changes and other code get claude-and-codex-review-and-head-tests-tier. Prose gets
 no-reviewer-tier. Settings, Bash guards and registered hooks always get
 claude-and-codex-review-and-head-tests-tier; all of .claude/guard-hooks/ does too,
@@ -180,6 +183,9 @@ _tool_message_to_agent_string_collector_spec.loader.exec_module(_tool_message_to
 path_is_test_file = _tool_message_to_agent_string_collector.path_is_test_file
 f_string_field_text = _tool_message_to_agent_string_collector.f_string_field_text
 tool_message_to_agent_string_nodes_in_source = _tool_message_to_agent_string_collector.tool_message_to_agent_string_nodes_in_source
+addition_chain_operands = _tool_message_to_agent_string_collector.addition_chain_operands
+helper_printers_in_tree = _tool_message_to_agent_string_collector.helper_printers_in_tree
+PRINTING_CALL_NAMES = _tool_message_to_agent_string_collector.PRINTING_CALL_NAMES
 _message_reminder_hook_spec = importlib.util.spec_from_file_location(
     "python_edit_changed_tool_message_to_agent_strings_check_reminder_hook",
     Path(__file__).resolve().parent.parent / "nn-systems" / "general-tools"
@@ -445,8 +451,58 @@ def fenced_code_block_line_numbers_in_markdown(source):
     return inside_lines
 
 
-class SyntaxTreeWithoutDocstringsOrStringValues(ast.NodeTransformer):
+def source_position(node):
+    return node.lineno, node.col_offset, node.end_lineno, node.end_col_offset
+
+
+def literal_piece_positions(node):
+    """The positions of the string literals that make up a printed string node: the node itself,
+    an f-string's literal parts, or the literal operands of a + chain. A format spec is left out."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return {source_position(node)}
+    if isinstance(node, ast.JoinedStr):
+        return {source_position(part) for part in node.values if isinstance(part, ast.Constant)}
+    if isinstance(node, ast.BinOp):
+        return set().union(*(literal_piece_positions(operand) for operand in addition_chain_operands(node)))
+    return set()
+
+
+def nearest_call_prints_its_argument(node, parents, helper_printers):
+    """True when the call nearest above node, if any, is a printing call or helper printer, the
+    exception a raise statement builds, or a method called on node itself, as .format is. The
+    collector also counts a string inside any call nested in a printed argument, such as the
+    pattern in print(re.sub("a", "b", text)), but such a string steers the call, not the text."""
+    child = node
+    parent = parents.get(child)
+    while parent is not None and not isinstance(parent, ast.Call):
+        if isinstance(parent, ast.stmt):
+            return True
+        child, parent = parent, parents.get(parent)
+    if parent is None:
+        return True
+    call_name = ast.unparse(parent.func)
+    return (call_name in PRINTING_CALL_NAMES
+            or (isinstance(parent.func, ast.Name) and parent.func.id in helper_printers)
+            or (isinstance(parents.get(parent), ast.Raise) and parents[parent].exc is parent)
+            or (child is parent.func and isinstance(parent.func, ast.Attribute)))
+
+
+def printed_string_literal_positions(tree, source):
+    entry_positions = {(entry["line"], entry["column"], entry["end_line"], entry["end_column"])
+                       for entry in tool_message_to_agent_string_nodes_in_source(source)}
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    helper_printers = helper_printers_in_tree(tree)
+    return set().union(*(literal_piece_positions(node) for node in ast.walk(tree)
+                         if isinstance(node, (ast.Constant, ast.JoinedStr, ast.BinOp))
+                         and source_position(node) in entry_positions
+                         and nearest_call_prints_its_argument(node, parents, helper_printers)))
+
+
+class SyntaxTreeWithoutDocstringsOrPrintedStringValues(ast.NodeTransformer):
     """Preserve code structure while ignoring the text allowed at a lower tier."""
+
+    def __init__(self, printed_positions):
+        self.printed_positions = printed_positions
 
     def visit(self, node):
         if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -457,13 +513,15 @@ class SyntaxTreeWithoutDocstringsOrStringValues(ast.NodeTransformer):
         return super().visit(node)
 
     def visit_Constant(self, node):
-        if isinstance(node.value, str):
+        if isinstance(node.value, str) and source_position(node) in self.printed_positions:
             node.value = ""
         return node
 
 
-def normalized_syntax_tree_dump_without_strings(source):
-    return ast.dump(SyntaxTreeWithoutDocstringsOrStringValues().visit(ast.parse(source)))
+def normalized_syntax_tree_dump_without_docstrings_or_printed_strings(source):
+    tree = ast.parse(source)
+    printed_positions = printed_string_literal_positions(tree, source)
+    return ast.dump(SyntaxTreeWithoutDocstringsOrPrintedStringValues(printed_positions).visit(tree))
 
 
 def registered_hook_paths_at_revision(repository, revision):
@@ -532,12 +590,12 @@ def classify_changed_file_into_class_tier_and_reason(repository, old_revision, n
             try:
                 if source is None:
                     raise SyntaxError("no source blob")
-                syntax_dumps.append(normalized_syntax_tree_dump_without_strings(source))
+                syntax_dumps.append(normalized_syntax_tree_dump_without_docstrings_or_printed_strings(source))
             except (SyntaxError, ValueError):
                 return "code", "claude-and-codex-review-and-head-tests-tier", f"{path} does not parse at {side}"
         if syntax_dumps[0] == syntax_dumps[1]:
-            return "code", "codex-review-and-head-tests-tier", f"{path} changes only docstrings, comments and string constants"
-        return "code", "claude-and-codex-review-and-head-tests-tier", f"{path} changes its syntax tree beyond docstrings, comments and string constants"
+            return "code", "codex-review-and-head-tests-tier", f"{path} changes only docstrings, comments and printed strings"
+        return "code", "claude-and-codex-review-and-head-tests-tier", f"{path} changes its syntax tree beyond docstrings, comments and printed strings"
     return "code", "claude-and-codex-review-and-head-tests-tier", f"{path} is not Python or Markdown, so no check shows its change leaves behaviour alone"
 
 

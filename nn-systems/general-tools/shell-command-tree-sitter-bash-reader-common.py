@@ -1281,7 +1281,7 @@ class _Collector:
                        last_word_end=""):
         """Read one simple command; last_word_end is text a redirection after it adds to its last word."""
         words, own_redirects, own_heredocs = [], [], []
-        joined = None
+        joined, joined_prefix = None, ""
         previous_end = None
         # Whether the last word runs on through escaped blanks to previous_end.
         continues = False
