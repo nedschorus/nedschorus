@@ -222,16 +222,6 @@ handoff_user_review_of_agent_memory_stores_mark = importlib.util.module_from_spe
 _handoff_user_review_of_agent_memory_stores_mark_spec.loader.exec_module(
     handoff_user_review_of_agent_memory_stores_mark)
 
-HANDOFF_ARCHITECTURE_OVERVIEW_REFRESH_USER_SHOWN_MARK_PATH = Path(__file__).resolve().with_name(
-    "handoff-architecture-overview-refresh-user-shown-mark.py")
-_handoff_architecture_overview_refresh_user_shown_mark_spec = importlib.util.spec_from_file_location(
-    "handoff_architecture_overview_refresh_user_shown_mark",
-    HANDOFF_ARCHITECTURE_OVERVIEW_REFRESH_USER_SHOWN_MARK_PATH)
-handoff_architecture_overview_refresh_user_shown_mark = importlib.util.module_from_spec(
-    _handoff_architecture_overview_refresh_user_shown_mark_spec)
-_handoff_architecture_overview_refresh_user_shown_mark_spec.loader.exec_module(
-    handoff_architecture_overview_refresh_user_shown_mark)
-
 _checkout_freshness_catch_up_spec = importlib.util.spec_from_file_location(
     "checkout_freshness_catch_up", SCRIPTS_DIRECTORY / "checkout-freshness-catch-up.py")
 checkout_freshness_catch_up = importlib.util.module_from_spec(_checkout_freshness_catch_up_spec)
@@ -505,44 +495,19 @@ AGENT_SEAT_GIVEN_OVERVIEW_REFRESH_LINES = "agent-instructions-editor"
 
 SYSTEM_OVERVIEW_PATH_TEMPLATE = architecture_overview_path_template_and_checked_against_commit_reader.PATH_TEMPLATE
 
-# The draft suffix avoids a tracked-name collision; the queue permits drafting before overview approval.
-SYSTEM_OVERVIEW_DRAFT_PATH_TEMPLATE = (
-    "docs/nedsnodes-wiki/queue/nedsnodes-{system}-architecture-overview-draft.md")
+# The overview-refresh line puts a system's name into a shell command unquoted.
+SYSTEM_NAME_PATTERN = r"[A-Za-z0-9][A-Za-z0-9_-]*"
 
 OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS = 15
 
 OVERVIEW_REFRESH_CHECK_GH_TIMEOUT_SECONDS = 30
 
-OVERVIEW_REFRESH_REMINDER_MARKS_READ_TIMEOUT_SECONDS = 30
-
 OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE = (
-    " — Dispatch a subagent to write {overview_draft_path}: a copy of "
-    "{overview_path} refreshed against the commits "
+    " — Dispatch a subagent to refresh {overview_path} against the commits "
     "`{commit_listing_command}` lists, as "
     "docs/nedsnodes-wiki/nedsnodes-how-to-write-an-architecture-overview.md "
-    "defines a refresh, ending in the line `{checked_against_line}`. When the subagent reports, show the user the "
-    "diff between {overview_path} and {overview_draft_path}. Once the user "
-    "has been shown the diff, run `python3 {reminder_mark_script} {system}`. "
-    "When the user approves the diff, write {overview_path} from "
-    "{overview_draft_path} and delete {overview_draft_path}."
-)
-
-OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE = (
-    "overview check could not read the day's reminder marks in {marks_location}, "
-    "so no line is withheld for a reminder already given: {error}"
-    " — Before you act on any overview-refresh line in this prompt, tell the "
-    "user that the handoff-supervisor could not read the day's overview-refresh "
-    "reminder marks, giving the location {marks_location} and the error above, "
-    "and that an overview-refresh line in this prompt may therefore repeat a "
-    "refresh the user was already shown today."
-)
-
-# Appended only when ned-box gave no answer; an answer that does not parse
-# came from ned-box, so the ssh check would mislead.
-OVERVIEW_REFRESH_REMINDER_MARKS_NED_BOX_DID_NOT_ANSWER_SENTENCE = (
-    " Because ned-box did not answer this machine, also tell the user that "
-    "`ssh nedlern@ned-box true`, run on the Mac, shows whether ned-box answers "
-    "again, and that the next agent-session's start reads the marks again."
+    "defines a refresh, ending in the line `{checked_against_line}`, and to "
+    "open a pull request with the refresh as /overview-write says."
 )
 
 MEMORY_REVIEW_DUE_FROM_PACIFIC_HOUR = 12
@@ -1594,9 +1559,8 @@ def overview_check_git_output(arguments: list, working_directory: Path,
     return output
 
 
-def overview_refresh_due_lines(working_directory: Path,
-                               now: Optional[datetime] = None) -> tuple:
-    """Return unsuppressed overview-refresh reminders, and a line for a reminder-marks read failure; never block launch."""
+def overview_refresh_due_lines(working_directory: Path) -> tuple:
+    """Return the overview-refresh reminders no open pull request answers; never block launch."""
     # Read origin/main so unmerged seat work cannot trigger a refresh; Markdown-only refreshes must not trigger another.
     # The checked-against commit may name a merge, so compare the commit range rather than last-commit identity.
     timeout = OVERVIEW_REFRESH_CHECK_GIT_TIMEOUT_SECONDS
@@ -1620,15 +1584,12 @@ def overview_refresh_due_lines(working_directory: Path,
     due = []
     for system_directory in git_machine_readable_output.nul_separated_fields(listed):
         system = system_directory.rsplit("/", 1)[-1]
-        # The reminder's commands take the name unquoted, and the mark script refuses any other name.
-        if not re.fullmatch(handoff_architecture_overview_refresh_user_shown_mark.SYSTEM_NAME_PATTERN, system):
+        if not re.fullmatch(SYSTEM_NAME_PATTERN, system):
             printable = system.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
             print(f"handoff-supervisor: overview check for {printable} passed over: "
                   f"the directory name nn-systems/{printable} on origin/main does not match "
-                  f"{handoff_architecture_overview_refresh_user_shown_mark.SYSTEM_NAME_PATTERN}, "
-                  f"the system-name pattern "
-                  f"nn-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py "
-                  f"accepts, so its nc-architecture-overview is not checked; the other systems "
+                  f"{SYSTEM_NAME_PATTERN}, the system-name pattern the overview-refresh line "
+                  f"needs, so its nc-architecture-overview is not checked; the other systems "
                   f"still are.\n"
                   f"If nn-systems/{printable} holds a system's programs, propose to the user a "
                   f"name for it that matches, to be renamed in a pull request; otherwise "
@@ -1665,7 +1626,6 @@ def overview_refresh_due_lines(working_directory: Path,
                 f"git log --no-merges {commit_range} -- "
                 + " ".join(f"'{pathspec}'" if ":(" in pathspec else pathspec
                            for pathspec in pathspecs))
-            overview_draft_path = SYSTEM_OVERVIEW_DRAFT_PATH_TEMPLATE.format(system=system)
             due.append((system, overview_path,
                 f"overview refresh due: {system} — {count} commit(s) under "
                 f"nn-systems/{system}/ since the commit its overview was checked "
@@ -1673,13 +1633,10 @@ def overview_refresh_due_lines(working_directory: Path,
                 f"{commit_range}"
                 + OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE.format(
                     overview_path=overview_path,
-                    overview_draft_path=overview_draft_path,
                     commit_listing_command=commit_listing_command,
                     checked_against_line=(
                         architecture_overview_path_template_and_checked_against_commit_reader.CHECKED_AGAINST_LINE_TEMPLATE.format(
-                            commit=main_commit_full)),
-                    reminder_mark_script=HANDOFF_ARCHITECTURE_OVERVIEW_REFRESH_USER_SHOWN_MARK_PATH,
-                    system=system)))
+                            commit=main_commit_full)))))
         except Exception as error:
             print(f"handoff-supervisor: overview check for {system} passed over: "
                   f"{type(error).__name__}: {error}")
@@ -1709,53 +1666,18 @@ def overview_refresh_due_lines(working_directory: Path,
         print(f"handoff-supervisor: overview check could not ask GitHub which open "
               f"pull requests change an overview, so no line is withheld for a "
               f"pull request: {unanswered}")
-        still_to_give = [(system, line) for system, _, line in due]
-    else:
-        still_to_give = []
-        # Any open change to the overview could conflict with another refresh.
-        for system, overview_path, line in due:
-            if overview_path not in changing_pull_request_by_path:
-                still_to_give.append((system, line))
-                continue
-            title, url = changing_pull_request_by_path[overview_path]
-            print(f"handoff-supervisor: overview check for {system} withheld its line: "
-                  f"the open pull request \"{title}\" ({url}) already changes "
-                  f"{overview_path}")
-    if not still_to_give:
-        return ()
-    # The seat marks only after showing the diff, so a seat that dies first cannot consume the daily reminder.
-    reminder_mark = handoff_architecture_overview_refresh_user_shown_mark
-    try:
-        today = reminder_mark.pacific_date_of(now or datetime.now(timezone.utc))
-        reminder_marks = reminder_mark.read_daily_overview_refresh_reminder_marks(
-            today, OVERVIEW_REFRESH_REMINDER_MARKS_READ_TIMEOUT_SECONDS)
-    except Exception as error:
-        # Unknown reminder state must not violate the daily reminder floor.
-        # The failure travels as a line so both the console and the successor see it.
-        return tuple(line for _, line in still_to_give) + (
-            OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE.format(
-                marks_location=reminder_mark.daily_overview_refresh_reminder_mark_citation(''),
-                error=f"{type(error).__name__}: {error}")
-            + (OVERVIEW_REFRESH_REMINDER_MARKS_NED_BOX_DID_NOT_ANSWER_SENTENCE
-               if getattr(error, "ned_box_did_not_answer", False) else ""),)
-    lines = []
-    for system, line in still_to_give:
-        file_name = reminder_mark.daily_overview_refresh_reminder_mark_file_name(today, system)
-        if file_name not in reminder_marks:
-            lines.append(line)
+        return tuple(line for _, _, line in due)
+    still_to_give = []
+    # Any open change to the overview could conflict with another refresh.
+    for system, overview_path, line in due:
+        if overview_path not in changing_pull_request_by_path:
+            still_to_give.append(line)
             continue
-        citation = reminder_mark.daily_overview_refresh_reminder_mark_citation(file_name)
-        written_at = reminder_marks[file_name].strip()
-        if not reminder_mark.reminder_mark_text_is_a_time(written_at):
-            print(f"handoff-supervisor: overview check for {system} gives its line: the "
-                  f"day's reminder mark {citation} does not hold the time it was "
-                  f"written, but {written_at!r}")
-            lines.append(line)
-            continue
-        print(f"handoff-supervisor: overview check for {system} withheld its line: the "
-              f"user was shown this overview's refresh today, at {written_at}, as "
-              f"{citation} records")
-    return tuple(lines)
+        title, url = changing_pull_request_by_path[overview_path]
+        print(f"handoff-supervisor: overview check for {system} withheld its line: "
+              f"the open pull request \"{title}\" ({url}) already changes "
+              f"{overview_path}")
+    return tuple(still_to_give)
 
 
 def memory_review_due_lines(now: Optional[datetime] = None) -> tuple:

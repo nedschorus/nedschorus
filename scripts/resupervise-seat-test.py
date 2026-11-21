@@ -324,7 +324,6 @@ def run_missing_launcher_case(workspace: Path):
     supervisor_home.mkdir(parents=True)
     for supervisor_file in ("handoff-supervisor.py", "session-handoff-field-names-common.py",
                             "handoff-user-review-of-agent-memory-stores-mark.py",
-                            "handoff-architecture-overview-refresh-user-shown-mark.py",
                             "uncommitted-work-snapshots.py",
                             "handoff-reference-checkout-fetch-and-fast-forward-to-origin-main-check-common.py",
                             "handoff-reference-checkout-back-on-main-after-pushing-leftovers-to-a-branch.py",
