@@ -3083,16 +3083,19 @@ with tempfile.TemporaryDirectory() as temporary:
         detached_capture = (capture_path.read_text(encoding="utf-8")
                             if capture_path.is_file() else "")
         capture_path.write_text("", encoding="utf-8")
-        # launcher_path() is None off macOS -- the box composes its launch
-        # directly -- and handing subprocess the string "None" aborted the
-        # whole run there (nedschorus#172), so the probe is skipped out loud.
-        if recovery.launcher_path() is None:
-            attached_capture = None
-        else:
-            recovery.subprocess.run([str(recovery.launcher_path()), workspace.name],
-                                    capture_output=True, text=True, check=False)
-            attached_capture = (capture_path.read_text(encoding="utf-8")
-                                if capture_path.is_file() else "")
+        # Every tool the launcher calls is stubbed, so the probe runs the
+        # durable checkout's launch-claude-mac on any platform rather than
+        # through launcher_path(), which is None off macOS. The sandbox HOME
+        # holds no ~/Projects/nedsnodes, so the probe names the checkout as
+        # recovery's own launches do.
+        attached_launcher = (recovery.durable_checkout
+                             / recovery.LAUNCH_CLAUDE_MAC_WITHIN_A_CHECKOUT)
+        attached_run = recovery.subprocess.run(
+            [str(attached_launcher), workspace.name,
+             *recovery.mac_launcher_supervisor_checkout_arguments()],
+            capture_output=True, text=True, check=False)
+        attached_capture = (capture_path.read_text(encoding="utf-8")
+                            if capture_path.is_file() else "")
     finally:
         os.environ["PATH"] = saved_path_env
         if saved_home_env is None:
@@ -3119,25 +3122,20 @@ with tempfile.TemporaryDirectory() as temporary:
           in command_tokens
           and str(workspace.seat_directory) in command_tokens,
           command_tokens)
-    if attached_capture is None:
-        skip("F1: the attached launch's after-exit shell command parses too",
-             "macOS only: the attached launch runs launch-claude-mac, and "
-             "launcher_path() is None on this platform")
-    else:
-        attached_line = next((line for line in attached_capture.splitlines()
-                              if "handoff-supervisor.py" in line), "")
-        try:
-            attached_tokens = shlex.split(attached_line)
-            attached_problem = ""
-        except ValueError as error:
-            attached_tokens, attached_problem = [], str(error)
-        check("F1: the attached launch's after-exit shell command parses too",
-              not attached_problem and attached_tokens
-              # containment, not equality: the composed string juxtaposes ';'
-              # against the closing quote, so the directory's token carries it
-              and any(str(workspace.seat_directory) in token
-                      for token in attached_tokens),
-              (attached_problem, attached_line))
+    attached_line = next((line for line in attached_capture.splitlines()
+                          if "handoff-supervisor.py" in line), "")
+    try:
+        attached_tokens = shlex.split(attached_line)
+        attached_problem = ""
+    except ValueError as error:
+        attached_tokens, attached_problem = [], str(error)
+    check("F1: the attached launch's after-exit shell command parses too",
+          not attached_problem and attached_tokens
+          # containment, not equality: the composed string juxtaposes ';'
+          # against the closing quote, so the directory's token carries it
+          and any(str(workspace.seat_directory) in token
+                  for token in attached_tokens),
+          (attached_problem, attached_line, attached_run.returncode, attached_run.stderr))
 
     # Round-4 review note (user-ruled 2026-08-22: allowed overrides must
     # work): default_agents_root resolves the same way the launchers do —
