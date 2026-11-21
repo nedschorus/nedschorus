@@ -381,7 +381,14 @@ as CHECK does and before it starts any read, an item with a `#new` or
 before any read, an item whose text up to its first `###` sub-step, or one of
 whose `###` sub-steps, holds more than 300 words, counting every run of
 characters between spaces that holds a letter or a digit, on every line but
-those opening `#approval_walk_item_`. When the line names one item that has
+those opening `#approval_walk_item_`. When the line names one `##` item
+whose `###` sub-step headings hold no running count, and none of its
+sub-steps has one, the step first writes `Item K.1 of M: `, `Item K.2 of M: `
+and so on into them, K the item's number and M its heading's, leaving the
+headings of its Withdrawn versions as they are, and starts again; unnumbered,
+the sub-steps would be read as the item's own lines, so one answer would
+decide every one of them. A sub-step that the count's four words take over
+the limit is refused with its heading numbered. When the line names one item that has
 numbered sub-steps, such as `### Item 3.1 of 9`, the walk-minutes do not all
 decide, the step then adds a `#next_to_present` line naming the first of them
 the walk-minutes do not decide, since the user is shown such an item one sub-step at a time, and
@@ -791,6 +798,7 @@ CLOSE_DEFERRED_HEADING_NOT_NOTED = ("Its heading in {document} names other items
 SUMMARY_HEADING = re.compile(r"\bof\s+\d+\b[*_\s:.\-\u2013\u2014]*summary\b|^\s*##\s+[*_\s]*summary\b", re.I)
 NEWLINE = "\n"
 UNNUMBERED_HEADING_PARTS = re.compile(r"^(\s*##[ \t]+)(.*?)(?:[ \t]+#+)?[ \t]*$")
+SUB_STEP_HEADING_PARTS = re.compile(r"^(\s*###[ \t]+)(.*?)(?:[ \t]+#+)?[ \t]*$")
 # The four categories of section 2 of
 # docs/nedsnodes-wiki/queue/nedsnodes-goals-and-philosophy-founding-statement-and-agent-working-principles.md,
 # in the order their items are shown.
@@ -2438,6 +2446,38 @@ def approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minut
                 if level in sub_steps)
 
 
+def approval_walk_item_unnumbered_sub_step_headings_numbered(walk_finder, minutes, value, numbers, total, parser):
+    """Write `Item K.n of M: ` into each unnumbered `###` sub-step heading of the one `##` item numbers names, K
+    the item's number, n counting from 1 in walk-document order and M its heading's, and return whether any was
+    written. Only the headings inside the item's unit count, which item_unit_spans ends at the first Withdrawn
+    heading, so a Withdrawn version's sub-step headings stay as they are. An item that already has a numbered
+    sub-step, or names several items, is left as it is."""
+    if len(numbers) != 1:
+        return False
+    document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
+    text = document.read_text(encoding="utf-8")
+    all_units = walk_finder.item_unit_spans(text, parser)
+    unit = walk_finder.waiting_item_units(document, value, numbers, total, parser, all_units)[1][0]
+    tokens = parser.parse(text)
+    heading = next((token for token in tokens if token.map is not None and token.map[0] == unit[3]
+                    and token.type == "heading_open"), None)
+    if (heading is None or heading.markup != walk_finder.UNNUMBERED_ITEM_HEADING_MARKUP or len(unit[0]) != 1
+            or walk_finder.approval_walk_item_sub_step_units_below_item_in_walk_document(all_units, unit)):
+        return False
+    sub_steps = [token.map[0] for token in tokens
+                 if token.type == "heading_open" and token.level == 0 and token.map is not None
+                 and token.markup == APPROVAL_WALK_ITEM_SUB_STEP_HEADING_MARKUP and unit[3] < token.map[0] < unit[4]]
+    if not sub_steps:
+        return False
+    lines = text.split("\n")
+    for position, line in enumerate(sub_steps, start=1):
+        marks, title = SUB_STEP_HEADING_PARTS.match(lines[line]).groups()
+        lines[line] = NUMBERED_HEADING.format(marks=marks, number=f"{unit[0][0]}.{position}", total=unit[1] or total,
+                                              title=title)
+    document.write_text("\n".join(lines), encoding="utf-8")
+    return True
+
+
 def rated_none_item_not_to_be_shown(walk_finder, top, minutes, value, numbers, total, parser, named):
     """Return the waiting item's walk-document path when the item is one the walk-me-through skill settles
     without showing it, as the step's docstring says, or None. named is the item as check names it."""
@@ -2504,7 +2544,9 @@ def waiting_item_read(arguments, sub_step_of=None):
     earlier_read_texts_kept_as_withdrawn_versions for that item and each item above it) when the line names an
     item split into numbered sub-steps: the sub-step is read in its place, and its line is added to the walk-minutes,
     and each such item's earlier read texts are kept as withdrawn versions, only once every refusal has passed, so a
-    refused read leaves the walk-minutes and the walk-document as they were."""
+    refused read leaves the walk-minutes and the walk-document as they were, except for the running counts
+    approval_walk_item_unnumbered_sub_step_headings_numbered writes into the item's sub-step headings, which
+    a sub-step those four words take over the word limit is refused with, and which a rerun keeps."""
     walk_finder = load_walk_finder()
     top, minutes, value, parser = the_open_walk(walk_finder, arguments.cwd)
     if sub_step_of:
@@ -2526,6 +2568,9 @@ def waiting_item_read(arguments, sub_step_of=None):
                                refused_unless_marks_read=(item, command))
     # Before the kept versions are written, so a refused item's document is left as it was.
     approval_walk_item_text_over_word_limit_refused(walk_finder, minutes, value, numbers, total, parser, item, command)
+    # Unnumbered, the sub-steps are read as the item's own lines, so one answer would decide them all.
+    if approval_walk_item_unnumbered_sub_step_headings_numbered(walk_finder, minutes, value, numbers, total, parser):
+        return waiting_item_read(arguments, sub_step_of)
     sub_step = approval_walk_item_first_numbered_sub_step_without_answer(walk_finder, minutes, value, numbers, total,
                                                                          parser)
     keep = (walk_finder, minutes, value, numbers, total, parser, earlier, item, text)
