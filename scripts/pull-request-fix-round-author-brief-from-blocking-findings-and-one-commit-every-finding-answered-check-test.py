@@ -2344,6 +2344,14 @@ def replaces_cases(root, repository, base, frozen_head):
           and f"4. old.txt:4{carried} ({REPLACED_URL}#discussion_r61)" in out
           and out.index("2. test.py (") < out.index("3. old.py:30"), err + out)
 
+    comment_rounds = [replaced_review(51, REPLACED_FIRST_HEAD, state="COMMENTED"),
+                      replaced_review(52, REPLACED_SECOND_HEAD, state="COMMENTED")]
+    code, out, err = run(root, repository, replaced_routes(
+        frozen_head, REPLACED_SECOND_HEAD, comment_rounds, REPLACED_COMMENTS))
+    check("replaces: a replaced pull request merge-lane-2 opened, whose two rounds are COMMENT reviews that open "
+          "with REQUEST_CHANGES, makes this first round the third, which asks for the advisor",
+          code == 0 and out.count(ADVISOR_SENTENCE) == 1, err + out)
+
     code, out, err = run(root, repository, replaced_routes(
         frozen_head, REPLACED_SECOND_HEAD, REPLACED_TWO_ROUNDS, REPLACED_COMMENTS),
         "--check", "--answers", answers_file(root, GOOD_ANSWERS))
