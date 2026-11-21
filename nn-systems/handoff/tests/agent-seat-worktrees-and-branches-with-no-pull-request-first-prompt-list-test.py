@@ -646,6 +646,34 @@ def test_supervisor_puts_deleted_branches_above_the_leftovers_and_forgets_counts
     counts.rmdir()
 
 
+def test_supervisor_shows_no_leftovers_sentence_above_a_part_with_no_entry():
+    fixture_spec = importlib.util.spec_from_file_location(
+        "handoff_supervisor_test_fixture_no_entry",
+        SYSTEM_DIRECTORY / "tests" / "handoff-supervisor-test-fixture.py")
+    fixture = importlib.util.module_from_spec(fixture_spec)
+    fixture_spec.loader.exec_module(fixture)
+    supervisor = fixture.supervisor
+    counts = SCRATCH / "seat-t-leftovers-prompt-listing-counts.json"
+    counts.write_text(json.dumps({"branch b1": 1}))
+    prompt = f"Opening.{supervisor.NEXT_STEP_HEADING}Do the next thing."
+    held = listing.hidden_line([("worktree", {"378"}), ("branch", {"379"})])
+    only_held = supervisor.launch_prompt_with_leftovers_before_the_next_step(
+        prompt, ("", held), counts)
+    check(only_held == f"Opening.\n\n{held}{supervisor.NEXT_STEP_HEADING}Do the next thing."
+          and not counts.exists(),
+          "a part with no entry, such as the line on what open tasks hold, is shown without the "
+          "leftovers sentence, and the counts file is deleted", only_held)
+    failure = ("Leftover work-snapshots could not be listed (OSError: x). Uncommitted work may be "
+               "waiting; list it with: a command")
+    branches = "This agent-seat's branches with no pull request: 1:\n- branch b1; main lacks the changes of its 1 commit(s)\nSteps."
+    mixed = supervisor.launch_prompt_with_leftovers_before_the_next_step(
+        prompt, (failure, branches), counts)
+    check(mixed.index(failure) < mixed.index(supervisor.LEFTOVERS_BEFORE_THE_NEXT_STEP_SENTENCE)
+          < mixed.index("- (listed in 1 first prompt(s)) branch b1;"),
+          "a part with no entry goes above the leftovers sentence, which only parts with entries "
+          "follow", mixed)
+
+
 def test_supervisor_appends_the_list():
     fixture_spec = importlib.util.spec_from_file_location(
         "handoff_supervisor_test_fixture", SYSTEM_DIRECTORY / "tests" / "handoff-supervisor-test-fixture.py")
@@ -832,6 +860,7 @@ for case in (test_branches, test_pushed_text, test_worktrees, test_gh_failure,
              test_deletion_reported_when_a_later_git_call_fails,
              test_supervisor_puts_leftovers_before_the_next_step,
              test_supervisor_puts_deleted_branches_above_the_leftovers_and_forgets_counts_when_none,
+             test_supervisor_shows_no_leftovers_sentence_above_a_part_with_no_entry,
              test_supervisor_puts_leftovers_before_the_next_step_without_a_conversation_tail,
              test_supervisor_appends_the_list, test_open_tasks_hold_entries,
              test_open_task_names_a_worktree_by_a_path_written_differently,
